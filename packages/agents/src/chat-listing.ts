@@ -31,8 +31,8 @@ export interface ChatListingInput {
 export interface ChatListing {
   /** Lines of the agents, for the description of `start_agent`. */
   readonly agents: readonly string[];
-  /** Lines of the workflows, for the description of `start_workflow`. */
-  readonly workflows: readonly string[];
+  /** Lines of the deep agents, for the description of the tool that starts one by a brief. */
+  readonly deepAgents: readonly string[];
   /** Records whose line kept its description. */
   readonly described: number;
 }
@@ -95,5 +95,5 @@ export function chatListing({ headers, sessionCounts, budget }: ChatListingInput
     offered
       .filter((header) => header.kind === kind)
       .map((header) => line(header, described.has(header.id)));
-  return { agents: linesOf('agent'), workflows: linesOf('workflow'), described: described.size };
+  return { agents: linesOf('agent'), deepAgents: linesOf('deep_agent'), described: described.size };
 }

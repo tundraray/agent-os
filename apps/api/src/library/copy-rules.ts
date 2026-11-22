@@ -6,7 +6,7 @@ import {
   type Language,
   type RecordBody,
 } from '@agent-os/contracts';
-import { isNameTaken, type ContentPart } from './record-content';
+import { contentParts, isNameTaken, type ContentPart } from './record-content';
 
 /** The copy mark of UXRD MC-8 in each interface language. */
 const COPY_SUFFIX: Readonly<Record<Language, string>> = {
@@ -47,65 +47,44 @@ export type CopyPlan = Omit<CopyResult, 'record'> & {
 export function planCopy(input: CopyInput): CopyPlan {
   const removedServers: CopyPlan['removedServers'] = [];
   const replacedModels: CopyPlan['replacedModels'] = [];
-  const copyPart = (part: ContentPart): Omit<ContentPart, 'executor'> => {
+  const copyPart = (part: ContentPart): CopiedPart => {
     const servers = copyServers(part.servers, input.usableServers);
     const removed = part.servers.filter(
       (server) => server !== ALL_SERVERS && !servers.includes(server),
     );
     if (removed.length > 0)
-      removedServers.push({ executor: part.executor, servers: removed });
+      removedServers.push({ subagent: part.subagent, servers: removed });
     // `null` runs on the default chat model at the start, so it is copied as is.
     if (part.model === null) return { servers, model: null };
     const model = replaceModel(part.model, input);
     if (model !== part.model)
       replacedModels.push({
-        executor: part.executor,
+        subagent: part.subagent,
         from: part.model,
         to: model,
       });
     return { servers, model };
   };
 
-  const visible = new Set(input.visibleAgentIds);
   const { body } = input;
+  const [own, ...subagentParts] = contentParts(body).map(copyPart);
+  if (own === undefined) throw new Error('a record content without its own part');
   let copy: RecordBody;
   let removedAgents: string[] = [];
   if (body.kind === 'agent') {
+    const visible = new Set(input.visibleAgentIds);
     const { content } = body;
-    const { servers, model } = copyPart({
-      executor: null,
-      servers: content.servers,
-      model: content.model,
-    });
     removedAgents = content.agents.filter((id) => !visible.has(id));
     const agents = content.agents.filter((id) => visible.has(id));
-    copy = {
-      kind: 'agent',
-      content: { ...content, servers: [...servers], model, agents },
-    };
+    copy = { kind: 'agent', content: { ...content, ...own, agents } };
   } else {
     const { content } = body;
-    const { model } = copyPart({
-      executor: null,
-      servers: [],
-      model: content.coordinator.model,
+    const subagents = content.subagents.map((subagent, index) => {
+      const part = subagentParts[index];
+      if (part === undefined) throw new Error(`subagent ${subagent.name} without its content part`);
+      return { ...subagent, ...part };
     });
-    const executors = content.executors.map((executor) => {
-      const part = copyPart({
-        executor: executor.name,
-        servers: executor.servers,
-        model: executor.model,
-      });
-      return { ...executor, servers: [...part.servers], model: part.model };
-    });
-    copy = {
-      kind: 'workflow',
-      content: {
-        ...content,
-        coordinator: { ...content.coordinator, model },
-        executors,
-      },
-    };
+    copy = { kind: 'deep_agent', content: { ...content, ...own, subagents } };
   }
 
   return {
@@ -119,6 +98,12 @@ export function planCopy(input: CopyInput): CopyPlan {
     replacedModels,
     removedAgents,
   };
+}
+
+/** The servers and the model of one part of the copy. */
+interface CopiedPart {
+  servers: string[];
+  model: string | null;
 }
 
 function copyServers(

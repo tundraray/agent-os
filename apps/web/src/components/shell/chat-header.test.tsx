@@ -65,10 +65,10 @@ describe('ChatHeaderView — HD-03 title by HeaderTitle (AC-07.2, AC-07.3, AC-12
   it.each([
     { workspaceOpen: false, expanded: 'false' },
     { workspaceOpen: true, expanded: 'true' },
-  ])('HD-04 «Рабочая область»: workspaceOpen=$workspaceOpen → aria-expanded="$expanded"', ({ workspaceOpen, expanded }) => {
+  ])('HD-04 «Схема» (deep-agents DA-12): workspaceOpen=$workspaceOpen → aria-expanded="$expanded"', ({ workspaceOpen, expanded }) => {
     renderHeaderView({ title: { kind: 'hidden' }, workspaceOpen });
 
-    expect(screen.getByRole('button', { name: 'Рабочая область' })).toHaveAttribute('aria-expanded', expanded);
+    expect(screen.getByRole('button', { name: 'Схема' })).toHaveAttribute('aria-expanded', expanded);
   });
 });
 

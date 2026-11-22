@@ -7,7 +7,7 @@ import {
 
 // KD-3, KD-8, Invariants 1, 2, 13; AC-01.1, AC-03.2, AC-03.3, DC-3, DC-4 (design-core.md): one
 // extraction per run end, never after a stop; a failed extraction or pass never keeps its id.
-const COORDINATOR = '00000000-0000-4000-8000-000000000001';
+const DEEP_AGENT = '00000000-0000-4000-8000-000000000001';
 const EXTRACTION = '00000000-0000-4000-8000-000000000002';
 const PASS = '00000000-0000-4000-8000-000000000003';
 const OTHER_TASK = '00000000-0000-4000-8000-000000000004';
@@ -15,7 +15,7 @@ const RECORD = '00000000-0000-4000-8000-000000000005';
 
 function run(patch: Partial<TriggerRun> = {}): TriggerRun {
   return {
-    runId: COORDINATOR,
+    runId: DEEP_AGENT,
     extractTaskId: null,
     lastExtractTaskId: null,
     needsRound: false,
@@ -46,23 +46,23 @@ interface Row {
 
 const ROWS: Row[] = [
   {
-    name: 'coordinator completed, no extraction in progress: create one',
+    name: 'deep agent completed, no extraction in progress: create one',
     type: 'task.completed',
-    taskId: COORDINATOR,
+    taskId: DEEP_AGENT,
     run: IDLE,
     expected: { action: 'create_extract', run: IDLE },
   },
   {
-    name: 'coordinator failed while a round runs: only the «one more round» mark',
+    name: 'deep agent failed while a round runs: only the «one more round» mark',
     type: 'task.failed',
-    taskId: COORDINATOR,
+    taskId: DEEP_AGENT,
     run: EXTRACTING,
     expected: { action: 'mark_round', run: EXTRACTING },
   },
   {
-    name: 'coordinator stopped: «stopped», no task even while a round runs',
+    name: 'deep agent stopped: «stopped», no task even while a round runs',
     type: 'task.stopped',
-    taskId: COORDINATOR,
+    taskId: DEEP_AGENT,
     run: EXTRACTING,
     expected: { action: 'stopped', run: EXTRACTING },
   },
@@ -97,7 +97,7 @@ const ROWS: Row[] = [
     expected: { action: 'mark_pass', run: EXTRACTED },
   },
   {
-    name: 'extraction completed after its workflow record was deleted: ignore',
+    name: 'extraction completed after its deep agent record was deleted: ignore',
     type: 'task.completed',
     taskId: EXTRACTION,
     run: EXTRACTED,

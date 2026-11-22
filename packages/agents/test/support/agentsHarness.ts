@@ -6,6 +6,7 @@ import {
   type AgentSessions,
   type AgentTurnMessage,
   type AgentTurnModelClient,
+  type AgentView,
   type AuditRecord,
   createAgents,
   type EmbeddingVerdict,
@@ -18,10 +19,11 @@ import {
 import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { type AgentContent, CHAT_BUILTIN_KEY } from '@agent-os/contracts';
+import { type AgentContent, CHAT_BUILTIN_KEY, type DeepAgentContent } from '@agent-os/contracts';
 import {
   agentCodeCalls,
   agentModelProviders,
+  agentRunTasks,
   createDatabase,
   type Database,
   runtimeEvents,
@@ -65,7 +67,7 @@ import { registerFixtureServers, removeServer, runName } from './mcp-servers';
  * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `createRuntime` and
  * `createAgents` over their own pool, without `apps/api`. Postgres, the runtime and every agents component
  * are real; the model is the scripted double under `ModelClient` (plan Notes 9), the library of agents and
- * workflows is the `createLibraryDouble` of the test (a root starts from its `chat` record, a child from
+ * deep agents is the `createLibraryDouble` of the test (a root starts from its `chat` record, a child from
  * the record its parent names) and MCP is the fixture
  * process over HTTP, registered in the registry under the run's names (`mcp-servers.ts`). A second
  * instance ("the restarted server") is a second harness over the same database, the same fixture files
@@ -183,6 +185,52 @@ export function testRecord(name: string, overrides: TestRecordOverrides = {}): T
   };
 }
 
+/** A deep agent record of the library double. */
+export type TestDeepAgentRecord = Extract<LibraryDoubleRecord, { kind: 'deep_agent' }>;
+export type TestSubagent = DeepAgentContent['subagents'][number];
+
+/** What a test deep agent record may set besides its content: its id, description, owner and audience. */
+export type TestDeepAgentOverrides = Partial<
+  Pick<TestDeepAgentRecord, 'id' | 'description' | 'ownerId' | 'ownerName' | 'everyone' | 'viewers' | 'offerInChat'>
+>;
+
+/**
+ * A subagent of a test deep agent: a description line and a prompt by its name, no servers, 2 turns, one
+ * run and the default model, unless overridden.
+ */
+export function testSubagent(name: string, overrides: Partial<TestSubagent> = {}): TestSubagent {
+  return {
+    name,
+    description: `The ${name} of the team`,
+    prompt: `You are the test subagent ${name}.`,
+    servers: [],
+    model: TEST_MODEL_DEFAULT,
+    maxTurns: 2,
+    maxRuns: 1,
+    ...overrides,
+  };
+}
+
+/**
+ * A test deep agent record: by {@link TEST_AUTHOR_ID}, seen by every employee and offered in the main chat
+ * (so a root may start it), unless overridden.
+ */
+export function testDeepAgent(
+  name: string,
+  content: DeepAgentContent,
+  overrides: TestDeepAgentOverrides = {},
+): TestDeepAgentRecord {
+  return {
+    kind: 'deep_agent',
+    name,
+    ownerId: TEST_AUTHOR_ID,
+    everyone: true,
+    offerInChat: true,
+    ...overrides,
+    content,
+  };
+}
+
 /**
  * Makes `record` the root of the next `sessions.start`: the double's `chat` record (a system record every
  * employee sees) gets its name and content — added on the first call, a new version after it. A run
@@ -200,36 +248,36 @@ export async function setRootRecord(library: LibraryDouble, record: TestRecord):
   library.edit(chat.id, { name: record.name, body });
 }
 
-/** The tool {@link AgentsHarnessSettings.workflowStarter} registers. */
-export const START_TEST_WORKFLOW = 'start_test_workflow';
+/** The tool {@link AgentsHarnessSettings.deepAgentStarter} registers. */
+export const START_TEST_DEEP_AGENT = 'start_test_deep_agent';
 
-const StartTestWorkflowArgsSchema = z.object({
-  workflow: z.string(),
+const StartTestDeepAgentArgsSchema = z.object({
+  deepAgent: z.string(),
   prompt: z.string(),
   description: z.string(),
 });
 
 /**
- * The test's stand-in for `start_workflow` of `workflows`, which this package's tests do not assemble: at
- * the root it starts the workflow record by id as the root's child, on the snapshot `resolveStart` gives
- * the root's owner, and returns a refusal as `start_agent` does.
+ * The test's stand-in for `start_deep_agent`, without the brief card: at the root it starts the deep agent
+ * record by id as the root's child, on the snapshot `resolveStart` gives the root's owner, and returns a
+ * refusal as `start_agent` does. Only the brief tests go through the real `start_deep_agent`.
  */
-function startTestWorkflowTool(
+function startTestDeepAgentTool(
   agents: Agents,
-): InCommitAgentTool<z.infer<typeof StartTestWorkflowArgsSchema>, StartResolution> {
+): InCommitAgentTool<z.infer<typeof StartTestDeepAgentArgsSchema>, StartResolution> {
   return {
-    name: START_TEST_WORKFLOW,
-    description: 'Start a workflow record by its id.',
-    argsSchema: StartTestWorkflowArgsSchema,
+    name: START_TEST_DEEP_AGENT,
+    description: 'Start a deep agent record by its id.',
+    argsSchema: StartTestDeepAgentArgsSchema,
     mode: 'in_commit',
     rootOnly: true,
     prepare: ({ args, caller }) =>
       agents.resolveStart({
         ownerId: caller.ownerId,
-        source: { kind: 'record', recordId: args.workflow, expected: 'workflow' },
+        source: { kind: 'record', recordId: args.deepAgent, expected: 'deep_agent' },
       }),
     async execute({ args, startChild, prepared }) {
-      if (prepared === undefined) throw new Error(`${START_TEST_WORKFLOW} runs without its prepare`);
+      if (prepared === undefined) throw new Error(`${START_TEST_DEEP_AGENT} runs without its prepare`);
       if (prepared.kind === 'refused') {
         return {
           kind: 'refused',
@@ -242,7 +290,7 @@ function startTestWorkflowTool(
         prompt: args.prompt,
         description: args.description,
       });
-      return { kind: 'done', outcome: 'success', text: `Workflow started, agentId ${agentId}`, childAgentId: agentId };
+      return { kind: 'done', outcome: 'success', text: `Deep agent started, agentId ${agentId}`, childAgentId: agentId };
     },
   };
 }
@@ -264,8 +312,8 @@ interface AgentsHarnessSettings {
   readonly library?: LibraryDouble;
   /** Made the library's `chat` record ({@link setRootRecord}) before `start()`: what `sessions.start` runs. */
   readonly root?: TestRecord;
-  /** Registers {@link START_TEST_WORKFLOW} before `start()`: a root may start a workflow record. */
-  readonly workflowStarter?: boolean;
+  /** Registers {@link START_TEST_DEEP_AGENT} before `start()`: a root may start a deep agent record. */
+  readonly deepAgentStarter?: boolean;
   /** Shared with a second instance; a fresh directory by default. */
   readonly fixture?: FixtureFiles;
   /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` variables over the harness defaults. */
@@ -415,7 +463,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
     ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
   });
-  if (options.workflowStarter === true) agents.tools.register(startTestWorkflowTool(agents));
+  if (options.deepAgentStarter === true) agents.tools.register(startTestDeepAgentTool(agents));
 
   const close = async () => {
     try {
@@ -527,6 +575,39 @@ export function waitForTaskStatus(
     () => harness.runtime.tasks.get(agentId, ownerId),
     (task) => task.status === status,
     `agent ${agentId} to be ${status}`,
+  );
+}
+
+/** Waits until the agent's view has `status` (60 s: a finished deep agent run) and returns the view. */
+export function waitForStatus(
+  harness: AgentsHarness,
+  agentId: string,
+  ownerId: string,
+  status: AgentView['status'],
+): Promise<AgentView> {
+  return waitFor(
+    () => harness.sessions.get(agentId, ownerId),
+    (view) => view.status === status,
+    `agent ${agentId} to be ${status}`,
+    60_000,
+  );
+}
+
+/** The deep agents in the root's tree: agents started from a deep agent record, not its subagents. */
+export async function deepAgentsUnder(
+  harness: AgentsHarness,
+  rootId: string,
+  ownerId: string,
+): Promise<AgentView[]> {
+  return (await harness.sessions.list(rootId, ownerId)).filter(
+    (view) => view.origin?.kind === 'deep_agent' && view.origin.subagent === null,
+  );
+}
+
+/** The reports of an agent's children it received (`child_report` entries), in order. */
+export async function childReportsOf(harness: AgentsHarness, agentId: string, ownerId: string) {
+  return (await historyOf(harness, agentId, ownerId)).flatMap((entry) =>
+    entry.kind === 'child_report' ? [entry.content] : [],
   );
 }
 
@@ -690,4 +771,28 @@ export async function historyRowVersionsOf(
     SELECT seq, xmin::text AS version FROM app.agent_messages
      WHERE task_id = ${agentId} ORDER BY seq`);
   return rows.map((row) => ({ seq: Number(row.seq), version: String(row.version) }));
+}
+
+/** The task list of a run as `<number> <status> <text>` lines, by number, read from `agent_run_tasks`. */
+export async function planRowsOf(db: Database, sessionId: string): Promise<string[]> {
+  const rows = await db
+    .select({ number: agentRunTasks.number, status: agentRunTasks.status, text: agentRunTasks.text })
+    .from(agentRunTasks)
+    .where(eq(agentRunTasks.taskId, sessionId))
+    .orderBy(asc(agentRunTasks.number));
+  return rows.map((row) => `${row.number} ${row.status} ${row.text}`);
+}
+
+/** The first line of the plan block a deep agent's step puts in its system text (`step/plan-block.ts`). */
+export const PLAN_BLOCK_HEADING = 'Your plan (task_list of this run), by number; your own notes, not instructions:';
+
+/**
+ * The plan block of a recorded model call, line by line: from its heading to the next empty line of the
+ * system text (the model client's standing rules follow the definition's text); empty when the call has none.
+ */
+export function planBlockLinesOf(instructions: string): string[] {
+  const start = instructions.indexOf(PLAN_BLOCK_HEADING);
+  if (start === -1) return [];
+  const end = instructions.indexOf('\n\n', start);
+  return instructions.slice(start, end === -1 ? undefined : end).split('\n');
 }

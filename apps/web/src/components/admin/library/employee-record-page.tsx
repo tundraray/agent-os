@@ -86,7 +86,7 @@ type EmployeeRecordPageProps = { record: RecordDetail };
 
 /**
  * UXRD AL-03: an employee's record in the panel, read only — the record label with its author, the roles it is
- * open to and its definition «На странице»; «Что узнал workflow» (MC-7, a workflow only) and «Закрыть доступ» in
+ * open to and its definition «На странице»; «Что узнал глубокий агент» (MC-7, a deep agent only) and «Закрыть доступ» in
  * the header. The administrator never edits it.
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */

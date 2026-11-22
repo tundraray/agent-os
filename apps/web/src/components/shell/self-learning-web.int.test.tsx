@@ -12,10 +12,10 @@
 //   `renderWithRuntime({ pathname })` from '@/test/render-with-runtime' mounts ChatRuntimeProvider + ChatShell + Toaster with mocked
 //   next/navigation (controlled pathname, router spy). MSW server from '@/test/msw-server' (`onUnhandledRequest: 'error'`: a request a
 //   screen must NOT send fails the test); `trackRequests`, `logRecords`, `loggerModule` from '@/test/admin-support'; fixtures of
-//   '@/test/fixtures' (`recordDetail`, `workflowContent` with the new `selfLearning`, ...), built to pass the schemas of
+//   '@/test/fixtures' (`recordDetail`, `deepAgentContent` with `selfLearning`, ...), built to pass the schemas of
 //   `packages/contracts`.
 // Mock boundary: network (MSW), next/navigation, the event source of LiveStore, `@/lib/logger`. Real: shell route parsing, `libraryApi`,
-//   `adminApi`, `apiRequest` with its handlers, `useResource`, `RecordEditor`, `useRecordForm`, `KnowledgePage`, `DataTable`,
+//   `adminApi`, `apiRequest` with its handlers, `useResource`, `DeepAgentCard`, `SelfLearningField`, `KnowledgePage`, `DataTable`,
 //   `ConfirmDialog`, `AdminForm`, toast. Do NOT mock any of them.
 //
 // Server-side proofs are NOT repeated here: who may read or delete the graph (403 KNOWLEDGE_FORBIDDEN vs 404), the cascade of an entity's
@@ -23,8 +23,6 @@
 //   scripted MSW response; the test proves what the browser shows, sends and re-reads for it.
 //
 // Proven by unit tests (NOT repeated here; named for the plan):
-//   - AC-10.1 rule half (provenAt: unit): `workflowChanges` row `selfLearning` + `changedFieldLabel` (`library.fields.*`) «Самообучение»
-//     (lib/library/record-rules.test.ts, existing table; one new row).
 //   - `parseShellRoute` rows `/library/<id>/knowledge` and `/admin/library/<id>/knowledge` (lib/shell-route.test.ts, existing table).
 //   - `isKnowledgeHidden` rows 404 / 403 KNOWLEDGE_FORBIDDEN / 403 other / 500 (lib/library/library-errors.test.ts, existing table).
 //   - `knowledge-view` pure functions (lib/library/knowledge-view.test.ts, one table-driven test = design UC-5): status lines 1-5 with
@@ -42,7 +40,7 @@
 //   selection-off / preparing lines with their reasons against the real API).
 //
 // AC proof map (one proof per AC; the DC rows of the design are listed beside):
-//   AC-10.1 INT-1 + unit (the rule) | AC-11.1 INT-2 | AC-11.3 INT-2 | AC-11.4 INT-2 | AC-11.5 INT-2 | AC-11.2 INT-3 | AC-09.1 INT-2 |
+//   AC-10.1 INT-1 (the switch on the deep agent card, deep-agents DA-13) | AC-11.1 INT-2 | AC-11.3 INT-2 | AC-11.4 INT-2 | AC-11.5 INT-2 | AC-11.2 INT-3 | AC-09.1 INT-2 |
 //   AC-09.2 INT-3 | AC-09.3 INT-2 | AC-12.1 INT-4 (wiring) + unit (bounds) | AC-06.1 INT-2 | AC-16.1 INT-2 |
 //   AC-02.2, AC-03.2, AC-03.4, AC-04.3, AC-06.2, AC-08.2, AC-11.6, AC-15.3, AC-17.1, AC-18.3, AC-18.4 unit (knowledge-view table) | AC-13.1 not automated (L1) |
 //   DC-1 INT-1 | DC-2 INT-2 | DC-3 INT-3 | DC-5 INT-4 (wiring) + unit (the rule) | DC-4 not automated (L1)
@@ -64,6 +62,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { logRecords, trackRequests, type TrackedRequests } from '@/test/admin-support';
 import {
   currentUser,
+  deepAgentContent,
   fixtureId,
   fixtureTime,
   knowledgeEntity,
@@ -74,7 +73,6 @@ import {
   knowledgeView,
   recordDetail,
   threadList,
-  workflowContent,
 } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
@@ -85,17 +83,17 @@ const API = 'http://api.test';
 
 // Support shared by the cases of this file -------------------------------------------------------------------------------------------------
 
-/** The workflow whose knowledge the cases open; Аня (the fixtures' default viewer) is its author. */
-const WORKFLOW_ID = fixtureId(61);
-const WORKFLOW_NAME = 'Разбор ошибок оплаты';
-const WORKFLOW = {
-  id: WORKFLOW_ID,
-  kind: 'workflow',
-  name: WORKFLOW_NAME,
+/** The deep agent whose knowledge the cases open; Аня (the fixtures' default viewer) is its author. */
+const DEEP_AGENT_ID = fixtureId(61);
+const DEEP_AGENT_NAME = 'Разбор ошибок оплаты';
+const DEEP_AGENT = {
+  id: DEEP_AGENT_ID,
+  kind: 'deep_agent',
+  name: DEEP_AGENT_NAME,
   description: 'Ищет причины ошибок оплаты',
-  content: workflowContent({ selfLearning: true }),
+  content: deepAgentContent({ selfLearning: true }),
 } as const;
-const KNOWLEDGE = `/api/library/${WORKFLOW_ID}/knowledge`;
+const KNOWLEDGE = `/api/library/${DEEP_AGENT_ID}/knowledge`;
 const BILLING = { id: 1, name: 'billing-api' };
 const TEAM = { id: 2, name: 'команда Платежи' };
 
@@ -121,7 +119,7 @@ function serveViewer(viewer: CurrentUser): void {
 /**
  * The viewer, the shell's thread list and the two reads of the knowledge screen: the record by the route of its
  * place (`library` — the employee's, `panel` — the administrator's) and the graph by its one route (KD-1). The
- * editor reads only the record, so `graph` is left out there.
+ * deep agent's card reads only the record, so `graph` is left out there.
  */
 function serveKnowledge({
   viewer = currentUser(),
@@ -166,9 +164,9 @@ const tabLabels = (): (string | null)[] =>
 /** Texts of the records the «Не найдено» rows' graph holds: none may reach the screen. */
 const ITEM_TEXTS = ['billing-api', 'команда Платежи', 'logs.search', 'ошибки оплаты', 'инциденты оплаты'];
 
-/** DC-2, AC-11.3: the «Не найдено» screen names nothing of the workflow and shows none of its records. */
-function expectNothingOfTheWorkflow(): void {
-  for (const text of [WORKFLOW_NAME, ...ITEM_TEXTS]) {
+/** DC-2, AC-11.3: the «Не найдено» screen names nothing of the deep agent and shows none of its records. */
+function expectNothingOfTheDeepAgent(): void {
+  for (const text of [DEEP_AGENT_NAME, ...ITEM_TEXTS]) {
     expect(document.body.textContent).not.toContain(text);
     expect(document.title).not.toContain(text);
   }
@@ -177,104 +175,78 @@ function expectNothingOfTheWorkflow(): void {
 }
 
 describe('self-learning / web - integration (jsdom + MSW)', () => {
-  // AC: AC-10.1 "Автор workflow включает флажок «Самообучение» в редакторе и сохраняет его вместе с остальной формой"
-  // Behavior: author opens the saved workflow with the flag off -> ticks only «Самообучение» -> the form turns «Изменено» and «Сохранить»
-  //   becomes available -> «Сохранить» sends `PUT /api/library/:id` whose body has `selfLearning: true` and the version the edit started
-  //   from -> the editor reopened shows the flag ticked with the link «Что узнал workflow» under it.
+  // AC: AC-10.1 "Автор включает «Самообучение» и сохраняет"; deep-agents AC-08.1 (the flag lives on the deep agent, and only people change it)
+  // Behavior: Аня opens her saved deep agent at version 2 with the flag off -> DA-13 «Карточка записи»: no fields and no «Сохранить» ->
+  //   she turns «Самообучение» on -> exactly one `PUT /api/library/:id` with the whole definition, the flag flipped and the version shown ->
+  //   the switch stands on with the link «Что узнал глубокий агент» -> turning it off while the save answers 409 moves the switch back and
+  //   shows MC-26 (deep-agents UXRD DA-13, «Самообучение не сохранилось»).
   // Verification items:
-  // - before the click «Сохранить» is unavailable (`aria-disabled`); right after it the panel says «Есть несохранённые изменения» and
-  //   «Сохранить» is available (nothing else was touched)
-  // - exactly one PUT, its body is the whole definition with `content.selfLearning === true` and `version: 2`, the version the edit
-  //   started from
-  // - after the save the panel says «Сохранено» and no unsaved changes; a fresh open shows the checkbox ticked and the link to
-  //   `/library/<id>/knowledge`; unticking it there shows the MC-1 note that the knowledge is kept
-  // Catches: the flag silently not saved because the editor's explicit changed-fields list (`workflowChanges`) ignores it, so «Сохранить»
-  //   stays disabled after the only change (DC-1, the design's main risk) - no unit row sees the real form wiring, and no server test
-  //   sees a PUT that was never sent.
+  // - the card has no save panel; the switch is off and available
+  // - one PUT, its body is the whole definition with `content.selfLearning === true` and `version: 2`
+  // - after the answer the switch is on and the link leads to `/library/<id>/knowledge`
+  // - the second PUT carries `version: 3` (the version the first save answered) and the flag off; its refusal puts the switch back on and
+  //   shows «Не удалось сохранить. Попробуйте ещё раз.»
+  // Catches: a switch that sends a stale version (a silent overwrite of a newer version saved elsewhere) or nothing at all, and a refused save
+  //   that leaves the switch in the position the server did not take (DC-1) - no unit row sees the card's wiring to the library route.
   // @category: core-functionality
-  // @dependency: RecordEditor, useRecordForm, WorkflowFields, SelfLearningField, workflowChanges, libraryApi, ShellLink, MSW, next/navigation mock
+  // @dependency: RecordPage, DeepAgentCard, SelfLearningField, recordAction, libraryApi, ShellLink, MSW, next/navigation mock
   // @complexity: medium
-  it('INT-1: ticking only «Самообучение» makes the form changed and the saved PUT carries selfLearning: true', async () => {
+  it('INT-1: the switch on the deep agent card saves the whole record with the flag flipped and the version shown, and a refusal moves it back', async () => {
     const user = userEvent.setup({ delay: null });
     const api = trackRequests(server);
-    const unsaved = 'Есть несохранённые изменения';
-    const kept = 'Знания сохранятся: включите снова — запуски продолжат с них.';
+    const saved = (version: number, selfLearning: boolean): RecordDetail =>
+      recordDetail({ ...DEEP_AGENT, version, content: deepAgentContent({ selfLearning }) });
+    const putBody = (version: number, selfLearning: boolean) => ({
+      kind: 'deep_agent',
+      name: DEEP_AGENT_NAME,
+      description: DEEP_AGENT.description,
+      content: deepAgentContent({ selfLearning }),
+      version,
+    });
+    const putsSince = (mark: number) =>
+      api.requests
+        .slice(mark)
+        .filter((request) => request.method === 'PUT')
+        .map(({ path, body }) => ({ path, body }));
 
-    // Arrange: Аня's saved workflow at version 2 with the flag off; the record read answers what the last PUT saved
-    let held: RecordDetail = recordDetail({ ...WORKFLOW, version: 2, content: workflowContent({ selfLearning: false }) });
-    serveKnowledge({ record: () => HttpResponse.json(held) });
+    // Arrange: Аня's saved deep agent at version 2 with the flag off; the first save answers version 3, the second a conflict
+    let putAnswer = (): Response => HttpResponse.json(saved(3, true));
+    serveKnowledge({ record: () => HttpResponse.json(saved(2, false)) });
     server.use(
       http.get(`${API}/api/library/choices`, () =>
         HttpResponse.json({ servers: ['logs'], defaultModel: 'anthropic/claude-haiku-4-5', defaultMaxTurns: 40 } satisfies LibraryChoices),
       ),
       http.get(`${API}/api/auth/me/roles`, () => HttpResponse.json([] satisfies MyRoleList)),
-      http.put(`${API}/api/library/:id`, () => {
-        held = recordDetail({ ...WORKFLOW, version: 3, content: workflowContent({ selfLearning: true }) });
-        return HttpResponse.json(held);
-      }),
+      http.put(`${API}/api/library/:id`, () => putAnswer()),
     );
-    let view = renderWithRuntime({ pathname: `/library/${WORKFLOW_ID}` });
-    const flag = await screen.findByRole('checkbox', { name: 'Самообучение' });
-    const panel = screen.getByRole('region', { name: 'Сохранение' });
-    const save = within(panel).getByRole('button', { name: 'Сохранить' });
+    renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}` });
+    const flag = await screen.findByRole('switch', { name: 'Самообучение' });
     expect(flag).not.toBeChecked();
-    expect(save).toHaveAttribute('aria-disabled', 'true');
-    expect(within(panel).queryByText(unsaved)).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Сохранение' })).toBeNull();
 
-    // Act: tick only «Самообучение»
+    // Act: turn «Самообучение» on
+    let mark = api.requests.length;
     await user.click(flag);
 
-    // Assert (DC-1): the only change makes the form changed and «Сохранить» available
+    // Assert (AC-10.1): one PUT with the whole definition, the flag on and the version shown; the switch stands on with the link
+    await waitFor(() => expect(putsSince(mark)).toEqual([{ path: `/api/library/${DEEP_AGENT_ID}`, body: putBody(2, true) }]));
+    await waitFor(() => expect(flag).toBeChecked());
+    expect(screen.getByRole('link', { name: 'Что узнал глубокий агент' })).toHaveAttribute(
+      'href',
+      `/library/${DEEP_AGENT_ID}/knowledge`,
+    );
+
+    // Act: turn it off while the save answers a conflict
+    putAnswer = () => apiError(409, 'Record version conflict', LibraryErrorCode.RECORD_VERSION_CONFLICT);
+    mark = api.requests.length;
+    await user.click(flag);
+
+    // Assert (DA-13): the PUT carried the version the first save answered; the refusal moves the switch back and shows MC-26
+    expect(await screen.findByText('Не удалось сохранить. Попробуйте ещё раз.')).toBeInTheDocument();
+    expect(putsSince(mark).filter((request) => request.path === `/api/library/${DEEP_AGENT_ID}`)).toEqual([
+      { path: `/api/library/${DEEP_AGENT_ID}`, body: putBody(3, false) },
+    ]);
     expect(flag).toBeChecked();
-    expect(within(panel).getByText(unsaved)).toBeInTheDocument();
-    expect(save).toHaveAttribute('aria-disabled', 'false');
-
-    // Act: «Сохранить»
-    const mark = api.requests.length;
-    await user.click(save);
-
-    // Assert (AC-10.1): one PUT with the whole definition, the flag on and the version the edit started from; the form is clean
-    expect(await within(panel).findByText('Сохранено')).toBeInTheDocument();
-    expect(within(panel).queryByText(unsaved)).toBeNull();
-    await waitFor(() =>
-      expect(
-        api.requests
-          .slice(mark)
-          .filter((request) => request.method === 'PUT')
-          .map(({ path, body }) => ({ path, body })),
-      ).toEqual([
-        {
-          path: `/api/library/${WORKFLOW_ID}`,
-          body: {
-            kind: 'workflow',
-            name: WORKFLOW_NAME,
-            description: WORKFLOW.description,
-            content: workflowContent({ selfLearning: true }),
-            version: 2,
-          },
-        },
-      ]),
-    );
-    view.unmount();
-
-    // Act: open the editor again; the record read returns what was saved
-    view = renderWithRuntime({ pathname: `/library/${WORKFLOW_ID}` });
-
-    // Assert: the flag is ticked and the link leads to the library's knowledge screen
-    const reopened = await screen.findByRole('checkbox', { name: 'Самообучение' });
-    expect(reopened).toBeChecked();
-    expect(screen.getByRole('link', { name: 'Что узнал workflow' })).toHaveAttribute('href', `/library/${WORKFLOW_ID}/knowledge`);
-    expect(screen.queryByText(kept)).toBeNull();
-
-    // Act + Assert (MC-1): unticking the saved flag tells that the knowledge is kept, and the change is saveable
-    await user.click(reopened);
-    expect(reopened).not.toBeChecked();
-    expect(screen.getByText(kept)).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Сохранение' })).getByRole('button', { name: 'Сохранить' })).toHaveAttribute(
-      'aria-disabled',
-      'false',
-    );
-    view.unmount();
   });
 
   // AC: AC-11.1 "Автор открывает экран «Что узнал workflow» со списком записей и строками состояния"; AC-11.3 "Чужой или несуществующий
@@ -285,8 +257,8 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
   //     status line 2 is the MC-3 variant about records shown only by topic with the number 2 (`counts.beyond`); no line about selection by
   //     meaning; tabs with counts, the table in the order `core` sent; the lesson shows `logs.search` and 3; the two `by_topic` records
   //     carry «только по теме» and the fifth tab «Только по теме · 2» shows them; no employee name, no run link.
-  //   row B (library, graph 403 KNOWLEDGE_FORBIDDEN): the existing «Не найдено» screen RV-02, no workflow name, no record rows.
-  //   row C (panel, record read 404): the existing «Не найдено» screen AD-15, no workflow name, no record rows.
+  //   row B (library, graph 403 KNOWLEDGE_FORBIDDEN): the existing «Не найдено» screen RV-02, no deep agent name, no record rows.
+  //   row C (panel, record read 404): the existing «Не найдено» screen AD-15, no deep agent name, no record rows.
   // Verification items:
   // - exactly two GETs on open: the record and `/api/library/:id/knowledge`, no admin-only route for the library variant
   // - row A: `h1` has focus; the status-line numbers (`always`, `active`, `percent`, 2), the tab counts and the «только по теме» marks come
@@ -296,7 +268,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
   // Catches: the screen taking the numbers of the status lines and tabs by counting the loaded items instead of reading `counts` (they
   //   differ when `core` sends a longer graph than the screen lists), or the new `state` / `placement` / `selection` fields dropped on the
   //   way from the real response through `libraryApi` and the `contracts` schema (marks and fifth tab then silently missing); and
-  //   the graph screen drawn from a 403 as a generic error (naming the workflow or showing «Повторить») instead of the «Не найдено»
+  //   the graph screen drawn from a 403 as a generic error (naming the deep agent or showing «Повторить») instead of the «Не найдено»
   //   screen, or opening the wrong screen at all because the new `knowledge` page kind is shadowed by the existing one-segment route
   //   (`/library/<id>/knowledge` used to open the library list) - the real route + two reads + error mapping meet only here.
   // @category: core-functionality
@@ -306,7 +278,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     const user = userEvent.setup({ delay: null });
     const api = trackRequests(server);
 
-    // Arrange (row A): the author's workflow; `core` counts 126 active records while the screen lists five, so a number counted from
+    // Arrange (row A): the author's deep agent; `core` counts 126 active records while the screen lists five, so a number counted from
     //   `items` cannot pass; two records reach runs only by topic
     const graph = knowledgeView({
       selection: { state: 'on' },
@@ -319,16 +291,16 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
         knowledgeSearchedNothing({ id: 3, placement: 'by_topic' }),
       ],
     });
-    serveKnowledge({ record: () => HttpResponse.json(recordDetail(WORKFLOW)), graph: () => HttpResponse.json(graph) });
+    serveKnowledge({ record: () => HttpResponse.json(recordDetail(DEEP_AGENT)), graph: () => HttpResponse.json(graph) });
     let mark = api.requests.length;
-    let view = renderWithRuntime({ pathname: `/library/${WORKFLOW_ID}/knowledge` });
+    let view = renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
 
     // Assert (row A): the `h1` takes focus; exactly the record and the graph were read, and nothing of the panel
-    const title = await screen.findByRole('heading', { level: 1, name: `Что узнал «${WORKFLOW_NAME}»` });
+    const title = await screen.findByRole('heading', { level: 1, name: `Что узнал «${DEEP_AGENT_NAME}»` });
     await waitFor(() => expect(title).toHaveFocus());
-    expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${WORKFLOW_ID}`, `GET ${KNOWLEDGE}`]);
+    expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]);
     expect(api.adminCount()).toBe(0);
-    expect(screen.getByRole('link', { name: 'Открыть workflow' })).toHaveAttribute('href', `/library/${WORKFLOW_ID}`);
+    expect(screen.getByRole('link', { name: 'Открыть глубокого агента' })).toHaveAttribute('href', `/library/${DEEP_AGENT_ID}`);
 
     // Assert (row A, MC-3): lines 1-2 carry `counts` as the server gave them; no selection line, no «не помещается» anywhere
     expect(
@@ -365,14 +337,14 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     expect(main.querySelectorAll('a[href^="/agents/"], a[href^="/chat/"]')).toHaveLength(0);
     view.unmount();
 
-    // Arrange (row B): Борис sees the workflow (shared with his role), but its knowledge is closed to him: the graph answers 403
+    // Arrange (row B): Борис sees the deep agent (shared with his role), but its knowledge is closed to him: the graph answers 403
     resetRow();
     serveKnowledge({
       viewer: currentUser({ id: fixtureId(2), email: 'boris@corp.example', name: 'Борис Петров' }),
       record: () =>
         HttpResponse.json(
           recordDetail({
-            ...WORKFLOW,
+            ...DEEP_AGENT,
             mine: false,
             audience: { roles: [{ id: fixtureId(100), name: 'SRE', member: true }] },
             canEdit: false,
@@ -383,18 +355,18 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
       graph: () => apiError(403, 'Knowledge is closed to the viewer', LibraryErrorCode.KNOWLEDGE_FORBIDDEN),
     });
     mark = api.requests.length;
-    view = renderWithRuntime({ pathname: `/library/${WORKFLOW_ID}/knowledge` });
+    view = renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
 
-    // Assert (row B): the library's RV-02 «Не найдено», focus on its `h1`; nothing of the workflow, no «Повторить»
+    // Assert (row B): the library's RV-02 «Не найдено», focus on its `h1`; nothing of the deep agent, no «Повторить»
     const libraryNotFound = await screen.findByRole('heading', { level: 1, name: 'Не найдено' });
     await waitFor(() => expect(libraryNotFound).toHaveFocus());
     expect(libraryNotFound.closest('section')?.textContent).toBe(
-      'Не найденоТакого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку',
+      'Не найденоТакого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку',
     );
     await waitFor(() =>
-      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${WORKFLOW_ID}`, `GET ${KNOWLEDGE}`]),
+      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]),
     );
-    expectNothingOfTheWorkflow();
+    expectNothingOfTheDeepAgent();
     view.unmount();
 
     // Arrange (row C): the administrator in the panel; the record is gone (404) while the graph still answers with records
@@ -406,7 +378,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
       graph: () => HttpResponse.json(graph),
     });
     mark = api.requests.length;
-    view = renderWithRuntime({ pathname: `/admin/library/${WORKFLOW_ID}/knowledge` });
+    view = renderWithRuntime({ pathname: `/admin/library/${DEEP_AGENT_ID}/knowledge` });
 
     // Assert (row C): the panel's AD-15 «Запись не найдена»; the record by the panel's route, the graph by the one library route
     const panelNotFound = await screen.findByRole('heading', { level: 1, name: 'Запись не найдена' });
@@ -416,9 +388,9 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     );
     expect(screen.getByRole('link', { name: 'К списку' })).toHaveAttribute('href', '/admin/library');
     await waitFor(() =>
-      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/admin/library/${WORKFLOW_ID}`, `GET ${KNOWLEDGE}`]),
+      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/admin/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]),
     );
-    expectNothingOfTheWorkflow();
+    expectNothingOfTheDeepAgent();
     view.unmount();
   });
 
@@ -462,14 +434,14 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
       items: [team, knowledgeEntity({ id: 4, name: 'ledger-db', description: 'База проводок' }), lesson],
     });
     let held = before;
-    serveKnowledge({ record: () => HttpResponse.json(recordDetail(WORKFLOW)), graph: () => HttpResponse.json(held) });
+    serveKnowledge({ record: () => HttpResponse.json(recordDetail(DEEP_AGENT)), graph: () => HttpResponse.json(held) });
     server.use(
       http.delete(`${API}/api/library/:id/knowledge/entities/:entityId`, () => {
         held = after;
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    renderWithRuntime({ pathname: `/library/${WORKFLOW_ID}/knowledge` });
+    renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
     const table = await screen.findByRole('table', { name: 'Все · 5' });
     expect(rowKeys(table)).toEqual(['entity:1', 'entity:2', 'relation:1', 'relation:2', 'relation:3']);
 
@@ -479,7 +451,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Удалить «billing-api»?' });
     expect(dialog).toHaveTextContent(
-      'Вместе с ней удалятся связи: 2. Следующие шаги запусков их уже не получат. Вернуть нельзя — workflow может узнать это снова.',
+      'Вместе с ней удалятся связи: 2. Следующие шаги запусков их уже не получат. Вернуть нельзя — глубокий агент может узнать это снова.',
     );
     expect(knowledgeRequestsSince(api, mark)).toEqual([]);
     await user.click(within(dialog).getByRole('button', { name: 'Удалить' }));
@@ -503,7 +475,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
     const refused = await screen.findByRole('alertdialog', { name: 'Удалить запись?' });
     expect(refused).toHaveTextContent(
-      '«logs.search · ошибки оплаты». Следующие шаги запусков её уже не получат. Вернуть нельзя — workflow может узнать это снова.',
+      '«logs.search · ошибки оплаты». Следующие шаги запусков её уже не получат. Вернуть нельзя — глубокий агент может узнать это снова.',
     );
     await user.click(within(refused).getByRole('button', { name: 'Удалить' }));
 
@@ -515,7 +487,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     expect(knowledgeRequestsSince(api, mark)).toEqual([`DELETE ${KNOWLEDGE}/relations/3`]);
     expect(rowKeys(reread)).toEqual(['entity:2', 'entity:4', 'relation:3']);
     expect(logRecords.filter((record) => record.message === 'library: knowledge delete: refused').map((record) => record.fields)).toEqual([
-      expect.objectContaining({ recordId: WORKFLOW_ID, type: 'relation', id: 3, outcome: 'refused', method: 'DELETE', status: 500 }),
+      expect.objectContaining({ recordId: DEEP_AGENT_ID, type: 'relation', id: 3, outcome: 'refused', method: 'DELETE', status: 500 }),
     ]);
   });
 
@@ -564,7 +536,7 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     renderWithRuntime({ pathname: '/admin/library' });
 
     // Two forms of the tab have «Сохранить»: everything is looked up inside this section
-    const section = await screen.findByRole('region', { name: 'Самообучение workflow' });
+    const section = await screen.findByRole('region', { name: 'Самообучение глубоких агентов' });
     const form = within(section);
     expect(screen.getByRole('tab', { name: 'Системные' })).toHaveAttribute('aria-selected', 'true');
     const limit = await form.findByRole('textbox', { name: 'Место для знаний в запуске, токенов' });

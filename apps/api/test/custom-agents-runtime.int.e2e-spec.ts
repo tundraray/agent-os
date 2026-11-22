@@ -5,16 +5,12 @@
 // Generated: 2026-11-17
 // Part: runtime. Files of the part (one budget, counted here):
 //   - packages/agents/test/custom-agents-runtime.int.e2e-spec.ts     INT-1  the start procedure and the snapshot (library double)
-//   - packages/workflows/test/custom-agents-runtime.int.e2e-spec.ts  INT-2  a workflow run on one copy of its team (library double)
-//   - apps/api/test/custom-agents-runtime.int.e2e-spec.ts (this file) INT-3  the chat path over the REAL library; INT-4 the draft tool and its routes
+//     (its INT-2 A row: a deep agent run on one copy of its team; the former INT-2 of `packages/workflows` moved there)
+//   - apps/api/test/custom-agents-runtime.int.e2e-spec.ts (this file) INT-3  the chat path over the REAL library
 // Test Type: Integration. Run with `pnpm --filter api test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`), never in the default `vitest run`.
 //
-// Budget Used: 4/3 integration skeletons for the part (INT-1 .. INT-4), 0/1-2 E2E.
-//   The default 3 are INT-1, INT-2, INT-3. INT-4 is the one extra; its unique defect: the new `chat_drafts` table and the two things only a
-//   real database and the real routes show - a draft read or saved through another employee's session or another conversation, and a draft
-//   saved twice or saved after it was replaced (the rows and the `library_create` event). INT-1..INT-3 cannot see it: the library part never
-//   calls `saveOwn` through a chat route, and the agents/workflows files stop below the HTTP edge. Without INT-4 the third item of CLAUDE.md's
-//   list (isolation between users) has no test for drafts.
+// Budget Used: 3/3 integration skeletons for the part (INT-1 .. INT-3), 0/1-2 E2E. The draft tool and its INT-4 are gone with the drafts
+//   (deep-agents agent-types): the chat's door into the library is proven by apps/api/test/deep-agents-agent-types.int.e2e-spec.ts INT-1.
 //   0 E2E: the journey a user notices first (write in chat -> a colleague's agent starts -> the run is labelled) crosses the web part's screens and
 //   there is no browser E2E tool in the repo; its API half is INT-3 over real HTTP. A child-process kill row would repeat runtime E2E-1.
 //
@@ -26,14 +22,12 @@
 //   existing admin routes (`allowRole`, `POST /api/admin/roles`, `PUT /api/admin/users/:id/roles/:roleId`); records through
 //   `POST /api/library`, `PUT .../audience`, the panel routes. Every row uses its own employees, roles and records (run-suffixed names), no
 //   check of a global list; `afterAll` deletes the run's rows. Responses are parsed with the schemas of `@agent-os/contracts`
-//   (`ConversationView`, `DraftView`, `AgentView`, `ApiErrorSchema`). The scripted model is keyed by the task (the latest user message the
+//   (`ConversationView`, `AgentView`, `ApiErrorSchema`). The scripted model is keyed by the task (the latest user message the
 //   call sees, a chip line included) and a recorder in front of it keeps each call's instructions and tool descriptions; "the chat's list" is
-//   read from the recorded root call (the `start_agent` / `start_workflow` descriptions). One recorder serves every boot of the file.
+//   read from the recorded root call (the `start_agent` / `start_deep_agent` descriptions). One recorder serves every boot of the file.
 //   Support the implementation tasks add (not skeletons): `test/support/library.ts` already named by the library file (`createRecord`, `putRecord`,
-//   `shareWith`); `test/support/drafts.ts` (`postDraftAction`); `createTestApp` gets no new option - a second boot over the same database is a
+//   `shareWith`); `createTestApp` gets no new option - a second boot over the same database is a
 //   second `createTestApp()` after the first one's `close()`.
-//   The table list of `packages/db/test/migrations.e2e-spec.ts` gets `chat_drafts`, and its CHECK-domain test (already there) keeps the new
-//   refusal reasons equal to the contract enum - nothing new to write.
 //
 // Proven elsewhere, not repeated here (one test at the lowest level that catches the defect; `provenAt: unit` = a table next to the code,
 //   named for the plan, never a second proof in this file):
@@ -47,13 +41,13 @@
 //   - `packages/agents/src/chat-listing.spec.ts`: UC-7 - own first and marked, a colleague's with the author, no colleague's record with the
 //       switch off, over the budget every name stays and descriptions vanish first from the records launched least (AC-15.3, AC-15.5, AC-15.7
 //       rule half). The choice between same-named records by the model is a manual run (Success Criteria of the PRD).
-//   - `packages/agents/src/tools/tool-registry.spec.ts`: UC-E6 - `draft_record` and `start_workflow` only for a session without a parent;
-//       a child, an executor and a coordinator get neither (AC-18.4).
+//   - `packages/agents/src/tools/tool-registry.spec.ts`: UC-E6 - `start_deep_agent` only for a session without a parent;
+//       a child, a subagent and a deep agent do not get it (AC-18.4).
 //   - `packages/agents/src/start/snapshot-definition.spec.ts`: the one pure function snapshot -> definition for a model call (prompt, tools,
 //       servers, turn limit; coordinator: shared text + rules + team lines, no `finalExecutor` -> the coordinator's text ends the turn) and
 //       workflow content -> coordinator snapshot.
 //   - `apps/api/src/chat/conversation-view.spec.ts` (existing, new rows): `origin` (author, executor), `firstRun`, the chip in `user_message`,
-//       `DraftView` states and `refusal`, `refusalDetail` with the model's number - AC-17.1 (mapping half).
+//       `refusalDetail` with the model's number - AC-17.1 (mapping half).
 //   - `apps/api/src/library/audience-rules.spec.ts`: the first half of AC-12.5 (audience of `chat` -> `audience_fixed`); AC-12.2 (an
 //       administrator's delete of a built-in record -> 422 `builtin`) is row 5 of INT-1 in `custom-agents-library.int.e2e-spec.ts`.
 //   - existing and rewritten by the implementation tasks, not new: agents INT-3 row A (a tool of a server the runner has no right on never reaches
@@ -73,10 +67,10 @@
 //   AC-12.4 INT-3 · AC-12.5 unit (`audience_fixed`) + INT-3 (the list of an employee outside «SRE») ·
 //   AC-13.1 INT-1 · AC-13.2 INT-1 · AC-13.3 INT-1 · AC-13.4 INT-2 ·
 //   AC-14.1 INT-1 + INT-3 (real roles) · AC-14.2 existing agents INT-3 row A · AC-14.3 INT-1 + INT-3 · AC-14.4 INT-1 + INT-3 (the route answers 409) ·
-//   AC-15.1 INT-3 · AC-15.2 INT-3 · AC-15.3 unit · AC-15.4 INT-4 · AC-15.5 unit + not automated · AC-15.6 INT-3 · AC-15.7 unit + not automated ·
+//   AC-15.1 INT-3 · AC-15.2 INT-3 · AC-15.3 unit · AC-15.5 unit + not automated · AC-15.6 INT-3 · AC-15.7 unit + not automated ·
 //   AC-16.1 INT-2 · AC-16.2 INT-2 · AC-16.3 INT-2 · AC-16.4 INT-2 · AC-16.5 unit (library `WorkflowContentSchema`, design-library) · AC-16.6 unit + INT-2 ·
-//   AC-17.1 INT-3 (+ unit mapping) · AC-18.1 INT-4 · AC-18.2 INT-4 · AC-18.3 INT-4 (the refusal) + not automated (the text) · AC-18.4 unit ·
-//   AC-18.5 INT-4 · AC-19.1 not automated.
+//   AC-17.1 INT-3 (+ unit mapping) · AC-18.4 unit · AC-19.1 not automated. AC-15.4, AC-18.1..AC-18.3, AC-18.5 (the draft tool) are
+//   replaced by the record tools of deep-agents agent-types.
 
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
@@ -88,14 +82,13 @@ import {
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AdminUserDetailSchema,
   RecordDetailSchema,
   StartRefusedErrorSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
   type AgentNode,
   type ApiError,
   type ConversationView,
-  type DraftView,
   type HistoryEntry,
   type RecordDetail,
   type SystemRecordAudienceBody,
@@ -122,14 +115,11 @@ import {
   waitFor,
 } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
-import { type DraftActionAnswer, postDraftAction } from './support/drafts';
 import {
   agentBody,
   auditOfRecord,
   BUILTIN,
   createRecord,
-  getRecord,
-  listLibrary,
   pointBuiltinsAt,
   recordName,
   setSystemAudience,
@@ -155,20 +145,19 @@ const TITLE = 'Заголовок рантайма';
 const UNSCRIPTED_ANSWER = 'Принято.';
 
 const START_AGENT = 'start_agent';
-const START_WORKFLOW = 'start_workflow';
-const DRAFT_RECORD = 'draft_record';
+const START_DEEP_AGENT = 'start_deep_agent';
 
-/** Executors of the seeded `deep-research` record, in its order: the team of every run of it. */
+/** Subagents of the seeded `deep-research` record, in its order: the team of every run of it. */
 const SEED_TEAM = seededTeam();
 
 function seededTeam(): string[] {
   const record = builtinRecords().find(
     (candidate) => candidate.builtinKey === BUILTIN.deepResearch.builtinKey,
   );
-  if (record?.body.kind !== 'workflow') {
-    throw new Error('The seed holds no deep-research workflow');
+  if (record?.body.kind !== 'deep_agent') {
+    throw new Error('The seed holds no deep-research deep agent');
   }
-  return record.body.content.executors.map((executor) => executor.name);
+  return record.body.content.subagents.map((subagent) => subagent.name);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -298,12 +287,12 @@ function startAgent(
   return { tool: START_AGENT, args: { agent, description, prompt } };
 }
 
-/** `start_workflow` of the seeded research workflow. */
+/** `start_deep_agent` of the seeded research deep agent. */
 function startResearch(question: string): ScriptedToolCall {
   return {
-    tool: START_WORKFLOW,
+    tool: START_DEEP_AGENT,
     args: {
-      workflow: BUILTIN.deepResearch.id,
+      deepAgent: BUILTIN.deepResearch.id,
       question,
       boundaries: '',
       result: '',
@@ -311,20 +300,9 @@ function startResearch(question: string): ScriptedToolCall {
   };
 }
 
-/** The coordinator's task: the brief as `start_workflow` writes it. */
+/** The deep agent's task: the brief as `start_deep_agent` writes it. */
 function briefTask(question: string): string {
   return JSON.stringify({ question, boundaries: '', result: '' });
-}
-
-/** `draft_record` of a new agent `name`, or of the record `recordId` when given. */
-function draftCall(name: string, recordId?: string): ScriptedToolCall {
-  return {
-    tool: DRAFT_RECORD,
-    args: {
-      ...agentBody(name, { model: DEFAULT_MODEL }),
-      ...(recordId === undefined ? {} : { recordId }),
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -339,7 +317,7 @@ let restoreBuiltins: (() => Promise<void>) | undefined;
 let restoreModels: (() => Promise<void>) | undefined;
 /** Gives the built-in records back what INT-3 A changed (name, prompt, audience); run in `afterAll`, last first. */
 const restoreEdits: (() => Promise<void>)[] = [];
-/** What this file created; `afterAll` deletes exactly these rows (an employee's records, drafts and grants go with him). */
+/** What this file created; `afterAll` deletes exactly these rows (an employee's records and grants go with him). */
 const made = { users: [] as string[], roles: [] as string[] };
 
 /**
@@ -671,7 +649,7 @@ async function rootSessions(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The library and the drafts
+// The library
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The built-in records by key: id and version (`library_records.builtin_key`). */
@@ -706,55 +684,6 @@ async function builtinCreates(): Promise<string[][]> {
   return creates;
 }
 
-/** The names of the employee's own records in `GET /api/library`. */
-async function ownNames(session: Session): Promise<string[]> {
-  return (await listLibrary(liveApp, session))
-    .filter((record) => record.mine)
-    .map((record) => record.name);
-}
-
-function draftAction(
-  session: Session,
-  threadId: string,
-  draftId: string,
-  action: Parameters<typeof postDraftAction>[4],
-): Promise<DraftActionAnswer> {
-  return postDraftAction(liveApp, session, threadId, draftId, action);
-}
-
-/** Fails unless the action answered 200; returns the draft. */
-function acted(answer: DraftActionAnswer): DraftView {
-  if (!answer.ok) {
-    throw new Error(
-      `The draft action answered ${answer.status}: ${JSON.stringify(answer.error)}`,
-    );
-  }
-  return answer.draft;
-}
-
-/** Fails unless the action answered `status` with `errorCode`; returns the error body. */
-function refused(
-  answer: DraftActionAnswer,
-  status: number,
-  errorCode: string,
-): ApiError {
-  if (answer.ok) {
-    throw new Error(
-      `The draft action answered 200: ${JSON.stringify(answer.draft)}`,
-    );
-  }
-  expect([answer.status, answer.error.errorCode]).toEqual([status, errorCode]);
-  return answer.error;
-}
-
-function draftNamed(view: ConversationView, name: string): DraftView {
-  const draft = view.drafts.find((candidate) => candidate.name === name);
-  if (draft === undefined) {
-    throw new Error(`No draft "${name}" in ${view.thread.id}`);
-  }
-  return draft;
-}
-
 describe('custom-agents / runtime - API integration (real AppModule + real Postgres + real library, scripted model)', () => {
   beforeAll(async () => {
     // One live app at a time (two apps with workers over one database would step each other's tasks); INT-3 A
@@ -784,7 +713,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
           await restoreModels?.();
         }
       } finally {
-        // Drafts go with their conversation, records and personal grants with their employee, shares with the role.
+        // Records and personal grants go with their employee, shares with the role.
         await removeRunRows(harness.pool, {
           models: [DEFAULT_MODEL, R_MODEL],
           roles: made.roles,
@@ -821,9 +750,10 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
   //      overwrites). Given Вера with no role and only a personal model right; When she writes in a new conversation; Then the chat answers
   //      (the root starts from the `chat` record by key, renamed or not, whatever its audience). A new conversation's `general-purpose` child
   //      carries the edited prompt in its model input; a conversation created before the edit keeps the old chat prompt on its next message.
-  //      The administrator opens `deep-research` to «SRE» only: Борис (a member) sees it in the `start_workflow` description of his root, Вера
-  //      does not; Борис confirms a brief for it and the coordinator's snapshot carries the three executors of the seed (the run view's `team`
-  //      equals the executor names of the seed file) - the seeded content is a valid, startable record.
+  //      The seeded `deep-research` is a `deep_agent` record. The administrator opens it to «SRE» only: Борис (a member) sees it in the
+  //      `start_deep_agent` description of his root, Глеб does not; Борис confirms an `agents.brief` card for it and the deep agent's snapshot
+  //      carries the subagents of the seed (the run view's `team` equals the subagent names of the seed file) - the seeded content is a
+  //      valid, startable record.
   //   B. A colleague's agent in the chat (AC-14.1, AC-14.3, AC-14.4, AC-15.1, AC-15.2, AC-15.6, AC-17.1; UC-8, UC-9, UC-10, UC-E1, UC-E2).
   //      Given Аня's agent R shared with «SRE» with the switch on, Борис also owns an agent with the same name; When Борис writes any message;
   //      Then his root's first model call lists R (number, name, author Аня), his own first and marked "ваша"; Аня turns the switch off and
@@ -846,7 +776,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
   //   removal from the role changes nothing; the author's label missing or a namesake started; a restart whose refusal is a 500 or whose
   //   `model` is lost; a seeded record that violates its own content schema and fails only at the first real start.
   // @category: core-functionality
-  // @dependency: BuiltinRecordsSeeder, LibraryService (listVisible, resolve, resolveBuiltin), ConversationsService (chip), ThreadsController, start_agent / start_workflow, AccessService, IdentityDirectory, runtime workers, Postgres
+  // @dependency: BuiltinRecordsSeeder, LibraryService (listVisible, resolve, resolveBuiltin), ConversationsService (chip), ThreadsController, start_agent / start_deep_agent, AccessService, IdentityDirectory, runtime workers, Postgres
   // @complexity: high
   // Implementation (task 6.5, Notes 4; where the comment above differs, the task's text decides): `api` e2e runs on the developer's
   //   database, where the built-in records are already seeded (Task Q.2), so "an empty library" and "exactly three records" are read
@@ -855,7 +785,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
   //   since an employee with no role sees no record open to everyone at all. Row B gives Аня's agent R a model of its own, allowed
   //   through «SRE» only: removing Борис from «SRE» and a personal deny for Аня change R and nothing of their chats.
   it(
-    'INT-3 A: the app seeds the three built-in records once and never over an edit; the chat starts from the `chat` record by key for an employee with no role, and the seeded research workflow starts for its audience only',
+    'INT-3 A: the app seeds the three built-in records once and never over an edit; the chat starts from the `chat` record by key for an employee with no role, and the seeded research deep agent starts through its brief for its audience only',
     async () => {
       const chat = BUILTIN.chat;
       const generalPurpose = BUILTIN.generalPurpose;
@@ -956,8 +886,9 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       await untilAnswered(boris, oldThread, 'INT-3 A: второй ответ до правок');
       expect(firstCallFor(oldNext).agentName).toBe(chatBefore.name);
 
-      // The administrator opens `deep-research` to «SRE» only; `afterAll` gives it back its audience
+      // The seeded research is a deep agent; the administrator opens it to «SRE» only, `afterAll` gives it back its audience
       const researchBefore = await panelRecord(deepResearch.id);
+      expect(researchBefore.kind).toBe('deep_agent');
       restoreEdits.push(() =>
         putPanelAudience(deepResearch.id, audienceBodyOf(researchBefore)),
       );
@@ -966,7 +897,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         roleIds: [sre.id],
       });
 
-      // Борис (in «SRE») starts general-purpose in a new conversation: his chat lists the research workflow, and the
+      // Борис (in «SRE») starts general-purpose in a new conversation: his chat lists the research deep agent, and the
       // child runs on the edited prompt
       const borisText = 'INT-3 A: новая беседа Бориса';
       const generalTask = 'INT-3 A: задание general-purpose';
@@ -988,7 +919,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const borisCall = firstCallFor(borisText);
       expect(borisCall.agentName).toBe(renamed);
       expect(
-        listingHeads(borisCall, START_WORKFLOW).filter((head) =>
+        listingHeads(borisCall, START_DEEP_AGENT).filter((head) =>
           head.startsWith(`${deepResearch.id}: `),
         ),
       ).toHaveLength(1);
@@ -1000,12 +931,12 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const glebThread = await firstMessage(gleb, glebText);
       await untilAnswered(gleb, glebThread, 'INT-3 A: ответ Глебу');
       expect(
-        listingHeads(firstCallFor(glebText), START_WORKFLOW).filter((head) =>
+        listingHeads(firstCallFor(glebText), START_DEEP_AGENT).filter((head) =>
           head.startsWith(`${deepResearch.id}: `),
         ),
       ).toEqual([]);
 
-      // Борис confirms a brief: the seeded workflow is a valid, startable record, its run carries the seed's team
+      // Борис confirms a brief: the seeded deep agent is a valid, startable record, its run carries the seed's team
       const question = 'INT-3 A: как ведёт себя очередь оплат?';
       const briefText = 'INT-3 A: Борис просит глубокий ресерч';
       scriptTask(briefText, [
@@ -1013,7 +944,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         { text: 'INT-3 A: бриф решён' },
       ]);
       scriptTask(briefTask(question), [
-        { text: 'INT-3 A: координатор ответил' },
+        { text: 'INT-3 A: глубокий агент ответил' },
       ]);
       await api(boris).send(borisThread, briefText);
       const awaiting = await waitFor(
@@ -1021,25 +952,26 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         (view) =>
           view.decisions.some(
             (decision) =>
-              decision.kind === WORKFLOWS_BRIEF_CONFIRMATION &&
+              decision.kind === AGENTS_BRIEF_CONFIRMATION &&
               decision.status === 'open',
           ),
-        'the brief of the research workflow',
+        'the brief of the research deep agent',
       );
       const brief = awaiting.decisions.find(
-        (decision) => decision.kind === WORKFLOWS_BRIEF_CONFIRMATION,
+        (decision) => decision.kind === AGENTS_BRIEF_CONFIRMATION,
       );
       if (brief === undefined) throw new Error('No brief to decide');
       await api(boris).decide(brief.decisionId, { approve: true });
-      const coordinator = await untilAgent(
+      const deepAgent = await untilAgent(
         boris,
         borisThread,
         question,
         (node) => node.origin?.recordId === deepResearch.id,
       );
-      const run = await api(boris).run(coordinator.agentId);
-      expect([run.origin.recordId, run.brief.question]).toEqual([
+      const run = await api(boris).run(deepAgent.agentId);
+      expect([run.origin.recordId, run.origin.kind, run.brief.question]).toEqual([
         deepResearch.id,
+        'deep_agent',
         question,
       ]);
       expect(run.team.map((member) => member.name)).toEqual(SEED_TEAM);
@@ -1177,7 +1109,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
           name,
           author: { id: anya.id, name: 'Аня' },
           builtinKey: null,
-          executor: null,
+          subagent: null,
         },
         true,
       ]);
@@ -1334,407 +1266,4 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
     },
     TEST_TIMEOUT_MS,
   );
-
-  // ---------------------------------------------------------------------------------------------------------------
-  // INT-4 (extra, see Budget Used): the draft tool and its routes - one saved record, no foreign reads, the refusals before a card
-  // ---------------------------------------------------------------------------------------------------------------
-  // AC: AC-18.1 "Given Аня просит в чате сделать агента для разбора оплат, when чат готовит черновик, then Аня видит карточку с именем,
-  //   описанием, промптом, инструментами и моделью, а запись появляется только после её подтверждения"; AC-18.2 "Given Аня отклонила
-  //   карточку, then новой записи нет"; AC-18.3 "Given администратор просит чат поправить `general-purpose`, then чат отказывает, и
-  //   системная запись не меняется"; AC-18.5 "Given агент Ани открыт роли «SRE», when Аня просит чат поправить его промпт, then чат
-  //   отказывает и предлагает редактор, а запись не меняется"; AC-15.4 "Given Аня сохранила нового агента (UC-1), then переключатель
-  //   «предлагать в главном чате» у него включён". Design: UC-11, UC-E5, DC-8, DC-9, KD-6, Flow 3, invariant 5.
-  // Behavior: the root calls `draft_record` -> a row in `chat_drafts`, the tool answers at once (the conversation stays free) -> the employee's
-  //   action on the card -> `DraftsService` finds the draft through her own conversation and calls the real `LibraryService.saveOwn`.
-  // Rows (literal expected values):
-  //   A. Save once (AC-18.1, AC-15.4, DC-8, DC-9). Given Аня's conversation with no drafts; When the scripted root calls `draft_record` twice
-  //      (two definitions); Then `ConversationView.drafts` holds two `DraftView`s: the first `superseded`, the second `pending`, and the
-  //      library holds no record of that name yet; `POST /api/threads/:threadId/drafts/:id` `save` on the first -> 409 `DRAFT_RESOLVED`;
-  //      `save` on the second -> 200 `saved` with `savedRecordId`: a PERSONAL record of Аня, version 1, "offer in chat" ON, one
-  //      `library_create` event; the next model call of her root lists that record; a second `save` of the same draft -> 409 `DRAFT_RESOLVED`
-  //      and still one record and one event. `saveOwn` refusing (the name is taken by Аня's other record): 200, the `DraftView` is still
-  //      `pending` with `refusal` set, no record added; `save` with another `name` then succeeds.
-  //   B. Reject (AC-18.2). Given a pending draft; When Аня rejects it; Then `state` is `rejected`, no record exists, a second action -> 409.
-  //   C. Refusals before any card (AC-18.3, AC-18.5, KD-6). Given the administrator asking the chat to change `general-purpose` and Аня asking
-  //      to change her record R2 shared with «SRE»; When the scripted root calls `draft_record` with `recordId` of each; Then the tool
-  //      results are `read_only` and `shared` respectively, `ConversationView.drafts` is empty (no draft row, no card), and neither record
-  //      changed (version, prompt, audience). An argument the content schema rejects -> `invalid_arguments`, no draft.
-  //   D. Isolation (invariant 5, CLAUDE.md: isolation between users). Given Аня's pending draft D1 and Борис's pending draft D2 in his own conversation; When Борис
-  //      sends an action on D1 through Аня's thread id, through his own thread id, and on a number that does not exist; Then each is 404
-  //      `DRAFT_NOT_FOUND` with one and the same body, D1 stays `pending`, no record was created; the same action on D2 through ANOTHER of
-  //      Борис's conversations is 404 too (the draft belongs to its conversation); Борис's `ConversationView` never holds D1.
-  // Catches: a draft saved by a route that finds it by number only (one employee saves, rejects or reads another's draft, or a draft of
-  //   another conversation); a save that runs twice (a double click or a retry makes two records or two events), or that saves a replaced
-  //   draft; a draft that creates the record before the employee confirms, or whose saved record is shared, not personal, or has the switch
-  //   off (the new agent invisible to the chat); a `saveOwn` refusal that surfaces as a 500 or marks the draft resolved; a refusal for a system
-  //   or a role-shared record that still leaves a card (the employee confirms a change the save will refuse); an administrator's request that
-  //   edits a system record through the chat.
-  // @category: core-functionality
-  // @dependency: draft_record tool, DraftsService, ThreadsController (drafts route), chat_drafts, LibraryService (saveOwn, resolve), Agents.mcp.usable, AuditLog, Postgres
-  // @complexity: high
-  // Implementation (task 6.5): each row makes its own employees in the file's drafts role; the administrator of row C gets a
-  //   personal right on the chat's model (the built-in role he sits in holds the developer's rights, not the run's model).
-  describe('INT-4: a chat draft becomes exactly one personal record only when its owner saves it from her own conversation, and a system or role-shared record is refused before any card is made', () => {
-    let drafts: RunRole;
-
-    beforeAll(async () => {
-      drafts = await newRole('drafts-int4', [DEFAULT_MODEL]);
-    }, TEST_TIMEOUT_MS);
-
-    it(
-      'INT-4 A: a newer draft supersedes the waiting one, a draft is saved once as a personal record with the switch on, and a refused save keeps it waiting',
-      async () => {
-        // Given: Аня's conversation with no drafts; When: her root calls draft_record twice
-        const anya = await newEmployee('Аня', [drafts]);
-        const first = recordName('Разбор оплат');
-        const second = recordName('Разбор оплат, вариант 2');
-        const asked = 'INT-4 A: сделай агента для разбора оплат';
-        scriptTask(asked, [
-          { calls: [draftCall(first)] },
-          { calls: [draftCall(second)] },
-          { text: 'INT-4 A: черновики готовы' },
-        ]);
-        const thread = await firstMessage(anya, asked);
-        const drafted = await untilAnswered(
-          anya,
-          thread,
-          'INT-4 A: черновики готовы',
-        );
-        // Then: the first is superseded, the second waits, and the library holds neither
-        expect(
-          drafted.drafts.map((draft) => [draft.name, draft.state]),
-        ).toEqual([
-          [first, 'superseded'],
-          [second, 'pending'],
-        ]);
-        expect(outcomesOf(drafted, DRAFT_RECORD)).toEqual([
-          'success null',
-          'success null',
-        ]);
-        const namesBefore = await ownNames(anya);
-        expect(
-          namesBefore.filter((own) => own === first || own === second),
-        ).toEqual([]);
-        const superseded = draftNamed(drafted, first);
-        const pending = draftNamed(drafted, second);
-
-        // A superseded draft cannot be saved
-        refused(
-          await draftAction(anya, thread, superseded.draftId, {
-            action: 'save',
-          }),
-          409,
-          'DRAFT_RESOLVED',
-        );
-        // The waiting one is saved: a personal record of Аня, version 1, offered in the chat, one create event
-        const saved = acted(
-          await draftAction(anya, thread, pending.draftId, { action: 'save' }),
-        );
-        expect(saved.state).toBe('saved');
-        if (saved.savedRecordId === null)
-          throw new Error('The saved draft names no record');
-        const record = await getRecord(liveApp, anya, saved.savedRecordId);
-        expect({
-          name: record.name,
-          version: record.version,
-          mine: record.mine,
-          author: record.author?.id,
-          roles: record.audience.roles,
-          offerInChat: record.offerInChat,
-        }).toEqual({
-          name: second,
-          version: 1,
-          mine: true,
-          author: anya.id,
-          roles: [],
-          offerInChat: true,
-        });
-        const createEvents = async () =>
-          (await auditOfRecord(harness.pool, record.id)).map(
-            (event) => `${event.kind} ${event.actor}`,
-          );
-        expect(await createEvents()).toEqual([`library_create ${anya.id}`]);
-
-        // The next model call of her root lists the new record as hers
-        const next = 'INT-4 A: что у меня есть?';
-        scriptTask(next, [{ text: 'INT-4 A: список прочитан' }]);
-        await api(anya).send(thread, next);
-        await untilAnswered(anya, thread, 'INT-4 A: список прочитан');
-        expect(listingHeads(firstCallFor(next), START_AGENT)).toContain(
-          `${record.id}: ${second} (yours)`,
-        );
-
-        // A second save of the same draft: 409, and still one record and one event
-        refused(
-          await draftAction(anya, thread, pending.draftId, { action: 'save' }),
-          409,
-          'DRAFT_RESOLVED',
-        );
-        expect((await ownNames(anya)).filter((own) => own === second)).toEqual([
-          second,
-        ]);
-        expect(await createEvents()).toEqual([`library_create ${anya.id}`]);
-
-        // `saveOwn` refuses a name Аня already has: 200, the draft still waits with the reason, no record added
-        const taken = await createRecord(
-          liveApp,
-          anya,
-          agentBody(recordName('Занятое имя'), { model: DEFAULT_MODEL }),
-        );
-        const takenAsk = 'INT-4 A: сделай агента с занятым именем';
-        scriptTask(takenAsk, [
-          { calls: [draftCall(taken.name)] },
-          { text: 'INT-4 A: черновик с занятым именем' },
-        ]);
-        await api(anya).send(thread, takenAsk);
-        const takenView = await untilAnswered(
-          anya,
-          thread,
-          'INT-4 A: черновик с занятым именем',
-        );
-        const takenDraft = draftNamed(takenView, taken.name);
-        const refusedSave = acted(
-          await draftAction(anya, thread, takenDraft.draftId, {
-            action: 'save',
-          }),
-        );
-        expect([
-          refusedSave.state,
-          refusedSave.refusal,
-          refusedSave.savedRecordId,
-        ]).toEqual(['pending', 'name_taken', null]);
-        expect(
-          (await ownNames(anya)).filter((own) => own === taken.name),
-        ).toEqual([taken.name]);
-        // Saved under another name, it succeeds
-        const otherName = recordName('Разбор оплат, другое имя');
-        const savedAs = acted(
-          await draftAction(anya, thread, takenDraft.draftId, {
-            action: 'save',
-            name: otherName,
-          }),
-        );
-        expect([savedAs.state, savedAs.name, savedAs.refusal]).toEqual([
-          'saved',
-          otherName,
-          null,
-        ]);
-        expect(await ownNames(anya)).toContain(otherName);
-      },
-      TEST_TIMEOUT_MS,
-    );
-
-    it(
-      'INT-4 B: a rejected draft creates no record and takes no second action',
-      async () => {
-        const anya = await newEmployee('Аня', [drafts]);
-        const name = recordName('Отклонённый агент');
-        const asked = 'INT-4 B: сделай агента, которого я отклоню';
-        scriptTask(asked, [
-          { calls: [draftCall(name)] },
-          { text: 'INT-4 B: черновик готов' },
-        ]);
-        const thread = await firstMessage(anya, asked);
-        const view = await untilAnswered(
-          anya,
-          thread,
-          'INT-4 B: черновик готов',
-        );
-        const draft = draftNamed(view, name);
-        expect(draft.state).toBe('pending');
-
-        const rejected = acted(
-          await draftAction(anya, thread, draft.draftId, { action: 'reject' }),
-        );
-        expect([rejected.state, rejected.savedRecordId]).toEqual([
-          'rejected',
-          null,
-        ]);
-        expect(await ownNames(anya)).not.toContain(name);
-        refused(
-          await draftAction(anya, thread, draft.draftId, { action: 'save' }),
-          409,
-          'DRAFT_RESOLVED',
-        );
-        expect(await ownNames(anya)).not.toContain(name);
-      },
-      TEST_TIMEOUT_MS,
-    );
-
-    it(
-      'INT-4 C: a request to change a system record or a role-shared one is refused before any card, and neither record changes',
-      async () => {
-        const generalPurpose = BUILTIN.generalPurpose;
-        // Given: the administrator asks the chat to change `general-purpose`
-        await personalModel(admin, 'allow', DEFAULT_MODEL);
-        const generalBefore = await panelRecord(generalPurpose.id);
-        const adminAsk = 'INT-4 C: поправь general-purpose';
-        scriptTask(adminAsk, [
-          {
-            calls: [draftCall(generalBefore.name, generalPurpose.id)],
-          },
-          { text: 'INT-4 C: системную запись не меняю' },
-        ]);
-        const adminThread = await firstMessage(admin, adminAsk);
-        const adminView = await untilAnswered(
-          admin,
-          adminThread,
-          'INT-4 C: системную запись не меняю',
-        );
-        expect(outcomesOf(adminView, DRAFT_RECORD)).toEqual([
-          'refused read_only',
-        ]);
-        expect(adminView.drafts).toEqual([]);
-        const generalAfter = await panelRecord(generalPurpose.id);
-        expect([generalAfter.version, promptOf(generalAfter)]).toEqual([
-          generalBefore.version,
-          promptOf(generalBefore),
-        ]);
-
-        // Given: Аня's record shared with the role; she asks to change it, and the model also sends a broken definition
-        const anya = await newEmployee('Аня', [drafts]);
-        const shared = await createRecord(
-          liveApp,
-          anya,
-          agentBody(recordName('Общий агент Ани'), { model: DEFAULT_MODEL }),
-        );
-        await shareWith(liveApp, anya, shared.id, [drafts.id]);
-        const sharedBefore = await getRecord(liveApp, anya, shared.id);
-        const anyaAsk = 'INT-4 C: поправь промпт моего общего агента';
-        const broken: ScriptedToolCall = {
-          tool: DRAFT_RECORD,
-          args: {
-            kind: 'agent',
-            name: recordName('Сломанный черновик'),
-            description: 'INT-4 C: содержимое не проходит схему',
-            content: { prompt: '' },
-          },
-        };
-        scriptTask(anyaAsk, [
-          { calls: [draftCall(shared.name, shared.id), broken] },
-          { text: 'INT-4 C: общую запись не меняю' },
-        ]);
-        const anyaThread = await firstMessage(anya, anyaAsk);
-        const anyaView = await untilAnswered(
-          anya,
-          anyaThread,
-          'INT-4 C: общую запись не меняю',
-        );
-        // Then: `shared` and `invalid_arguments`, no draft, and the record as it was
-        expect(outcomesOf(anyaView, DRAFT_RECORD)).toEqual([
-          'refused shared',
-          'refused invalid_arguments',
-        ]);
-        expect(anyaView.drafts).toEqual([]);
-        const sharedAfter = await getRecord(liveApp, anya, shared.id);
-        expect([
-          sharedAfter.version,
-          promptOf(sharedAfter),
-          sharedAfter.audience.roles.map((role) => role.id),
-        ]).toEqual([sharedBefore.version, promptOf(sharedBefore), [drafts.id]]);
-      },
-      TEST_TIMEOUT_MS,
-    );
-
-    it(
-      "INT-4 D: another employee's draft and a draft of another conversation answer one 404, and the draft stays as it was, and a draft of a deleted conversation",
-      async () => {
-        // Given: Аня's waiting draft D1 and Борис's waiting draft D2 in his own conversation
-        const anya = await newEmployee('Аня', [drafts]);
-        const boris = await newEmployee('Борис', [drafts]);
-        const anyaName = recordName('Черновик Ани');
-        const borisName = recordName('Черновик Бориса');
-        const anyaAsk = 'INT-4 D: Аня просит черновик';
-        const borisAsk = 'INT-4 D: Борис просит черновик';
-        scriptTask(anyaAsk, [
-          { calls: [draftCall(anyaName)] },
-          { text: 'INT-4 D: черновик Ани готов' },
-        ]);
-        scriptTask(borisAsk, [
-          { calls: [draftCall(borisName)] },
-          { text: 'INT-4 D: черновик Бориса готов' },
-        ]);
-        const anyaThread = await firstMessage(anya, anyaAsk);
-        const borisThread = await firstMessage(boris, borisAsk);
-        const anyaDraft = draftNamed(
-          await untilAnswered(anya, anyaThread, 'INT-4 D: черновик Ани готов'),
-          anyaName,
-        );
-        const borisDraft = draftNamed(
-          await untilAnswered(
-            boris,
-            borisThread,
-            'INT-4 D: черновик Бориса готов',
-          ),
-          borisName,
-        );
-        const { id: borisOther } = await api(boris).createThread();
-
-        // When: Борис acts on D1 through Аня's thread and his own, on a number that does not exist, and on D2 through
-        // another of his conversations
-        const answers = [
-          refused(
-            await draftAction(boris, anyaThread, anyaDraft.draftId, {
-              action: 'save',
-            }),
-            404,
-            'DRAFT_NOT_FOUND',
-          ),
-          refused(
-            await draftAction(boris, anyaThread, anyaDraft.draftId, {
-              action: 'reject',
-            }),
-            404,
-            'DRAFT_NOT_FOUND',
-          ),
-          refused(
-            await draftAction(boris, borisThread, anyaDraft.draftId, {
-              action: 'save',
-            }),
-            404,
-            'DRAFT_NOT_FOUND',
-          ),
-          refused(
-            await draftAction(boris, borisThread, randomUUID(), {
-              action: 'save',
-            }),
-            404,
-            'DRAFT_NOT_FOUND',
-          ),
-          refused(
-            await draftAction(boris, borisOther, borisDraft.draftId, {
-              action: 'save',
-            }),
-            404,
-            'DRAFT_NOT_FOUND',
-          ),
-        ];
-        // Then: one and the same body, D1 and D2 still wait, no record was created
-        for (const answer of answers) expect(answer).toEqual(answers[0]);
-        const anyaView = await api(anya).history(anyaThread);
-        expect(draftNamed(anyaView, anyaName).state).toBe('pending');
-        const borisView = await api(boris).history(borisThread);
-        expect(
-          borisView.drafts.map((draft) => [draft.draftId, draft.state]),
-        ).toEqual([[borisDraft.draftId, 'pending']]);
-        expect(await ownNames(anya)).not.toContain(anyaName);
-        expect(await ownNames(boris)).not.toContain(anyaName);
-        expect(await ownNames(boris)).not.toContain(borisName);
-
-        // When: Борис deletes his conversation while D2 still waits, then saves D2 through it
-        await api(boris).deleteThread(borisThread);
-        const ofDeleted = refused(
-          await draftAction(boris, borisThread, borisDraft.draftId, {
-            action: 'save',
-          }),
-          404,
-          'DRAFT_NOT_FOUND',
-        );
-        // Then: the same 404 as another employee's draft, and D2 did not become a record
-        expect(ofDeleted).toEqual(answers[0]);
-        expect(await ownNames(boris)).not.toContain(borisName);
-      },
-      TEST_TIMEOUT_MS,
-    );
-  });
 });

@@ -3,7 +3,7 @@ import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
-import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block';
+import { knowledgeBlock } from '../knowledge/knowledge-block';
 import type { KnowledgeVectorStore } from '../knowledge/vector-store';
 import { type ModelClient, modelErrorMessage } from '../model/model-client';
 import { snapshotDefinition } from '../start/snapshot-definition';
@@ -17,6 +17,7 @@ import {
 } from '../store/sessions.repository';
 import type { ToolRegistry } from '../tools/tool-registry';
 import { entriesOf, rootTurnReset } from './deliver';
+import { planBlock, planOf, withStepBlocks } from './plan-block';
 import {
   appendWithEvent,
   callUnlessAborted,
@@ -87,11 +88,13 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     const view = await readSessionHistory(database, session, own);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
-    // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache.
+    // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
+    // the summary would be written without the plan (deep-agents KD-5, DC-4).
     const knowledge = await knowledgeBlock(
       { database, store: vectorStore },
       { snapshot, taskId: ctx.taskId, logger: ctx.logger },
     );
+    const plan = planBlock(await planOf(database, snapshot, ctx.taskId));
     // History holds tool calls, and the provider takes them only with the tools defined.
     const sessionTools = await registry.sessionTools({
       snapshot,
@@ -107,7 +110,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: withKnowledge(definition.prompt, knowledge),
+        instructions: withStepBlocks(definition.prompt, { knowledge, plan }),
         messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
         tools: sessionTools,
         // The summary is not an answer the employee reads: its parts do not go to the hook.

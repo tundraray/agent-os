@@ -39,7 +39,7 @@
   "deleteDialog": {
     "title": "Delete chat?",
     "description": "Chat “{title}” and all its messages will be deleted. This can't be undone.",
-    "agents": "This chat's agents and workflow runs will be deleted too, and running ones will be stopped.",
+    "agents": "Agents and deep agents in this chat will be deleted too; running ones will be stopped.",
     "cancel": "Cancel",
     "confirm": "Delete"
   },
@@ -77,11 +77,16 @@
     "title": "How can I help?",
     "hint": "Ask a question, request a text or a breakdown of a task."
   },
-  "workspace": {
-    "title": "Workspace",
-    "resize": "Resize workspace",
-    "close": "Close workspace",
-    "empty": "Tool artifacts will appear here: tables, documents, charts."
+  "schema": {
+    "title": "Diagram",
+    "close": "Close diagram",
+    "resize": "Resize diagram",
+    "openInLibrary": "Open in library",
+    "emptyTitle": "The diagram appears here",
+    "emptyHint": "Ask the chat to create or show an agent — its diagram appears here.",
+    "gone": "{kind, select, agent {Agent} other {Deep agent}} “{name}” was deleted or closed to you",
+    "loadError": "Couldn't load the diagram",
+    "retry": "Try again"
   },
   "leaveGuard": {
     "title": "Leave without saving?",
@@ -121,7 +126,7 @@
     },
     "libraryNotFound": {
       "title": "Not found",
-      "description": "No such agent or workflow: it was deleted, closed to you, or the link is wrong."
+      "description": "No such agent or deep agent: it was deleted, closed to you, or the link is wrong."
     },
     "libraryLoadError": {
       "title": "Couldn't load",

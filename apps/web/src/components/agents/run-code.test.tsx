@@ -219,7 +219,7 @@ describe('run_code in the web (UC-5)', () => {
     { name: 'a run naming no tool reads MC-9', overrides: { content: { canCall: [] } }, items: null, none: true },
     { name: 'content outside the contract shows no list', overrides: { content: { tools: [] } }, items: null, none: false },
   ])('$name', ({ overrides, items, none }) => {
-    const card = renderCard({ confirmation: writeRequest(overrides), byChat: true });
+    const card = renderCard({ confirmation: writeRequest(overrides), byChat: true, saved: null });
 
     if (items === null) {
       expect(card.queryByRole('list', { name: 'Может вызвать' })).toBeNull();

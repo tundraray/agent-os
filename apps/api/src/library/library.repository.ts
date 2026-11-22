@@ -1,9 +1,9 @@
 import {
   AgentContentSchema,
   CHAT_BUILTIN_KEY,
+  DeepAgentContentSchema,
   RecordKindSchema,
   UserStatusSchema,
-  WorkflowContentSchema,
   type RecordAuthor,
   type RecordBody,
 } from '@agent-os/contracts';
@@ -194,7 +194,7 @@ function panelQueryCondition(query: PanelQuery | undefined): SQL | undefined {
 function recordBody(kind: string, content: unknown): RecordBody {
   return RecordKindSchema.parse(kind) === 'agent'
     ? { kind: 'agent', content: AgentContentSchema.parse(content) }
-    : { kind: 'workflow', content: WorkflowContentSchema.parse(content) };
+    : { kind: 'deep_agent', content: DeepAgentContentSchema.parse(content) };
 }
 
 function authorOf(
@@ -397,6 +397,8 @@ export async function lockRecord(
 // ---------- Writes ----------
 
 export interface NewRecord {
+  /** Chosen before the save when a card named it (deep-agents KD-3); absent — the database's. */
+  readonly id?: string;
   /** `null` — a system record. */
   readonly ownerId: string | null;
   readonly name: string;
@@ -421,6 +423,7 @@ export async function insertRecord(
     const [row] = await executor
       .insert(libraryRecords)
       .values({
+        ...(record.id === undefined ? {} : { id: record.id }),
         ownerId: record.ownerId,
         name: record.name,
         description: record.description,

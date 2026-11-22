@@ -10,7 +10,6 @@
   "connectionRestored": "Связь с сервером восстановлена",
   "decisionsOpened": "Нужно ваше решение: {count, plural, one {# запрос} few {# запроса} many {# запросов} other {# запроса}}",
   "decisionRequested": "Нужно ваше решение: {who, select, chat {Чат} other {Агент «{agent}»}} хочет выполнить {tool}",
-  "taskReady": "Задание готово — нужно ваше решение",
-  "draftReady": "Черновик «{name}» готов — проверьте и сохраните",
+  "briefReady": "Задание готово — нужно ваше решение",
   "reportArrived": "Пришёл отчёт: {description}"
 }

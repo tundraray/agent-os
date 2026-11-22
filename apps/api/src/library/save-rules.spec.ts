@@ -26,28 +26,28 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
   };
 }
 
-function workflow(
-  executorServers: string[],
-  executorModel: string,
+/** A deep agent whose subagents hold `subagentServers`, each with `subagentModel`. */
+function deepAgent(
+  subagentServers: string[][],
+  subagentModel: string,
 ): RecordBody {
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     content: {
-      coordinator: { rules: '', model: HAIKU, maxTurns: 20 },
-      executors: [
-        {
-          name: 'Сборщик',
-          role: 'Собирает данные',
-          prompt: 'Собери',
-          servers: executorServers,
-          model: executorModel,
-          maxTurns: 10,
-          maxRuns: 1,
-          tools: [],
-          source: null,
-        },
-      ],
-      finalExecutor: null,
+      prompt: 'Собери ответ командой',
+      servers: [],
+      model: HAIKU,
+      maxTurns: 20,
+      subagents: subagentServers.map((servers, index) => ({
+        name: `Сборщик ${index + 1}`,
+        description: 'Собирает данные',
+        prompt: 'Собери',
+        servers,
+        model: subagentModel,
+        maxTurns: 10,
+        maxRuns: 1,
+      })),
+      finalSubagent: null,
       selfLearning: false,
     },
   };
@@ -78,11 +78,21 @@ function save(fields: Partial<SaveInput>): SaveInput {
 }
 
 const allowed: SaveDecision = { kind: 'allowed' };
-const refused = (reason: string) => ({ kind: 'refused', reason });
-const nameTaken = (reason: string) => ({ kind: 'name_taken', reason });
+const refused = (reason: string, path: string, values: string[]) => ({
+  kind: 'refused',
+  reason,
+  path,
+  values,
+});
+const nameTaken = (reason: string, name: string) => ({
+  kind: 'name_taken',
+  reason,
+  path: 'name',
+  values: [name],
+});
 
-// KD-4, Flow 1: AC-06.1, AC-06.2, AC-07.1, AC-07.2, AC-07.3, DC-8, DC-9, DC-10.
-describe('save rule: names unique per owner and against system records, only added servers and agents checked, the model checked when the employee has one allowed', () => {
+// KD-4, Flow 1: AC-06.1, AC-06.2, AC-07.1, AC-07.2, AC-07.3, DC-8, DC-9, DC-10; deep-agents KD-4, UC-2: AC-06.4 (the path and the values).
+describe('save rule: names unique per owner and against system records, only added servers and agents checked, the model checked when the employee has one allowed, a refusal names the path and the values', () => {
   it.each<{ name: string; input: SaveInput; expected: unknown }>([
     {
       name: 'AC-06.1: the author has the name in another case and of another kind',
@@ -90,7 +100,7 @@ describe('save rule: names unique per owner and against system records, only add
         name: 'Разбор Оплат',
         takenNames: { own: ['разбор оплат'], system: [] },
       }),
-      expected: nameTaken('own'),
+      expected: nameTaken('own', 'Разбор Оплат'),
     },
     {
       name: 'AC-06.2: a new record takes the name of a system record',
@@ -98,7 +108,7 @@ describe('save rule: names unique per owner and against system records, only add
         name: 'General-Purpose',
         takenNames: { own: [], system: ['general-purpose'] },
       }),
-      expected: nameTaken('system'),
+      expected: nameTaken('system', 'General-Purpose'),
     },
     {
       name: 'DC-8: a save that keeps the name is not checked against system records',
@@ -116,17 +126,17 @@ describe('save rule: names unique per owner and against system records, only add
         previous: { name: 'мой агент', body: agent() },
         takenNames: { own: [], system: ['general-purpose'] },
       }),
-      expected: nameTaken('system'),
+      expected: nameTaken('system', 'general-purpose'),
     },
     {
       name: 'AC-07.1: an added server the author may not use',
       input: save({ body: agent({ servers: ['sentry', 'gmail'] }) }),
-      expected: refused('server_not_allowed'),
+      expected: refused('server_not_allowed', 'servers', ['gmail']),
     },
     {
-      name: 'AC-07.1: an executor server the author may not use',
-      input: save({ body: workflow(['gmail'], HAIKU) }),
-      expected: refused('server_not_allowed'),
+      name: 'AC-06.4: a subagent server the author may not use is named by its path',
+      input: save({ body: deepAgent([['sentry'], ['sentry', 'jira']], HAIKU) }),
+      expected: refused('server_not_allowed', 'subagents.1.servers', ['jira']),
     },
     {
       name: 'AC-07.2: a server the author lost stays on a prompt edit',
@@ -142,12 +152,22 @@ describe('save rule: names unique per owner and against system records, only add
     {
       name: 'DC-10: all servers in an employee record',
       input: save({ body: agent({ servers: ['*'] }) }),
-      expected: refused('all_servers_not_allowed'),
+      expected: refused('all_servers_not_allowed', 'servers', ['*']),
+    },
+    {
+      name: 'AC-06.4: all servers in a subagent of an employee record',
+      input: save({ body: deepAgent([['sentry'], ['*']], HAIKU) }),
+      expected: refused('all_servers_not_allowed', 'subagents.1.servers', ['*']),
     },
     {
       name: 'DC-9: a model not allowed while another one is',
       input: save({ body: agent({ model: SONNET }) }),
-      expected: refused('model_not_allowed'),
+      expected: refused('model_not_allowed', 'model', [SONNET]),
+    },
+    {
+      name: 'DC-9: a subagent model not allowed is named by its path',
+      input: save({ body: deepAgent([['sentry']], SONNET) }),
+      expected: refused('model_not_allowed', 'subagents.0.model', [SONNET]),
     },
     {
       name: 'DC-9: without allowed models the model is not checked',
@@ -160,7 +180,7 @@ describe('save rule: names unique per owner and against system records, only add
     {
       name: 'an added agent the author does not see',
       input: save({ body: agent({ agents: [AGENT_SEEN, AGENT_HIDDEN] }) }),
-      expected: refused('agent_not_visible'),
+      expected: refused('agent_not_visible', 'agents', [AGENT_HIDDEN]),
     },
     {
       name: 'an agent kept from before is not checked',
@@ -176,7 +196,7 @@ describe('save rule: names unique per owner and against system records, only add
     {
       name: 'AC-07.3: an admin takes any registry server, all servers and any catalogue model',
       input: save({
-        body: workflow(['gmail', 'jira'], SONNET),
+        body: deepAgent([['gmail', 'jira'], ['*']], SONNET),
         choices: admin,
         previous: { name: 'разбор оплат', body: agent() },
       }),
@@ -190,7 +210,7 @@ describe('save rule: names unique per owner and against system records, only add
     {
       name: 'an admin may not add a server outside the registry',
       input: save({ body: agent({ servers: ['ghost'] }), choices: admin }),
-      expected: refused('server_not_allowed'),
+      expected: refused('server_not_allowed', 'servers', ['ghost']),
     },
     {
       name: 'an admin may not add a model outside the catalogue',
@@ -198,7 +218,7 @@ describe('save rule: names unique per owner and against system records, only add
         body: agent({ model: 'anthropic/ghost' }),
         choices: admin,
       }),
-      expected: refused('model_not_allowed'),
+      expected: refused('model_not_allowed', 'model', ['anthropic/ghost']),
     },
     {
       name: 'a system record takes the name of another system record: reason own (the admin owns the system records)',
@@ -207,7 +227,7 @@ describe('save rule: names unique per owner and against system records, only add
         choices: admin,
         takenNames: { own: [], system: ['researcher'] },
       }),
-      expected: nameTaken('own'),
+      expected: nameTaken('own', 'Researcher'),
     },
   ])('$name', ({ input, expected }) => {
     expect(decideSave(input)).toEqual(expected);

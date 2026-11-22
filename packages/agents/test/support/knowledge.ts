@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { LibraryDoubleRecord, ScriptedToolCall } from '@agent-os/agents/testing';
-import type { KnowledgeView, WorkflowContent } from '@agent-os/contracts';
+import type { DeepAgentContent, KnowledgeView } from '@agent-os/contracts';
 import {
   agentKnowledgeEntities,
   agentKnowledgeRelations,
@@ -46,24 +46,27 @@ export function recordKnowledge(operations: readonly unknown[]): ScriptedToolCal
 }
 
 /**
- * A workflow record of the library double that learns: by `TEST_AUTHOR_ID`, seen by every employee, the
- * coordinator on the default model, no final executor. Its id is the id of the real row of {@link withLibraryRow}.
+ * A deep agent record of the library double that learns: by `TEST_AUTHOR_ID`, seen by every employee, on
+ * the default model, without servers of its own and without a final subagent. Its id is the id of the real row of {@link withLibraryRow}.
  */
-export function learningWorkflow(
+export function learningDeepAgent(
   recordId: string,
-  executors: WorkflowContent['executors'],
+  subagents: DeepAgentContent['subagents'],
 ): LibraryDoubleRecord {
   return {
     id: recordId,
-    kind: 'workflow',
-    name: `learning workflow ${recordId}`,
+    kind: 'deep_agent',
+    name: `learning deep agent ${recordId}`,
     ownerId: TEST_AUTHOR_ID,
     everyone: true,
     offerInChat: true,
     content: {
-      coordinator: { rules: '', model: TEST_MODEL_DEFAULT, maxTurns: 20 },
-      executors,
-      finalExecutor: null,
+      prompt: 'You run a learning deep agent.',
+      servers: [],
+      model: TEST_MODEL_DEFAULT,
+      maxTurns: 20,
+      subagents,
+      finalSubagent: null,
       selfLearning: true,
     },
   };
@@ -72,9 +75,9 @@ export function learningWorkflow(
 /**
  * Runs `body` with a real `app.library_records` row of id `recordId` — the graph and its vectors
  * reference it by a cascading key (KD-1, KD-8) — and afterwards, also when `body` fails, removes what the
- * workflow left: the question rows of its runs' sessions and their run rows (they reference the sessions,
+ * deep agent left: the question rows of its runs' sessions and their run rows (they reference the sessions,
  * not the record), then the row itself, whose cascade takes the graph, the vectors and the vector row. A
- * system workflow row, named by its id. `db` must outlive the harnesses: close them inside `body`, so no
+ * system deep agent row, named by its id. `db` must outlive the harnesses: close them inside `body`, so no
  * worker writes after the cleanup.
  */
 export async function withLibraryRow<T>(
@@ -84,10 +87,10 @@ export async function withLibraryRow<T>(
 ): Promise<T> {
   await db.insert(libraryRecords).values({
     id: recordId,
-    kind: 'workflow',
+    kind: 'deep_agent',
     ownerId: null,
     name: `knowledge-test-${recordId}`,
-    description: 'Self-learning test workflow',
+    description: 'Self-learning test deep agent',
     content: {},
   });
   try {
@@ -271,7 +274,7 @@ export function waitForRound(db: Database, runId: string, after: Date | null = n
 }
 
 /**
- * Waits until the `knowledge.embed` pass of the workflow that started after `after` (the round's `lastAt`, or a
+ * Waits until the `knowledge.embed` pass of the deep agent that started after `after` (the round's `lastAt`, or a
  * time taken before a delete) has ended — no pass in flight, none asked for, an outcome written after `after` —
  * and returns the vector row: `lastReason` (`null` — vectors written), `lastModel`.
  */
@@ -288,7 +291,7 @@ export function waitForEmbedPass(
       !row.needsPass &&
       row.lastAt !== null &&
       row.lastAt > after,
-    `the embedding pass of workflow ${recordId} after ${after.toISOString()}`,
+    `the embedding pass of deep agent ${recordId} after ${after.toISOString()}`,
   ) as Promise<KnowledgeEmbeddingRow>;
 }
 
@@ -302,7 +305,7 @@ export interface KnowledgeTask {
 }
 
 /**
- * The knowledge tasks of a run (`{ runId }`: its `knowledge.extract` tasks) or of a workflow (`{ recordId }`: its
+ * The knowledge tasks of a run (`{ runId }`: its `knowledge.extract` tasks) or of a deep agent (`{ recordId }`: its
  * `knowledge.embed` passes), in order of creation.
  */
 export async function knowledgeTasksOf(
@@ -325,7 +328,7 @@ export async function knowledgeTasksOf(
     .orderBy(asc(runtimeTasks.createdSeq));
 }
 
-/** The author's view of the graph (`Agents.knowledge.view`), the flag on and the executors' servers given. */
+/** The author's view of the graph (`Agents.knowledge.view`), the flag on and the subagents' servers given. */
 export function knowledgeView(
   harness: AgentsHarness,
   recordId: string,

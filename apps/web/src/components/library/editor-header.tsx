@@ -41,7 +41,7 @@ export type EditorHeaderActionsProps = {
   mode: EditorMode;
   /** The record as saved, with the audience of the last share. */
   record: RecordDetail;
-  /** The form holds unsaved changes: «Использовать в чате» and «Доработать в чате» wait for a save. */
+  /** The editor's form holds unsaved changes: «Использовать в чате» and «Доработать в чате» wait for a save. */
   changed: boolean;
   copyPending: boolean;
   /** Describes the menu trigger while the last copy's error shows. */
@@ -54,11 +54,12 @@ export type EditorHeaderActionsProps = {
 };
 
 /**
- * The right end of the editor's header (record-editor.md, parts 1–2; UXRD ED-01, AL-02): the audience button and
- * the menu «⋯». Each changing control exists only by its flag (Invariant 3). Sharing is unavailable under a
- * ban or without roles, and then the dialog does not open (DC-5). In mode `system` the dialog is the
- * administrator's, `chat` has the MC-14 line instead of the button, and the menu holds only «Удалить», never on
- * a built-in record.
+ * The right end of the header of the agent editor and of the deep agent's card (record-editor.md, parts 1–2; UXRD
+ * ED-01, AL-02; deep-agents UXRD DA-13): the audience button and the menu «⋯». Each changing control exists only by
+ * its flag (Invariant 3). Sharing is unavailable under a ban or without roles, and then the dialog does not open
+ * (DC-5). On the deep agent's card «Использовать в чате» stands in the header between them. In mode `system` the
+ * dialog is the administrator's, `chat` has the MC-14 line instead of the button, and the menu holds only
+ * «Удалить», never on a built-in record.
  */
 export function EditorHeaderActions({
   mode,
@@ -75,6 +76,7 @@ export function EditorHeaderActions({
   const [deleting, setDeleting] = useState(false);
   const system = mode === "system";
   const canDelete = record.canDelete && !(system && record.builtinKey !== null);
+  const inChat = useInChat();
 
   return (
     <>
@@ -106,6 +108,16 @@ export function EditorHeaderActions({
           )}
         </>
       )}
+      {!system && record.kind === "deep_agent" && canUseInChat(record) && (
+        <Button
+          type="button"
+          size="sm"
+          className="pointer-coarse:h-11"
+          onClick={() => inChat({ record: { id: record.id, kind: record.kind, name: record.name } })}
+        >
+          {t("row.useInChat")}
+        </Button>
+      )}
       {system ? (
         canDelete && <SystemMenu record={record} onDelete={() => setDeleting(true)} />
       ) : (
@@ -132,12 +144,12 @@ export function EditorHeaderActions({
 }
 
 /**
- * UXRD MC-7: the panel's entry to the knowledge screen of a workflow (AL-02, AL-03), whatever its «Самообучение»
+ * UXRD MC-7: the panel's entry to the knowledge screen of a deep agent (AL-02, AL-03), whatever its «Самообучение»
  * flag; an agent has none. A link styled as a button, so `ShellLink` asks MC-11 over unsaved changes.
  */
 export function KnowledgeButton({ record }: { record: Pick<RecordDetail, "id" | "kind"> }) {
   const t = useTranslations("library");
-  if (record.kind !== "workflow") return null;
+  if (record.kind !== "deep_agent") return null;
   return (
     <ShellLink
       href={adminKnowledgePath(record.id)}
@@ -246,7 +258,10 @@ function EditorMenu({ record, changed, copyPending, copyErrorId, onCopy, onDelet
   const locale = useLocale();
   const inChat = useInChat();
   const reasonId = useId();
-  // «Доработать в чате» only on a record its author alone sees (UXRD ED-01).
+  const refuseId = useId();
+  const deepAgent = record.kind === "deep_agent";
+  // The chat changes only what its author alone sees (UXRD ED-01): the agent's menu has no «Доработать в чате»
+  // otherwise, the deep agent's card shows it unavailable with the reason (deep-agents UXRD MC-26).
   const alone = record.audience.everyone !== true && record.audience.roles.length === 0;
   const waitReason = changed ? t("editor.header.saveFirst") : null;
   const waiting = {
@@ -254,6 +269,7 @@ function EditorMenu({ record, changed, copyPending, copyErrorId, onCopy, onDelet
     title: waitReason ?? undefined,
     "aria-describedby": changed ? reasonId : undefined,
   };
+  const refused = { disabled: true, title: t("card.refineUnavailable"), "aria-describedby": refuseId };
   return (
     <DropdownMenu>
       <MenuTrigger record={record} describedBy={copyErrorId} pending={copyPending} />
@@ -263,14 +279,19 @@ function EditorMenu({ record, changed, copyPending, copyErrorId, onCopy, onDelet
             {waitReason}
           </span>
         )}
-        {canUseInChat(record) && (
+        {deepAgent && !alone && (
+          <span id={refuseId} className="sr-only">
+            {t("card.refineUnavailable")}
+          </span>
+        )}
+        {!deepAgent && canUseInChat(record) && (
           <DropdownMenuItem {...waiting} onClick={() => inChat({ record: { id: record.id, kind: record.kind, name: record.name } })}>
             {t("row.useInChat")}
           </DropdownMenuItem>
         )}
-        {alone && (
+        {(alone || deepAgent) && (
           <DropdownMenuItem
-            {...waiting}
+            {...(alone ? waiting : refused)}
             onClick={() => inChat({ text: t("editor.header.refineTemplate", { name: builtinName(record, locale) }) })}
           >
             {t("editor.header.refine")}

@@ -1,12 +1,12 @@
 import {
   CHAT_BUILTIN_KEY,
   type AgentContent,
-  type DraftView,
+  type DeepAgentContent,
   type RecordBody,
+  type RecordDetail,
   type RecordSummary,
   type RunOrigin,
-  type WorkflowContent,
-  type WorkflowExecutor,
+  type Subagent,
 } from '@agent-os/contracts';
 import type { LibraryTranslator } from '@/lib/i18n/messages';
 
@@ -23,7 +23,7 @@ export function canUseInChat(
 ): boolean {
   if (record.builtinKey === CHAT_BUILTIN_KEY) return false;
   if (!record.mine && !record.offerInChat) return false;
-  return !record.missingRights.some((right) => right.executor === null && Boolean(right.model));
+  return !record.missingRights.some((right) => right.subagent === null && Boolean(right.model));
 }
 
 /** «Изменён после запуска» (AC-28.1): `live` is the record `origin.recordId` in the library list. */
@@ -46,38 +46,19 @@ export function recipientNote(
   return { roles: live.audience.roles.filter((role) => role.member).map((role) => role.name) };
 }
 
-/** DC-01 «Устарел»: a pending edit draft whose record moved on after it, or whose save hit a conflict. */
-export function isDraftStale(
-  draft: Pick<DraftView, 'state' | 'recordId' | 'baseVersion' | 'refusal'>,
-  live: LiveRecord<'version'>,
-): boolean {
-  if (draft.state !== 'pending' || draft.recordId === null || draft.baseVersion === null) return false;
-  if (draft.refusal === 'version_conflict') return true;
-  return live != null && live.version > draft.baseVersion;
-}
-
 /** Reads a record of the library list by id (`libraryIndex.summaryOf`). */
 export type SummaryLookup = { summaryOf(recordId: string): LiveRecord<'name'> };
 
-/** Title of a workflow task card (MC-21): «Задание · {имя}», or «Задание» while the record is unknown. */
-export function taskTitleName(t: LibraryTranslator, workflowId: string | null | undefined, index: SummaryLookup): string {
-  const live = workflowId ? index.summaryOf(workflowId) : null;
-  return live == null ? t('task.title') : t('task.titleNamed', { name: live.name });
-}
-
-/** «{имя} 2», «{имя} 3», … — the first not among the owner's names; names compare without case, as the server does. */
-export function freeName(name: string, ownNames: readonly string[]): string {
-  const taken = new Set(ownNames.map((own) => own.toLowerCase()));
-  for (let n = 2; ; n += 1) {
-    const candidate = `${name} ${n}`;
-    if (!taken.has(candidate.toLowerCase())) return candidate;
-  }
+/** Title of a deep agent's brief card (MC-22): «Задание · {имя}», or «Задание» while the record is unknown. */
+export function briefTitleName(t: LibraryTranslator, deepAgentId: string | null | undefined, index: SummaryLookup): string {
+  const live = deepAgentId ? index.summaryOf(deepAgentId) : null;
+  return live == null ? t('brief.title') : t('brief.titleNamed', { name: live.name });
 }
 
 /**
- * A record's form fields (MC-7, MC-12), each labelled by `library.fields.{field}`: the editor, the conflict
- * block (MC-10) and the draft card (MC-15) name changed fields by them. The platform tools of an agent have no
- * form field.
+ * The fields of a definition (MC-7, MC-12, MC-27): an agent's form fields, and a deep agent's «Кто пишет ответ».
+ * The editor, the conflict block (MC-10) and the «Правка» card (MC-24) name changed fields by them. The platform
+ * tools of an agent have no field.
  */
 export type RecordField =
   | 'name'
@@ -87,99 +68,131 @@ export type RecordField =
   | 'model'
   | 'maxTurns'
   | 'agents'
-  | 'rules'
-  | 'finalExecutor'
-  | 'selfLearning'
-  | 'coordinatorModel'
-  | 'coordinatorMaxTurns';
+  | 'finalSubagent';
 
-/** A changed field; an executor is one unit, named as its panel is (MC-13 «Исполнитель «{имя}»»). */
-export type ChangedField = { field: RecordField } | { field: 'executor'; executor: string };
+/** The fields of one subagent of a deep agent. */
+export type SubagentField = 'description' | 'prompt' | 'servers' | 'model' | 'maxTurns' | 'maxRuns';
 
-/** The form label a changed field is named by. */
+/**
+ * A changed field; a list field (servers, startable agents) names the entries the change removed. A subagent
+ * is one unit, known by its name: changed (with its changed fields), new, or removed.
+ */
+export type ChangedField =
+  | { field: RecordField; removed?: readonly string[] }
+  | { field: 'subagent'; subagent: string; change: 'changed'; fields: readonly SubagentField[] }
+  | { field: 'subagent'; subagent: string; change: 'new' | 'removed' };
+
+const FIELD_LABEL = {
+  name: 'fields.name',
+  description: 'fields.description',
+  prompt: 'fields.prompt',
+  servers: 'fields.servers',
+  model: 'fields.model',
+  maxTurns: 'fields.maxTurns',
+  agents: 'fields.agents',
+  finalSubagent: 'definition.finalSubagent',
+} as const satisfies Record<RecordField, string>;
+
+/** The label a changed field is named by; a subagent by its name. */
 export function changedFieldLabel(t: LibraryTranslator, changed: ChangedField): string {
-  return changed.field === 'executor' ? t('fields.executor', { name: changed.executor }) : t(`fields.${changed.field}`);
+  return changed.field === 'subagent' ? changed.subagent : t(FIELD_LABEL[changed.field]);
 }
 
-/** A record's definition as the form, a saved record and a draft hold it. */
+/** A record's definition: the editor's agent, or either kind on a record card. */
 export type RecordDefinition = { readonly name: string; readonly description: string } & RecordBody;
 
-/** Only the definition of a saved record or a draft, as the form holds it. */
-export function definitionOf(record: RecordDefinition): RecordDefinition {
-  const { name, description } = record;
-  return record.kind === 'agent'
-    ? { name, description, kind: 'agent', content: record.content }
-    : { name, description, kind: 'workflow', content: record.content };
+/** An agent's definition as the editor's form holds it; a deep agent has no form (UXRD KD-1). */
+export type AgentDefinition = {
+  readonly name: string;
+  readonly description: string;
+  readonly kind: 'agent';
+  readonly content: AgentContent;
+};
+
+/** A saved agent record: the only kind the editor opens. */
+export type AgentRecord = Extract<RecordDetail, { kind: 'agent' }>;
+
+/** Only the definition of a saved agent, as the form holds it. */
+export function definitionOf({ name, description, content }: AgentRecord): AgentDefinition {
+  return { name, description, kind: 'agent', content };
 }
 
-/** Fields that differ between two definitions, in form order; equal definitions give an empty list. */
+/**
+ * What differs between two definitions of one kind, in definition order; equal definitions give an empty list.
+ * Definitions of different kinds never meet: a record never changes its kind.
+ */
 export function changedFields(before: RecordDefinition, after: RecordDefinition): ChangedField[] {
   const changed: ChangedField[] = [];
-  if (before.name !== after.name) changed.push(fieldOf('name'));
-  if (before.description !== after.description) changed.push(fieldOf('description'));
-  if (after.kind === 'agent') {
-    const previous = before.kind === 'agent' ? before.content : null;
-    changed.push(...agentChanges(previous, after.content));
-  } else {
-    const previous = before.kind === 'workflow' ? before.content : null;
-    changed.push(...workflowChanges(previous, after.content));
+  if (before.name !== after.name) changed.push({ field: 'name' });
+  if (before.description !== after.description) changed.push({ field: 'description' });
+  if (before.kind === 'agent' && after.kind === 'agent') changed.push(...agentChanges(before.content, after.content));
+  if (before.kind === 'deep_agent' && after.kind === 'deep_agent') {
+    changed.push(...deepAgentChanges(before.content, after.content));
   }
   return changed;
 }
 
-function fieldOf(field: RecordField): ChangedField {
-  return { field };
-}
-
-function executorOf(name: string): ChangedField {
-  return { field: 'executor', executor: name };
-}
-
-/** `previous` `null` — the other definition is of another kind, so every field counts as changed. */
-function agentChanges(previous: AgentContent | null, next: AgentContent): ChangedField[] {
-  const checks: [RecordField, boolean][] = [
-    ['prompt', previous?.prompt === next.prompt],
-    ['servers', previous !== null && sameSet(previous.servers, next.servers)],
-    ['model', previous?.model === next.model],
-    ['maxTurns', previous?.maxTurns === next.maxTurns],
-    ['agents', previous !== null && sameSet(previous.agents, next.agents)],
+function agentChanges(previous: AgentContent, next: AgentContent): ChangedField[] {
+  return [
+    ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
+    ...listChange('servers', previous.servers, next.servers),
+    ...scalarChanges([
+      ['model', previous.model === next.model],
+      ['maxTurns', previous.maxTurns === next.maxTurns],
+    ]),
+    ...listChange('agents', previous.agents, next.agents),
   ];
-  return checks.filter(([, same]) => !same).map(([field]) => fieldOf(field));
 }
 
-function workflowChanges(previous: WorkflowContent | null, next: WorkflowContent): ChangedField[] {
-  const before = new Map((previous?.executors ?? []).map((executor) => [executor.name, executor]));
-  const after = new Map(next.executors.map((executor) => [executor.name, executor]));
-  const executors = [
-    ...next.executors.filter((executor) => {
-      const old = before.get(executor.name);
-      return old === undefined || !sameExecutor(old, executor);
-    }),
-    ...(previous?.executors ?? []).filter((executor) => !after.has(executor.name)),
-  ].map((executor) => executorOf(executor.name));
-
-  const checks: [RecordField, boolean][] = [
-    ['rules', previous?.coordinator.rules === next.coordinator.rules],
-    ['finalExecutor', previous !== null && previous.finalExecutor === next.finalExecutor],
-    ['selfLearning', previous?.selfLearning === next.selfLearning],
-    ['coordinatorModel', previous?.coordinator.model === next.coordinator.model],
-    ['coordinatorMaxTurns', previous?.coordinator.maxTurns === next.coordinator.maxTurns],
+function deepAgentChanges(previous: DeepAgentContent, next: DeepAgentContent): ChangedField[] {
+  const before = new Map(previous.subagents.map((subagent) => [subagent.name, subagent]));
+  const after = new Set(next.subagents.map((subagent) => subagent.name));
+  const subagents: ChangedField[] = [];
+  for (const subagent of next.subagents) {
+    const old = before.get(subagent.name);
+    if (old === undefined) {
+      subagents.push({ field: 'subagent', subagent: subagent.name, change: 'new' });
+      continue;
+    }
+    const fields = subagentChanges(old, subagent);
+    if (fields.length > 0) subagents.push({ field: 'subagent', subagent: subagent.name, change: 'changed', fields });
+  }
+  for (const subagent of previous.subagents) {
+    if (!after.has(subagent.name)) subagents.push({ field: 'subagent', subagent: subagent.name, change: 'removed' });
+  }
+  return [
+    ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
+    ...listChange('servers', previous.servers, next.servers),
+    ...subagents,
+    ...scalarChanges([
+      ['finalSubagent', previous.finalSubagent === next.finalSubagent],
+      ['model', previous.model === next.model],
+      ['maxTurns', previous.maxTurns === next.maxTurns],
+    ]),
   ];
-  return [...executors, ...checks.filter(([, same]) => !same).map(([field]) => fieldOf(field))];
 }
 
-function sameExecutor(a: WorkflowExecutor, b: WorkflowExecutor): boolean {
-  return (
-    a.role === b.role &&
-    a.prompt === b.prompt &&
-    a.model === b.model &&
-    a.maxTurns === b.maxTurns &&
-    a.maxRuns === b.maxRuns &&
-    sameSet(a.servers, b.servers) &&
-    sameSet(a.tools, b.tools) &&
-    a.source?.recordId === b.source?.recordId &&
-    a.source?.version === b.source?.version
-  );
+function subagentChanges(previous: Subagent, next: Subagent): SubagentField[] {
+  const checks: [SubagentField, boolean][] = [
+    ['description', previous.description === next.description],
+    ['prompt', previous.prompt === next.prompt],
+    ['servers', sameSet(previous.servers, next.servers)],
+    ['model', previous.model === next.model],
+    ['maxTurns', previous.maxTurns === next.maxTurns],
+    ['maxRuns', previous.maxRuns === next.maxRuns],
+  ];
+  return checks.filter(([, same]) => !same).map(([field]) => field);
+}
+
+function scalarChanges(checks: [RecordField, boolean][]): ChangedField[] {
+  return checks.filter(([, same]) => !same).map(([field]) => ({ field }));
+}
+
+/** A list field that differs, with the entries it lost; the order they were ticked in is no change. */
+function listChange(field: RecordField, previous: readonly string[], next: readonly string[]): ChangedField[] {
+  if (sameSet(previous, next)) return [];
+  const removed = previous.filter((value) => !next.includes(value));
+  return [removed.length > 0 ? { field, removed } : { field }];
 }
 
 /** Server and agent lists are choices, not sequences: the order they were ticked in is no change. */

@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { createLatch, type ScriptedToolCall } from '@agent-os/agents/testing';
 import type { Logger } from '@agent-os/common';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AdminUserSummarySchema,
   ApiErrorSchema,
   CatalogModelSchema,
@@ -40,7 +41,6 @@ import {
   MyModelsSchema,
   RecordDetailSchema,
   StartRefusedErrorSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
   type ModelDefaults,
   type ModelProviderView,
   type MyModel,
@@ -70,9 +70,9 @@ import {
   agentBody,
   BUILTIN,
   createRecord,
+  deepAgentBody,
   getRecord,
   recordName,
-  workflowBody,
 } from './support/library';
 import { runName } from './support/mcp-servers';
 import { databaseUrl } from './support/migrate.global-setup';
@@ -191,20 +191,10 @@ interface LedgerRow {
   costUsd: number;
 }
 
-/** A workflow record body whose coordinator and executor have no model of their own (`null`: the default at the start). */
-function nullModelWorkflow(name: string) {
-  const body = workflowBody(name, RUN_CHAT_MODEL);
-  return {
-    ...body,
-    content: {
-      ...body.content,
-      coordinator: { ...body.content.coordinator, model: null },
-      executors: body.content.executors.map((executor) => ({
-        ...executor,
-        model: null,
-      })),
-    },
-  };
+/** A deep agent record body whose deep agent and subagent have no model of their own (`null`: the default at the start). */
+function nullModelDeepAgent(name: string) {
+  const body = deepAgentBody(name, RUN_CHAT_MODEL, [{ model: null }]);
+  return { ...body, content: { ...body.content, model: null } };
 }
 
 /** A provider address on this machine: every request is answered 401 with the Gemini key it carried, which it keeps. */
@@ -298,7 +288,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       poolMax: 2,
     });
     double = await startProviderDouble();
-    // Workers on: INT-4 and INT-7 run agents and a workflow to their model calls.
+    // Workers on: INT-4 and INT-7 run agents and a deep agent to their model calls.
     harness = await createTestApp({ captureLog: true, workers: true });
     const { app } = harness;
     admin = await seedSuperAdmin(
@@ -1313,12 +1303,12 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   //   DC-7 "Встроенная запись с моделью `null` стартует на модели чата по умолчанию на момент старта; запуск, который уже идёт, смену не замечает".
   //   Design: UC-3, KD-5, run-snapshot pattern (ADR-0017).
   // Behavior: a library record is saved with `model: null` -> a run starts: `resolveStart` replaces `null` with the default chat model into the
-  //   snapshot -> the administrator changes the default -> the running agent's next calls and its workflow executors started later in that run use
+  //   snapshot -> the administrator changes the default -> the running agent's next calls and its subagents started later in that run use
   //   the snapshot's model; a NEW start takes the new default.
   // Rows:
   //   1. default = Haiku; a built-in-style record with `model: null` (a record created by an author with no model chosen is the same row): the
   //      scripted model's call carries the Haiku id
-  //   2. the administrator sets the default to Sonnet while that run is held at a latch: its next call and an executor the run starts after the
+  //   2. the administrator sets the default to Sonnet while that run is held at a latch: its next call and a subagent the run starts after the
   //      change still carry Haiku (the snapshot); a second run of the same record started after the change carries Sonnet
   //   3. a record created after the change by an author with no model chosen: `GET` of it holds Sonnet (AC-06.1), a record with a model of its
   //      own is untouched by the change
@@ -1338,15 +1328,15 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const vera = await employeeAllowed('mp-int7', [INT7_HAIKU, INT7_SONNET]);
       const veraApi = chatApi(app, vera);
       await putDefaults({ chatModel: INT7_HAIKU });
-      // And: Вера's workflow record with no model of its own (like a built-in record), and her agent record with Haiku chosen
-      const workflow = await createRecord(
+      // And: Вера's deep agent record with no model of its own (like a built-in record), and her agent record with Haiku chosen
+      const deepAgent = await createRecord(
         app,
         vera,
-        nullModelWorkflow(recordName('INT-7 workflow')),
+        nullModelDeepAgent(recordName('INT-7 deep agent')),
       );
-      if (workflow.kind !== 'workflow')
-        throw new Error('INT-7: the workflow record is not a workflow');
-      const executorName = workflow.content.executors[0]?.name ?? '';
+      if (deepAgent.kind !== 'deep_agent')
+        throw new Error('INT-7: the deep agent record is not a deep agent');
+      const subagentName = deepAgent.content.subagents[0]?.name ?? '';
       const ownModel = await createRecord(
         app,
         vera,
@@ -1354,19 +1344,19 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       );
       /** Every script answers its calls past the listed ones, so no step fails on an unscripted report. */
       const answered = { thereafter: { text: 'INT-7: принято' } };
-      const startWorkflow = (question: string): ScriptedToolCall => ({
-        tool: 'start_workflow',
-        args: { workflow: workflow.id, question, boundaries: '', result: '' },
+      const startDeepAgent = (question: string): ScriptedToolCall => ({
+        tool: 'start_deep_agent',
+        args: { deepAgent: deepAgent.id, question, boundaries: '', result: '' },
       });
-      /** The coordinator's task: the brief as `start_workflow` writes it. */
+      /** The deep agent's task: the brief as `start_deep_agent` writes it. */
       const briefTask = (question: string) =>
         JSON.stringify({ question, boundaries: '', result: '' });
       /** Вера's first message in a new conversation; she approves the brief its chat asks for. */
-      const runWorkflow = async (text: string) => {
+      const runDeepAgent = async (text: string) => {
         const { id } = await veraApi.createThread();
         await veraApi.send(id, text);
         const isOpenBrief = (decision: { kind: string; status: string }) =>
-          decision.kind === WORKFLOWS_BRIEF_CONFIRMATION &&
+          decision.kind === AGENTS_BRIEF_CONFIRMATION &&
           decision.status === 'open';
         const view = await waitFor(
           () => veraApi.history(id),
@@ -1378,17 +1368,17 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         await veraApi.decide(brief.decisionId, { approve: true });
       };
 
-      // Row 1 - When: Вера's chat (the built-in `chat` record on `null`) starts her workflow; its coordinator's first call is held
-      const firstText = 'INT-7 row 1: Вера запускает workflow без своей модели';
+      // Row 1 - When: Вера's chat (the built-in `chat` record on `null`) starts her deep agent; its first call is held
+      const firstText = 'INT-7 row 1: Вера запускает глубокого агента без своей модели';
       const firstQuestion = 'INT-7 row 1: вопрос первого запуска';
-      const executorTask = 'INT-7 row 2: задача исполнителя после смены';
+      const subagentTask = 'INT-7 row 2: задача сабагента после смены';
       const latch = createLatch();
       const firstChat = harness.model.script(
         { task: firstText },
-        [{ calls: [startWorkflow(firstQuestion)] }],
+        [{ calls: [startDeepAgent(firstQuestion)] }],
         answered,
       );
-      const firstCoordinator = harness.model.script(
+      const firstDeepAgent = harness.model.script(
         { task: briefTask(firstQuestion) },
         [
           {
@@ -1396,9 +1386,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
               {
                 tool: 'start_agent',
                 args: {
-                  agent: executorName,
-                  description: 'INT-7 row 2: исполнитель',
-                  prompt: executorTask,
+                  agent: subagentName,
+                  description: 'INT-7 row 2: сабагент',
+                  prompt: subagentTask,
                 },
               },
             ],
@@ -1407,50 +1397,50 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         ],
         answered,
       );
-      const executor = harness.model.script(
-        { task: executorTask },
+      const subagent = harness.model.script(
+        { task: subagentTask },
         [],
         answered,
       );
       try {
-        await runWorkflow(firstText);
+        await runDeepAgent(firstText);
         await latch.reached(1);
-        // Then: the chat and the coordinator called Haiku, the default at their start
+        // Then: the chat and the deep agent called Haiku, the default at their start
         expect([
           firstChat.calls[0]?.model,
-          firstCoordinator.calls[0]?.model,
+          firstDeepAgent.calls[0]?.model,
         ]).toEqual([INT7_HAIKU, INT7_HAIKU]);
         // Row 2 - When: the administrator sets Sonnet as the default while the run is held
         await putDefaults({ chatModel: INT7_SONNET });
       } finally {
         latch.open();
       }
-      // Then: the coordinator's next call and the executor it starts after the change still call Haiku (the snapshot)
-      await executor.called(1);
-      await firstCoordinator.called(2);
+      // Then: the deep agent's next call and the subagent it starts after the change still call Haiku (the snapshot)
+      await subagent.called(1);
+      await firstDeepAgent.called(2);
       expect([
-        firstCoordinator.calls[1]?.model,
-        executor.calls[0]?.model,
+        firstDeepAgent.calls[1]?.model,
+        subagent.calls[0]?.model,
       ]).toEqual([INT7_HAIKU, INT7_HAIKU]);
       // When: a second run of the same records starts after the change
       const secondText = 'INT-7 row 2: второй запуск после смены';
       const secondQuestion = 'INT-7 row 2: вопрос второго запуска';
       const secondChat = harness.model.script(
         { task: secondText },
-        [{ calls: [startWorkflow(secondQuestion)] }],
+        [{ calls: [startDeepAgent(secondQuestion)] }],
         answered,
       );
-      const secondCoordinator = harness.model.script(
+      const secondDeepAgent = harness.model.script(
         { task: briefTask(secondQuestion) },
         [],
         answered,
       );
-      await runWorkflow(secondText);
-      await secondCoordinator.called(1);
-      // Then: its chat and its coordinator call Sonnet
+      await runDeepAgent(secondText);
+      await secondDeepAgent.called(1);
+      // Then: its chat and its deep agent call Sonnet
       expect([
         secondChat.calls[0]?.model,
-        secondCoordinator.calls[0]?.model,
+        secondDeepAgent.calls[0]?.model,
       ]).toEqual([INT7_SONNET, INT7_SONNET]);
 
       // Row 3 - When: after the change Вера opens the editor of a new record (it takes the model of `choices`, as the web

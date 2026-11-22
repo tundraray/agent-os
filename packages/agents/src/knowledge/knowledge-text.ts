@@ -6,11 +6,11 @@ import type { GraphItem } from './select-knowledge';
  * AC-07.1–AC-07.3): the graph is a hint where to look, never a source of the answer.
  */
 export const KNOWLEDGE_RULE =
-  'The knowledge below was learned by earlier runs of this workflow. It is a hint where to look, not a source: ' +
+  'The knowledge below was learned by earlier runs of this deep agent. It is a hint where to look, not a source: ' +
   'confirm every claim of your answer with a call in this run, and never name this knowledge as a source.';
 
-/** Who wrote the enveloped records: the workflow's own earlier runs, through extraction. */
-const KNOWLEDGE_AUTHOR = 'earlier runs of this workflow';
+/** Who wrote the enveloped records: the deep agent's own earlier runs, through extraction. */
+const KNOWLEDGE_AUTHOR = 'earlier runs of this deep agent';
 
 /** The record's key in the vector store and in the extraction input: `e12` for an entity, `r7` for a relation. */
 export function knowledgeKey(item: Pick<GraphItem, 'type' | 'id'>): string {

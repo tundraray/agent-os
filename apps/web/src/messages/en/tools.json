@@ -12,12 +12,20 @@
     "args": { "callId": "Call", "offset": "From line", "limit": "Lines" }
   },
   "search_tool_result": { "title": "Search saved result", "args": { "callId": "Call", "pattern": "Search for" } },
-  "start_workflow": {
-    "title": "Start workflow",
-    "args": { "workflow": "Workflow", "question": "Question", "boundaries": "Scope", "result": "Result" }
+  "start_deep_agent": {
+    "title": "Start deep agent",
+    "args": { "deepAgent": "Deep agent", "question": "Question", "boundaries": "Scope", "result": "Result" }
   },
-  "draft_record": {
-    "title": "Prepare draft",
-    "args": { "recordId": "Agent or workflow", "kind": "Type", "name": "Name", "description": "Description", "content": "Definition" }
-  }
+  "task_list": { "title": "Task list", "args": { "add": "New items", "set": "Statuses" } },
+  "list_records": { "title": "Library list", "args": {} },
+  "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
+  "create_record": {
+    "title": "Create record",
+    "args": { "kind": "Kind", "name": "Name", "description": "Description", "content": "Content", "system": "System" }
+  },
+  "edit_record": {
+    "title": "Edit record",
+    "args": { "recordId": "Record", "kind": "Kind", "name": "Name", "description": "Description", "content": "Content", "system": "System" }
+  },
+  "delete_record": { "title": "Delete record", "args": { "recordId": "Record" } }
 }

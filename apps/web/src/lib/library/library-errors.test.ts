@@ -4,7 +4,6 @@ import { ApiRequestError } from '@/lib/api/api-request';
 import { testTranslator } from '@/test/intl';
 import { render } from '@/test/render';
 import {
-  describeDraftRefusal,
   describeLibraryError,
   describeRefusal,
   isKnowledgeHidden,
@@ -42,7 +41,7 @@ const startRefused = (reason: string, model: string | null): ApiRequestError =>
 
 const network = new ApiRequestError({ kind: 'network', method: 'POST', path: '/api/threads/t1/messages' });
 
-const NOT_FOUND = 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.';
+const NOT_FOUND = 'Такого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.';
 
 /** A library error as the page shows it: its text as markup, so the server text's language mark is seen. */
 type Shown = Omit<LibraryErrorText, 'text'> & { text: string };
@@ -67,9 +66,9 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       { place: { at: 'screen' }, text: NOT_FOUND, open: false },
     ],
     [
-      '404 on a message with a workflow chip → MC-16 under the field',
-      () => libraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'message', kind: 'workflow' }),
-      { place: { at: 'composer' }, text: 'Workflow недоступен: его удалили или закрыли для вас', open: false },
+      '404 on a message with a deep agent chip → MC-16 under the field',
+      () => libraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'message', kind: 'deep_agent' }),
+      { place: { at: 'composer' }, text: 'Глубокий агент недоступен: его удалили или закрыли для вас', open: false },
     ],
     // 409 RECORD_VERSION_CONFLICT: MC-10, employee and administrator wording
     [
@@ -111,16 +110,6 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       { place: { at: 'field', field: 'servers' }, text: 'Нет доступа к системе sentry — уберите её', open: false },
     ],
     [
-      '422 server_not_allowed of an executor → its card',
-      () =>
-        libraryError(refusal(422, 'RECORD_REJECTED', 'server_not_allowed'), {
-          where: 'editor',
-          server: 'jira',
-          executor: 'Сбор тикетов',
-        }),
-      { place: { at: 'executor', executor: 'Сбор тикетов' }, text: 'Нет доступа к системе jira — уберите её', open: false },
-    ],
-    [
       '422 all_servers_not_allowed → the field «Системы»',
       () =>
         libraryError(refusal(422, 'RECORD_REJECTED', 'all_servers_not_allowed', 'Record is rejected'), {
@@ -134,16 +123,6 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
         libraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
           where: 'editor',
           model: 'anthropic/claude-opus-5-5',
-        }),
-      { place: { at: 'field', field: 'model' }, text: 'Модель Opus вам недоступна — выберите другую', open: false },
-    ],
-    [
-      '422 model_not_allowed of an executor stays at the field «Модель»',
-      () =>
-        libraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
-          where: 'editor',
-          model: 'anthropic/claude-opus-5-5',
-          executor: 'Сбор тикетов',
         }),
       { place: { at: 'field', field: 'model' }, text: 'Модель Opus вам недоступна — выберите другую', open: false },
     ],
@@ -188,16 +167,16 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       },
     ],
     [
-      'START_REFUSED by model at «Запустить с нуля», a colleague’s workflow',
+      'START_REFUSED by model at «Запустить с нуля», a colleague’s deep agent',
       () =>
         libraryError(startRefused('model_not_allowed', 'anthropic/claude-sonnet-5-5'), {
           where: 'restart',
-          kind: 'workflow',
+          kind: 'deep_agent',
           own: false,
         }),
       {
         place: { at: 'notice' },
-        text: 'Модель Sonnet вам недоступна — workflow не запустился. Скопируйте его себе — копия получит вашу модель',
+        text: 'Модель Sonnet вам недоступна — глубокий агент не запустился. Скопируйте его себе — копия получит вашу модель',
         open: true,
       },
     ],
@@ -243,10 +222,10 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       () =>
         libraryError(startRefused('provider_key_missing', 'anthropic/claude-sonnet-5-5'), {
           where: 'restart',
-          kind: 'workflow',
+          kind: 'deep_agent',
           own: false,
         }),
-      { place: { at: 'notice' }, text: 'У провайдера модели Sonnet нет ключа — workflow не запустился', open: true },
+      { place: { at: 'notice' }, text: 'У провайдера модели Sonnet нет ключа — глубокий агент не запустился', open: true },
     ],
     // unknown code and network
     [
@@ -285,42 +264,19 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       },
     ],
     [
-      'refusal model_not_allowed of a colleague’s workflow',
+      'refusal model_not_allowed of a colleague’s deep agent',
       () =>
         describeRefusal(t, 'model_not_allowed', {
-          tool: 'start_workflow',
-          kind: 'workflow',
+          tool: 'start_deep_agent',
+          kind: 'deep_agent',
           model: 'anthropic/claude-sonnet-5-5',
           recordId: 'w1',
           own: false,
         }),
       {
-        text: 'Модель Sonnet вам недоступна — workflow не запустился. Скопируйте его себе — копия получит вашу модель',
+        text: 'Модель Sonnet вам недоступна — глубокий агент не запустился. Скопируйте его себе — копия получит вашу модель',
         action: { label: 'Открыть', recordId: 'w1' },
       },
-    ],
-    [
-      'refusal shared → «Открыть в редакторе»',
-      () => describeRefusal(t, 'shared', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r1', own: true }),
-      { text: 'Агент открыт ролям — правьте его в редакторе', action: { label: 'Открыть в редакторе', recordId: 'r1' } },
-    ],
-    [
-      'refusal read_only of a company agent',
-      () =>
-        describeRefusal(t, 'read_only', {
-          tool: 'draft_record',
-          kind: 'agent',
-          model: null,
-          recordId: 's1',
-          own: false,
-          company: true,
-        }),
-      { text: 'Агентов от компании правят в панели администратора', action: null },
-    ],
-    [
-      'refusal read_only of a colleague’s record → the platform text',
-      () => describeRefusal(t, 'read_only', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r2', own: false }),
-      null,
     ],
     [
       'refusal run_limit',
@@ -343,59 +299,18 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
       'refusal model_not_configured → MC-12 without a model',
       () =>
         describeRefusal(t, 'model_not_configured', {
-          tool: 'start_workflow',
-          kind: 'workflow',
+          tool: 'start_deep_agent',
+          kind: 'deep_agent',
           model: null,
           recordId: 'w1',
           own: false,
         }),
-      { text: 'Модель не настроена — workflow не запустился', action: { label: 'Открыть', recordId: 'w1' } },
+      { text: 'Модель не настроена — глубокий агент не запустился', action: { label: 'Открыть', recordId: 'w1' } },
     ],
     [
-      'refusal invalid_arguments of draft_record → the platform text',
+      'refusal invalid_arguments of start_deep_agent → the platform text',
       () =>
-        describeRefusal(t, 'invalid_arguments', { tool: 'draft_record', kind: 'workflow', model: null, recordId: null, own: true }),
-      null,
-    ],
-    // Draft card, MC-8: a refused save is a 200 with `refusal` (DC-01 «Не сохранено»).
-    [
-      'draft refusal name_taken',
-      () => describeDraftRefusal(t, 'name_taken', { kind: 'agent', name: 'Разбор' }),
-      'У вас уже есть агент «Разбор»',
-    ],
-    [
-      'draft refusal system_name',
-      () => describeDraftRefusal(t, 'system_name', { kind: 'workflow', name: 'Разбор' }),
-      'Так называется агент от компании — выберите другое имя',
-    ],
-    [
-      'draft refusal model_not_allowed names the draft model',
-      () => describeDraftRefusal(t, 'model_not_allowed', { kind: 'agent', name: 'Разбор', model: 'anthropic/claude-opus-5-5' }),
-      'Модель Opus вам недоступна — выберите другую',
-    ],
-    [
-      'draft refusal model_not_allowed without a model',
-      () => describeDraftRefusal(t, 'model_not_allowed', { kind: 'workflow', name: 'Разбор' }),
-      'Не удалось сохранить: модель вам недоступна',
-    ],
-    [
-      'draft refusal not_found',
-      () => describeDraftRefusal(t, 'not_found', { kind: 'workflow', name: 'Разбор' }),
-      'Workflow недоступен: его удалили или закрыли для вас',
-    ],
-    [
-      'draft refusal shared',
-      () => describeDraftRefusal(t, 'shared', { kind: 'agent', name: 'Разбор' }),
-      'Агент открыт ролям — правьте его в редакторе',
-    ],
-    [
-      'draft refusal without a UXRD text shows no reason code',
-      () => describeDraftRefusal(t, 'server_not_allowed', { kind: 'agent', name: 'Разбор' }),
-      'Не удалось сохранить — откройте черновик в редакторе: там видно, что исправить',
-    ],
-    [
-      'draft refusal version_conflict → the stale line, not a refusal line',
-      () => describeDraftRefusal(t, 'version_conflict', { kind: 'agent', name: 'Разбор' }),
+        describeRefusal(t, 'invalid_arguments', { tool: 'start_deep_agent', kind: 'deep_agent', model: null, recordId: null, own: true }),
       null,
     ],
     // Knowledge screen «Не найдено» (self-learning design-web.md, «Клиент API»)

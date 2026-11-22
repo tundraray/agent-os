@@ -37,8 +37,7 @@
   },
   "meta": {
     "started": "started <time>{at}</time>",
-    "workflow": "Workflow “{name}”",
-    "coordinator": "coordinator",
+    "deepAgent": "Deep agent “{name}”",
     "fromAgent": "started by agent “<link>{name}</link>”",
     "fromChat": "from chat “<link>{title}</link>”"
   },
@@ -47,7 +46,7 @@
     "stopFailed": "Couldn't stop the agent. Try again.",
     "restart": "Start over",
     "restartFailed": "Couldn't start the agent over.",
-    "restartUnavailable": "The {kind, select, agent {agent} other {workflow}} isn't available — can't start over",
+    "restartUnavailable": "The {kind, select, agent {agent} other {deep agent}} isn't available — can't start over",
     "restartVersion": "Will run on version {version}",
     "menu": "Agent actions",
     "open": "Open"
@@ -87,13 +86,13 @@
     "byChat": "Chat wants to run:",
     "byAgent": "Agent “<link>{description}</link>” wants to run:",
     "groupAction": "Decision needed: {tool}",
-    "groupBrief": "Task: {question}",
+    "groupBrief": "Brief: {question}",
     "approve": "Approve",
     "reject": "Reject",
     "approved": "Approved · {time}",
     "rejected": "Rejected · {time}",
-    "briefApproved": "Task approved · {time}",
-    "briefRejected": "Task rejected · {time}",
+    "briefApproved": "Brief approved · {time}",
+    "briefRejected": "Brief rejected · {time}",
     "cancelled": "Not needed: the agent was stopped",
     "sendFailed": "Couldn't send the decision. Try again.",
     "launch": "Run",
@@ -101,35 +100,40 @@
     "launchEdited": "Run with edits",
     "cancelEdit": "Cancel",
     "emptyQuestion": "The question can't be empty",
-    "selfLearning": "This workflow learns: it remembers what this run finds, and other employees' runs get it."
+    "selfLearning": "The deep agent learns: it remembers what this run finds, and other employees' runs get it."
   },
-  "draft": {
-    "status": "Draft",
-    "label": "Draft: {name}",
-    "newTitle": "{kind, select, agent {New agent} other {New workflow}}",
-    "editTitle": "Editing “{name}”",
-    "howToFix": "To change it, tell the chat what to change",
-    "save": "Save",
-    "saveAs": "Save as “{name}”",
-    "openInEditor": "Open in editor",
-    "reject": "Reject",
-    "saved": "Saved · {time}",
-    "savedInEditor": "Saved in the editor · {time}",
-    "rejected": "Rejected · {time}",
-    "tryInChat": "Try in chat",
-    "share": "Share",
-    "open": "Open",
-    "superseded": "Draft “{name}” was replaced by the new one below",
-    "stale": "The {kind, select, agent {agent} other {workflow}} changed after the draft. Ask the chat to prepare the edit again or open the editor."
+  "recordCard": {
+    "create": "{kind, select, agent {Create agent} other {Create deep agent}}",
+    "edit": "Change “{name}”",
+    "delete": "Delete “{name}”",
+    "deleteNote": "The {kind, select, agent {agent} other {deep agent}} will be removed from the library. This can't be undone.",
+    "changed": "changed",
+    "new": "new",
+    "removed": "Removed: {what}",
+    "createButton": "Create",
+    "saveButton": "Save changes",
+    "deleteButton": "Delete",
+    "created": "Created · {time}",
+    "changedOutcome": "Changed · {time}",
+    "deleted": "Deleted · {time}",
+    "notSaved": "Not saved: {reason}",
+    "showDiagram": "Show diagram"
+  },
+  "recordTool": {
+    "list_records": "Library list",
+    "read_record": "Read “{name}”",
+    "create_record": "Create “{name}”",
+    "edit_record": "Edit “{name}”",
+    "delete_record": "Delete “{name}”"
   },
   "run": {
     "label": "{name}: {status}",
-    "stepLabel": "{hasExecutor, select, yes {{executor}, } other {}}{description}, {status}",
+    "stepLabel": "{hasSubagent, select, yes {{subagent}, } other {}}{description}, {status}",
     "open": "Open",
     "openLabel": "Open agent “{description}”",
     "openRun": "Open run",
     "rerun": "Run again",
-    "changedAfterRun": "The {kind, select, agent {agent} other {workflow}} changed after the run: now version {version}",
+    "changedAfterRun": "The {kind, select, agent {agent} other {deep agent}} changed after the run: now version {version}",
     "recipient": "{author}{count, plural, =0 {} one { · for role {roles}} other { · for roles {roles}}}: works with your permissions and connections, changes only after you approve. The author or an administrator can remove it.",
     "limitReached": "call limit reached",
     "notCalled": "not called"
@@ -139,7 +143,9 @@
     "stopped": "Stopped by you",
     "stopped_with_parent": "Stopped with its parent",
     "continued": "Continued with history",
-    "compacted": "History compacted for the model"
+    "compacted": "History compacted for the model",
+    "planItemsOpen": "Answer not accepted: plan items {numbers} are still open",
+    "reportMissing": "Answer not accepted: waiting for the report from “{name}”"
   },
   "queue": {
     "region": "Waiting for delivery",
@@ -152,5 +158,42 @@
       "report": "Report",
       "parent": "Agent"
     }
+  },
+  "taskStatus": {
+    "waiting": "Waiting",
+    "running": "Running",
+    "done": "Done",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "tasks": {
+    "tabs": {
+      "activity": "Activity",
+      "tasks": "Tasks · {count}"
+    },
+    "listLabel": "Tasks",
+    "summary": {
+      "running": "Running: {count}",
+      "waiting": "Waiting: {count}",
+      "done": "Done: {count}",
+      "failed": "Failed: {count}",
+      "cancelled": "Cancelled: {count}"
+    },
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "ownItem": "own item",
+    "rowButton": "Task {number}: {text}, {status}",
+    "details": {
+      "status": "Status",
+      "task": "Task",
+      "who": "Who does it",
+      "ownItem": "own item — the agent keeps it"
+    },
+    "emptyTitle": "No tasks yet",
+    "emptyHint": "The agent adds its plan when it starts working.",
+    "loading": "Loading tasks…",
+    "loadError": "Couldn't load tasks",
+    "retry": "Try again",
+    "openRun": "Open run"
   }
 }

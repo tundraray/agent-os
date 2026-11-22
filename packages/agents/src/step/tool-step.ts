@@ -53,7 +53,7 @@ interface CallDecision {
   readonly callId: string;
   readonly approve: boolean;
   readonly args?: unknown;
-  /** `content` of the resolved request, handed to the tool (code-execution KD-10). */
+  /** `content` of the resolved request, handed to the tool (code-execution KD-10; deep-agents KD-3). */
   readonly confirmed?: unknown;
 }
 
@@ -66,7 +66,8 @@ interface CallDecision {
 type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<HistoryEntry | undefined>;
 
 export interface ToolStepDeps {
-  readonly registry: Pick<ToolRegistry, 'checkTools'>;
+  /** `toolOf` keeps the log rule of a tool the session was not offered. */
+  readonly registry: Pick<ToolRegistry, 'checkTools' | 'toolOf'>;
   readonly runner: ToolRunner;
   /** Asked once per step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
   readonly access: Pick<AccessGate, 'tools'>;
@@ -109,6 +110,7 @@ function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): 
       outcome: refused,
       refusalReason: execution.reason,
       refusalDetail: execution.refusalDetail ?? null,
+      ...(execution.text === undefined ? {} : { resultText: execution.text }),
       startedAt,
       finishedAt,
     };
@@ -176,7 +178,9 @@ function commitOf(
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
  *   a call the check allows goes through the repeat rule (agent-harness KD-5) — a third same call is
  *   `repeated_call`, audited for an MCP tool; a second one runs and its result's text gets the mark;
- *   a call needing confirmation without a decision ends the step with `await_decision`, the ready
+ *   a call needing confirmation without a decision is checked by its tool's `review`, if it has one, outside
+ *   any transaction (deep-agents KD-3) — a refusal closes it `refused` with its text and asks nothing —
+ *   and then ends the step with `await_decision`, the ready
  *   results committed and the call's `tool_confirmation` written, the rest waiting; a rejected one is
  *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
  *   after it so its result is committed before anything else runs; an `outside` call runs under the
@@ -212,6 +216,8 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
       agentId: ctx.taskId,
       root: ctx.parentId === null,
     });
+    const argsOf = (call: CallState): unknown =>
+      loggedArgsOf(sessionTools, registry.toolOf, { name: requestedName(call), args: call.args });
     const decision = decisionOf(ctx);
     const closings: Closing[] = [];
     // The repeat rule's past (KD-5): the closed calls of the visible history, then each call of this step it lets through.
@@ -285,7 +291,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         callId: call.callId,
         tool: call.tool,
         server: call.server,
-        args: loggedArgsOf(sessionTools, requestedName(call), call.args),
+        args: argsOf(call),
         outcome: unknown,
         reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
       });
@@ -326,7 +332,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
             callId: call.callId,
             tool: call.tool,
             server: call.server,
-            args: loggedArgsOf(sessionTools, requestedName(call), call.args),
+            args: argsOf(call),
             outcome: refused,
             reason,
             durationMs: 0,
@@ -377,12 +383,18 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
                 `Call ${call.callId} of agent ${ctx.taskId} awaits confirmation, but the step got no decision for it`,
               );
             }
-            const request = runner.confirmationRequest(resolved, session, sessionTools);
+            const card = await runner.confirmationRequest(resolved, session, sessionTools);
+            if (card.kind === 'refused') {
+              // The tool's check before the card refused it (deep-agents KD-3): no request, the model reads why.
+              refuse(card.reason, card.text);
+              continue;
+            }
+            const { request } = card;
             ctx.logger.info('tool call awaits confirmation', {
               callId: call.callId,
               tool: call.tool,
               server: call.server,
-              args: loggedArgsOf(sessionTools, requestedName(call), call.args),
+              args: argsOf(call),
               outcome: null,
               reason: 'awaiting_confirmation',
             });
@@ -400,7 +412,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               callId: call.callId,
               tool: call.tool,
               server: call.server,
-              args: loggedArgsOf(sessionTools, requestedName(call), call.args),
+              args: argsOf(call),
               outcome: rejected,
               reason: 'rejected',
               durationMs: 0,

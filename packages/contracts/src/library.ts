@@ -4,7 +4,7 @@ import { LanguageSchema, type Language } from './identity';
 import { McpServerNameSchema } from './mcp';
 
 /**
- * Library of agents and workflows (design-library.md, Contract Definitions). Lengths and shapes
+ * Library of agents and deep agents (design-library.md, deep-agents design-agent-types.md, Contract Definitions). Lengths and shapes
  * answered 400 live here; rules that carry a `reason` (all servers outside a system record, a role
  * the owner is not in, a holder that does not exist) are the service's, because the pipe's 400 has
  * no `reason`.
@@ -13,13 +13,12 @@ import { McpServerNameSchema } from './mcp';
 export const RECORD_NAME_MAX_LENGTH = 80;
 export const RECORD_DESCRIPTION_MAX_LENGTH = 300;
 export const RECORD_PROMPT_MAX_LENGTH = 20_000;
-export const COORDINATOR_RULES_MAX_LENGTH = 4_000;
-export const EXECUTOR_NAME_MAX_LENGTH = 80;
-export const EXECUTOR_ROLE_MAX_LENGTH = 300;
-export const WORKFLOW_EXECUTORS_MIN = 1;
-export const WORKFLOW_EXECUTORS_MAX = 10;
-export const EXECUTOR_MAX_RUNS_MIN = 1;
-export const EXECUTOR_MAX_RUNS_MAX = 20;
+export const SUBAGENT_NAME_MAX_LENGTH = 80;
+export const SUBAGENT_DESCRIPTION_MAX_LENGTH = 300;
+export const DEEP_AGENT_SUBAGENTS_MIN = 1;
+export const DEEP_AGENT_SUBAGENTS_MAX = 10;
+export const SUBAGENT_MAX_RUNS_MIN = 1;
+export const SUBAGENT_MAX_RUNS_MAX = 20;
 export const RECORD_MAX_TURNS_MIN = 1;
 export const RECORD_MAX_TURNS_MAX = 200;
 /** «Максимум шагов» of a new record until an administrator sets another (`library_settings`). */
@@ -64,7 +63,7 @@ export const LibraryErrorCode = {
   RECORD_VERSION_CONFLICT: 'RECORD_VERSION_CONFLICT',
   RECORD_NAME_TAKEN: 'RECORD_NAME_TAKEN',
   RECORD_REJECTED: 'RECORD_REJECTED',
-  /** 403: the workflow is visible, but its knowledge graph is not open to the employee. */
+  /** 403: the deep agent is visible, but its knowledge graph is not open to the employee. */
   KNOWLEDGE_FORBIDDEN: 'KNOWLEDGE_FORBIDDEN',
 } as const;
 export type LibraryErrorCode = (typeof LibraryErrorCode)[keyof typeof LibraryErrorCode];
@@ -87,26 +86,10 @@ export type LibraryRejectReason = z.infer<typeof LibraryRejectReasonSchema>;
 export const RecordNameTakenReasonSchema = z.enum(['own', 'system']);
 export type RecordNameTakenReason = z.infer<typeof RecordNameTakenReasonSchema>;
 
-/**
- * Why `saveOwn` refused a save from the chat (design-library.md, «Для части `runtime`»): its own
- * reasons and every reason of a 422 RECORD_REJECTED. `shared` — the record has holders (AC-18.5).
- */
-export const SaveOwnRefusalSchema = z.enum([
-  'not_found',
-  'read_only',
-  'shared',
-  'version_conflict',
-  'name_taken',
-  'system_name',
-  'invalid',
-  ...LibraryRejectReasonSchema.options,
-]);
-export type SaveOwnRefusal = z.infer<typeof SaveOwnRefusalSchema>;
-
-export const RecordKindSchema = z.enum(['agent', 'workflow']);
+export const RecordKindSchema = z.enum(['agent', 'deep_agent']);
 export type RecordKind = z.infer<typeof RecordKindSchema>;
 
-/** Platform tools a record may hold. `run_code` and `start_workflow` are never stored in a record. */
+/** Platform tools an agent record may hold. `run_code` and `start_deep_agent` are never stored in a record. */
 export const RecordToolSchema = z.enum(['start_agent', 'message_agent', 'list_agents', 'stop_agent']);
 export type RecordTool = z.infer<typeof RecordToolSchema>;
 
@@ -157,53 +140,42 @@ export const AgentContentSchema = z.object({
 });
 export type AgentContent = z.infer<typeof AgentContentSchema>;
 
-/** The agent record an executor was taken from, at the version taken. */
-const ExecutorSourceSchema = z.object({ recordId: IdSchema, version: VersionSchema });
-
-const ExecutorSchema = z.object({
-  name: nameSchema(EXECUTOR_NAME_MAX_LENGTH),
-  /** What the executor answers for and when to call it. */
-  role: z.string().trim().min(1).max(EXECUTOR_ROLE_MAX_LENGTH),
+/** A subagent: a copy inside its deep agent, called by its name (KD-1). */
+const SubagentSchema = z.object({
+  name: nameSchema(SUBAGENT_NAME_MAX_LENGTH),
+  /** When to call the subagent. */
+  description: z.string().trim().min(1).max(SUBAGENT_DESCRIPTION_MAX_LENGTH),
   prompt: PromptSchema,
   servers: ServersSchema,
   model: RecordModelSchema,
   maxTurns: MaxTurnsSchema,
-  maxRuns: z.number().int().min(EXECUTOR_MAX_RUNS_MIN).max(EXECUTOR_MAX_RUNS_MAX),
-  tools: ToolsSchema,
-  source: ExecutorSourceSchema.nullable(),
+  /** Runs of the subagent within one run of its deep agent. */
+  maxRuns: z.number().int().min(SUBAGENT_MAX_RUNS_MIN).max(SUBAGENT_MAX_RUNS_MAX),
 });
-export type WorkflowExecutor = z.infer<typeof ExecutorSchema>;
+export type Subagent = z.infer<typeof SubagentSchema>;
 
-export const WorkflowContentSchema = z
+export const DeepAgentContentSchema = z
   .object({
-    coordinator: z.object({
-      /** Rules in words; may be empty. */
-      rules: z.string().max(COORDINATOR_RULES_MAX_LENGTH),
-      model: RecordModelSchema,
-      maxTurns: MaxTurnsSchema,
-    }),
-    executors: z.array(ExecutorSchema).min(WORKFLOW_EXECUTORS_MIN).max(WORKFLOW_EXECUTORS_MAX),
-    /** Executor whose report becomes the answer; `null` — the coordinator writes it. */
-    finalExecutor: z.string().nullable(),
-    /** Runs learn into the workflow's knowledge graph; content saved before the field reads `false`. */
+    prompt: PromptSchema,
+    servers: ServersSchema,
+    model: RecordModelSchema,
+    maxTurns: MaxTurnsSchema,
+    subagents: z.array(SubagentSchema).min(DEEP_AGENT_SUBAGENTS_MIN).max(DEEP_AGENT_SUBAGENTS_MAX),
+    /** Subagent whose report becomes the answer; `null` — the deep agent writes it. */
+    finalSubagent: z.string().nullable(),
+    /** Runs learn into the deep agent's knowledge graph; only people change it. */
     selfLearning: z.boolean().default(false),
   })
   .superRefine((content, ctx) => {
-    const names = content.executors.map((executor) => executor.name);
+    const names = content.subagents.map((subagent) => subagent.name);
     if (!hasNoRepeats(names.map((name) => name.toLowerCase()))) {
-      ctx.addIssue({ code: 'custom', path: ['executors'], message: 'executor names repeat' });
+      ctx.addIssue({ code: 'custom', path: ['subagents'], message: 'subagent names repeat' });
     }
-    const sources = content.executors.flatMap((executor) =>
-      executor.source ? [executor.source.recordId] : [],
-    );
-    if (!hasNoRepeats(sources)) {
-      ctx.addIssue({ code: 'custom', path: ['executors'], message: 'executor sources repeat' });
-    }
-    if (content.finalExecutor !== null && !names.includes(content.finalExecutor)) {
-      ctx.addIssue({ code: 'custom', path: ['finalExecutor'], message: 'no such executor' });
+    if (content.finalSubagent !== null && !names.includes(content.finalSubagent)) {
+      ctx.addIssue({ code: 'custom', path: ['finalSubagent'], message: 'no such subagent' });
     }
   });
-export type WorkflowContent = z.infer<typeof WorkflowContentSchema>;
+export type DeepAgentContent = z.infer<typeof DeepAgentContentSchema>;
 
 /** `kind` and the content of that kind, joined to the given fields. */
 export function withContentByKind<T extends z.ZodRawShape>(fields: T) {
@@ -215,8 +187,8 @@ export function withContentByKind<T extends z.ZodRawShape>(fields: T) {
     }),
     z.object({
       ...fields,
-      kind: z.literal(RecordKindSchema.enum.workflow),
-      content: WorkflowContentSchema,
+      kind: z.literal(RecordKindSchema.enum.deep_agent),
+      content: DeepAgentContentSchema,
     }),
   ]);
 }
@@ -224,7 +196,7 @@ export function withContentByKind<T extends z.ZodRawShape>(fields: T) {
 /** A record's kind and the content of that kind, as the bodies and the stored rows hold it. */
 export type RecordBody =
   | { readonly kind: 'agent'; readonly content: AgentContent }
-  | { readonly kind: 'workflow'; readonly content: WorkflowContent };
+  | { readonly kind: 'deep_agent'; readonly content: DeepAgentContent };
 
 // ---------- Bodies ----------
 
@@ -282,9 +254,9 @@ const RecordAudienceSchema = z.object({
 });
 export type RecordAudience = z.infer<typeof RecordAudienceSchema>;
 
-/** What the viewer lacks to run the record; `executor` `null` — the agent itself or the coordinator. */
+/** What the viewer lacks to run the record; `subagent` `null` — the agent or the deep agent itself. */
 const MissingRightSchema = z.object({
-  executor: z.string().nullable(),
+  subagent: z.string().nullable(),
   servers: z.array(McpServerNameSchema),
   model: ModelIdSchema.nullable(),
 });
@@ -317,33 +289,18 @@ const recordViewFields = {
 export const RecordSummarySchema = z.object({ ...recordViewFields, kind: RecordKindSchema });
 export type RecordSummary = z.infer<typeof RecordSummarySchema>;
 
-/** State of an executor's source agent for the viewer. */
-const ExecutorSourceStateSchema = z.object({
-  executor: z.string(),
-  recordId: IdSchema,
-  version: VersionSchema,
-  state: z.enum(['current', 'changed', 'gone']),
-  /** The newer version when `changed`, otherwise `null`. */
-  latestVersion: VersionSchema.nullable(),
-});
-export type ExecutorSourceState = z.infer<typeof ExecutorSourceStateSchema>;
-
 /** Response of GET /api/library/:id and of every write that returns the record. */
-export const RecordDetailSchema = withContentByKind({
-  ...recordViewFields,
-  /** Only workflows have executors; an agent's list is empty. */
-  executorSources: z.array(ExecutorSourceStateSchema),
-});
+export const RecordDetailSchema = withContentByKind(recordViewFields);
 export type RecordDetail = z.infer<typeof RecordDetailSchema>;
 
 /** Response of POST /api/library/:id/copy. */
 export const CopyResultSchema = z.object({
   record: RecordDetailSchema,
   removedServers: z.array(
-    z.object({ executor: z.string().nullable(), servers: z.array(McpServerNameSchema) }),
+    z.object({ subagent: z.string().nullable(), servers: z.array(McpServerNameSchema) }),
   ),
   replacedModels: z.array(
-    z.object({ executor: z.string().nullable(), from: ModelIdSchema, to: ModelIdSchema }),
+    z.object({ subagent: z.string().nullable(), from: ModelIdSchema, to: ModelIdSchema }),
   ),
   /** Agents the copy may not start: the copier does not see them. */
   removedAgents: z.array(IdSchema),

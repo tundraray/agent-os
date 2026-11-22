@@ -1,20 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { HttpException, Inject, Injectable } from '@nestjs/common';
 import type { LogFields, Logger } from '@agent-os/common';
-import type { z } from 'zod';
 import {
-  CreateRecordBodySchema,
   type BannedRecord,
   type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
   type LibraryChoices,
+  LibraryRecordCardSchema,
+  type LibraryRecordCard,
+  type LibraryRejectReason,
   type RecordAudienceBody,
   type RecordBody,
   type RecordDetail,
   type RecordHeader,
   type RecordSummary,
   type ResolvedRecord,
-  type SaveOwnRefusalSchema,
   type SystemRecordAudienceBody,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
@@ -53,6 +54,7 @@ import {
   type RecordKey,
   type Viewer,
 } from './library.repository';
+import { chatRecordOf, type ChatRecord } from './record-listing';
 import {
   auditSample,
   banAuditSample,
@@ -63,9 +65,14 @@ import {
   recordSummary,
   resolvedRecord,
   type ViewContext,
-  type VisibleVersions,
 } from './record-view';
-import { decideSave, type SaveChoices, type SaveInput } from './save-rules';
+import { contentParts } from './record-content';
+import {
+  decideSave,
+  type RefusedField,
+  type SaveChoices,
+  type SaveInput,
+} from './save-rules';
 
 /** The employee of a route: the id from the session and the admin right (`req.user`). */
 export interface LibraryActor {
@@ -93,30 +100,24 @@ export interface BuiltinRecordInput {
   readonly body: RecordBody;
 }
 
-/** Input of `saveOwn`: the record edited and the version the edit started from, or `null` for a new one. */
-export interface OwnRecordInput {
-  readonly target: { readonly id: string; readonly version: number } | null;
-  readonly kind: string;
-  readonly name: string;
-  readonly description: string;
-  readonly content: unknown;
-}
-
-/** A workflow whose knowledge graph is open to the actor: what the knowledge routes need. */
+/** A deep agent whose knowledge graph is open to the actor: what the knowledge routes need. */
 export interface KnowledgeTarget {
   readonly recordId: string;
-  /** The flag of the workflow's last version. */
+  /** The flag of the deep agent's last version. */
   readonly selfLearning: boolean;
-  /** The servers of the executors of the last version, without repeats (`*` as is). */
+  /** The servers of the deep agent and of its subagents in the last version, without repeats (`*` as is). */
   readonly servers: readonly string[];
 }
 
-/** Why a save is refused; `saveOwn` answers it as is (design-library.md, «Для части `runtime`»). */
-export type SaveRefusal = z.infer<typeof SaveOwnRefusalSchema>;
-
-export type SaveOwnResult =
-  | { readonly outcome: 'saved'; readonly record: RecordDetail }
-  | { readonly outcome: 'refused'; readonly reason: SaveRefusal };
+/** Why a save is refused; each route answers it with its own error. */
+export type SaveRefusal =
+  | 'not_found'
+  | 'read_only'
+  | 'version_conflict'
+  | 'name_taken'
+  | 'system_name'
+  | 'invalid'
+  | LibraryRejectReason;
 
 type SaveScope = 'employee' | 'system';
 type ViewScope = ViewContext['scope'];
@@ -128,17 +129,222 @@ interface SaveRequest {
   readonly body: CreateRecordBody;
   /** Servers usable to the author (employee) or the MCP registry (system). */
   readonly servers: readonly string[];
-  /** `saveOwn`: a record with holders is not the caller's to change from the chat (AC-18.5). */
-  readonly refuseShared: boolean;
+  /** The id of a new record chosen before the save (a chat card, deep-agents KD-3); absent — the database's. */
+  readonly newId?: string;
+  /**
+   * The models the author may choose, read before a transaction opened (the chat's save runs in the step's
+   * transaction); absent — read here: allowed to the employee, or the chat models of the catalogue.
+   */
+  readonly models?: readonly string[];
+}
+
+/** A refusal of the save, with the part of the record the rule is about when a rule of the content decided. */
+interface Refused {
+  readonly outcome: 'refused';
+  readonly refusal: SaveRefusal;
+  readonly field?: RefusedField;
 }
 
 type SaveResult =
   | { readonly outcome: 'saved'; readonly record: LibraryRecord }
-  | { readonly outcome: 'refused'; readonly refusal: SaveRefusal };
+  | Refused;
+
+/** What the checks before the write decided: the stored record an edit changes, or the refusal. */
+type SaveCheck =
+  | { readonly outcome: 'allowed'; readonly previous: LibraryRecord | null }
+  | Refused;
 
 /** Thrown inside a save transaction to roll it back; caught right outside it. */
 class SaveRefused {
   constructor(readonly refusal: SaveRefusal) {}
+}
+
+/** A record's name, description and kind with its content, as a chat change names it. */
+export interface ChatRecordInput {
+  readonly name: string;
+  readonly description: string;
+  readonly body: RecordBody;
+}
+
+/**
+ * A change the main chat asks for (deep-agents KD-3). The self-learning flag in `body` is not the
+ * chat's: the service sets it — off on create, the stored one on edit.
+ */
+export type ChatChange =
+  | {
+      readonly action: 'create';
+      readonly system: boolean;
+      readonly record: ChatRecordInput;
+    }
+  | {
+      readonly action: 'edit';
+      readonly recordId: string;
+      readonly record: ChatRecordInput;
+    }
+  | { readonly action: 'delete'; readonly recordId: string };
+
+/** The facts a chat call is decided with, read before any transaction ({@link LibraryService.chatContext}). */
+export interface ChatContext {
+  readonly actor: LibraryActor;
+  readonly viewer: Viewer;
+  /** The servers usable to the employee and, for an admin, the MCP registry. */
+  readonly servers: PanelServerFacts;
+  readonly allowedModels: readonly string[];
+  /** The chat models of the catalogue; empty for a non-admin. */
+  readonly catalogueModels: readonly string[];
+}
+
+/**
+ * Why a chat change is refused: a refusal of the save, or a rule only the chat has — a record with
+ * holders (`shared`), a system record for a non-admin (`admin_only`).
+ */
+export type ChatRefusalCode = SaveRefusal | 'shared' | 'admin_only';
+
+/** A refused chat change, with the part of the record the rule is about when one is. */
+export interface ChatRefusal {
+  readonly outcome: 'refused';
+  readonly refusal: ChatRefusalCode;
+  readonly field?: RefusedField;
+  /** The servers the record may name — usable to the employee, or the registry — when a rule of the content refused. */
+  readonly allowedServers?: readonly string[];
+}
+
+/** The answer of the check before the card: the refusal, or the card's content. */
+export type ChatReview =
+  | ChatRefusal
+  | { readonly outcome: 'card'; readonly card: LibraryRecordCard };
+
+/** The answer of the save of an approved card; `version` `null` — the record was deleted. */
+export type ChatSaveResult =
+  | ChatRefusal
+  | {
+      readonly outcome: 'saved';
+      readonly recordId: string;
+      readonly version: number | null;
+    };
+
+/** The field of a create's `system` argument: only an admin creates a system record. */
+const SYSTEM_FIELD: RefusedField = { path: 'system', values: [] };
+
+function chatRefused(
+  refusal: ChatRefusalCode,
+  field?: RefusedField,
+): ChatRefusal {
+  return { outcome: 'refused', refusal, ...(field === undefined ? {} : { field }) };
+}
+
+/** A refusal of the save rules, with the servers the request could choose from. */
+function chatRefusedBy(refused: Refused, request: SaveRequest): ChatRefusal {
+  return {
+    ...chatRefused(refused.refusal, refused.field),
+    allowedServers: request.servers,
+  };
+}
+
+function chatSaved(result: SaveResult, request: SaveRequest): ChatSaveResult {
+  return result.outcome === 'refused'
+    ? chatRefusedBy(result, request)
+    : {
+        outcome: 'saved',
+        recordId: result.record.id,
+        version: result.record.version,
+      };
+}
+
+function chatOutcomeFields(
+  result: ChatReview | ChatSaveResult,
+): LogFields {
+  return result.outcome === 'refused'
+    ? { outcome: 'refused', reason: result.refusal, path: result.field?.path ?? null }
+    : { outcome: result.outcome };
+}
+
+/**
+ * Which rules a chat change of `record` follows (Invariant 4): an admin's change of a system record the
+ * panel's, the employee's own record shared with no one the employee's; any other record is refused —
+ * missing or not seen, another employee's, shared, a system record for a non-admin, a built-in one to
+ * delete.
+ */
+function chatScope(
+  record: LibraryRecord | undefined,
+  context: ChatContext,
+  action: 'edit' | 'delete',
+):
+  | ChatRefusal
+  | {
+      readonly outcome: 'allowed';
+      readonly scope: SaveScope;
+      readonly record: LibraryRecord;
+    } {
+  if (record === undefined) return chatRefused('not_found');
+  if (record.ownerId === null) {
+    if (!context.actor.isAdmin) return chatRefused('admin_only');
+    if (action === 'delete' && record.builtinKey !== null)
+      return chatRefused('builtin');
+    return { outcome: 'allowed', scope: 'system', record };
+  }
+  if (record.ownerId !== context.viewer.id) return chatRefused('read_only');
+  if (hasHolders(record)) return chatRefused('shared');
+  return { outcome: 'allowed', scope: 'employee', record };
+}
+
+/** The stored flag of a deep agent; an agent has none. */
+function selfLearningOf(body: RecordBody): boolean {
+  return body.kind === 'deep_agent' && body.content.selfLearning;
+}
+
+/** The body with the self-learning flag set, which only a deep agent holds. */
+function withSelfLearning(body: RecordBody, selfLearning: boolean): RecordBody {
+  return body.kind === 'deep_agent'
+    ? { kind: 'deep_agent', content: { ...body.content, selfLearning } }
+    : body;
+}
+
+/** The content of a `library.record` card (Contract «Содержимое карточки `library.record`»). */
+function libraryRecordCard(card: {
+  readonly action: LibraryRecordCard['action'];
+  readonly recordId: string;
+  readonly system: boolean;
+  readonly next: ChatRecordInput | null;
+  readonly previous: LibraryRecord | null;
+}): LibraryRecordCard {
+  const { next, previous } = card;
+  const kind = next?.body.kind ?? previous?.body.kind;
+  return LibraryRecordCardSchema.parse({
+    action: card.action,
+    recordId: card.recordId,
+    kind,
+    system: card.system,
+    next: next && {
+      name: next.name,
+      description: next.description,
+      content: next.body.content,
+    },
+    previous: previous && {
+      name: previous.name,
+      description: previous.description,
+      content: previous.body.content,
+      version: previous.version,
+    },
+  });
+}
+
+/** The record an approved card saves; `null` on delete. */
+function cardRecordOf(card: LibraryRecordCard): ChatRecordInput | null {
+  if (card.kind === 'agent') {
+    const { next } = card;
+    return next && {
+      name: next.name,
+      description: next.description,
+      body: { kind: 'agent', content: next.content },
+    };
+  }
+  const { next } = card;
+  return next && {
+    name: next.name,
+    description: next.description,
+    body: { kind: 'deep_agent', content: next.content },
+  };
 }
 
 type LibraryAuditKind =
@@ -167,7 +373,7 @@ function readOnly(): HttpException {
   return libraryError('RECORD_READ_ONLY');
 }
 
-/** The HTTP answer of a refused save. `shared` is asked for only by `saveOwn`. */
+/** The HTTP answer of a refused save. */
 function saveRefusalError(refusal: SaveRefusal): HttpException {
   switch (refusal) {
     case 'not_found':
@@ -182,18 +388,14 @@ function saveRefusalError(refusal: SaveRefusal): HttpException {
       return libraryError('RECORD_NAME_TAKEN', 'system');
     case 'invalid':
       return kindChangedError();
-    case 'shared':
-      throw new Error('a route save asked for the saveOwn refusal "shared"');
     default:
       return libraryError('RECORD_REJECTED', refusal);
   }
 }
 
-/** Whether the content names other records: agents to start, or executor sources. */
+/** Whether the content names other records: the agents an agent may start. */
 function refersToRecords(body: RecordBody): boolean {
-  return body.kind === 'agent'
-    ? body.content.agents.length > 0
-    : body.content.executors.some((executor) => executor.source !== null);
+  return body.kind === 'agent' && body.content.agents.length > 0;
 }
 
 /** The record just read inside its own transaction; missing means the code is wrong, not the request. */
@@ -286,7 +488,6 @@ export class LibraryService {
           target: null,
           body,
           servers: facts.usableServers,
-          refuseShared: false,
         });
         return this.savedDetail(
           result,
@@ -318,7 +519,6 @@ export class LibraryService {
           target: { id, version: body.version },
           body,
           servers: facts.usableServers,
-          refuseShared: false,
         });
         return this.savedDetail(
           result,
@@ -394,7 +594,7 @@ export class LibraryService {
           await Promise.all([
             this.allowedModelIds(viewer.id),
             this.access.defaultChatModel(),
-            this.visibleAgents(this.db, viewer, refersToRecords(source.body)),
+            this.visibleAgentIds(this.db, viewer, refersToRecords(source.body)),
             recordNames(this.db, viewer.id),
             recordNames(this.db, null),
           ]);
@@ -405,7 +605,7 @@ export class LibraryService {
           usableServers: facts.usableServers,
           allowedModels,
           defaultModel,
-          visibleAgentIds: [...visible.keys()],
+          visibleAgentIds: visible,
           language,
           builtinKey: source.builtinKey,
         });
@@ -492,10 +692,11 @@ export class LibraryService {
 
   /**
    * The access rule of /api/library/:id/knowledge (self-learning KD-7, auth-boundary.md): open to the
-   * workflow's author and to an admin when the workflow is in the panel. Built on the two reads that
-   * do not throw, so the panel is asked after a failed visibility: a workflow neither visible nor in
+   * deep agent's author and to an admin when the deep agent is in the panel. Built on the two reads that
+   * do not throw, so the panel is asked after a failed visibility: a deep agent neither visible nor in
    * the admin's panel, missing, or an agent — 404 RECORD_NOT_FOUND; visible but not open — 403
-   * KNOWLEDGE_FORBIDDEN. Writes nothing.
+   * KNOWLEDGE_FORBIDDEN. The servers are those of the lesson tools: the deep agent's own and every
+   * subagent's (deep-agents KD-1). Writes nothing.
    */
   knowledgeTarget(
     actor: LibraryActor,
@@ -512,18 +713,15 @@ export class LibraryService {
           actor.isAdmin ? this.panelOne(this.db, recordId) : undefined,
         ]);
         const record = visible ?? inPanel;
-        if (record === undefined || record.body.kind !== 'workflow')
+        if (record === undefined || record.body.kind !== 'deep_agent')
           throw notFound();
         if (record.ownerId !== viewer.id && inPanel === undefined)
           throw libraryError('KNOWLEDGE_FORBIDDEN');
-        const { content } = record.body;
         return {
           recordId: record.id,
-          selfLearning: content.selfLearning,
+          selfLearning: record.body.content.selfLearning,
           servers: [
-            ...new Set(
-              content.executors.flatMap((executor) => executor.servers),
-            ),
+            ...new Set(contentParts(record.body).flatMap((part) => part.servers)),
           ],
         };
       },
@@ -598,7 +796,6 @@ export class LibraryService {
           target: null,
           body,
           servers: facts.registryServers,
-          refuseShared: false,
         });
         return this.savedDetail(result, author, actor.isAdmin, 'panel', facts);
       },
@@ -624,7 +821,6 @@ export class LibraryService {
           target: { id, version: body.version },
           body,
           servers: facts.registryServers,
-          refuseShared: false,
         });
         return this.savedDetail(result, author, actor.isAdmin, 'panel', facts);
       },
@@ -738,6 +934,257 @@ export class LibraryService {
     );
   }
 
+  // ---------- For the main chat (deep-agents KD-3) ----------
+
+  /**
+   * The facts a chat call is decided with, read outside any transaction: who the employee is now, the
+   * servers he may use (or the registry for an admin's system record) and the models he may choose. The
+   * save runs in the step's transaction, which must not wait on other reads (design-access.md KD-4).
+   */
+  async chatContext(
+    actor: LibraryActor,
+    servers: PanelServerFacts,
+  ): Promise<ChatContext> {
+    const [viewer, allowedModels, catalogueModels] = await Promise.all([
+      this.viewerOf(actor.id),
+      this.allowedModelIds(actor.id),
+      actor.isAdmin ? this.catalogueModelIds() : [],
+    ]);
+    return { actor, viewer, servers, allowedModels, catalogueModels };
+  }
+
+  /** `list_records`: the records the employee sees and, for an admin, the system records of the panel. */
+  chatRecords(context: ChatContext): Promise<ChatRecord[]> {
+    const { actor, viewer } = context;
+    return this.logged(
+      'chat_list',
+      { viewerId: actor.id },
+      async () => {
+        const [visible, system] = await Promise.all([
+          findVisibleRecords(this.db, viewer),
+          actor.isAdmin ? findPanelRecords(this.db, { list: 'system' }) : [],
+        ]);
+        const seen = new Set(visible.map((record) => record.id));
+        return [
+          ...visible,
+          ...system.filter((record) => !seen.has(record.id)),
+        ].map((record) => chatRecordOf(record, viewer.id));
+      },
+      (records) => ({ count: records.length }),
+    );
+  }
+
+  /** `read_record`: a record the chat may read, or `null` — missing or not seen, answered alike. */
+  chatRecord(
+    context: ChatContext,
+    recordId: string,
+  ): Promise<ChatRecord | null> {
+    return this.logged(
+      'chat_read',
+      { viewerId: context.actor.id, recordId },
+      async () => {
+        const record = await this.chatTarget(this.db, context, recordId);
+        return record === undefined
+          ? null
+          : chatRecordOf(record, context.viewer.id);
+      },
+      (record) =>
+        record === null ? { outcome: 'not_found' } : recordFields(record),
+    );
+  }
+
+  /**
+   * The check before the card (Flow 1): the rights to the record and the rules of its content, without a
+   * write. The card names the record — on create the id chosen now — and the version the employee sees.
+   */
+  reviewChatChange(
+    context: ChatContext,
+    change: ChatChange,
+  ): Promise<ChatReview> {
+    return this.logged(
+      'chat_review',
+      {
+        actorId: context.actor.id,
+        action: change.action,
+        recordId: change.action === 'create' ? null : change.recordId,
+      },
+      () => this.reviewed(context, change),
+      chatOutcomeFields,
+    );
+  }
+
+  /**
+   * The save of an approved card in the step's transaction (Invariant 3): the row is locked, the same
+   * checks run again on the version the card showed — another version is `version_conflict` — and the
+   * record's version and its audit event are written at a savepoint of the step's transaction. The
+   * self-learning flag is the stored one on an edit and off on a create (Invariant 4).
+   */
+  saveChatChange(
+    tx: RuntimeTx,
+    context: ChatContext,
+    card: LibraryRecordCard,
+  ): Promise<ChatSaveResult> {
+    return this.logged(
+      'chat_save',
+      {
+        actorId: context.actor.id,
+        action: card.action,
+        recordId: card.recordId,
+        fromVersion: card.previous?.version ?? null,
+      },
+      () => this.savedFromCard(tx, context, card),
+      chatOutcomeFields,
+    );
+  }
+
+  private async reviewed(
+    context: ChatContext,
+    change: ChatChange,
+  ): Promise<ChatReview> {
+    if (change.action === 'create') {
+      if (change.system && !context.actor.isAdmin)
+        return chatRefused('admin_only', SYSTEM_FIELD);
+      const next = {
+        ...change.record,
+        body: withSelfLearning(change.record.body, false),
+      };
+      const scope = change.system ? 'system' : 'employee';
+      const request = this.chatSaveRequest(context, scope, null, next);
+      const check = await this.checkSave(request, this.db);
+      if (check.outcome === 'refused') return chatRefusedBy(check, request);
+      return {
+        outcome: 'card',
+        card: libraryRecordCard({
+          action: 'create',
+          recordId: randomUUID(),
+          system: change.system,
+          next,
+          previous: null,
+        }),
+      };
+    }
+    const target = await this.chatTarget(this.db, context, change.recordId);
+    const scope = chatScope(target, context, change.action);
+    if (scope.outcome === 'refused') return scope;
+    const { record: previous } = scope;
+    const system = previous.ownerId === null;
+    if (change.action === 'delete')
+      return {
+        outcome: 'card',
+        card: libraryRecordCard({
+          action: 'delete',
+          recordId: previous.id,
+          system,
+          next: null,
+          previous,
+        }),
+      };
+    const next = {
+      ...change.record,
+      body: withSelfLearning(change.record.body, selfLearningOf(previous.body)),
+    };
+    const request = this.chatSaveRequest(context, scope.scope, previous, next);
+    const check = await this.checkSave(request, this.db);
+    if (check.outcome === 'refused') return chatRefusedBy(check, request);
+    return {
+      outcome: 'card',
+      card: libraryRecordCard({
+        action: 'edit',
+        recordId: previous.id,
+        system,
+        next,
+        previous,
+      }),
+    };
+  }
+
+  private async savedFromCard(
+    tx: RuntimeTx,
+    context: ChatContext,
+    card: LibraryRecordCard,
+  ): Promise<ChatSaveResult> {
+    const next = cardRecordOf(card);
+    if (card.action === 'create') {
+      if (next === null)
+        throw new Error(`create card of record ${card.recordId} has no record`);
+      if (card.system && !context.actor.isAdmin)
+        return chatRefused('admin_only', SYSTEM_FIELD);
+      const scope = card.system ? 'system' : 'employee';
+      const request = this.chatSaveRequest(context, scope, null, {
+        ...next,
+        body: withSelfLearning(next.body, false),
+      });
+      return chatSaved(
+        await this.save({ ...request, newId: card.recordId }, tx),
+        request,
+      );
+    }
+    if (card.previous === null)
+      throw new Error(
+        `${card.action} card of record ${card.recordId} has no previous version`,
+      );
+    if (!(await lockRecord(tx, card.recordId))) return chatRefused('not_found');
+    const target = await this.chatTarget(tx, context, card.recordId);
+    const scope = chatScope(target, context, card.action);
+    if (scope.outcome === 'refused') return scope;
+    const { record: current } = scope;
+    if (current.version !== card.previous.version)
+      return chatRefused('version_conflict');
+    if (card.action === 'delete') {
+      await this.deleteChecked(tx, context.actor.id, current);
+      return { outcome: 'saved', recordId: current.id, version: null };
+    }
+    if (next === null)
+      throw new Error(`edit card of record ${card.recordId} has no record`);
+    const request = this.chatSaveRequest(context, scope.scope, current, {
+      ...next,
+      body: withSelfLearning(next.body, selfLearningOf(current.body)),
+    });
+    return chatSaved(await this.save(request, tx), request);
+  }
+
+  /**
+   * The record a chat call names: one the employee sees, or for an admin a system record of the panel.
+   * Missing, not seen — another employee's private record among them — and an id that is not a UUID
+   * answer alike, so the chat learns nothing of a record it cannot see.
+   */
+  private async chatTarget(
+    executor: Executor,
+    context: ChatContext,
+    recordId: string,
+  ): Promise<LibraryRecord | undefined> {
+    if (!isUuid(recordId)) return undefined;
+    const visible = await this.visibleOne(executor, context.viewer, recordId);
+    if (visible !== undefined || !context.actor.isAdmin) return visible;
+    const inPanel = await this.panelOne(executor, recordId);
+    return inPanel?.ownerId === null ? inPanel : undefined;
+  }
+
+  /** The save request of a chat change: the employee's choices, or the panel's for an admin's system record. */
+  private chatSaveRequest(
+    context: ChatContext,
+    scope: SaveScope,
+    previous: LibraryRecord | null,
+    record: ChatRecordInput,
+  ): SaveRequest {
+    return {
+      scope,
+      author: context.viewer,
+      target: previous && { id: previous.id, version: previous.version },
+      body: {
+        name: record.name,
+        description: record.description,
+        ...record.body,
+      },
+      servers:
+        scope === 'employee'
+          ? context.servers.usableServers
+          : context.servers.registryServers,
+      models:
+        scope === 'employee' ? context.allowedModels : context.catalogueModels,
+    };
+  }
+
   // ---------- For the runtime part ----------
 
   /** The record to start, as the viewer sees it; `null` for an invisible, deleted or missing one. */
@@ -794,66 +1241,11 @@ export class LibraryService {
     );
   }
 
-  /**
-   * Creates or edits the caller's personal record for the chat's creation tool (`runtime` FR-18) by
-   * the path of POST and PUT /api/library, and refuses a record with holders (`shared`, AC-18.5).
-   * `executor` is the caller's transaction when the save must commit with the caller's own writes
-   * (the draft's resolution); the record and its audit event are then written in a savepoint of it.
-   */
-  saveOwn(
-    ownerId: string,
-    input: OwnRecordInput,
-    usableServers: readonly string[],
-    executor: Executor = this.db,
-  ): Promise<SaveOwnResult> {
-    return this.logged(
-      'save_own',
-      { actorId: ownerId, recordId: input.target?.id ?? null },
-      async (): Promise<SaveOwnResult> => {
-        const parsed = CreateRecordBodySchema.safeParse({
-          kind: input.kind,
-          name: input.name,
-          description: input.description,
-          content: input.content,
-        });
-        if (!parsed.success) return { outcome: 'refused', reason: 'invalid' };
-        const author = await this.viewerOf(ownerId);
-        const result = await this.save(
-          {
-            scope: 'employee',
-            author,
-            target: input.target,
-            body: parsed.data,
-            servers: usableServers,
-            refuseShared: true,
-          },
-          executor,
-        );
-        if (result.outcome === 'refused')
-          return { outcome: 'refused', reason: result.refusal };
-        const record = await this.detail(
-          result.record,
-          author,
-          false,
-          'employee',
-          {
-            usableServers,
-          },
-        );
-        return { outcome: 'saved', record };
-      },
-      (result) =>
-        result.outcome === 'saved'
-          ? recordFields(result.record)
-          : { outcome: 'refused', reason: result.reason },
-    );
-  }
-
   // ---------- Save ----------
 
   /**
-   * The one save path of POST and PUT (employee and panel) and of `saveOwn` (Flow 1): visibility → the
-   * right to change → the rule → the versioned write and its audit event in one transaction. A refusal
+   * The one save path of POST and PUT (employee and panel) and of the chat's save (Flow 1): visibility →
+   * the right to change → the rule → the versioned write and its audit event in one transaction. A refusal
    * writes nothing. On the plain client the write opens its own transaction; on the caller's
    * transaction it is a savepoint, so a `name_taken` from the database rolls back only the save and
    * the caller's transaction goes on.
@@ -862,37 +1254,9 @@ export class LibraryService {
     request: SaveRequest,
     executor: Executor = this.db,
   ): Promise<SaveResult> {
-    // A disabled author sees no record, so whatever was written could not be read back (KD-2).
-    if (!request.author.active)
-      return { outcome: 'refused', refusal: 'not_found' };
-    let previous: LibraryRecord | null = null;
-    if (request.target !== null) {
-      const { id } = request.target;
-      const record = isUuid(id)
-        ? await this.readOne(executor, request.scope, request.author, id)
-        : undefined;
-      if (record === undefined)
-        return { outcome: 'refused', refusal: 'not_found' };
-      const owner = request.scope === 'employee' ? request.author.id : null;
-      if (record.ownerId !== owner)
-        return { outcome: 'refused', refusal: 'read_only' };
-      // Answered before the other refusals; `updateSaved` checks it again under the row lock.
-      if (request.refuseShared && hasHolders(record))
-        return { outcome: 'refused', refusal: 'shared' };
-      if (record.body.kind !== request.body.kind)
-        return { outcome: 'refused', refusal: 'invalid' };
-      previous = record;
-    }
-    const decision = decideSave(
-      await this.saveInput(executor, request, previous),
-    );
-    if (decision.kind === 'name_taken')
-      return {
-        outcome: 'refused',
-        refusal: decision.reason === 'own' ? 'name_taken' : 'system_name',
-      };
-    if (decision.kind === 'refused')
-      return { outcome: 'refused', refusal: decision.reason };
+    const check = await this.checkSave(request, executor);
+    if (check.outcome === 'refused') return check;
+    const { previous } = check;
     const write = (tx: RuntimeTx): Promise<LibraryRecord> =>
       previous === null
         ? this.insertSaved(tx, request)
@@ -907,6 +1271,47 @@ export class LibraryService {
     }
   }
 
+  /** The checks of {@link save} before its write; writes nothing, so the chat asks it before the card. */
+  private async checkSave(
+    request: SaveRequest,
+    executor: Executor,
+  ): Promise<SaveCheck> {
+    // A disabled author sees no record, so whatever was written could not be read back (KD-2).
+    if (!request.author.active)
+      return { outcome: 'refused', refusal: 'not_found' };
+    let previous: LibraryRecord | null = null;
+    if (request.target !== null) {
+      const { id } = request.target;
+      const record = isUuid(id)
+        ? await this.readOne(executor, request.scope, request.author, id)
+        : undefined;
+      if (record === undefined)
+        return { outcome: 'refused', refusal: 'not_found' };
+      const owner = request.scope === 'employee' ? request.author.id : null;
+      if (record.ownerId !== owner)
+        return { outcome: 'refused', refusal: 'read_only' };
+      if (record.body.kind !== request.body.kind)
+        return { outcome: 'refused', refusal: 'invalid' };
+      previous = record;
+    }
+    const decision = decideSave(
+      await this.saveInput(executor, request, previous),
+    );
+    if (decision.kind === 'name_taken')
+      return {
+        outcome: 'refused',
+        refusal: decision.reason === 'own' ? 'name_taken' : 'system_name',
+        field: { path: decision.path, values: decision.values },
+      };
+    if (decision.kind === 'refused')
+      return {
+        outcome: 'refused',
+        refusal: decision.reason,
+        field: { path: decision.path, values: decision.values },
+      };
+    return { outcome: 'allowed', previous };
+  }
+
   /** The input of the save rule: other records' names, the author's choices, the agents he sees. */
   private async saveInput(
     executor: Executor,
@@ -915,15 +1320,15 @@ export class LibraryService {
   ): Promise<SaveInput> {
     const { scope, author, body } = request;
     const exceptId = previous?.id;
-    const [ownNames, systemNames, visible, models] = await Promise.all([
+    const [ownNames, systemNames, visibleAgentIds, models] = await Promise.all([
       scope === 'employee' ? recordNames(executor, author.id, exceptId) : [],
       recordNames(executor, null, scope === 'system' ? exceptId : undefined),
-      this.visibleAgents(executor, author, refersToRecords(body)),
-      scope === 'employee'
-        ? this.allowedModelIds(author.id)
-        : this.catalogueModelIds(),
+      this.visibleAgentIds(executor, author, refersToRecords(body)),
+      request.models ??
+        (scope === 'employee'
+          ? this.allowedModelIds(author.id)
+          : this.catalogueModelIds()),
     ]);
-    const visibleAgentIds = [...visible.keys()];
     const choices: SaveChoices =
       scope === 'employee'
         ? {
@@ -953,6 +1358,7 @@ export class LibraryService {
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
     const inserted = await insertRecord(tx, {
+      ...(request.newId === undefined ? {} : { id: request.newId }),
       ownerId: scope === 'employee' ? author.id : null,
       name: body.name,
       description: body.description,
@@ -969,9 +1375,7 @@ export class LibraryService {
   }
 
   /**
-   * `name_taken` aborts the transaction, so it is thrown and the transaction rolled back. The `shared`
-   * refusal is checked again here: an audience change keeps the version and locks the row, so the
-   * holders read after this update are those of the record being saved (AC-18.5).
+   * `name_taken` aborts the transaction, so it is thrown and the transaction rolled back.
    */
   private async updateSaved(
     tx: RuntimeTx,
@@ -993,8 +1397,6 @@ export class LibraryService {
         current === undefined ? 'not_found' : 'version_conflict',
       );
     const record = present(current, previous.id);
-    if (request.refuseShared && hasHolders(record))
-      throw new SaveRefused('shared');
     await this.audit(tx, author.id, 'library_update', previous, record);
     return record;
   }
@@ -1044,26 +1446,18 @@ export class LibraryService {
     scope: ViewScope,
     facts: ServerFacts,
   ): Promise<RecordDetail> {
-    const [context, versions] = await Promise.all([
-      this.contextOf(viewer, isAdmin, scope, facts),
-      this.visibleAgents(this.db, viewer, refersToRecords(record.body)),
-    ]);
-    return recordDetail(record, context, versions);
+    return recordDetail(record, await this.contextOf(viewer, isAdmin, scope, facts));
   }
 
-  /** Agent records the viewer sees, id → version; read only when the content names records. */
-  private async visibleAgents(
+  /** Ids of the agent records the viewer sees; read only when the content names records. */
+  private async visibleAgentIds(
     executor: Executor,
     viewer: Viewer,
     needed: boolean,
-  ): Promise<VisibleVersions> {
-    if (!needed) return new Map();
+  ): Promise<string[]> {
+    if (!needed) return [];
     const records = await findVisibleRecords(executor, viewer);
-    return new Map(
-      records
-        .filter((record) => record.body.kind === 'agent')
-        .map((record) => [record.id, record.version]),
-    );
+    return records.filter((record) => record.body.kind === 'agent').map((record) => record.id);
   }
 
   private async resolveBy(

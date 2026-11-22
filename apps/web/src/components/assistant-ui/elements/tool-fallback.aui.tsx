@@ -19,7 +19,6 @@ import {
 import { useAuiState, type ToolCallMessagePartComponent } from "@assistant-ui/react";
 import {
   IdSchema,
-  RecordKindSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
@@ -35,9 +34,9 @@ import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
 import { isRunCode, NO_RUN_VALUE, runCodeView } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
-import type { ToolCallArtifact } from "@/lib/feed/to-feed";
+import { isRecordTool, RECORD_CHANGE_TOOLS, type RecordTool, type ToolCallArtifact } from "@/lib/feed/to-feed";
 import { toolCallLabels } from "@/lib/i18n/builtin-name";
-import type { ChatTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
+import type { AgentsTranslator, ChatTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
@@ -138,24 +137,23 @@ function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
   return { content: text ?? t("platformRefusal") };
 }
 
-/** The library's create and start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
-const LIBRARY_TOOLS = new Set(["start_agent", "start_workflow", "draft_record"]);
+/** The library's start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
+const LIBRARY_TOOLS = new Set(["start_agent", "start_deep_agent"]);
 
 /**
  * The record a library call names and its kind: `agent` of `start_agent` (only a record id — not a fork
- * or an executor's name), `workflow` of `start_workflow`, `recordId` and `kind` of `draft_record`.
+ * or a subagent's name), `deepAgent` of `start_deep_agent`.
  */
-function libraryCallOf(toolName: string, args: unknown): { recordId: string | null; kind: RecordKind | null } {
+function libraryCallOf(toolName: string, args: unknown): { recordId: string | null; kind: RecordKind } {
   const arg = (key: string): unknown =>
     typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
   const id = (value: unknown): string | null => {
     const parsed = IdSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   };
-  if (toolName === "start_agent") return { recordId: id(arg("agent")), kind: "agent" };
-  if (toolName === "start_workflow") return { recordId: id(arg("workflow")), kind: "workflow" };
-  const kind = RecordKindSchema.safeParse(arg("kind"));
-  return { recordId: id(arg("recordId")), kind: kind.success ? kind.data : null };
+  return toolName === "start_agent"
+    ? { recordId: id(arg("agent")), kind: "agent" }
+    : { recordId: id(arg("deepAgent")), kind: "deep_agent" };
 }
 
 function ReasonParagraph({ content }: ReasonLine) {
@@ -169,9 +167,9 @@ function ReasonParagraph({ content }: ReasonLine) {
 const LINK_CLASS = "text-foreground underline underline-offset-2";
 
 /**
- * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» or «Открыть в редакторе» to the
- * record's page; a refusal without a library text (`model_not_connected`, `read_only` on a colleague's
- * record, `invalid_arguments`) keeps the general line. Whose the record is comes from the library list.
+ * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» to the record's page; a refusal
+ * without a library text (`model_not_connected`, `invalid_arguments`) keeps the general line. Whose the record
+ * is comes from the library list.
  */
 function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; args: unknown; artifact: unknown }) {
   const t = useTranslations("errors");
@@ -180,11 +178,10 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
   const live = useLiveRecord(call.recordId ?? "");
   const refusal: RefusalText | null = describeRefusal(t, refusalReasonOf(artifact), {
     tool: toolName,
-    kind: call.kind ?? live?.kind ?? "agent",
+    kind: call.kind,
     model: refusedModel(artifact),
     recordId: call.recordId,
     own: live?.mine === true,
-    company: live != null && live.author === null,
   });
   if (refusal === null) return <ReasonParagraph {...refusalOf(t, artifact)} />;
   const { action } = refusal;
@@ -208,16 +205,41 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
 }
 
 /**
+ * MC-23: a record tool's block names its record — «Чтение «{имя}»», «Создание «{имя}»» — by the name the feed
+ * knows, else by the live library list; a record known by neither reads by the catalogue's title.
+ */
+function useRecordToolTitle(toolName: RecordTool, args: unknown, artifact: unknown): string | null {
+  const t = useTranslations("agents.recordTool");
+  const recordId = IdSchema.safeParse(
+    typeof args === "object" && args !== null ? Reflect.get(args, "recordId") : undefined,
+  );
+  // No list holds an empty id: a call without a record reads as one the list does not hold.
+  const live = useLiveRecord(recordId.success ? recordId.data : "");
+  if (toolName === "list_records") return t("list_records");
+  const name = textField(artifact, "recordName") ?? live?.name ?? null;
+  return name === null ? null : t(toolName, { name });
+}
+
+/** A record tool's block: the library list is read only here, so other blocks never subscribe to it. */
+function RecordToolBlock(props: ToolBlockProps & { toolName: RecordTool }) {
+  const title = useRecordToolTitle(props.toolName, props.args, props.artifact);
+  return <ToolBlock {...props} title={title} />;
+}
+
+/**
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
  * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
+ * A record tool that changes a record reads its refusal as «Не сохранено:» and the platform's text as is (KD-4).
  */
 function reasonLine(
   t: ErrorsTranslator,
   tChat: ChatTranslator,
-  outcome: CallOutcome,
-  artifact: unknown,
-  server: string,
+  tAgents: AgentsTranslator,
+  { outcome, artifact, server, toolName, result }: { outcome: CallOutcome; artifact: unknown; server: string; toolName: string; result: unknown },
 ): ReasonLine | null {
+  if (outcome === "refused" && RECORD_CHANGE_TOOLS.has(toolName) && typeof result === "string" && result !== "") {
+    return { content: tAgents("recordCard.notSaved", { reason: result }) };
+  }
   if (outcome === "refused") return refusalOf(t, artifact);
   if (outcome === "auth_required") {
     return {
@@ -253,11 +275,27 @@ function parsedResult(result: unknown): unknown {
  * not taken here — DecisionCard does that (KD-5).
  */
 const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsText, result, artifact }) => {
+  const props = { toolName, args, argsText, result, artifact };
+  return isRecordTool(toolName) ? <RecordToolBlock {...props} toolName={toolName} /> : <ToolBlock {...props} />;
+};
+
+type ToolBlockProps = {
+  toolName: string;
+  args: unknown;
+  argsText: string;
+  result: unknown;
+  artifact: unknown;
+  /** The block's own title (a record tool's, MC-23); the catalogue's or the server's when absent or null. */
+  title?: string | null;
+};
+
+function ToolBlock({ toolName, args, argsText, result, artifact, title }: ToolBlockProps) {
   const [open, setOpen] = useState(false);
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
   const t = useTranslations("errors");
   const tChat = useTranslations("chat");
+  const tAgents = useTranslations("agents");
   const { tools } = useMessages();
 
   const outcome = outcomeOf(artifact);
@@ -266,12 +304,13 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const server = textField(artifact, "server");
   const toolTitle = server === null ? null : textField(artifact, "toolTitle");
   const sentLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
-  const { title: toolLabel, args: labels } = toolCallLabels(tools, {
+  const { title: catalogueTitle, args: labels } = toolCallLabels(tools, {
     tool: toolName,
     server,
     toolTitle,
     argLabels: sentLabels.success ? sentLabels.data : undefined,
   });
+  const toolLabel = title ?? catalogueTitle;
   const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
   /**
    * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a
@@ -284,7 +323,9 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const time = formatListTime(format, at);
   // The library line reads the library list from the shell, so other blocks never mount it.
   const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
-  const reason = libraryRefusal ? null : reasonLine(t, tChat, outcome, artifact, server ?? toolName);
+  const reason = libraryRefusal
+    ? null
+    : reasonLine(t, tChat, tAgents, { outcome, artifact, server: server ?? toolName, toolName, result });
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =
@@ -375,7 +416,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
       </CollapsibleContent>
     </Collapsible>
   );
-};
+}
 
 export const ToolFallback = memo(ToolFallbackImpl);
 ToolFallback.displayName = "ToolFallback";

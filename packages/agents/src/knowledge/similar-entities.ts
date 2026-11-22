@@ -101,8 +101,8 @@ const CHOOSE_ENTITIES_RULE =
   'below, call choose_entities with its ref and the id e… of the candidate that is the same thing, or null ' +
   'if none is: then it stays a new entity. Choose only among the candidates listed for that entity.';
 
-/** Who the enveloped candidates come from: the workflow's graph and the model's own proposal. */
-const SIMILAR_ENTITIES_AUTHOR = 'knowledge graph of this workflow';
+/** Who the enveloped candidates come from: the deep agent's graph and the model's own proposal. */
+const SIMILAR_ENTITIES_AUTHOR = 'knowledge graph of this deep agent';
 
 /**
  * What the model sees in the `choose_entities` call: each new entity with its ref, name and description,

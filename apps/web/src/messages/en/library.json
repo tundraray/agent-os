@@ -1,5 +1,5 @@
 {
-  "kind": "{kind, select, agent {agent} other {workflow}}",
+  "kind": "{kind, select, agent {agent} other {deep agent}}",
   "cancel": "Cancel",
   "retry": "Retry",
   "open": "Open",
@@ -7,11 +7,8 @@
     "title": "Library",
     "createInChat": "Create in chat",
     "fillForm": "Fill in a form",
-    "agent": "Agent",
-    "workflow": "Workflow",
     "create": "Create",
     "agentForm": "Agent form",
-    "workflowForm": "Workflow form",
     "template": "Make an agent that ",
     "mine": "Mine",
     "colleagues": "From colleagues",
@@ -33,12 +30,12 @@
     "delete": "Delete",
     "openInPanel": "Open in admin panel",
     "readOnly": "Read-only — to use it, copy it to yourself",
-    "systems": "{count, plural, =1 {{names} isn't available to you — the {kind, select, agent {agent} other {workflow}} will run without it} other {{names}{rest, plural, =0 {} other { and # more}} aren't available to you — the {kind, select, agent {agent} other {workflow}} will run without them}}",
-    "modelUnavailable": "The {model} model isn't available to you — the {kind, select, agent {agent} other {workflow}} won't run for you"
+    "systems": "{count, plural, =1 {{names} isn't available to you — the {kind, select, agent {agent} other {deep agent}} will run without it} other {{names}{rest, plural, =0 {} other { and # more}} aren't available to you — the {kind, select, agent {agent} other {deep agent}} will run without them}}",
+    "modelUnavailable": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you"
   },
   "ban": "An administrator closed access · {date} — sharing isn't allowed",
   "droppedServers": "Systems you have no access to weren't included: {servers}",
-  "executorLine": "{executor}: {text}",
+  "subagentLine": "{subagent}: {text}",
   "fields": {
     "name": "Name",
     "description": "Description",
@@ -47,30 +44,21 @@
     "model": "Model",
     "maxTurns": "Maximum steps",
     "agents": "Can start",
-    "rules": "How the team works",
-    "finalExecutor": "Who writes the answer",
-    "selfLearning": "Self-learning",
-    "coordinatorModel": "Coordinator model",
-    "coordinatorMaxTurns": "Coordinator maximum steps",
-    "executor": "Executor “{name}”"
+    "selfLearning": "Self-learning"
   },
-  "task": {
-    "title": "Task",
-    "titleNamed": "Task · {name}"
+  "brief": {
+    "title": "Brief",
+    "titleNamed": "Brief · {name}"
   },
   "editor": {
-    "newTitle": "{kind, select, agent {New agent} other {New workflow}}",
-    "created": "{kind, select, agent {Agent created} other {Workflow created}}",
+    "newTitle": "{kind, select, agent {New agent} other {New deep agent}}",
+    "created": "{kind, select, agent {Agent created} other {Deep agent created}}",
     "discarded": "Changes discarded",
     "restore": "Undo",
-    "usedIn": "“{name}” is in your workflows: {workflows}",
-    "updateThere": "Update there",
-    "updated": "Updated: {workflows}",
-    "notUpdated": "Couldn't update: {workflows}",
-    "onlyAdmins": "Only administrators can see the {kind, select, agent {agent} other {workflow}} for now",
+    "onlyAdmins": "Only administrators can see the {kind, select, agent {agent} other {deep agent}} for now",
     "share": "Share",
-    "everyoneGets": "All employees see the {kind, select, agent {agent} other {workflow}} — new runs will use the new version",
-    "launchHint": "To run it, press “Use in chat” or name the {kind, select, agent {agent} other {workflow}} in chat.",
+    "everyoneGets": "All employees see the {kind, select, agent {agent} other {deep agent}} — new runs will use the new version",
+    "launchHint": "To run it, press “Use in chat” or name the {kind, select, agent {agent} other {deep agent}} in chat.",
     "header": {
       "audience": "Who can see it: {who}",
       "everyone": "all employees",
@@ -88,7 +76,6 @@
       "save": "Save",
       "discard": "Discard changes",
       "discardShort": "Discard",
-      "backToChat": "Back to chat",
       "saveMine": "Save my changes",
       "takeSaved": "Take the saved version"
     }
@@ -119,90 +106,43 @@
     }
   },
   "team": {
-    "title": "Team · {count}",
-    "label": "Team",
-    "hint": "The coordinator decides whom to call and when from the team's lines.",
-    "listLabel": "Team, the coordinator decides whom to call and when",
+    "title": "Subagents · {count}",
+    "hint": "the agent decides whom to call and when",
+    "listLabel": "Subagents, the agent decides whom to call and when",
     "final": "writes the answer",
     "noServers": "no systems",
     "allServers": "all systems",
     "maxRuns": "How many times it can be called",
     "upTo": "{count, plural, one {up to # time} other {up to # times}}",
-    "removed": "Removed: {names}",
     "details": "Details"
   },
-  "workflowFields": {
-    "descriptionHint": "The chat decides when to call the workflow from its description.",
-    "task": "The workflow gets only the task you confirm before the run: the question, scope and result. It doesn't see the chat.",
-    "startInChat": "It's easier to start in chat: describe what the workflow should do, and the chat will put the team together.",
-    "describeInChat": "Describe in chat",
-    "template": "Make a workflow that ",
-    "add": "Add",
-    "fromLibrary": "From the library…",
-    "emptyTitle": "No team yet",
-    "emptyText": "Add executors and write for each what it's responsible for and when to call it. You can take your own agent from the library.",
-    "optional": "optional",
-    "rulesHint": "If the order matters or who waits for whom, write it here. The coordinator decides the rest from the team's lines.",
-    "rulesPlaceholder": "For example: “Answer” writes the summary once “Log collection” and “Ticket collection” are back.",
-    "notInTeam": "There's no “{name}” in the team",
-    "notMentioned": "“{name}” isn't mentioned in the rules — the coordinator will call it by its team line",
-    "oldName": "The rules still have the old name “{name}”",
-    "replaceInRules": "Replace in the rules",
-    "coordinator": "The coordinator itself",
-    "finalHint": "This executor's report becomes the workflow's answer.",
-    "finalRemoved": "{name} was removed from the team — the coordinator writes the answer",
-    "advanced": "More: coordinator model and maximum steps",
-    "checks": {
-      "addOne": "Add at least one executor",
-      "enterRole": "Write what the executor is responsible for and when to call it",
-      "enterPromptInPanel": "Enter instructions — open the executor",
-      "nameTaken": "The team already has this name"
-    }
-  },
-  "executor": {
-    "new": "New executor",
-    "role": "What it's responsible for and when to call it",
-    "rolePlaceholder": "For example: collects Sentry errors for the period in the task",
-    "updated": "The “{source}” agent was updated in the library",
-    "takeNewVersion": "Take the new version",
-    "gone": "The “{source}” agent was deleted or closed to you — it can't be updated",
-    "edit": "Edit",
-    "remove": "Remove from the team",
-    "editName": "{name}, edit",
-    "done": "Done",
-    "advanced": "More: model, maximum steps, how many times it can be called"
-  },
-  "picker": {
-    "title": "Add from the library",
-    "find": "Find an agent",
-    "noAgents": "No agents in the library"
-  },
   "definition": {
-    "recipient": "The author is {author}.{roleCount, plural, =0 {} one { The {kind, select, agent {agent} other {workflow}} is open to your role {roles}.} other { The {kind, select, agent {agent} other {workflow}} is open to your roles {roles}.}} It works with your permissions and connected accounts. Changes in systems happen only after you confirm them. The author or an administrator can remove the {kind, select, agent {agent} other {workflow}}.",
-    "changed": "changed",
-    "selfLearning": "{state, select, on {on} other {off}}",
-    "coordinator": "Coordinator",
-    "coordinatorSummary": "{model} · {maxTurns, plural, one {up to # step} other {up to # steps}}",
+    "recipient": "The author is {author}.{roleCount, plural, =0 {} one { The {kind, select, agent {agent} other {deep agent}} is open to your role {roles}.} other { The {kind, select, agent {agent} other {deep agent}} is open to your roles {roles}.}} It works with your permissions and connected accounts. Changes in systems happen only after you confirm them. The author or an administrator can remove the {kind, select, agent {agent} other {deep agent}}.",
+    "brief": "The deep agent gets only the brief you approve before the run: the question, scope and result. It doesn't see the chat.",
+    "deepAgent": "Agent",
+    "deepAgentSummary": "{model} · {maxTurns, plural, one {up to # step} other {up to # steps}}",
+    "finalSubagent": "Who writes the answer",
+    "agentItself": "The agent itself",
     "expand": "Show all",
     "collapse": "Collapse"
   },
   "recordPage": {
-    "colleagueHint": "Or name the {kind, select, agent {agent} other {workflow}} in chat — the chat will start it itself.",
-    "ownNamesake": "You have your own {kind, select, agent {agent} other {workflow}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
+    "colleagueHint": "Or name the {kind, select, agent {agent} other {deep agent}} in chat — the chat will start it itself.",
+    "ownNamesake": "You have your own {kind, select, agent {agent} other {deep agent}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
     "severalNamesakes": "Several have this name: name it in chat and the chat will choose by description. To start this one, press “Use in chat”.",
-    "readOnly": "The author opened the {kind, select, agent {agent} other {workflow}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
-    "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {workflow}} won't run for you. The copy gets your model.",
-    "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {workflow}} nor its copy will run."
+    "readOnly": "The author opened the {kind, select, agent {agent} other {deep agent}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
+    "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you. The copy gets your model.",
+    "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {deep agent}} nor its copy will run."
   },
   "label": {
     "mine": "yours",
     "company": "from the company",
     "onlyYou": "only you",
-    "unavailable": "{kind, select, agent {agent} other {workflow}} unavailable",
+    "unavailable": "{kind, select, agent {agent} other {deep agent}} unavailable",
     "version": "· version {version}",
     "remove": "Remove: {name}",
     "spoken": {
-      "mine": "{kind, select, agent {your agent} other {your workflow}}",
+      "mine": "{kind, select, agent {your agent} other {your deep agent}}",
       "author": "author {name}",
       "version": "version {version}"
     }
@@ -219,11 +159,11 @@
   },
   "delete": {
     "title": "Delete “{name}”?",
-    "everyone": "The {kind, select, agent {agent} other {workflow}} will disappear for everyone it's open to. Runs already in progress will finish.",
-    "onlyYou": "The {kind, select, agent {agent} other {workflow}} will be deleted for good. Runs already in progress will finish.",
-    "roles": "The {kind, select, agent {agent} other {workflow}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.",
+    "everyone": "The {kind, select, agent {agent} other {deep agent}} will disappear for everyone it's open to. Runs already in progress will finish.",
+    "onlyYou": "The {kind, select, agent {agent} other {deep agent}} will be deleted for good. Runs already in progress will finish.",
+    "roles": "The {kind, select, agent {agent} other {deep agent}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.",
     "confirm": "Delete",
-    "deleted": "{kind, select, agent {Agent} other {Workflow}} deleted"
+    "deleted": "{kind, select, agent {Agent} other {Deep agent}} deleted"
   },
   "share": {
     "title": "Share “{name}”",
@@ -232,9 +172,9 @@
     "leftRole": "you're no longer in this role",
     "employeeDelivery": "How colleagues get “{name}”",
     "adminDelivery": "How employees get “{name}”",
-    "offer": "Their chat suggests and starts the {kind, select, agent {agent} other {workflow}}",
+    "offer": "Their chat suggests and starts the {kind, select, agent {agent} other {deep agent}}",
     "libraryOnly": "Only in the library — to read and copy",
-    "consequence": "Colleagues will see that the {kind, select, agent {agent} other {workflow}} is from you, and it will run with their permissions.",
+    "consequence": "Colleagues will see that the {kind, select, agent {agent} other {deep agent}} is from you, and it will run with their permissions.",
     "everyone": "All employees",
     "selected": "Selected roles and employees",
     "search": "Find a role or employee",
@@ -253,10 +193,15 @@
     "hint": "Runs remember where they found what, and every later run gets it — whoever starts it, even without access to those systems.",
     "kept": "The knowledge is kept: turn it back on and runs continue from it."
   },
+  "card": {
+    "refineHint": "To change it, press “Refine in chat”.",
+    "refineUnavailable": "The chat changes only what only you can see. Close access in “Who can see” first.",
+    "saveFailed": "Couldn't save. Try again."
+  },
   "knowledge": {
-    "entry": "What the workflow learned",
+    "entry": "What the deep agent learned",
     "title": "What “{name}” learned",
-    "openWorkflow": "Open workflow",
+    "openDeepAgent": "Open deep agent",
     "columns": {
       "record": "Record",
       "kind": "Type",
@@ -267,10 +212,10 @@
     "loading": "Loading knowledge…",
     "loadFailed": "Couldn't load the knowledge",
     "empty": {
-      "nothingTitle": "The workflow hasn't learned anything yet",
+      "nothingTitle": "The deep agent hasn't learned anything yet",
       "nothingText": "Knowledge appears after the first finished run. Stopped runs don't teach.",
       "offTitle": "Self-learning is off",
-      "offText": "{audience, select, panel {The author can turn it on.} other {Turn it on in the workflow editor — runs will start remembering where they found what.}}"
+      "offText": "{audience, select, panel {The author can turn it on.} other {Turn it on on the deep agent's page — runs will start remembering where they found what.}}"
     },
     "lines": {
       "scopeAll": "Runs get {active, plural, one {# record} other {all # records}} · knowledge takes {percent}% of the space",
@@ -332,9 +277,9 @@
     "deleteDialog": {
       "recordTitle": "Delete the record?",
       "entityTitle": "Delete “{text}”?",
-      "record": "“{text}”. Later steps of runs won't get it. This can't be undone — the workflow may learn it again.",
-      "entity": "Later steps of runs won't get it. This can't be undone — the workflow may learn it again.",
-      "entityWithRelations": "Its relations are deleted with it: {relations}. Later steps of runs won't get them. This can't be undone — the workflow may learn it again."
+      "record": "“{text}”. Later steps of runs won't get it. This can't be undone — the deep agent may learn it again.",
+      "entity": "Later steps of runs won't get it. This can't be undone — the deep agent may learn it again.",
+      "entityWithRelations": "Its relations are deleted with it: {relations}. Later steps of runs won't get them. This can't be undone — the deep agent may learn it again."
     },
     "deleted": "{relations, plural, =0 {Deleted} other {Deleted with relations: {relations}}}"
   }

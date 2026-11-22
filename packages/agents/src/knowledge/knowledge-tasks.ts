@@ -9,16 +9,16 @@ import { z } from 'zod';
 export const KNOWLEDGE_EXTRACT_TASK_TYPE = 'knowledge.extract';
 export const KNOWLEDGE_EMBED_TASK_TYPE = 'knowledge.embed';
 
-/** Input of `knowledge.extract`: the coordinator task of the run and the root of its conversation. */
+/** Input of `knowledge.extract`: the deep agent task of the run and the root of its conversation. */
 export const KnowledgeExtractInputSchema = z.object({ runId: z.uuid(), rootId: z.uuid() });
 export type KnowledgeExtractInput = z.infer<typeof KnowledgeExtractInputSchema>;
 
-/** Input of `knowledge.embed`: the workflow record whose graph gets vectors. */
+/** Input of `knowledge.embed`: the deep agent record whose graph gets vectors. */
 export const KnowledgeEmbedInputSchema = z.object({ recordId: z.uuid() });
 export type KnowledgeEmbedInput = z.infer<typeof KnowledgeEmbedInputSchema>;
 
 /**
- * The request of a vector pass of the workflow. The pass belongs to the platform; who pays is the
+ * The request of a vector pass of the deep agent. The pass belongs to the platform; who pays is the
  * vector row's `payer_id`, decided per embed call (KD-8).
  */
 export function embedPassRequest(recordId: string): Parameters<Runtime['tasks']['create']>[0] {
@@ -26,7 +26,7 @@ export function embedPassRequest(recordId: string): Parameters<Runtime['tasks'][
   return { type: KNOWLEDGE_EMBED_TASK_TYPE, ownerId: PLATFORM_OWNER_ID, input };
 }
 
-/** SQLSTATE foreign_key_violation: the workflow record was deleted meanwhile (DC-8). */
+/** SQLSTATE foreign_key_violation: the deep agent record was deleted meanwhile (DC-8). */
 const FOREIGN_KEY_VIOLATION = '23503';
 
 /** Whether the error, or a cause of it (drizzle wraps the driver's error), is a foreign key violation. */

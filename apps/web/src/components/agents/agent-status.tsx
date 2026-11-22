@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { AgentStatus as AgentStatusValue } from "@agent-os/contracts";
+import type { AgentStatus as AgentStatusValue, RunTaskStatus } from "@agent-os/contracts";
 import { useFormatter, useTranslations } from "next-intl";
 import {
   CircleCheckIcon,
+  CircleIcon,
   CircleDashedIcon,
   CirclePauseIcon,
   CircleStopIcon,
@@ -32,6 +33,15 @@ const STATUS_LOOK: Record<AgentStatusValue, StatusLook> = {
   completed: { Icon: CircleCheckIcon, tone: "text-success" },
   failed: { Icon: CircleXIcon, tone: "text-destructive" },
   stopped: { Icon: CircleStopIcon, tone: "text-muted-foreground" },
+};
+
+/** Task statuses take the agent statuses' icons and colours (agent-status.md, «Статусы задачи»); MC-11 labels — `agents.taskStatus.{status}`. */
+const TASK_STATUS_LOOK: Record<RunTaskStatus, StatusLook> = {
+  waiting: { Icon: CircleIcon, tone: "text-muted-foreground" },
+  running: STATUS_LOOK.working,
+  done: STATUS_LOOK.completed,
+  failed: STATUS_LOOK.failed,
+  cancelled: STATUS_LOOK.stopped,
 };
 
 /** The icon and colour role of a status, for blocks that show the same state (a running or waiting tool call). */
@@ -103,23 +113,84 @@ export type AgentStatusProps =
     });
 
 /**
- * The agent status of agent-status.md: «Метка» (icon and label), «Иконка» (icon only, label as the
- * accessible name and a delayed hint) and «Строка события» (icon, event text and time). A status change
- * never changes a variant's height, so it never moves its neighbours; only a long event text wraps.
+ * The agent status of agent-status.md: «Метка», «Иконка» and «Строка события» (icon, event text and time);
+ * only a long event text wraps.
  */
 export function AgentStatus(props: AgentStatusProps) {
   const { status, className } = props;
   const format = useFormatter();
   const t = useTranslations("agents");
-  const { Icon, tone } = STATUS_LOOK[status];
+  const look = STATUS_LOOK[status];
   const label = t(`status.${status}`);
-  const glyph = (
-    <FadeSlot swapKey={status} className={cn(tone, "transition-colors duration-(--duration-fast) motion-reduce:transition-none")}>
-      <StatusGlyph Icon={Icon} spinning={status === "working"} />
+
+  if (props.variant !== "event") {
+    return (
+      <StatusView variant={props.variant} look={look} label={label} status={status} spinning={status === "working"} className={className} />
+    );
+  }
+
+  return (
+    <p
+      data-slot="agent-status-event"
+      data-status={status}
+      title={props.hint ?? undefined}
+      className={cn("text-muted-foreground flex min-h-5 min-w-0 items-start gap-1 py-0.5 text-xs leading-4", className)}
+    >
+      <ToneGlyph look={look} status={status} spinning={status === "working"} />
+      {/* The status text is never truncated: a long source wraps to a second line (foundations, «Длина текста»). */}
+      <span className="min-w-0 wrap-break-word">{props.text}</span>
+      <span aria-hidden className="shrink-0">
+        ·
+      </span>
+      <time dateTime={props.at} className="shrink-0 tabular-nums">
+        {formatListTime(format, props.at)}
+      </time>
+    </p>
+  );
+}
+
+/** A task's or plan item's status (agent-status.md, «Статусы задачи»): the «Метка» and «Иконка» variants of an agent's. */
+export function TaskStatus({ status, variant, className }: { status: RunTaskStatus; variant: "label" | "icon"; className?: string }) {
+  const t = useTranslations("agents");
+  return (
+    <StatusView
+      variant={variant}
+      look={TASK_STATUS_LOOK[status]}
+      label={t(`taskStatus.${status}`)}
+      status={status}
+      spinning={status === "running"}
+      className={className}
+    />
+  );
+}
+
+const toneTransition = "transition-colors duration-(--duration-fast) motion-reduce:transition-none";
+
+function ToneGlyph({ look, status, spinning }: { look: StatusLook; status: string; spinning: boolean }) {
+  return (
+    <FadeSlot swapKey={status} className={cn(look.tone, toneTransition)}>
+      <StatusGlyph Icon={look.Icon} spinning={spinning} />
     </FadeSlot>
   );
+}
 
-  if (props.variant === "icon") {
+type StatusViewProps = {
+  variant: "label" | "icon";
+  look: StatusLook;
+  label: string;
+  status: string;
+  spinning: boolean;
+  className?: string;
+};
+
+/**
+ * «Метка» (icon and label) and «Иконка» (icon only, label as the accessible name and a delayed hint). A status
+ * change never changes the height, so it never moves its neighbours.
+ */
+function StatusView({ variant, look, label, status, spinning, className }: StatusViewProps) {
+  const glyph = <ToneGlyph look={look} status={status} spinning={spinning} />;
+
+  if (variant === "icon") {
     return (
       <Tooltip>
         <TooltipTrigger
@@ -141,37 +212,14 @@ export function AgentStatus(props: AgentStatusProps) {
     );
   }
 
-  if (props.variant === "label") {
-    return (
-      <span
-        data-slot="agent-status"
-        data-status={status}
-        className={cn("inline-flex h-5 items-center gap-1 text-xs leading-4 whitespace-nowrap", className)}
-      >
-        {glyph}
-        <span className={cn(tone, "transition-colors duration-(--duration-fast) motion-reduce:transition-none")}>
-          {label}
-        </span>
-      </span>
-    );
-  }
-
   return (
-    <p
-      data-slot="agent-status-event"
+    <span
+      data-slot="agent-status"
       data-status={status}
-      title={props.hint ?? undefined}
-      className={cn("text-muted-foreground flex min-h-5 min-w-0 items-start gap-1 py-0.5 text-xs leading-4", className)}
+      className={cn("inline-flex h-5 items-center gap-1 text-xs leading-4 whitespace-nowrap", className)}
     >
       {glyph}
-      {/* The status text is never truncated: a long source wraps to a second line (foundations, «Длина текста»). */}
-      <span className="min-w-0 wrap-break-word">{props.text}</span>
-      <span aria-hidden className="shrink-0">
-        ·
-      </span>
-      <time dateTime={props.at} className="shrink-0 tabular-nums">
-        {formatListTime(format, props.at)}
-      </time>
-    </p>
+      <span className={cn(look.tone, toneTransition)}>{label}</span>
+    </span>
   );
 }

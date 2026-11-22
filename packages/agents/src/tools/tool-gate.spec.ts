@@ -17,8 +17,10 @@ import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './too
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
 // (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`, the
-// coordinator's team and its `maxRuns`); design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the
-// server–tool pair, one audit record per refusal).
+// deep agent's team and its `maxRuns`); deep-agents UC-5, AC-02.1, AC-03.2, DC-2, DC-3 (a deep agent
+// starts only its own team, nobody starts a deep agent with start_agent, each refusal says why);
+// design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the server–tool pair, one audit record per
+// refusal).
 const OWNER = 'employee-1';
 
 /** A uuid whose last group is `n`. */
@@ -37,7 +39,7 @@ const NO_TOOLS: AgentSnapshot = {
     name: 'no-tools',
     author: { id: id(900), name: 'Аня' },
     builtinKey: null,
-    executor: null,
+    subagent: null,
   },
   content: {
     prompt: 'Answer.',
@@ -243,7 +245,7 @@ function header(n: number, overrides: Partial<RecordHeader> = {}): RecordHeader 
   };
 }
 
-/** The root's set: an offered agent, own and another's records without the switch, a workflow. */
+/** The root's set: an offered agent, own and another's records without the switch, a deep agent. */
 const ROOT: LaunchSet = {
   kind: 'root',
   tool: 'agent',
@@ -251,29 +253,59 @@ const ROOT: LaunchSet = {
     header(2),
     header(3, { mine: true, offerInChat: false }),
     header(4, { offerInChat: false }),
-    header(5, { kind: 'workflow' }),
+    header(5, { kind: 'deep_agent' }),
   ],
 };
 
 /** An agent whose snapshot's `agents` hold one record. */
 const AGENT_SET: LaunchSet = { kind: 'agents', ids: [id(2)] };
 
-/** A coordinator's team: `gather` may run twice. */
-const TEAM: LaunchSet = { kind: 'team', executors: [{ name: 'gather', maxRuns: 2 }] };
+/** A deep agent's team: `gather` may run twice, `answer` once. */
+const TEAM: LaunchSet = {
+  kind: 'team',
+  subagents: [
+    { name: 'gather', maxRuns: 2 },
+    { name: 'answer', maxRuns: 1 },
+  ],
+};
+
+/** DC-2: the text of a refusal outside the team names the team. */
+const OUTSIDE_TEAM: Gate = {
+  kind: 'refused',
+  reason: 'not_allowed',
+  text: 'You may start only the subagents of your team, by name: gather, answer.',
+};
+
+/** DC-3: the text of a refusal of a deep agent's record says who starts it. */
+const DEEP_AGENT_RECORD: Gate = {
+  kind: 'refused',
+  reason: 'not_allowed',
+  text: 'This record is a deep agent: only the main chat starts a deep agent, after the employee approves its brief.',
+};
 
 const START: StartGateInput = {
   launchSet: AGENT_SET,
-  target: { kind: 'record', recordId: id(2) },
+  target: { kind: 'record', recordId: id(2), recordKind: 'agent' },
   depth: 1,
   maxDepth: 3,
 };
 
-/** `gateStart` of `START` with the given launch set and target. */
+/** `gateStart` of `START` with the given launch set and target, with the refusal's text. */
 function gate(launchSet: LaunchSet, target: StartGateInput['target']): Gate {
-  return kindOf(gateStart({ ...START, launchSet, target }));
+  return gateStart({ ...START, launchSet, target });
 }
 
-type Gate = { kind: 'allowed' } | { kind: 'refused'; reason: string };
+/** An agent's record of the given number, as the caller's owner sees it. */
+function agentRecord(n: number): StartGateInput['target'] {
+  return { kind: 'record', recordId: id(n), recordKind: 'agent' };
+}
+
+/** A deep agent's record of the given number. */
+function deepAgentRecord(n: number): StartGateInput['target'] {
+  return { kind: 'record', recordId: id(n), recordKind: 'deep_agent' };
+}
+
+type Gate = { kind: 'allowed' } | { kind: 'refused'; reason: string; text?: string };
 
 function kindOf(gate: { kind: string; reason?: string }): Gate {
   return gate.kind === 'allowed' ? { kind: 'allowed' } : { kind: 'refused', reason: gate.reason ?? '' };
@@ -337,45 +369,40 @@ describe('a tool call is refused with its reason or allowed', () => {
       () => checkRunCode(runClass, '// count only\r\nreturn 1;'),
       { kind: 'allowed' },
     ]),
+    ["a record outside the agent's agents", () => gate(AGENT_SET, agentRecord(3)), { kind: 'refused', reason: 'not_allowed' }],
+    ["a record of the agent's agents", () => gate(AGENT_SET, agentRecord(2)), { kind: 'allowed' }],
+    ["an agent names a deep agent's record", () => gate(AGENT_SET, deepAgentRecord(6)), DEEP_AGENT_RECORD],
     [
-      "a record outside the agent's agents",
-      () => gate(AGENT_SET, { kind: 'record', recordId: id(3) }),
-      { kind: 'refused', reason: 'not_allowed' },
-    ],
-    ["a record of the agent's agents", () => gate(AGENT_SET, { kind: 'record', recordId: id(2) }), { kind: 'allowed' }],
-    [
-      'an executor that reached its maxRuns',
-      () => gate(TEAM, { kind: 'executor', name: 'gather', startedCount: 2 }),
-      { kind: 'refused', reason: 'run_limit' },
-    ],
-    [
-      'an executor under its maxRuns',
-      () => gate(TEAM, { kind: 'executor', name: 'gather', startedCount: 1 }),
+      'a deep agent starts a subagent of its team under its maxRuns',
+      () => gate(TEAM, { kind: 'subagent', name: 'gather', startedCount: 1 }),
       { kind: 'allowed' },
     ],
     [
-      'a name outside the team',
-      () => gate(TEAM, { kind: 'executor', name: 'answer', startedCount: 0 }),
-      { kind: 'refused', reason: 'not_allowed' },
+      'a deep agent starts a subagent that reached its maxRuns',
+      () => gate(TEAM, { kind: 'subagent', name: 'gather', startedCount: 2 }),
+      { kind: 'refused', reason: 'run_limit' },
     ],
-    ['a fork at a coordinator', () => gate(TEAM, { kind: 'fork' }), { kind: 'refused', reason: 'not_allowed' }],
+    [
+      'a deep agent names a subagent outside its team',
+      () => gate(TEAM, { kind: 'subagent', name: 'review', startedCount: 0 }),
+      OUTSIDE_TEAM,
+    ],
+    ["a deep agent names an agent's record", () => gate(TEAM, agentRecord(2)), OUTSIDE_TEAM],
+    ["a deep agent names a deep agent's record", () => gate(TEAM, deepAgentRecord(6)), DEEP_AGENT_RECORD],
+    ['a fork at a deep agent', () => gate(TEAM, { kind: 'fork' }), OUTSIDE_TEAM],
     ['a fork at an agent', () => gate(AGENT_SET, { kind: 'fork' }), { kind: 'allowed' }],
-    ['the root starts an agent the chat offers', () => gate(ROOT, { kind: 'record', recordId: id(2) }), { kind: 'allowed' }],
+    ['the root starts an agent the chat offers', () => gate(ROOT, agentRecord(2)), { kind: 'allowed' }],
     [
       'the root starts its own agent without «предлагать в главном чате»',
-      () => gate(ROOT, { kind: 'record', recordId: id(3) }),
+      () => gate(ROOT, agentRecord(3)),
       { kind: 'allowed' },
     ],
     [
       "the root starts another's agent without «предлагать в главном чате»",
-      () => gate(ROOT, { kind: 'record', recordId: id(4) }),
+      () => gate(ROOT, agentRecord(4)),
       { kind: 'refused', reason: 'not_allowed' },
     ],
-    [
-      'the root starts a workflow with start_agent',
-      () => gate(ROOT, { kind: 'record', recordId: id(5) }),
-      { kind: 'refused', reason: 'not_allowed' },
-    ],
+    ['the root starts a deep agent with start_agent', () => gate(ROOT, deepAgentRecord(5)), DEEP_AGENT_RECORD],
     [
       'a depth over the limit',
       () => kindOf(gateStart({ ...START, depth: 3 })),
@@ -563,7 +590,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
       () =>
         admission(['logs/search'], async (runner, audits) => {
           const step = createToolStep({
-            registry: { checkTools: async () => [MCP_TOOL, CHANGING_TOOL] },
+            registry: { checkTools: async () => [MCP_TOOL, CHANGING_TOOL], toolOf: () => undefined },
             runner,
             access: gateOf(['logs/search']),
             audit: async (entry) => {

@@ -1,4 +1,5 @@
 import type { Logger } from '@agent-os/common';
+import type { RecordKind } from '@agent-os/contracts';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -24,7 +25,7 @@ export const START_AGENT_TOOL = 'start_agent';
 
 /**
  * How an agent waits for what it started (KD-2): the model reads it in the description and in every
- * result of `start_agent` and `start_workflow`, so it ends its turn instead of polling `list_agents`.
+ * result of `start_agent` and `start_deep_agent`, so it ends its turn instead of polling `list_agents`.
  */
 export const WAITING_RULE =
   'Do not wait for it with list_agents or any other call: when you have nothing else to do, end your turn with a short text and no tool calls. You are resumed automatically when its report arrives.';
@@ -39,7 +40,7 @@ export const StartAgentArgsSchema = z.object({
     .string()
     .min(1)
     .describe(
-      `What to start, as the description lists it: the id of an agent, an executor's name in your team, or "${FORK_AGENT}" for a copy of yourself`,
+      `What to start, as the description lists it: the id of an agent, a subagent's name in your team, or "${FORK_AGENT}" for a copy of yourself`,
     ),
   prompt: z.string().min(1).describe('The assignment: everything the agent needs to do the work'),
 });
@@ -47,8 +48,8 @@ export type StartAgentArgs = z.infer<typeof StartAgentArgsSchema>;
 
 /**
  * The description of `start_agent` the model sees: the lines of whom the session may start (the chat
- * listing, the agent's `agents` or the coordinator's team), each as a list item, and the fork unless the
- * session is a coordinator.
+ * listing, the agent's `agents` or the deep agent's team), each as a list item, and the fork unless the
+ * session is a deep agent.
  */
 export function describeStartAgent(startable: readonly string[], canFork: boolean): string {
   const lines = startable.length === 0 ? ['(none)'] : startable.map((line) => `- ${line}`);
@@ -75,10 +76,10 @@ export interface StartAgentDeps {
   readonly logger: Logger;
 }
 
-/** What the call names, before the commit counts an executor's starts. */
+/** What the call names, before the commit counts a subagent's starts. */
 type NamedTarget =
-  | Exclude<StartTarget, { kind: 'executor' }>
-  | { readonly kind: 'executor'; readonly name: string };
+  | Exclude<StartTarget, { kind: 'subagent' }>
+  | { readonly kind: 'subagent'; readonly name: string };
 
 /** What `prepare` hands `execute`: the call's target, the caller's launch set and the start procedure's answer. */
 interface PreparedStart {
@@ -92,17 +93,27 @@ interface PreparedStart {
 
 const RecordIdSchema = z.uuid();
 
+/**
+ * The call's target before its record's kind is known: a deep agent names its subagents, so only an id
+ * that is not a name of its team is taken as a record — to refuse a deep agent's id with its own text.
+ */
 function targetOf(agent: string, snapshot: RunSnapshot): NamedTarget {
   if (agent === FORK_AGENT) return { kind: 'fork' };
-  if (snapshot.kind === 'workflow') return { kind: 'executor', name: agent };
-  return { kind: 'record', recordId: agent };
+  if (
+    snapshot.kind === 'deep_agent' &&
+    (snapshot.content.subagents.some((subagent) => subagent.name === agent) ||
+      !RecordIdSchema.safeParse(agent).success)
+  ) {
+    return { kind: 'subagent', name: agent };
+  }
+  return { kind: 'record', recordId: agent, recordKind: null };
 }
 
 /** The caller's launch set (Terms «Набор запуска»): the root's is read live, the others' from the snapshot. */
 async function launchSetOf(caller: ToolCaller, library: RecordLibrary): Promise<LaunchSet> {
   const { snapshot } = caller;
-  if (snapshot.kind === 'workflow') {
-    return { kind: 'team', executors: snapshot.content.executors };
+  if (snapshot.kind === 'deep_agent') {
+    return { kind: 'team', subagents: snapshot.content.subagents };
   }
   if (caller.parentId === null) {
     return { kind: 'root', headers: await library.listVisible(caller.ownerId), tool: 'agent' };
@@ -111,27 +122,47 @@ async function launchSetOf(caller: ToolCaller, library: RecordLibrary): Promise<
 }
 
 /**
+ * The kind of the record the call names, as the caller's owner sees it (DC-3): the root reads it from its
+ * headers, an agent knows the records of its `agents` are agents, any other record is asked of the
+ * library on the owner's behalf; `null` — the owner does not see it.
+ */
+async function recordKindOf(
+  recordId: string,
+  caller: ToolCaller,
+  launchSet: LaunchSet,
+  library: RecordLibrary,
+): Promise<RecordKind | null> {
+  if (launchSet.kind === 'root') {
+    return launchSet.headers.find((candidate) => candidate.id === recordId)?.kind ?? null;
+  }
+  if (launchSet.kind === 'agents' && launchSet.ids.includes(recordId)) return 'agent';
+  return (await library.resolve(caller.ownerId, recordId))?.kind ?? null;
+}
+
+/**
  * Where the child's snapshot comes from (design-runtime.md, «Откуда берётся снимок»); `null` for a target
- * the gate refuses without the library — a coordinator's fork, a name outside its team.
+ * the gate refuses without the library — a deep agent's fork, a name outside its team, a deep agent's
+ * record, a record outside an agent's `agents`.
  */
 function sourceOf(target: NamedTarget, caller: ToolCaller, launchSet: LaunchSet): StartSource | null {
   const { snapshot } = caller;
   switch (target.kind) {
     case 'fork':
       return launchSet.kind === 'team' ? null : { kind: 'fork', snapshot };
-    case 'executor':
-      return snapshot.kind === 'workflow' &&
-        snapshot.content.executors.some((executor) => executor.name === target.name)
-        ? { kind: 'executor', coordinator: snapshot, name: target.name }
+    case 'subagent':
+      return snapshot.kind === 'deep_agent' &&
+        snapshot.content.subagents.some((subagent) => subagent.name === target.name)
+        ? { kind: 'subagent', deepAgent: snapshot, name: target.name }
         : null;
-    case 'record': {
-      // The root checks the kind in the gate (`not_allowed`), so it resolves the record as it is.
-      const header =
-        launchSet.kind === 'root'
-          ? launchSet.headers.find((candidate) => candidate.id === target.recordId)
-          : undefined;
-      return { kind: 'record', recordId: target.recordId, expected: header?.kind ?? 'agent' };
-    }
+    case 'record':
+      if (target.recordKind === 'deep_agent') return null;
+      // The root checks the kind and the switch in the gate (`not_allowed`), so it resolves the record as it is.
+      if (launchSet.kind === 'root') {
+        return { kind: 'record', recordId: target.recordId, expected: target.recordKind ?? 'agent' };
+      }
+      return launchSet.kind === 'agents' && launchSet.ids.includes(target.recordId)
+        ? { kind: 'record', recordId: target.recordId, expected: 'agent' }
+        : null;
   }
 }
 
@@ -157,6 +188,7 @@ export function createStartAgentTool(
     prepared: PreparedStart,
     reason: Extract<StartGate, { kind: 'refused' }>['reason'] | StartRefusal['reason'],
     model: string | null,
+    text?: string,
   ) {
     logStart(logger, {
       ownerId: caller.ownerId,
@@ -173,6 +205,7 @@ export function createStartAgentTool(
       kind: 'refused' as const,
       reason,
       refusalDetail: model === null ? null : { model },
+      ...(text === undefined ? {} : { text }),
     };
   }
 
@@ -185,9 +218,18 @@ export function createStartAgentTool(
     loggedArgs: ({ agent, description }) => ({ agent, description }),
     async prepare({ args, caller }) {
       const startedAt = Date.now();
-      const target = targetOf(args.agent, caller.snapshot);
+      const named = targetOf(args.agent, caller.snapshot);
       const launchSet = await launchSetOf(caller, deps.library);
-      if (target.kind === 'record' && !RecordIdSchema.safeParse(target.recordId).success) {
+      if (named.kind === 'record' && !RecordIdSchema.safeParse(named.recordId).success) {
+        return { startedAt, target: named, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
+      }
+      const target: NamedTarget =
+        named.kind === 'record'
+          ? { ...named, recordKind: await recordKindOf(named.recordId, caller, launchSet, deps.library) }
+          : named;
+      // A record an agent's owner does not see is refused before the gate, as the start procedure would
+      // (plan Notes 2); at a deep agent the gate refuses any id outside its team with the team's text.
+      if (target.kind === 'record' && target.recordKind === null && launchSet.kind === 'agents') {
         return { startedAt, target, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
       }
       const source = sourceOf(target, caller, launchSet);
@@ -205,7 +247,7 @@ export function createStartAgentTool(
       }
 
       const target: StartTarget =
-        prepared.target.kind === 'executor'
+        prepared.target.kind === 'subagent'
           ? {
               ...prepared.target,
               startedCount: await history.startedCount(tx, caller.agentId, prepared.target.name),
@@ -217,7 +259,7 @@ export function createStartAgentTool(
         depth: caller.depth,
         maxDepth: deps.maxDepth,
       });
-      if (gate.kind === 'refused') return refuse(caller, prepared, gate.reason, null);
+      if (gate.kind === 'refused') return refuse(caller, prepared, gate.reason, null, gate.text);
       if (resolution === null) {
         throw new Error(`start_agent of agent ${caller.agentId} passed the gate with nothing resolved`);
       }

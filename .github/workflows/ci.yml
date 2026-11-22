@@ -53,7 +53,7 @@ jobs:
 
   # The Postgres suites against a real Postgres 16 (design-runtime.md, Part constraints): the API is
   # built (the packages are not: the suites run their source), the migrations are applied, then each suite runs in turn — db (migrations), runtime (in-process INT file and the
-  # child-process kill matrix), agents, workflows, api (chat). One suite at a time: the workers of
+  # child-process kill matrix), agents, api (chat). One suite at a time: the workers of
   # one suite would touch another's rows. The on-demand measurements (test:verify) are left out.
   e2e-runtime:
     runs-on: ubuntu-latest
@@ -91,5 +91,4 @@ jobs:
       - run: pnpm --filter @agent-os/db test:e2e
       - run: pnpm --filter @agent-os/runtime test:e2e
       - run: pnpm --filter @agent-os/agents test:e2e
-      - run: pnpm --filter @agent-os/workflows test:e2e
       - run: pnpm --filter api test:e2e

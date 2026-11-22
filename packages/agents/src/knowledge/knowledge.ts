@@ -33,12 +33,12 @@ import { embedPassRequest } from './knowledge-tasks';
 import { type EmbeddingState, knowledgeViewParts } from './select-knowledge';
 import type { KnowledgeVectorStore } from './vector-store';
 
-/** What `view` is asked about: the record, and its flag and executors' servers as the library read them. */
+/** What `view` is asked about: the record, and its flag and subagents' servers as the library read them. */
 export interface KnowledgeViewRequest {
   readonly recordId: string;
-  /** The flag of the workflow's last version. */
+  /** The flag of the deep agent's last version. */
   readonly selfLearning: boolean;
-  /** The servers of the executors of the workflow's last version (`*` — any): lessons' tools are judged by them. */
+  /** The servers of the subagents of the deep agent's last version (`*` — any): lessons' tools are judged by them. */
   readonly servers: readonly string[];
 }
 
@@ -53,7 +53,7 @@ export interface KnowledgeRelationDelete {
 }
 
 export interface KnowledgeEntityDeletion {
-  /** `false` — the entity was not there (already deleted, or not of this workflow): nothing changed (DC-10). */
+  /** `false` — the entity was not there (already deleted, or not of this deep agent): nothing changed (DC-10). */
   readonly deleted: boolean;
   /** Fact relations that went with the entity. */
   readonly relations: number;
@@ -105,7 +105,7 @@ export interface AgentsKnowledgeDeps {
   readonly logger: Logger;
 }
 
-/** How a deletion left the workflow's vector pass. */
+/** How a deletion left the deep agent's vector pass. */
 type VectorCleanup = 'pass_created' | 'pass_marked';
 
 export function createAgentsKnowledge(deps: AgentsKnowledgeDeps): AgentsKnowledge {
@@ -236,7 +236,7 @@ function settingsView(row: KnowledgeSettingsRow): KnowledgeSettings {
 
 /**
  * What the screen needs of selection by meaning (Contract `KnowledgeSelection`): the current model without
- * a provider request, the workflow's last embedding attempt and the store's keys — no `embed` call.
+ * a provider request, the deep agent's last embedding attempt and the store's keys — no `embed` call.
  */
 async function embeddingState(
   database: Database,
@@ -254,15 +254,15 @@ async function embeddingState(
   };
 }
 
-/** The workflow's last embedding attempt when it failed with a model; a success or no attempt — `null`. */
+/** The deep agent's last embedding attempt when it failed with a model; a success or no attempt — `null`. */
 function lastFailureOf(row: KnowledgeEmbeddingRow | undefined): EmbeddingState['lastFailure'] {
   if (row?.lastReason == null || row.lastModel === null) return null;
   return { reason: EmbeddingFailureReasonSchema.parse(row.lastReason), model: row.lastModel };
 }
 
 /**
- * The last round of any run of the workflow (Contract `LastExtraction`), or `null`. A round the trigger
- * ended (`stopped`, `interrupted`) has no model of its own; the extraction runs on the coordinator's model
+ * The last round of any run of the deep agent (Contract `LastExtraction`), or `null`. A round the trigger
+ * ended (`stopped`, `interrupted`) has no model of its own; the extraction runs on the deep agent's model
  * (KD-4), so the run's session names it — the run row lives exactly as long as that session.
  */
 async function lastExtractionOf(

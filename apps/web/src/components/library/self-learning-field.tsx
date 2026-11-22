@@ -1,64 +1,97 @@
 "use client";
 
-import { useId } from "react";
-import { ArrowRight, Info } from "lucide-react";
+import { useId, useState } from "react";
+import { ArrowRight, Info, LoaderCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { CAPTION } from "@/components/admin/admin-form";
 import { ShellLink } from "@/components/shell/shell-link";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription } from "@/components/ui/field";
-import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "cn";
 
 export type SelfLearningFieldProps = {
+  /** The flag of the saved record. */
   checked: boolean;
-  /** The flag of the saved record: unticking a saved self-learning workflow shows that its knowledge is kept. */
-  savedOn: boolean;
-  /** The knowledge screen of a saved workflow; `null` while the workflow is new. */
+  /** Saves the record with the flag flipped; a refusal is already logged by the caller's `recordAction`. */
+  onSave: (checked: boolean) => Promise<void>;
+  /** The knowledge screen of the deep agent; `null` where the page has its own entry to it. */
   knowledgeHref: string | null;
-  onChange: (checked: boolean) => void;
 };
 
 /**
- * «Самообучение» (self-learning UXRD, SL-01; record-editor.md, variant «Workflow»). The hint and the «kept» note
- * are the checkbox's description, not alerts. The link goes through `ShellLink`, so leaving with unsaved edits
- * is asked about by the shell's guard (MC-11).
+ * «Самообучение» on the deep agent's card (deep-agents UXRD DA-13; self-learning UXRD, MC-1): the switch saves
+ * at once. While the save runs it stands in its new position, unavailable, with `LoaderCircle`; a refusal moves
+ * it back and shows MC-26 under it. The «kept» note follows a switch-off made here. The hint and the note are the
+ * switch's description, not alerts.
  */
-export function SelfLearningField({ checked, savedOn, knowledgeHref, onChange }: SelfLearningFieldProps) {
+export function SelfLearningField({ checked, onSave, knowledgeHref }: SelfLearningFieldProps) {
   const id = useId();
   const t = useTranslations("library");
+  const labelId = `${id}-label`;
   const hintId = `${id}-hint`;
   const noteId = `${id}-note`;
-  const kept = savedOn && !checked;
+  const errorId = `${id}-error`;
+  const [target, setTarget] = useState<boolean | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [turnedOff, setTurnedOff] = useState(false);
+  const saving = target !== null;
+  const shown = target ?? checked;
+  const kept = turnedOff && !shown;
+
+  async function save(next: boolean): Promise<void> {
+    setFailed(false);
+    setTarget(next);
+    try {
+      await onSave(next);
+      setTurnedOff(!next);
+    } catch {
+      // `recordAction` has logged the refusal; the switch goes back and MC-26 names the failure.
+      setFailed(true);
+    } finally {
+      setTarget(null);
+    }
+  }
+
+  const describedBy = [hintId, kept ? noteId : null, failed ? errorId : null].filter((part) => part !== null).join(" ");
 
   return (
-    <Field className="gap-1.5">
-      <Label className="flex w-fit items-center gap-2 text-sm leading-5 font-medium text-foreground pointer-coarse:min-h-11">
-        <Checkbox
-          checked={checked}
-          aria-describedby={kept ? `${hintId} ${noteId}` : hintId}
-          onCheckedChange={(next) => onChange(next)}
+    <div className="flex flex-col gap-1.5">
+      <label className="flex w-fit items-center gap-2 pointer-coarse:min-h-11">
+        <Switch
+          checked={shown}
+          disabled={saving}
+          aria-labelledby={labelId}
+          aria-describedby={describedBy}
+          onCheckedChange={(next) => void save(next)}
+          className="pointer-coarse:after:-inset-3"
         />
-        {t("fields.selfLearning")}
-      </Label>
-      <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+        <span id={labelId} className={cn("text-foreground text-sm leading-5 font-medium", saving && "opacity-50")}>
+          {t("fields.selfLearning")}
+        </span>
+        {saving && <LoaderCircle aria-hidden className="text-muted-foreground size-3.5 animate-spin motion-reduce:animate-none" />}
+      </label>
+      <p id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
         {t("selfLearning.hint")}
-      </FieldDescription>
+      </p>
       {kept && (
-        <p id={noteId} className={cn(CAPTION, "flex items-start gap-1.5 text-foreground")}>
-          <Info aria-hidden className="mt-px size-3.5 shrink-0 text-info" />
+        <p id={noteId} className={cn(CAPTION, "text-foreground flex items-start gap-1.5")}>
+          <Info aria-hidden className="text-info mt-px size-3.5 shrink-0" />
           {t("selfLearning.kept")}
+        </p>
+      )}
+      {failed && (
+        <p id={errorId} role="alert" className={cn(CAPTION, "text-destructive")}>
+          {t("card.saveFailed")}
         </p>
       )}
       {knowledgeHref !== null && (
         <ShellLink
           href={knowledgeHref}
-          className="inline-flex w-fit items-center gap-1 rounded-sm text-sm leading-5 font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+          className="text-primary focus-visible:ring-ring/50 inline-flex w-fit items-center gap-1 rounded-sm text-sm leading-5 font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 pointer-coarse:min-h-11"
         >
           {t("knowledge.entry")}
           <ArrowRight aria-hidden className="size-3.5" />
         </ShellLink>
       )}
-    </Field>
+    </div>
   );
 }

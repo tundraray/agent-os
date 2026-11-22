@@ -4,7 +4,7 @@ import { createComposerSeed, NEW_THREAD_TARGET, type ComposerSeed } from './comp
 
 const LOGS: ChipRecord = { id: '7f3c1a52-4b8e-4c1d-9a0e-2d6b5f8e1c40', kind: 'agent', name: 'Разбор логов' };
 const REVIEW: ChipRecord = { id: '2a9d6e14-8c3b-4f70-b5d1-6e0c9a4f7b23', kind: 'agent', name: 'Ревью' };
-const RESEARCH: ChipRecord = { id: '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71', kind: 'workflow', name: 'Исследование' };
+const RESEARCH: ChipRecord = { id: '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71', kind: 'deep_agent', name: 'Исследование' };
 
 type Chips = Record<string, string>;
 

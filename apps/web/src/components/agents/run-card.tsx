@@ -10,7 +10,7 @@ import type {
   AgentView,
   RecordSummary,
   RunOrigin,
-  WorkflowRunView,
+  DeepAgentRunView,
 } from "@agent-os/contracts";
 import { ArrowUpRightIcon, BanIcon, CircleIcon, type LucideIcon } from "lucide-react";
 import { useStore } from "zustand";
@@ -24,7 +24,7 @@ import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
-import { isWorkflowCoordinator, type RunCardPartData } from "@/lib/feed/to-feed";
+import { isDeepAgentRun, type RunCardPartData } from "@/lib/feed/to-feed";
 import { changedAfterRun, recipientNote } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { NEW_THREAD_TARGET, type SeedTarget } from "@/lib/threads/composer-seed";
@@ -36,10 +36,10 @@ const LINK_CLASS =
 
 /**
  * The library record a run goes by (RN-01–RN-03): its origin when the run is the record itself — an
- * agent or a workflow coordinator. A workflow step and a conversation's root have none of their own.
+ * agent or a deep agent. A subagent's run and a conversation's root have none of their own.
  */
 export function runRecord(agent: Pick<AgentView, "origin">): RunOrigin | null {
-  return agent.origin !== null && agent.origin.executor === null ? agent.origin : null;
+  return agent.origin !== null && agent.origin.subagent === null ? agent.origin : null;
 }
 
 /** The live row of a record (KD-2): `undefined` — the library list is not read, `null` — not in it. */
@@ -76,7 +76,7 @@ export function ChangedAfterRun({
 }
 
 /** The conversation the card stands in: the agent page's own one, or the open conversation of the route. */
-function useCardThread(): SeedTarget {
+export function useCardThread(): SeedTarget {
   const pageThread = useFeedSelector(
     (state) => (state.view?.kind === "agent" ? state.view.agent.threadId : null),
     null,
@@ -129,7 +129,7 @@ function RecipientLine({ origin, firstRun }: { origin: RunOrigin; firstRun: bool
 }
 
 export type RunCardProps = {
-  /** The started agent or workflow coordinator with its subtree. */
+  /** The started agent or deep agent with its subtree. */
   data: RunCardPartData;
 };
 
@@ -137,17 +137,17 @@ function byCreation(a: AgentNode, b: AgentNode): number {
   return Date.parse(a.createdAt) - Date.parse(b.createdAt);
 }
 
-/** The coordinator is done: the team's executors it never called can be named (agent-run-card.md, «Не вызывался»). */
+/** The deep agent is done: the team's subagents it never called can be named (agent-run-card.md, «Не вызывался»). */
 const RUN_ENDED: ReadonlySet<AgentStatusValue> = new Set(["completed", "failed", "stopped"]);
 
 /**
- * KD-7: the run's `WorkflowRunView`, read when the card appears and again when the coordinator's status or
+ * KD-7: the run's `DeepAgentRunView`, read when the card appears and again when the deep agent's status or
  * its number of children changes. `null` until the first answer and after a failed read: the steps then show
  * without the team's rows, and the failure goes to the log.
  */
-function useWorkflowRun(agentId: string, status: AgentStatusValue, children: number): WorkflowRunView | null {
+function useDeepAgentRun(agentId: string, status: AgentStatusValue, children: number): DeepAgentRunView | null {
   const { apiClient } = useShellServices();
-  const [run, setRun] = useState<WorkflowRunView | null>(null);
+  const [run, setRun] = useState<DeepAgentRunView | null>(null);
   useEffect(() => {
     // An answer that arrives after a newer read started, or after the card left, is dropped.
     let current = true;
@@ -156,7 +156,7 @@ function useWorkflowRun(agentId: string, status: AgentStatusValue, children: num
         if (current) setRun(view);
       },
       (error: unknown) => {
-        logger.warn("workflow run read failed", { ...describeApiError(error), agentId, status, children });
+        logger.warn("deep agent run read failed", { ...describeApiError(error), agentId, status, children });
         if (current) setRun(null);
       },
     );
@@ -167,14 +167,14 @@ function useWorkflowRun(agentId: string, status: AgentStatusValue, children: num
   return run;
 }
 
-/** A row of the card's step list: a call of the coordinator, a call refused by the limit, an executor never called. */
+/** A row of the card's step list: a call of the deep agent, a call refused by the limit, a subagent never called. */
 type RunRow =
   | { kind: "step"; at: string; step: AgentNode }
-  | { kind: "refused"; at: string; executor: string }
-  | { kind: "not_called"; executor: string };
+  | { kind: "refused"; at: string; subagent: string }
+  | { kind: "not_called"; subagent: string };
 
-/** Steps and limit refusals in call order; after the end, the team's executors without a step. */
-function runRows(steps: readonly AgentNode[], run: WorkflowRunView | null, ended: boolean): RunRow[] {
+/** Steps and limit refusals in call order; after the end, the team's subagents without a step. */
+function runRows(steps: readonly AgentNode[], run: DeepAgentRunView | null, ended: boolean): RunRow[] {
   const calls: RunRow[] = [
     ...steps.map((step): RunRow => ({ kind: "step", at: step.createdAt, step })),
     ...(run?.limitRefusals ?? []).map((refusal): RunRow => ({ kind: "refused", ...refusal })),
@@ -185,32 +185,32 @@ function runRows(steps: readonly AgentNode[], run: WorkflowRunView | null, ended
   if (run === null || !ended) return calls;
   // A step the feed already has but an earlier read did not counts as called as well.
   const called = new Set(
-    [...run.steps, ...steps].flatMap((step) => (step.origin?.executor == null ? [] : [step.origin.executor])),
+    [...run.steps, ...steps].flatMap((step) => (step.origin?.subagent == null ? [] : [step.origin.subagent])),
   );
   const notCalled = run.team
     .filter((member) => !called.has(member.name))
-    .map((member): RunRow => ({ kind: "not_called", executor: member.name }));
+    .map((member): RunRow => ({ kind: "not_called", subagent: member.name }));
   return [...calls, ...notCalled];
 }
 
-/** Rows share the card's columns: status icon, executor name (as wide as the longest, up to 160 px), text. */
+/** Rows share the card's columns: status icon, subagent name (as wide as the longest, up to 160 px), text. */
 const ROW_CLASS = "col-span-full grid h-7 grid-cols-subgrid items-center pointer-coarse:h-11";
 const OPENS_CLASS =
   "overflow-hidden transition-[height] duration-(--duration-fast) starting:h-0 motion-reduce:transition-none";
-const EXECUTOR_CLASS = "min-w-0 truncate text-sm leading-5 font-medium";
+const SUBAGENT_CLASS = "min-w-0 truncate text-sm leading-5 font-medium";
 const ROW_TEXT_CLASS = "text-muted-foreground min-w-0 truncate text-sm leading-5";
 
-/** One agent the coordinator started: a 28 px link row; a row added after mount opens over 150 ms. */
+/** One agent the deep agent started: a 28 px link row; a row added after mount opens over 150 ms. */
 function StepRow({ step, appeared }: { step: AgentNode; appeared: boolean }) {
   const t = useTranslations("agents");
-  const executor = step.origin?.executor ?? null;
+  const subagent = step.origin?.subagent ?? null;
   return (
     <li className={cn(ROW_CLASS, appeared && OPENS_CLASS)}>
       <Link
         href={agentPath(step.agentId)}
         aria-label={t("run.stepLabel", {
-          hasExecutor: executor === null || executor === "" ? "no" : "yes",
-          executor: executor ?? "",
+          hasSubagent: subagent === null || subagent === "" ? "no" : "yes",
+          subagent: subagent ?? "",
           description: step.description,
           status: t(`status.${step.status}`),
         })}
@@ -218,7 +218,7 @@ function StepRow({ step, appeared }: { step: AgentNode; appeared: boolean }) {
         className="hover:bg-accent focus-visible:ring-ring col-span-full grid h-full grid-cols-subgrid items-center rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-inset"
       >
         <AgentStatus variant="icon" status={step.status} className="shrink-0" />
-        <span className={EXECUTOR_CLASS}>{executor}</span>
+        <span className={SUBAGENT_CLASS}>{subagent}</span>
         <span className={ROW_TEXT_CLASS}>{step.description}</span>
       </Link>
     </li>
@@ -226,15 +226,15 @@ function StepRow({ step, appeared }: { step: AgentNode; appeared: boolean }) {
 }
 
 /** A row without an agent behind it (MC-17): «предел вызовов исчерпан» or «не вызывался»; not a link. */
-function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor: string; note: string; opens: boolean }) {
+function MutedRow({ Icon, subagent, note, opens }: { Icon: LucideIcon; subagent: string; note: string; opens: boolean }) {
   return (
     <li className={cn(ROW_CLASS, "px-1", opens && OPENS_CLASS)}>
-      <span className="sr-only">{`${executor}, ${note}`}</span>
+      <span className="sr-only">{`${subagent}, ${note}`}</span>
       <span aria-hidden className="inline-flex size-4 items-center justify-center">
         <Icon className="text-muted-foreground size-3.5" />
       </span>
-      <span aria-hidden className={cn(EXECUTOR_CLASS, "text-muted-foreground")}>
-        {executor}
+      <span aria-hidden className={cn(SUBAGENT_CLASS, "text-muted-foreground")}>
+        {subagent}
       </span>
       <span aria-hidden className={ROW_TEXT_CLASS}>
         {note}
@@ -244,8 +244,8 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
 }
 
 /**
- * The live run card of agent-run-card.md (UXRD CV-01, RN-01, MC-17): the «Workflow» variant exactly when
- * the node is a workflow coordinator, otherwise «Агент», two lines with the record label when the agent comes
+ * The live run card of agent-run-card.md (UXRD CV-01, RN-01, MC-17): the «Глубокий агент» variant exactly when
+ * the node is a deep agent's run, otherwise «Агент», two lines with the record label when the agent comes
  * from the library. Status changes recolour icons and labels only.
  */
 export function RunCard({ data }: RunCardProps) {
@@ -260,7 +260,7 @@ export function RunCard({ data }: RunCardProps) {
       {formatListTime(format, data.createdAt)}
     </time>
   );
-  if (!isWorkflowCoordinator(data) || record === null) {
+  if (!isDeepAgentRun(data) || record === null) {
     return (
       <div
         role="group"
@@ -295,19 +295,19 @@ export function RunCard({ data }: RunCardProps) {
     );
   }
 
-  return <WorkflowRunCard data={data} origin={record} time={time} />;
+  return <DeepAgentRunCard data={data} origin={record} time={time} />;
 }
 
 /**
- * The «Workflow» variant (AC-27.1–AC-27.3): the header is the record label with the version the run started
- * on — the origin's, never the live one; the steps are the coordinator's children from the feed, named by
- * `origin.executor`; limit refusals and, after the end, uncalled executors come from `WorkflowRunView`.
+ * The «Глубокий агент» variant (AC-27.1–AC-27.3): the header is the record label with the version the run
+ * started on — the origin's, never the live one; the steps are the deep agent's children from the feed, named by
+ * `origin.subagent`; limit refusals and, after the end, uncalled subagents come from `DeepAgentRunView`.
  */
-function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin: RunOrigin; time: ReactNode }) {
+function DeepAgentRunCard({ data, origin, time }: { data: RunCardPartData; origin: RunOrigin; time: ReactNode }) {
   const briefQuestion = data.briefQuestion;
   // Rows present at first render (a reload, a re-read) do not animate; only steps added later open.
   const [initialStepIds] = useState(() => new Set(data.children.map((child) => child.agentId)));
-  const run = useWorkflowRun(data.agentId, data.status, data.children.length);
+  const run = useDeepAgentRun(data.agentId, data.status, data.children.length);
   const rows = runRows([...data.children].sort(byCreation), run, RUN_ENDED.has(data.status));
   const t = useTranslations("agents");
   return (
@@ -315,7 +315,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
       role="group"
       aria-label={t("run.label", { name: origin.name, status: t(`status.${data.status}`) })}
       data-slot="run-card"
-      data-variant="workflow"
+      data-variant="deep-agent"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"
     >
       <div className="flex h-6 min-w-0 items-center gap-3">
@@ -342,17 +342,17 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
               <StepRow key={row.step.agentId} step={row.step} appeared={!initialStepIds.has(row.step.agentId)} />
             ) : row.kind === "refused" ? (
               <MutedRow
-                key={`refused-${row.executor}-${row.at}-${index}`}
+                key={`refused-${row.subagent}-${row.at}-${index}`}
                 Icon={BanIcon}
-                executor={row.executor}
+                subagent={row.subagent}
                 note={t("run.limitReached")}
                 opens={false}
               />
             ) : (
               <MutedRow
-                key={`not-called-${row.executor}`}
+                key={`not-called-${row.subagent}`}
                 Icon={CircleIcon}
-                executor={row.executor}
+                subagent={row.subagent}
                 note={t("run.notCalled")}
                 opens
               />

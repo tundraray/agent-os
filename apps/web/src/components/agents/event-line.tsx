@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AgentStatus as AgentStatusValue, HistoryEvent, MyModel } from "@agent-os/contracts";
 import { useFormatter, useTranslations } from "next-intl";
-import { ArchiveIcon, HistoryIcon, type LucideIcon } from "lucide-react";
+import { ArchiveIcon, FileTextIcon, HistoryIcon, ListTodoIcon, type LucideIcon } from "lucide-react";
 import { AgentStatus, StatusGlyph } from "@/components/agents/agent-status";
 import { accessApi } from "@/lib/access/access-api";
 import { quotaFailureAnnouncement, quotaFailureText, quotaRowOf } from "@/lib/access/access-texts";
@@ -18,7 +18,7 @@ import {
 } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
 import { formatListTime } from "@/lib/i18n/formats";
-import type { EventPartData } from "@/lib/feed/to-feed";
+import type { EventPartData, PlanNoticePartData } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
 
 type StatusEvent = Exclude<HistoryEvent, "continued" | "compacted">;
@@ -46,28 +46,11 @@ const MARK_ICON: Record<"continued" | "compacted", LucideIcon> = {
  */
 export function EventLine({ data }: { data: EventPartData }) {
   const { event, reason, createdAt } = data;
-  const format = useFormatter();
   const t = useTranslations("errors");
   const tAgents = useTranslations("agents");
 
   if (event === "continued" || event === "compacted") {
-    return (
-      <p
-        data-slot="agent-status-event"
-        className="text-muted-foreground flex h-5 min-w-0 items-center gap-1 text-xs leading-4"
-      >
-        <span className="inline-flex size-4 shrink-0 items-center justify-center">
-          <StatusGlyph Icon={MARK_ICON[event]} spinning={false} />
-        </span>
-        <span className="min-w-0 truncate">{tAgents(`event.${event}`)}</span>
-        <span aria-hidden className="shrink-0">
-          ·
-        </span>
-        <time dateTime={createdAt} className="shrink-0 tabular-nums">
-          {formatListTime(format, createdAt)}
-        </time>
-      </p>
-    );
+    return <MarkLine Icon={MARK_ICON[event]} text={tAgents(`event.${event}`)} at={createdAt} />;
   }
 
   if (event === "failed" && reason === "quota_exhausted") return <QuotaFailureLine data={data} />;
@@ -80,6 +63,43 @@ export function EventLine({ data }: { data: EventPartData }) {
   }
 
   return <AgentStatus variant="event" status={EVENT_STATUS[event]} text={tAgents(`event.${event}`)} at={createdAt} />;
+}
+
+/** A line that marks a moment, not a status: a static muted icon, the text and the time. */
+function MarkLine({ Icon, text, at }: { Icon: LucideIcon; text: string; at: string }) {
+  const format = useFormatter();
+  return (
+    <p
+      data-slot="agent-status-event"
+      className="text-muted-foreground flex h-5 min-w-0 items-center gap-1 text-xs leading-4"
+    >
+      <span className="inline-flex size-4 shrink-0 items-center justify-center">
+        <StatusGlyph Icon={Icon} spinning={false} />
+      </span>
+      <span className="min-w-0 truncate">{text}</span>
+      <span aria-hidden className="shrink-0">
+        ·
+      </span>
+      <time dateTime={at} className="shrink-0 tabular-nums">
+        {formatListTime(format, at)}
+      </time>
+    </p>
+  );
+}
+
+/**
+ * A deep agent's refused answer (uxrd.md MC-15, DA-06, AC-05.1): «Ответ не принят: открыты пункты плана {номера}» or
+ * «Ответ не принят: нужен отчёт «{имя}»», built from the fields the `notice` entry carries. The deep agent keeps
+ * working, so the line marks a moment rather than a status.
+ */
+export function PlanNoticeLine({ data }: { data: PlanNoticePartData }) {
+  const tAgents = useTranslations("agents");
+  if ("missingReport" in data) {
+    const text = tAgents("event.reportMissing", { name: data.missingReport });
+    return <MarkLine Icon={FileTextIcon} text={text} at={data.createdAt} />;
+  }
+  const text = tAgents("event.planItemsOpen", { numbers: data.openPlanItems.join(", ") });
+  return <MarkLine Icon={ListTodoIcon} text={text} at={data.createdAt} />;
 }
 
 type QuotaRead = { status: "loading" } | { status: "ready"; row: MyModel | null; month: string };

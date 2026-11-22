@@ -31,7 +31,7 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven). The unit tests are written by the implementation phases,
 // one table-driven test per rule, none of them skeletoned here:
-// - unit, packages/agents/src/step/turn-rules.spec.ts (extend the existing `endOfTurn` table): cut-off x {no executor, unfinished children, root, coordinator with an answer executor} - UC-1, AC-01.1 (rule), DC-1
+// - unit, packages/agents/src/step/turn-rules.spec.ts (extend the existing `endOfTurn` table): cut-off x {no final subagent, unfinished children, root, deep agent with a final subagent} - UC-1, AC-01.1 (rule), DC-1
 // - unit, packages/agents/src/model/model-client.spec.ts (extend): `finishReason: 'length'` -> `cutOff: true`, any other reason -> false, for the model step and the compaction call alike - KD-3
 // - unit, ToolRunner.check (next to tool-runner/tool-gate specs): MCP schema missing arg / wrong type -> `invalid_arguments` with the argument name and what was expected; built-in tool
 //   with a number for a string -> the same; a schema of unknown dialect -> allowed with the "not checked" reason; `pattern` and `format` are left to the server; the error text is cut at the code constant;
@@ -382,7 +382,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   }, TEST_TIMEOUT_MS);
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-3: a cut-off report of an executor is not the report: the executor gets a notice and writes it again, the coordinator receives the second text
+  // INT-3: a cut-off report of a child agent is not the report: the child gets a notice and writes it again, its parent receives the second text
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-01.1 "Given исполнитель пишет отчёт и ответ модели оборвался на пределе длины без вызовов инструментов, when шаг модели заканчивается, then исполнитель не завершён, координатор отчёта не получил, а в истории исполнителя есть уведомление об обрезке."
   //   AC-01.2 "Given ответ модели был обрезан, when следующий её ответ заканчивается нормально, then отчётом становится этот ответ."
@@ -396,14 +396,14 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   //   B. the scout's second model input holds the notice after the first answer; the root receives the second, full text as the report and never the cut one; the turn counter and the ledger count both
   //      model calls (two ledger rows for the scout).
   //   C. the journal: the scout's two `agent step finished` records carry `cutOff` true and false in that order, `toolsChosen` empty, `directCalls` 0, `runCodeCalls` 0.
-  // Catches: the flag set by `ModelClient` but not handed to `endOfTurn` by the model step (the cut text is delivered to the coordinator as a finished report, truncated mid-sentence - the defect that started the
+  // Catches: the flag set by `ModelClient` but not handed to `endOfTurn` by the model step (the cut text is delivered to the parent as a finished report, truncated mid-sentence - the defect that started the
   //   feature); a notice written but the task also completed; a notice that is not part of the next model input; the report taken from the first answer after the notice. `endOfTurn` and the finish-reason mapping are
   //   unit tables, which cannot see how the model step hands one to the other.
   // @category: core-functionality
   // @dependency: ModelClient.call (cutOff), endOfTurn, model step, start_agent, child report delivery, runtime ledger, Postgres, ScriptedModel (cutOff answer)
   // @complexity: medium
-  it('INT-3: an executor whose answer is cut off at the length limit gets a notice and finishes only with its next, complete answer, which is the report the coordinator receives', async () => {
-    // Given: a root that starts the executor `scout`, whose first answer is cut off at the length limit
+  it('INT-3: a child agent whose answer is cut off at the length limit gets a notice and finishes only with its next, complete answer, which is the report its parent receives', async () => {
+    // Given: a root that starts the child agent `scout`, whose first answer is cut off at the length limit
     const ownerId = newUser();
     const library = createLibraryDouble();
     const scoutId = library.add(testRecord('scout'));

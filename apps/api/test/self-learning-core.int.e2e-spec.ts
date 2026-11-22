@@ -15,7 +15,7 @@
 //   Support (`test/support/knowledge.ts`): `seedKnowledge(pool, recordId)` writes two entities and a fact relation between them, with the run
 //   source columns set, straight into `app.agent_knowledge_*` (the extraction pipeline is not exercised here); `removeKnowledgeTasks` deletes
 //   the platform's vector passes the deletions queue. The `knowledge_delete` rows are read with `auditOfRecord` of `support/library.ts`.
-//   The graph rows go with their workflows, the workflows with their authors (`removeRunRows`).
+//   The graph rows go with their deep agents, the deep agents with their authors (`removeRunRows`).
 //   v1.2: the test database image must carry pgvector (`pgvector/pgvector:pg16`, the migration requires the extension) - the same gap as in the
 //   agents file's header; no embedding double is needed here, the file runs with no embedding model selected and no model call is made.
 //
@@ -47,9 +47,9 @@ import {
 import {
   auditOfRecord,
   createRecord,
+  deepAgentBody,
   recordName,
   shareWith,
-  workflowBody,
   type LibraryAuditEvent,
 } from './support/library';
 import {
@@ -63,7 +63,7 @@ import {
 /** Bound of one test; the requests settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 
-/** The platform's default chat model while the file runs (`useRunModels`): the model of every workflow of the file. */
+/** The platform's default chat model while the file runs (`useRunModels`): the model of every deep agent of the file. */
 const DEFAULT_MODEL = runModel('haiku');
 
 /** The password of every employee the file inserts. */
@@ -74,10 +74,10 @@ let admin: Session;
 /** Gives the platform back its default models, the embedding model included; run in `afterAll` before the run's rows go. */
 let restoreModels: (() => Promise<void>) | undefined;
 
-/** What this file created; `afterAll` deletes exactly these rows (the workflows go with their authors). */
+/** What this file created; `afterAll` deletes exactly these rows (the deep agents go with their authors). */
 const createdUserIds = new Set<string>();
 const createdRoleIds = new Set<string>();
-const workflowIds = new Set<string>();
+const deepAgentIds = new Set<string>();
 
 /** A new employee of the run, signed in and remembered for the cleanup. */
 async function newEmployee(tag: string, name: string): Promise<Session> {
@@ -102,17 +102,17 @@ async function newRole(name: string): Promise<RunRole> {
   return role;
 }
 
-/** A personal self-learning workflow of `author` with its graph seeded. */
-async function newWorkflow(
+/** A personal self-learning deep agent of `author` with its graph seeded. */
+async function newDeepAgent(
   author: Session,
   base: string,
 ): Promise<{ id: string; graph: SeededGraph }> {
-  const body = workflowBody(recordName(base), DEFAULT_MODEL);
+  const body = deepAgentBody(recordName(base), DEFAULT_MODEL);
   const record = await createRecord(harness.app, author, {
     ...body,
     content: { ...body.content, selfLearning: true },
   });
-  workflowIds.add(record.id);
+  deepAgentIds.add(record.id);
   return { id: record.id, graph: await seedKnowledge(harness.pool, record.id) };
 }
 
@@ -249,7 +249,7 @@ describe('self-learning / core - API integration (real AppModule + real Postgres
   afterAll(async () => {
     if (harness !== undefined) {
       await restoreModels?.();
-      await removeKnowledgeTasks(harness.pool, [...workflowIds]);
+      await removeKnowledgeTasks(harness.pool, [...deepAgentIds]);
       await removeRunRows(harness.pool, {
         models: [DEFAULT_MODEL],
         roles: [...createdRoleIds],
@@ -289,16 +289,16 @@ describe('self-learning / core - API integration (real AppModule + real Postgres
   // @dependency: KnowledgeController, LibraryService.knowledgeTarget, Agents.knowledge, AuditLog, SessionGuard, Postgres
   // @complexity: medium
   it(
-    'INT-9: the author and the administrator of a panel-visible workflow read and clean the graph; other runners get 403, invisible workflows 404, the audit holds no text',
+    'INT-9: the author and the administrator of a panel-visible deep agent read and clean the graph; other runners get 403, invisible deep agents 404, the audit holds no text',
     async () => {
       const team = await newRole('Платежи');
       const anya = await newEmployee('anya', 'Аня');
       const boris = await newEmployee('boris', 'Борис');
       await team.add(anya);
       await team.add(boris);
-      const shared = await newWorkflow(anya, 'Разбор платежей');
+      const shared = await newDeepAgent(anya, 'Разбор платежей');
       await shareWith(harness.app, anya, shared.id, [team.id]);
-      const personal = await newWorkflow(boris, 'Личный разбор');
+      const personal = await newDeepAgent(boris, 'Личный разбор');
 
       // Row 1: the author reads the graph.
       const anyaView = await viewOf(anya, shared.id);

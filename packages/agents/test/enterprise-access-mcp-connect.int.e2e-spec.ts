@@ -80,8 +80,8 @@ const TEST_TIMEOUT_MS = 180_000;
 /** A server name the records name and the registry never holds (DC-11). */
 const GHOST_SERVER = runName('ghost');
 
-/** The tools every session offers its model, before any server's tools. */
-const SESSION_TOOLS = ['read_tool_result', 'search_tool_result', 'run_code'];
+/** The tools every conversation root offers its model, before any server's tools: the root's `start_deep_agent` and those of every session. */
+const SESSION_TOOLS = ['start_deep_agent', 'read_tool_result', 'search_tool_result', 'run_code'];
 /** The run's tools as the model names them; the registry keeps a server's tools sorted by name. */
 const LOGS_TOOLS = [
   `mcp__${LOGS_SERVER}__aggregate_logs`,

@@ -15,7 +15,7 @@ import {
   type StartResolution,
   type StartSource,
 } from './resolve-start';
-import type { RunSnapshot, WorkflowSnapshot } from './snapshot';
+import type { DeepAgentSnapshot, RunSnapshot } from './snapshot';
 
 // DC-3, DC-4, DC-5, AC-14.1, AC-14.3, AC-14.4 (rule): every kind of start takes its own source — only the
 // built-in and by-id starts ask the library, on behalf of the starter and not the author; a record that is
@@ -41,21 +41,32 @@ function agentContent(model: string, agents: string[] = []): AgentContent & { mo
   return { prompt: 'You help.', servers: [], model, maxTurns: 10, agents, tools: ['start_agent'] };
 }
 
-function executor(name: string, source: string | null): WorkflowSnapshot['content']['executors'][number] {
+function subagent(name: string): DeepAgentSnapshot['content']['subagents'][number] {
   return {
     name,
-    role: `Роль ${name}`,
+    description: `Когда звать ${name}`,
     prompt: `You are ${name}.`,
     servers: [],
     model: HAIKU,
     maxTurns: 6,
     maxRuns: 2,
-    tools: [],
-    source: source === null ? null : { recordId: source, version: 1 },
   };
 }
 
-/** The records of a row: the author's agents and workflow, and the system `chat`. */
+/** The content of the author's deep agent: one subagent, no final one. */
+function deepAgentContent(): DeepAgentSnapshot['content'] {
+  return {
+    prompt: 'You research.',
+    servers: [],
+    model: SONNET,
+    maxTurns: 30,
+    subagents: [subagent('gather')],
+    finalSubagent: null,
+    selfLearning: false,
+  };
+}
+
+/** The records of a row: the author's agents and deep agent, and the system `chat`. */
 function seed(library: LibraryDouble) {
   const visibleAgent = (name: string, model: string) =>
     library.add({
@@ -79,17 +90,12 @@ function seed(library: LibraryDouble) {
     everyone: true,
     content: agentContent(HAIKU, [hidden, helper]),
   });
-  const workflow = library.add({
-    kind: 'workflow',
+  const deepAgent = library.add({
+    kind: 'deep_agent',
     name: 'Глубокий ресерч',
     ownerId: AUTHOR,
     everyone: true,
-    content: {
-      coordinator: { rules: '', model: SONNET, maxTurns: 30 },
-      executors: [executor('gather', null)],
-      finalExecutor: null,
-      selfLearning: false,
-    },
+    content: deepAgentContent(),
   });
   const unknownModel = visibleAgent('Новая модель', UNKNOWN_MODEL);
   library.add({
@@ -100,30 +106,25 @@ function seed(library: LibraryDouble) {
     builtinKey: 'chat',
     content: agentContent(HAIKU),
   });
-  return { helper, hidden, agent, workflow, unknownModel };
+  return { helper, hidden, agent, deepAgent, unknownModel };
 }
 type Ids = ReturnType<typeof seed>;
 
-/** A coordinator's snapshot whose executor comes from the author's record the starter does not see (AC-16.3). */
-function coordinator(ids: Ids): WorkflowSnapshot {
+/** The deep agent's snapshot taken at its start (AC-16.3: its subagents need no library). */
+function deepAgentSnapshot(ids: Ids): DeepAgentSnapshot {
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name: 'Глубокий ресерч',
     origin: {
-      recordId: ids.workflow,
-      kind: 'workflow',
+      recordId: ids.deepAgent,
+      kind: 'deep_agent',
       version: 1,
       name: 'Глубокий ресерч',
       author: { id: AUTHOR, name: AUTHOR },
       builtinKey: null,
-      executor: null,
+      subagent: null,
     },
-    content: {
-      coordinator: { rules: '', model: SONNET, maxTurns: 30 },
-      executors: [executor('gather', ids.hidden)],
-      finalExecutor: null,
-      selfLearning: false,
-    },
+    content: deepAgentContent(),
   };
 }
 
@@ -139,7 +140,7 @@ function ownSnapshot(ids: Ids, model: string): RunSnapshot {
       name: 'Черновик Ани',
       author: { id: AUTHOR, name: AUTHOR },
       builtinKey: null,
-      executor: null,
+      subagent: null,
     },
     content: agentContent(model),
     agents: [],
@@ -194,10 +195,10 @@ describe('resolveStart', () => {
       resolved: (ids) => [ids.agent],
     },
     {
-      case: 'a workflow by id is its coordinator',
-      source: (ids) => ({ kind: 'record', recordId: ids.workflow, expected: 'workflow' }),
-      expected: 'workflow Глубокий ресерч',
-      resolved: (ids) => [ids.workflow],
+      case: 'a deep agent by id is its whole team',
+      source: (ids) => ({ kind: 'record', recordId: ids.deepAgent, expected: 'deep_agent' }),
+      expected: 'deep_agent Глубокий ресерч',
+      resolved: (ids) => [ids.deepAgent],
     },
     {
       case: 'a record the author sees and the starter does not is unavailable',
@@ -213,19 +214,19 @@ describe('resolveStart', () => {
     },
     {
       case: 'a record of another kind is unavailable',
-      source: (ids) => ({ kind: 'record', recordId: ids.workflow, expected: 'agent' }),
+      source: (ids) => ({ kind: 'record', recordId: ids.deepAgent, expected: 'agent' }),
       expected: 'refused record_unavailable -',
-      resolved: (ids) => [ids.workflow],
+      resolved: (ids) => [ids.deepAgent],
     },
     {
-      case: 'an executor comes from the coordinator without the library, though its source is hidden',
-      source: (ids) => ({ kind: 'executor', coordinator: coordinator(ids), name: 'gather' }),
-      expected: 'executor gather',
+      case: 'a subagent comes from the deep agent without the library',
+      source: (ids) => ({ kind: 'subagent', deepAgent: deepAgentSnapshot(ids), name: 'gather' }),
+      expected: 'subagent gather',
       resolved: () => [],
     },
     {
-      case: 'an executor outside the team is unavailable',
-      source: (ids) => ({ kind: 'executor', coordinator: coordinator(ids), name: 'nobody' }),
+      case: 'a subagent outside the team is unavailable',
+      source: (ids) => ({ kind: 'subagent', deepAgent: deepAgentSnapshot(ids), name: 'nobody' }),
       expected: 'refused record_unavailable -',
       resolved: () => [],
     },

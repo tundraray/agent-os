@@ -4,7 +4,6 @@ import { AuditModule } from './audit/audit.module';
 import { RuntimeModule } from './runtime/runtime.module';
 import { LoggingModule } from './logging/logging.module';
 import { AgentsModule } from './agents/agents.module';
-import { WorkflowsModule } from './workflows/workflows.module';
 import { ChatModule } from './chat/chat.module';
 import { IdentityModule } from './identity/identity.module';
 import { AccessModule } from './access/access.module';
@@ -24,7 +23,6 @@ import { KnowledgeApiModule } from './knowledge/knowledge-api.module';
     AccessAdminModule,
     LibraryApiModule,
     KnowledgeApiModule,
-    WorkflowsModule,
     ChatModule,
   ],
 })

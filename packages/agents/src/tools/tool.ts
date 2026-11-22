@@ -54,6 +54,8 @@ export type ToolRunResult =
       readonly reason: ToolRefusalReason;
       /** The refused model of a refusal by model; absent or `null` otherwise. */
       readonly refusalDetail?: { readonly model: string } | null;
+      /** What the model reads after `[refused: <reason>]` in the call's `tool_result` (deep-agents KD-4). */
+      readonly text?: string;
     };
 
 /** Input of a tool executed inside the commit transaction of the step: no external calls. */
@@ -66,6 +68,8 @@ export interface InCommitToolInput<Args, Prepared = unknown> {
   readonly startChild: StartChild;
   /** What the tool's `prepare` answered before the commit; absent for a tool without one. */
   readonly prepared?: Prepared;
+  /** `content` of the card the employee approved when the call runs on confirmation; absent otherwise (deep-agents KD-3). */
+  readonly confirmed?: unknown;
 }
 
 /** Input of a tool executed outside a transaction: it may call an external system. */
@@ -83,6 +87,11 @@ export interface OutsideToolInput<Args> {
   readonly confirmed?: unknown;
 }
 
+/** What `review` answers: the call is refused with its reason and text, or the card shows `content`. */
+export type ToolReview =
+  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason; readonly text: string }
+  | { readonly kind: 'card'; readonly content: unknown };
+
 /** A tool that waits for the employee's decision before it runs (KD-4). */
 export interface ToolConfirmation<Args> {
   /** Decision kind of the request. */
@@ -91,6 +100,12 @@ export interface ToolConfirmation<Args> {
   required?(args: Args): boolean;
   /** What the employee is shown; JSON. `tools` is the session's tool set (code-execution KD-10). */
   content(args: Args, tools: readonly SessionTool[]): unknown;
+  /**
+   * The check before the card (deep-agents KD-3): reads what it needs outside any transaction, after the
+   * argument schema and the repeat rule, and refuses the call or gives the card's content. A refusal closes
+   * the call `refused` with its text and asks the employee nothing; without `review` the card is `content`.
+   */
+  review?(args: Args, caller: ToolCaller): Promise<ToolReview>;
   /** Whether the employee may edit the arguments when confirming. */
   readonly editableArgs: boolean;
 }

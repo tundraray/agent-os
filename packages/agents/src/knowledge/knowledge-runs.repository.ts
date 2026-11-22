@@ -20,7 +20,7 @@ const questions = agentKnowledgeQuestions;
 const embedding = agentKnowledgeEmbedding;
 
 /*
- * The run rows, session questions and workflow vector rows of self-learning (repository over a
+ * The run rows, session questions and deep agent vector rows of self-learning (repository over a
  * transaction, KD-3, KD-6, KD-8): the only code that reads and writes `agent_knowledge_runs`,
  * `agent_knowledge_questions` and `agent_knowledge_embedding`; besides them it reads only
  * `agent_sessions.owner_id`. No function opens a transaction, logs or decides.
@@ -30,7 +30,7 @@ const embedding = agentKnowledgeEmbedding;
 
 export type KnowledgeRunRow = typeof runs.$inferSelect;
 
-/** A run that learns, with the owner of its coordinator session — the starter. */
+/** A run that learns, with the owner of its deep agent session — the starter. */
 export interface KnowledgeRun extends Omit<KnowledgeRunRow, 'servers'> {
   /** Servers of the whole team (`*` kept as is). */
   readonly servers: string[];
@@ -57,7 +57,7 @@ export interface RoundOutcome {
 const ServersSchema = z.array(z.string());
 
 /**
- * Creates the run row with the coordinator session (KD-2, called from `ensureSession` in its
+ * Creates the run row with the deep agent session (KD-2, called from `ensureSession` in its
  * transaction); a second call for the same run writes nothing.
  */
 export async function insertKnowledgeRun(
@@ -86,7 +86,7 @@ async function findRun(reader: StoreReader, where: SQL): Promise<KnowledgeRun | 
   return { ...row, servers: ServersSchema.parse(row.servers), ownerId: session.ownerId };
 }
 
-/** The run row of the coordinator task; `undefined` when the run does not learn or is gone. */
+/** The run row of the deep agent task; `undefined` when the run does not learn or is gone. */
 export function findRunById(reader: StoreReader, runId: string): Promise<KnowledgeRun | undefined> {
   return findRun(reader, eq(runs.runId, runId));
 }
@@ -146,7 +146,7 @@ export async function advanceExtractedUpTo(tx: RuntimeTx, runId: string, at: Dat
     .where(eq(runs.runId, runId));
 }
 
-/** The run row of the workflow with the latest round outcome (`lastExtraction`); `undefined` before any round. */
+/** The run row of the deep agent with the latest round outcome (`lastExtraction`); `undefined` before any round. */
 export async function lastExtraction(
   reader: StoreReader,
   recordId: string,
@@ -190,7 +190,7 @@ export async function writeQuestion(tx: RuntimeTx, question: KnowledgeQuestion):
     .onConflictDoUpdate({ target: questions.taskId, set: current });
 }
 
-// ---------- Workflow vector rows (KD-8) ----------
+// ---------- Deep agent vector rows (KD-8) ----------
 
 export type KnowledgeEmbeddingRow = typeof embedding.$inferSelect;
 
@@ -199,13 +199,13 @@ export type KnowledgeEmbeddingPatch = Partial<
   Pick<KnowledgeEmbeddingRow, 'passTaskId' | 'needsPass' | 'payerId'>
 >;
 
-/** An embeddings attempt of the workflow: the failure reason or `null`, and the model. */
+/** An embeddings attempt of the deep agent: the failure reason or `null`, and the model. */
 export interface EmbeddingOutcome {
   readonly reason: EmbeddingFailureReason | null;
   readonly model: string | null;
 }
 
-/** The workflow's vector row; `undefined` before its first pass or question outcome. */
+/** The deep agent's vector row; `undefined` before its first pass or question outcome. */
 export async function findEmbeddingRow(
   reader: StoreReader,
   recordId: string,
@@ -228,7 +228,7 @@ export async function findEmbeddingByPassTask(
 }
 
 /**
- * The workflow's vector row, created when missing and locked, so that two requests for a pass see
+ * The deep agent's vector row, created when missing and locked, so that two requests for a pass see
  * each other (Invariant 13).
  */
 export async function ensureEmbeddingRow(

@@ -1,21 +1,19 @@
-import type { AgentContent, MissingRight, WorkflowContent, WorkflowExecutor } from '@agent-os/contracts';
+import type { AgentContent, MissingRight } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import { testTranslator } from '@/test/intl';
 import {
+  briefTitleName,
   canUseInChat,
   changedAfterRun,
   changedFieldLabel,
   changedFields,
-  freeName,
-  isDraftStale,
   recipientNote,
-  taskTitleName,
-  type RecordDefinition,
+  type AgentDefinition,
 } from './record-rules';
 
 const t = testTranslator('library');
 /** Changed fields as the form names them, from the Russian catalogue. */
-const labelsOf = (before: RecordDefinition, after: RecordDefinition): string[] =>
+const labelsOf = (before: AgentDefinition, after: AgentDefinition): string[] =>
   changedFields(before, after).map((field) => changedFieldLabel(t, field));
 
 const MODEL = 'anthropic/claude-haiku-4-5';
@@ -35,8 +33,6 @@ const colleague = {
   },
 };
 
-const pendingEdit = { state: 'pending' as const, recordId: SOURCE_ID, baseVersion: 3, refusal: null };
-
 const agentContent: AgentContent = {
   prompt: 'Собери ошибки gateway',
   servers: ['sentry', 'jira'],
@@ -46,42 +42,16 @@ const agentContent: AgentContent = {
   tools: [],
 };
 
-const agent = (content: Partial<AgentContent> = {}, name = 'Сбор логов'): RecordDefinition => ({
+const agent = (content: Partial<AgentContent> = {}, name = 'Сбор логов'): AgentDefinition => ({
   name,
   description: 'Ошибки за период',
   kind: 'agent',
   content: { ...agentContent, ...content },
 });
 
-const executor = (name: string, fields: Partial<WorkflowExecutor> = {}): WorkflowExecutor => ({
-  name,
-  role: 'Собирает ошибки за период из задания',
-  prompt: 'Собери ошибки',
-  servers: ['sentry'],
-  model: MODEL,
-  maxTurns: 40,
-  maxRuns: 3,
-  tools: [],
-  source: null,
-  ...fields,
-});
-
-const workflow = (content: Partial<WorkflowContent> = {}, name = 'Разбор инцидента'): RecordDefinition => ({
-  name,
-  description: 'Сводка по инциденту',
-  kind: 'workflow',
-  content: {
-    coordinator: { rules: '', model: MODEL, maxTurns: 40 },
-    executors: [executor('Сбор логов'), executor('Ответ')],
-    finalExecutor: 'Ответ',
-    selfLearning: false,
-    ...content,
-  },
-});
-
 const index = { summaryOf: (id: string) => (id === SOURCE_ID ? { name: 'Разбор инцидента' } : null) };
 
-// Catches: a rule shows an action where it is forbidden or hides it where it is allowed (AC-26.2, AC-28.1, AC-29.1, DC-01).
+// Catches: a rule shows an action where it is forbidden or hides it where it is allowed (AC-26.2, AC-28.1, AC-29.1).
 describe('web rules (design-web.md, «Правила веба»)', () => {
   it.each<[string, () => unknown, unknown]>([
     // «Использовать в чате» — AC-26.2, RV-01
@@ -91,17 +61,17 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
     ["in chat: colleague's record not offered in chat → no (AC-26.2)", () => inChat({}), false],
     [
       'in chat: the record itself needs a model the viewer lacks → no',
-      () => inChat({ mine: true, missingRights: [{ executor: null, servers: [], model: MODEL }] }),
+      () => inChat({ mine: true, missingRights: [{ subagent: null, servers: [], model: MODEL }] }),
       false,
     ],
     [
-      'in chat: only missing servers or an executor model → yes',
+      'in chat: only missing servers or a subagent model → yes',
       () =>
         inChat({
           mine: true,
           missingRights: [
-            { executor: null, servers: ['sentry'], model: null },
-            { executor: 'Сбор логов', servers: [], model: MODEL },
+            { subagent: null, servers: ['sentry'], model: null },
+            { subagent: 'Сбор логов', servers: [], model: MODEL },
           ],
         }),
       true,
@@ -124,35 +94,12 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
     ['recipient note: a company record → none', () => recipientNote({ ...colleague, author: null }), null],
     ['recipient note: record not in the live list → none', () => recipientNote(null), null],
 
-    // «Черновик устарел» — DC-01
-    ['stale draft: record version above baseVersion → yes', () => isDraftStale(pendingEdit, { version: 4 }), true],
-    ['stale draft: record still at baseVersion → no', () => isDraftStale(pendingEdit, { version: 3 }), false],
-    [
-      'stale draft: last refusal version_conflict → yes',
-      () => isDraftStale({ ...pendingEdit, refusal: 'version_conflict' }, { version: 3 }),
-      true,
-    ],
-    ['stale draft: an already saved draft → no', () => isDraftStale({ ...pendingEdit, state: 'saved' }, { version: 4 }), false],
-    [
-      'stale draft: a draft of a new record → no',
-      () => isDraftStale({ ...pendingEdit, recordId: null, baseVersion: null }, undefined),
-      false,
-    ],
+    // Заголовок задания — MC-22
+    ['brief title: record in the list → with its name', () => briefTitleName(t, SOURCE_ID, index), 'Задание · Разбор инцидента'],
+    ['brief title: record not in the list → «Задание»', () => briefTitleName(t, 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index), 'Задание'],
+    ['brief title: list not read → «Задание»', () => briefTitleName(t, SOURCE_ID, { summaryOf: () => undefined }), 'Задание'],
 
-    // Заголовок задания — MC-21
-    ['task title: record in the list → with its name', () => taskTitleName(t, SOURCE_ID, index), 'Задание · Разбор инцидента'],
-    ['task title: record not in the list → «Задание»', () => taskTitleName(t, 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index), 'Задание'],
-    ['task title: list not read → «Задание»', () => taskTitleName(t, SOURCE_ID, { summaryOf: () => undefined }), 'Задание'],
-
-    // Свободное имя
-    ['free name: nothing taken → «{имя} 2»', () => freeName('Сбор логов', ['Сбор логов']), 'Сбор логов 2'],
-    [
-      'free name: «{имя} 2» taken, any case → «{имя} 3»',
-      () => freeName('Сбор логов', ['Сбор логов', 'сбор логов 2']),
-      'Сбор логов 3',
-    ],
-
-    // Изменённые поля — MC-7, MC-10, MC-15
+    // Изменённые поля — MC-7, MC-10
     [
       'changed fields: equal definitions, or servers ticked in another order → none',
       () => [changedFields(agent(), agent()), changedFields(agent(), agent({ servers: ['jira', 'sentry'] }))],
@@ -163,25 +110,6 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
       () => labelsOf(agent(), agent({ prompt: 'Собери ошибки и тикеты' }, 'Сбор логов и тикетов')),
       ['Имя', 'Инструкция'],
     ],
-    [
-      'changed fields: workflow executor changed, added and removed',
-      () =>
-        labelsOf(
-          workflow(),
-          workflow({
-            executors: [executor('Сбор логов', { role: 'Собирает ошибки gateway' }), executor('Сбор тикетов')],
-            finalExecutor: null,
-          }),
-        ),
-      ['Исполнитель «Сбор логов»', 'Исполнитель «Сбор тикетов»', 'Исполнитель «Ответ»', 'Кто пишет ответ'],
-    ],
-    [
-      'changed fields: workflow name and coordinator rules',
-      () => labelsOf(workflow(), workflow({ coordinator: { rules: 'Ответ ждёт сбор', model: MODEL, maxTurns: 40 } }, 'Инцидент')),
-      ['Имя', 'Как работает команда'],
-    ],
-    // AC-10.1, DC-1: without the field the form stays clean after the tick, and the flag is never saved.
-    ['changed fields: workflow self-learning only', () => labelsOf(workflow(), workflow({ selfLearning: true })), ['Самообучение']],
   ])('%s', (_, decide, expected) => {
     expect(decide()).toEqual(expected);
   });

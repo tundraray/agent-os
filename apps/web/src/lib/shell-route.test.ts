@@ -26,6 +26,11 @@ describe('lib/shell-route', () => {
     { pathname: '/agents/a1', expected: { kind: 'agent', agentId: 'a1' } },
     { pathname: '/agents/a%2F1', expected: { kind: 'agent', agentId: 'a/1' } },
     { pathname: '/agents/a1/x', expected: { kind: 'chat' } },
+    // deep-agents DA-04: the tab «Задачи» lives in the address and is parsed before a single agent id.
+    { pathname: '/agents/a1/tasks', expected: { kind: 'agent', agentId: 'a1', tab: 'tasks' } },
+    { pathname: '/agents/a%2F1/tasks', expected: { kind: 'agent', agentId: 'a/1', tab: 'tasks' } },
+    { pathname: '/agents/tasks', expected: { kind: 'agent', agentId: 'tasks' } },
+    { pathname: '/agents/a1/tasks/x', expected: { kind: 'chat' } },
     { pathname: '/agents/a/b', expected: { kind: 'chat' } },
     { pathname: '/agents/', expected: { kind: 'chat' } },
     { pathname: '/account', expected: { kind: 'account' } },
@@ -52,18 +57,19 @@ describe('lib/shell-route', () => {
   ])('builds $path for agent id "$id" and parses it back to the same id', ({ id, path }) => {
     expect(agentPath(id)).toBe(path);
     expect(parseShellRoute(agentPath(id))).toEqual({ kind: 'agent', agentId: id });
+    expect(parseShellRoute(agentPath(id, 'tasks'))).toEqual({ kind: 'agent', agentId: id, tab: 'tasks' });
   });
 
-  // KD-1: the employee's library pages; `new/agent` and `new/workflow` are parsed before a record id.
+  // KD-1: the employee's library pages; `new/agent` is parsed before a record id, and a deep agent has no form (UXRD KD-1).
   const libraryList = { kind: 'library', page: { kind: 'list' } };
   it.each([
     { pathname: '/library', expected: libraryList },
     { pathname: '/library/r1', expected: { kind: 'library', page: { kind: 'record', id: 'r1' } } },
     { pathname: '/library/r%2F1', expected: { kind: 'library', page: { kind: 'record', id: 'r/1' } } },
-    { pathname: '/library/new/agent', expected: { kind: 'library', page: { kind: 'new', recordKind: 'agent' } } },
-    { pathname: '/library/new/workflow', expected: { kind: 'library', page: { kind: 'new', recordKind: 'workflow' } } },
+    { pathname: '/library/new/agent', expected: { kind: 'library', page: { kind: 'new' } } },
+    { pathname: '/library/new/deep_agent', expected: libraryList },
     { pathname: '/library/new/other', expected: libraryList },
-    // Self-learning KD-2: a workflow's knowledge is parsed before a single record id, otherwise it opens the list.
+    // Self-learning KD-2: a deep agent's knowledge is parsed before a single record id, otherwise it opens the list.
     { pathname: '/library/abc/knowledge', expected: { kind: 'library', page: { kind: 'knowledge', id: 'abc' } } },
     { pathname: '/library/a%2Fb/knowledge', expected: { kind: 'library', page: { kind: 'knowledge', id: 'a/b' } } },
     { pathname: '/library/knowledge', expected: { kind: 'library', page: { kind: 'record', id: 'knowledge' } } },
@@ -106,18 +112,17 @@ describe('lib/shell-route', () => {
     expect(adminNewPath('servers')).toBe('/admin/register-server');
   });
 
-  // KD-1, DC-6: the panel's «Агенты и workflow» keeps its tab and its new-record kind in the path, so a reload and
+  // KD-1, DC-6: the panel's «Агенты и глубокие агенты» keeps its tab and its new agent in the path, so a reload and
   // «Назад» return the same tab; `shared`, `bans` and `new/…` are parsed before a record id.
   const libraryTab = (tab: string) => ({ kind: 'admin', section: 'library', page: { kind: 'list', tab } });
   it.each([
     { pathname: '/admin/library', expected: libraryTab('system') },
     { pathname: '/admin/library/shared', expected: libraryTab('shared') },
     { pathname: '/admin/library/bans', expected: libraryTab('bans') },
-    { pathname: '/admin/library/new/agent', expected: { kind: 'admin', section: 'library', page: { kind: 'new', recordKind: 'agent' } } },
-    { pathname: '/admin/library/new/workflow', expected: { kind: 'admin', section: 'library', page: { kind: 'new', recordKind: 'workflow' } } },
+    { pathname: '/admin/library/new/agent', expected: { kind: 'admin', section: 'library', page: { kind: 'new' } } },
     { pathname: '/admin/library/r%2F1', expected: { kind: 'admin', section: 'library', page: { kind: 'record', key: 'r/1' } } },
     { pathname: '/admin/library/new/other', expected: usersList },
-    // Self-learning KD-2: a workflow's knowledge is parsed after the tabs and `new/…`, before a single record key.
+    // Self-learning KD-2: a deep agent's knowledge is parsed after the tabs and `new/…`, before a single record key.
     { pathname: '/admin/library/abc/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'knowledge', key: 'abc' } } },
     { pathname: '/admin/library/a%2Fb/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'knowledge', key: 'a/b' } } },
     { pathname: '/admin/library/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'record', key: 'knowledge' } } },

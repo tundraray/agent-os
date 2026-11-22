@@ -2,28 +2,37 @@ import type {
   AgentConfirmation,
   AgentHistoryEntry,
   AgentView as AgentsAgentView,
+  DeepAgentRun,
 } from '@agent-os/agents';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
   ConfirmationKindSchema,
   HISTORY_PAGE_SIZE,
+  IdSchema,
+  LIBRARY_RECORD_CONFIRMATION,
   type AgentNode,
   type AgentView,
   type Confirmation,
-  type DraftView,
+  type DeepAgentRunView,
   type HistoryEntry,
   type PendingMessage,
+  type RecordFocus,
+  type RecordFocusAction,
   type RunOrigin,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 import type { StepMessage } from '@agent-os/runtime';
-import type { WorkflowRun } from '@agent-os/workflows';
 import { z } from 'zod';
-import type { Draft } from './drafts.repository';
+import {
+  CREATE_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
+  READ_RECORD_TOOL,
+} from '../library/record-tools';
 
 /**
- * The views of `agents`, `workflows` and `runtime` as the chat API returns them (design-chat.md,
+ * The views of `agents` and `runtime` as the chat API returns them (design-chat.md,
  * ConversationView, AgentNode, Confirmation; design-runtime.md, «Данные для `web`»): every `Date`
  * becomes an ISO string, and each result is a value of the `contracts` schema's type without a cast.
  * Pure functions; `ConversationsService` and the agent routes share them.
@@ -44,7 +53,7 @@ function toRunOrigin(origin: RunOrigin): RunOrigin {
     name: origin.name,
     author: origin.author === null ? null : { id: origin.author.id, name: origin.author.name },
     builtinKey: origin.builtinKey,
-    executor: origin.executor,
+    subagent: origin.subagent,
   };
 }
 
@@ -143,42 +152,89 @@ export function toConfirmation(
 }
 
 /**
- * A workflow run (`GET /agents/:agentId/run`): the coordinator and the steps as agents, every date ISO.
+ * A deep agent run (`GET /agents/:agentId/run`): the deep agent and the steps as agents, every date ISO.
  */
-export function toWorkflowRunView(run: WorkflowRun): WorkflowRunView {
+export function toDeepAgentRunView(run: DeepAgentRun): DeepAgentRunView {
   return {
     origin: toRunOrigin(run.origin),
     brief: { question: run.brief.question, boundaries: run.brief.boundaries, result: run.brief.result },
-    coordinator: toAgentView(run.coordinator),
+    deepAgent: toAgentView(run.deepAgent),
     team: run.team.map((member) => ({
       name: member.name,
-      role: member.role,
       maxRuns: member.maxRuns,
       final: member.final,
     })),
     steps: run.steps.map(toAgentView),
-    limitRefusals: run.limitRefusals.map(({ executor, at }) => ({ executor, at: iso(at) })),
+    limitRefusals: run.limitRefusals.map(({ subagent, at }) => ({ subagent, at: iso(at) })),
   };
 }
 
-/** A record draft of the conversation (design-runtime.md, `DraftView`), every date ISO. */
-export function toDraftView(draft: Draft): DraftView {
-  const fields = {
-    draftId: draft.id,
-    callId: draft.callId,
-    name: draft.name,
-    description: draft.description,
-    recordId: draft.recordId,
-    baseVersion: draft.baseVersion,
-    state: draft.state,
-    refusal: draft.refusal,
-    savedRecordId: draft.savedRecordId,
-    createdAt: iso(draft.createdAt),
-    resolvedAt: isoOrNull(draft.resolvedAt),
-  };
-  return draft.body.kind === 'agent'
-    ? { ...fields, kind: 'agent', content: draft.body.content }
-    : { ...fields, kind: 'workflow', content: draft.body.content };
+/** The focus action of a record tool that names its record in `recordId`. */
+const RECORD_ID_ACTIONS: Readonly<Record<string, RecordFocusAction>> = {
+  [READ_RECORD_TOOL]: 'read',
+  [EDIT_RECORD_TOOL]: 'changed',
+  [DELETE_RECORD_TOOL]: 'deleted',
+};
+
+const RecordIdArgsSchema = z.object({ recordId: IdSchema });
+const DeepAgentArgsSchema = z.object({ deepAgent: IdSchema });
+
+type ToolResultEntry = Extract<HistoryEntry, { kind: 'tool_result' }>;
+
+/**
+ * The record of a successful root call and what the call did to it: a record tool names it in its
+ * arguments; a create in the card the employee approved (the id `review` chose, KD-3) — the root runs
+ * one call at a time, so it is the last approved `create_record` request resolved before the result; a
+ * brief start in `deepAgent`, the tool being the one of the root's `agents.brief` requests. `undefined` —
+ * the call is not about a record.
+ */
+function focusTargetOf(
+  result: ToolResultEntry,
+  confirmations: readonly Confirmation[],
+): { readonly recordId: string; readonly action: RecordFocusAction } | undefined {
+  const { tool, args: callArgs } = result.content;
+  const byId = RECORD_ID_ACTIONS[tool];
+  if (byId !== undefined) {
+    const args = RecordIdArgsSchema.safeParse(callArgs);
+    return args.success ? { recordId: args.data.recordId, action: byId } : undefined;
+  }
+  if (tool === CREATE_RECORD_TOOL) {
+    const card = confirmations.findLast(
+      (confirmation) =>
+        confirmation.kind === LIBRARY_RECORD_CONFIRMATION &&
+        confirmation.tool === CREATE_RECORD_TOOL &&
+        confirmation.resolution?.approve === true &&
+        confirmation.resolvedAt !== null &&
+        confirmation.resolvedAt <= result.createdAt,
+    );
+    const content = RecordIdArgsSchema.safeParse(card?.content);
+    return content.success ? { recordId: content.data.recordId, action: 'created' } : undefined;
+  }
+  const startsDeepAgent = confirmations.some(
+    (confirmation) => confirmation.kind === AGENTS_BRIEF_CONFIRMATION && confirmation.tool === tool,
+  );
+  if (!startsDeepAgent) return undefined;
+  const args = DeepAgentArgsSchema.safeParse(callArgs);
+  return args.success ? { recordId: args.data.deepAgent, action: 'started' } : undefined;
+}
+
+/**
+ * The record in focus of a conversation (deep-agents KD-6): the last successful call of the root about a
+ * record — read, created, changed, deleted, or started by a brief — with the time it finished; `null`
+ * while the chat has not touched a record. `entries` are the root's whole history, `confirmations` its
+ * decision requests.
+ */
+export function focusOf(
+  entries: readonly HistoryEntry[],
+  confirmations: readonly Confirmation[],
+): RecordFocus | null {
+  for (const entry of [...entries].reverse()) {
+    if (entry.kind !== 'tool_result' || entry.content.outcome !== 'success') continue;
+    const target = focusTargetOf(entry, confirmations);
+    if (target !== undefined)
+      return { ...target, at: entry.content.finishedAt ?? entry.createdAt };
+  }
+  return null;
 }
 
 /** Payloads of the queue messages of an agent (the agents package, `step/deliver.ts`). */

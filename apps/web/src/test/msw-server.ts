@@ -4,6 +4,7 @@ import type {
   McpConnection,
   MyModels,
   RecordSummary,
+  RunTaskListView,
   SpendResponse,
 } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
@@ -19,8 +20,9 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolR
  * agent page and the agent list (custom-agents design-web.md, KD-2). The model providers and the model
  * defaults are read by the grant dialog, the company record editor and the «Модели» section; a ready
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
- * «Системные» tab of «Агенты и workflow» (self-learning AS-01); the settings of large tool results by the
- * «MCP-серверы» list (tool-result-reading R-5). A test that cares overrides them with
+ * «Системные» tab of «Агенты и глубокие агенты» (self-learning AS-01); the settings of large tool results by the
+ * «MCP-серверы» list (tool-result-reading R-5). A deep agent's task list is read by its page and by the
+ * diagram panel of the conversation that started it (deep-agents DA-04, DA-12). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [
@@ -31,6 +33,7 @@ const shellDefaults = [
   ),
   http.get('/api/mcp/connections', () => HttpResponse.json([] satisfies McpConnection[])),
   http.get('/api/threads/:threadId/agents', () => HttpResponse.json([] satisfies AgentNode[])),
+  http.get('/api/agents/:agentId/tasks', () => HttpResponse.json({ tasks: [] } satisfies RunTaskListView)),
   http.get('/api/access/models', () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),

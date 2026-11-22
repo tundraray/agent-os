@@ -198,7 +198,7 @@ const modelDefaults = {
 const RecordSummaryListSchema = z.array(RecordSummarySchema);
 const BannedRecordListSchema = z.array(BannedRecordSchema);
 
-/** The panel's «Агенты и workflow» (design-library.md, admin routes). */
+/** The panel's «Агенты и глубокие агенты» (design-library.md, admin routes). */
 const library = {
   system: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'system'), schema: RecordSummaryListSchema }),
   shared: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'shared'), schema: RecordSummaryListSchema }),
@@ -220,7 +220,7 @@ const library = {
     apiRequest({ path: apiPath('library', 'settings'), method: 'PUT', body, schema: LibrarySettingsSchema }),
 };
 
-/** «Самообучение workflow» on «Системные»: the knowledge limit and lessons. */
+/** «Самообучение глубоких агентов» on «Системные»: the knowledge limit and lessons. */
 const knowledge = {
   settings: (): Promise<KnowledgeSettings> =>
     apiRequest({ path: apiPath('knowledge', 'settings'), schema: KnowledgeSettingsSchema }),

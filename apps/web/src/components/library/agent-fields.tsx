@@ -39,7 +39,7 @@ import {
 import { formatModel, formatRecordModel } from "@/lib/agents/format";
 import type { FormatsTranslator, ModelsTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/pick-locale";
-import type { RecordDefinition } from "@/lib/library/record-rules";
+import type { AgentDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
 
@@ -65,8 +65,6 @@ function CheckText({ check }: { check: Check }) {
 
 const failed = (check: Check): ReactNode => <CheckText check={check} />;
 
-export type AgentDefinition = Extract<RecordDefinition, { kind: "agent" }>;
-
 export type AgentField = "name" | "description" | "prompt" | "servers" | "model" | "maxTurns" | "agents";
 
 export type AgentFieldErrors = Partial<Record<AgentField, ReactNode>>;
@@ -90,15 +88,15 @@ export type EditorChoices = {
   models: readonly EditorModel[] | undefined;
   /** `null` while no default chat model is chosen. */
   defaultModel: string | null;
-  /** Set by an administrator in the panel's «Агенты и workflow». */
+  /** Set by an administrator in the panel's «Агенты и глубокие агенты». */
   defaultMaxTurns: number;
 };
 
 /** A chat model the author may choose: a `MyModel` row as it is, or a catalogue row in the panel. */
-export type EditorModel = { model: string; name: string; unavailableReason: ModelUnavailableReason | null };
+type EditorModel = { model: string; name: string; unavailableReason: ModelUnavailableReason | null };
 
-/** What a new record or a new executor starts with (`GET /api/library/choices`). */
-export type RecordDefaults = Pick<EditorChoices, "defaultModel" | "defaultMaxTurns">;
+/** What a new record starts with (`GET /api/library/choices`). */
+type RecordDefaults = Pick<EditorChoices, "defaultModel" | "defaultMaxTurns">;
 
 /** The name rule is the contract's own schema of a record name, never an expression of the web. */
 const RecordNameSchema = CreateRecordBodySchema.options[0].shape.name;
@@ -107,7 +105,7 @@ const RecordNameSchema = CreateRecordBodySchema.options[0].shape.name;
 const ADVANCED_FIELDS: readonly AgentField[] = ["model", "maxTurns", "agents"];
 
 /** The checks of a record's name and description, the same for both kinds (MC-8). */
-export function validateRecordText(values: { name: string; description: string }): Partial<Record<"name" | "description", ReactNode>> {
+function validateRecordText(values: { name: string; description: string }): Partial<Record<"name" | "description", ReactNode>> {
   const errors: Partial<Record<"name" | "description", ReactNode>> = {};
   if (values.name.trim() === "") errors.name = failed("enterName");
   else if (!RecordNameSchema.safeParse(values.name).success) errors.name = failed("oneLineName");
@@ -302,7 +300,7 @@ type TextFieldProps = {
 };
 
 /** One text field with a counter (settings-form field; record-editor.md, parts 5 and 6). */
-export function TextField({ id, label, hint, value, max, enforceMax = true, multiline = false, long = false, error, onChange }: TextFieldProps) {
+function TextField({ id, label, hint, value, max, enforceMax = true, multiline = false, long = false, error, onChange }: TextFieldProps) {
   const hintId = hint === undefined ? null : `${id}-hint`;
   const errorId = `${id}-error`;
   const control = {
@@ -368,7 +366,7 @@ type ServersFieldProps = {
  * «Системы» (KD-8): a checkbox per system of the author's rights, by its registry name. A system the author
  * has lost comes first, ticked and marked; it does not stop a save, and once unticked it cannot come back.
  */
-export function ServersField({ id, saved, chosen, choices, allowAll = false, error, onChange }: ServersFieldProps) {
+function ServersField({ id, saved, chosen, choices, allowAll = false, error, onChange }: ServersFieldProps) {
   const t = useTranslations("library");
   // «Все системы» is a mark of the list, not a system: it is never listed as a lost one.
   const all = chosen.includes(ALL_SERVERS);
@@ -487,8 +485,6 @@ function ModelBanner({
 
 type ModelFieldProps = {
   id: string;
-  /** «Модель» by default; a workflow's coordinator names its own. */
-  label?: string;
   /** `null` — the record runs on the default chat model. */
   model: string | null;
   choices: EditorChoices;
@@ -550,7 +546,7 @@ function ownOption(
  * when it is not offered, comes first: a model without a right or of a broken provider stays chosen with its
  * mark; a record without its own model shows the default chat model, and choosing another gives it its own.
  */
-export function ModelField({ id, label, model, choices, error, onChange }: ModelFieldProps) {
+function ModelField({ id, model, choices, error, onChange }: ModelFieldProps) {
   const t = useTranslations("formats");
   const tLibrary = useTranslations("library");
   const tModels = useTranslations("admin.models");
@@ -566,7 +562,7 @@ export function ModelField({ id, label, model, choices, error, onChange }: Model
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {label ?? tLibrary("fields.model")}
+        {tLibrary("fields.model")}
       </FieldLabel>
       <Select
         value={model}
@@ -616,31 +612,24 @@ export function ModelField({ id, label, model, choices, error, onChange }: Model
  * «Максимум шагов»: typed as text, so an emptied field stays empty; anything but a whole number is `NaN`
  * in the form and is refused before sending.
  */
-export function MaxTurnsField({
+function MaxTurnsField({
   id,
-  label,
-  hint: givenHint,
   value,
   error,
   onChange,
 }: {
   id: string;
-  /** «Максимум шагов» by default; also the coordinator's maximum and an executor's «Сколько раз можно звать». */
-  label?: string;
-  /** `null` — no hint. */
-  hint?: string | null;
   value: number;
   error: ReactNode;
   onChange: (value: number) => void;
 }) {
   const t = useTranslations("library");
-  const hint = givenHint === undefined ? t("agentFields.maxTurnsHint") : givenHint;
-  const hintId = hint === null ? null : `${id}-hint`;
+  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {label ?? t("fields.maxTurns")}
+        {t("fields.maxTurns")}
       </FieldLabel>
       <Input
         id={id}
@@ -656,11 +645,9 @@ export function MaxTurnsField({
           onChange(text === "" ? Number.NaN : Number(text));
         }}
       />
-      {hintId !== null && (
-        <FieldDescription id={hintId} className={HINT}>
-          {hint}
-        </FieldDescription>
-      )}
+      <FieldDescription id={hintId} className={HINT}>
+        {t("agentFields.maxTurnsHint")}
+      </FieldDescription>
       <FieldError id={errorId} className={CAPTION}>
         {error}
       </FieldError>

@@ -62,7 +62,7 @@ export interface StartLogEntry {
   readonly startedAt: number;
 }
 
-/** Logs a start or its refusal with the record, its version and the executor (design-runtime.md, «Логирование»). */
+/** Logs a start or its refusal with the record, its version and the subagent (design-runtime.md, «Логирование»). */
 export function logStart(logger: Logger, entry: StartLogEntry): void {
   const origin = entry.resolution?.kind === 'snapshot' ? entry.resolution.snapshot.origin : null;
   logger.info(entry.refusal === null ? 'agents start done' : 'agents start refused', {
@@ -73,7 +73,7 @@ export function logStart(logger: Logger, entry: StartLogEntry): void {
     source: entry.source,
     recordId: origin?.recordId ?? entry.recordId ?? null,
     version: origin?.version ?? null,
-    executor: origin?.executor ?? null,
+    subagent: origin?.subagent ?? null,
     outcome: entry.refusal ?? 'started',
     refusedModel: entry.resolution?.kind === 'refused' ? entry.resolution.model : null,
     durationMs: Date.now() - entry.startedAt,

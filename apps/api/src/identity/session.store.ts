@@ -1,8 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
-  identityRoleMembers,
-  identityRoles,
   identitySessions,
   identitySettings,
   identityUsers,
@@ -20,6 +18,7 @@ import type { Executor } from '../common/executor';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { isSessionExpired, needsTouch } from './session-lifetime';
 import { readSessionLimits, sessionLimitColumns } from './settings.repository';
+import { IS_ADMIN } from './users.repository';
 
 /** `ended_reason` of a session ended by a block (KD-4, DC-9). */
 export const ENDED_BY_BLOCK = 'account_disabled';
@@ -60,13 +59,6 @@ export interface FoundSession {
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
-
-/** The personal admin mark or a membership in a role with the admin right. */
-const IS_ADMIN = sql<boolean>`(${identityUsers.isAdmin} or exists (
-  select 1 from ${identityRoleMembers}
-  join ${identityRoles} on ${identityRoles.id} = ${identityRoleMembers.roleId}
-  where ${identityRoleMembers.userId} = ${identityUsers.id} and ${identityRoles.isAdmin}
-))`;
 
 // ---------- Writes in the caller's transaction (repository-over-transaction.md: executor first) ----------
 

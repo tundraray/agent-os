@@ -26,7 +26,7 @@ export interface KnowledgeVectorKey {
 
 /**
  * Replaceable store of the graph's vectors (self-learning/design-core.md, KD-8, FR-19). A collection is
- * the graph of one workflow — its record id. The graph tables are the source of truth: the store
+ * the graph of one deep agent — its record id. The graph tables are the source of truth: the store
  * shares no transaction with them, a caller joins found keys with the graph and drops keys without a
  * record. Filters are plain fields; a failure of the store is an exception.
  */

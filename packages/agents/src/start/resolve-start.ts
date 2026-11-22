@@ -15,24 +15,24 @@ import { modelDeniedEntry } from '../model/model-client';
 import { providerReadiness } from '../providers/provider-readiness';
 import type { AgentsProviders } from '../providers/provider-registry';
 import type { RecordLibrary } from './record-library';
-import type { RunSnapshot, WorkflowSnapshot } from './snapshot';
-import { executorSnapshot, recordSnapshot, snapshotDefinition } from './snapshot-definition';
+import type { DeepAgentSnapshot, RunSnapshot } from './snapshot';
+import { recordSnapshot, snapshotDefinition, subagentSnapshot } from './snapshot-definition';
 
 /**
  * Where a start takes its snapshot (design-runtime.md, «Откуда берётся снимок»). Only `builtin` and
- * `record` ask the library; the others copy a snapshot the run already holds, so an executor works on
- * the workflow's copy even when its source is hidden from the starter (AC-16.3).
+ * `record` ask the library; the others copy a snapshot the run already holds, so a subagent works on
+ * its deep agent's copy (AC-16.3).
  */
 export type StartSource =
   /** The built-in record with this key, such as `chat` for the root of a conversation. */
   | { readonly kind: 'builtin'; readonly builtinKey: string }
   /** A record by its id, and its restart from scratch; a record of another kind is unavailable. */
   | { readonly kind: 'record'; readonly recordId: string; readonly expected: RecordKind }
-  /** An executor of the coordinator's team, by its name; a name outside the team is unavailable. */
-  | { readonly kind: 'executor'; readonly coordinator: WorkflowSnapshot; readonly name: string }
+  /** A subagent of the deep agent's team, by its name; a name outside the team is unavailable. */
+  | { readonly kind: 'subagent'; readonly deepAgent: DeepAgentSnapshot; readonly name: string }
   /** A fork: the caller's snapshot. */
   | { readonly kind: 'fork'; readonly snapshot: RunSnapshot }
-  /** The restart of an executor or a fork: its own earlier snapshot. */
+  /** The restart of a subagent or a fork: its own earlier snapshot. */
   | { readonly kind: 'restart'; readonly snapshot: RunSnapshot };
 
 export interface StartRequest {
@@ -86,7 +86,7 @@ const MODEL_NOT_CONFIGURED: StartRefusal = {
  * its provider. It runs before the transaction that starts the run and writes nothing: a refused model
  * comes back with its `access_denied` record, which the caller writes once that refusal is its outcome;
  * a provider refusal and `model_not_configured` have none (model-providers design-core.md KD-2, KD-5).
- * A record's `null` model becomes the default chat model here, once, in the snapshot: executors, forks
+ * A record's `null` model becomes the default chat model here, once, in the snapshot: subagents, forks
  * and restarts copy it. A spent quota does not stop the start — the run fails at its first call; a
  * disabled owner rejects with `OwnerDisabledError`.
  */
@@ -122,8 +122,8 @@ async function buildSnapshot(
       const record = await deps.library.resolve(ownerId, source.recordId);
       return snapshotOfRecord(ownerId, record?.kind === source.expected ? record : null, deps);
     }
-    case 'executor':
-      return executorSnapshot(source.coordinator, source.name) ?? RECORD_UNAVAILABLE;
+    case 'subagent':
+      return subagentSnapshot(source.deepAgent, source.name) ?? RECORD_UNAVAILABLE;
     case 'fork':
     case 'restart':
       return source.snapshot;
@@ -132,7 +132,7 @@ async function buildSnapshot(
 
 /**
  * The snapshot of a record the library gave the starter; an agent's `agents` are matched against one
- * `listVisible` of the same starter (plan Notes 9в), a workflow needs none. The default chat model is
+ * `listVisible` of the same starter (plan Notes 9в), a deep agent needs none. The default chat model is
  * read at the start, for the record's `null` models (KD-5).
  */
 async function snapshotOfRecord(

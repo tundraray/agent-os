@@ -1,6 +1,5 @@
 import { type CodeRunner, createCodeRunner } from '@agent-os/code-runner';
 import { createSecretMasker, type Logger } from '@agent-os/common';
-import type { RecordKind } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
@@ -24,13 +23,7 @@ import { type CompleteTextRequest, createModelClient, type OnTextDelta } from '.
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions';
 import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry';
 import type { RecordLibrary } from './start/record-library';
-import {
-  auditStartRefusal,
-  resolveStart,
-  type StartRefusal,
-  type StartRequest,
-  type StartResolution,
-} from './start/resolve-start';
+import { resolveStart, type StartRequest, type StartResolution } from './start/resolve-start';
 import { createAgentStepHandler } from './step/agent-step.handler';
 import { createCompactionStep } from './step/compaction-step';
 import { createModelStep } from './step/model-step';
@@ -38,8 +31,8 @@ import { createToolStep } from './step/tool-step';
 import { toolResults } from './store/tool-results.repository';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index';
 import { createRunCodeTool } from './tools/builtin/run-code';
+import { createTaskListTool } from './tools/builtin/task-list';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry';
-import { rootMayStartRecord } from './tools/tool-gate';
 import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings';
 import { createToolRunner } from './tools/tool-runner';
 
@@ -60,7 +53,7 @@ export interface AgentsOptions {
   /** Writes the `access_denied` record of every refused tool or model call (KD-6). */
   readonly audit: AccessAudit;
   /**
-   * The library of agents and workflows (design-runtime.md, «Порт `RecordLibrary`»): every start asks it
+   * The library of agents and deep agents (design-runtime.md, «Порт `RecordLibrary`»): every start asks it
    * for the record on behalf of the starter; `apps/api` passes `LibraryService`.
    */
   readonly library: RecordLibrary;
@@ -78,14 +71,6 @@ export interface AgentsOptions {
   readonly embeddingClient?: EmbeddingClient;
 }
 
-/** What `rootMayStart` asks: the conversation root's owner and the record the call names. */
-export interface RootStartQuery {
-  readonly ownerId: string;
-  readonly recordId: string;
-  /** The kind the calling tool starts. */
-  readonly kind: RecordKind;
-}
-
 /** The agents package (design-agents.md, Contract «Сборка»). */
 export interface Agents {
   /** Tools of upper parts, registered before `start()`. */
@@ -94,20 +79,9 @@ export interface Agents {
   readonly sessions: AgentSessions;
   /**
    * The one start procedure (KD-2): the snapshot of a start on behalf of the starter, or its refusal.
-   * `workflows` calls it in the `prepare` of `start_workflow`, before the commit.
+   * A tool of an upper part that starts a record calls it in its `prepare`, before the commit.
    */
   resolveStart(request: StartRequest): Promise<StartResolution>;
-  /**
-   * Writes the `access_denied` record of a start refused for its model; nothing for any other refusal.
-   * `workflows` calls it in the `execute` of `start_workflow` when that refusal is the call's outcome.
-   */
-  auditStartRefusal(refusal: StartRefusal): Promise<void>;
-  /**
-   * Whether the conversation root of `ownerId` may start the record of this kind (KD-4, AC-15.2): the
-   * rule `start_agent` applies at the root, read live from the owner's library view. `workflows` asks it
-   * in the `prepare` of `start_workflow`, before the commit.
-   */
-  rootMayStart(request: RootStartQuery): Promise<boolean>;
   /** The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014). */
   readonly mcp: AgentsMcp;
   /** The model provider registry: the only entry point of `apps/api` to `agent_model_providers` (ADR-0019). */
@@ -118,7 +92,7 @@ export interface Agents {
    */
   readonly embeddings: AgentsEmbeddings;
   /**
-   * The knowledge graphs of self-learning workflows and their settings (self-learning KD-1, KD-7): the only
+   * The knowledge graphs of self-learning deep agents and their settings (self-learning KD-1, KD-7): the only
    * entry point of `apps/api` to `agent_knowledge_*`. Who may call is the library's rule, asked first.
    */
   readonly knowledge: AgentsKnowledge;
@@ -204,13 +178,17 @@ export function createAgents(options: AgentsOptions): Agents {
     maskSecrets,
   });
   const registry: ToolRegistry = createToolRegistry({
-    builtins: createBuiltinTools({
-      ...startDeps,
-      maxDepth: config.maxDepth,
-      logger,
-      database,
-      tasks: runtime.tasks,
-    }),
+    builtins: [
+      ...createBuiltinTools({
+        ...startDeps,
+        maxDepth: config.maxDepth,
+        logger,
+        database,
+        tasks: runtime.tasks,
+      }),
+      // Only a deep agent's definition names it (deep-agents KD-5).
+      createTaskListTool({ logger }),
+    ],
     runCode,
     database,
     access,
@@ -275,9 +253,6 @@ export function createAgents(options: AgentsOptions): Agents {
     tools: { register: (tool) => registry.register(tool) },
     sessions,
     resolveStart: (request) => resolveStart(request, startDeps),
-    auditStartRefusal: (refusal) => auditStartRefusal(audit, refusal),
-    rootMayStart: async ({ ownerId, recordId, kind }) =>
-      rootMayStartRecord(await library.listVisible(ownerId), kind, recordId),
     mcp: createAgentsMcp(mcpRegistry, accounts),
     providers,
     embeddings,

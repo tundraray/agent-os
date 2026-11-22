@@ -4,7 +4,6 @@ import { AgentsError, type StartRefusalDetail } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
-import { WorkflowsError } from '@agent-os/workflows';
 import { apiError } from '../common/api-error';
 
 /**
@@ -34,8 +33,6 @@ const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
   NOT_FINISHED: { status: 409, message: 'Agent is not finished' },
   PARENT_FINISHED: { status: 409, message: 'Parent agent is finished' },
   START_REFUSED: { status: 409, message: 'Start refused' },
-  DRAFT_NOT_FOUND: { status: 404, message: 'Draft not found' },
-  DRAFT_RESOLVED: { status: 409, message: 'Draft is resolved' },
 };
 
 /** The HTTP answer of one API error code, body `ApiErrorSchema`. */
@@ -79,6 +76,7 @@ function codeOf(
         return notFound;
       case 'NOT_FINISHED':
       case 'INVALID_ARGUMENTS':
+      case 'RUN_NOT_FOUND':
         return error.code;
       default:
         return undefined;
@@ -95,15 +93,14 @@ function codeOf(
         return undefined;
     }
   }
-  if (error instanceof WorkflowsError) return error.code;
   return undefined;
 }
 
 /**
  * Translates any error of a command into its HTTP answer: an `HttpException` (validation, cursor, the
  * service's own codes) as is, a refused start into 409 START_REFUSED with its reason and model, an
- * expected refusal of `agents`, `runtime` or `workflows` into its code with a constant message, anything else into a bare 500 with neither text nor stack (the caller logs
- * the original error in the field `error`).
+ * expected refusal of `agents` or `runtime` into its code with a constant message, anything else into a
+ * bare 500 with neither text nor stack (the caller logs the original error in the field `error`).
  */
 function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   if (error instanceof HttpException) return error;
@@ -124,9 +121,6 @@ export type CommandFields = {
   readonly decisionId?: string;
   /** The record chip of a message. */
   readonly recordId?: string;
-  /** A record draft and the employee's action on it. */
-  readonly draftId?: string;
-  readonly action?: string;
 };
 
 /** One API command: its route, ids, the work, and the outcome fields read from the result. */

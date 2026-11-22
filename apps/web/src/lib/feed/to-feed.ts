@@ -1,5 +1,7 @@
 import {
-  WORKFLOWS_BRIEF_CONFIRMATION,
+  AGENTS_BRIEF_CONFIRMATION,
+  LIBRARY_RECORD_CONFIRMATION,
+  LibraryRecordCardSchema,
   type AgentNode,
   type AgentPageView,
   type AgentStatus,
@@ -9,8 +11,8 @@ import {
   type ChipRecord,
   type Confirmation,
   type ConversationView,
-  type DraftView,
   type HistoryEntry,
+  type LibraryRecordCard,
   type PendingMessage,
   type ToolCallState,
   type ToolOutcome,
@@ -38,8 +40,8 @@ export type FeedView =
       decisions: readonly Confirmation[];
       /** Direct children of the root. */
       children: readonly AgentNode[];
-      /** Every record draft of the conversation (KD-6): not decisions, so the tray and counters never see them. */
-      drafts: readonly DraftView[];
+      /** The record the conversation last touched (KD-6); null while it has touched none. */
+      focus: ConversationView["focus"];
     }
   | {
       kind: "agent";
@@ -50,9 +52,9 @@ export type FeedView =
       children: readonly AgentNode[];
     };
 
-/** A workflow coordinator: started from a workflow record and not as one of its executors. */
-export function isWorkflowCoordinator(agent: Pick<AgentView, "origin">): boolean {
-  return agent.origin?.kind === "workflow" && agent.origin.executor === null;
+/** A deep agent's run: started from a deep agent record and not as one of its subagents. */
+export function isDeepAgentRun(agent: Pick<AgentView, "origin">): boolean {
+  return agent.origin?.kind === "deep_agent" && agent.origin.subagent === null;
 }
 
 /** The view of one page read, with that page's entries. */
@@ -66,7 +68,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
       pending: page.pending,
       decisions: page.decisions,
       children: page.agents,
-      drafts: page.drafts,
+      focus: page.focus,
     };
   }
   return {
@@ -138,22 +140,39 @@ export const FEED_PART = {
   decision: "decision",
   report: "report",
   event: "event",
-  draft: "draft",
+  planNotice: "plan-notice",
 } as const;
 
-/** The workflow card also shows the question of the brief that started it (agent-run-card.md, part 4). */
+/** The deep agent card also shows the question of the brief that started it (agent-run-card.md, part 4). */
 export type RunCardPartData = AgentNode & { briefQuestion?: string };
 export type DecisionPartData = {
   confirmation: Confirmation;
   /** The conversation's root asks: «Чат хочет выполнить:» (MC-19). */
   byChat: boolean;
+  /** How the call of an approved record card ended (DA-11); null before its result and for any other decision. */
+  saved: RecordSave | null;
 };
-/** A record draft (DC-01) with the conversation's draft before it, whose fields «изменено» compares against. */
-export type DraftPartData = {
-  draft: DraftView;
-  previous: DraftView | null;
-  threadId: string;
-};
+
+/** The end of a record card's call: a success, or a refusal with the platform's text (KD-4). */
+export type RecordSave = { outcome: ToolOutcome; text: string | null };
+
+/** The chat's record tools (deep-agents design-agent-types.md, «Инструменты записей»). */
+const RECORD_TOOLS = ["list_records", "read_record", "create_record", "edit_record", "delete_record"] as const;
+export type RecordTool = (typeof RECORD_TOOLS)[number];
+
+/** The record tools that change a record: their refusal reads «Не сохранено:» and the platform's text (KD-4). */
+export const RECORD_CHANGE_TOOLS: ReadonlySet<string> = new Set<RecordTool>(["create_record", "edit_record", "delete_record"]);
+
+export function isRecordTool(toolName: string): toolName is RecordTool {
+  return RECORD_TOOLS.some((tool) => tool === toolName);
+}
+
+/** The content of a `library.record` card; null for any other decision and for content outside the contract. */
+export function recordCardOf(confirmation: Confirmation): LibraryRecordCard | null {
+  if (confirmation.kind !== LIBRARY_RECORD_CONFIRMATION) return null;
+  const card = LibraryRecordCardSchema.safeParse(confirmation.content);
+  return card.success ? card.data : null;
+}
 export type ReportPartData = Extract<HistoryEntry, { kind: "child_report" }>["content"] & {
   createdAt: string;
 };
@@ -162,6 +181,15 @@ export type EventPartData = Extract<HistoryEntry, { kind: "event" }>["content"] 
   /** The model of the agent whose feed this is (the conversation's root or the page's agent); QS-01 names it. */
   model: string;
 };
+
+/**
+ * A deep agent's refused answer (uxrd.md MC-15), from the `notice` entry: the numbers of the plan items left open,
+ * or the final subagent whose completed report is lacking.
+ */
+export type PlanNoticePartData = { createdAt: string } & (
+  | { openPlanItems: readonly number[] }
+  | { missingReport: string }
+);
 
 /** `error` of the reply error block TH-08: the root's failure reason and model (MC-11). */
 export type ReplyErrorData = { reason: ChatFailureReason; model: string };
@@ -179,6 +207,8 @@ export type ToolCallArtifact = {
   refusalDetail?: ToolResult["refusalDetail"];
   /** What a code run's script printed; null for other tools and for a failed run. */
   output: string | null;
+  /** The record a record tool's call names (MC-23); absent or null for other tools and when the feed does not know it. */
+  recordName?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
 };
@@ -199,11 +229,8 @@ type LikePart = Exclude<ThreadMessageLike["content"], string>[number];
 type ToolCallLikePart = Extract<LikePart, { type: "tool-call" }>;
 type JsonObject = NonNullable<ToolCallLikePart["args"]>;
 
-/**
- * Calls another feed piece already shows: a start — the run card or the brief card (MC-23), a draft —
- * the draft card (DC-01). Only other outcomes draw a block.
- */
-const SHOWN_ELSEWHERE = new Set(["start_agent", "start_workflow", "draft_record"]);
+/** Calls another feed piece already shows: a start — the run card or the brief card (MC-23). Only other outcomes draw a block. */
+const SHOWN_ELSEWHERE = new Set(["start_agent", "start_deep_agent"]);
 const HIDDEN_OUTCOMES = new Set<ToolOutcome>(["success", "rejected"]);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
   "tool_error",
@@ -219,6 +246,7 @@ const ERROR_OUTCOMES = new Set<ToolOutcome>([
 // toFeed
 
 type ToolResult = Extract<HistoryEntry, { kind: "tool_result" }>["content"];
+type NoticeContent = Extract<HistoryEntry, { kind: "notice" }>["content"];
 
 const time = (iso: string): number => Date.parse(iso);
 
@@ -230,7 +258,20 @@ function meta(custom: FeedMessageMeta): ThreadMessageLike["metadata"] {
   return { custom };
 }
 
-function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined): ToolCallLikePart {
+/**
+ * The name a record tool's call reads by: the `name` it writes, or the name its record has on the feed's latest
+ * record card (a delete or a read names only the id; a deleted record is in no library list).
+ */
+function recordNameOf(call: AnswerToolCall, cards: readonly LibraryRecordCard[]): string | null {
+  if (!isRecordTool(call.tool)) return null;
+  const written = stringField(call.args, "name");
+  if (written !== undefined) return written;
+  const recordId = stringField(call.args, "recordId");
+  const card = recordId === undefined ? undefined : cards.findLast((c) => c.recordId === recordId);
+  return (card?.next ?? card?.previous)?.name ?? null;
+}
+
+function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined, recordName: string | null): ToolCallLikePart {
   const outcome = result?.outcome ?? null;
   const artifact: ToolCallArtifact = {
     state: result === undefined ? call.state : "done",
@@ -241,6 +282,7 @@ function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined): Too
     refusalReason: result?.refusalReason ?? null,
     refusalDetail: result?.refusalDetail ?? null,
     output: result?.output ?? null,
+    recordName,
     startedAt: result?.startedAt ?? null,
     finishedAt: result?.finishedAt ?? null,
   };
@@ -271,10 +313,19 @@ function dataMessage(id: string, createdAt: string, name: string, data: unknown)
   };
 }
 
+/** The feed line of a deep agent's refused answer; null for a notice meant for the model only. */
+function planNoticeOf(content: NoticeContent, createdAt: string): PlanNoticePartData | null {
+  const { openPlanItems, missingReport } = content;
+  if (openPlanItems !== undefined && openPlanItems.length > 0) return { openPlanItems, createdAt };
+  if (missingReport !== undefined) return { missingReport, createdAt };
+  return null;
+}
+
 function entryMessage(
   view: FeedView,
   entry: HistoryEntry,
   results: ReadonlyMap<string, ToolResult>,
+  cards: readonly LibraryRecordCard[],
 ): ThreadMessageLike | null {
   const id = `seq-${entry.seq}`;
   const createdAt = new Date(entry.createdAt);
@@ -309,7 +360,7 @@ function entryMessage(
       if (entry.content.text !== "") parts.push({ type: "text", text: entry.content.text });
       for (const call of entry.content.toolCalls) {
         const result = results.get(call.callId);
-        if (isDrawnCall(call, result)) parts.push(toolCallPart(call, result));
+        if (isDrawnCall(call, result)) parts.push(toolCallPart(call, result, recordNameOf(call, cards)));
       }
       if (parts.length === 0) return null;
       // AV-04: on an agent page the answer that ends a turn without calls is the agent's report.
@@ -339,10 +390,15 @@ function entryMessage(
       const data: EventPartData = { event, reason, createdAt: entry.createdAt, model };
       return dataMessage(id, entry.createdAt, FEED_PART.event, data);
     }
+    case "notice": {
+      // MC-15: a refusal over open plan items or a lacking final report is a feed line built from the entry's fields;
+      // other notices are for the model only.
+      const data = planNoticeOf(entry.content, entry.createdAt);
+      return data === null ? null : dataMessage(id, entry.createdAt, FEED_PART.planNotice, data);
+    }
     case "tool_result":
-    case "notice":
     case "compaction":
-      // A result is a part of its call; notices and compaction summaries are for the model only.
+      // A result is a part of its call; compaction summaries are for the model only.
       return null;
   }
 }
@@ -357,18 +413,18 @@ function stringField(value: unknown, key: string): string | undefined {
 }
 
 /**
- * The question of the confirmed brief that started a workflow: the last approved brief of the
- * coordinator's workflow record created not later than it (the run card stands right under that
- * brief). The built `AgentNode` carries no brief, so the feed's own decisions are the source.
+ * The question of the confirmed brief that started a deep agent: the last approved brief of the deep
+ * agent's record created not later than it (the run card stands right under that brief). The built
+ * `AgentNode` carries no brief, so the feed's own decisions are the source.
  */
 function briefQuestionOf(decisions: readonly Confirmation[], node: AgentNode): string | undefined {
-  if (!isWorkflowCoordinator(node)) return undefined;
+  if (!isDeepAgentRun(node)) return undefined;
   const brief = decisions
     .filter(
       (c) =>
-        c.kind === WORKFLOWS_BRIEF_CONFIRMATION &&
+        c.kind === AGENTS_BRIEF_CONFIRMATION &&
         c.resolution?.approve === true &&
-        stringField(c.args, "workflow") === node.origin?.recordId &&
+        stringField(c.args, "deepAgent") === node.origin?.recordId &&
         time(c.createdAt) <= time(node.createdAt),
     )
     .sort((a, b) => time(b.createdAt) - time(a.createdAt))[0];
@@ -376,25 +432,33 @@ function briefQuestionOf(decisions: readonly Confirmation[], node: AgentNode): s
   return stringField(brief.resolution.args, "question") ?? stringField(brief.content, "question");
 }
 
-/** A conversation's drafts by creation time, each with the one before it (DC-8). */
-function draftItems(view: FeedView): Floating[] {
-  if (view.kind !== "thread") return [];
-  const drafts = [...view.drafts].sort((a, b) => time(a.createdAt) - time(b.createdAt));
-  return drafts.map((draft, index) => {
-    const data: DraftPartData = { draft, previous: drafts[index - 1] ?? null, threadId: view.threadId };
-    return {
-      createdAt: draft.createdAt,
-      message: dataMessage(`draft-${draft.draftId}`, draft.createdAt, FEED_PART.draft, data),
-    };
-  });
+/** A finished call of the feed's own agent, in `seq` order: its tool, its result and when the result was written. */
+type FinishedCall = { tool: string; result: ToolResult; at: number };
+
+/**
+ * How the call of an approved record card ended. The confirmation names no call, so the result is the first
+ * one of the same tool the feed's agent wrote after the decision: the conversation's root runs one call at a
+ * time, and the call's result is written only once the employee has decided (design-agent-types.md, Flow 1).
+ */
+function recordSaveOf(view: FeedView, confirmation: Confirmation, calls: readonly FinishedCall[]): RecordSave | null {
+  if (confirmation.kind !== LIBRARY_RECORD_CONFIRMATION || confirmation.resolution?.approve !== true) return null;
+  const ownerId = view.kind === "thread" ? view.chat.rootAgentId : view.agent.agentId;
+  if (confirmation.agentId !== ownerId) return null;
+  const decidedAt = time(confirmation.resolvedAt ?? confirmation.createdAt);
+  const call = calls.find((c) => c.tool === confirmation.tool && c.at >= decidedAt);
+  return call === undefined ? null : { outcome: call.result.outcome, text: call.result.text ?? null };
 }
 
-/** Decisions, direct children and drafts, by creation time; equal times keep the API's list order. */
-function floatingItems(view: FeedView): Floating[] {
+/** Decisions and direct children, by creation time; equal times keep the API's list order. */
+function floatingItems(view: FeedView, calls: readonly FinishedCall[]): Floating[] {
   const byChatRoot = (c: Confirmation): boolean =>
     view.kind === "thread" && c.agentId === view.chat.rootAgentId;
   const decisions = view.decisions.map((confirmation) => {
-    const data: DecisionPartData = { confirmation, byChat: byChatRoot(confirmation) };
+    const data: DecisionPartData = {
+      confirmation,
+      byChat: byChatRoot(confirmation),
+      saved: recordSaveOf(view, confirmation, calls),
+    };
     return {
       createdAt: confirmation.createdAt,
       message: dataMessage(`decision-${confirmation.decisionId}`, confirmation.createdAt, FEED_PART.decision, data),
@@ -407,8 +471,8 @@ function floatingItems(view: FeedView): Floating[] {
       message: dataMessage(`agent-${node.agentId}`, node.createdAt, FEED_PART.runCard, data),
     };
   });
-  // Array.prototype.sort is stable: ties keep decisions, then children, then drafts, each in API order.
-  return [...decisions, ...children, ...draftItems(view)].sort((a, b) => time(a.createdAt) - time(b.createdAt));
+  // Array.prototype.sort is stable: ties keep decisions, then children, each in API order.
+  return [...decisions, ...children].sort((a, b) => time(a.createdAt) - time(b.createdAt));
 }
 
 function optimisticMessage(entry: OptimisticEntry): ThreadMessageLike {
@@ -436,8 +500,8 @@ function draftMessage(draft: string): ThreadMessageLike {
 }
 
 /**
- * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `draft-*`, `local-*`, `draft`): entries
- * by `seq`; each decision, direct child and record draft after the last entry created not later than it (KD-3);
+ * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `local-*`, `draft`): entries
+ * by `seq`; each decision and direct child after the last entry created not later than it (KD-3);
  * optimistic feed entries, then the draft, last.
  */
 export function toFeed(
@@ -447,13 +511,23 @@ export function toFeed(
 ): ThreadMessageLike[] {
   const entries = [...view.entries].sort((a, b) => a.seq - b.seq);
   const results = new Map<string, ToolResult>();
+  const toolOf = new Map<string, string>();
+  const calls: FinishedCall[] = [];
   for (const entry of entries) {
-    if (entry.kind === "tool_result") results.set(entry.content.callId, entry.content);
+    if (entry.kind === "model_answer") {
+      for (const call of entry.content.toolCalls) toolOf.set(call.callId, call.tool);
+    }
+    if (entry.kind === "tool_result") {
+      results.set(entry.content.callId, entry.content);
+      const tool = toolOf.get(entry.content.callId);
+      if (tool !== undefined) calls.push({ tool, result: entry.content, at: time(entry.createdAt) });
+    }
   }
+  const cards = view.decisions.flatMap((confirmation) => recordCardOf(confirmation) ?? []);
 
   // Anchor −1 places an item before every entry.
   const anchored = new Map<number, ThreadMessageLike[]>();
-  for (const item of floatingItems(view)) {
+  for (const item of floatingItems(view, calls)) {
     const at = time(item.createdAt);
     let anchor = -1;
     entries.forEach((entry, index) => {
@@ -464,7 +538,7 @@ export function toFeed(
 
   const messages: ThreadMessageLike[] = [...(anchored.get(-1) ?? [])];
   entries.forEach((entry, index) => {
-    const message = entryMessage(view, entry, results);
+    const message = entryMessage(view, entry, results, cards);
     if (message !== null) messages.push(message);
     messages.push(...(anchored.get(index) ?? []));
   });

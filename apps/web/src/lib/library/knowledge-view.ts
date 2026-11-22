@@ -24,7 +24,7 @@ const ITEM_TEXT_MAX = 60;
 export type KnowledgeIntl = { t: LibraryTranslator; format: Formatter };
 
 /**
- * `employeeInPanel` — the panel screen of an employee's workflow (the record has an `author`): only the author
+ * `employeeInPanel` — the panel screen of an employee's deep agent (the record has an `author`): only the author
  * can turn self-learning on, so the texts say so instead of pointing at the editor.
  */
 export type KnowledgeAudience = { employeeInPanel: boolean };

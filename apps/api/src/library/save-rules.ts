@@ -6,6 +6,7 @@ import {
 } from '@agent-os/contracts';
 import {
   contentParts,
+  fieldPath,
   isNameTaken,
   type ContentPart,
 } from './record-content';
@@ -52,24 +53,36 @@ export interface SaveInput {
   readonly choices: SaveChoices;
 }
 
+/**
+ * The part of the record a refusal is about (deep-agents KD-4): the path of the field, such as `name`,
+ * `servers` or `subagents.1.servers`, and the values in it that broke the rule.
+ */
+export interface RefusedField {
+  readonly path: string;
+  readonly values: readonly string[];
+}
+
 export type SaveDecision =
   | { readonly kind: 'allowed' }
-  | { readonly kind: 'name_taken'; readonly reason: RecordNameTakenReason }
-  | { readonly kind: 'refused'; readonly reason: LibraryRejectReason };
+  | ({ readonly kind: 'name_taken'; readonly reason: RecordNameTakenReason } & RefusedField)
+  | ({ readonly kind: 'refused'; readonly reason: LibraryRejectReason } & RefusedField);
 
 /**
  * Whether the author may save the record (KD-4, Flow 1; DC-8–DC-10, AC-06.1, AC-06.2, AC-07.1–AC-07.3).
  * Only what the author added is checked against their choices: a server they lost stays in the record.
  * The model is checked whole, and only when the employee has an allowed model at all. Rights stay
- * with `AccessGate` at every call; this keeps the record in step with the editor.
+ * with `AccessGate` at every call; this keeps the record in step with the editor. A refusal names the
+ * first part of the record that breaks the rule and the values that break it.
  */
 export function decideSave(input: SaveInput): SaveDecision {
   const nameTaken = takenNameReason(input);
-  if (nameTaken) return { kind: 'name_taken', reason: nameTaken };
+  if (nameTaken) return { kind: 'name_taken', reason: nameTaken, path: 'name', values: [input.name] };
   const refused = contentRefusal(input);
-  if (refused) return { kind: 'refused', reason: refused };
+  if (refused) return { kind: 'refused', ...refused };
   return { kind: 'allowed' };
 }
+
+type ContentRefusal = { readonly reason: LibraryRejectReason } & RefusedField;
 
 function takenNameReason({
   name,
@@ -91,53 +104,79 @@ function contentRefusal({
   body,
   previous,
   choices,
-}: SaveInput): LibraryRejectReason | null {
+}: SaveInput): ContentRefusal | null {
   const parts = contentParts(body);
   const previousParts = previous ? contentParts(previous.body) : [];
-  const servers = parts.flatMap((part) => part.servers);
-  const addedServers = added(
-    servers,
-    previousParts.flatMap((part) => part.servers),
-  );
+  const keptServers = new Set(previousParts.flatMap((part) => part.servers));
   // A `null` model is not checked: the start checks the default chat model (KD-5).
-  const models = chosenModels(parts);
+  const keptModels = new Set(chosenModels(previousParts));
 
-  if (choices.scope === 'employee') {
-    if (servers.includes(ALL_SERVERS)) return 'all_servers_not_allowed';
-    if (!within(addedServers, choices.usableServers))
-      return 'server_not_allowed';
-    const { allowedModels } = choices;
-    if (allowedModels.length > 0 && !within(models, allowedModels))
-      return 'model_not_allowed';
-  } else {
-    if (!within(addedServers, [...choices.registryServers, ALL_SERVERS]))
-      return 'server_not_allowed';
-    const addedModels = added(models, chosenModels(previousParts));
-    if (!within(addedModels, choices.catalogueModels))
-      return 'model_not_allowed';
-  }
+  const serverRefusal =
+    choices.scope === 'employee'
+      ? (refusedIn(parts, 'servers', 'all_servers_not_allowed', (server) => server === ALL_SERVERS) ??
+        refusedIn(parts, 'servers', 'server_not_allowed', outside(keptServers, choices.usableServers)))
+      : refusedIn(
+          parts,
+          'servers',
+          'server_not_allowed',
+          outside(keptServers, [...choices.registryServers, ALL_SERVERS]),
+        );
+  if (serverRefusal) return serverRefusal;
 
-  const addedAgents = added(
-    contentAgents(body),
-    previous ? contentAgents(previous.body) : [],
+  const modelRefusal = refusedIn(
+    parts,
+    'model',
+    'model_not_allowed',
+    modelBreaks(choices, keptModels),
   );
-  if (!within(addedAgents, choices.visibleAgentIds)) return 'agent_not_visible';
+  if (modelRefusal) return modelRefusal;
+
+  const keptAgents = new Set(previous ? contentAgents(previous.body) : []);
+  const hiddenAgents = contentAgents(body).filter(
+    outside(keptAgents, choices.visibleAgentIds),
+  );
+  return hiddenAgents.length > 0
+    ? { reason: 'agent_not_visible', path: 'agents', values: hiddenAgents }
+    : null;
+}
+
+/**
+ * An employee's model is checked whole, and only while some model is allowed to him; an admin's only
+ * when it was not in the record before.
+ */
+function modelBreaks(
+  choices: SaveChoices,
+  keptModels: ReadonlySet<string>,
+): (model: string) => boolean {
+  if (choices.scope === 'system') return outside(keptModels, choices.catalogueModels);
+  if (choices.allowedModels.length === 0) return () => false;
+  return outside(new Set(), choices.allowedModels);
+}
+
+/** A value that was not in the record before and is not among the allowed ones. */
+function outside(
+  kept: ReadonlySet<string>,
+  allowed: readonly string[],
+): (value: string) => boolean {
+  const permitted = new Set(allowed);
+  return (value) => !kept.has(value) && !permitted.has(value);
+}
+
+/** The first part whose `field` holds a value `breaks` the rule, with those values; `null` when none. */
+function refusedIn(
+  parts: readonly ContentPart[],
+  field: 'servers' | 'model',
+  reason: LibraryRejectReason,
+  breaks: (value: string) => boolean,
+): ContentRefusal | null {
+  for (const part of parts) {
+    const values = field === 'servers' ? part.servers : chosenModels([part]);
+    const broken = values.filter(breaks);
+    if (broken.length > 0) return { reason, path: fieldPath(part, field), values: broken };
+  }
   return null;
 }
 
 function chosenModels(parts: readonly ContentPart[]): string[] {
   return parts.flatMap((part) => (part.model === null ? [] : [part.model]));
-}
-
-function added(values: readonly string[], before: readonly string[]): string[] {
-  const kept = new Set(before);
-  return values.filter((value) => !kept.has(value));
-}
-
-function within(
-  values: readonly string[],
-  allowed: readonly string[],
-): boolean {
-  const set = new Set(allowed);
-  return values.every((value) => set.has(value));
 }

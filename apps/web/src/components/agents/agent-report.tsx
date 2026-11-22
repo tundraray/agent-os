@@ -68,7 +68,7 @@ function ReportCopy({ text }: { text: string }) {
 }
 
 /**
- * The report of a child agent or workflow that reached its parent (agent-report.md, UXRD CV-02, MC-18):
+ * The report of a child agent or deep agent that reached its parent (agent-report.md, UXRD CV-02, MC-18):
  * «Отчёт · {описание}» with the status, the notice line, the reason of a failure or stop and the report
  * in Markdown, or «Отчёта нет.».
  */

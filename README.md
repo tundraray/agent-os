@@ -20,14 +20,13 @@
 agent-os/
   apps/
     web/              Next.js + assistant-ui
-    api/              NestJS: API чата, SSE, сборка runtime, agents и workflows
+    api/              NestJS: API чата, SSE, сборка runtime и agents
   packages/
     common/           логгер и общие утилиты
     contracts/        общие типы: инструменты, события, DTO
     db/               модель схемы `app` (Drizzle), миграции, мигратор, createDatabase
     runtime/          durable runtime без NestJS: createRuntime, порты, порт обработчика
-    agents/           агенты поверх runtime: определения, сессии, инструменты, MCP: createAgents
-    workflows/        шаблоны процессов (deep-research), инструмент start_workflow, чтение запуска: createWorkflows
+    agents/           агенты и глубокие агенты поверх runtime: снимки, сессии, инструменты, start_deep_agent, MCP: createAgents
     mcp-fixture/      HTTP-процесс с фикстурными MCP-серверами `logs`, `backoffice`, `tracker` для разработки и тестов
   infra/
     docker-compose.yml       стек из образов: postgres, migrate, api, web
@@ -95,9 +94,9 @@ cd ../..
 
 Инструкции: [NestJS first steps](https://docs.nestjs.com/first-steps), [NestJS configuration](https://docs.nestjs.com/techniques/configuration), [NestJS SSE](https://docs.nestjs.com/techniques/server-sent-events).
 
-`apps/api` — NestJS-приложение, которое собирает пакеты `runtime`, `agents` и `workflows` и отдаёт API чата:
+`apps/api` — NestJS-приложение, которое собирает пакеты `runtime` и `agents` и отдаёт API чата:
 
-- `src/runtime/`, `src/agents/`, `src/workflows/` — модули-сборщики пакетов: читают переменные окружения и файлы `config/`.
+- `src/runtime/`, `src/agents/` — модули-сборщики пакетов: читают переменные окружения и файлы `config/`.
 - `src/chat/` — беседы, агенты, решения, расход (HTTP-команды) и живой поток `GET /api/events` (SSE поверх `LISTEN/NOTIFY` Postgres).
 - `src/audit/` — interceptor, пишущий события в Postgres.
 - `src/auth/` — `SessionGuard`: в разработке все запросы идут от `dev-user` (заголовок `x-user-id` подменяет пользователя).
@@ -231,7 +230,7 @@ POSTGRES_PORT=5433 pnpm db:up
 |---|---|
 | `pnpm --filter @agent-os/db test:e2e` | миграции и домены CHECK схемы `app` |
 | `pnpm --filter @agent-os/runtime test:e2e` | интеграционные тесты runtime и матрицу убийств процесса (дочерний процесс запускается из исходников через `tsx`) |
-| `pnpm --filter @agent-os/agents test:e2e` / `pnpm --filter @agent-os/workflows test:e2e` | интеграционные тесты агентов и шаблонов процессов |
+| `pnpm --filter @agent-os/agents test:e2e` | интеграционные тесты агентов и глубоких агентов |
 | `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (беседы, агенты, решения, живой поток) |
 | `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
 

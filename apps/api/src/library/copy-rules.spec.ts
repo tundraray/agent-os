@@ -23,24 +23,25 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
   };
 }
 
-const workflow: RecordBody = {
-  kind: 'workflow',
+const subagent = {
+  name: 'Сборщик',
+  description: 'Собирает данные',
+  prompt: 'Собери',
+  servers: ['sentry', 'jira'],
+  model: PLATFORM_MODEL,
+  maxTurns: 10,
+  maxRuns: 1,
+};
+
+const deepAgent: RecordBody = {
+  kind: 'deep_agent',
   content: {
-    coordinator: { rules: '', model: ANYA_MODEL, maxTurns: 20 },
-    executors: [
-      {
-        name: 'Сборщик',
-        role: 'Собирает данные',
-        prompt: 'Собери',
-        servers: ['sentry', 'jira'],
-        model: PLATFORM_MODEL,
-        maxTurns: 10,
-        maxRuns: 1,
-        tools: [],
-        source: null,
-      },
-    ],
-    finalExecutor: null,
+    prompt: 'Собери ответ командой',
+    servers: [],
+    model: ANYA_MODEL,
+    maxTurns: 20,
+    subagents: [subagent],
+    finalSubagent: null,
     selfLearning: false,
   },
 };
@@ -76,7 +77,7 @@ describe("copy rule: a free name with the copy suffix, the copier's servers, eac
       expected: expect.objectContaining({
         body: agent({ model: PLATFORM_MODEL }),
         replacedModels: [
-          { executor: null, from: ANYA_MODEL, to: PLATFORM_MODEL },
+          { subagent: null, from: ANYA_MODEL, to: PLATFORM_MODEL },
         ],
       }),
     },
@@ -85,7 +86,7 @@ describe("copy rule: a free name with the copy suffix, the copier's servers, eac
       input: copy({ allowedModels: [BORIS_FIRST, BORIS_SECOND] }),
       expected: expect.objectContaining({
         body: agent({ model: BORIS_FIRST }),
-        replacedModels: [{ executor: null, from: ANYA_MODEL, to: BORIS_FIRST }],
+        replacedModels: [{ subagent: null, from: ANYA_MODEL, to: BORIS_FIRST }],
       }),
     },
     {
@@ -94,22 +95,20 @@ describe("copy rule: a free name with the copy suffix, the copier's servers, eac
       expected: expect.objectContaining({ body: agent(), replacedModels: [] }),
     },
     {
-      name: 'a workflow: each model replaced, servers the copier lacks dropped per executor',
-      input: copy({ body: workflow, allowedModels: [PLATFORM_MODEL] }),
+      name: 'a deep agent: each model replaced, servers the copier lacks dropped per subagent',
+      input: copy({ body: deepAgent, allowedModels: [PLATFORM_MODEL] }),
       expected: expect.objectContaining({
         body: {
-          kind: 'workflow',
+          kind: 'deep_agent',
           content: {
-            ...workflow.content,
-            coordinator: { rules: '', model: PLATFORM_MODEL, maxTurns: 20 },
-            executors: [
-              { ...workflow.content.executors[0], servers: ['sentry'] },
-            ],
+            ...deepAgent.content,
+            model: PLATFORM_MODEL,
+            subagents: [{ ...subagent, servers: ['sentry'] }],
           },
         },
-        removedServers: [{ executor: 'Сборщик', servers: ['jira'] }],
+        removedServers: [{ subagent: 'Сборщик', servers: ['jira'] }],
         replacedModels: [
-          { executor: null, from: ANYA_MODEL, to: PLATFORM_MODEL },
+          { subagent: null, from: ANYA_MODEL, to: PLATFORM_MODEL },
         ],
       }),
     },

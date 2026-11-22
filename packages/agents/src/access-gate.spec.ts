@@ -71,7 +71,7 @@ const SNAPSHOT: AgentSnapshot = {
     name: 'helper',
     author: { id: '00000000-0000-4000-8000-000000000002', name: 'Аня' },
     builtinKey: null,
-    executor: null,
+    subagent: null,
   },
   content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP] },
   agents: [],

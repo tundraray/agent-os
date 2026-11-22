@@ -20,8 +20,7 @@ import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
-import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
@@ -33,12 +32,12 @@ import type { LibraryTranslator } from '@/lib/i18n/messages';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
-import { adminLibraryTabPath, adminNewRecordPath, adminRecordPath, LIBRARY_TABS, type AdminPage, type LibraryTab } from '@/lib/shell-route';
+import { adminLibraryTabPath, adminNewAgentPath, adminRecordPath, LIBRARY_TABS, type AdminPage, type LibraryTab } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CloseAccessDialog, EmployeeRecordPage, panelRecordHref, type ClosableRecord } from './employee-record-page';
 import { KnowledgeSettingsForm } from './knowledge-settings-form';
 import { LibrarySettingsForm } from './library-settings-form';
-import { useTakenHandoff } from '@/components/library/record-editor';
+import { useCreatedHandoff } from '@/components/library/record-editor';
 import { NewSystemRecordPage, SystemRecordPage } from './system-record-page';
 
 const EMPTY_VALUE = '—';
@@ -71,15 +70,13 @@ type LibrarySectionProps = {
 };
 
 /**
- * UXRD AL-01: the panel's «Агенты и workflow». Each tab is an address, so a reload and «Назад» return it (DC-6);
+ * UXRD AL-01: the panel's «Агенты и глубокие агенты». Each tab is an address, so a reload and «Назад» return it (DC-6);
  * a record is AL-03. Mounted by `AdminScreen` only, under `AdminGate`.
  */
 export function LibrarySection({ page }: LibrarySectionProps) {
   if (page.kind === 'record') return <LibraryRecord key={page.key} id={page.key} />;
   if (page.kind === 'knowledge') return <KnowledgePage key={page.key} id={page.key} variant="panel" />;
-  if (page.kind === 'new' && page.recordKind !== undefined) {
-    return <NewSystemRecordPage key={page.recordKind} kind={page.recordKind} />;
-  }
+  if (page.kind === 'new') return <NewSystemRecordPage />;
   return <LibraryTabs tab={page.kind === 'list' ? (page.tab ?? 'system') : 'system'} />;
 }
 
@@ -88,13 +85,13 @@ function LibraryRecord({ id }: { id: string }) {
   const t = useTranslations('admin.library');
   const record = useResource(() => adminApi.library.get(id), `library:${id}`);
   // Taken on mount, before the record is read: leaving during the read must not leave the handoff behind.
-  const handoff = useTakenHandoff(adminRecordPath('library', id));
+  const created = useCreatedHandoff(adminRecordPath('library', id));
   if (isNotFound(record.error)) return <ThreadNotice variant="record-not-found" section="library" />;
   if (record.data === undefined) {
     return <RecordPlaceholder section="library" resource={record} loadFailed={t('loadFailed')} />;
   }
   // A record without an author is the company's: AL-02, the administrator edits it; an employee's is AL-03.
-  if (record.data.author === null) return <SystemRecordPage record={record.data} handoff={handoff} />;
+  if (record.data.author === null) return <SystemRecordPage record={record.data} created={created} />;
   return <EmployeeRecordPage record={record.data} />;
 }
 
@@ -107,7 +104,7 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
   return (
     <>
       <PageHeader area={titles.panel} title={title}>
-        <CreateMenu />
+        <CreateButton />
       </PageHeader>
       <Tabs value={tab} className="gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -151,23 +148,14 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
   );
 }
 
-/** «Создать» (AL-01): «Агент» and «Workflow» lead to the empty forms of AL-02. */
-function CreateMenu() {
+/** «Создать» (AL-01): the empty agent form of AL-02; a deep agent has no form (deep-agents UXRD KD-1). */
+function CreateButton() {
   const t = useTranslations('library.screen');
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button size="sm" className={CONTROL_SIZE} />}>
-        <PlusIcon aria-hidden />
-        {t('create')}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-auto min-w-36">
-        {(['agent', 'workflow'] as const).map((kind) => (
-          <DropdownMenuItem key={kind} render={<ShellLink href={adminNewRecordPath(kind)} />}>
-            {t(kind)}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ShellLink href={adminNewAgentPath()} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
+      <PlusIcon aria-hidden />
+      {t('create')}
+    </ShellLink>
   );
 }
 
@@ -236,7 +224,7 @@ function systemRow(record: RecordSummary, { t, tLibrary, locale, onDelete }: Sys
 }
 
 /**
- * «Системные»: agents and workflows of the company; never empty, the built-in ones are always there. «Удалить»
+ * «Системные»: agents and deep agents of the company; never empty, the built-in ones are always there. «Удалить»
  * in the row's menu, except on a built-in record; after the delete the list is read again and the row leaves.
  */
 function SystemTab({ caption }: { caption: string }) {

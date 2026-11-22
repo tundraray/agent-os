@@ -12,6 +12,7 @@ import { KnowledgePage } from '@/components/library/knowledge-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
 import { FeedProvider } from '@/lib/feed/feed-context';
+import type { FeedStore } from '@/lib/feed/feed-store';
 import { focusShellTarget } from '@/lib/focus';
 import { NEW_THREAD_TARGET } from '@/lib/threads/composer-seed';
 import { selectMainItem } from '@/lib/threads/main-thread';
@@ -43,6 +44,20 @@ export function useMainViewState(): MainViewState {
   };
 }
 
+/**
+ * The open conversation's store, the same one its runtime reads; none on `/` before the first message. The list
+ * item it lifts on activity is the one it was created with. Shared by the feed and the diagram panel.
+ */
+export function useConversationFeed(): FeedStore | null {
+  const { mainRemoteId } = useMainViewState();
+  const { feeds } = useShellServices();
+  const mainItemId = useAuiState((s) => s.threadListItem.id);
+  return useMemo(
+    () => (mainRemoteId === undefined ? null : feeds.forThread(mainRemoteId, mainItemId)),
+    [feeds, mainRemoteId, mainItemId],
+  );
+}
+
 const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome };
 /** E-8: the open thread was deleted elsewhere — the feed stays, the notice takes the composer's place. */
 const DELETED_THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, DeletedNotice };
@@ -62,30 +77,21 @@ export function MainView() {
   if (route.kind === 'account') return <AccountScreen currentUser={services.currentUser} />;
   if (route.kind === 'admin') return <AdminGate route={route} />;
   if (route.kind === 'library' && route.page.kind === 'list') return <LibraryScreen />;
-  // Self-learning KD-2: a workflow's knowledge; a new key per workflow, so nothing of one carries over to the next.
+  // Self-learning KD-2: a deep agent's knowledge; a new key per deep agent, so nothing of one carries over to the next.
   if (route.kind === 'library' && route.page.kind === 'knowledge') {
     return <KnowledgePage key={route.page.id} id={route.page.id} variant="library" />;
   }
   // A new key per record: the copy dialog and focus of one record never carry over to the next.
   if (route.kind === 'library' && route.page.kind === 'record') return <RecordPage key={route.page.id} id={route.page.id} />;
-  // A new key per kind: the form of a new agent never carries over to a new workflow.
-  if (route.kind === 'library' && route.page.kind === 'new') {
-    return <NewRecordPage key={route.page.recordKind} kind={route.page.recordKind} />;
-  }
+  if (route.kind === 'library' && route.page.kind === 'new') return <NewRecordPage />;
   return <ConversationView />;
 }
 
 function ConversationView() {
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
   const { newChat, leaveTo, retrySwitch, retryHistory } = useShellActions();
-  const { feeds, libraryIndex, composerSeed } = useShellServices();
-  // The list item that lifts in the list on activity; the store keeps the one it was created with.
-  const mainItemId = useAuiState((s) => s.threadListItem.id);
-  // The conversation's store, the same one its runtime reads; none on `/` before the first message.
-  const feed = useMemo(
-    () => (mainRemoteId === undefined ? null : feeds.forThread(mainRemoteId, mainItemId)),
-    [feeds, mainRemoteId, mainItemId],
-  );
+  const { libraryIndex, composerSeed } = useShellServices();
+  const feed = useConversationFeed();
   // The run labels and the cards read the library list on entering each conversation (KD-2).
   useEffect(() => {
     void libraryIndex.refresh();

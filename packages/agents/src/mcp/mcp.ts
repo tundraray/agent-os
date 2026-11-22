@@ -7,7 +7,13 @@ import {
 } from '@agent-os/contracts';
 
 import type { ConnectTarget } from './connect-requests';
-import type { McpAccounts, McpConnectBegin, McpConnectReturn, McpConnectStart } from './mcp-accounts';
+import type {
+  McpAccounts,
+  McpConnectBegin,
+  McpConnectReturn,
+  McpConnectStart,
+  UsableMcpServer,
+} from './mcp-accounts';
 import { McpError } from './mcp-errors';
 import {
   type McpRegistry,
@@ -48,6 +54,11 @@ export interface AgentsMcp {
   connections(ownerId: string): Promise<McpConnection[]>;
   /** Names of the enabled servers of any mode the employee may use, by name; none for a disabled employee. */
   usable(ownerId: string): Promise<string[]>;
+  /**
+   * The servers of `usable` with the names of the tools `AccessGate.tools` allows the employee: a server
+   * without an allowed tool is not among them; none for a disabled employee (deep-agents KD-3, DC-7).
+   */
+  usableTools(ownerId: string): Promise<UsableMcpServer[]>;
   beginConnect(input: McpConnectBegin): Promise<McpConnectStart>;
   /** Stores the account; an admin's account on a server waiting for its list also fills the list (Flow 1). */
   finishConnect(input: McpConnectReturn): Promise<McpConnectResult>;
@@ -106,6 +117,7 @@ export function createAgentsMcp(registry: McpRegistry, accounts: McpAccounts): A
     remove: (name) => registry.remove(name),
     connections: (ownerId) => accounts.connections(ownerId),
     usable: (ownerId) => accounts.usable(ownerId),
+    usableTools: (ownerId) => accounts.usableTools(ownerId),
     beginConnect: (input) => accounts.begin(input),
     async finishConnect(input) {
       const finished = await accounts.finish(input);

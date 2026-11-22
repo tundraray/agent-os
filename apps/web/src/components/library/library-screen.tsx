@@ -3,9 +3,9 @@
 import { useEffect, useId, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { ChevronDownIcon, PlusIcon, RotateCwIcon } from "lucide-react";
+import { PlusIcon, RotateCwIcon } from "lucide-react";
 import { useStore } from "zustand";
-import type { RecordKind, RecordSummary } from "@agent-os/contracts";
+import type { RecordSummary } from "@agent-os/contracts";
 import { PageHeader } from "@/components/shell/page-header";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { focusShellTarget } from "@/lib/focus";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
-import { newRecordPath } from "@/lib/shell-route";
+import { newAgentPath } from "@/lib/shell-route";
 import { LibraryRow } from "./library-row";
 import { useInChat } from "./use-in-chat";
 
@@ -190,27 +190,23 @@ function LoadingGroups() {
   );
 }
 
-/** «Создать в чате» and «Заполнить форму» from 768 px; below it both in the menu «+» (MC-1). */
+/**
+ * «Создать в чате» and «Заполнить форму» from 768 px; below it both in the menu «+» (MC-1). The form is the
+ * agent's only: a deep agent is created in the chat (deep-agents UXRD DA-01).
+ */
 function CreateActions({ onCreateInChat }: { onCreateInChat: () => void }) {
   const router = useRouter();
   const t = useTranslations("library");
-  const openForm = (kind: RecordKind) => () => router.push(newRecordPath(kind));
+  const openForm = () => router.push(newAgentPath());
   return (
     <>
       <div className="hidden items-center gap-2 md:flex">
         <Button variant="outline" size="sm" onClick={onCreateInChat}>
           {t("screen.createInChat")}
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
-            {t("screen.fillForm")}
-            <ChevronDownIcon aria-hidden />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-auto min-w-36">
-            <DropdownMenuItem onClick={openForm("agent")}>{t("screen.agent")}</DropdownMenuItem>
-            <DropdownMenuItem onClick={openForm("workflow")}>{t("screen.workflow")}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button variant="outline" size="sm" onClick={openForm}>
+          {t("screen.fillForm")}
+        </Button>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -220,8 +216,7 @@ function CreateActions({ onCreateInChat }: { onCreateInChat: () => void }) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto min-w-40">
           <DropdownMenuItem onClick={onCreateInChat}>{t("screen.createInChat")}</DropdownMenuItem>
-          <DropdownMenuItem onClick={openForm("agent")}>{t("screen.agentForm")}</DropdownMenuItem>
-          <DropdownMenuItem onClick={openForm("workflow")}>{t("screen.workflowForm")}</DropdownMenuItem>
+          <DropdownMenuItem onClick={openForm}>{t("screen.agentForm")}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </>

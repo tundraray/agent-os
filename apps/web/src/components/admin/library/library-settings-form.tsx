@@ -15,7 +15,7 @@ async function save({ defaultMaxTurns }: { defaultMaxTurns: string }): Promise<v
   await adminApi.library.saveSettings({ defaultMaxTurns: turns });
 }
 
-/** The library's settings under «Системные»: «Максимум шагов» a new agent or workflow starts with. */
+/** The library's settings under «Системные»: «Максимум шагов» a new agent or deep agent starts with. */
 export function LibrarySettingsForm() {
   const t = useTranslations('admin.library.settings');
   const headingId = useId();

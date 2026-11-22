@@ -44,7 +44,7 @@
 //     * the tool-call gate rule - `tool_not_in_definition`, `no_access`, `depth_limit`, `not_allowed` (list and count), `unknown_agent`, `invalid_arguments`, and "allowed" - AC-03.1, AC-10.2, AC-10.3, DC-6, UC-E4 rule rows; the boundary half (the refused call never
 //       reaches the server, never creates a task) is INT-3 row A and INT-1 row D
 //     * the turn counter - counts model calls since the task, not the compaction call; resets when the agent finishes a turn (report, failure, stop, interrupt) and, for a root session, on each delivered employee message - DC-1 (the effect on a real run is INT-1 row C)
-//     * the end-of-turn decision - text without calls ends the turn; with unfinished children the child waits; with the coordinator's `finalExecutor` set a text without that executor's report is refused - KD-2, DC-3, DC-4, Invariant 4 (the wiring is INT-1 rows A and D)
+//     * the end-of-turn decision - text without calls ends the turn; with unfinished children the child waits; with the deep agent's `finalExecutor` set a text without that subagent's report is refused - KD-2, DC-3, DC-4, Invariant 4 (the wiring is INT-1 rows A and D)
 //     * the agent status derivation (State Transitions table, MC-3 labels) - `working`, `awaiting_confirmation`, `interrupted`, `completed`, `failed`, `stopped`, including "interrupted from a pending `interrupt` message before the step takes it" - KD-3
 //     * history to provider messages - the single place of Invariant 3 (a delivered message after the last result of its answer and before the next answer; a call is never separated from its result), `<data>` envelope with delimiter escaping, fork reference
 //       (history up to `throughSeq` plus the task), compaction summary replaces older entries for the model while `history` still returns all; this is also the property test: FOR ALL histories with open calls and delivered messages in any interleaving, the provider
@@ -72,7 +72,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentTurnMessage } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
-import type { RecordTool, WorkflowContent } from '@agent-os/contracts';
+import type { RecordTool, Subagent } from '@agent-os/contracts';
+import { agentRunTasks } from '@agent-os/db';
 import {
   createLatch,
   createLibraryDouble,
@@ -95,7 +96,7 @@ import {
   historyRowVersionsOf,
   ledgerRowsOf,
   setRootRecord,
-  START_TEST_WORKFLOW,
+  START_TEST_DEEP_AGENT,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
   TEST_MODEL_DEFAULT,
@@ -131,7 +132,7 @@ const COMPACTION_REQUEST =
   'their sources, the agents you started and their results, and what is left to do. ' +
   'Answer with the summary text only; do not call tools.';
 
-/** A `start_agent` call of a scripted answer: `agent` is a record id, an executor's name or `fork`. */
+/** A `start_agent` call of a scripted answer: `agent` is a record id, a subagent's name or `fork`. */
 function startAgent(args: { agent: string; description: string; prompt: string }): ScriptedToolCall {
   return { tool: 'start_agent', args };
 }
@@ -139,7 +140,7 @@ function startAgent(args: { agent: string; description: string; prompt: string }
 /** Every built-in tool a record may hold, as the built-in `general-purpose` record has them. */
 const ALL_RECORD_TOOLS: RecordTool[] = ['start_agent', 'message_agent', 'list_agents', 'stop_agent'];
 
-/** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_workflow`). */
+/** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_deep_agent`). */
 async function startedChildrenOf(harness: AgentsHarness, agentId: string): Promise<(string | undefined)[]> {
   const calls = await toolCallRowsOf(harness.db, agentId);
   return calls.flatMap((call) => (call.childTaskId !== null ? [call.childTaskId] : []));
@@ -295,7 +296,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   //   with that reason. `agents.send` to the failed agent: it works in the SAME session (same `agentId`, history intact and the new message last), gets the full turn limit again (two more model calls), and its report is a SECOND notification to the parent. Then the
   //   finished agent `agents.restart`s: a NEW `agentId` with the same definition, task text, model, limits and parent, its history starts at the task with nothing of the old one, and the old agent is still in `agents.list`; restarting a working agent answers `NOT_FINISHED`.
   // - Row D "caller limits and the final agent" (UC-5): a root session always waits at the end of a turn ("Конец хода"), so the session checked is a CHILD of the root: the coordinator of a workflow record whose team is `planner` and `answer`, one run
-  //   each, with final executor `answer` (custom-agents runtime: the caller limits are the workflow's team), started by the root through the harness's `start_test_workflow`. The script starts `planner` twice, then `gatherer` once, then answers text, then starts `answer`, then (after its report) answers text.
+  //   each, with final subagent `answer` (custom-agents runtime: the caller limits are the deep agent's team), started by the root through the harness's `start_test_deep_agent`. The script starts `planner` twice, then `gatherer` once, then answers text, then starts `answer`, then (after its report) answers text.
   //   Then: the second `planner` is refused `run_limit`, `gatherer` (outside the team) `not_allowed`, and NO task was created for either (the session's children are the first planner and `answer` only); the first text answer is met by a `notice`
   //   entry and a new turn rather than ending the session; the report its parent (the root) receives is `answer`'s report, not the session's own text; the refused calls appear in the history with the reason.
   // - Row E "fork and compaction" (UC-E10, UC-E11): a root with three exchanges calls `start_agent` with `fork`. Then: the fork's first model input holds the root's three exchanges up to the entry before the answer that contains the `start_agent` call, then the task; the root's
@@ -350,7 +351,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       fixture,
       access: { [ownerId]: [LOGS_SERVER] },
       library,
-      root: testRecord('coordinator', { tools: ['start_agent'], servers: [LOGS_SERVER] }),
+      root: testRecord('deep agent', { tools: ['start_agent'], servers: [LOGS_SERVER] }),
     });
     try {
       // When: the root runs; its read is held while both children reach their first model call together
@@ -680,31 +681,32 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-1 D: a start outside the caller limits or over their count is refused without creating a task, a text answer without the final agent\'s report gets a notice, and the final agent\'s report becomes the session\'s report', async () => {
-    // Given: a workflow record whose team is `planner` and `answer`, one run each, with final executor `answer`;
-    // the root starts its coordinator; `gatherer` is no executor of the team
+    // Given: a deep agent record whose team is `planner` and `answer`, one run each, with final subagent `answer`;
+    // the root starts its deep agent; `gatherer` is no subagent of the team
     const ownerId = newUser();
     const library = createLibraryDouble();
-    const executor = (name: string): WorkflowContent['executors'][number] => ({
+    const subagent = (name: string): Subagent => ({
       name,
-      role: `The ${name} of the team`,
-      prompt: 'You are a test executor.',
+      description: `The ${name} of the team`,
+      prompt: 'You are a test subagent.',
       servers: [],
       model: TEST_MODEL_DEFAULT,
       maxTurns: 20,
       maxRuns: 1,
-      tools: [],
-      source: null,
     });
-    const workflowId = library.add({
-      kind: 'workflow',
-      name: 'limited workflow',
+    const deepAgentRecordId = library.add({
+      kind: 'deep_agent',
+      name: 'limited deep agent',
       ownerId: TEST_AUTHOR_ID,
       everyone: true,
       offerInChat: true,
       content: {
-        coordinator: { rules: '', model: TEST_MODEL_DEFAULT, maxTurns: 20 },
-        executors: [executor('planner'), executor('answer')],
-        finalExecutor: 'answer',
+        prompt: 'You run the limited deep agent.',
+        servers: [],
+        model: TEST_MODEL_DEFAULT,
+        maxTurns: 20,
+        subagents: [subagent('planner'), subagent('answer')],
+        finalSubagent: 'answer',
         selfLearning: false,
       },
     });
@@ -718,15 +720,15 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         {
           calls: [
             {
-              tool: START_TEST_WORKFLOW,
-              args: { workflow: workflowId, prompt: 'Coordinate with limits', description: 'coordinator' },
+              tool: START_TEST_DEEP_AGENT,
+              args: { deepAgent: deepAgentRecordId, prompt: 'Coordinate with limits', description: 'deep agent' },
             },
           ],
         },
       ],
       { thereafter: { text: 'noted' } },
     );
-    const coordinator = model.script({ task: 'Coordinate with limits' }, [
+    const deepAgent = model.script({ task: 'Coordinate with limits' }, [
       { calls: [startAgent({ agent: 'planner', description: 'planner', prompt: 'Plan A' })] },
       { calls: [startAgent({ agent: 'planner', description: 'second planner', prompt: 'Plan B' })] },
       {
@@ -745,7 +747,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       access: {},
       library,
       root: testRecord('root'),
-      workflowStarter: true,
+      deepAgentStarter: true,
     });
     try {
       const { agentId: rootId } = await harness.sessions.start({
@@ -764,7 +766,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitForTaskStatus(harness, plannerId, ownerId, 'completed');
       atThirdCall.open();
       await answerHeld.reached();
-      await coordinator.called(6);
+      await deepAgent.called(6);
       await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
       answerHeld.open();
       await waitForTaskStatus(harness, agentId, ownerId, 'completed');
@@ -791,7 +793,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'tool_result: start_agent refused not_allowed',
         'child_report: planner completed',
         'model_answer: my own summary []',
-        'notice: You cannot finish: there is no report of executor "answer" yet. The workflow ends only with a completed report of executor "answer"; start it with start_agent.',
+        'notice: You cannot finish: there is no report of subagent "answer" yet. The deep agent ends only with a completed report of subagent "answer"; start it with start_agent.',
         'model_answer:  [start_agent]',
         'tool_result: start_agent success',
         'model_answer: waiting for the answer []',
@@ -1382,6 +1384,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: U1's model was offered the `logs` tools (the registry keeps a server's list by tool name) and its
       // read reached the server once
       expect(allowed.calls[0]?.toolNames).toEqual([
+        'start_deep_agent',
         'read_tool_result',
         'search_tool_result',
         'run_code',
@@ -1405,7 +1408,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: U2's model was offered no server tool (only the tools every session has); its forced
       // call was refused `no_access` (the server is in the definition, the owner may not use it), is in its
       // history, and nothing of it reached a server
-      expect(denied.calls[0]?.toolNames).toEqual(['read_tool_result', 'search_tool_result', 'run_code']);
+      expect(denied.calls[0]?.toolNames).toEqual(['start_deep_agent', 'read_tool_result', 'search_tool_result', 'run_code']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
         `mcp__${LOGS_SERVER}__get_trace done refused no_access timed`,
@@ -1784,7 +1787,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @complexity: medium
   //
   // Verification items (table-driven by operation; A has a root, a child, history entries with tool calls, and one open confirmation):
-  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `resolveConfirmation` (approve and reject).
+  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `taskList` (deep-agents UC-7: A's child has three plan items), `resolveConfirmation` (approve and reject).
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`AGENT_NOT_FOUND`, and `DECISION_NOT_FOUND` for the confirmation), with nothing of A's data
   //   (no definition, task text, argument or count) in the answer or the error message.
   // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, tool calls in `agent_messages` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
@@ -1828,6 +1831,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitForTaskStatus(harness, childId, ownerA, 'completed');
       const [request] = (await harness.sessions.confirmations(rootId, ownerA)).filter((c) => c.status === 'open');
       if (request === undefined) throw new Error('A has no confirmation request');
+      // deep-agents UC-7, AC-04.1 (isolation): three items of a run's task list, as `task_list` would leave them
+      await harness.db.insert(agentRunTasks).values([
+        { taskId: childId, number: 1, text: 'item one of A', status: 'running' },
+        { taskId: childId, number: 2, text: 'item two of A' },
+        { taskId: childId, number: 3, text: 'item three of A' },
+      ]);
       const before = await treeRowVersionsOf(harness.db, [rootId, childId]);
 
       // When: B calls every operation on A's agent, tree or decision, and on an id that exists for nobody
@@ -1841,6 +1850,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         { name: 'stop', foreignId: rootId, call: (id) => sessions.stop({ agentId: id, ownerId: ownerB }) },
         { name: 'restart', foreignId: childId, call: (id) => sessions.restart({ agentId: id, ownerId: ownerB }) },
         { name: 'confirmations', foreignId: rootId, call: (id) => sessions.confirmations(id, ownerB) },
+        { name: 'taskList', foreignId: childId, call: (id) => sessions.taskList(id, ownerB) },
         {
           name: 'resolveConfirmation approve',
           foreignId: request.decisionId,
@@ -1877,6 +1887,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'stop: AgentsError AGENT_NOT_FOUND Task <id> not found',
         'restart: AgentsError AGENT_NOT_FOUND Task <id> not found',
         'confirmations: AgentsError AGENT_NOT_FOUND Agent <id> not found',
+        'taskList: AgentsError AGENT_NOT_FOUND Task <id> not found',
         'resolveConfirmation approve: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
         'resolveConfirmation reject: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
         'resolveConfirmation with edited arguments: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
@@ -1911,6 +1922,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'task: Child task of owner A',
         'model_answer: report of the child of A []',
       ]);
+      expect(
+        (await harness.sessions.taskList(childId, ownerA)).tasks.map((item) => `${item.number} ${item.status} ${item.text}`),
+      ).toEqual(['1 running item one of A', '2 waiting item two of A', '3 waiting item three of A']);
     } finally {
       await harness.close();
     }

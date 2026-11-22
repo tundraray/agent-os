@@ -24,7 +24,7 @@ function toLibrarySettings(row: LibrarySettingsRow): LibrarySettings {
 }
 
 /**
- * The library's settings in the single `library_settings` row: «Максимум шагов» a new agent or workflow
+ * The library's settings in the single `library_settings` row: «Максимум шагов» a new agent or deep agent
  * starts with. The editor reads it through `GET /api/library/choices`; a saved record keeps its own value.
  */
 @Injectable()

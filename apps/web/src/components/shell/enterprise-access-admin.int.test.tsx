@@ -501,7 +501,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      no «Панель администратора» in the user menu; ZERO requests to `/api/admin/*` for the whole test ([support] request counter on
   //      `server.events` `request:start`, because the screen could swallow the unhandled-request error); «В чат» leaves without a chat restart
   //   2. an administrator (`isAdmin: true`) opens the user menu and chooses «Панель администратора»: «Сотрудники» is open, the sidebar shows «К чату»
-  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели», «Агенты и workflow» (no «Журнал», no pauses), the focus is on the `h1`
+  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели», «Агенты и глубокие агенты» (no «Журнал», no pauses), the focus is on the `h1`
   //      «Сотрудники», `document.title` is «Сотрудники — Панель — Agent OS»; the first request after `GET /api/auth/me` is `GET /api/admin/users`
   //   3. the administrator on `/admin/roles` presses «Создать роль» and creates one: `POST /api/admin/roles` answers `403 ADMIN_REQUIRED` - the SAME
   //      address now shows «Нет доступа», the ordinary sidebar, the menu without the panel item, no role row left on screen, and no further
@@ -618,7 +618,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       'Авторизация',
       'MCP-серверы',
       'Модели',
-      'Агенты и workflow',
+      'Агенты и глубокие агенты',
     ]);
     expect(within(panelNav).getByRole('link', { name: 'Сотрудники' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('navigation', { name: 'История бесед' })).toBeNull();

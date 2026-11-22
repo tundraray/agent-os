@@ -35,6 +35,12 @@ import { checkServerUrl } from './mcp-url';
 /** A token closer than this to its end is refreshed before the call (Runtime settings). */
 const REFRESH_BEFORE_EXPIRY_MS = 60 * 1000;
 
+/** A server the employee may use and the names of its tools he has the right to (deep-agents KD-3). */
+export interface UsableMcpServer {
+  readonly server: string;
+  readonly tools: readonly string[];
+}
+
 export interface McpAccountsOptions {
   readonly database: Database;
   readonly requests: ConnectRequests;
@@ -177,7 +183,7 @@ export class McpAccounts {
    * status (AC-14.1, AC-14.6); none for a disabled employee.
    */
   async connections(ownerId: string): Promise<McpConnection[]> {
-    const servers = (await this.usableServers(ownerId)).filter(isOAuthServer);
+    const servers = (await this.usableServers(ownerId)).rows.filter(isOAuthServer);
     if (servers.length === 0) return [];
     const connected = new Set((await accountsOf(this.options.database, ownerId)).map((account) => account.server));
     return servers.map((row) => ({
@@ -327,14 +333,30 @@ export class McpAccounts {
 
   /** Names of enabled servers of any mode with at least one tool the gate allows the employee, by name (KD-4). */
   async usable(ownerId: string): Promise<string[]> {
-    return (await this.usableServers(ownerId)).map((row) => row.name);
+    return (await this.usableServers(ownerId)).rows.map((row) => row.name);
   }
 
-  /** Enabled servers of any mode the employee may use, by name; none for a disabled employee. */
-  private async usableServers(ownerId: string): Promise<McpServerRow[]> {
-    const access = await this.options.access.tools(ownerId);
+  /**
+   * The servers of `usable` with the names of their tools the gate allows the employee, in the server's
+   * list order (deep-agents KD-3, DC-7); none for a disabled employee.
+   */
+  async usableTools(ownerId: string): Promise<UsableMcpServer[]> {
+    const { rows, access } = await this.usableServers(ownerId);
     if (access.kind === 'owner_disabled') return [];
-    return (await listServers(this.options.database)).filter((row) => usableServer(row, access));
+    return rows.map((row) => ({
+      server: row.name,
+      tools: (storedMcpTools(row.tools) ?? [])
+        .map((tool) => tool.tool)
+        .filter((tool) => access.allows(row.name, tool)),
+    }));
+  }
+
+  /** Enabled servers of any mode the employee may use, by name, with the gate's answer; none for a disabled employee. */
+  private async usableServers(ownerId: string): Promise<{ rows: McpServerRow[]; access: ToolAccess }> {
+    const access = await this.options.access.tools(ownerId);
+    if (access.kind === 'owner_disabled') return { rows: [], access };
+    const rows = (await listServers(this.options.database)).filter((row) => usableServer(row, access));
+    return { rows, access };
   }
 
   /** The admin connects his `oauth` server in any status; an employee only one he may use (`connections`' rule). */

@@ -27,8 +27,8 @@
 //     assertions; `auditOf(pool, { kind, objectType, ... })` that reads `access_denied` rows by object type (the kind is shared with the
 //     administrator-route refusals of identity, so rows of tools and models are filtered by `objectType`).
 //   - `createTestApp`: the `mcpAccess` option, `MCP_ACCESS_TABLE` and the price file are deleted.
-//   - A test workflow record of the employee whose executor names the `backoffice` server and runs a model script and a `run_code` script,
-//     started by `start_workflow` of the employee's chat (INT-1 step 4).
+//   - A test deep agent record of the employee whose subagent names the `backoffice` server and runs a model script and a `run_code` script,
+//     started by `start_deep_agent` of the employee's chat (INT-1 step 4).
 //   - Agent records on a given model (system records the administrator shows to one employee), which the chat starts by id: the model of a
 //     start is the record's (INT-2, INT-3). The built-in records run on `A` (`pointBuiltinsAt`).
 //   - A latch around a scripted model call (the scripted model's `hold`/latch of the existing chat suite) so two calls stay in flight (INT-3).
@@ -76,12 +76,12 @@ import {
   type TextScript,
 } from '@agent-os/agents/testing';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AGENTS_TOOL_CONFIRMATION,
   CreateCatalogModelBodySchema,
   GrantSchema,
   MyModelsSchema,
   StartRefusedErrorSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
   type AgentNode,
   type ConversationView,
   type CreateRecordBody,
@@ -194,40 +194,37 @@ const SEARCH_LOGS = mcpTool(LOGS_SERVER, 'search_logs');
 const SEARCH_TICKETS = mcpTool(TRACKER_SERVER, 'search_tickets');
 const RUN_CODE = 'run_code';
 
-/** The one executor of the INT-1 workflow, which its coordinator starts by name. */
-const ACCESS_EXECUTOR = 'access-executor';
+/** The one subagent of the INT-1 deep agent, which the deep agent starts by name. */
+const ACCESS_SUBAGENT = 'access-subagent';
 
 /**
- * The INT-1 workflow record: a coordinator on `A` and one executor on `A` that names the run's `backoffice`. Every
- * session has `run_code` without naming it, and a record never holds it, so the executor's `tools` is empty.
+ * The INT-1 deep agent record: the deep agent on `A` without servers and one subagent on `A` that names the run's
+ * `backoffice`. Every session has `run_code` without naming it, and a record never holds it.
  */
-function accessCheckWorkflow(): Extract<CreateRecordBody, { kind: 'workflow' }> {
+function accessCheckDeepAgent(): Extract<CreateRecordBody, { kind: 'deep_agent' }> {
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name: recordName('access-check'),
     description:
-      'Test workflow of the access integration tests: one executor that writes an incident note.',
+      'Test deep agent of the access integration tests: one subagent that writes an incident note.',
     content: {
-      coordinator: {
-        rules: `Start the executor ${ACCESS_EXECUTOR} with start_agent and wait for its report.`,
-        model: MODEL_A,
-        maxTurns: 6,
-      },
-      executors: [
+      prompt: `Start the subagent ${ACCESS_SUBAGENT} with start_agent and wait for its report.`,
+      servers: [],
+      model: MODEL_A,
+      maxTurns: 6,
+      subagents: [
         {
-          name: ACCESS_EXECUTOR,
-          role: 'Writes the incident note of the access check.',
+          name: ACCESS_SUBAGENT,
+          description: 'Writes the incident note of the access check.',
           prompt:
             'You write the incident note of the access check from your assignment.',
           servers: [BACKOFFICE_SERVER],
           model: MODEL_A,
           maxTurns: 4,
           maxRuns: 1,
-          tools: [],
-          source: null,
         },
       ],
-      finalExecutor: ACCESS_EXECUTOR,
+      finalSubagent: ACCESS_SUBAGENT,
       selfLearning: false,
     },
   };
@@ -598,11 +595,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   than the main chat; a refusal that reaches the server or leaves zero or two audit rows; a grant for a tool or model that does not exist, or a
   //   duplicate, saved and then silently never matching.
   // @category: core-functionality
-  // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, start_workflow, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
+  // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, start_deep_agent, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
   // @complexity: high
   // Implementation (task T3.1; where the comment above differs, the task's text and the built code decide): Аня, Борис
-  //   and Глеб each get `A` through the run's role `int1-models`; Глеб's `logs` comes from the role `int1-logs`. The workflow
-  //   is Аня's own record; its executor names `backoffice` and has `run_code` without naming it (a record never holds it).
+  //   and Глеб each get `A` through the run's role `int1-models`; Глеб's `logs` comes from the role `int1-logs`. The deep agent
+  //   is Аня's own record; its subagent names `backoffice` and has `run_code` without naming it (a record never holds it).
   //   «Exactly one record per refusal»: the audit is written before the commit of the refusal (plan Notes 3), so the test
   //   waits for the refused call rows first and counts the audit after.
   it(
@@ -793,11 +790,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         server: BACKOFFICE_SERVER,
         tool: 'create_incident_note',
       });
-      // Аня's own workflow record: her chat may start it, and its executor names `backoffice`
+      // Аня's own deep agent record: her chat may start it, and its subagent names `backoffice`
       const accessCheck = await createRecord(
         harness.app,
         anya,
-        accessCheckWorkflow(),
+        accessCheckDeepAgent(),
       );
 
       const anyaTask =
@@ -805,8 +802,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const borisTask = 'INT-1: Борис reads the trace and the tickets';
       const glebTask = 'INT-1: Глеб writes the incident note';
       const question = 'INT-1: write the incident note of the order';
-      const executorTask =
-        'INT-1: the workflow executor writes the incident note';
+      const subagentTask =
+        'INT-1: the deep agent subagent writes the incident note';
       const anyaChat = harness.model.script(
         { task: anyaTask },
         [
@@ -821,9 +818,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           {
             calls: [
               {
-                tool: 'start_workflow',
+                tool: 'start_deep_agent',
                 args: {
-                  workflow: accessCheck.id,
+                  deepAgent: accessCheck.id,
                   question,
                   boundaries: '',
                   result: '',
@@ -843,24 +840,24 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
               {
                 tool: 'start_agent',
                 args: {
-                  agent: ACCESS_EXECUTOR,
-                  description: 'executor',
-                  prompt: executorTask,
+                  agent: ACCESS_SUBAGENT,
+                  description: 'subagent',
+                  prompt: subagentTask,
                 },
               },
             ],
           },
         ],
-        { thereafter: { text: 'the executor reported' } },
+        { thereafter: { text: 'the subagent reported' } },
       );
-      const executor = harness.model.script({ task: executorTask }, [
+      const subagent = harness.model.script({ task: subagentTask }, [
         {
           calls: [
             {
               tool: CREATE_NOTE,
               args: {
                 orderId: 'ord-0000a002',
-                text: 'INT-1: from the workflow',
+                text: 'INT-1: from the deep agent',
               },
             },
             refusedFromCode('Заметка из скрипта', CREATE_NOTE, {
@@ -924,7 +921,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         RUN_CODE,
       ]);
 
-      // 4. AC-18.1, AC-18.4, DC-4, the doors: Аня's chat, Борис's chat and its script, the workflow agent and its
+      // 4. AC-18.1, AC-18.4, DC-4, the doors: Аня's chat, Борис's chat and its script, the subagent and its
       //    script -> five `no_access`, each the call's result (the agents go on), no call reaches the fixture but
       //    Борис's allowed `search_tickets`, and exactly one audit record per refusal
       const brief = await waitFor(
@@ -932,18 +929,18 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         (view) =>
           view.decisions.some(
             (d) =>
-              d.kind === WORKFLOWS_BRIEF_CONFIRMATION && d.status === 'open',
+              d.kind === AGENTS_BRIEF_CONFIRMATION && d.status === 'open',
           ),
-        "the brief of Аня's workflow",
+        "the brief of Аня's deep agent",
       );
       const briefId =
-        brief.decisions.find((d) => d.kind === WORKFLOWS_BRIEF_CONFIRMATION)
+        brief.decisions.find((d) => d.kind === AGENTS_BRIEF_CONFIRMATION)
           ?.decisionId ?? '';
       expect(await anyaApi.decide(briefId, { approve: true })).toEqual({
         outcome: 'resolved',
       });
       await Promise.all([
-        executor.called(2),
+        subagent.called(2),
         borisChat.called(2),
         anyaChat.called(3),
       ]);
@@ -967,7 +964,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         `boris ${LOGS_SERVER}/get_trace rejected no_access`,
         `boris ${LOGS_SERVER}/get_trace rejected no_access`,
       ]);
-      expect(offered(executor.calls[0])).toEqual(offered(anyaChat.calls[0]));
+      expect(offered(subagent.calls[0])).toEqual(offered(anyaChat.calls[0]));
       expect(journal()).toEqual(['tracker shared search_tickets']);
       // Борис's refusals are results his chat goes on with; his script got the refusal as its value
       const borisTurn = await untilIdle(
@@ -990,7 +987,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           ? scriptResult.content.text
           : undefined,
       ).toBe('refused no_access');
-      // The workflow settles: the executor and the coordinator report and Аня's chat is free again
+      // The run settles: the subagent and the deep agent report and Аня's chat is free again
       await waitFor(
         () => anyaApi.history(anyaThread),
         (view) => {
@@ -1003,7 +1000,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
             reportsOf(view).length === 1
           );
         },
-        "Аня's workflow to finish",
+        "Аня's deep agent to finish",
       );
 
       // 5. After approval: Глеб's mutating call waits for his decision; the administrator removes his personal right;

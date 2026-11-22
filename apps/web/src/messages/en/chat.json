@@ -7,7 +7,7 @@
     "fromAgent": "From agent “{sender}”",
     "fromAgentUnnamed": "From agent",
     "report": "Report",
-    "brief": "Task"
+    "brief": "Brief"
   },
   "voice": {
     "header": "Voice conversation",
@@ -43,7 +43,7 @@
     }
   },
   "sendFailed": "Couldn't send the message. Try again.",
-  "chipPlaceholder": "{kind, select, agent {Describe the task for “{name}”…} other {Describe what to look into — the chat will prepare a task for “{name}”…}}",
+  "chipPlaceholder": "{kind, select, agent {Describe the task for “{name}”…} other {Describe what to look into — the chat will prepare a brief for “{name}”…}}",
   "composer": {
     "message": "Message",
     "dictate": "Voice input",

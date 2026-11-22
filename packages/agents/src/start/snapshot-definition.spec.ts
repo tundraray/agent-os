@@ -1,25 +1,26 @@
 import type { RecordHeader, ResolvedRecord } from '@agent-os/contracts';
 
 import {
-  COORDINATOR_PROMPT,
-  executorSnapshot,
+  DEEP_AGENT_RULES,
   recordSnapshot,
   type RunDefinition,
   snapshotDefinition,
+  subagentSnapshot,
 } from './snapshot-definition';
-import type { WorkflowSnapshot } from './snapshot';
+import type { DeepAgentSnapshot } from './snapshot';
 
-// AC-16.4, DC-7, AC-15.3 (rule): the definition a step hands the model comes from the snapshot alone —
-// an agent's prompt, tools, servers and limit with the visible records of its `agents`; a coordinator's
-// common text with the record's rules, the team as «имя (до N вызовов): роль», and who writes the
-// answer; an executor taken from the workflow by its name.
+// AC-16.4, DC-7, AC-15.3 (rule); deep-agents KD-1, KD-2, AC-08.1: the definition a step hands the model
+// comes from the snapshot alone — an agent's prompt, tools, servers and limit with the visible records of
+// its `agents`; a deep agent's prompt with the platform rules after it, its own servers, the team as
+// «имя (up to N runs): описание», and who writes the answer; a subagent taken from the deep agent by its
+// name, learning on the servers of the deep agent and its whole team.
 
 const HAIKU = 'anthropic/claude-haiku-5-5';
 const SONNET = 'anthropic/claude-sonnet-5-5';
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
 const VISIBLE_ID = '00000000-0000-4000-8000-000000000002';
 const HIDDEN_ID = '00000000-0000-4000-8000-000000000003';
-const WORKFLOW_ID = '00000000-0000-4000-8000-000000000004';
+const DEEP_AGENT_ID = '00000000-0000-4000-8000-000000000004';
 const OWNER_ID = '00000000-0000-4000-8000-000000000005';
 
 const AGENT_RECORD: ResolvedRecord = {
@@ -58,54 +59,55 @@ const VISIBLE_HEADERS: RecordHeader[] = [
   },
 ];
 
-function executor(
+function subagent(
   name: string,
   maxRuns: number,
-  role: string,
-): WorkflowSnapshot['content']['executors'][number] {
+  description: string,
+): DeepAgentSnapshot['content']['subagents'][number] {
   return {
     name,
-    role,
+    description,
     prompt: `You are ${name}.`,
     servers: name === 'gather' ? ['logs'] : [],
     model: HAIKU,
     maxTurns: 6,
     maxRuns,
-    tools: [],
-    source: null,
   };
 }
 
-function workflow(rules: string, finalExecutor: string | null): WorkflowSnapshot {
+function deepAgent(finalSubagent: string | null, selfLearning = false): DeepAgentSnapshot {
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name: 'Глубокий ресерч',
     origin: {
-      recordId: WORKFLOW_ID,
-      kind: 'workflow',
+      recordId: DEEP_AGENT_ID,
+      kind: 'deep_agent',
       version: 3,
       name: 'Глубокий ресерч',
       author: null,
       builtinKey: 'deep-research',
-      executor: null,
+      subagent: null,
     },
     content: {
-      coordinator: { rules, model: SONNET, maxTurns: 30 },
-      executors: [
-        executor('plan', 1, 'Делит вопрос на направления'),
-        executor('gather', 5, 'Собирает данные по направлению'),
-        executor('answer', 2, 'Пишет ответ'),
+      prompt: 'Start plan first.',
+      servers: ['tickets'],
+      model: SONNET,
+      maxTurns: 30,
+      subagents: [
+        subagent('plan', 1, 'Делит вопрос на направления'),
+        subagent('gather', 5, 'Собирает данные по направлению'),
+        subagent('answer', 2, 'Пишет ответ'),
       ],
-      finalExecutor,
-      selfLearning: false,
+      finalSubagent,
+      selfLearning,
     },
   };
 }
 
 const TEAM_LINES = [
-  'plan (up to 1 calls): Делит вопрос на направления',
-  'gather (up to 5 calls): Собирает данные по направлению',
-  'answer (up to 2 calls): Пишет ответ',
+  'plan (up to 1 runs): Делит вопрос на направления',
+  'gather (up to 5 runs): Собирает данные по направлению',
+  'answer (up to 2 runs): Пишет ответ',
 ];
 
 describe('snapshotDefinition', () => {
@@ -124,41 +126,41 @@ describe('snapshotDefinition', () => {
         tools: ['start_agent', 'list_agents'],
         servers: ['billing'],
         startable: [`${VISIBLE_ID}: Сверка — Сверяет выписки`],
-        finalExecutor: null,
+        finalSubagent: null,
       },
     },
     {
-      case: 'a coordinator without rules and with a final executor',
-      definition: () => snapshotDefinition(workflow('', 'answer')),
+      case: 'a deep agent with a final subagent: its prompt, then the rules, then the final rule',
+      definition: () => snapshotDefinition(deepAgent('answer')),
       expected: {
         name: 'Глубокий ресерч',
-        prompt: `${COORDINATOR_PROMPT}\n\nThe answer is the report of answer: after it reports, reply with one short sentence and make no more calls.`,
+        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nThe answer is the report of answer: after it reports, end with a short text without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['start_agent', 'message_agent'],
-        servers: [],
+        tools: ['start_agent', 'message_agent', 'task_list'],
+        servers: ['tickets'],
         startable: TEAM_LINES,
-        finalExecutor: 'answer',
+        finalSubagent: 'answer',
       },
     },
     {
-      case: 'a coordinator with rules and without a final executor writes the answer itself',
-      definition: () => snapshotDefinition(workflow('Start plan first.', null)),
+      case: 'a deep agent without a final subagent writes the answer itself',
+      definition: () => snapshotDefinition(deepAgent(null)),
       expected: {
         name: 'Глубокий ресерч',
-        prompt: `${COORDINATOR_PROMPT}\n\nWhen the work is done, write the answer yourself as plain text without tool calls.\n\nRules of this workflow:\nStart plan first.`,
+        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nWhen the work is done, write the answer yourself as plain text without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['start_agent', 'message_agent'],
-        servers: [],
+        tools: ['start_agent', 'message_agent', 'task_list'],
+        servers: ['tickets'],
         startable: TEAM_LINES,
-        finalExecutor: null,
+        finalSubagent: null,
       },
     },
     {
-      case: 'an executor taken from the workflow by its name',
+      case: 'a subagent taken from the deep agent by its name',
       definition: () => {
-        const snapshot = executorSnapshot(workflow('', 'answer'), 'gather');
+        const snapshot = subagentSnapshot(deepAgent('answer'), 'gather');
         return snapshot === null ? null : snapshotDefinition(snapshot);
       },
       expected: {
@@ -169,13 +171,13 @@ describe('snapshotDefinition', () => {
         tools: [],
         servers: ['logs'],
         startable: [],
-        finalExecutor: null,
+        finalSubagent: null,
       },
     },
     {
-      case: 'a name outside the team gives no executor',
+      case: 'a name outside the team gives no subagent',
       definition: () => {
-        const snapshot = executorSnapshot(workflow('', 'answer'), 'review');
+        const snapshot = subagentSnapshot(deepAgent('answer'), 'review');
         return snapshot === null ? null : snapshotDefinition(snapshot);
       },
       expected: null,
@@ -184,15 +186,19 @@ describe('snapshotDefinition', () => {
     expect(definition()).toEqual(expected);
   });
 
-  it('an executor keeps the workflow origin with its own name', () => {
-    expect(executorSnapshot(workflow('', 'answer'), 'gather')?.origin).toEqual({
-      recordId: WORKFLOW_ID,
-      kind: 'workflow',
-      version: 3,
-      name: 'Глубокий ресерч',
-      author: null,
-      builtinKey: 'deep-research',
-      executor: 'gather',
+  it('a subagent of a learning deep agent keeps its origin with its own name and learns on the servers of the deep agent and the team', () => {
+    const snapshot = subagentSnapshot(deepAgent('answer', true), 'gather');
+    expect({ origin: snapshot?.origin, learning: snapshot?.learning }).toEqual({
+      origin: {
+        recordId: DEEP_AGENT_ID,
+        kind: 'deep_agent',
+        version: 3,
+        name: 'Глубокий ресерч',
+        author: null,
+        builtinKey: 'deep-research',
+        subagent: 'gather',
+      },
+      learning: { servers: ['tickets', 'logs'] },
     });
   });
 });

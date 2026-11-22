@@ -1,33 +1,34 @@
 import type { RecordBody } from '@agent-os/contracts';
 
 /**
- * One holder of a model and servers: the agent itself or the coordinator (`executor` `null`), or an
- * executor. A `null` model is the default chat model, resolved at the start (KD-5).
+ * One holder of a model and servers: the agent or the deep agent itself (`subagent` `null`), or a
+ * subagent. A `null` model is the default chat model, resolved at the start (KD-5).
  */
 export interface ContentPart {
-  readonly executor: string | null;
+  readonly subagent: string | null;
+  /** Where the part lives in the content: `''` for the record itself, `subagents.N` for a subagent. */
+  readonly path: string;
   readonly servers: readonly string[];
   readonly model: string | null;
 }
 
-/** Every model of the content with its servers: an agent's one, a workflow's coordinator and executors. */
+/** The path of a field of a part, as a refusal names it (deep-agents KD-4): `servers`, `subagents.1.model`. */
+export function fieldPath(part: ContentPart, field: 'servers' | 'model'): string {
+  return part.path === '' ? field : `${part.path}.${field}`;
+}
+
+/** Every model of the content with its servers: an agent's one, a deep agent's own and its subagents'. */
 export function contentParts(body: RecordBody): ContentPart[] {
-  if (body.kind === 'agent') {
-    return [
-      {
-        executor: null,
-        servers: body.content.servers,
-        model: body.content.model,
-      },
-    ];
-  }
-  const { coordinator, executors } = body.content;
+  const { servers, model } = body.content;
+  const own: ContentPart = { subagent: null, path: '', servers, model };
+  if (body.kind === 'agent') return [own];
   return [
-    { executor: null, servers: [], model: coordinator.model },
-    ...executors.map((executor) => ({
-      executor: executor.name,
-      servers: executor.servers,
-      model: executor.model,
+    own,
+    ...body.content.subagents.map((subagent, index) => ({
+      subagent: subagent.name,
+      path: `subagents.${index}`,
+      servers: subagent.servers,
+      model: subagent.model,
     })),
   ];
 }

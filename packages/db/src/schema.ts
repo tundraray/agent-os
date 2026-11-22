@@ -5,7 +5,6 @@ import {
   CALL_RECORD_KINDS,
   DecisionStatusSchema,
   DeliveryStatusSchema,
-  DraftStateSchema,
   EmbeddingFailureReasonSchema,
   EMBEDDING_DIMENSIONS_MAX,
   EMBEDDING_DIMENSIONS_MIN,
@@ -33,7 +32,7 @@ import {
   RECORD_MAX_TURNS_MAX,
   RECORD_MAX_TURNS_MIN,
   RecordKindSchema,
-  SaveOwnRefusalSchema,
+  RunTaskStatusSchema,
   SINGLE_CALL_RECORD_KINDS,
   TaskStatusSchema,
   TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
@@ -371,8 +370,8 @@ export const agentSessions = app.table(
     authorId: uuid('author_id'),
     authorName: text('author_name'),
     builtinKey: text('builtin_key'),
-    /** Executor name of a workflow step; null otherwise. */
-    executor: text('executor'),
+    /** Subagent name of a run of a subagent; null otherwise. */
+    subagent: text('subagent'),
     /** The owner had no earlier session with this record. */
     firstRun: boolean('first_run').notNull().default(false),
     /** Fork source: the parent's history up to `forked_through_seq` precedes this one. No FK. */
@@ -534,6 +533,31 @@ export const agentCodeCalls = app.table(
   ],
 );
 
+/**
+ * The task list of a deep agent's run (deep-agents/design-agent-types.md, KD-5, Data Model): one row per
+ * item, numbered from 1 within the run and never reused. Written in the step transaction with the
+ * `tool_result` that changed it; deleting the session deletes its items, as `agent_messages`.
+ */
+export const agentRunTasks = app.table(
+  'agent_run_tasks',
+  {
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    text: text('text').notNull(),
+    status: text('status').notNull().default(RunTaskStatusSchema.enum.waiting),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.number] }),
+    check('agent_run_tasks_status_check', isOneOf(t.status, RunTaskStatusSchema.options)),
+  ],
+);
+
 // ---------------------------------------------------------------------------------------------
 // MCP registry and employee accounts (enterprise-access/design-mcp-connect.md, Data Model, KD-1).
 // Owned by the `agents` package (ADR-0014). Tokens and the client secret are stored as is.
@@ -617,43 +641,6 @@ export const agentModelProviders = app.table(
   },
   (t) => [
     check('agent_model_providers_kind_check', isOneOf(t.kind, ModelProviderKindSchema.options)),
-  ],
-);
-
-/**
- * A record draft of a conversation (custom-agents/design-runtime.md, KD-6): written by `draft_record`
- * of the root, resolved by the conversation's route. The conversation is its root session, and the
- * drafts go with it. `record_id` and `saved_record_id` have no FK: the record may be deleted.
- */
-export const chatDrafts = app.table(
-  'chat_drafts',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    conversationId: uuid('conversation_id')
-      .notNull()
-      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
-    ownerId: text('owner_id').notNull(),
-    /** The `draft_record` call in the root's history the card stands at. */
-    callId: text('call_id').notNull(),
-    kind: text('kind').notNull(),
-    /** The edited record and its version at the draft; null for a new record. */
-    recordId: uuid('record_id'),
-    baseVersion: integer('base_version'),
-    name: text('name').notNull(),
-    description: text('description').notNull(),
-    content: jsonb('content').notNull(),
-    state: text('state').notNull().default(DraftStateSchema.enum.pending),
-    savedRecordId: uuid('saved_record_id'),
-    /** Reason of the last refused `saveOwn`; null when none. */
-    refusal: text('refusal'),
-    createdAt: createdAt(),
-    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
-  },
-  (t) => [
-    index('chat_drafts_conversation_idx').on(t.conversationId),
-    check('chat_drafts_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
-    check('chat_drafts_state_check', isOneOf(t.state, DraftStateSchema.options)),
-    check('chat_drafts_refusal_check', isOneOf(t.refusal, SaveOwnRefusalSchema.options)),
   ],
 );
 

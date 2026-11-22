@@ -53,8 +53,6 @@ export const ThreadsErrorCodeSchema = z.enum([
   'NOT_FINISHED',
   'PARENT_FINISHED',
   'START_REFUSED',
-  'DRAFT_NOT_FOUND',
-  'DRAFT_RESOLVED',
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
 

@@ -47,7 +47,7 @@ export interface KnowledgeGraph {
 }
 
 export interface CheckOperationsInput {
-  /** The workflow's graph read again after `lockGraph` (Invariant 5). */
+  /** The deep agent's graph read again after `lockGraph` (Invariant 5). */
   readonly graph: KnowledgeGraph;
   /** The calls of the round's input by number `c…`. */
   readonly calls: ReadonlyMap<string, RoundCall>;
@@ -57,7 +57,7 @@ export interface CheckOperationsInput {
   readonly mask: (text: string) => string;
   /** The round's commit time: the date of every confirmation. */
   readonly roundAt: Date;
-  /** The coordinator task of the run being extracted. */
+  /** The deep agent task of the run being extracted. */
   readonly runId: string;
 }
 

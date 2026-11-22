@@ -1,10 +1,11 @@
 // custom-agents / web - integration tests (Vitest + RTL + MSW 2, jsdom)
 // Design Doc: docs/features/custom-agents/design-web.md, Test Strategy UC-1..UC-11, UC-E1..UC-E6;
 //   PRD: docs/features/custom-agents/prd.md FR-20..FR-29 (AC-20.1 .. AC-29.1); UXRD: docs/features/custom-agents/uxrd.md.
-// Budget Used: 5/3 integration tests for the part (INT-1 .. INT-5), all in this file - the default 3 plus 2 extras, each naming the
-//   defect no other test catches (see "Catches"). The five are five different surfaces with five different data sources (the record
-//   page, the editor form, the feed's run labels, the draft -> chip -> message pipeline, the audience dialog with the panel section);
-//   merging them would put unrelated failures into one test. 0/2 E2E: the repo has no browser tool (no Playwright, no `e2e` directory), so
+// Budget Used: 4/3 integration tests for the part (INT-1, INT-2, INT-3, INT-5), all in this file - the default 3 plus 1 extra, each
+//   naming the defect no other test catches (see "Catches"). The four are four different surfaces with four different data sources (the
+//   record page, the editor form, the feed's run labels, the audience dialog with the panel section); merging them would put unrelated
+//   failures into one test. INT-4 (the draft card) went with the record drafts (deep-agents design-agent-types.md, KD-3).
+//   0/2 E2E: the repo has no browser tool (no Playwright, no `e2e` directory), so
 //   the design's «L1-сценарии в браузере» table stays the manual real-browser acceptance, exactly as in agent-platform-web and
 //   enterprise-access-admin. The two spikes of that table (the browser «Назад» guard, the chip in a new conversation) are L1 only:
 //   jsdom has no real history stack.
@@ -15,29 +16,28 @@
 //   click reaches the router spy) with mocked next/navigation (controlled pathname, router spy). setup.ts dismisses the toasts after each
 //   test. MSW server from '@/test/msw-server' (`onUnhandledRequest: 'error'`: a request a screen must NOT send fails the test);
 //   `trackRequests`, `logRecords`, `loggerModule` from '@/test/admin-support'; the fixtures of '@/test/fixtures' (`recordSummary`,
-//   `recordDetail`, `agentContent`, `workflowContent`, `draftView`, `copyResult`, `workflowRunView`, `agentNode`, `conversationView`, ...),
+//   `recordDetail`, `agentContent`, `copyResult`, `deepAgentRunView`, `agentNode`, `conversationView`, ...),
 //   built to pass the schemas of `packages/contracts`; `createTestLiveSource()` for the `/api/events` frames.
 // Mock boundary: network (MSW), next/navigation, the event source of LiveStore, the clipboard, and `@/lib/logger` (the Sentry/console
-//   boundary). Real: shell route parsing, `libraryIndex`, `composerSeed`, `draftHandoff`, `leaveGuard` and the other shell stores,
+//   boundary). Real: shell route parsing, `libraryIndex`, `composerSeed`, `createdHandoff`, `leaveGuard` and the other shell stores,
 //   `libraryApi`, `adminApi.library`, `apiRequest` with its handlers, `useResource`, `toFeed`, `useFeedRuntime`, `RecordEditor`,
-//   `useRecordForm`, `ShareDialog`, `DraftCard`, the cards, toast and announcer. Do NOT mock any of them.
+//   `useRecordForm`, `ShareDialog`, the cards, toast and announcer. Do NOT mock any of them.
 //
 // Server-side proofs are NOT repeated here: that an invisible record answers like a missing one, who may change what, the version check on
-//   the server, the copy's dropped tools and replaced model, draft isolation, `START_REFUSED` and the run limit are proven by the API tests
-//   of `library` and `runtime` (apps/api/test/custom-agents-library.int.e2e-spec.ts, apps/api/test/custom-agents-runtime.int.e2e-spec.ts,
-//   packages/agents/test/custom-agents-runtime.int.e2e-spec.ts, packages/workflows/test/custom-agents-runtime.int.e2e-spec.ts). Every
+//   the server, the copy's dropped tools and replaced model, `START_REFUSED` and the run limit are proven by the API tests of `library`
+//   and `agents` (apps/api/test/custom-agents-library.int.e2e-spec.ts, apps/api/test/custom-agents-runtime.int.e2e-spec.ts,
+//   packages/agents/test/custom-agents-runtime.int.e2e-spec.ts). Every
 //   server answer below is a scripted MSW response; the test proves what the browser shows, sends and keeps for it. The panel's
 //   administrator gate is proven by enterprise-access-admin.int.test.tsx (INT-1).
 //
 // Proven by unit tests (NOT repeated here):
-//   - `parseShellRoute` table (lib/shell-route.test.ts): `/library`, `/library/<id>`, `/library/new/agent|workflow` before the id, the
+//   - `parseShellRoute` table (lib/shell-route.test.ts): `/library`, `/library/<id>`, `/library/new/agent` before the id, the
 //     panel's `/admin/library`, `/shared`, `/bans`, `new/...`, `<id>`; a tab is an address (DC-6, AC-24.1 half "the tab survives a
 //     reload and «Назад»").
 //   - `describeLibraryError` table (lib/library/library-errors.test.ts): every row of «Ошибки и их место» -> place and text; unknown code ->
 //     «Не удалось сохранить: {причина}».
-//   - the web rules table (lib/library/record-rules.test.ts): «Использовать в чате» (AC-26.2, `missingRights` with a null executor and a
-//     model), «изменён после запуска», «пояснение получателю», «черновик устарел», «свободное имя» («{имя} 2», «{имя} 3»), the one
-//     function comparing two definitions into «изменено» field labels (MC-7, MC-15).
+//   - the web rules table (lib/library/record-rules.test.ts): «Использовать в чате» (AC-26.2, `missingRights` with a null subagent and a
+//     model), «изменён после запуска», «пояснение получателю», the one function comparing two agent definitions into field labels (MC-7).
 //   - `useRecordForm` reducer (components/library/use-record-form.test.ts): Чисто / Изменено / Сохраняем / Сохранено / Конфликт, «есть
 //     изменения» as a comparison, «Отменить изменения», «Взять сохранённое» and «Вернуть» (invariants 1 and 2).
 //   - `leaveGuard` store (lib/leave-guard.test.ts): `hold` / `release` / `confirmLeave`, nothing held -> no question.
@@ -48,19 +48,17 @@
 //   Logging fields (Логирование) are asserted only where a row below shows an error being handled.
 //
 // AC proof map (one proof per AC; the DC rows of the design are listed beside):
-//   AC-20.1 INT-1 | AC-20.2 INT-1 | AC-21.1 INT-2 | AC-21.2 INT-2 | AC-22.1 INT-2 | AC-22.2 INT-2 | AC-22.3 INT-2 (MC-12 phrase in the editor;
-//   the chat half is web's DraftCard / DefinitionView) | AC-23.1 INT-1 | AC-23.2 INT-5 | AC-24.1 INT-5 (list, columns, close access) + unit (the tab
-//   as an address) | AC-25.1 INT-3 | AC-25.2 INT-1 (library) + INT-3 (card) | AC-26.1 INT-4 | AC-26.2 INT-1 + unit (the rule) | AC-27.1 INT-3 |
-//   AC-27.2 INT-3 | AC-27.3 INT-3 | AC-28.1 INT-3 (card and agent page) + INT-4 (the chip and `recordId` of «Запустить заново») | AC-29.1 INT-1 +
-//   INT-3 | DC-1 INT-1 | DC-2 INT-2 | DC-3 INT-2 | DC-4 INT-2 | DC-5 INT-1 | DC-6 unit | DC-7 INT-3 | DC-8 INT-4 | DC-9 INT-4 | DC-10 INT-4 |
-//   DC-11 INT-3 | DC-12 INT-4
+//   AC-20.1 INT-1 | AC-20.2 INT-1 | AC-21.1 INT-2 | AC-21.2 INT-2 | AC-23.1 INT-1 | AC-23.2 INT-5 | AC-24.1 INT-5 (list, columns, close access) +
+//   unit (the tab as an address) | AC-25.1 INT-3 | AC-25.2 INT-1 (library) + INT-3 (card) | AC-26.2 INT-1 + unit (the rule) | AC-27.1 INT-3 |
+//   AC-27.2 INT-3 | AC-27.3 INT-3 | AC-28.1 INT-3 (card and agent page) | AC-29.1 INT-1 + INT-3 | DC-1 INT-1 | DC-2 INT-2 | DC-3 INT-2 |
+//   DC-5 INT-1 | DC-6 unit | DC-7 INT-3 | DC-11 INT-3. The workflow form (AC-22.x, DC-4) and the record drafts (AC-26.1, DC-8–DC-10, DC-12)
+//   were removed by deep-agents (design-agent-types.md, KD-1, KD-3).
 
 import type {
   AgentNode,
   BannedRecord,
   ConversationView,
   CurrentUser,
-  DraftView,
   LibraryChoices,
   LibrarySettings,
   MyRoleList,
@@ -83,7 +81,7 @@ import {
   conversationView,
   copyResult,
   currentUser,
-  draftView,
+  deepAgentRunView,
   fixtureId,
   fixtureTime,
   historyEntry,
@@ -92,8 +90,6 @@ import {
   recordSummary,
   threadList,
   threadSummary,
-  workflowContent,
-  workflowRunView,
 } from '@/test/fixtures';
 import { createTestLiveSource } from '@/test/live-source';
 import { server } from '@/test/msw-server';
@@ -202,7 +198,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       author: ANYA,
       audience: { roles: [{ ...SRE, member: true }] },
       offerInChat: false,
-      missingRights: [{ executor: null, servers: ['jira'], model: SONNET }],
+      missingRights: [{ subagent: null, servers: ['jira'], model: SONNET }],
       canEdit: false,
       canShare: false,
       canDelete: false,
@@ -226,8 +222,8 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
         HttpResponse.json(
           copyResult({
             record: recordDetail({ id: copyId, name: 'Разбор инцидентов', author: { id: BORIS.id, name: BORIS.name, disabled: false } }),
-            removedServers: [{ executor: null, servers: ['jira'] }],
-            replacedModels: [{ executor: null, from: SONNET, to: HAIKU }],
+            removedServers: [{ subagent: null, servers: ['jira'] }],
+            replacedModels: [{ subagent: null, from: SONNET, to: HAIKU }],
           }),
         ),
       ),
@@ -307,7 +303,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       screens.push(heading.closest('section')?.textContent ?? '');
     }
     expect(screens).toEqual(
-      hidden.map(() => 'Не найденоТакого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку'),
+      hidden.map(() => 'Не найденоТакого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку'),
     );
     expect(
       libraryRequestsSince(tracked.requests, beforeHidden).filter((request) => request.startsWith('GET /api/library/')),
@@ -348,11 +344,8 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
   // INT-2 ---------------------------------------------------------------------------------------------------------------------------------
   // AC: AC-21.1 "Given Аня потеряла право на Jira, а Jira есть в её агенте, when она открывает редактор, then Jira помечен, а сохранить агента
-  //   можно"; AC-21.2 "Given запись изменили в другой вкладке, when Аня сохраняет, then она видит конфликт (AC-08.1)"; AC-22.1 "Given источник
-  //   исполнителя изменился, when автор открывает workflow, then видит отметку об изменении и обновляет исполнителя одним действием (AC-16.2)";
-  //   AC-22.2 "Given источник исполнителя удалён, then редактор показывает это, а исполнитель остаётся в workflow"; AC-22.3 "Given автор создаёт
-  //   workflow в редакторе…, then он видит, что workflow получит только подтверждённый бриф, а не беседу". Design: UC-3, UC-4, UC-E2, DC-2,
-  //   DC-3, DC-4, KD-3, KD-4, Flow 1, invariants 1 and 2.
+  //   можно"; AC-21.2 "Given запись изменили в другой вкладке, when Аня сохраняет, then она видит конфликт (AC-08.1)". Design: UC-3, UC-E2,
+  //   DC-2, DC-3, KD-3, Flow 1, invariants 1 and 2.
   // Behavior: the author edits -> the form keeps the saved version and the typed values apart -> «Сохранить» sends the version the edit started
   //   from -> a conflict leaves the typed values in place and offers two actions -> leaving with unsaved changes asks first.
   // Rows (`PUT /api/library/:id` and `GET /api/library/:id` scripted per row; the tracker reads the request bodies):
@@ -364,21 +357,16 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   //      field; «Сохранить мои правки» sends `version: 4`. «Взять сохранённое» makes form and saved version 4 and the toast «Вернуть»
   //      puts the typed instruction back over version 4. In a second pass the `GET` after the conflict fails: the block is shown
   //      without the field list and without «Взять сохранённое».
-  //   3. Given a workflow whose executor A has source state `changed` and executor B has `gone`; When she opens the editor; Then the phrase of
-  //      MC-12 (the workflow gets only the confirmed task, not the conversation) is visible; A shows the change mark with «Взять новую
-  //      версию», B shows its state with no action and stays in the team; «Взять новую версию» changes the form only (the source is read,
-  //      nothing is written), and «Сохранить» sends a `PUT` that carries A's new source version.
-  //   4. Given a changed form; When she clicks a sidebar item, then «Новый чат»; Then the dialog of MC-11 opens with the focus on
+  //   3. Given a changed form; When she clicks a sidebar item, then «Новый чат»; Then the dialog of MC-11 opens with the focus on
   //      «Остаться»; «Остаться» keeps the route and the typed values, «Уйти без сохранения» goes (router `push`). Given a clean form the
   //      same two clicks go without a question.
   // Catches: a save that sends the current stored version instead of the version the edit started from (a silent overwrite of the other tab's
-  //   change - invariant 2); a conflict that clears what the author typed (invariant 1); a «Взять новую версию» that writes the
-  //   record before «Сохранить»; a deleted source that drops the executor from the team; a sidebar or «Новый чат» route that bypasses
+  //   change - invariant 2); a conflict that clears what the author typed (invariant 1); a sidebar or «Новый чат» route that bypasses
   //   `leaveGuard` and loses a long instruction.
   // @category: core-functionality
-  // @dependency: RecordEditor, useRecordForm, ExecutorItem, ExecutorPanel, leaveGuard, ShellLink, newChat action, libraryApi, libraryIndex, ConfirmDialog (MC-11), MSW, next/navigation mock
+  // @dependency: RecordEditor, useRecordForm, leaveGuard, ShellLink, newChat action, libraryApi, libraryIndex, ConfirmDialog (MC-11), MSW, next/navigation mock
   // @complexity: high
-  it('INT-2: the editor saves with the version the edit started from, keeps the typed values through a conflict, applies source changes only to the form, and asks before leaving with unsaved changes', async () => {
+  it('INT-2: the editor saves with the version the edit started from, keeps the typed values through a conflict, and asks before leaving with unsaved changes', async () => {
     const user = userEvent.setup();
     const tracked = trackRequests(server);
     const ANYA_VIEWER = currentUser();
@@ -483,90 +471,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     expect(screen.queryByRole('button', { name: 'Взять сохранённое' })).toBeNull();
     unread.view.unmount();
 
-    // Row 3: a workflow whose executor «Сбор логов» has a changed source and «Сбор тикетов» a deleted one
-    resetRow();
-    const sourceA = recordDetail({
-      id: fixtureId(62),
-      name: 'Логи за период',
-      version: 2,
-      content: agentContent({ prompt: 'Собери логи за период из задания.' }),
-    });
-    const goneB = fixtureId(63);
-    const executor = (name: string, recordId: string) => ({
-      name,
-      role: `${name} по заданию`,
-      prompt: 'Старая инструкция.',
-      servers: ['logs'],
-      model: HAIKU,
-      maxTurns: 20,
-      maxRuns: 3,
-      tools: [],
-      source: { recordId, version: 1 },
-    });
-    const workflowFields = { id: fixtureId(61), kind: 'workflow', name: 'Разбор инцидента', version: 2 } satisfies Partial<RecordSummary> &
-      Pick<RecordSummary, 'id'>;
-    const workflowPath = `/api/library/${workflowFields.id}`;
-    const workflow = recordDetail({
-      ...workflowFields,
-      content: workflowContent({ executors: [executor('Сбор логов', sourceA.id), executor('Сбор тикетов', goneB)] }),
-      executorSources: [
-        { executor: 'Сбор логов', recordId: sourceA.id, version: 1, state: 'changed', latestVersion: 2 },
-        { executor: 'Сбор тикетов', recordId: goneB, version: 1, state: 'gone', latestVersion: null },
-      ],
-    });
-    serveLibrary({
-      viewer: ANYA_VIEWER,
-      list: [recordSummary(workflowFields), recordSummary({ id: sourceA.id, name: sourceA.name, version: 2 })],
-      records: [workflow, sourceA],
-    });
-    servePut();
-    putAnswer = () => HttpResponse.json(recordDetail({ ...workflowFields, version: 3 }));
-    const workflowView = renderWithRuntime({ pathname: `/library/${workflowFields.id}` });
-
-    // Assert (row 3): MC-12 about the task; A has the change mark with its action, B its state without one and stays in the team
-    expect(
-      await screen.findByText(
-        'Workflow получает только задание, которое вы подтверждаете перед запуском: вопрос, границы и результат. Беседу он не видит.',
-      ),
-    ).toBeInTheDocument();
-    expect(within(screen.getByRole('list', { name: 'Команда' })).getAllByRole('listitem')).toHaveLength(2);
-    expect(screen.getByText('Агент «Логи за период» обновлён в библиотеке')).toBeInTheDocument();
-    expect(screen.getByText('Агент «Сбор тикетов» удалён или закрыт для вас — обновить нельзя')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Взять новую версию' })).toHaveLength(1);
-
-    // Act (row 3): «Взять новую версию» reads the source once and writes nothing
-    const workflowPanel = screen.getByRole('region', { name: 'Сохранение' });
-    const beforeTake = tracked.requests.length;
-    await user.click(screen.getByRole('button', { name: 'Взять новую версию' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Взять новую версию' })).toBeNull());
-    const sinceTake = libraryRequestsSince(tracked.requests, beforeTake);
-    expect(sinceTake.filter((request) => request === `GET /api/library/${sourceA.id}`)).toHaveLength(1);
-    expect(sinceTake.filter((request) => request.startsWith('PUT'))).toEqual([]);
-
-    // Act (row 3): save -> one `PUT` with the workflow's version and A's new source version; B is still there
-    const beforeWorkflowSave = tracked.requests.length;
-    await user.click(within(workflowPanel).getByRole('button', { name: 'Сохранить' }));
-    expect(await within(workflowPanel).findByText('Сохранено')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(bodiesSince(beforeWorkflowSave, 'PUT', workflowPath)).toEqual([
-        expect.objectContaining({
-          version: 2,
-          content: expect.objectContaining({
-            executors: [
-              expect.objectContaining({
-                name: 'Сбор логов',
-                prompt: 'Собери логи за период из задания.',
-                source: { recordId: sourceA.id, version: 2 },
-              }),
-              expect.objectContaining({ name: 'Сбор тикетов', source: { recordId: goneB, version: 1 } }),
-            ],
-          }),
-        }),
-      ]),
-    );
-    workflowView.unmount();
-
-    // Row 4: a changed form -> the sidebar item and «Новый чат» each ask MC-11 first
+    // Row 3: a changed form -> the sidebar item and «Новый чат» each ask MC-11 first
     resetRow();
     const sidebar = (): HTMLElement => {
       const element = document.querySelector<HTMLElement>('[data-slot="sidebar"]');
@@ -589,18 +494,18 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
     await askedThenStay();
 
-    // Assert (row 4): «Остаться» keeps the route and the typed instruction
+    // Assert (row 3): «Остаться» keeps the route and the typed instruction
     expect(guarded.view.router.push).not.toHaveBeenCalled();
     expect(guarded.prompt).toHaveValue(TYPED);
 
-    // Act (row 4): «Уйти без сохранения» goes
+    // Act (row 3): «Уйти без сохранения» goes
     await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
     const leave = await screen.findByRole('alertdialog', { name: 'Уйти без сохранения?' });
     await user.click(within(leave).getByRole('button', { name: 'Уйти без сохранения' }));
     await waitFor(() => expect(guarded.view.router.push.mock.calls).toEqual([['/']]));
     guarded.view.unmount();
 
-    // Row 4, a clean form: the same two go at once, without a question
+    // Row 3, a clean form: the same two go at once, without a question
     const clean = await openAgentEditor();
     await user.click(within(sidebar()).getByRole('link', { name: 'Агенты' }));
     await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
@@ -617,16 +522,16 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   //   показывает версию 3"; AC-28.1 "…в запуске Борис видит, что агент изменился после старта, и может запустить его заново на версии 2";
   //   AC-29.1 (the card half: `firstRun`). Design: UC-1 (the card), UC-7, UC-9, UC-10 (render half), UC-E6, DC-7, DC-11, KD-2, KD-7, Flow 3.
   // Behavior: the conversation and `GET /api/library` are read on open -> the run labels take name, author and version from `origin` and the
-  //   audience from the live data -> the workflow card additionally reads `WorkflowRunView` -> labels, step rows and restart hints follow.
-  // Rows (`conversationView` with `agentNode.origin`, `confirmation`, `GET /api/agents/:id/run` -> `WorkflowRunView`):
+  //   audience from the live data -> the deep agent card additionally reads `DeepAgentRunView` -> labels, step rows and restart hints follow.
+  // Rows (`conversationView` with `agentNode.origin`, `confirmation`, `GET /api/agents/:id/run` -> `DeepAgentRunView`):
   //   1. Given Аня's agent that asks Борис to confirm an action, with `origin` (record, version 1, name) and the record in the live data for
   //      «SRE», and a second run whose record is absent from the live data; When Борис opens the conversation; Then the first decision card is
   //      labelled «… · Аня Смирнова SRE» (name and author from `origin`, audience from the live data), the second run's label is the state
   //      «Недоступна» with no link, and the `firstRun` card carries the explanation of MC-17.
-  //   2. Given a finished coordinator of version 3 with a team of four, three step children and a `run_limit` refusal, the live data holding
+  //   2. Given a finished deep agent of version 3 with a team of four, three step children and a `run_limit` refusal, the live data holding
   //      version 4; When Борис opens the conversation; Then the steps are labelled with the team's names, the refused call reads «предел
-  //      вызовов исчерпан», the fourth executor reads «не вызывался», the header says «версия 3» (not 4), and the card re-reads
-  //      `WorkflowRunView` when the coordinator's status changes.
+  //      вызовов исчерпан», the fourth subagent reads «не вызывался», the header says «версия 3» (not 4), and the card re-reads
+  //      `DeepAgentRunView` when the deep agent's status changes.
   //   3. Given Аня's agent whose run started on version 1 and the live data at version 2; When Борис opens the conversation; Then the card says
   //      «изменён после запуска: сейчас версия 2» with «Запустить заново», and the running agent still shows version 1. On the agent page:
   //      the hint reads «Пойдёт на версии 2» and the page has the line of MC-17 and no button of its own. With the record absent from the
@@ -637,12 +542,12 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   //      route, the status and the reason, and nothing else on the screen breaks.
   // Catches: a label that takes author, version or name from the live record instead of `origin` (a run would claim a version it did not
   //   run, AC-27.3); a card that reads the template or definition fields the contract no longer has; steps labelled by the instruction
-  //   instead of the executor name, or the fourth executor silently missing; an absent record rendered as a broken link or as a
+  //   instead of the subagent name, or the fourth subagent silently missing; an absent record rendered as a broken link or as a
   //   «changed» line; a refused restart that opens a new agent anyway.
   // @category: core-functionality
   // @dependency: toFeed, FeedStore, libraryIndex, RunCard, AgentTree, DecisionCard, AgentMeta, AgentHeader, RecordLabel, StateBadge, getRun, LiveStore (test live source), MSW, next/navigation mock
   // @complexity: high
-  it('INT-3: run labels take name, author and version from the origin and the audience from the live data, a workflow card names its steps, and a changed record offers a restart on the new version', async () => {
+  it('INT-3: run labels take name, author and version from the origin and the audience from the live data, a deep agent card names its steps, and a changed record offers a restart on the new version', async () => {
     const user = userEvent.setup();
     const tracked = trackRequests(server);
     const THREAD = threadSummary({ id: 'a', title: 'Выгрузка' });
@@ -659,44 +564,44 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       name: 'Разбор инцидентов',
       author: anyaAuthor,
       builtinKey: null,
-      executor: null,
+      subagent: null,
     } satisfies RunOrigin;
     const liveAgent = recordSummary({ id: agentId, name: 'Разбор инцидентов и сбоев', version: 2, ...colleagues });
     // A record the live list does not hold (deleted or closed for Борис)
     const goneOrigin = { ...agentOrigin, recordId: fixtureId(72), name: 'Сводка смены' } satisfies RunOrigin;
-    // Аня's workflow: the run started on version 3, the live row is version 4; a team of four
-    const workflowId = fixtureId(81);
-    const workflowOrigin = {
+    // Аня's deep agent: the run started on version 3, the live row is version 4; a team of four
+    const deepAgentId = fixtureId(81);
+    const deepAgentRunOrigin = {
       ...agentOrigin,
-      recordId: workflowId,
-      kind: 'workflow',
+      recordId: deepAgentId,
+      kind: 'deep_agent',
       version: 3,
       name: 'Полный разбор инцидента',
     } satisfies RunOrigin;
-    const liveWorkflow = recordSummary({
-      id: workflowId,
-      kind: 'workflow',
+    const liveDeepAgent = recordSummary({
+      id: deepAgentId,
+      kind: 'deep_agent',
       name: 'Полный разбор инцидента',
       version: 4,
       ...colleagues,
     });
 
-    const step = (stepId: string, executor: string, description: string, status: AgentNode['status'], at: number) =>
+    const step = (stepId: string, subagent: string, description: string, status: AgentNode['status'], at: number) =>
       agentNode({
         agentId: stepId,
         parentId: 'w1',
         depth: 2,
-        origin: { ...workflowOrigin, executor },
+        origin: { ...deepAgentRunOrigin, subagent },
         description,
         status,
         createdAt: fixtureTime(at),
       });
-    const coordinator = (status: 'working' | 'completed') =>
+    const deepAgentNode = (status: 'working' | 'completed') =>
       agentNode({
         agentId: 'w1',
         name: 'Полный разбор инцидента',
         description: 'Полный разбор инцидента',
-        origin: workflowOrigin,
+        origin: deepAgentRunOrigin,
         status,
         createdAt: fixtureTime(5),
         children: [
@@ -707,11 +612,10 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       });
     const team = ['Сбор логов', 'Сбор тикетов', 'Метрики', 'Сводка'].map((name) => ({
       name,
-      role: `${name} по заданию`,
       maxRuns: 1,
       final: name === 'Сводка',
     }));
-    const viewOf = (workflowStatus: 'working' | 'completed'): ConversationView =>
+    const viewOf = (deepAgentStatus: 'working' | 'completed'): ConversationView =>
       conversationView({
         thread: THREAD,
         entries: [
@@ -737,7 +641,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
             createdAt: fixtureTime(3),
           }),
           agentNode({ agentId: 'a2', origin: goneOrigin, description: 'Сводка за ночь', status: 'completed', createdAt: fixtureTime(4) }),
-          coordinator(workflowStatus),
+          deepAgentNode(deepAgentStatus),
         ],
       });
 
@@ -764,14 +668,14 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
           return HttpResponse.json({ ...held, entries: held.entries.filter((entry) => entry.seq > afterSeq) });
         }),
         http.get(`${API}/api/agents/w1/run`, () => {
-          const current = held.agents.find((agent) => agent.agentId === 'w1') ?? coordinator('working');
+          const current = held.agents.find((agent) => agent.agentId === 'w1') ?? deepAgentNode('working');
           return HttpResponse.json(
-            workflowRunView({
-              origin: workflowOrigin,
-              coordinator: current,
+            deepAgentRunView({
+              origin: deepAgentRunOrigin,
+              deepAgent: current,
               team,
               steps: current.children,
-              limitRefusals: [{ executor: 'Сбор логов', at: fixtureTime(5.3) }],
+              limitRefusals: [{ subagent: 'Сбор логов', at: fixtureTime(5.3) }],
             }),
           );
         }),
@@ -786,7 +690,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       if (label === null) throw new Error(`the label of «${name}» is not rendered`);
       return label;
     };
-    /** The workflow card's rows: a link (a step the coordinator started) or a plain row, by what a screen reader hears. */
+    /** The deep agent card's rows: a link (a step the deep agent started) or a plain row, by what a screen reader hears. */
     const runRows = (card: HTMLElement): string[] =>
       Array.from(card.querySelectorAll('li'), (row) => {
         const link = row.querySelector('a');
@@ -796,7 +700,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const RECIPIENT_NOTE =
       'Аня Смирнова · для роли SRE: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.';
 
-    serveRuns([liveAgent, liveWorkflow]);
+    serveRuns([liveAgent, liveDeepAgent]);
     const live = createTestLiveSource();
     const view = renderWithRuntime({ pathname: '/chat/a', liveSource: live });
     await screen.findByText('Запускаю разбор.');
@@ -831,13 +735,13 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     expect(within(agentCard).getByText('Агент изменён после запуска: сейчас версия 2')).toBeInTheDocument();
     expect(within(agentCard).getByRole('button', { name: 'Запустить заново' })).toBeInTheDocument();
 
-    // Assert (row 2, running): the header carries the run's version 3, not the live 4; steps by executor, the limit refusal among them
-    const workflowCard = await runCard('Полный разбор инцидента: Работает');
-    const workflowHeader = labelOf(workflowCard, 'Полный разбор инцидента');
-    expect(workflowHeader).toHaveTextContent('версия 3');
-    expect(workflowHeader).not.toHaveTextContent('версия 4');
+    // Assert (row 2, running): the header carries the run's version 3, not the live 4; steps by subagent, the limit refusal among them
+    const deepAgentCard = await runCard('Полный разбор инцидента: Работает');
+    const deepAgentHeader = labelOf(deepAgentCard, 'Полный разбор инцидента');
+    expect(deepAgentHeader).toHaveTextContent('версия 3');
+    expect(deepAgentHeader).not.toHaveTextContent('версия 4');
     await waitFor(() =>
-      expect(runRows(workflowCard)).toEqual([
+      expect(runRows(deepAgentCard)).toEqual([
         'ссылка: Сбор логов, Собрать логи за неделю, Завершён',
         'ссылка: Сбор тикетов, Найти тикеты по сбою, Завершён',
         'строка: Сбор логов, предел вызовов исчерпан',
@@ -847,11 +751,11 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const readsWhileRunning = runReads();
     expect(readsWhileRunning).toBeGreaterThan(0);
 
-    // Act (row 2): the coordinator finishes; the stream's `ready` re-reads the conversation
+    // Act (row 2): the deep agent finishes; the stream's `ready` re-reads the conversation
     held = viewOf('completed');
     live.emit('ready', {});
 
-    // Assert (row 2, ended): the card re-read the run on the status change; the fourth executor reads «не вызывался» and is no link
+    // Assert (row 2, ended): the card re-read the run on the status change; the fourth subagent reads «не вызывался» and is no link
     const endedCard = await runCard('Полный разбор инцидента: Завершён');
     await waitFor(() =>
       expect(runRows(endedCard)).toEqual([
@@ -865,7 +769,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     await waitFor(() => expect(runReads()).toBeGreaterThan(readsWhileRunning));
     expect(labelOf(endedCard, 'Полный разбор инцидента')).toHaveTextContent('версия 3');
     expect(labelOf(endedCard, 'Полный разбор инцидента')).not.toHaveTextContent('версия 4');
-    expect(within(endedCard).getByText('Workflow изменён после запуска: сейчас версия 4')).toBeInTheDocument();
+    expect(within(endedCard).getByText('Глубокий агент изменён после запуска: сейчас версия 4')).toBeInTheDocument();
 
     // Act (row 3, card): «Запустить заново» puts the live record into this conversation's field through `useInChat`
     await user.click(within(agentCard).getByRole('button', { name: 'Запустить заново' }));
@@ -875,7 +779,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Arrange (row 3, agent page): `a3` ran Аня's agent on version 1; the live record is at version 2
     resetRow();
-    serveRuns([liveAgent, liveWorkflow]);
+    serveRuns([liveAgent, liveDeepAgent]);
     const pageView = renderWithRuntime({ pathname: '/agents/a3' });
     expect(await screen.findByRole('heading', { level: 1, name: 'Проверка инцидента 41' })).toBeInTheDocument();
     const restart = screen.getByRole('button', { name: 'Запустить с нуля' });
@@ -913,7 +817,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Row 3, the record absent from the live data: the page's «Запустить с нуля» is disabled with the MC-17 hint
     resetRow();
-    serveRuns([liveWorkflow]);
+    serveRuns([liveDeepAgent]);
     const gonePage = renderWithRuntime({ pathname: '/agents/a3' });
     expect(await screen.findByRole('heading', { level: 1, name: 'Проверка инцидента 41' })).toBeInTheDocument();
     const blocked = screen.getByRole('button', { name: 'Запустить с нуля' });
@@ -926,7 +830,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     // Row 4: `GET /api/library` fails - the labels render without audience and without the «changed» line, logged once
     held = viewOf('working');
     resetRow();
-    serveRuns([liveAgent, liveWorkflow]);
+    serveRuns([liveAgent, liveDeepAgent]);
     server.use(
       http.get(`${API}/api/library`, () =>
         HttpResponse.json({ statusCode: 500, message: 'Internal server error', reason: 'database_unavailable' }, { status: 500 }),
@@ -946,7 +850,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     expect(document.body).not.toHaveTextContent('недоступен');
     expect(document.body).not.toHaveTextContent('работает с вашими правами');
     expect(screen.queryByRole('button', { name: 'Запустить заново' })).toBeNull();
-    // ...and nothing else breaks: the conversation, the decision card and the workflow card are on screen
+    // ...and nothing else breaks: the conversation, the decision card and the deep agent card are on screen
     expect(failedView.container.querySelector('[data-decision-id="d1"]')).toHaveTextContent('хочет выполнить:');
     expect(labelOf(await runCard('Полный разбор инцидента: Работает'), 'Полный разбор инцидента')).toHaveTextContent('версия 3');
     expect(screen.getByText('Разберись с инцидентом 42')).toBeInTheDocument();
@@ -961,374 +865,6 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   });
 
   // INT-4 ---------------------------------------------------------------------------------------------------------------------------------
-  // AC: AC-26.1 "Given Аня сохранила агента из карточки черновика, when она нажимает «Использовать в чате», then агент стоит в поле сообщения,
-  //   а запуска нет, пока она не отправит сообщение"; AC-28.1 (the chip of «Запустить заново» and its `recordId`). Design: UC-8, UC-11, UC-E4,
-  //   UC-E5, DC-8, DC-9, DC-10, DC-12, KD-5, KD-6, Flow 2, invariant 4.
-  // Behavior: a draft arrives in `ConversationView.drafts` -> the card acts through the draft route -> the saved record becomes a chip through
-  //   `composerSeed` -> the message carries the chip's `recordId` -> a refused send gives back the text and drops the chip; the editor path
-  //   goes through `draftHandoff`.
-  // Rows (`draftView` fixtures; `POST /api/threads/:id/drafts/:draftId`, `POST /api/threads/:id/messages`; the tracker reads request bodies):
-  //   1. Given two drafts in the conversation, the first replaced; When Аня saves the second and presses «Проверить в чате»; Then the first is
-  //      the row of MC-15, the second marks as «изменено» exactly the fields that differ from the first; the card shows «Сохранено · {время}»
-  //      with «Проверить в чате», «Поделиться», «Открыть»; the chip stands above the field of this conversation, the focus is in the field,
-  //      and NO message request has been sent; she types a text and sends: the body carries the text and the same `recordId` the chip
-  //      showed, and the chip is gone after the accepted send. Before the save she sends a plain message beside the waiting card: it goes
-  //      out at once (a draft card holds nothing). «Запустить заново» of INT-3 row 3 uses this same path (chip, one `recordId`).
-  //   2. Given a waiting draft of a new agent; When Аня presses «Открыть в редакторе», changes the description and presses «Создать»; Then the
-  //      form was filled from the draft (`draftHandoff`), after the create the draft route receives `saved_in_editor` with the new record's
-  //      number, the panel offers «Вернуться в беседу», and back in the conversation the card reads «Сохранено в редакторе · {время}». A
-  //      handoff left by another page leaves the form empty and the draft still openable.
-  //   3. The draft route answers 409 `DRAFT_RESOLVED` to «Сохранить» and the re-read view is `saved`; Then the card shows «Сохранено» with no
-  //      error line. In a second pass the answer is a `DraftView` with `refusal` `name_taken`: the line of MC-8 and «Сохранить как «{имя} 2»»,
-  //      and that action sends the free name.
-  //   4. A chip stands in the field and the message answers 404 `RECORD_NOT_FOUND`; Then the chip is gone, the typed text is back in the field,
-  //      and under the field the line of MC-16 «{Вид} недоступен…». In a first pass the answer is a network error: text and chip both
-  //      return and the failed-send line of chat-shell shows.
-  // Catches: a chip that starts the agent before the message is sent; a message that carries a `recordId` different from the chip shown (or
-  //   none, or a stale one - invariant 4); a refused send that eats the user's text or leaves a chip that can never be sent; a draft
-  //   resolved in another tab shown as an error; a draft saved through the editor that stays «waiting» in the chat and can be saved a second
-  //   time; a draft card counted as a decision that blocks the conversation.
-  // @category: core-functionality
-  // @dependency: toFeed (draft part), DraftCard, DecisionCard variants, composerSeed, draftHandoff, Composer, useFeedRuntime, threadsApiClient (draftAction, sendThreadMessage), RecordEditor (handoff), libraryIndex, MSW, next/navigation mock
-  // @complexity: high
-  it('INT-4: a saved draft becomes a chip without starting anything, the message carries the chip\'s recordId, a refused send restores the text, and a draft saved in the editor or in another tab settles the card', async () => {
-    const user = userEvent.setup();
-    const tracked = trackRequests(server);
-    const THREAD = threadSummary({ id: 'a', title: 'Новый агент' });
-    const DRAFTS = '/api/threads/a/drafts';
-    const MESSAGES = '/api/threads/a/messages';
-    const DRAFT_RESOLVED = { statusCode: 409, message: 'Draft already resolved', errorCode: 'DRAFT_RESOLVED' };
-    const SEND_FAILED = 'Не удалось отправить сообщение. Попробуйте ещё раз.';
-
-    /** Bodies of the `method path` requests since request number `from`. */
-    const bodiesSince = (from: number, method: string, path: string): unknown[] =>
-      tracked.requests
-        .slice(from)
-        .filter((request) => request.method === method && request.path === path)
-        .map((request) => request.body);
-    const postsSince = (from: number): string[] =>
-      tracked.requests
-        .slice(from)
-        .filter((request) => request.method === 'POST')
-        .map((request) => request.path);
-
-    // Conversation `a` (an existing one: its task is there, so a message is not the first) with the drafts the
-    //   server holds now; the library list, the records and the answers of the draft route and of the message, per step
-    const conversationWith = (drafts: DraftView[]): ConversationView =>
-      conversationView({
-        thread: THREAD,
-        entries: [
-          historyEntry({ kind: 'task', seq: 1, content: { text: 'Сделай агента для разбора логов' } }),
-          historyEntry({ kind: 'model_answer', seq: 2, content: { text: 'Подготовил черновик.' } }),
-        ],
-        drafts,
-      });
-    let held = conversationWith([]);
-    let list: RecordSummary[] = [];
-    const records: RecordDetail[] = [];
-    let draftAnswer: () => Response = () => HttpResponse.json(DRAFT_RESOLVED, { status: 409 });
-    let messageAnswer: () => Response = () => HttpResponse.json({ messageId: 'm1' }, { status: 202 });
-    const serveConversation = (): void => {
-      serveLibrary({ viewer: currentUser(), records });
-      server.use(
-        http.get(`${API}/api/library`, () => HttpResponse.json(list)),
-        http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([THREAD]))),
-        http.get(`${API}/api/threads/a`, () => HttpResponse.json(THREAD)),
-        http.get(`${API}/api/threads/a/history`, ({ request }) => {
-          const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
-          return HttpResponse.json({ ...held, entries: held.entries.filter((entry) => entry.seq > afterSeq) });
-        }),
-        http.post(`${API}${DRAFTS}/:draftId`, () => draftAnswer()),
-        http.post(`${API}${MESSAGES}`, () => messageAnswer()),
-      );
-    };
-    serveConversation();
-
-    const pendingCard = (name: string): Promise<HTMLElement> => screen.findByRole('group', { name: `Черновик: ${name}` });
-    /** The card of `draftId` once the feed shows it in `state`. */
-    const cardIn = async (draftId: string, state: DraftView['state']): Promise<HTMLElement> => {
-      const selector = `[data-slot="draft-card"][data-draft-id="${draftId}"]`;
-      await waitFor(() => expect(document.querySelector(selector)).toHaveAttribute('data-state', state));
-      const card = document.querySelector<HTMLElement>(selector);
-      if (card === null) throw new Error(`the draft card ${draftId} is not rendered`);
-      return card;
-    };
-    /** The definition rows of a card marked «изменено», by their labels. */
-    const changedLabels = (card: HTMLElement): string[] =>
-      Array.from(card.querySelectorAll('dt'), (row) => row.textContent ?? '')
-        .filter((text) => text.includes('изменено'))
-        .map((text) => text.replace('изменено', '').trim());
-    const messageField = (): HTMLElement => screen.getByRole('textbox', { name: 'Сообщение' });
-    const failureLine = (): string | null =>
-      document.querySelector('[data-slot="aui_composer-send-failure"]')?.textContent ?? null;
-    const CHIP_REMOVE = 'Убрать: Разбор логов';
-
-    // Row 1: two drafts of «Разбор логов»; the first was replaced by the second, which changed the description and the
-    //   instruction
-    const savedId = fixtureId(91);
-    const replaced = draftView({
-      draftId: 'd1',
-      callId: 'c1',
-      description: 'Ищет ошибки',
-      content: agentContent({ prompt: 'Найди ошибки в логах.' }),
-      state: 'superseded',
-      createdAt: fixtureTime(3),
-      resolvedAt: fixtureTime(4),
-    });
-    const second = draftView({ draftId: 'd2', callId: 'c2', createdAt: fixtureTime(4) });
-    const secondSaved = draftView({ ...second, state: 'saved', savedRecordId: savedId, resolvedAt: fixtureTime(5) });
-    held = conversationWith([replaced, second]);
-    const view = renderWithRuntime({ pathname: '/chat/a' });
-
-    // Assert (row 1): the replaced draft is the MC-15 line; the waiting one marks exactly the two changed fields
-    const waiting = await pendingCard('Разбор логов');
-    expect(waiting).toHaveAttribute('data-state', 'pending');
-    expect(screen.getByText('Черновик «Разбор логов» заменён новым ниже')).toBeInTheDocument();
-    expect(changedLabels(waiting)).toEqual(['Описание', 'Инструкция']);
-
-    // Act (row 1): a draft card is not a decision that blocks the conversation: a message sent beside the waiting card goes out
-    const BESIDE = 'Пока жду, проверь ещё один лог';
-    const beforeBeside = tracked.requests.length;
-    await user.type(messageField(), BESIDE);
-    await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    await waitFor(() => expect(postsSince(beforeBeside)).toEqual([MESSAGES]));
-    await waitFor(() => expect(messageField()).toHaveValue(''));
-    expect(waiting).toHaveAttribute('data-state', 'pending');
-
-    // Act (row 1): «Сохранить» - the route saves it; the re-read view answers it saved, the list holds the record
-    draftAnswer = () => {
-      held = conversationWith([replaced, secondSaved]);
-      list = [recordSummary({ id: savedId })];
-      return HttpResponse.json(secondSaved);
-    };
-    const beforeSave = tracked.requests.length;
-    await user.click(within(waiting).getByRole('button', { name: 'Сохранить' }));
-
-    // Assert (row 1): «Сохранено · {время}» with «Проверить в чате», «Поделиться» (the record is shareable) and «Открыть»
-    const saved = await cardIn('d2', 'saved');
-    await waitFor(() => expect(bodiesSince(beforeSave, 'POST', `${DRAFTS}/d2`)).toEqual([{ action: 'save' }]));
-    expect(within(saved).getByText(/^Сохранено · \S/)).toBeInTheDocument();
-    expect(within(saved).queryByRole('button', { name: 'Сохранить' })).toBeNull();
-    expect(await within(saved).findByRole('button', { name: 'Поделиться' })).toBeInTheDocument();
-    expect(within(saved).getByRole('link', { name: 'Открыть' })).toHaveAttribute('href', `/library/${savedId}`);
-    await user.click(within(saved).getByRole('link', { name: 'Открыть' }));
-    expect(view.router.push.mock.lastCall?.[0]).toBe(`/library/${savedId}`);
-
-    // Act (row 1): «Проверить в чате» puts the chip into this conversation's field and sends nothing
-    const beforeChip = tracked.requests.length;
-    await user.click(within(saved).getByRole('button', { name: 'Проверить в чате' }));
-    expect(view.router.push).toHaveBeenLastCalledWith('/chat/a');
-    const chipRemove = await screen.findByRole('button', { name: CHIP_REMOVE });
-    expect(chipRemove.closest('[data-slot="aui_composer-shell"]')).toContainElement(messageField());
-    await waitFor(() => expect(messageField()).toHaveFocus());
-    expect(postsSince(beforeChip)).toEqual([]);
-
-    // Act (row 1): she types and sends while the draft card stands in the conversation (it holds nothing)
-    const TASK = 'Проверь логи оплаты за вчера';
-    await user.type(messageField(), TASK);
-    expect(postsSince(beforeChip)).toEqual([]);
-    const beforeSend = tracked.requests.length;
-    await user.click(screen.getByRole('button', { name: 'Отправить' }));
-
-    // Assert (row 1): the body carries the text and the chip's record; the accepted send takes the chip away
-    await waitFor(() => expect(bodiesSince(beforeSend, 'POST', MESSAGES)).toEqual([{ text: TASK, recordId: savedId }]));
-    await waitFor(() => expect(screen.queryByRole('button', { name: CHIP_REMOVE })).toBeNull());
-    expect(failureLine()).toBeNull();
-
-    // Row 4: the chip again, then two refused sends - the network, then 404 `RECORD_NOT_FOUND`
-    await user.click(within(await cardIn('d2', 'saved')).getByRole('button', { name: 'Проверить в чате' }));
-    await screen.findByRole('button', { name: CHIP_REMOVE });
-    await user.type(messageField(), TASK);
-    const refusedSend = async (answer: () => Response, line: string): Promise<void> => {
-      messageAnswer = answer;
-      const before = tracked.requests.length;
-      await user.click(screen.getByRole('button', { name: 'Отправить' }));
-      await waitFor(() => expect(bodiesSince(before, 'POST', MESSAGES)).toEqual([{ text: TASK, recordId: savedId }]));
-      await waitFor(() => expect(failureLine()).toBe(line));
-      await waitFor(() => expect(messageField()).toHaveValue(TASK));
-    };
-
-    // Assert (row 4, network): text and chip both come back, the failed-send line of chat-shell stands under the field
-    await refusedSend(() => HttpResponse.error(), SEND_FAILED);
-    expect(screen.getByRole('button', { name: CHIP_REMOVE })).toBeInTheDocument();
-
-    // Assert (row 4, 404): the text comes back, the chip is gone, MC-16 under the field; the refusal is logged with the record
-    await refusedSend(() => HttpResponse.json(RECORD_NOT_FOUND, { status: 404 }), 'Агент недоступен: его удалили или закрыли для вас');
-    expect(screen.queryByRole('button', { name: CHIP_REMOVE })).toBeNull();
-    expect(logRecords).toContainEqual({
-      level: 'warn',
-      message: 'feed command send failed',
-      fields: expect.objectContaining({ threadId: 'a', recordId: savedId, status: 404, code: 'RECORD_NOT_FOUND' }),
-    });
-    view.unmount();
-
-    // Row 3, first pass: another tab saved the draft first - the route answers 409 `DRAFT_RESOLVED`, the re-read shows it saved
-    resetRow();
-    serveConversation();
-    const elsewhere = draftView({ draftId: 'd5', callId: 'c5', name: 'Сводка смены', createdAt: fixtureTime(3) });
-    held = conversationWith([elsewhere]);
-    list = [];
-    draftAnswer = () => {
-      held = conversationWith([
-        draftView({ ...elsewhere, state: 'saved', savedRecordId: fixtureId(95), resolvedAt: fixtureTime(6) }),
-      ]);
-      return HttpResponse.json(DRAFT_RESOLVED, { status: 409 });
-    };
-    const resolvedView = renderWithRuntime({ pathname: '/chat/a' });
-    const beforeResolved = tracked.requests.length;
-    await user.click(within(await pendingCard('Сводка смены')).getByRole('button', { name: 'Сохранить' }));
-
-    // Assert (row 3): the outcome of the other tab, with no error line
-    const resolved = await cardIn('d5', 'saved');
-    expect(within(resolved).getByText(/^Сохранено · \S/)).toBeInTheDocument();
-    expect(within(resolved).queryByRole('alert')).toBeNull();
-    expect(postsSince(beforeResolved)).toEqual([`${DRAFTS}/d5`]);
-    resolvedView.unmount();
-
-    // Row 3, second pass: the save is refused with `name_taken` in a 200; Аня already has an agent «Разбор логов»
-    resetRow();
-    serveConversation();
-    const taken = draftView({ draftId: 'd6', callId: 'c6', createdAt: fixtureTime(3) });
-    const refused = draftView({ ...taken, refusal: 'name_taken' });
-    const savedAs = draftView({
-      ...taken,
-      name: 'Разбор логов 2',
-      state: 'saved',
-      savedRecordId: fixtureId(96),
-      resolvedAt: fixtureTime(7),
-    });
-    held = conversationWith([taken]);
-    list = [recordSummary({ id: fixtureId(92) })];
-    draftAnswer = () => {
-      held = conversationWith([refused]);
-      return HttpResponse.json(refused);
-    };
-    const takenView = renderWithRuntime({ pathname: '/chat/a' });
-    const takenCard = await pendingCard('Разбор логов');
-    await user.click(within(takenCard).getByRole('button', { name: 'Сохранить' }));
-
-    // Assert (row 3): MC-8 and «Сохранить как «Разбор логов 2»», which sends the free name
-    expect(await within(takenCard).findByText('У вас уже есть агент «Разбор логов»')).toBeInTheDocument();
-    const saveAs = await within(takenCard).findByRole('button', { name: 'Сохранить как «Разбор логов 2»' });
-    draftAnswer = () => {
-      held = conversationWith([savedAs]);
-      return HttpResponse.json(savedAs);
-    };
-    const beforeSaveAs = tracked.requests.length;
-    await user.click(saveAs);
-    await waitFor(() =>
-      expect(bodiesSince(beforeSaveAs, 'POST', `${DRAFTS}/d6`)).toEqual([{ action: 'save', name: 'Разбор логов 2' }]),
-    );
-    await cardIn('d6', 'saved');
-    takenView.unmount();
-
-    // Row 2: a waiting draft of a new agent «Сводка смены»; the create answers the record `createdId`
-    resetRow();
-    serveConversation();
-    const NEW_AGENT = '/library/new/agent';
-    const DRAFT_PROMPT = 'Собери события смены и сведи их в отчёт.';
-    const EDITED = 'Сводит события ночной смены';
-    const createdId = fixtureId(93);
-    const newDraft = draftView({
-      draftId: 'd3',
-      callId: 'c3',
-      name: 'Сводка смены',
-      description: 'Сводит события смены',
-      content: agentContent({ prompt: DRAFT_PROMPT }),
-      createdAt: fixtureTime(3),
-    });
-    const inEditor = draftView({ ...newDraft, state: 'saved_in_editor', savedRecordId: createdId, resolvedAt: fixtureTime(8) });
-    const created = recordDetail({
-      id: createdId,
-      name: 'Сводка смены',
-      description: EDITED,
-      content: agentContent({ prompt: DRAFT_PROMPT }),
-    });
-    records.push(created);
-    held = conversationWith([newDraft]);
-    list = [];
-    server.use(http.post(`${API}/api/library`, () => HttpResponse.json(created)));
-    const openFromCard = async (target: ReturnType<typeof renderWithRuntime>): Promise<void> => {
-      await user.click(within(await pendingCard('Сводка смены')).getByRole('button', { name: 'Открыть в редакторе' }));
-      expect(target.router.push).toHaveBeenLastCalledWith(NEW_AGENT);
-    };
-    const nameField = (): Promise<HTMLElement> => screen.findByRole('textbox', { name: 'Имя' });
-
-    // Row 2: a handoff left by another page - that page's form and then the draft's own page are empty
-    const leftView = renderWithRuntime({ pathname: '/chat/a' });
-    await openFromCard(leftView);
-    leftView.setPathname('/library/new/workflow');
-    expect(await nameField()).toHaveValue('');
-    leftView.setPathname(NEW_AGENT);
-    expect(await nameField()).toHaveValue('');
-    // A new record starts with «Максимум шагов» the administrator set (`choices.defaultMaxTurns`)
-    await user.click(screen.getByRole('button', { name: /^Дополнительно/ }));
-    expect(await screen.findByRole('textbox', { name: 'Максимум шагов' })).toHaveValue(String(NEW_MAX_TURNS));
-
-    // Row 2: the draft is still openable
-    leftView.setPathname('/chat/a');
-    await openFromCard(leftView);
-    leftView.unmount();
-
-    // Act (row 2): «Открыть в редакторе», then the draft's own page: the form is the draft
-    const editorView = renderWithRuntime({ pathname: '/chat/a' });
-    await openFromCard(editorView);
-    editorView.setPathname(NEW_AGENT);
-    expect(await nameField()).toHaveValue('Сводка смены');
-    const description = screen.getByRole('textbox', { name: 'Описание' });
-    expect(description).toHaveValue('Сводит события смены');
-    expect(screen.getByRole('textbox', { name: 'Инструкция' })).toHaveValue(DRAFT_PROMPT);
-
-    // Act (row 2): change the description and «Создать»; the draft route is told before the address changes
-    await user.clear(description);
-    await user.type(description, EDITED);
-    draftAnswer = () => {
-      held = conversationWith([inEditor]);
-      list = [recordSummary({ id: createdId, name: 'Сводка смены', description: EDITED })];
-      return HttpResponse.json(inEditor);
-    };
-    const beforeCreate = tracked.requests.length;
-    const toldBefore = (): number => postsSince(beforeCreate).filter((path) => path === `${DRAFTS}/d3`).length;
-    let toldAtReplace = -1;
-    editorView.router.replace.mockImplementation(() => {
-      toldAtReplace = toldBefore();
-    });
-    await user.click(within(screen.getByRole('region', { name: 'Сохранение' })).getByRole('button', { name: 'Создать' }));
-
-    // Assert (row 2): one create with the draft's definition and the edit; `saved_in_editor` with the new record, before `replace`
-    await waitFor(() => expect(editorView.router.replace).toHaveBeenCalledWith(`/library/${createdId}`));
-    expect(toldAtReplace).toBe(1);
-    await waitFor(() =>
-      expect(bodiesSince(beforeCreate, 'POST', '/api/library')).toEqual([
-        expect.objectContaining({
-          name: 'Сводка смены',
-          description: EDITED,
-          content: expect.objectContaining({ prompt: DRAFT_PROMPT }),
-        }),
-      ]),
-    );
-    await waitFor(() =>
-      expect(bodiesSince(beforeCreate, 'POST', `${DRAFTS}/d3`)).toEqual([{ action: 'saved_in_editor', recordId: createdId }]),
-    );
-
-    // Act (row 2): the new record's page offers «Вернуться в беседу»
-    editorView.setPathname(`/library/${createdId}`);
-    await user.click(await screen.findByRole('button', { name: 'Вернуться в беседу' }));
-    expect(editorView.router.push).toHaveBeenLastCalledWith('/chat/a');
-    editorView.setPathname('/chat/a');
-    // The shell watches the conversation again; the stream's `ready` re-reads it (design-web.md, KD-2).
-    await waitFor(() => expect(editorView.live.current()?.url).toBe(`${API}/api/events?watch=thread%3Aa`));
-    editorView.live.emit('ready', {});
-
-    // Assert (row 2): the card reads «Сохранено в редакторе · {время}» and can no longer be saved
-    const settled = await cardIn('d3', 'saved_in_editor');
-    expect(within(settled).getByText(/^Сохранено в редакторе · \S/)).toBeInTheDocument();
-    expect(within(settled).queryByRole('button', { name: 'Сохранить' })).toBeNull();
-    expect(within(settled).queryByRole('button', { name: 'Открыть в редакторе' })).toBeNull();
-    editorView.unmount();
-  });
-
-  // INT-5 ---------------------------------------------------------------------------------------------------------------------------------
   // AC: AC-23.2 "Given Аня открывает окно, then ей предложены только её роли"; AC-24.1 "Given у Ани есть личная и ролевая запись, when
   //   администратор открывает раздел, then видит только ролевую - с промптом, автором и ролями". Design: UC-5, UC-6, KD-1 (the section),
   //   DC-6 (the tab as an address is proven by the `parseShellRoute` unit table, not here).

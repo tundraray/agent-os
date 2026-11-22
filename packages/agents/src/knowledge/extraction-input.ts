@@ -11,7 +11,7 @@ import type { KnowledgeRun } from './knowledge-runs.repository';
 
 /*
  * The input of an extraction round (design-core.md, Contract «Вход извлечения», KD-3): the MCP calls
- * of the coordinator's subtree that finished after the run's extracted-up-to mark and not later than
+ * of the deep agent's subtree that finished after the run's extracted-up-to mark and not later than
  * the read, cut to the sizes below. It only reads; it neither calls a model nor writes the graph,
  * and it logs nothing — the caller logs the counts, never the text.
  */
@@ -27,9 +27,9 @@ const EXTRACTION_INPUT_BYTES = 48_000;
 const ROUND_OUTCOMES: readonly RoundCallOutcome[] = ['success', 'empty', 'tool_error'];
 
 const ENVELOPE_SOURCE = 'tool calls';
-const ENVELOPE_AUTHOR = 'this run of the workflow';
+const ENVELOPE_AUTHOR = 'this run of the deep agent';
 
-/** What the round knows of its run: the row of `agent_knowledge_runs` with the coordinator's owner. */
+/** What the round knows of its run: the row of `agent_knowledge_runs` with the deep agent's owner. */
 export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedUpTo'>;
 
 export interface ExtractionInputDeps {
@@ -94,12 +94,12 @@ function cutToBytes(text: string, maxBytes: number): CutText {
 }
 
 /**
- * The tasks whose calls the round may read: the coordinator and its descendants in its own tree and
+ * The tasks whose calls the round may read: the deep agent and its descendants in its own tree and
  * of its owner — never sibling runs of the same conversation, another tree or another owner.
  */
 async function subtreeTaskIds(deps: ExtractionInputDeps, run: ExtractionRun): Promise<string[]> {
-  const coordinator = await deps.tasks.get(run.runId, run.ownerId);
-  const tree = await deps.tasks.listTree(coordinator.rootId, run.ownerId);
+  const deepAgent = await deps.tasks.get(run.runId, run.ownerId);
+  const tree = await deps.tasks.listTree(deepAgent.rootId, run.ownerId);
   return [run.runId, ...descendantsOf(tree, run.runId).map((task) => task.taskId)];
 }
 

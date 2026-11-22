@@ -674,7 +674,7 @@ export function createLibraryDouble(): LibraryDouble {
       const body: RecordBody =
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
-          : { kind: 'workflow', content: record.content };
+          : { kind: 'deep_agent', content: record.content };
       records.set(id, {
         id,
         name: record.name,

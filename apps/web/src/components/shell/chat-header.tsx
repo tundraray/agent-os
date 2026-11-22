@@ -40,7 +40,7 @@ export type ChatHeaderViewProps = {
   scrolled?: boolean;
   /** Content of the HD-03 slot in place of the title, with its own `h1` (the agent page's AV-01). */
   heading?: ReactNode;
-  /** HD-04 «Рабочая область»; agent routes have no workspace (UXRD KD-1). */
+  /** HD-04 «Схема» (deep-agents DA-12): the panel from 1024 px, the drawer below it; agent routes have none (UXRD KD-1). */
   showWorkspaceToggle?: boolean;
 };
 
@@ -103,8 +103,8 @@ export function ChatHeaderView({
         <Button
           variant="ghost"
           size="icon"
-          className={cn(iconButton, 'aria-expanded:bg-accent hidden size-8 lg:inline-flex')}
-          aria-label={t('workspace.title')}
+          className={cn(iconButton, 'aria-expanded:bg-accent size-8 pointer-coarse:size-11')}
+          aria-label={t('schema.title')}
           aria-expanded={workspaceOpen}
           aria-controls={workspaceOpen ? WORKSPACE_ID : undefined}
           data-shell-focus="workspace-toggle"
@@ -169,7 +169,7 @@ type ChatHeaderProps = {
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
  * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
  * which needs `AgentFeedProvider` above; a panel or library address → the slot its screen fills through
- * `PageHeader` (AD-01, LB-01); none of them has the workspace button.
+ * `PageHeader` (AD-01, LB-01); none of them has the diagram button.
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();

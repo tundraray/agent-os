@@ -23,8 +23,6 @@ export type SavePanelProps = {
   isNew: boolean;
   /** «Использовать в чате» in place of the save buttons after a save; `null` — the record has no such action. */
   onUseInChat: (() => void) | null;
-  /** The editor was opened from a draft card: «Вернуться в беседу» takes that place instead (DC-12). */
-  onBackToChat: (() => void) | null;
   onDiscard: () => void;
   /** The button that takes the focus after a save. */
   useInChatRef: Ref<HTMLButtonElement>;
@@ -33,21 +31,14 @@ export type SavePanelProps = {
 /**
  * Part 10 of record-editor.md: sticks to the bottom of the main area. The state on the left (a dot only
  * below 768 px), «Отменить изменения» and «Сохранить» (a submit of the form) on the right; after a save,
- * «Использовать в чате» (or «Вернуться в беседу») takes their place. The panel keeps its height when its state changes.
+ * «Использовать в чате» takes their place. The panel keeps its height when its state changes.
  */
-export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard, useInChatRef }: SavePanelProps) {
+export function SavePanel({ status, isNew, onUseInChat, onDiscard, useInChatRef }: SavePanelProps) {
   const t = useTranslations("library");
   const tCommon = useTranslations("common");
   const savedShown = useSavedShown(status);
   const saving = status === "saving";
   const changed = status === "changed" || status === "conflict";
-  const next =
-    onBackToChat !== null
-      ? { label: t("editor.panel.backToChat"), onClick: onBackToChat }
-      : onUseInChat !== null
-        ? { label: t("row.useInChat"), onClick: onUseInChat }
-        : null;
-  const showNext = status === "saved" && next !== null;
 
   return (
     <div role="region" aria-label={t("editor.panel.region")}className="shrink-0 border-t border-border bg-background">
@@ -71,9 +62,9 @@ export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard,
           {status === "saved" && savedShown && tCommon("saved")}
         </p>
         <div className="flex shrink-0 items-center gap-2">
-          {showNext ? (
-            <Button ref={useInChatRef} type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={next.onClick}>
-              {next.label}
+          {status === "saved" && onUseInChat !== null ? (
+            <Button ref={useInChatRef} type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onUseInChat}>
+              {t("row.useInChat")}
             </Button>
           ) : (
             <>

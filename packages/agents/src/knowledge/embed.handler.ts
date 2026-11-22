@@ -41,7 +41,7 @@ interface PassPlan {
   readonly stale: readonly PassItem[];
 }
 
-/** How the step leaves the workflow's vector row. */
+/** How the step leaves the deep agent's vector row. */
 type PassNext =
   /** The batch is done and records still lack a vector: another step. */
   | 'more'
@@ -112,7 +112,7 @@ function recordedOutcome(result: EmbedUnavailable): EmbeddingOutcome | null {
 }
 
 /**
- * Builds the handler of `knowledge.embed` (design-core.md KD-8, Flow 4): one pass per workflow, held by
+ * Builds the handler of `knowledge.embed` (design-core.md KD-8, Flow 4): one pass per deep agent, held by
  * `pass_task_id` of its vector row (Invariant 13). A step deletes the store's keys without a graph record,
  * embeds up to `EMBEDDING_BATCH_SIZE` records lacking a vector of the current model — records that never had
  * one in a call charged to the row's payer (the platform when only deletions asked for the pass), records
@@ -180,7 +180,7 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
   }
 
   /**
-   * Writes a call's vectors. A foreign key failure because the workflow was deleted meanwhile ends the pass
+   * Writes a call's vectors. A foreign key failure because the deep agent was deleted meanwhile ends the pass
    * quietly (`false`); any other store failure throws.
    */
   async function writeVectors(

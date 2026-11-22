@@ -3,7 +3,7 @@
 // Run with `pnpm --filter @agent-os/agents test:e2e`: needs Postgres with the `vector` extension (`pgvector/pgvector:pg16`).
 //
 // The rows speak only the port: the same table runs against any other implementation by swapping `createStore`.
-// Each row gets two fresh workflows (`a`, `b`) with real `app.library_records` rows; deleting them cascades to the vectors.
+// Each row gets two fresh deep agents (`a`, `b`) with real `app.library_records` rows; deleting them cascades to the vectors.
 // Vectors are unit length; model B's are of another length, so a query that compared across models would fail in pgvector.
 import { randomUUID } from 'node:crypto';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
@@ -29,7 +29,7 @@ const QUESTION = [1, 0, 0];
 
 interface ContractRow {
   readonly name: string;
-  /** Arranges and acts through the port on workflows `a` and `b`; returns what is asserted. */
+  /** Arranges and acts through the port on deep agents `a` and `b`; returns what is asserted. */
   readonly act: (store: KnowledgeVectorStore, a: string, b: string) => Promise<unknown>;
   readonly expected: unknown;
 }
@@ -118,8 +118,8 @@ const ROWS: readonly ContractRow[] = [
     ],
   },
   {
-    // Catches: one workflow's vectors seen, found or deleted through another's collection.
-    name: "another workflow's collection is not visible",
+    // Catches: one deep agent's vectors seen, found or deleted through another's collection.
+    name: "another deep agent's collection is not visible",
     act: async (store, a, b) => {
       await store.upsert(b, GRAPH);
       await store.upsert(a, [{ key: 'e1', kind: 'entity', model: MODEL_A, vector: [0, 1, 0] }]);

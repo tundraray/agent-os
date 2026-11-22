@@ -21,7 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatModel } from "@/lib/agents/format";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
-import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
+import { isDeepAgentRun } from "@/lib/feed/to-feed";
 import { focusShellTarget } from "@/lib/focus";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
 import type { Locale } from "@/lib/i18n/pick-locale";
@@ -55,9 +55,9 @@ const SKELETON_WIDTHS = ["62%", "48%", "71%", "55%", "40%", "66%", "52%", "45%"]
 
 type AnyAgentNode = AgentNode | AgentListNode;
 
-/** The row text: the task; for a workflow run — the workflow name in `locale` and the coordinator's task. */
+/** The row text: the task; for a deep agent's run — the record's name in `locale` and the deep agent's task. */
 function rowDescription(node: AnyAgentNode, locale: Locale): string {
-  if (!isWorkflowCoordinator(node)) return node.description;
+  if (!isDeepAgentRun(node)) return node.description;
   const name = builtinName({ builtinKey: node.origin?.builtinKey ?? null, name: node.name }, locale);
   return node.description === "" ? name : `${name} · ${node.description}`;
 }

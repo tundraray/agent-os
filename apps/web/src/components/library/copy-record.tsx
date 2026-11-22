@@ -30,8 +30,8 @@ import { useLeaveThenGo } from "./use-in-chat";
 /** What a copy reads of a record: a library row, or a record page with its content. */
 export type CopySource = RecordSummary | RecordDetail;
 
-/** Systems of one part of the record: the agent itself (`executor` `null`) or an executor of a workflow. */
-type PartServers = { executor: string | null; servers: readonly string[] };
+/** Systems of one part of the record: the agent or the deep agent itself (`subagent` `null`), or a subagent. */
+type PartServers = { subagent: string | null; servers: readonly string[] };
 
 type CopyPlan = {
   record: CopySource;
@@ -42,12 +42,11 @@ type CopyPlan = {
 };
 
 const droppedOf = (rights: readonly MissingRight[]): PartServers[] =>
-  rights.filter((right) => right.servers.length > 0).map(({ executor, servers }) => ({ executor, servers }));
+  rights.filter((right) => right.servers.length > 0).map(({ subagent, servers }) => ({ subagent, servers }));
 
 const hasAllServers = (record: RecordDetail): boolean =>
-  record.kind === "agent"
-    ? record.content.servers.includes(ALL_SERVERS)
-    : record.content.executors.some((executor) => executor.servers.includes(ALL_SERVERS));
+  record.content.servers.includes(ALL_SERVERS) ||
+  (record.kind === "deep_agent" && record.content.subagents.some((subagent) => subagent.servers.includes(ALL_SERVERS)));
 
 /**
  * What the dialog must name before the copy. Only a company record can hold «Все системы»; a library row
@@ -61,8 +60,8 @@ async function planCopy(record: CopySource): Promise<CopyPlan> {
   return { record, dropped, allServers: (await libraryApi.choices()).servers };
 }
 
-const partLine = (t: LibraryTranslator, { executor, servers }: PartServers): string =>
-  executor === null ? servers.join(", ") : t("executorLine", { executor, text: servers.join(", ") });
+const partLine = (t: LibraryTranslator, { subagent, servers }: PartServers): string =>
+  subagent === null ? servers.join(", ") : t("subagentLine", { subagent, text: servers.join(", ") });
 
 /**
  * The notice of MC-4 (and MC-19): the copy's name, then the dropped systems in the wording of MC-13 and both
@@ -78,8 +77,8 @@ function copiedNotice(t: LibraryTranslator, result: CopyResult): { title: string
     ...(result.removedServers.length === 0
       ? []
       : [t("droppedServers", { servers: result.removedServers.map((part) => partLine(t, part)).join("; ") })]),
-    ...result.replacedModels.map(({ executor, from, to }) =>
-      executor === null ? replaced(from, to) : t("executorLine", { executor, text: replaced(from, to) }),
+    ...result.replacedModels.map(({ subagent, from, to }) =>
+      subagent === null ? replaced(from, to) : t("subagentLine", { subagent, text: replaced(from, to) }),
     ),
   ];
   return {
@@ -188,7 +187,7 @@ export function useCopyRecord(): CopyRecord {
             <p>{tLibrary("copy.onlyYou")}</p>
             <CopyLines heading={tLibrary("copy.dropped")} parts={plan.dropped} />
             {plan.allServers !== null && (
-              <CopyLines heading={tLibrary("copy.allServers")} parts={[{ executor: null, servers: plan.allServers }]} />
+              <CopyLines heading={tLibrary("copy.allServers")} parts={[{ subagent: null, servers: plan.allServers }]} />
             )}
             {error !== null && <FormError>{error}</FormError>}
           </div>
@@ -209,18 +208,18 @@ export function useCopyRecord(): CopyRecord {
   return { copy: (record) => void copy(record), pending, error: plan === null ? error : null, dialog };
 }
 
-/** «{системы}» of the agent itself in one line; a workflow's executors one line each. */
+/** «{системы}» of the agent itself in one line; a deep agent's parts one line each. */
 function CopyLines({ heading, parts }: { heading: string; parts: readonly PartServers[] }) {
   const t = useTranslations("library");
   if (parts.length === 0) return null;
-  const single = parts.length === 1 && parts[0]?.executor === null ? parts[0] : null;
+  const single = parts.length === 1 && parts[0]?.subagent === null ? parts[0] : null;
   if (single !== null) return <p>{`${heading} ${single.servers.join(", ")}`}</p>;
   return (
     <div className="flex flex-col gap-1">
       <p>{heading}</p>
       <ul className="flex flex-col gap-1 pl-4">
         {parts.map((part) => (
-          <li key={part.executor ?? ""} className="list-disc">
+          <li key={part.subagent ?? ""} className="list-disc">
             {partLine(t, part)}
           </li>
         ))}

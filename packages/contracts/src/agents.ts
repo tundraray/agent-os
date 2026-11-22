@@ -108,6 +108,14 @@ export const ToolRefusalReasonSchema = z.enum([
   'read_only',
   'shared',
   'repeated_call',
+  'admin_only',
+  'builtin',
+  'name_taken',
+  'system_name',
+  'server_not_allowed',
+  'all_servers_not_allowed',
+  'agent_not_visible',
+  'version_conflict',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 

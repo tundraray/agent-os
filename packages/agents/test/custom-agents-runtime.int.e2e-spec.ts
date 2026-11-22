@@ -3,8 +3,8 @@
 //   PRD: docs/features/custom-agents/prd.md FR-13, FR-14 (AC-13.1 .. AC-13.4, AC-14.1, AC-14.3, AC-14.4).
 // Generated: 2026-11-17
 // Part: runtime. THE PART'S BUDGET, THE FULL acProof AND THE LIST OF UNIT TABLES ARE IN `apps/api/test/custom-agents-runtime.int.e2e-spec.ts` (one place;
-//   this file holds INT-1 of 4). Sibling skeleton files of the part: packages/workflows/test/custom-agents-runtime.int.e2e-spec.ts (INT-2),
-//   apps/api/test/custom-agents-runtime.int.e2e-spec.ts (INT-3, INT-4).
+//   this file holds INT-1 and INT-2 A of 4). Sibling skeleton
+//   file of the part: apps/api/test/custom-agents-runtime.int.e2e-spec.ts (INT-3, INT-4).
 // Test Type: Integration. Run with `pnpm --filter @agent-os/agents test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`), never in the default `vitest run`.
 //
 // Harness (follows agent-platform-agents.int.e2e-spec.ts and test/support/agentsHarness.ts):
@@ -36,29 +36,35 @@ import {
   createScriptedModel,
   inputLines,
   type RecordedModelCall,
+  type ReplyFromInput,
   type ScriptedModel,
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import type { LogRecord } from '@agent-os/common';
+import type { DeepAgentContent } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
+  childReportsOf,
   closeAll,
   createAgentsHarness,
   expireLease,
   historyLines,
   historyOf,
   ledgerRowsOf,
-  START_TEST_WORKFLOW,
+  START_TEST_DEEP_AGENT,
   setRootRecord,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
   TEST_MODEL_DEFAULT,
+  testDeepAgent,
   testRecord,
+  testSubagent,
   toolCallRowsOf,
   waitFor,
+  waitForStatus,
   waitForTaskStatus,
 } from './support/agentsHarness';
 import { newUser } from './support/new-user';
@@ -75,12 +81,12 @@ const MODEL_NOT_ALLOWED = { kind: 'refused', reason: 'model_not_allowed' } as co
 /** A built-in call that needs no server; a record without `list_agents` in its tools gets it refused. */
 const LIST_AGENTS: ScriptedToolCall = { tool: 'list_agents', args: {} };
 
-/** A `start_agent` call of a scripted answer: `agent` is a record id, an executor's name or `fork`. */
+/** A `start_agent` call of a scripted answer: `agent` is a record id, a subagent's name or `fork`. */
 function startAgent(args: { agent: string; description: string; prompt: string }): ScriptedToolCall {
   return { tool: 'start_agent', args };
 }
 
-/** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_workflow`). */
+/** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_deep_agent`). */
 async function startedChildrenOf(harness: AgentsHarness, agentId: string): Promise<string[]> {
   const calls = await toolCallRowsOf(harness.db, agentId);
   return calls.flatMap((call) => (call.childTaskId !== null ? [call.childTaskId] : []));
@@ -140,6 +146,131 @@ function notCurrentLogsOf(harness: AgentsHarness, taskId: string): LogRecord[] {
   );
 }
 
+/** The deep agent of INT-2 A that Борис runs: its name is the deep agent's name. */
+const TEAM_NAME = 'incident review';
+
+/**
+ * The deep agent's turns, counted call by call. First run: the start of a, b and c (1), the text on its own
+ * results (2), a wake per report, the last one being the answer (3-5). Second run: start a, text, the report.
+ */
+const TEAM_MAX_TURNS = 5;
+
+/** The finishing rule of a deep agent without `finalSubagent` (DC-7). */
+const WRITES_ANSWER_ITSELF = 'When the work is done, write the answer yourself as plain text without tool calls.';
+
+/** The team as the deep agent's `start_agent` lists it: «имя (up to N runs): описание». */
+const TEAM_V1_LINES = [
+  'a (up to 1 runs): Reads the incident timeline (version 1).',
+  'b (up to 2 runs): Checks the payment logs.',
+  'c (up to 1 runs): Writes the customer note.',
+];
+const TEAM_V2_LINES = [
+  'a (up to 1 runs): Reads the incident timeline and the deploy log (version 2).',
+  'b (up to 2 runs): Checks the payment logs.',
+  'c (up to 1 runs): Writes the customer note.',
+];
+
+/** Version 1: three subagents with a description each and `maxRuns` 1, 2 and 1, no `finalSubagent`. */
+function teamV1(): DeepAgentContent {
+  return {
+    prompt: 'You review incidents, version 1.',
+    servers: [],
+    model: TEST_MODEL_DEFAULT,
+    maxTurns: TEAM_MAX_TURNS,
+    subagents: [
+      testSubagent('a', {
+        description: 'Reads the incident timeline (version 1).',
+        prompt: 'You are subagent a of team version 1.',
+      }),
+      testSubagent('b', {
+        description: 'Checks the payment logs.',
+        prompt: 'You are subagent b of team version 1.',
+        maxRuns: 2,
+      }),
+      testSubagent('c', {
+        description: 'Writes the customer note.',
+        prompt: 'You are subagent c of team version 1.',
+      }),
+    ],
+    finalSubagent: null,
+    selfLearning: false,
+  };
+}
+
+/** Version 2: another prompt of the deep agent, and `a` with another description and prompt. */
+function teamV2(): DeepAgentContent {
+  const v1 = teamV1();
+  return {
+    ...v1,
+    prompt: 'You review incidents, version 2.',
+    subagents: v1.subagents.map((subagent) =>
+      subagent.name === 'a'
+        ? {
+            ...subagent,
+            description: 'Reads the incident timeline and the deploy log (version 2).',
+            prompt: 'You are subagent a of team version 2.',
+          }
+        : subagent,
+    ),
+  };
+}
+
+const FIRST_RUN_TASK = 'Review the incident of Monday.';
+const FIRST_ANSWER = 'Review: the timeline, the logs and the note agree - a bad deploy at 10:40.';
+const SECOND_RUN_TASK = 'Review the incident of Tuesday.';
+const SECOND_ANSWER = 'Review: the timeline shows a second deploy.';
+
+/** The record's own prompt: the instructions before the platform's text that follows it. */
+function promptOf(call: RecordedModelCall | undefined): string {
+  return (call?.instructions ?? '').split('\n\n')[0] ?? '';
+}
+
+/** The lines of whom `start_agent` may start, as the model reads them. */
+function teamLinesOf(call: RecordedModelCall | undefined): string[] {
+  const lines = (call?.toolDescriptions.start_agent ?? '').split('\n');
+  return lines.slice(lines.indexOf('Agents you may start:') + 1).map((line) => line.replace(/^- /, ''));
+}
+
+/** Whether a recorded input holds a report of every child with these descriptions (`provider-messages.ts`). */
+function allReported(messages: readonly AgentTurnMessage[], descriptions: readonly string[]): boolean {
+  const reports = messages.flatMap((message) =>
+    message.role === 'user' && message.content.startsWith('<data source="child agent report"') ? [message.content] : [],
+  );
+  return descriptions.every((description) => reports.some((report) => report.includes(description)));
+}
+
+/** A deep agent that writes `answer` once every child it started has reported, and a short text before that. */
+function answerWhenReported(descriptions: readonly string[], answer: string): ReplyFromInput {
+  return (messages) => ({ text: allReported(messages, descriptions) ? answer : 'Waiting for the team.' });
+}
+
+/** A conversation of the owner whose first answer starts the deep agent record on `task`; returns once the deep agent exists. */
+async function startDeepAgentRun(
+  harness: AgentsHarness,
+  model: ScriptedModel,
+  ownerId: string,
+  deepAgentId: string,
+  task: string,
+): Promise<{ rootId: string; deepAgentId: string }> {
+  const conversation = `Start the deep agent: ${task}`;
+  model.script(
+    { task: conversation },
+    [
+      {
+        calls: [
+          {
+            tool: START_TEST_DEEP_AGENT,
+            args: { deepAgent: deepAgentId, prompt: task, description: TEAM_NAME },
+          },
+        ],
+      },
+    ],
+    { thereafter: { text: 'noted' } },
+  );
+  const { agentId: rootId } = await harness.sessions.start({ ownerId, prompt: conversation, description: conversation });
+  return { rootId, deepAgentId: await startedChild(harness, rootId) };
+}
+
 describe('custom-agents / runtime - agents package (real runtime + Postgres, scripted model, library double)', () => {
   // ---------------------------------------------------------------------------------------------------------------
   // INT-1: a start freezes the record's content, a restart takes the right snapshot, a refused start creates nothing
@@ -165,9 +296,9 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   //      (not in its snapshot). The root created BEFORE the `chat` edit answers its next message with the old chat prompt; a root created
   //      after the edit starts with the new one. "Запустить с нуля" of the finished first child (`sessions.restart`) starts a new agent on
   //      version 2 (DC-3; UXRD KD-7).
-  //   B. Who restarts on whose copy (DC-3, DC-4, DC-5, invariant 2). Given a coordinator-style tree: an executor started from the snapshot of
-  //      its coordinator (the executor's own source record is then deleted in the double) and a fork of a record-agent; When each finished
-  //      agent is restarted; Then the executor restarts on its own stored snapshot although its source is gone (no library read: the double's
+  //   B. Who restarts on whose copy (DC-3, DC-4, DC-5, invariant 2). Given a deep agent tree: a subagent started from the snapshot of
+  //      its deep agent (the deep agent's record is then deleted in the double) and a fork of a record-agent; When each finished
+  //      agent is restarted; Then the subagent restarts on its own stored snapshot although its record is gone (no library read: the double's
   //      call count of `resolve` did not move), the fork restarts on the snapshot of the caller it ran on and does not inherit the parent's
   //      history; Given the record of a restarted agent is then deleted -> `sessions.restart` is refused `START_REFUSED` with reason
   //      `record_unavailable`, and the number of agents under the parent did not change; Given the agent's model is no longer allowed to its
@@ -180,8 +311,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   //      set). A start whose record's model is not allowed to the runner is refused `model_not_allowed` carrying the model's number, and a model
   //      with no connection `model_not_connected`; again no child, no ledger row, the root keeps answering.
   // Catches: a step that reads the library or an in-memory catalog after the start (an edit, a delete or a role change reaches a running
-  //   agent); a snapshot kept only in the process (lost with a restart of the server); a restart of an executor or a fork that asks the library
-  //   (and fails when the source is gone, or silently swaps it for the latest version); a record restart that copies the old snapshot (stale
+  //   agent); a snapshot kept only in the process (lost with a restart of the server); a restart of a subagent or a fork that asks the library
+  //   (and fails when the record is gone, or silently swaps it for the latest version); a record restart that copies the old snapshot (stale
   //   version against UXRD KD-7) or that creates the new agent before the check (a refused restart leaves a stray agent); a start asked
   //   for the AUTHOR instead of the runner (Борис runs Аня's private record through her agent); a refusal that still writes a child task, a
   //   session row or a ledger row.
@@ -329,42 +460,42 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-1 B: an executor and a fork restart on their own snapshot without asking the library, and a restart refused for a deleted record or a withdrawn model names its reason and creates no agent', async () => {
-    // Given: a workflow record whose executor `planner` was taken from a source record; an agent record
-    // `forker` that forks itself; a `leaf` record. The root starts the coordinator, the forker and the leaf;
-    // the coordinator and the forker are then held in a model call, so they stay unfinished parents
+  it('INT-1 B: a subagent and a fork restart on their own snapshot without asking the library, and a restart refused for a deleted record or a withdrawn model names its reason and creates no agent', async () => {
+    // Given: a deep agent record with the subagent `planner`; an agent record
+    // `forker` that forks itself; a `leaf` record. The root starts the deep agent, the forker and the leaf;
+    // the deep agent and the forker are then held in a model call, so they stay unfinished parents
     const boris = newUser();
     const library = createLibraryDouble();
-    const sourceId = library.add(testRecord('planner source', { prompt: 'Planner prompt.' }));
-    const workflowId = library.add({
-      kind: 'workflow',
-      name: 'restart workflow',
+    const deepAgentRecordId = library.add({
+      kind: 'deep_agent',
+      name: 'restart deep agent',
       ownerId: TEST_AUTHOR_ID,
       everyone: true,
       offerInChat: true,
       content: {
-        coordinator: { rules: '', model: TEST_MODEL_DEFAULT, maxTurns: 20 },
-        executors: [
+        prompt: 'You run the plan.',
+        servers: [],
+        model: TEST_MODEL_DEFAULT,
+        maxTurns: 20,
+        subagents: [
           {
             name: 'planner',
-            role: 'Plans the work',
+            description: 'Plans the work',
             prompt: 'Planner prompt.',
             servers: [],
             model: TEST_MODEL_CHOSEN,
             maxTurns: 20,
             maxRuns: 1,
-            tools: [],
-            source: { recordId: sourceId, version: 1 },
           },
         ],
-        finalExecutor: null,
+        finalSubagent: null,
         selfLearning: false,
       },
     });
     const forkerRecord = testRecord('forker', { prompt: 'Forker prompt, version 1.', tools: ['start_agent'] });
     const forkerRecordId = library.add(forkerRecord);
     const leafRecordId = library.add(testRecord('leaf'));
-    const coordinatorHeld = createLatch();
+    const deepAgentHeld = createLatch();
     const forkerHeld = createLatch();
     const modelRefusals: Record<string, Record<string, typeof MODEL_NOT_ALLOWED>> = {};
     const { model, lineOf } = withPrompts(createScriptedModel());
@@ -374,8 +505,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         {
           calls: [
             {
-              tool: START_TEST_WORKFLOW,
-              args: { workflow: workflowId, prompt: 'Coordinate the plan', description: 'coordinator' },
+              tool: START_TEST_DEEP_AGENT,
+              args: { deepAgent: deepAgentRecordId, prompt: 'Coordinate the plan', description: 'deep agent' },
             },
             startAgent({ agent: forkerRecordId, description: 'forker', prompt: 'Fork yourself' }),
             startAgent({ agent: leafRecordId, description: 'leaf', prompt: 'Leaf task' }),
@@ -387,11 +518,11 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     model.script(
       { task: 'Coordinate the plan' },
       [{ calls: [startAgent({ agent: 'planner', description: 'planner', prompt: 'Plan the work' })] }],
-      { thereafter: { text: 'coordinator holds', latch: coordinatorHeld } },
+      { thereafter: { text: 'deep agent holds', latch: deepAgentHeld } },
     );
     const planner = model.script({ task: 'Plan the work' }, [
       { text: 'plan' },
-      { text: 'plan of the restarted executor' },
+      { text: 'plan of the restarted subagent' },
     ]);
     model.script(
       { task: 'Fork yourself' },
@@ -408,7 +539,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       library,
       access: {},
       root: testRecord('chat', { tools: ['start_agent'] }),
-      workflowStarter: true,
+      deepAgentStarter: true,
       ownerModelRefusals: modelRefusals,
     });
     try {
@@ -418,24 +549,23 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         description: 'restart tree',
       });
       await startedChild(harness, rootId, 3);
-      const [coordinatorId, forkerId, leafId] = await startedChildrenOf(harness, rootId);
-      if (coordinatorId === undefined || forkerId === undefined || leafId === undefined) {
-        throw new Error('the root started no coordinator, forker and leaf');
+      const [deepAgentId, forkerId, leafId] = await startedChildrenOf(harness, rootId);
+      if (deepAgentId === undefined || forkerId === undefined || leafId === undefined) {
+        throw new Error('the root started no deep agent, forker and leaf');
       }
-      const plannerId = await startedChild(harness, coordinatorId);
+      const plannerId = await startedChild(harness, deepAgentId);
       const forkId = await startedChild(harness, forkerId);
       await waitForTaskStatus(harness, plannerId, boris, 'completed');
       await waitForTaskStatus(harness, forkId, boris, 'completed');
       await waitForTaskStatus(harness, leafId, boris, 'completed');
-      await coordinatorHeld.reached();
+      await deepAgentHeld.reached();
       await forkerHeld.reached();
       // Given: the fork ran on the forker's snapshot and saw its history up to the start call
       expect(inputLines(fork.calls[0]?.messages ?? [])).toEqual(['user: Fork yourself', 'user: Fork task']);
 
-      // When: the executor's source record and its workflow are deleted, the forker's record gets version 2,
-      // and the executor and the fork are restarted from scratch
-      library.remove(sourceId);
-      library.remove(workflowId);
+      // When: the subagent's deep agent is deleted, the forker's record gets version 2,
+      // and the subagent and the fork are restarted from scratch
+      library.remove(deepAgentRecordId);
       library.edit(forkerRecordId, {
         body: { kind: 'agent', content: { ...forkerRecord.content, prompt: 'Forker prompt, version 2.' } },
       });
@@ -447,7 +577,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
 
       // Then: neither restart asked the library
       expect(library.resolveCalls).toHaveLength(resolvedBefore);
-      // Then: the executor restarted on its own snapshot although its source and its workflow are gone
+      // Then: the subagent restarted on its own snapshot although its deep agent is gone
       expect(planner.calls.map(lineOf)).toEqual([
         `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
         `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
@@ -457,8 +587,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         plannerRestart.parentId,
         plannerRestart.origin?.recordId,
         plannerRestart.origin?.version,
-        plannerRestart.origin?.executor,
-      ]).toEqual([coordinatorId, workflowId, 1, 'planner']);
+        plannerRestart.origin?.subagent,
+      ]).toEqual([deepAgentId, deepAgentRecordId, 1, 'planner']);
       // Then: the fork restarted on the forker's snapshot of version 1, without the forker's history
       expect(fork.calls.map(lineOf)).toEqual([
         `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
@@ -608,6 +738,135 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       );
     } finally {
       anyaHeld.open();
+      await harness.close();
+    }
+  }, TEST_TIMEOUT_MS);
+  // ---------------------------------------------------------------------------------------------------------------
+  // INT-2 A: a deep agent runs to its end on the copy of its whole team it started with, and the next run takes the new version
+  // ---------------------------------------------------------------------------------------------------------------
+  // AC-13.4 "Given запуск идёт, when автор меняет запись, then запуск
+  //   доходит до конца на прежних копиях всех своих агентов"; AC-16.2 "when запускают снова, then работает новая версия"; AC-16.3 the team
+  //   runs with the runner's rights; AC-16.4 "the deep agent sees each subagent's line and decides itself whom to start"; ADR-0017.
+  // Behavior: Борис starts Аня's deep agent shared with him -> `resolveStart` builds ONE snapshot of the whole team from the record -> the
+  //   deep agent and every subagent start from it, no library read for a subagent -> without `finalSubagent` the deep agent ends with its own text.
+  // Catches: a deep agent or a subagent that reads the record at its own start (an author's edit reaches a run in progress); a deep agent that
+  //   does not see each subagent's description and limit; a final answer refused although no `finalSubagent` is set; a second run that still
+  //   uses the first run's copy.
+  // @category: core-functionality
+  // @dependency: Agents.resolveStart (deep agent source), startChild, gateStart, subagent snapshots, RecordLibrary (double), runtime, Postgres
+  // @complexity: high
+  it('INT-2 A: a deep agent runs on one copy of its whole team whatever the author edits, ends with its own answer, and the next run takes the new version', async () => {
+    // Given: Аня's deep agent version 1, open to Борис and offered in his chat
+    const boris = newUser();
+    const ana = randomUUID();
+    const library = createLibraryDouble();
+    const deepAgentId = library.add(
+      testDeepAgent(TEAM_NAME, teamV1(), { ownerId: ana, ownerName: 'Аня', everyone: false, viewers: [boris] }),
+    );
+    const model = createScriptedModel();
+    const held = createLatch();
+    const firstRun = model.script(
+      { task: FIRST_RUN_TASK },
+      [
+        {
+          calls: [
+            startAgent({ agent: 'a', description: 'subagent a', prompt: 'Read the timeline (run one).' }),
+            startAgent({ agent: 'b', description: 'subagent b', prompt: 'Check the payment logs (run one).' }),
+            startAgent({ agent: 'c', description: 'subagent c', prompt: 'Write the customer note (run one).' }),
+          ],
+          latch: held,
+        },
+      ],
+      { thereafter: answerWhenReported(['subagent a', 'subagent b', 'subagent c'], FIRST_ANSWER) },
+    );
+    const subagentA = model.script({ task: 'Read the timeline (run one).' }, [{ text: 'The timeline is read.' }]);
+    const subagentB = model.script({ task: 'Check the payment logs (run one).' }, [{ text: 'The logs are checked.' }]);
+    const subagentC = model.script({ task: 'Write the customer note (run one).' }, [{ text: 'The note is written.' }]);
+    const harness = await createAgentsHarness({
+      model,
+      library,
+      access: {},
+      root: testRecord('chat'),
+      deepAgentStarter: true,
+    });
+    try {
+      // When: Борис's conversation starts the deep agent; its first call is held
+      const first = await startDeepAgentRun(harness, model, boris, deepAgentId, FIRST_RUN_TASK);
+      await held.reached();
+
+      // Then: the deep agent starts from its record's prompt, writes the answer itself and sees each subagent's line and limit
+      const firstCall = firstRun.calls[0];
+      expect(promptOf(firstCall)).toBe('You review incidents, version 1.');
+      expect(firstCall?.instructions).toContain(WRITES_ANSWER_ITSELF);
+      expect(teamLinesOf(firstCall)).toEqual(TEAM_V1_LINES);
+
+      // When: while the run goes on, Аня saves version 2
+      library.edit(deepAgentId, { body: { kind: 'deep_agent', content: teamV2() } });
+      const readsBefore = library.resolveCalls.length;
+      held.open();
+
+      // Then: the run ends with the deep agent's own answer, on version 1, with no library read for a subagent
+      expect(await waitForStatus(harness, first.deepAgentId, boris, 'completed')).toMatchObject({
+        name: TEAM_NAME,
+        origin: { recordId: deepAgentId, kind: 'deep_agent', version: 1, subagent: null },
+      });
+      expect(library.resolveCalls.slice(readsBefore)).toEqual([]);
+
+      // Then: the three subagents ran on the version-1 copy
+      const team = (await harness.sessions.list(first.rootId, boris)).filter(
+        (view) => view.parentId === first.deepAgentId,
+      );
+      expect(
+        team
+          .map(({ name, status, origin }) => ({ name, status, version: origin?.version, subagent: origin?.subagent }))
+          .sort((left, right) => left.name.localeCompare(right.name)),
+      ).toEqual([
+        { name: 'a', status: 'completed', version: 1, subagent: 'a' },
+        { name: 'b', status: 'completed', version: 1, subagent: 'b' },
+        { name: 'c', status: 'completed', version: 1, subagent: 'c' },
+      ]);
+      expect([subagentA, subagentB, subagentC].map((script) => promptOf(script.calls[0]))).toEqual([
+        'You are subagent a of team version 1.',
+        'You are subagent b of team version 1.',
+        'You are subagent c of team version 1.',
+      ]);
+
+      // Then: every later input of the deep agent still holds the version-1 prompt and team
+      expect(firstRun.calls.length).toBeGreaterThan(1);
+      for (const call of firstRun.calls) {
+        expect(promptOf(call)).toBe('You review incidents, version 1.');
+        expect(teamLinesOf(call)).toEqual(TEAM_V1_LINES);
+      }
+
+      // Then: no "answer through the final subagent" notice; the root receives the deep agent's answer as the run's report
+      expect((await historyOf(harness, first.deepAgentId, boris)).filter((entry) => entry.kind === 'notice')).toEqual([]);
+      const firstReports = await waitFor(
+        () => childReportsOf(harness, first.rootId, boris),
+        (reports) => reports.length > 0,
+        'the report of the first run at the root',
+      );
+      expect(firstReports.map(({ agentId, status, text }) => ({ agentId, status, text }))).toEqual([
+        { agentId: first.deepAgentId, status: 'completed', text: FIRST_ANSWER },
+      ]);
+
+      // When: Борис starts the deep agent again
+      const secondRun = model.script(
+        { task: SECOND_RUN_TASK },
+        [{ calls: [startAgent({ agent: 'a', description: 'subagent a', prompt: 'Read the timeline (run two).' })] }],
+        { thereafter: answerWhenReported(['subagent a'], SECOND_ANSWER) },
+      );
+      const subagentASecond = model.script({ task: 'Read the timeline (run two).' }, [{ text: 'The timeline is read again.' }]);
+      const second = await startDeepAgentRun(harness, model, boris, deepAgentId, SECOND_RUN_TASK);
+
+      // Then: the second run is version 2 - the deep agent's prompt and team, and `a` with its new prompt (AC-16.2)
+      expect(await waitForStatus(harness, second.deepAgentId, boris, 'completed')).toMatchObject({
+        origin: { recordId: deepAgentId, version: 2, subagent: null },
+      });
+      expect(promptOf(secondRun.calls[0])).toBe('You review incidents, version 2.');
+      expect(teamLinesOf(secondRun.calls[0])).toEqual(TEAM_V2_LINES);
+      expect(promptOf(subagentASecond.calls[0])).toBe('You are subagent a of team version 2.');
+    } finally {
+      held.open();
       await harness.close();
     }
   }, TEST_TIMEOUT_MS);

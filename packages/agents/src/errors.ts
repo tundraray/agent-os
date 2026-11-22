@@ -4,6 +4,8 @@ import type { StartRefusedError } from '@agent-os/contracts';
 export type AgentsErrorCode =
   /** The agent does not exist or belongs to another owner. */
   | 'AGENT_NOT_FOUND'
+  /** The run view: the agent does not exist, belongs to another owner or is not a deep agent (deep-agents KD-2). */
+  | 'RUN_NOT_FOUND'
   /** The new agent would be deeper than `AGENT_MAX_DEPTH`. */
   | 'DEPTH_LIMIT'
   /** A restart from scratch of an agent that is still working. */

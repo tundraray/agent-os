@@ -19,15 +19,15 @@ import { formatModel, type ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
-import { canUseInChat, recipientNote } from "@/lib/library/record-rules";
-import { adminRecordPath, libraryPath, newRecordPath, recordPath } from "@/lib/shell-route";
+import { canUseInChat, recipientNote, type AgentRecord } from "@/lib/library/record-rules";
+import { adminRecordPath, libraryPath, newAgentPath, recordPath } from "@/lib/shell-route";
 import { blankAgent } from "./agent-fields";
 import { useCopyRecord } from "./copy-record";
+import { DeepAgentCard, type DeepAgentRecord } from "./deep-agent-card";
 import { DefinitionView } from "./definition-view";
-import { RecordEditor, useTakenHandoff, type RecordEditorProps } from "./record-editor";
+import { RecordEditor, useCreatedHandoff } from "./record-editor";
 import { RecordLabel } from "./record-label";
 import { useInChat } from "./use-in-chat";
-import { blankWorkflow } from "./workflow-fields";
 
 /** Rows of the definition skeleton (UXRD RV-01, Loading). */
 const SKELETON_ROWS = [0, 1, 2, 3] as const;
@@ -42,7 +42,7 @@ export type RecordPageProps = { id: string };
 export function RecordPage({ id }: RecordPageProps) {
   const { libraryIndex } = useShellServices();
   const record = useResource(() => libraryApi.get(id), id, "library");
-  const handoff = useTakenHandoff(recordPath(id));
+  const created = useCreatedHandoff(recordPath(id));
 
   useEffect(() => {
     void libraryIndex.refresh();
@@ -51,26 +51,25 @@ export function RecordPage({ id }: RecordPageProps) {
   if (isNotFound(record.error)) return <ThreadNotice variant="library-not-found" />;
   if (record.status === "error") return <ThreadNotice variant="library-load-error" onRetry={record.reload} />;
   if (record.data === undefined) return <RecordSkeleton />;
-  // An own record its owner may edit opens in the editor; company records change only in the panel (Invariant 3).
+  // An own record its owner may edit: an agent opens in the editor, a deep agent in its card (DA-13); company
+  // records change only in the panel (Invariant 3).
   if (record.data.mine && record.data.canEdit) {
-    return <EditorPage start={{ saved: record.data }} handoff={handoff} />;
+    if (record.data.kind === "deep_agent") return <OwnDeepAgentPage record={record.data} />;
+    return <EditorPage start={{ saved: record.data }} created={created} />;
   }
   return <RecordView record={record.data} />;
 }
 
-/**
- * `/library/new/agent` and `/library/new/workflow`: the empty editor of that kind; the library list is read on
- * entry for «Может запускать» and «Из библиотеки…».
- */
-export function NewRecordPage({ kind }: { kind: RecordKind }) {
+/** `/library/new/agent`: the empty agent editor; the library list is read on entry for «Может запускать». */
+export function NewRecordPage() {
   const { libraryIndex } = useShellServices();
-  const handoff = useTakenHandoff(newRecordPath(kind));
+  const created = useCreatedHandoff(newAgentPath());
 
   useEffect(() => {
     void libraryIndex.refresh();
   }, [libraryIndex]);
 
-  return <EditorPage start={{ newKind: kind }} handoff={handoff} />;
+  return <EditorPage start="new" created={created} />;
 }
 
 /**
@@ -78,13 +77,7 @@ export function NewRecordPage({ kind }: { kind: RecordKind }) {
  * (`choices`) and their models. The editor waits for `choices` — a new record takes its model and «Максимум шагов» from there;
  * the models fill the model field and its banner once read.
  */
-function EditorPage({
-  start,
-  handoff,
-}: {
-  start: { saved: RecordDetail } | { newKind: RecordKind };
-  handoff: RecordEditorProps["handoff"];
-}) {
+function EditorPage({ start, created }: { start: { saved: AgentRecord } | "new"; created: boolean }) {
   const choices = useResource(libraryApi.choices, "choices", "library");
   const models = useResource(accessApi.models, "models", "library");
 
@@ -93,15 +86,18 @@ function EditorPage({
   return (
     <RecordEditor
       mode="employee"
-      source={
-        "saved" in start
-          ? start
-          : { blank: start.newKind === "agent" ? blankAgent(choices.data) : blankWorkflow(choices.data) }
-      }
+      source={start === "new" ? { blank: blankAgent(choices.data) } : start}
       choices={{ ...choices.data, models: models.data?.models }}
-      handoff={handoff}
+      created={created}
     />
   );
+}
+
+/** DA-13 of one's own deep agent, with the viewer's models for the definition. */
+function OwnDeepAgentPage({ record }: { record: DeepAgentRecord }) {
+  const models = useResource(accessApi.models, "models", "library");
+  const choices = useResource(libraryApi.choices, "choices", "library");
+  return <DeepAgentCard mode="employee" record={record} modelNames={modelNamesOf(models.data, choices.data)} />;
 }
 
 /**
@@ -120,12 +116,12 @@ function RecordView({ record }: { record: RecordDetail }) {
   const usable = canUseInChat(record);
   const note = recipientNote(record);
   const recipient = note !== null && record.author !== null ? { author: record.author.name, roles: note.roles } : null;
-  const missingModel = record.missingRights.find((right) => right.executor === null && right.model !== null)?.model;
+  const missingModel = record.missingRights.find((right) => right.subagent === null && right.model !== null)?.model;
   const models = useResource(accessApi.models, "models", "library");
   const choices = useResource(libraryApi.choices, "choices", "library");
   const modelNames = modelNamesOf(models.data, choices.data);
   // `missingRights` names only models without a right; a model of a provider that does not work is the viewer's own.
-  const ownModel = record.kind === "agent" ? record.content.model : record.content.coordinator.model;
+  const ownModel = record.content.model;
   const brokenReason =
     ownModel === null ? null : (models.data?.models.find((row) => row.model === ownModel)?.unavailableReason ?? null);
   // A company record changes only in the panel: an administrator gets the way there (RV-01).

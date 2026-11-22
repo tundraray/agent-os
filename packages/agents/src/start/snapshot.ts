@@ -1,8 +1,8 @@
 import {
   AgentContentSchema,
+  DeepAgentContentSchema,
   ModelIdSchema,
   RunOriginSchema,
-  WorkflowContentSchema,
 } from '@agent-os/contracts';
 import { z } from 'zod';
 
@@ -20,12 +20,12 @@ const snapshotModel = { model: ModelIdSchema };
 
 const AgentSnapshotContentSchema = AgentContentSchema.extend(snapshotModel);
 
-/** One executor of a workflow, as `WorkflowContent` holds it, with its model. */
-const ExecutorContentSchema = WorkflowContentSchema.shape.executors.element.extend(snapshotModel);
+/** One subagent of a deep agent, as `DeepAgentContent` holds it, with its model. */
+const SubagentContentSchema = DeepAgentContentSchema.shape.subagents.element.extend(snapshotModel);
 
-const WorkflowSnapshotContentSchema = WorkflowContentSchema.safeExtend({
-  coordinator: WorkflowContentSchema.shape.coordinator.extend(snapshotModel),
-  executors: z.array(ExecutorContentSchema),
+const DeepAgentSnapshotContentSchema = DeepAgentContentSchema.safeExtend({
+  ...snapshotModel,
+  subagents: z.array(SubagentContentSchema),
 });
 
 /** A record of an agent's `agents` the starter saw at the start: what its `start_agent` lists. */
@@ -37,7 +37,7 @@ const StartableAgentSchema = z.object({
 export type StartableAgent = z.infer<typeof StartableAgentSchema>;
 
 const snapshotFields = {
-  /** The run's name: the record's name, or the executor's name in its team. */
+  /** The run's name: the record's name, or the subagent's name in its team. */
   name: z.string().min(1),
   origin: RunOriginSchema,
 };
@@ -50,23 +50,24 @@ export const RunSnapshotSchema = z.discriminatedUnion('kind', [
     /** The records of `content.agents` visible to the starter at the start, in that order. */
     agents: z.array(StartableAgentSchema),
   }),
-  /** The coordinator of a workflow: the whole team is in its content. */
-  z.object({ ...snapshotFields, kind: z.literal('workflow'), content: WorkflowSnapshotContentSchema }),
+  /** A deep agent: its whole team is in its content (deep-agents design-agent-types.md KD-1). */
   z.object({
     ...snapshotFields,
-    kind: z.literal('executor'),
-    content: ExecutorContentSchema,
+    kind: z.literal('deep_agent'),
+    content: DeepAgentSnapshotContentSchema,
+  }),
+  z.object({
+    ...snapshotFields,
+    kind: z.literal('subagent'),
+    content: SubagentContentSchema,
     /**
-     * The run learns (self-learning design-core.md KD-2): the servers of the whole team; `null` — it does
-     * not. A snapshot written before the field reads as `null`.
+     * The run learns (self-learning design-core.md KD-2): the servers of the deep agent and its whole
+     * team; `null` — it does not.
      */
-    learning: z
-      .object({ servers: ExecutorContentSchema.shape.servers })
-      .nullable()
-      .default(null),
+    learning: z.object({ servers: SubagentContentSchema.shape.servers }).nullable(),
   }),
 ]);
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 export type AgentSnapshot = Extract<RunSnapshot, { kind: 'agent' }>;
-export type WorkflowSnapshot = Extract<RunSnapshot, { kind: 'workflow' }>;
-export type ExecutorSnapshot = Extract<RunSnapshot, { kind: 'executor' }>;
+export type DeepAgentSnapshot = Extract<RunSnapshot, { kind: 'deep_agent' }>;
+export type SubagentSnapshot = Extract<RunSnapshot, { kind: 'subagent' }>;

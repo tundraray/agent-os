@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import type { RecordFocusAction } from '@agent-os/contracts';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { Layout, LayoutChangedMeta } from 'react-resizable-panels';
+import { useStore } from 'zustand';
 import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
 import { LocaleSync } from '@/components/i18n/locale-sync';
 import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -13,6 +15,7 @@ import { useLeaveGuardHistory } from '@/hooks/use-leave-guard-history';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
+import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
 import type { FocusTarget } from '@/lib/focus';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
@@ -23,16 +26,19 @@ import { ChatRuntimeProvider } from './chat-runtime-provider';
 import { ConnectionBar } from './connection-bar';
 import { DocumentTitle } from './document-title';
 import { LeaveGuardDialog } from './leave-guard-dialog';
-import { MainView } from './main-view';
+import { MainView, useConversationFeed } from './main-view';
+import { SchemaPanel } from './schema-panel';
 import { useShellServices } from './shell-actions';
 import {
   FEED_MIN_WIDTH,
   WORKSPACE_DEFAULT_SIZE,
   WORKSPACE_PANEL_ID,
+  WorkspaceDrawer,
   WorkspacePanel,
+  toggleElement,
 } from './workspace-panel';
 
-/** Main-area width (window minus sidebar) that fits the workspace (360 px) beside the feed (480 px). */
+/** Main-area width (window minus sidebar) that fits the panel (360 px) beside the feed (480 px). */
 const WORKSPACE_FIT_WIDTH = 840;
 
 type ChatShellProps = {
@@ -71,59 +77,62 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
   );
 }
 
-const focusWorkspaceToggle = (): void => {
-  document.querySelector<HTMLElement>('[data-shell-focus="workspace-toggle"]')?.focus();
-};
+/** Focus actions that open the panel by themselves from 1024 px (deep-agents KD-6); a read or a delete does not. */
+const OPENING_ACTIONS: ReadonlySet<RecordFocusAction> = new Set(['created', 'changed', 'started']);
 
 /**
- * The main area: the chat panel and, while open on ≥ 1024 px, the workspace panel (WS-01…WS-03).
- * Opening it where the main area is narrower than 840 px folds the sidebar for the time it stays open,
- * without touching the saved `sidebar_state` cookie.
+ * The main area: the chat panel and the diagram panel (WS-01…WS-03, deep-agents DA-12) — beside the feed while
+ * open from 1024 px, a drawer below it. Opening the panel where the main area is narrower than 840 px folds the
+ * sidebar for the time it stays open, without touching the saved `sidebar_state` cookie.
  */
 function ShellMain({ children }: { children: ReactNode }) {
   const route = parseShellRoute(usePathname());
-  // Agent, panel and library routes have no workspace (UXRD KD-1): its button is hidden and an open workspace closes.
+  // Agent, panel and library routes have no diagram (UXRD KD-1): its button is hidden and an open panel closes.
   const workspaceAllowed = route.kind === 'chat';
-  // The user's intent and the dragged width live for the tab session only.
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const { live, workspace } = useShellServices();
+  const workspaceOpen = useStore(workspace, (state) => state.open);
+  // The dragged width lives for the tab session only.
   const [workspaceSize, setWorkspaceSize] = useState<number>();
   const desktop = useMediaQuery('(min-width: 1024px)');
   const workspaceVisible = workspaceOpen && desktop && workspaceAllowed;
   const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
   const mainRef = useRef<HTMLElement>(null);
+  const sidebarOpenRef = useRef(sidebarOpen);
   const sidebarFoldedRef = useRef(false);
-  const { live } = useShellServices();
+  const feed = useConversationFeed();
 
-  // The user expanding the sidebar while the workspace is open takes the fold over.
+  // The user expanding the sidebar while the panel is open takes the fold over.
   useEffect(() => {
+    sidebarOpenRef.current = sidebarOpen;
     if (sidebarOpen) sidebarFoldedRef.current = false;
   }, [sidebarOpen]);
 
-  if (!workspaceAllowed && workspaceOpen) setWorkspaceOpen(false);
   useEffect(() => {
-    if (workspaceAllowed || workspaceOpen) return;
-    if (sidebarFoldedRef.current) {
+    if (!workspaceAllowed) workspace.close();
+  }, [workspaceAllowed, workspace]);
+
+  // Whoever opened the panel (the header, a record card, a record change), it folds a sidebar that leaves no room.
+  useEffect(() => {
+    if (workspaceVisible) {
+      const mainWidth = mainRef.current?.getBoundingClientRect().width ?? 0;
+      if (sidebarOpenRef.current && mainWidth < WORKSPACE_FIT_WIDTH) {
+        setSidebarOpen(false, { persist: false });
+        sidebarFoldedRef.current = true;
+      }
+    } else if (sidebarFoldedRef.current) {
       sidebarFoldedRef.current = false;
       setSidebarOpen(true, { persist: false });
     }
-  }, [workspaceAllowed, workspaceOpen, setSidebarOpen]);
-
-  const openWorkspace = (): void => {
-    const mainWidth = mainRef.current?.getBoundingClientRect().width ?? 0;
-    if (sidebarOpen && mainWidth < WORKSPACE_FIT_WIDTH) {
-      setSidebarOpen(false, { persist: false });
-      sidebarFoldedRef.current = true;
-    }
-    setWorkspaceOpen(true);
-  };
+  }, [workspaceVisible, setSidebarOpen]);
 
   const closeWorkspace = (): void => {
-    setWorkspaceOpen(false);
-    if (sidebarFoldedRef.current) {
-      sidebarFoldedRef.current = false;
-      setSidebarOpen(true, { persist: false });
-    }
-    focusWorkspaceToggle();
+    workspace.close();
+    toggleElement()?.focus();
+  };
+
+  const toggleWorkspace = (): void => {
+    if (workspaceOpen) closeWorkspace();
+    else workspace.show({ focusHeading: true });
   };
 
   const rememberWorkspaceSize = (layout: Layout, meta: LayoutChangedMeta): void => {
@@ -133,14 +142,12 @@ function ShellMain({ children }: { children: ReactNode }) {
 
   return (
     <SidebarInset ref={mainRef} className="min-h-0 min-w-0">
+      {workspaceAllowed && feed !== null && <SchemaAutoOpen feed={feed} desktop={desktop} />}
       <ResizablePanelGroup orientation="horizontal" onLayoutChanged={rememberWorkspaceSize}>
         <ResizablePanel id="chat" minSize={FEED_MIN_WIDTH} className="flex flex-col" style={{ overflow: 'hidden' }}>
           <RouteFeedProvider route={route}>
             <DocumentTitle />
-            <ChatHeader
-              workspaceOpen={workspaceVisible}
-              onToggleWorkspace={workspaceOpen ? closeWorkspace : openWorkspace}
-            />
+            <ChatHeader workspaceOpen={workspaceOpen && workspaceAllowed} onToggleWorkspace={toggleWorkspace} />
             <ConnectionBar live={live} />
             <div className="min-h-0 flex-1">
               <MainView />
@@ -151,12 +158,56 @@ function ShellMain({ children }: { children: ReactNode }) {
           <WorkspacePanel
             defaultSize={workspaceSize === undefined ? WORKSPACE_DEFAULT_SIZE : `${workspaceSize}%`}
             onClose={closeWorkspace}
-          />
+          >
+            <SchemaPanel feed={feed} />
+          </WorkspacePanel>
         )}
       </ResizablePanelGroup>
+      {workspaceAllowed && !desktop && (
+        <WorkspaceDrawer open={workspaceOpen} onClose={() => workspace.close()}>
+          <SchemaPanel feed={feed} />
+        </WorkspaceDrawer>
+      )}
       {children}
     </SidebarInset>
   );
+}
+
+/**
+ * KD-6: from 1024 px the panel opens by itself when the conversation's focus moves to a new event that created
+ * or changed a record or started a deep agent; a start also turns it to «Задачи». The focus the conversation
+ * already had when it was opened is not an event, and after «×» the panel waits for the next one. Focus stays
+ * in the feed; below 1024 px nothing opens by itself, so the drawer never covers the conversation.
+ */
+function SchemaAutoOpen({ feed, desktop }: { feed: FeedStore; desktop: boolean }) {
+  const { workspace } = useShellServices();
+  const desktopRef = useRef(desktop);
+  useEffect(() => {
+    desktopRef.current = desktop;
+  }, [desktop]);
+
+  useEffect(() => {
+    // undefined until the conversation's first read: what it shows then happened before this visit.
+    let seen: string | null | undefined;
+    const check = ({ view }: FeedState): void => {
+      if (view?.kind !== 'thread') return;
+      const focus = view.focus;
+      const key = focus === null ? null : `${focus.recordId}|${focus.action}|${focus.at}`;
+      if (seen === undefined || key === seen) {
+        seen = key;
+        return;
+      }
+      seen = key;
+      if (focus === null || !OPENING_ACTIONS.has(focus.action)) return;
+      const tab = focus.action === 'started' ? 'tasks' : undefined;
+      if (desktopRef.current) workspace.show({ tab, focusHeading: false });
+      else if (tab !== undefined) workspace.setTab(tab);
+    };
+    check(feed.getState());
+    return feed.subscribe(check);
+  }, [feed, workspace]);
+
+  return null;
 }
 
 /**

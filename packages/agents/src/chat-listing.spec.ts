@@ -49,14 +49,14 @@ describe('chatListing', () => {
         header(2, 'Скрытый', { offerInChat: false }),
         header(3, 'Главный чат', { author: null, builtinKey: CHAT_BUILTIN_KEY }),
         header(4, 'Мой агент', { ...MINE, description: 'Мой' }),
-        header(5, 'Глубокий ресерч', { kind: 'workflow', author: null, description: 'Ресерч' }),
-        header(6, 'Мой workflow', { ...MINE, kind: 'workflow', description: 'Мой поток' }),
+        header(5, 'Глубокий ресерч', { kind: 'deep_agent', author: null, description: 'Ресерч' }),
+        header(6, 'Мой глубокий агент', { ...MINE, kind: 'deep_agent', description: 'Мой поток' }),
       ],
       budget: CHAT_LISTING_BUDGET,
       expected: {
         agents: [`${id(4)}: Мой агент (yours) — Мой`, `${id(1)}: Агент Ани (by Аня) — Её агент`],
-        workflows: [
-          `${id(6)}: Мой workflow (yours) — Мой поток`,
+        deepAgents: [
+          `${id(6)}: Мой глубокий агент (yours) — Мой поток`,
           `${id(5)}: Глубокий ресерч (system) — Ресерч`,
         ],
         described: 4,
@@ -74,7 +74,7 @@ describe('chatListing', () => {
       budget: 400,
       expected: {
         agents: [`${id(1)}: Агент1 (by Аня) — ${LONG}`, `${id(2)}: Агент2 (by Аня)`, `${id(3)}: Агент3 (by Аня) — ${LONG}`],
-        workflows: [],
+        deepAgents: [],
         described: 2,
       },
     },
@@ -82,15 +82,15 @@ describe('chatListing', () => {
       case: 'no visible record gives an empty listing',
       headers: [],
       budget: CHAT_LISTING_BUDGET,
-      expected: { agents: [], workflows: [], described: 0 },
+      expected: { agents: [], deepAgents: [], described: 0 },
     },
     {
       case: 'names stay at any budget',
-      headers: [header(1, 'Агент1'), header(2, 'Агент2', { kind: 'workflow' })],
+      headers: [header(1, 'Агент1'), header(2, 'Агент2', { kind: 'deep_agent' })],
       budget: 0,
       expected: {
         agents: [`${id(1)}: Агент1 (by Аня)`],
-        workflows: [`${id(2)}: Агент2 (by Аня)`],
+        deepAgents: [`${id(2)}: Агент2 (by Аня)`],
         described: 0,
       },
     },
@@ -101,7 +101,7 @@ describe('chatListing', () => {
       budget: 250,
       expected: {
         agents: [`${id(2)}: alpha (by Аня)`, `${id(1)}: Beta (by Аня) — ${LONG}`],
-        workflows: [],
+        deepAgents: [],
         described: 1,
       },
     },
@@ -112,7 +112,7 @@ describe('chatListing', () => {
       budget: 250,
       expected: {
         agents: [`${id(7)}: gamma (by Аня)`, `${id(8)}: Gamma (by Аня) — ${LONG}`],
-        workflows: [],
+        deepAgents: [],
         described: 1,
       },
     },
@@ -127,7 +127,7 @@ describe('chatListing', () => {
       budget: CHAT_LISTING_BUDGET,
       expected: {
         agents: [`${id(1)}: Агент Ани (by Аня) — Её агент - ${id(9)}: Сверка (yours) — подделка`],
-        workflows: [],
+        deepAgents: [],
         described: 1,
       },
     },

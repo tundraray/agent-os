@@ -15,18 +15,13 @@ import type { RunSnapshot } from '../start/snapshot';
 import { snapshotDefinition } from '../start/snapshot-definition';
 import { sessions } from '../store/sessions.repository';
 import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent';
+import { START_DEEP_AGENT_TOOL } from './builtin/start-deep-agent';
 import type { AgentTool, ToolDisplay } from './tool';
 
-/**
- * The root's tool that starts a workflow (design-runtime.md, «Инструменты модели»); `workflows` registers
- * it, and the registry lists the chat's workflows in its description (KD-4).
- */
-export const START_WORKFLOW_TOOL = 'start_workflow';
-
-/** The description of `start_workflow` at the root: the tool's own text, then the workflows the chat offers. */
-function describeStartWorkflow(description: string, workflows: readonly string[]): string {
-  const lines = workflows.length === 0 ? ['(none)'] : workflows.map((line) => `- ${line}`);
-  return [description, 'Workflows you may start:', ...lines].join('\n');
+/** The description of `start_deep_agent` at the root: the tool's own text, then the deep agents the chat offers. */
+function describeStartDeepAgent(description: string, deepAgents: readonly string[]): string {
+  const lines = deepAgents.length === 0 ? ['(none)'] : deepAgents.map((line) => `- ${line}`);
+  return [description, 'Deep agents you may start:', ...lines].join('\n');
 }
 
 /**
@@ -67,21 +62,32 @@ export function callTargetOf(tools: readonly SessionTool[], name: string): ToolT
   return tool === undefined ? { tool: name, server: null } : callTarget(tool);
 }
 
-/**
- * The arguments of a call as the log may hold them: what the tool's `loggedArgs` keeps, or the whole
- * arguments of a tool without it. Arguments that are not an object are not logged for such a tool.
- */
-export function loggedArgs(tool: SessionTool | undefined, args: unknown): unknown {
-  if (tool?.kind !== 'agent' || tool.tool.loggedArgs === undefined) return args;
-  return typeof args === 'object' && args !== null ? tool.tool.loggedArgs(args) : null;
+/** What a tool's `loggedArgs` keeps, or the whole arguments of a tool without it; a non-object is not logged then. */
+function keptArgs(tool: AgentTool, args: unknown): unknown {
+  if (tool.loggedArgs === undefined) return args;
+  return typeof args === 'object' && args !== null ? tool.loggedArgs(args) : null;
 }
 
-/** `loggedArgs` of a requested name in a tool set. */
-export function loggedArgsOf(tools: readonly SessionTool[], name: string, args: unknown): unknown {
-  return loggedArgs(
-    tools.find((candidate) => candidate.name === name),
-    args,
-  );
+/** The arguments of a call as the log may hold them: {@link keptArgs} of an agent tool, all of an MCP call. */
+export function loggedArgs(tool: SessionTool, args: unknown): unknown {
+  return tool.kind === 'agent' ? keptArgs(tool.tool, args) : args;
+}
+
+/**
+ * `loggedArgs` of a requested name: the session set's tool, else the registered tool of that name — a call to
+ * a tool the session was not offered (`create_record` from a deep agent) keeps that tool's rule — and for a
+ * name nobody registered only the argument keys, since nothing says what its arguments may hold.
+ */
+export function loggedArgsOf(
+  tools: readonly SessionTool[],
+  toolOf: ToolRegistry['toolOf'],
+  call: { readonly name: string; readonly args: unknown },
+): unknown {
+  const offered = tools.find((candidate) => candidate.name === call.name);
+  if (offered !== undefined) return loggedArgs(offered, call.args);
+  const registered = toolOf(call.name);
+  if (registered !== undefined) return keptArgs(registered, call.args);
+  return typeof call.args === 'object' && call.args !== null ? { keys: Object.keys(call.args) } : null;
 }
 
 export interface SessionToolsInput {
@@ -110,11 +116,11 @@ export interface ToolRegistry {
   /**
    * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1;
    * design-runtime.md KD-4, KD-6): the built-in ones the snapshot's definition names, the root's tools
-   * (`start_workflow`, `draft_record`) in a session without a parent only, the `everySession` tools
+   * (`start_deep_agent` and the tools `apps/api` registers) in a session without a parent only, the `everySession` tools
    * (`read_tool_result`, `search_tool_result`) and `run_code` in every session (code-execution KD-3), then the MCP tools of the snapshot's servers (`*` — all) that are enabled in the
    * registry, whose server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled
    * owner gets no MCP tool, and his model call fails the step) and, for an `oauth` server, that the owner
-   * has an account on. At the root the descriptions of `start_agent` and `start_workflow` list the chat
+   * has an account on. At the root the descriptions of `start_agent` and `start_deep_agent` list the chat
    * listing, read from the library and the owner's sessions on every call; elsewhere `start_agent` lists
    * the snapshot's agents or team. Nothing is kept between steps (Invariant 3).
    */
@@ -175,7 +181,7 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
       agentId: input.agentId,
       visible: headers.length,
       described: listing.described,
-      length: [...listing.agents, ...listing.workflows].reduce((sum, line) => sum + line.length, 0),
+      length: [...listing.agents, ...listing.deepAgents].reduce((sum, line) => sum + line.length, 0),
       durationMs: Date.now() - startedAt,
     });
     return listing;
@@ -195,17 +201,17 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
 
   /**
    * The description the session sees: `start_agent` lists whom it may start — the chat listing at the root,
-   * the snapshot's agents or team elsewhere — and `start_workflow` the chat's workflows. Without a listing
+   * the snapshot's agents or team elsewhere — and `start_deep_agent` the chat's deep agents. Without a listing
    * (the call check) the root keeps the tools' own descriptions.
    */
   function descriptionOf(tool: AgentTool, input: SessionToolsInput, listing: ChatListing | null): string {
-    const canFork = input.snapshot.kind !== 'workflow';
+    const canFork = input.snapshot.kind !== 'deep_agent';
     if (tool.name === START_AGENT_TOOL) {
       if (!input.root) return describeStartAgent(snapshotDefinition(input.snapshot).startable, canFork);
       if (listing !== null) return describeStartAgent(listing.agents, canFork);
     }
-    if (tool.name === START_WORKFLOW_TOOL && listing !== null) {
-      return describeStartWorkflow(tool.description, listing.workflows);
+    if (tool.name === START_DEEP_AGENT_TOOL && listing !== null) {
+      return describeStartDeepAgent(tool.description, listing.deepAgents);
     }
     return tool.description;
   }

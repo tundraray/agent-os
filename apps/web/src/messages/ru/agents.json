@@ -37,8 +37,7 @@
   },
   "meta": {
     "started": "запущен <time>{at}</time>",
-    "workflow": "Workflow «{name}»",
-    "coordinator": "координатор",
+    "deepAgent": "Глубокий агент «{name}»",
     "fromAgent": "запущен агентом «<link>{name}</link>»",
     "fromChat": "из беседы «<link>{title}</link>»"
   },
@@ -47,7 +46,7 @@
     "stopFailed": "Не удалось остановить агента. Попробуйте ещё раз.",
     "restart": "Запустить с нуля",
     "restartFailed": "Не удалось запустить агента с нуля.",
-    "restartUnavailable": "{kind, select, agent {Агент} other {Workflow}} недоступен — запустить с нуля нельзя",
+    "restartUnavailable": "{kind, select, agent {Агент} other {Глубокий агент}} недоступен — запустить с нуля нельзя",
     "restartVersion": "Пойдёт на версии {version}",
     "menu": "Действия с агентом",
     "open": "Открыть"
@@ -101,35 +100,40 @@
     "launchEdited": "Запустить с правками",
     "cancelEdit": "Отмена",
     "emptyQuestion": "Вопрос не может быть пустым",
-    "selfLearning": "Workflow учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников."
+    "selfLearning": "Глубокий агент учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников."
   },
-  "draft": {
-    "status": "Черновик",
-    "label": "Черновик: {name}",
-    "newTitle": "{kind, select, agent {Новый агент} other {Новый workflow}}",
-    "editTitle": "Правка «{name}»",
-    "howToFix": "Чтобы поправить — напишите в чат, что изменить",
-    "save": "Сохранить",
-    "saveAs": "Сохранить как «{name}»",
-    "openInEditor": "Открыть в редакторе",
-    "reject": "Отклонить",
-    "saved": "Сохранено · {time}",
-    "savedInEditor": "Сохранено в редакторе · {time}",
-    "rejected": "Отклонено · {time}",
-    "tryInChat": "Проверить в чате",
-    "share": "Поделиться",
-    "open": "Открыть",
-    "superseded": "Черновик «{name}» заменён новым ниже",
-    "stale": "{kind, select, agent {Агент} other {Workflow}} изменился после черновика. Попросите чат подготовить правку заново или откройте редактор."
+  "recordCard": {
+    "create": "{kind, select, agent {Создать агента} other {Создать глубокого агента}}",
+    "edit": "Изменить «{name}»",
+    "delete": "Удалить «{name}»",
+    "deleteNote": "{kind, select, agent {Агент} other {Глубокий агент}} пропадёт из библиотеки. Вернуть его нельзя.",
+    "changed": "изменено",
+    "new": "новый",
+    "removed": "Убрано: {what}",
+    "createButton": "Создать",
+    "saveButton": "Сохранить изменения",
+    "deleteButton": "Удалить",
+    "created": "Создано · {time}",
+    "changedOutcome": "Изменено · {time}",
+    "deleted": "Удалено · {time}",
+    "notSaved": "Не сохранено: {reason}",
+    "showDiagram": "Показать схему"
+  },
+  "recordTool": {
+    "list_records": "Список библиотеки",
+    "read_record": "Чтение «{name}»",
+    "create_record": "Создание «{name}»",
+    "edit_record": "Правка «{name}»",
+    "delete_record": "Удаление «{name}»"
   },
   "run": {
     "label": "{name}: {status}",
-    "stepLabel": "{hasExecutor, select, yes {{executor}, } other {}}{description}, {status}",
+    "stepLabel": "{hasSubagent, select, yes {{subagent}, } other {}}{description}, {status}",
     "open": "Открыть",
     "openLabel": "Открыть агента «{description}»",
     "openRun": "Открыть запуск",
     "rerun": "Запустить заново",
-    "changedAfterRun": "{kind, select, agent {Агент} other {Workflow}} изменён после запуска: сейчас версия {version}",
+    "changedAfterRun": "{kind, select, agent {Агент} other {Глубокий агент}} изменён после запуска: сейчас версия {version}",
     "recipient": "{author}{count, plural, =0 {} =1 { · для роли {roles}} other { · для ролей {roles}}}: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.",
     "limitReached": "предел вызовов исчерпан",
     "notCalled": "не вызывался"
@@ -139,7 +143,9 @@
     "stopped": "Остановлен вами",
     "stopped_with_parent": "Остановлен вместе с родителем",
     "continued": "Продолжен с историей",
-    "compacted": "История сжата для модели"
+    "compacted": "История сжата для модели",
+    "planItemsOpen": "Ответ не принят: открыты пункты плана {numbers}",
+    "reportMissing": "Ответ не принят: нужен отчёт «{name}»"
   },
   "queue": {
     "region": "Ждут доставки",
@@ -152,5 +158,42 @@
       "report": "Отчёт",
       "parent": "Агент"
     }
+  },
+  "taskStatus": {
+    "waiting": "Ожидает",
+    "running": "В работе",
+    "done": "Готова",
+    "failed": "Сбой",
+    "cancelled": "Отменена"
+  },
+  "tasks": {
+    "tabs": {
+      "activity": "Ход работы",
+      "tasks": "Задачи · {count}"
+    },
+    "listLabel": "Задачи",
+    "summary": {
+      "running": "В работе: {count}",
+      "waiting": "Ожидают: {count}",
+      "done": "Готовы: {count}",
+      "failed": "Сбой: {count}",
+      "cancelled": "Отменены: {count}"
+    },
+    "expandAll": "Раскрыть все",
+    "collapseAll": "Свернуть все",
+    "ownItem": "свой пункт",
+    "rowButton": "Задача {number}: {text}, {status}",
+    "details": {
+      "status": "Статус",
+      "task": "Задача",
+      "who": "Кто делает",
+      "ownItem": "свой пункт — ведёт сам агент"
+    },
+    "emptyTitle": "Задач пока нет",
+    "emptyHint": "Агент добавит план, когда начнёт работу.",
+    "loading": "Загружаем задачи…",
+    "loadError": "Не удалось загрузить задачи",
+    "retry": "Повторить",
+    "openRun": "Открыть запуск"
   }
 }

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { inRootLaunchSet, type Agents, type RootSession } from '@agent-os/agents';
+import {
+  inRootLaunchSet,
+  type AgentHistoryEntry,
+  type Agents,
+  type RootSession,
+} from '@agent-os/agents';
 import {
   HISTORY_PAGE_SIZE,
   THREAD_PAGE_SIZE,
@@ -21,13 +26,13 @@ import { RUNTIME } from '../runtime/runtime.tokens';
 import { chatStatus } from './chat-status';
 import { httpError, threadNotFound } from './chat.errors';
 import {
+  focusOf,
   nextAfterSeqOf,
   toAgentTree,
   toConfirmation,
   toHistoryEntry,
   toPending,
 } from './conversation-view';
-import { DraftsService } from './drafts.service';
 import { decodeThreadCursor, encodeThreadCursor, type ThreadCursor } from './thread-cursor';
 import { TitleService } from './title.service';
 
@@ -67,7 +72,6 @@ export class ConversationsService {
     @Inject(AGENTS) private readonly agents: Agents,
     @Inject(RUNTIME) private readonly runtime: Runtime,
     private readonly library: LibraryService,
-    private readonly drafts: DraftsService,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
@@ -162,30 +166,49 @@ export class ConversationsService {
   /**
    * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a page of
    * the root's history after `afterSeq`, its queue, the decisions of the whole tree in every status, the
-   * agents under the root and every record draft (design-runtime.md, KD-6).
+   * agents under the root and the record in focus (deep-agents KD-6), read from the root's whole history.
    */
   async view(threadId: string, ownerId: string, afterSeq: number): Promise<ConversationView> {
     const thread = toThreadSummary(await this.owned(threadId, ownerId));
-    const [task, views, entries, messages, confirmations, drafts] = await Promise.all([
+    const [task, views, entries, messages, confirmations, rootHistory] = await Promise.all([
       this.runtime.tasks.get(threadId, ownerId),
       this.agents.sessions.list(threadId, ownerId),
       this.agents.sessions.history({ agentId: threadId, ownerId, afterSeq, limit: HISTORY_PAGE_SIZE }),
       this.runtime.inbox.listPending(threadId, ownerId),
       this.agents.sessions.confirmations(threadId, ownerId),
-      this.drafts.list(threadId),
+      this.wholeHistory(threadId, ownerId),
     ]);
     const root = views.find((view) => view.agentId === threadId);
     if (root === undefined) throw new Error(`Conversation ${threadId} has no view of its root`);
+    const decisions = confirmations.map((confirmation) => toConfirmation(confirmation, views));
     return {
       thread,
       chat: { ...chatStatus({ root, task }), rootAgentId: threadId, model: root.model },
       entries: entries.map(toHistoryEntry),
       nextAfterSeq: nextAfterSeqOf(entries),
       pending: toPending(messages, views),
-      decisions: confirmations.map((confirmation) => toConfirmation(confirmation, views)),
+      decisions,
       agents: toAgentTree(views, threadId),
-      drafts,
+      focus: focusOf(
+        rootHistory.map(toHistoryEntry),
+        decisions.filter((decision) => decision.agentId === threadId),
+      ),
     };
+  }
+
+  /** The root's history from its first entry, page by page. */
+  private async wholeHistory(threadId: string, ownerId: string): Promise<AgentHistoryEntry[]> {
+    const entries: AgentHistoryEntry[] = [];
+    for (;;) {
+      const page = await this.agents.sessions.history({
+        agentId: threadId,
+        ownerId,
+        afterSeq: entries.at(-1)?.seq ?? 0,
+        limit: HISTORY_PAGE_SIZE,
+      });
+      entries.push(...page);
+      if (page.length < HISTORY_PAGE_SIZE) return entries;
+    }
   }
 
   /** The agents of the conversation under its root (AC-24.1). */

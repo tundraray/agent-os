@@ -39,7 +39,7 @@ export interface QuestionVectorDeps {
 type EmbedAttempt = EmbedResult | { readonly kind: 'error'; readonly message: string };
 
 /**
- * The question to embed now (KD-6, Invariant 12), for a session that learns: a coordinator's step that
+ * The question to embed now (KD-6, Invariant 12), for a session that learns: a deep agent's step that
  * delivers a `user_message` other than the stored source — the last such message; no question row yet
  * (the session may exist before its first step) — the session's `task`; otherwise nothing. A step that
  * is both the first and delivers a message embeds only the message: it is the newer question.
@@ -51,7 +51,7 @@ function questionToEmbed(
   stored: KnowledgeQuestionRow | undefined,
 ): SessionQuestion | null {
   const employees =
-    snapshot.kind === 'workflow' ? messages.filter((message) => message.kind === userMessage) : [];
+    snapshot.kind === 'deep_agent' ? messages.filter((message) => message.kind === userMessage) : [];
   const latest = employees[employees.length - 1];
   if (latest !== undefined && latest.messageId !== stored?.source) {
     return { source: latest.messageId, text: UserMessageTextSchema.parse(latest.payload).text };
@@ -61,7 +61,7 @@ function questionToEmbed(
 }
 
 /**
- * The outcome for the workflow's vector row (Contract «Строка векторов workflow»): success — no reason;
+ * The outcome for the deep agent's vector row (Contract «Строка векторов workflow»): success — no reason;
  * a refusal — its reason; `owner_disabled` (one employee's refusal) and a thrown error — none, log only.
  */
 function outcomeOf(attempt: EmbedAttempt): EmbeddingOutcome | null {
@@ -128,7 +128,7 @@ export async function embedQuestion(
       vector: vector === undefined ? null : [...vector],
     });
     if (outcome === null) return;
-    // A workflow deleted during the run takes its vector row with it: the outcome is lost, not the step.
+    // A deep agent deleted during the run takes its vector row with it: the outcome is lost, not the step.
     await tx
       .transaction((savepoint) => writeQuestionOutcome(savepoint, recordId, outcome))
       .catch((error: unknown) => {

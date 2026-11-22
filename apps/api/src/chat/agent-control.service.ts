@@ -13,20 +13,19 @@ import {
   type AwaitingCount,
   type DecisionRequest,
   type DecisionResponse,
+  type DeepAgentRunView,
   type HistoryEntry,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type RunTaskListView,
   type SpendResponse,
   type StopResponse,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 import { monthOf, type Runtime } from '@agent-os/runtime';
-import type { Workflows } from '@agent-os/workflows';
 import { AGENTS } from '../agents/agents.tokens';
 import { isUuid } from '../common/is-uuid';
 import { RUNTIME } from '../runtime/runtime.tokens';
-import { WORKFLOWS } from '../workflows/workflows.tokens';
 import { httpError } from './chat.errors';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
 import {
@@ -35,8 +34,8 @@ import {
   toAgentView,
   toConfirmation,
   toHistoryEntry,
+  toDeepAgentRunView,
   toPending,
-  toWorkflowRunView,
 } from './conversation-view';
 import { decodeRowCursor, toThreadSummary } from './conversations.service';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor';
@@ -55,14 +54,13 @@ type ListedAgent = {
  * DC-3). Every agent operation starts with `agents.sessions.get` (the owner check of the package) and
  * refuses a conversation's root: for the web the root is not an agent. A malformed, missing or foreign
  * id answers as a missing one. Agents and the conversations — their root sessions — are reached only
- * through `agents`, `workflows` and `runtime`.
+ * through `agents` and `runtime`.
  */
 @Injectable()
 export class AgentControlService {
   constructor(
     @Inject(AGENTS) private readonly agents: Agents,
     @Inject(RUNTIME) private readonly runtime: Runtime,
-    @Inject(WORKFLOWS) private readonly workflows: Workflows,
     @Inject(AGENT_LIST_PAGE_SIZE) private readonly pageSize: number,
   ) {}
 
@@ -174,10 +172,16 @@ export class AgentControlService {
     return { entries, nextAfterSeq: more ? last.seq : null };
   }
 
-  /** A coordinator's workflow run (`WorkflowRunView`); any other agent is `RUN_NOT_FOUND` (from `workflows`). */
-  async run(agentId: string, ownerId: string): Promise<WorkflowRunView> {
+  /** A deep agent's run (`DeepAgentRunView`); any other agent is `RUN_NOT_FOUND` (from `agents`). */
+  async run(agentId: string, ownerId: string): Promise<DeepAgentRunView> {
     await this.agent(agentId, ownerId);
-    return toWorkflowRunView(await this.workflows.runs.get(agentId, ownerId));
+    return toDeepAgentRunView(await this.agents.sessions.run(agentId, ownerId));
+  }
+
+  /** The agent's task list in number order; an agent without one has an empty list (deep-agents KD-5). */
+  async tasks(agentId: string, ownerId: string): Promise<RunTaskListView> {
+    await this.agent(agentId, ownerId);
+    return this.agents.sessions.taskList(agentId, ownerId);
   }
 
   /** A message to the agent; to a finished agent it continues with its history. */

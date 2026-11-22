@@ -91,6 +91,32 @@ export async function findUserById(
   return row;
 }
 
+/** A column written with its table name: drizzle drops it in a query over one table, and the subquery below needs it. */
+const col = (table: string, column: string) =>
+  sql`${sql.identifier(table)}.${sql.identifier(column)}`;
+
+/**
+ * The admin right of the employee row: the personal mark or a membership in a role with the admin
+ * right. The one rule of the session (`SessionStore.find`) and of `IdentityDirectory.isAdmin`.
+ */
+export const IS_ADMIN = sql<boolean>`(${col('identity_users', 'is_admin')} or exists (
+  select 1 from ${identityRoleMembers}
+  join ${identityRoles} on ${col('identity_roles', 'id')} = ${col('identity_role_members', 'role_id')}
+  where ${col('identity_role_members', 'user_id')} = ${col('identity_users', 'id')} and ${col('identity_roles', 'is_admin')}
+))`;
+
+/** Whether the employee has the admin right now; `false` for an unknown one. */
+export async function hasAdminRight(
+  executor: Executor,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await executor
+    .select({ isAdmin: IS_ADMIN })
+    .from(identityUsers)
+    .where(eq(identityUsers.id, userId));
+  return row?.isAdmin ?? false;
+}
+
 /** Of the employee ids given, those of employees that exist. */
 export async function existingUserIds(
   executor: Executor,

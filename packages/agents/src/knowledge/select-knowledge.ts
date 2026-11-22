@@ -22,7 +22,7 @@ type WithoutComputed<Item> = Item extends unknown ? Omit<Item, 'state' | 'placem
  */
 export type GraphItem = WithoutComputed<KnowledgeItem> & { readonly outdated: boolean };
 
-/** Whether the workflow still has the tool: in the registry and on the team's servers (`*` — any), KD-5. */
+/** Whether the deep agent still has the tool: in the registry and on the team's servers (`*` — any), KD-5. */
 export type ToolAlive = (server: string, tool: string) => boolean;
 
 export type SelectionSettings = Pick<KnowledgeSettings, 'limitTokens' | 'lessonsEnabled'>;
@@ -82,9 +82,9 @@ export function selectKnowledge({ items, settings, toolAlive, closeness }: Selec
 export interface EmbeddingState {
   /** `Agents.embeddings.model()`: the current model, `null` on `model_not_configured`. */
   readonly model: string | null;
-  /** The workflow's last embedding attempt, when it failed: its reason and model. */
+  /** The deep agent's last embedding attempt, when it failed: its reason and model. */
   readonly lastFailure: { readonly reason: EmbeddingFailureReason; readonly model: string } | null;
-  /** `list` of the workflow's collection. */
+  /** `list` of the deep agent's collection. */
   readonly vectors: readonly Pick<KnowledgeVectorKey, 'key' | 'model'>[];
 }
 
@@ -92,7 +92,7 @@ export interface KnowledgeViewPartsInput {
   readonly items: readonly GraphItem[];
   readonly settings: SelectionSettings;
   readonly toolAlive: ToolAlive;
-  /** The flag of the workflow's last version. */
+  /** The flag of the deep agent's last version. */
   readonly selfLearning: boolean;
   readonly embedding: EmbeddingState;
 }

@@ -89,5 +89,5 @@ export function formatRecordModel(t: FormatsTranslator, modelId: string | null, 
   return t("defaultModelNamed", { model: formatModel(defaultModel, names) });
 }
 
-/** The workflow brief's three parts in card order (MC-9, MC-20); each reads `agents.brief.{part}`. */
+/** The deep agent brief's three parts in card order (MC-9, MC-20); each reads `agents.brief.{part}`. */
 export const BRIEF_PARTS = ["question", "boundaries", "result"] as const;

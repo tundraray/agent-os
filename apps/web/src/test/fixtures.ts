@@ -13,13 +13,16 @@ import {
   CopyResultSchema,
   CatalogModelSchema,
   CurrentUserSchema,
-  DraftViewSchema,
+  DeepAgentContentSchema,
+  DeepAgentRunViewSchema,
   GrantSchema,
   HistoryEntrySchema,
   KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
   KnowledgeItemSchema,
   KnowledgeSettingsSchema,
   KnowledgeViewSchema,
+  LIBRARY_RECORD_CONFIRMATION,
+  LibraryRecordCardSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
   ModelDefaultsSchema,
@@ -39,8 +42,6 @@ import {
   TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
   TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
   ToolResultSettingsSchema,
-  WorkflowContentSchema,
-  WorkflowRunViewSchema,
   modelProvider,
   type AdminUserDetail,
   type AdminUserPage,
@@ -56,13 +57,14 @@ import {
   type ConversationView,
   type CopyResult,
   type CurrentUser,
-  type DraftView,
-  type ExecutorSourceState,
+  type DeepAgentContent,
+  type DeepAgentRunView,
   type Grant,
   type HistoryEntry,
   type KnowledgeItem,
   type KnowledgeSettings,
   type KnowledgeView,
+  type LibraryRecordCard,
   type McpServerSummary,
   type McpServerView,
   type McpToolView,
@@ -77,12 +79,11 @@ import {
   type RoleDetail,
   type RoleSummary,
   type RunOrigin,
+  type RunTaskView,
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
   type ToolResultSettings,
-  type WorkflowContent,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 
 const FIXTURE_TIME = '2026-10-28T10:00:00.000Z';
@@ -145,19 +146,19 @@ function agentView(overrides: Partial<AgentView> & Pick<AgentView, 'agentId'>): 
   });
 }
 
-/** The id of the workflow record `research` «Исследование» the workflow fixtures start from. */
-export const WORKFLOW_RECORD_ID = '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71';
+/** The id of the deep agent record `research` «Исследование» the deep agent fixtures start from. */
+export const DEEP_AGENT_RECORD_ID = '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71';
 
-/** The origin of a workflow coordinator: the system workflow «Исследование», version 1. */
-export function workflowOrigin(): RunOrigin {
+/** The origin of a deep agent's run: the system deep agent «Исследование», version 1. */
+export function deepAgentOrigin(): RunOrigin {
   return RunOriginSchema.parse({
-    recordId: WORKFLOW_RECORD_ID,
-    kind: 'workflow',
+    recordId: DEEP_AGENT_RECORD_ID,
+    kind: 'deep_agent',
     version: 1,
     name: 'Исследование',
     author: null,
     builtinKey: 'research',
-    executor: null,
+    subagent: null,
   });
 }
 
@@ -253,6 +254,28 @@ export function confirmation(overrides: Partial<Confirmation> & Pick<Confirmatio
   });
 }
 
+/**
+ * An open record card of the chat (`library.record`, deep-agents DA-11): the conversation's root `root` asks to
+ * `{action}_record`; the arguments are the record's id and the definition after the change, as the model wrote them.
+ */
+export function recordConfirmation(
+  card: LibraryRecordCard,
+  overrides: Partial<Confirmation> & Pick<Confirmation, 'decisionId'>,
+): Confirmation {
+  const content = LibraryRecordCardSchema.parse(card);
+  const recordId = content.action === 'create' ? {} : { recordId: content.recordId };
+  return confirmation({
+    agentId: 'root',
+    description: 'Чат',
+    kind: LIBRARY_RECORD_CONFIRMATION,
+    tool: `${content.action}_record`,
+    server: null,
+    args: { ...recordId, ...(content.next === null ? {} : { kind: content.kind, ...content.next }) },
+    content,
+    ...overrides,
+  });
+}
+
 /** GET /threads/:id/history of an idle conversation `t1` with root `root` and nothing read yet. */
 export function conversationView(overrides: Partial<ConversationView> = {}): ConversationView {
   return ConversationViewSchema.parse({
@@ -263,7 +286,7 @@ export function conversationView(overrides: Partial<ConversationView> = {}): Con
     pending: [],
     decisions: [],
     agents: [],
-    drafts: [],
+    focus: null,
     ...overrides,
   });
 }
@@ -598,24 +621,25 @@ export function agentContent(overrides: Partial<AgentContent> = {}): AgentConten
   });
 }
 
-/** Content of a workflow record: one executor «Аналитик» without a source; the coordinator writes the answer. */
-export function workflowContent(overrides: Partial<WorkflowContent> = {}): WorkflowContent {
-  return WorkflowContentSchema.parse({
-    coordinator: { rules: '', model: FIXTURE_RECORD_MODEL, maxTurns: 30 },
-    executors: [
+/** Content of a deep agent record: one subagent «Аналитик»; the deep agent writes the answer itself. */
+export function deepAgentContent(overrides: Partial<DeepAgentContent> = {}): DeepAgentContent {
+  return DeepAgentContentSchema.parse({
+    prompt: 'Разбери ошибки командой и напиши сводку.',
+    servers: [],
+    model: FIXTURE_RECORD_MODEL,
+    maxTurns: 30,
+    subagents: [
       {
         name: 'Аналитик',
-        role: 'Ищет причины ошибок',
+        description: 'Ищет причины ошибок',
         prompt: 'Найди причины ошибок.',
         servers: ['logs'],
         model: FIXTURE_RECORD_MODEL,
         maxTurns: 20,
         maxRuns: 3,
-        tools: [],
-        source: null,
       },
     ],
-    finalExecutor: null,
+    finalSubagent: null,
     ...overrides,
   });
 }
@@ -645,14 +669,13 @@ export function recordSummary(overrides: Partial<RecordSummary> & Pick<RecordSum
 /** GET /api/library/:id: the summary fields of `recordSummary` with the content of its kind. */
 export function recordDetail(
   overrides: Partial<RecordSummary> &
-    Pick<RecordSummary, 'id'> & { content?: AgentContent | WorkflowContent; executorSources?: ExecutorSourceState[] },
+    Pick<RecordSummary, 'id'> & { content?: AgentContent | DeepAgentContent },
 ): RecordDetail {
-  const { content, executorSources = [], ...summary } = overrides;
+  const { content, ...summary } = overrides;
   const row = recordSummary(summary);
   return RecordDetailSchema.parse({
     ...row,
-    content: content ?? (row.kind === 'workflow' ? workflowContent() : agentContent()),
-    executorSources,
+    content: content ?? (row.kind === 'deep_agent' ? deepAgentContent() : agentContent()),
   });
 }
 
@@ -667,39 +690,18 @@ export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
   });
 }
 
-/** A pending draft `d1` of a new agent record at the `draft_record` call `c1`. */
-export function draftView(
-  overrides: Partial<Omit<DraftView, 'kind' | 'content'>> & {
-    kind?: DraftView['kind'];
-    content?: AgentContent | WorkflowContent;
-  } = {},
-): DraftView {
-  const { kind = 'agent', content, ...fields } = overrides;
-  return DraftViewSchema.parse({
-    draftId: 'd1',
-    callId: 'c1',
-    name: 'Разбор логов',
-    description: 'Ищет причины ошибок в логах',
-    recordId: null,
-    baseVersion: null,
-    state: 'pending',
-    refusal: null,
-    savedRecordId: null,
-    createdAt: FIXTURE_TIME,
-    resolvedAt: null,
-    ...fields,
-    kind,
-    content: content ?? (kind === 'workflow' ? workflowContent() : agentContent()),
-  });
+/** GET /agents/:id/run of the deep agent `deep` «Исследование»: one subagent «Аналитик», nothing called yet. */
+/** One item of a deep agent's task list (`GET /api/agents/:agentId/tasks`). */
+export function runTask(overrides: Partial<RunTaskView> & Pick<RunTaskView, 'number' | 'text'>): RunTaskView {
+  return { status: 'waiting', createdAt: fixtureTime(10), updatedAt: fixtureTime(10), ...overrides };
 }
 
-/** GET /agents/:id/run of the coordinator `coord` of «Исследование»: one executor «Аналитик», nothing called yet. */
-export function workflowRunView(overrides: Partial<WorkflowRunView> = {}): WorkflowRunView {
-  return WorkflowRunViewSchema.parse({
-    origin: workflowOrigin(),
+export function deepAgentRunView(overrides: Partial<DeepAgentRunView> = {}): DeepAgentRunView {
+  return DeepAgentRunViewSchema.parse({
+    origin: deepAgentOrigin(),
     brief: { question: 'Почему падают платежи?', boundaries: '', result: '' },
-    coordinator: agentView({ agentId: 'coord', name: 'Исследование', origin: workflowOrigin() }),
-    team: [{ name: 'Аналитик', role: 'Ищет причины ошибок', maxRuns: 3, final: false }],
+    deepAgent: agentView({ agentId: 'deep', name: 'Исследование', origin: deepAgentOrigin() }),
+    team: [{ name: 'Аналитик', maxRuns: 3, final: false }],
     steps: [],
     limitRefusals: [],
     ...overrides,

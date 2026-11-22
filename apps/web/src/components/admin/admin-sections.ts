@@ -17,7 +17,7 @@ const ICON: Readonly<Record<AdminSection, LucideIcon>> = {
   library: LibraryBigIcon,
 };
 
-/** The panel's sections in sidebar order (AD-01, MC-18; the agents and workflows section — AL-01). */
+/** The panel's sections in sidebar order (AD-01, MC-18; the agents and deep agents section — AL-01). */
 export const ADMIN_SECTIONS: readonly AdminSectionEntry[] = ADMIN_SECTION_IDS.map((section) => ({
   section,
   Icon: ICON[section],

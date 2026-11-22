@@ -1,12 +1,10 @@
 import {
-  WORKFLOWS_BRIEF_CONFIRMATION,
+  AGENTS_BRIEF_CONFIRMATION,
   type ChipRecord,
   type Confirmation,
   type ConversationView,
   type AgentPageView,
   type DecisionRequest,
-  type DraftActionRequest,
-  type DraftView,
   type HistoryEntry,
   type InterruptResponse,
   type RestartResponse,
@@ -70,12 +68,6 @@ export type FeedStore = StoreApi<FeedState> & {
   /** Stops the agent's work; a message is never part of it. Rejects when the server did not take it. */
   interrupt: () => Promise<void>;
   decide: (decisionId: string, approve: boolean, args?: Record<string, unknown>) => Promise<void>;
-  /**
-   * A record draft's action (KD-6), then a re-read. Resolves with the draft as the server answered — a refused
-   * save is a 200 with `refusal` — or `null` when another tab had resolved it (409 `DRAFT_RESOLVED`): the
-   * re-read shows that outcome, with no error (DC-9). Rejects on any other failure.
-   */
-  draftAction: (draftId: string, action: DraftActionRequest) => Promise<DraftView | null>;
   stop: () => Promise<void>;
   /** Resolves with the new agent the caller opens. */
   restart: () => Promise<RestartResponse>;
@@ -96,12 +88,12 @@ export type CreateFeedStoreInput = {
   onActivity?: () => void;
 };
 
-/** MC-25 for decisions that opened since the previous read; a workflow task — custom-agents MC-21. */
+/** MC-25 for decisions that opened since the previous read; a deep agent's brief — deep-agents MC-22. */
 function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): Announcement | null {
   if (opened.length === 0) return null;
   if (opened.length > 1) return { key: "announce.decisionsOpened", values: { count: opened.length } };
   const [decision] = opened;
-  if (decision.kind === WORKFLOWS_BRIEF_CONFIRMATION) return { key: "announce.taskReady" };
+  if (decision.kind === AGENTS_BRIEF_CONFIRMATION) return { key: "announce.briefReady" };
   const byChat = view.kind === "thread" && decision.agentId === view.chat.rootAgentId;
   return {
     key: "announce.decisionRequested",
@@ -112,13 +104,6 @@ function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): 
       tool: decision.server === null ? { builtinTool: decision.tool } : decision.tool,
     },
   };
-}
-
-/** Waiting drafts a re-read found for the first time (MC-19 «Черновик «{имя}» готов»). */
-function newDrafts(previous: FeedView, next: FeedView): DraftView[] {
-  if (next.kind !== "thread") return [];
-  const known = new Set(previous.kind === "thread" ? previous.drafts.map((d) => d.draftId) : []);
-  return next.drafts.filter((d) => d.state === "pending" && !known.has(d.draftId));
 }
 
 export function createFeedStore({
@@ -161,9 +146,6 @@ export function createFeedStore({
     const opened = next.decisions.filter((d) => d.status === "open" && !known.has(d.decisionId));
     const decision = decisionAnnouncement(next, opened);
     if (decision !== null) announcer.getState().announce(decision.key, decision.values);
-    for (const draft of newDrafts(previous, next)) {
-      announcer.getState().announce("announce.draftReady", { name: draft.name });
-    }
     for (const entry of added) {
       if (entry.kind === "child_report") {
         announcer.getState().announce("announce.reportArrived", { description: entry.content.description });
@@ -326,11 +308,6 @@ export function createFeedStore({
     return source.agentId;
   }
 
-  function threadOnly(name: string): string {
-    if (source.kind !== "thread") throw new Error(`${name} is a conversation command`);
-    return source.threadId;
-  }
-
   return Object.assign(store, {
     load: () => reads.request(),
     applyDelta: (part: DraftPart) => {
@@ -362,22 +339,6 @@ export function createFeedStore({
       const body: DecisionRequest = args === undefined ? { approve } : { approve, args };
       await command("decide", () => api.decide(decisionId, body), { decisionId });
       await reads.request();
-    },
-    draftAction: async (draftId: string, action: DraftActionRequest) => {
-      const threadId = threadOnly("draft");
-      // A failure is logged by `command` with `threadId`, `draftId`, the action and its code.
-      const fields = { draftId, action: action.action };
-      let draft: DraftView;
-      try {
-        draft = await command("draft", () => api.draftAction(threadId, draftId, action), fields);
-      } catch (error) {
-        if (!isApiRequestError(error) || error.code !== "DRAFT_RESOLVED") throw error;
-        await reads.request();
-        return null;
-      }
-      logger.info("feed command draft done", { threadId, ...fields, outcome: draft.state, refusal: draft.refusal });
-      await reads.request();
-      return draft;
     },
     stop: async () => {
       const agentId = agentOnly("stop");

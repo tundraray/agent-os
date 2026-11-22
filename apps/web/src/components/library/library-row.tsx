@@ -40,10 +40,10 @@ type RowNote = { icon: LucideIcon; text: string };
 /** The row's notes (library-row.md, States): what will happen when the viewer runs the record. */
 function rowNotes(t: LibraryTranslator, record: RecordSummary, format: Formatter): RowNote[] {
   const notes: RowNote[] = [];
-  // The record's and its executors' systems together: the viewer's run works without each of them.
+  // The record's and its subagents' systems together: the viewer's run works without each of them.
   const servers = [...new Set(record.missingRights.flatMap((right) => right.servers))];
   if (servers.length > 0) notes.push({ icon: CircleMinus, text: systemsText(t, servers, record.kind) });
-  const model = record.missingRights.find((right) => right.executor === null && right.model !== null)?.model;
+  const model = record.missingRights.find((right) => right.subagent === null && right.model !== null)?.model;
   if (model != null) {
     notes.push({ icon: CircleMinus, text: t("row.modelUnavailable", { model: formatModel(model), kind: record.kind }) });
   }
@@ -125,6 +125,7 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
         pending={copy.pending}
         describedBy={copy.error === null ? undefined : errorId}
         onUseInChat={() => inChat({ record: { id: record.id, kind: record.kind, name } })}
+        onRefine={() => inChat({ text: t("editor.header.refineTemplate", { name }) })}
         onOpen={() => router.push(recordPath(record.id))}
         onOpenInPanel={() => router.push(adminRecordPath("library", record.id))}
         onShare={() => setSharing(true)}
@@ -150,6 +151,8 @@ type RowMenuProps = {
   pending: boolean;
   describedBy: string | undefined;
   onUseInChat: () => void;
+  /** «Доработать в чате» of one's own deep agent (deep-agents UXRD DA-01, MC-26). */
+  onRefine: () => void;
   onOpen: () => void;
   onShare: () => void;
   onCopy: () => void;
@@ -161,7 +164,11 @@ function RowMenu({ record, name, noRoles, pending, describedBy, ...on }: RowMenu
   const t = useTranslations("library");
   const tErrors = useTranslations("errors");
   const shareReasonId = useId();
+  const refineReasonId = useId();
   const shareBlocked = shareBlockedReason(tErrors, record, noRoles);
+  // The chat changes only what its author alone sees; the agent's own item is in its editor (library-row.md).
+  const refinable = record.mine && record.kind === "deep_agent";
+  const alone = record.audience.everyone !== true && record.audience.roles.length === 0;
   // A company record changes only in the panel: an administrator gets the way there (library-row.md).
   const inPanel = useAdminRight() === "admin" && record.author === null;
   return (
@@ -182,6 +189,21 @@ function RowMenu({ record, name, noRoles, pending, describedBy, ...on }: RowMenu
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-45">
         {canUseInChat(record) && <DropdownMenuItem onClick={on.onUseInChat}>{t("row.useInChat")}</DropdownMenuItem>}
+        {refinable && (
+          <DropdownMenuItem
+            disabled={!alone}
+            title={alone ? undefined : t("card.refineUnavailable")}
+            aria-describedby={alone ? undefined : refineReasonId}
+            onClick={on.onRefine}
+          >
+            {t("editor.header.refine")}
+            {!alone && (
+              <span id={refineReasonId} className="sr-only">
+                {t("card.refineUnavailable")}
+              </span>
+            )}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={on.onOpen}>{t("open")}</DropdownMenuItem>
         {/* Under a ban the server says `canShare: false`, yet the owner sees the item with the reason (MC-14). */}
         {record.mine && (record.canShare || record.ban !== null) && (

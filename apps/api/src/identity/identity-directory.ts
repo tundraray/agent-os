@@ -7,6 +7,7 @@ import { existingRoleIds } from './roles.repository';
 import {
   existingUserIds,
   findUserById,
+  hasAdminRight,
   rolesOfUsers,
 } from './users.repository';
 
@@ -42,6 +43,12 @@ export class IdentityDirectory {
     if (!isUuid(userId)) return false;
     const user = await findUserById(this.db, userId);
     return user?.status === UserStatusSchema.enum.active;
+  }
+
+  /** Whether the employee has the admin right now, by the rule of the session; `false` for an unknown one. */
+  async isAdmin(userId: string): Promise<boolean> {
+    if (!isUuid(userId)) return false;
+    return hasAdminRight(this.db, userId);
   }
 
   /** Of the roles and employees named, those that exist; an id that is not a UUID names nobody. */

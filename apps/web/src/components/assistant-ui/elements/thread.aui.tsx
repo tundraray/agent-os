@@ -23,8 +23,7 @@ import {
 } from "@/components/assistant-ui/elements/tool-group.aui";
 import { AgentReport } from "@/components/agents/agent-report";
 import { DecisionCard } from "@/components/agents/decision-card";
-import { DraftCard } from "@/components/agents/draft-card";
-import { EventLine } from "@/components/agents/event-line";
+import { EventLine, PlanNoticeLine } from "@/components/agents/event-line";
 import { InterruptButton } from "@/components/agents/interrupt-button";
 import { QueueTray } from "@/components/agents/queue-tray";
 import { RunCard } from "@/components/agents/run-card";
@@ -39,9 +38,9 @@ import {
   FEED_PART,
   trayEntries,
   type DecisionPartData,
-  type DraftPartData,
   type EventPartData,
   type OptimisticEntry,
+  type PlanNoticePartData,
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
@@ -147,7 +146,10 @@ const reasoningDuration = (timing: ThreadGroupPart["timing"]) =>
  * renders after the feed in place of the tray and the composer.
  * `FeedHeader` renders above the first message of the feed (the agent page's
  * meta line and inherited history). `TaskBrief`, when set, replaces the task's
- * text with the workflow brief under the caption «Задание» (AV-03, MC-21).
+ * text with the deep agent brief under the caption «Задание» (AV-03, deep-agents MC-22).
+ * `Feed`, when set, takes the place of the whole feed — header, earlier entries
+ * and messages — while the tray and the composer stay (a deep agent's tab
+ * «Задачи», deep-agents DA-04).
  */
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
@@ -164,6 +166,7 @@ export type ThreadComponents = {
   DeletedNotice?: ComponentType | undefined;
   FeedHeader?: ComponentType | undefined;
   TaskBrief?: ComponentType | undefined;
+  Feed?: ComponentType | undefined;
 };
 
 const messageGroupBy = groupPartByType({
@@ -283,7 +286,7 @@ const ThreadRoot: FC<{
   placeholder: string;
   seedTarget: SeedTarget | undefined;
 }> = ({ isEmpty, historyPending, placeholder, seedTarget }) => {
-  const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader } = useContext(ThreadComponentsContext);
+  const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader, Feed } = useContext(ThreadComponentsContext);
 
   return (
     <ThreadPrimitive.Root
@@ -306,7 +309,11 @@ const ThreadRoot: FC<{
             isEmpty && "md:justify-center",
           )}
         >
-          {historyPending ? (
+          {Feed ? (
+            <div data-slot="aui_feed-replacement" className="mb-6 px-2">
+              <Feed />
+            </div>
+          ) : historyPending ? (
             <ThreadHistorySkeleton />
           ) : (
             <>
@@ -436,21 +443,8 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
     <DecisionCard
       confirmation={data.confirmation}
       byChat={data.byChat}
+      saved={data.saved}
       onDecide={(approve, args) => feed.decide(data.confirmation.decisionId, approve, args)}
-    />
-  );
-};
-
-const DraftPart: DataMessagePartComponent<DraftPartData> = ({ data }) => {
-  const feed = useFeed();
-  // Draft parts come only from a conversation's feed, whose store sends the draft's actions.
-  if (feed === null) return null;
-  return (
-    <DraftCard
-      draft={data.draft}
-      previous={data.previous}
-      threadId={data.threadId}
-      onAction={(action) => feed.draftAction(data.draft.draftId, action)}
     />
   );
 };
@@ -463,6 +457,10 @@ const EventPart: DataMessagePartComponent<EventPartData> = ({ data }) => (
   <EventLine data={data} />
 );
 
+const PlanNoticePart: DataMessagePartComponent<PlanNoticePartData> = ({ data }) => (
+  <PlanNoticeLine data={data} />
+);
+
 /** The feed's `data-*` parts by name (spike S-1, e): each renders its own component. */
 const FEED_PART_COMPONENTS = {
   data: {
@@ -471,7 +469,7 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.decision]: DecisionPart,
       [FEED_PART.report]: ReportPart,
       [FEED_PART.event]: EventPart,
-      [FEED_PART.draft]: DraftPart,
+      [FEED_PART.planNotice]: PlanNoticePart,
     },
   },
 };
@@ -1156,7 +1154,7 @@ const UserMessage: FC = () => {
   // custom-agents KD-5: the record chip the message was sent with (`FeedMessageMeta.record`).
   const sentRecord = useAuiState((s): unknown => s.message.metadata.custom["record"]);
   const record = isChipRecord(sentRecord) ? sentRecord : null;
-  // AV-03: a workflow coordinator's task reads as its brief.
+  // AV-03: a deep agent's task reads as its brief.
   const Brief = isTask ? TaskBrief : undefined;
   const t = useTranslations("chat");
   const sourceCaptionText = useSourceCaption();

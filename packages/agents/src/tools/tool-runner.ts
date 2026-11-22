@@ -27,7 +27,7 @@ import { type Session, sessionInputOf } from '../store/sessions.repository';
 import { callRecords } from '../store/call-records.repository';
 import type { StoredToolResult, ToolResultSettingsRow } from '../store/tool-results.repository';
 import { cutText, maskValue, wrapperText } from './large-result';
-import type { InCommitAgentTool, StartChild, ToolCaller } from './tool';
+import type { InCommitAgentTool, StartChild, ToolCaller, ToolReview } from './tool';
 import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry';
 
 /** One tool call of a model answer, as the model wrote it. */
@@ -160,6 +160,8 @@ export type ToolExecution =
       readonly reason: ToolRefusalReason;
       /** The refused model of a refusal by model; absent otherwise. */
       readonly refusalDetail?: { readonly model: string } | null;
+      /** What the model reads after `[refused: <reason>]` (deep-agents KD-4); absent — the reason alone. */
+      readonly text?: string;
     };
 
 /**
@@ -201,6 +203,11 @@ export interface ConfirmationRequest {
     readonly content: unknown;
   };
 }
+
+/** The card of a call that needs a decision, or the refusal its tool's `review` gave before any card (deep-agents KD-3). */
+export type ConfirmationCard =
+  | { readonly kind: 'request'; readonly request: ConfirmationRequest }
+  | Extract<ToolReview, { readonly kind: 'refused' }>;
 
 /** What the spawn helper of one in-commit call is bound to. */
 export interface StartChildScope {
@@ -311,14 +318,16 @@ export interface ToolRunner {
    */
   needsConfirmation(call: ResolvedCall): boolean;
   /**
-   * The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. `tools` — the
-   * session's tool set, passed to the tool's `content` (code-execution KD-10).
+   * The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. A tool with
+   * `review` is asked first, outside any transaction: its refusal is the answer and no request is made, its
+   * card is the request's content (deep-agents KD-3). Without `review` the content is the tool's
+   * `content(args, tools)` — `tools` the session's tool set (code-execution KD-10).
    */
   confirmationRequest(
     call: ResolvedCall,
     session: Pick<Session, 'description'>,
     tools: readonly SessionTool[],
-  ): ConfirmationRequest;
+  ): Promise<ConfirmationCard>;
   /** Runs an MCP tool or an `outside` tool, outside any transaction, under the step's signal. */
   runOutside(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution>;
   /**
@@ -340,7 +349,7 @@ export interface ToolRunner {
    * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
-   * an `outside` tool in its input (code-execution KD-10).
+   * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3).
    */
   sendConfirmed(
     call: ResolvedCall,
@@ -708,6 +717,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     prepared: unknown,
     tx: RuntimeTx,
     effects: StepEffects,
+    confirmed?: unknown,
   ): Promise<ToolExecution> {
     return call.tool.tool.execute({
       callId: call.callId,
@@ -717,6 +727,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       effects,
       startChild: options.startChildFor({ tx, effects, caller: call.caller }),
       prepared,
+      ...(confirmed === undefined ? {} : { confirmed }),
     });
   }
 
@@ -800,22 +811,33 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       return confirmation.required === undefined || confirmation.required(call.args);
     },
 
-    confirmationRequest(call, session, tools) {
+    async confirmationRequest(call, session, tools) {
       const { tool, server } = callTarget(call.tool);
       const confirmation = call.tool.kind === 'agent' ? call.tool.tool.confirmation : undefined;
+      const review: ToolReview =
+        confirmation?.review === undefined
+          ? {
+              kind: 'card',
+              content:
+                confirmation === undefined
+                  ? { toolDescription: call.tool.description }
+                  : confirmation.content(call.args, tools),
+            }
+          : await confirmation.review(call.args, call.caller);
+      if (review.kind === 'refused') return review;
       return {
-        kind: confirmation?.kind ?? AGENTS_TOOL_CONFIRMATION,
-        payload: {
-          agentId: call.caller.agentId,
-          description: session.description,
-          callId: call.callId,
-          tool,
-          server,
-          args: call.args,
-          content:
-            confirmation === undefined
-              ? { toolDescription: call.tool.description }
-              : confirmation.content(call.args, tools),
+        kind: 'request',
+        request: {
+          kind: confirmation?.kind ?? AGENTS_TOOL_CONFIRMATION,
+          payload: {
+            agentId: call.caller.agentId,
+            description: session.description,
+            callId: call.callId,
+            tool,
+            server,
+            args: call.args,
+            content: review.content,
+          },
         },
       };
     },
@@ -871,7 +893,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
           commit: async (tx, effects) => {
             const startedAt = Date.now();
             const execution: ToolExecution | NotSent = (await callRecords.markSent(tx, key))
-              ? await runInCommit(inCommit, prepared, tx, effects)
+              ? await runInCommit(inCommit, prepared, tx, effects, confirmed)
               : { kind: 'not_sent', reason: 'not_awaiting' };
             logCall(ctx.logger, loggedCall(sent), execution, startedAt);
             return execution;

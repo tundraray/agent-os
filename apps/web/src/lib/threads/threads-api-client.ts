@@ -6,16 +6,16 @@ import {
   AwaitingCountSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
-  DraftViewSchema,
+  DeepAgentRunViewSchema,
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
+  RunTaskListViewSchema,
   SendMessageResponseSchema,
   SpendResponseSchema,
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunViewSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -23,19 +23,18 @@ import {
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
-  type DraftActionRequest,
-  type DraftView,
+  type DeepAgentRunView,
   type InheritedHistory,
   type InterruptResponse,
   type RenameThreadRequest,
   type RestartResponse,
+  type RunTaskListView,
   type SendMessageRequest,
   type SendMessageResponse,
   type SpendResponse,
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunView,
 } from "@agent-os/contracts";
 import { apiRequest } from "@/lib/api/api-request";
 
@@ -107,23 +106,6 @@ async function sendThreadMessage(
   });
 }
 
-/**
- * Saves, rejects or marks a draft saved in the editor. A refused `save` is a 200 whose draft stays
- * `pending` with its `refusal`; 404 `DRAFT_NOT_FOUND` / `RECORD_NOT_FOUND` and 409 `DRAFT_RESOLVED` throw.
- */
-async function draftAction(
-  threadId: string,
-  draftId: string,
-  action: DraftActionRequest,
-): Promise<DraftView> {
-  return apiRequest({
-    path: `${threadRoute(threadId)}/drafts/${encodeURIComponent(draftId)}`,
-    method: "POST",
-    body: action,
-    schema: DraftViewSchema,
-  });
-}
-
 async function interruptThread(threadId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${threadRoute(threadId)}/interrupt`,
@@ -155,8 +137,13 @@ async function getInherited(agentId: string, afterSeq: number): Promise<Inherite
   });
 }
 
-async function getRun(agentId: string): Promise<WorkflowRunView> {
-  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: WorkflowRunViewSchema });
+async function getRun(agentId: string): Promise<DeepAgentRunView> {
+  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: DeepAgentRunViewSchema });
+}
+
+/** The deep agent's task list by number; empty for an agent without one. */
+async function getRunTasks(agentId: string): Promise<RunTaskListView> {
+  return apiRequest({ path: `${agentRoute(agentId)}/tasks`, schema: RunTaskListViewSchema });
 }
 
 async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {
@@ -217,13 +204,13 @@ export const threadsApiClient = {
   getConversation,
   getThreadAgents,
   sendThreadMessage,
-  draftAction,
   interruptThread,
   listAgents,
   getAwaitingCount,
   getAgentPage,
   getInherited,
   getRun,
+  getRunTasks,
   sendAgentMessage,
   interruptAgent,
   stopAgent,

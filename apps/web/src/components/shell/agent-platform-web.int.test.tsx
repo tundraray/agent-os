@@ -20,7 +20,7 @@
 import {
   DecisionRequestSchema,
   SendMessageRequestSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
+  AGENTS_BRIEF_CONFIRMATION,
   type AgentListPage,
   type AgentPageView,
   type Confirmation,
@@ -51,10 +51,10 @@ import {
   recordDetail,
   threadList,
   threadSummary,
-  WORKFLOW_RECORD_ID,
-  workflowContent,
-  workflowOrigin,
-  workflowRunView,
+  DEEP_AGENT_RECORD_ID,
+  deepAgentContent,
+  deepAgentOrigin,
+  deepAgentRunView,
   type Deferred,
 } from '@/test/fixtures';
 import { createTestLiveSource, type TestLiveSource } from '@/test/live-source';
@@ -272,7 +272,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   //   координатор, и их статусы, и картина обновляется без перезагрузки."
   // AC: AC-22.2 "Given агент работает, when сотрудник смотрит его историю, then новые записи появляются без перезагрузки."
   // AC: DC-1 (design-web) "Лента после перечитывания с afterSeq совпадает с лентой, собранной вживую: записи не повторяются и не пропадают."
-  // Behavior: open /chat/a (view: chat answer, an MCP tool call with its result, a confirmed brief, a workflow run with two steps)
+  // Behavior: open /chat/a (view: chat answer, an MCP tool call with its result, a confirmed brief, a deep agent run with two steps)
   //   → the event source delivers `ready`, then `delta` parts, then a `tree` note whose re-read (afterSeq = last seq) adds a third step
   //   and a report → the draft text is shown until its history entry arrives and is replaced by it; the run card sits under the
   //   brief card with three steps and their statuses; the report is last; no entry appears twice
@@ -280,17 +280,17 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   //   (invariant 2), or the draft is left next to the entry that replaced it
   // Verification items:
   // - draft visible before its history entry exists, gone (not duplicated) after the re-read that brings the entry
-  // - run card is placed directly under the brief card (CV-01), with 3 steps in order, each named by its executor
-  //   (`origin.executor`, custom-agents AC-27.1), with its task and status
+  // - run card is placed directly under the brief card (CV-01), with 3 steps in order, each named by its subagent
+  //   (`origin.subagent`, custom-agents AC-27.1), with its task and status
   // - `GET history` after the `tree` note carries afterSeq equal to the last seq of the first load
-  // - the successful start_agent / start_workflow tool call is not drawn (the run card replaces it, MC-23)
+  // - the successful start_agent / start_deep_agent tool call is not drawn (the run card replaces it, MC-23)
   // @category: core-functionality
   // @dependency: LiveStore (injected event source), FeedStore, toFeed, useFeedRuntime, threadsApiClient, Thread, AssistantMessage, RunCard, MSW
   // @complexity: high
   it('AC-24.1 / AC-22.2 / DC-1: live draft is replaced by its history entry, the run card sits under its brief with three steps, and the re-read repeats no entry', async () => {
-    // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a workflow run with two steps
+    // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a deep agent run with two steps
     const briefArgs = {
-      workflow: WORKFLOW_RECORD_ID,
+      deepAgent: DEEP_AGENT_RECORD_ID,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -299,8 +299,8 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       decisionId: 'd-brief',
       agentId: 'root',
       description: 'Чат',
-      kind: WORKFLOWS_BRIEF_CONFIRMATION,
-      tool: 'start_workflow',
+      kind: AGENTS_BRIEF_CONFIRMATION,
+      tool: 'start_deep_agent',
       server: null,
       args: briefArgs,
       content: briefArgs,
@@ -309,13 +309,13 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       createdAt: fixtureTime(4),
       resolvedAt: fixtureTime(4.5),
     });
-    // Each step carries the team executor it runs as (custom-agents KD-7): the card names steps by it.
-    const step = (agentId: string, executor: string, description: string, status: 'working' | 'completed', at: number) =>
+    // Each step carries the subagent it runs as (custom-agents KD-7): the card names steps by it.
+    const step = (agentId: string, subagent: string, description: string, status: 'working' | 'completed', at: number) =>
       agentNode({
         agentId,
         parentId: 'w1',
         depth: 2,
-        origin: { ...workflowOrigin(), executor },
+        origin: { ...deepAgentOrigin(), subagent },
         description,
         status,
         createdAt: fixtureTime(at),
@@ -324,7 +324,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       agentNode({
         agentId: 'w1',
         name: 'Исследование',
-        origin: workflowOrigin(),
+        origin: deepAgentOrigin(),
         description: 'Исследование',
         status,
         createdAt: fixtureTime(5),
@@ -346,13 +346,13 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
         seq: 4,
         content: {
           text: 'Готовлю бриф.',
-          toolCalls: [{ callId: 'c2', tool: 'start_workflow', server: null, args: briefArgs, state: 'done' }],
+          toolCalls: [{ callId: 'c2', tool: 'start_deep_agent', server: null, args: briefArgs, state: 'done' }],
         },
       }),
       historyEntry({
         kind: 'tool_result',
         seq: 5,
-        content: { callId: 'c2', tool: 'start_workflow', server: null, args: briefArgs, text: 'Запущено' },
+        content: { callId: 'c2', tool: 'start_deep_agent', server: null, args: briefArgs, text: 'Запущено' },
       }),
     ];
     const conversation = serveConversation(
@@ -371,10 +371,10 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       }),
     );
     // The card reads the run's view (custom-agents KD-7); the whole team is called, so no «не вызывался» rows.
-    const team = ['Логи', 'Разбор', 'Сводка'].map((name) => ({ name, role: `Роль ${name}`, maxRuns: 1, final: name === 'Сводка' }));
+    const team = ['Логи', 'Разбор', 'Сводка'].map((name) => ({ name, maxRuns: 1, final: name === 'Сводка' }));
     server.use(
       http.get(`${API}/api/agents/w1/run`, () =>
-        HttpResponse.json(workflowRunView({ coordinator: run('working', []), team })),
+        HttpResponse.json(deepAgentRunView({ deepAgent: run('working', []), team })),
       ),
     );
     const { live } = await openConversation('Смотрю логи.');
@@ -581,25 +581,25 @@ describe('Agent platform web: the decision card (UC-3)', () => {
   // AC: AC-28.2 "Given бриф ждёт, when сотрудник подтверждает его, в том числе исправив текст, then запускается один workflow, и его агенты получают подтверждённый бриф, но не историю беседы."
   // AC: AC-28.3 "Given бриф ждёт, when сотрудник отказывается, then workflow не запускается, а чат получает результат «отклонено пользователем» (как AC-12.4)."
   // Behavior: /chat/a with an open brief and an open mutating-action request of a background agent
-  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `workflow` from the Confirmation
+  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `deepAgent` from the Confirmation
   //     unchanged and the three brief fields with the edited question → the card shows «Задание подтверждено» (MC-21), focus is on the card
   //   → press "Отклонить" on the action request, the first POST fails with a network error → the card returns to "Ждёт" with the MC-19
   //     error line (role="alert") → repeat the same button: the card shows «Отклонено»
-  // Catches: the brief decision sent without `workflow` or with the original instead of the edited text (the workflow would start from
+  // Catches: the brief decision sent without `deepAgent` or with the original instead of the edited text (the deep agent would start from
   //   the wrong brief), a failed decision that leaves the card stuck in "Отправка" or loses the retry button
   // Verification items:
-  // - request body of the brief decision: approve true, workflow as in the Confirmation, question = edited value
+  // - request body of the brief decision: approve true, deepAgent as in the Confirmation, question = edited value
   // - the focus moves to the card container after the outcome
   // - the error line of the failed decision is announced inside the card; the retry button is the same control
   // @category: core-functionality
   // @dependency: FeedStore.decide, toFeed (decisions placement), DecisionCard, threadsApiClient, MSW
   // @complexity: medium
-  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its workflow and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
+  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its deep agent and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
     // Arrange: the clock is on the fixture day, so outcome times read «ЧЧ:ММ» (FIXTURE_TIME 10:00Z = 11:00 Berlin)
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-28T12:00:00+01:00'));
     const briefArgs = {
-      workflow: WORKFLOW_RECORD_ID,
+      deepAgent: DEEP_AGENT_RECORD_ID,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -608,8 +608,8 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       decisionId: 'd-brief',
       agentId: 'root',
       description: 'Чат',
-      kind: WORKFLOWS_BRIEF_CONFIRMATION,
-      tool: 'start_workflow',
+      kind: AGENTS_BRIEF_CONFIRMATION,
+      tool: 'start_deep_agent',
       server: null,
       args: briefArgs,
       content: briefArgs,
@@ -640,7 +640,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
             content: {
               text: 'Предлагаю бриф.',
               toolCalls: [
-                { callId: 'c1', tool: 'start_workflow', server: null, args: briefArgs, state: 'awaiting_confirmation' },
+                { callId: 'c1', tool: 'start_deep_agent', server: null, args: briefArgs, state: 'awaiting_confirmation' },
               ],
             },
           }),
@@ -652,10 +652,10 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     const decisionBodies: { decisionId: string; body: DecisionRequest }[] = [];
     let ticketFailures = 1;
     server.use(
-      // The open brief card reads its workflow's record for the self-learning line (self-learning KD-6).
-      http.get(`${API}/api/library/${WORKFLOW_RECORD_ID}`, () =>
+      // The open brief card reads its deep agent's record for the self-learning line (self-learning KD-6).
+      http.get(`${API}/api/library/${DEEP_AGENT_RECORD_ID}`, () =>
         HttpResponse.json(
-          recordDetail({ id: WORKFLOW_RECORD_ID, kind: 'workflow', content: workflowContent({ selfLearning: false }) }),
+          recordDetail({ id: DEEP_AGENT_RECORD_ID, kind: 'deep_agent', content: deepAgentContent({ selfLearning: false }) }),
         ),
       ),
       http.post(`${API}/api/decisions/:decisionId`, async ({ request, params }) => {
@@ -699,7 +699,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     await user.type(question, 'Почему падает ночная выгрузка?');
     await user.click(within(briefCard).getByRole('button', { name: 'Запустить с правками' }));
 
-    // Assert 1: approve with the workflow unchanged and the edited question; the card confirms and takes focus
+    // Assert 1: approve with the deep agent unchanged and the edited question; the card confirms and takes focus
     await waitFor(() => expect(within(cardOf('d-brief')).getByText('Задание подтверждено · 11:01')).toBeInTheDocument());
     expect(decisionBodies).toEqual([
       {
@@ -707,7 +707,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
         body: {
           approve: true,
           args: {
-            workflow: WORKFLOW_RECORD_ID,
+            deepAgent: DEEP_AGENT_RECORD_ID,
             question: 'Почему падает ночная выгрузка?',
             boundaries: 'Только логи за неделю',
             result: 'Короткий отчёт',

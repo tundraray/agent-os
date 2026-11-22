@@ -19,15 +19,15 @@ const RESOLVED = new Date('2026-11-14T10:05:00.000Z');
 const RECORD_ID = 'fb06f3c1-a1be-4167-9896-f0d0fba21a89';
 const AUTHOR_ID = '0b4f1c2e-3d5a-4e6f-8a7b-9c0d1e2f3a4b';
 
-/** A workflow step: a colleague's record, its executor named. */
+/** A deep agent's step: a colleague's record, its subagent named. */
 const STEP_ORIGIN: RunOrigin = {
   recordId: RECORD_ID,
-  kind: 'workflow',
+  kind: 'deep_agent',
   version: 3,
   name: 'Разбор инцидента',
   author: { id: AUTHOR_ID, name: 'Аня' },
   builtinKey: null,
-  executor: 'gather',
+  subagent: 'gather',
 };
 
 function agent(agentId: string, parentId: string | null, origin: RunOrigin | null = null): AgentsAgentView {
@@ -77,7 +77,7 @@ function message(seq: number, kind: string, payload: unknown): StepMessage {
 describe('conversation view maps confirmations, the agent tree and the pending queue', () => {
   it.each([
     {
-      name: 'an open MCP request of a workflow step, with the record it started from',
+      name: 'an open MCP request of a deep agent step, with the record it started from',
       input: confirmation({}),
       expected: {
         decisionId: 'd1',
@@ -123,22 +123,22 @@ describe('conversation view maps confirmations, the agent tree and the pending q
       input: confirmation({
         agentId: 'root',
         description: 'agent root',
-        kind: 'workflows.brief',
-        tool: 'start_workflow',
+        kind: 'agents.brief',
+        tool: 'start_deep_agent',
         server: null,
-        args: { workflow: RECORD_ID, question: 'Q', boundaries: '', result: '' },
-        content: { workflow: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        args: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        content: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
       }),
       expected: {
         decisionId: 'd1',
         agentId: 'root',
         description: 'agent root',
         origin: null,
-        kind: 'workflows.brief',
-        tool: 'start_workflow',
+        kind: 'agents.brief',
+        tool: 'start_deep_agent',
         server: null,
-        args: { workflow: RECORD_ID, question: 'Q', boundaries: '', result: '' },
-        content: { workflow: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        args: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        content: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
         status: 'open',
         resolution: null,
         createdAt: '2026-11-14T10:00:00.000Z',
@@ -150,9 +150,9 @@ describe('conversation view maps confirmations, the agent tree and the pending q
     expect(toConfirmation(input, views)).toEqual(expected);
   });
 
-  // AC-17.1, AC-15.6: the record a run started from, with its author and executor, and the first-run
+  // AC-17.1, AC-15.6: the record a run started from, with its author and subagent, and the first-run
   // mark; the author's `disabled`, which an origin read from a snapshot may carry, never reaches the web.
-  it('agent: name, origin with author and executor, firstRun; no author.disabled; dates are ISO', () => {
+  it('agent: name, origin with author and subagent, firstRun; no author.disabled; dates are ISO', () => {
     const origin = { ...STEP_ORIGIN, author: { id: AUTHOR_ID, name: 'Аня', disabled: true } };
     const step = { ...agent('s1', 'c1', origin), firstRun: true, finishedAt: RESOLVED };
 
@@ -243,13 +243,13 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         seq: 3,
         kind: 'user_message',
         createdAt: CREATED,
-        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'workflow', name: 'Разбор инцидента' } },
+        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'deep_agent', name: 'Разбор инцидента' } },
       },
       expected: {
         seq: 3,
         kind: 'user_message',
         createdAt: '2026-11-14T10:00:00.000Z',
-        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'workflow', name: 'Разбор инцидента' } },
+        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'deep_agent', name: 'Разбор инцидента' } },
       },
     },
     {

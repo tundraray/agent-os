@@ -9,7 +9,7 @@ import { RecordLabel } from "@/components/library/record-label";
 import { formatModel } from "@/lib/agents/format";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
-import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
+import { isDeepAgentRun } from "@/lib/feed/to-feed";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
 
 const LINK_CLASS =
@@ -24,7 +24,7 @@ const Separator = ({ className }: { className?: string }) => (
 /**
  * AV-02, MC-8: the first line of the agent page's feed — model, start time and where the agent came
  * from: the conversation, or the parent agent when the parent is not the conversation's root (A-2); a
- * workflow coordinator names its workflow instead (A-1). Below 768 px the line opens with the status,
+ * deep agent names its record instead (A-1; deep-agents MC-21). Below 768 px the line opens with the status,
  * which the header shows from 768 px (UXRD Screen 3). No tokens, no cost (AC-13.2). An agent from the
  * library gets the second line of RN-03 below.
  */
@@ -85,13 +85,11 @@ function AgentMetaLine({ agent }: { agent: AgentPageView["agent"] }) {
     >
       <AgentStatus variant="label" status={agent.status} className="md:hidden" />
       <Separator className="md:hidden" />
-      {isWorkflowCoordinator(agent) ? (
+      {isDeepAgentRun(agent) ? (
         <>
           <span>
-            {t("workflow", { name: builtinName({ builtinKey: agent.origin?.builtinKey ?? null, name: agent.name }, locale) })}
+            {t("deepAgent", { name: builtinName({ builtinKey: agent.origin?.builtinKey ?? null, name: agent.name }, locale) })}
           </span>
-          <Separator />
-          <span>{t("coordinator")}</span>
           <Separator />
           <span>{model}</span>
           <Separator />

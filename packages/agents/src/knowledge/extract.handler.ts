@@ -61,7 +61,7 @@ import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 
 /*
  * The handler of `knowledge.extract` (design-core.md, KD-3, KD-4, Flow 1): one extraction round per
- * step. The model judges, the code decides: the coordinator's model returns operations through
+ * step. The model judges, the code decides: the deep agent's model returns operations through
  * `record_knowledge`, `checkOperations` checks them against the graph re-read under the graph lock,
  * and the code applies them by id. Model and embedding calls run outside any transaction; every write
  * of the round — graph, outcome, mark, the run row's task fields — is one guarded transaction.
@@ -72,11 +72,11 @@ const EXTRACT_AGENT_NAME = 'knowledge-extract';
 
 /** What the extraction model is told; `ModelClient.call` appends the data preamble and the code rule. */
 const EXTRACTION_RULE = [
-  'You keep the knowledge graph of a workflow. Below are the knowledge graph learned by its earlier runs,',
+  'You keep the knowledge graph of a deep agent. Below are the knowledge graph learned by its earlier runs,',
   'each record with its id (e… for an entity, r… for a relation), and the tool calls of the last run, each',
-  'with its number c…. Decide what this run learned that will help later runs of the same workflow, and call',
+  'with its number c…. Decide what this run learned that will help later runs of the same deep agent, and call',
   'record_knowledge exactly once with the operations; call no other tool and do not answer in text.',
-  '- add_entity: a thing the workflow works with (a system, a project, a team, a document), with a ref you',
+  '- add_entity: a thing the deep agent works with (a system, a project, a team, a document), with a ref you',
   '  use in this answer to link it; add_relation kind fact: a fact between two entities (ids e… or refs);',
   '  kind lesson: how a tool should be called for a kind of question; kind searched_nothing: a tool that',
   '  found nothing for a kind of question.',
@@ -89,11 +89,11 @@ const EXTRACTION_RULE = [
 
 /** What the `choose_entities` call is told; the rule itself is in its message. */
 const CHOOSE_RULE =
-  'You link new entities of a workflow knowledge graph to existing ones. Call choose_entities once.';
+  'You link new entities of a deep agent knowledge graph to existing ones. Call choose_entities once.';
 
 const RECORD_KNOWLEDGE: AgentToolDefinition = {
   name: RECORD_KNOWLEDGE_TOOL,
-  description: 'Records what this run learned: operations on the knowledge graph of the workflow.',
+  description: 'Records what this run learned: operations on the knowledge graph of the deep agent.',
   inputSchema: RecordKnowledgeArgsSchema,
 };
 
@@ -106,7 +106,7 @@ const CHOOSE_ENTITIES: AgentToolDefinition = {
 export interface KnowledgeExtractHandlerDeps {
   /** Reads outside the commit: the run row, the session, the graph, the settings, the registry, the calls. */
   readonly database: Database;
-  /** The coordinator's subtree for the round's input (`readExtractionInput`). */
+  /** The deep agent's subtree for the round's input (`readExtractionInput`). */
   readonly tasks: Pick<Runtime['tasks'], 'get' | 'listTree'>;
   /** The only way to the model: access check, ledger row and monthly spend of an ordinary call. */
   readonly modelClient: Pick<ModelClient, 'call'>;
@@ -314,18 +314,18 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  * Builds the handler of `knowledge.extract` (design-core.md, KD-3, KD-4, Flow 1, Invariants 1–5).
  *
  * A step is one round:
- * 1. Reads the run row, the coordinator's session (its model), the round's input (`readAt` — the read).
- *    No row, no session or no coordinator task (the conversation was deleted) — the round ends without a
+ * 1. Reads the run row, the deep agent's session (its model), the round's input (`readAt` — the read).
+ *    No row, no session or no deep agent task (the conversation was deleted) — the round ends without a
  *    model call; a row that names another task (a lost step whose commit already ended the round) —
  *    `complete` without writes.
  * 2. No calls in the window — no model call, `done` with zeros (DC-5).
  * 3. The graph by `selectKnowledge` without closeness, then `ModelClient.call` with `record_knowledge` on
- *    the coordinator's model, the starter as owner; a refusal is `skipped`, any `model_error` is `failed`;
+ *    the deep agent's model, the starter as owner; a refusal is `skipped`, any `model_error` is `failed`;
  *    an answer without a good call gets one more attempt, a second bad one is `invalid_answer` (DC-7).
  * 4. New entities: masked, embedded, the store's similar entities; only with candidates one more call
  *    with `choose_entities` (DC-17). So a round makes at most three model calls.
  * 5. The commit — one guarded transaction: `lockGraph`, the run row locked and re-read, the graph re-read,
- *    `checkOperations`, the graph writes in a savepoint (a deleted workflow drops only them, DC-8), the
+ *    `checkOperations`, the graph writes in a savepoint (a deleted deep agent drops only them, DC-8), the
  *    outcome with `last_extract_task_id`, the mark moved forward to `readAt` on `done`, and under the run
  *    row's lock: «one more round» set → cleared and the task continues; else `extract_task_id` cleared and
  *    the task completes. The step never returns `fail`.
@@ -561,7 +561,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         } catch (error) {
           if (!isForeignKeyViolation(error)) throw error;
           recordDeleted = true;
-          round.logger.warn('knowledge graph writes dropped: workflow deleted', {
+          round.logger.warn('knowledge graph writes dropped: deep agent deleted', {
             reason: 'record_deleted',
           });
         }
@@ -638,7 +638,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     return { outcome: 'complete', result: { ...fields, ...settled.counts } };
   }
 
-  /** The coordinator's task, read by `readExtractionInput`, is gone: the conversation was deleted. */
+  /** The deep agent's task, read by `readExtractionInput`, is gone: the conversation was deleted. */
   async function inputOf(run: KnowledgeRun): Promise<ExtractionInput | undefined> {
     try {
       return await readExtractionInput({ database, tasks: deps.tasks }, run);
@@ -681,7 +681,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       return finish(ctx, { runId, recordId, model: null, logger }, null, null, startedAt);
     }
 
-    // The coordinator's model from its session: a later change of the workflow does not touch it (AC-08.3).
+    // The deep agent's model from its session: a later change of the deep agent does not touch it (AC-08.3).
     const model = session.model;
     const logger = baseLogger.child({ recordId, ownerId, model });
     const round = { runId, recordId, ownerId, model, logger };
@@ -712,7 +712,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       content: [
         envelope(
           'knowledge graph',
-          'earlier runs of this workflow',
+          'earlier runs of this deep agent',
           graphText === '' ? '(empty)' : graphText,
         ),
         input.text,

@@ -9,8 +9,8 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
-  WORKFLOW_RECORD_ID,
-  workflowOrigin,
+  DEEP_AGENT_RECORD_ID,
+  deepAgentOrigin,
 } from '@/test/fixtures';
 
 import {
@@ -21,6 +21,7 @@ import {
   trayEntries,
   type DraftPart,
   type OptimisticEntry,
+  type PlanNoticePartData,
 } from './to-feed';
 
 /** `id` and the non-text parts of each message: `tool:<name>#<callId>` or the `data-*` part type. */
@@ -30,6 +31,10 @@ function summary(messages: readonly ThreadMessageLike[]): string[] {
     const marks = parts.flatMap((part) => {
       if (part.type === 'text') return [];
       if (part.type === 'tool-call') return [`tool:${part.toolName}#${part.toolCallId}`];
+      if (part.type === 'data-plan-notice') {
+        const data = part.data as PlanNoticePartData;
+        return [`${part.type}:${'missingReport' in data ? data.missingReport : data.openPlanItems.join(',')}`];
+      }
       return [part.type];
     });
     return [message.id, ...marks].join(' ');
@@ -75,6 +80,20 @@ const notice: HistoryEntry = {
   kind: 'notice',
   createdAt: fixtureTime(2),
   content: { text: 'Заметка для модели' },
+};
+/** A refusal over open plan items: the model's text names other numbers, so the line must come from `openPlanItems`. */
+const planNotice: HistoryEntry = {
+  seq: 5,
+  kind: 'notice',
+  createdAt: fixtureTime(5),
+  content: { text: 'You cannot finish yet: 9. [running] x', openPlanItems: [2, 3] },
+};
+/** A refusal for want of the final subagent's completed report: the line names it from `missingReport`. */
+const reportNotice: HistoryEntry = {
+  seq: 6,
+  kind: 'notice',
+  createdAt: fixtureTime(6),
+  content: { text: 'You cannot finish: there is no report of subagent "other" yet.', missingReport: 'answer' },
 };
 const compaction: HistoryEntry = {
   seq: 3,
@@ -123,20 +142,20 @@ describe('toFeed', () => {
       tray: [],
     },
     {
-      name: 'the coordinator run card sits right under the brief card',
+      name: 'the deep agent run card sits right under the brief card',
       view: conversationView({
         entries: [
           task,
-          answer(2, [['c2', 'start_workflow']]),
-          result(3, 'c2', 'start_workflow', 'success'),
+          answer(2, [['c2', 'start_deep_agent']]),
+          result(3, 'c2', 'start_deep_agent', 'success'),
           answer(4),
         ],
         decisions: [
           confirmation({
             decisionId: 'brief',
             agentId: 'root',
-            kind: 'workflows.brief',
-            tool: 'start_workflow',
+            kind: 'agents.brief',
+            tool: 'start_deep_agent',
             server: null,
             status: 'resolved',
             resolution: { approve: true, args: {} },
@@ -148,7 +167,7 @@ describe('toFeed', () => {
           agentNode({
             agentId: 'w1',
             name: 'Исследование',
-            origin: workflowOrigin(),
+            origin: deepAgentOrigin(),
             createdAt: fixtureTime(2.5),
           }),
         ],
@@ -200,6 +219,24 @@ describe('toFeed', () => {
       tray: [],
     },
     {
+      // uxrd.md MC-15, deep-agents KD-5: the employee sees the refusal, built from the numbers in the entry.
+      name: 'a notice over open plan items is a feed line with their numbers',
+      view: conversationView({ entries: [task, notice, answer(4), planNotice] }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-4', 'seq-5 data-plan-notice:2,3'],
+      tray: [],
+    },
+    {
+      // uxrd.md MC-15, deep-agents AC-05.1: the refusal for a lacking final report names the subagent from the entry.
+      name: 'a notice over a lacking final report is a feed line with the subagent name',
+      view: conversationView({ entries: [task, answer(4), reportNotice] }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-4', 'seq-6 data-plan-notice:answer'],
+      tray: [],
+    },
+    {
       name: 'a feed entry whose messageId is queued stays at the end and out of the tray; the draft is last',
       view: conversationView({
         chat: { status: 'working', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
@@ -221,18 +258,18 @@ describe('toFeed', () => {
     expect(trayEntries(feedView, optimistic).entries.map((entry) => entry.id)).toEqual(tray);
   });
 
-  // UXRD run card part 4: the workflow card shows the question of the brief that started it.
-  it('the workflow run card carries the question the brief ran with', () => {
+  // UXRD run card part 4: the deep agent card shows the question of the brief that started it.
+  it('the deep agent run card carries the question the brief ran with', () => {
     const view = conversationView({
       decisions: [
         confirmation({
           decisionId: 'brief',
           agentId: 'root',
-          kind: 'workflows.brief',
-          args: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
-          content: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
+          kind: 'agents.brief',
+          args: { deepAgent: DEEP_AGENT_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
+          content: { deepAgent: DEEP_AGENT_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
           status: 'resolved',
-          resolution: { approve: true, args: { workflow: WORKFLOW_RECORD_ID, question: 'Исправленный', boundaries: '', result: '' } },
+          resolution: { approve: true, args: { deepAgent: DEEP_AGENT_RECORD_ID, question: 'Исправленный', boundaries: '', result: '' } },
           createdAt: fixtureTime(2.2),
           resolvedAt: fixtureTime(2.4),
         }),
@@ -241,7 +278,7 @@ describe('toFeed', () => {
         agentNode({
           agentId: 'w1',
           name: 'Исследование',
-          origin: workflowOrigin(),
+          origin: deepAgentOrigin(),
           createdAt: fixtureTime(2.5),
         }),
       ],

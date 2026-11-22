@@ -253,8 +253,8 @@ export const history = {
     return answer?.seq;
   },
 
-  /** How many runs of the named executor the coordinator's `start_agent` calls started (KD-5, `run_limit`). */
-  async startedCount(tx: RuntimeTx, taskId: string, executor: string): Promise<number> {
+  /** How many runs of the named subagent the deep agent's `start_agent` calls started (KD-5, `run_limit`). */
+  async startedCount(tx: RuntimeTx, taskId: string, subagent: string): Promise<number> {
     const [row] = await tx
       .select({ started: count() })
       .from(agentMessages)
@@ -264,7 +264,7 @@ export const history = {
           isResult,
           sql`${agentMessages.content} ->> 'tool' = ${START_AGENT_TOOL}`,
           sql`${agentMessages.content} ->> 'outcome' = ${ToolOutcomeSchema.enum.success}`,
-          sql`${agentMessages.content} -> 'args' ->> 'agent' = ${executor}`,
+          sql`${agentMessages.content} -> 'args' ->> 'agent' = ${subagent}`,
         ),
       );
     return row?.started ?? 0;

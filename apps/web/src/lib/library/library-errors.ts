@@ -6,7 +6,6 @@ import {
   RecordNameTakenReasonSchema,
   type RecordKind,
   type RecordSummary,
-  type SaveOwnRefusal,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { failedText } from '@/lib/i18n/server-text';
@@ -29,7 +28,7 @@ export function shareBlockedReason(t: ErrorsTranslator, record: Pick<RecordSumma
 }
 
 /**
- * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a workflow
+ * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a deep agent
  * the viewer sees but whose knowledge is closed to them (AC-11.3). Any other refusal stays an error.
  */
 export const isKnowledgeHidden = (error: unknown): boolean =>
@@ -66,8 +65,6 @@ export type LibraryErrorContext = {
   model?: string;
   /** A server on the form the author has no access to (422 `server_not_allowed`). */
   server?: string;
-  /** The executor whose card a server error belongs to (a model error stays at the «Модель» field). */
-  executor?: string;
   /** The role the owner is no longer in (422 `role_not_member`). */
   role?: string;
   /** A refused restart: the record is the viewer's own. */
@@ -86,7 +83,6 @@ export type LibraryErrorPlace =
   /** MC-10 above the save panel. */
   | { at: 'conflict' }
   | { at: 'field'; field: LibraryErrorField }
-  | { at: 'executor'; executor: string }
   | { at: 'form' }
   | { at: 'notice' }
   /** The notice under the message field. */
@@ -115,9 +111,8 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
 
 const at = (place: LibraryErrorPlace, text: ReactNode, open = false): LibraryErrorText => ({ place, text, open });
 
-/** The «Системы» field of a server error, or the executor's card when the caller names it. */
-const serversPlace = (context: LibraryErrorContext): LibraryErrorPlace =>
-  context.executor === undefined ? { at: 'field', field: 'servers' } : { at: 'executor', executor: context.executor };
+/** The «Системы» field of a server error. */
+const SERVERS_PLACE: LibraryErrorPlace = { at: 'field', field: 'servers' };
 
 /** The refused model of a 409 `START_REFUSED` body, as the core reads it. */
 const refusedModel = (error: ApiRequestError): string | null => error.model ?? null;
@@ -175,11 +170,11 @@ function rejected(t: ErrorsTranslator, error: ApiRequestError, context: LibraryE
   switch (reason.data) {
     case 'server_not_allowed':
       return at(
-        serversPlace(context),
+        SERVERS_PLACE,
         context.server === undefined ? fallback : t('library.serverNotAllowed', { server: context.server }),
       );
     case 'all_servers_not_allowed':
-      return at(serversPlace(context), fallback);
+      return at(SERVERS_PLACE, fallback);
     case 'model_not_allowed':
       return at(
         { at: 'field', field: 'model' },
@@ -252,39 +247,9 @@ export function describeLibraryError(t: ErrorsTranslator, error: unknown, contex
   return inMessage ? null : at(placeOf(context.where), failedText(t, 'save', error));
 }
 
-/**
- * MC-8 on a draft card: why a draft's save was refused (a 200 whose draft keeps waiting with `refusal`).
- * `version_conflict` has no line here: the card shows the MC-15 stale line instead.
- */
-export function describeDraftRefusal(
-  t: ErrorsTranslator,
-  refusal: SaveOwnRefusal,
-  context: { kind: RecordKind; name: string; model?: string },
-): string | null {
-  switch (refusal) {
-    case 'version_conflict':
-      return null;
-    case 'name_taken':
-      return t('library.nameTaken', { kind: context.kind, name: context.name });
-    case 'system_name':
-      return t('library.systemName');
-    case 'model_not_allowed':
-      return context.model === undefined
-        ? t('library.draftModelNotAllowed')
-        : t('library.modelNotAllowed', { model: formatModel(context.model) });
-    case 'not_found':
-      return t('library.unavailable', { kind: context.kind });
-    case 'shared':
-      return t('library.shared', { kind: context.kind });
-    default:
-      // The UXRD has no MC-8 text for these reasons, and a 200 refusal carries no server message to quote.
-      return t('library.draftOther');
-  }
-}
-
 /** What the tool-call block knows about the refused call. */
 export type RefusalContext = {
-  /** `start_agent`, `start_workflow` or `draft_record`. */
+  /** `start_agent` or `start_deep_agent`. */
   tool: string;
   kind: RecordKind;
   /** `refusalDetail.model` of the result, never the call's arguments. */
@@ -293,8 +258,6 @@ export type RefusalContext = {
   recordId: string | null;
   /** The record is the viewer's own. */
   own: boolean;
-  /** The record is the company's (a system record). */
-  company?: boolean;
 };
 
 export type RefusalText = {
@@ -304,8 +267,7 @@ export type RefusalText = {
 
 /**
  * The text and action of a refused library call (MC-16, MC-17; model-providers MC-12). `null` — not the library's refusal,
- * or one without a UXRD text (`read_only` on a colleague's record, `invalid_arguments` of `draft_record`):
- * the block shows the platform's general refusal text.
+ * or one without a UXRD text: the block shows the platform's general refusal text.
  */
 export function describeRefusal(
   t: ErrorsTranslator,
@@ -319,13 +281,6 @@ export function describeRefusal(
       return { text: t('library.unavailable', { kind }), action: null };
     case 'model_not_allowed':
       return { text: modelNotStarted(t, model, kind, context.own), action: open };
-    case 'shared':
-      return {
-        text: t('library.shared', { kind }),
-        action: recordId === null ? null : { label: t('library.openInEditor'), recordId },
-      };
-    case 'read_only':
-      return context.company === true ? { text: t('library.companyReadOnly'), action: null } : null;
     case 'run_limit':
       return { text: t('library.runLimit'), action: null };
     case 'model_not_configured':

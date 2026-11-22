@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CreateRecordBodySchema } from './library';
+import { CreateRecordBodySchema, DeepAgentContentSchema } from './library';
 
 const MODEL = 'anthropic/claude-haiku-5-5';
 
@@ -13,34 +13,10 @@ const agentContent = {
 };
 const agent = { kind: 'agent', name: 'разбор оплат', description: 'Ищет сбои оплат.', content: agentContent };
 
-const executorWithoutRole = {
-  name: 'Аналитик',
-  prompt: 'Найди сбой.',
-  servers: ['logs'],
-  model: MODEL,
-  maxTurns: 20,
-  maxRuns: 3,
-  tools: [],
-  source: null,
-};
-const executor = { ...executorWithoutRole, role: 'Разбирает логи, когда нужен поиск сбоя.' };
-const executorNamed = (name: string) => ({ ...executor, name });
-const workflowContent = {
-  coordinator: { rules: 'Сначала логи.', model: MODEL, maxTurns: 20 },
-  executors: [executor],
-  finalExecutor: null,
-};
-const workflow = { kind: 'workflow', name: 'дежурство', description: 'Разбор инцидента.', content: workflowContent };
-
 const withAgent = (content: Record<string, unknown>) => ({ ...agent, content: { ...agentContent, ...content } });
-const withWorkflow = (content: Record<string, unknown>) => ({
-  ...workflow,
-  content: { ...workflowContent, ...content },
-});
-
-// AC-06.3, AC-16.5 and Failure Mode "invalid option": the body schema is the 400 boundary that
+// AC-06.3 and Failure Mode "invalid option": the body schema is the 400 boundary that
 // keeps a record of a wrong size or with a tool outside the closed set from reaching the service.
-describe('record body: lengths, closed tool set and team size are bounded by the schema', () => {
+describe('record body: lengths and the closed tool set are bounded by the schema', () => {
   it.each<{ label: string; body: Record<string, unknown>; valid: boolean }>([
     // AC-06.3
     { label: 'name of 80 padded with spaces (trimmed)', body: { ...agent, name: `  ${'и'.repeat(80)}  ` }, valid: true },
@@ -68,36 +44,59 @@ describe('record body: lengths, closed tool set and team size are bounded by the
       valid: false,
     },
     { label: 'tool start_agent', body: withAgent({ tools: ['start_agent'] }), valid: true },
-    { label: 'tool start_workflow', body: withAgent({ tools: ['start_workflow'] }), valid: false },
+    { label: 'tool start_deep_agent', body: withAgent({ tools: ['start_deep_agent'] }), valid: false },
     { label: 'tool run_code', body: withAgent({ tools: ['run_code'] }), valid: false },
-    // WorkflowContent
-    { label: 'empty coordinator rules', body: withWorkflow({ coordinator: { ...workflowContent.coordinator, rules: '' } }), valid: true },
-    {
-      label: 'coordinator rules of 4 001',
-      body: withWorkflow({ coordinator: { ...workflowContent.coordinator, rules: 'п'.repeat(4_001) } }),
-      valid: false,
-    },
-    { label: '0 executors', body: withWorkflow({ executors: [] }), valid: false },
-    {
-      label: '10 executors',
-      body: withWorkflow({ executors: Array.from({ length: 10 }, (_, i) => executorNamed(`Исполнитель ${i}`)) }),
-      valid: true,
-    },
-    {
-      label: '11 executors',
-      body: withWorkflow({ executors: Array.from({ length: 11 }, (_, i) => executorNamed(`Исполнитель ${i}`)) }),
-      valid: false,
-    },
-    { label: 'maxRuns 21', body: withWorkflow({ executors: [{ ...executor, maxRuns: 21 }] }), valid: false },
-    // AC-16.5
-    { label: 'executor without role', body: withWorkflow({ executors: [executorWithoutRole] }), valid: false },
-    {
-      label: 'executor name repeated in another case',
-      body: withWorkflow({ executors: [executorNamed('Аналитик'), executorNamed('аналитик')] }),
-      valid: false,
-    },
-    { label: 'final executor by name', body: withWorkflow({ finalExecutor: 'Аналитик' }), valid: true },
   ])('$label -> valid: $valid', ({ body, valid }) => {
     expect(CreateRecordBodySchema.safeParse(body).success).toBe(valid);
+  });
+});
+
+const subagent = {
+  name: 'Аналитик',
+  description: 'Разбирает логи, когда нужен поиск сбоя.',
+  prompt: 'Найди сбой.',
+  servers: ['logs'],
+  model: MODEL,
+  maxTurns: 20,
+  maxRuns: 3,
+};
+const subagentNamed = (name: string) => ({ ...subagent, name });
+const deepAgentContent = {
+  prompt: 'Разбери инцидент командой.',
+  servers: [],
+  model: MODEL,
+  maxTurns: 30,
+  subagents: [subagent],
+  finalSubagent: null,
+};
+
+// UC-1 (AC-27.1, AC-01.1): the content schema is the tool's argument schema, so the chat learns the
+// path and the rule of a broken deep agent from the refusal before any card.
+describe('deep agent content is refused with the path and the rule', () => {
+  it.each<{ label: string; content: Record<string, unknown>; issue: Record<string, unknown> }>([
+    {
+      label: '11 subagents',
+      content: { subagents: Array.from({ length: 11 }, (_, i) => subagentNamed(`Сабагент ${i}`)) },
+      issue: { path: ['subagents'], code: 'too_big', maximum: 10 },
+    },
+    {
+      label: 'final subagent outside the team',
+      content: { finalSubagent: 'Писатель' },
+      issue: { path: ['finalSubagent'], code: 'custom', message: 'no such subagent' },
+    },
+    {
+      label: 'empty prompt of a subagent',
+      content: { subagents: [{ ...subagent, prompt: '' }] },
+      issue: { path: ['subagents', 0, 'prompt'], code: 'too_small', minimum: 1 },
+    },
+    {
+      label: 'subagent name repeated in another case',
+      content: { subagents: [subagentNamed('Аналитик'), subagentNamed('аналитик')] },
+      issue: { path: ['subagents'], code: 'custom', message: 'subagent names repeat' },
+    },
+  ])('$label', ({ content, issue }) => {
+    const result = DeepAgentContentSchema.safeParse({ ...deepAgentContent, ...content });
+
+    expect(result.error?.issues).toContainEqual(expect.objectContaining(issue));
   });
 });

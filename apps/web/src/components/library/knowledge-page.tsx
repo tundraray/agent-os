@@ -30,11 +30,11 @@ import { RecordSkeleton } from "./record-page";
 export type KnowledgePageProps = { id: string; variant: "library" | "panel" };
 
 /**
- * UXRD KN-01 / KN-03 (self-learning design-web.md, KD-1): «Что узнал workflow» in the library and in the panel.
+ * UXRD KN-01 / KN-03 (self-learning design-web.md, KD-1): «Что узнал глубокий агент» in the library and in the panel.
  * The record (name, kind, author) and the graph are read in parallel on open (read-on-open). A 404 of either read
  * or the graph's 403 `KNOWLEDGE_FORBIDDEN` — and an agent at this address — is the place's «Не найдено», which
  * names nothing (ADR-0016). Until the graph has answered once nothing of the record is drawn, so a closed graph
- * never shows its workflow's name first.
+ * never shows its deep agent's name first.
  */
 export function KnowledgePage({ id, variant }: KnowledgePageProps) {
   const t = useTranslations("library");
@@ -91,7 +91,7 @@ export function KnowledgePage({ id, variant }: KnowledgePageProps) {
   );
 }
 
-/** MC-2: the `h1`, the parent of the place and «Открыть workflow»; focus lands on the `h1` once it is drawn. */
+/** MC-2: the `h1`, the parent of the place and «Открыть глубокого агента»; focus lands on the `h1` once it is drawn. */
 function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: KnowledgePageProps["variant"] }) {
   const titles = useAdminTitles();
   const t = useTranslations("library");
@@ -111,7 +111,7 @@ function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: K
         href={library ? recordPath(record.id) : adminRecordPath("library", record.id)}
         className={buttonVariants({ variant: "outline", size: "sm", className: "pointer-coarse:h-11" })}
       >
-        {t("knowledge.openWorkflow")}
+        {t("knowledge.openDeepAgent")}
       </ShellLink>
     </PageHeader>
   );

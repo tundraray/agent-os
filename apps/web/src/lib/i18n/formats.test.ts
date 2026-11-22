@@ -74,14 +74,14 @@ describe('formats counts and durations by the interface language', () => {
     ['minutes and seconds', 'ru', (t) => formatDuration(t, 185_000), '3 мин 5 с'],
     ['whole hours', 'ru', (t) => formatDuration(t, 7_200_000), '2 ч'],
     ['hours and minutes', 'ru', (t) => formatDuration(t, 8_040_000), '2 ч 14 мин'],
-    // «до N раз» and «до N шагов» of the workflow team agree with the number too.
+    // «до N раз» and «до N шагов» of the deep agent and its subagents agree with the number too.
     ['up to 1 run', 'ru', () => libraryRu('team.upTo', { count: 1 }), 'до 1 раза'],
     ['up to 2 runs', 'ru', () => libraryRu('team.upTo', { count: 2 }), 'до 2 раз'],
     ['up to 5 runs', 'ru', () => libraryRu('team.upTo', { count: 5 }), 'до 5 раз'],
     ['up to 21 runs', 'ru', () => libraryRu('team.upTo', { count: 21 }), 'до 21 раза'],
-    ['up to 1 step', 'ru', () => libraryRu('definition.coordinatorSummary', { model: 'M', maxTurns: 1 }), 'M · до 1 шага'],
-    ['up to 2 steps', 'ru', () => libraryRu('definition.coordinatorSummary', { model: 'M', maxTurns: 2 }), 'M · до 2 шагов'],
-    ['up to 21 steps', 'ru', () => libraryRu('definition.coordinatorSummary', { model: 'M', maxTurns: 21 }), 'M · до 21 шага'],
+    ['up to 1 step', 'ru', () => libraryRu('definition.deepAgentSummary', { model: 'M', maxTurns: 1 }), 'M · до 1 шага'],
+    ['up to 2 steps', 'ru', () => libraryRu('definition.deepAgentSummary', { model: 'M', maxTurns: 2 }), 'M · до 2 шагов'],
+    ['up to 21 steps', 'ru', () => libraryRu('definition.deepAgentSummary', { model: 'M', maxTurns: 21 }), 'M · до 21 шага'],
   ])('%s in %s', (_case, locale, render, expected) => {
     expect(render(translatorOf(locale))).toBe(expected);
   });

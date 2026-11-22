@@ -18,14 +18,15 @@ import {
   type AgentListQuery,
   type AgentPageView,
   type AwaitingCount,
+  type DeepAgentRunView,
   type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type RunTaskListView,
   type SendMessageRequest,
   type SendMessageResponse,
   type StopResponse,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
@@ -105,10 +106,10 @@ export class AgentsController {
   }
 
   @Get(':agentId/run')
-  workflowRun(
+  deepAgentRun(
     @Param('agentId') agentId: string,
     @Req() req: AuthedRequest,
-  ): Promise<WorkflowRunView> {
+  ): Promise<DeepAgentRunView> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /agents/:agentId/run',
@@ -119,6 +120,17 @@ export class AgentsController {
         steps: run.steps.length,
         limitRefusals: run.limitRefusals.length,
       }),
+    });
+  }
+
+  @Get(':agentId/tasks')
+  tasks(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<RunTaskListView> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'GET /agents/:agentId/tasks',
+      fields: { ownerId, agentId },
+      work: () => this.control.tasks(agentId, ownerId),
+      outcomeOf: (list) => ({ tasks: list.tasks.length }),
     });
   }
 

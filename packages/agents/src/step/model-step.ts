@@ -5,6 +5,8 @@ import {
   type ChipRecord,
   HistoryEventSchema,
   RUN_CODE_TOOL,
+  type RunTaskStatus,
+  RunTaskStatusSchema,
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import {
@@ -18,7 +20,7 @@ import {
 
 import type { AccessAudit } from '../access-gate';
 import type { HistoryEntry } from '../history/history';
-import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block';
+import { knowledgeBlock } from '../knowledge/knowledge-block';
 import type { KnowledgeVectorStore } from '../knowledge/vector-store';
 import {
   type ModelClient,
@@ -41,7 +43,14 @@ import {
 } from '../store/sessions.repository';
 import { callTargetOf, type ToolRegistry } from '../tools/tool-registry';
 import { entriesOf, rootTurnReset } from './deliver';
-import { endOfTurn, type FinalExecutorReport } from './turn-rules';
+import { planBlock, planOf, withStepBlocks } from './plan-block';
+import { endOfTurn, noticeContent, type FinalSubagentReport } from './turn-rules';
+
+/** Plan items that keep a deep agent from finishing (deep-agents KD-5, FR-09). */
+const OPEN_PLAN_STATUSES: readonly RunTaskStatus[] = [
+  RunTaskStatusSchema.enum.waiting,
+  RunTaskStatusSchema.enum.running,
+];
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
@@ -333,14 +342,14 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
   const { database, registry, modelClient, audit, vectorStore } = deps;
 
   /**
-   * The last report of the final executor among the coordinator's child reports, the delivered ones
-   * included (DC-4; design-runtime.md KD-5): a child is that executor by the `executor` of its origin.
+   * The last report of the final subagent among the deep agent's child reports, the delivered ones
+   * included (DC-4; design-runtime.md KD-5): a child is that subagent by the `subagent` of its origin.
    */
-  async function finalExecutorReport(
+  async function finalSubagentReport(
     taskId: string,
-    finalExecutor: string,
+    finalSubagent: string,
     delivered: readonly NewHistoryEntry[],
-  ): Promise<FinalExecutorReport | null> {
+  ): Promise<FinalSubagentReport | null> {
     // Read by kind, not from the step's entries: a report may stand before the last compaction.
     const reports = await history.childReports(database, taskId);
     for (const entry of delivered) {
@@ -353,7 +362,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     );
     const last = reports
       .reverse()
-      .find((report) => children.get(report.agentId)?.origin?.executor === finalExecutor);
+      .find((report) => children.get(report.agentId)?.origin?.subagent === finalSubagent);
     return last === undefined ? null : { status: last.status, text: last.text };
   }
 
@@ -408,6 +417,8 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       { database, store: vectorStore },
       { snapshot, taskId: ctx.taskId, logger: ctx.logger },
     );
+    // The plan too (deep-agents KD-5): only a tool step changes it, so `endOfTurn` below reads the same items.
+    const plan = await planOf(database, snapshot, ctx.taskId);
     const sessionTools = await registry.sessionTools({
       snapshot,
       ownerId: session.ownerId,
@@ -421,7 +432,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: withKnowledge(definition.prompt, knowledge),
+        instructions: withStepBlocks(definition.prompt, { knowledge, plan: planBlock(plan) }),
         messages: providerMessagesOf(view, shown),
         tools: sessionTools,
         streamsText: true,
@@ -504,17 +515,18 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       };
     }
 
-    const { finalExecutor } = definition;
+    const { finalSubagent } = definition;
     const inFlight = isRoot ? { unfinished: 0, pending: 0 } : await childrenInFlight(ctx);
     const ending = endOfTurn({
       isRoot,
       unfinishedChildren: inFlight.unfinished,
       pendingChildNotices: inFlight.pending,
-      finalExecutor,
-      finalExecutorReport:
-        isRoot || finalExecutor === null
+      finalSubagent,
+      finalSubagentReport:
+        isRoot || finalSubagent === null
           ? null
-          : await finalExecutorReport(ctx.taskId, finalExecutor, delivered),
+          : await finalSubagentReport(ctx.taskId, finalSubagent, delivered),
+      openPlanItems: plan.filter((item) => OPEN_PLAN_STATUSES.includes(item.status)),
       text: result.text,
       cutOff: result.cutOff,
     });
@@ -529,11 +541,31 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         });
         return { outcome: 'wait', commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch) };
       case 'notice':
+        if (ending.openPlanItems !== undefined) {
+          // Every reminder is logged, so how often a deep agent answers with work open shows (KD-5, Risks).
+          ctx.logger.info('deep agent reminded of open plan items', {
+            agentId: ctx.taskId,
+            rootId: ctx.rootId,
+            ownerId: ctx.ownerId,
+            stepNo: ctx.stepNo,
+            openPlanItems: ending.openPlanItems,
+          });
+        }
+        if (ending.missingReport !== undefined) {
+          // Likewise each answer refused for lacking the final subagent's completed report.
+          ctx.logger.info('deep agent reminded of the final subagent report', {
+            agentId: ctx.taskId,
+            rootId: ctx.rootId,
+            ownerId: ctx.ownerId,
+            stepNo: ctx.stepNo,
+            finalSubagent: ending.missingReport,
+          });
+        }
         logStep(ctx, STEP_KIND, startedAt, 'continue', { notice: true, turns: counted, ...answered });
         return {
           outcome: 'continue',
           commit: (tx, effects) =>
-            writeAnswer(tx, effects, [{ kind: 'notice', content: { text: ending.text } }], callPatch),
+            writeAnswer(tx, effects, [{ kind: 'notice', content: noticeContent(ending) }], callPatch),
         };
       case 'complete':
         logStep(ctx, STEP_KIND, startedAt, 'complete', { turns: counted, ...answered });

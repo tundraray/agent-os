@@ -15,7 +15,7 @@ const relations = agentKnowledgeRelations;
 export type KnowledgeEntityRow = typeof entities.$inferSelect;
 export type KnowledgeRelationRow = typeof relations.$inferSelect;
 
-/** A workflow's graph as stored, each table by id. */
+/** A deep agent's graph as stored, each table by id. */
 export interface KnowledgeGraph {
   readonly entities: KnowledgeEntityRow[];
   readonly relations: KnowledgeRelationRow[];
@@ -67,24 +67,24 @@ export interface KnowledgeSettingsChange {
 }
 
 /*
- * The graph and the settings of self-learning workflows (repository over a transaction, KD-1): the
+ * The graph and the settings of self-learning deep agents (repository over a transaction, KD-1): the
  * only code that reads and writes `agent_knowledge_entities`, `agent_knowledge_relations` and
  * `agent_knowledge_settings`. No function opens a transaction, logs or decides: the rules are the
  * pure functions' (`checkOperations`, `selectKnowledge`).
  */
 
 /**
- * Queues the writes to one workflow's graph (Invariant 5): a PostgreSQL transaction-level advisory
+ * Queues the writes to one deep agent's graph (Invariant 5): a PostgreSQL transaction-level advisory
  * lock, released by the commit or rollback of `tx`. The round commit and the deletions take it as
  * the first statement of their transaction and read the graph after it. The key is the 64-bit
- * `hashtextextended` of the record id's text: different workflows get different keys, and the rare
- * collision only makes two workflows wait for each other — it never lets two writers of one in.
+ * `hashtextextended` of the record id's text: different deep agents get different keys, and the rare
+ * collision only makes two deep agents wait for each other — it never lets two writers of one in.
  */
 export async function lockGraph(tx: RuntimeTx, recordId: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${recordId}, 0))`);
 }
 
-/** All records of the workflow's graph, outdated included, by id. */
+/** All records of the deep agent's graph, outdated included, by id. */
 export async function readGraph(reader: StoreReader, recordId: string): Promise<KnowledgeGraph> {
   const entityRows = await reader
     .select()
@@ -158,7 +158,7 @@ export async function markOutdated(
 }
 
 /**
- * Deletes the entity of this workflow; its fact relations go by cascade (AC-09.2). Counted before the
+ * Deletes the entity of this deep agent; its fact relations go by cascade (AC-09.2). Counted before the
  * delete: under `lockGraph` nobody adds a relation to it in between.
  */
 export async function deleteEntity(
@@ -183,7 +183,7 @@ export async function deleteEntity(
   return { deleted: true, relations: ends?.relations ?? 0 };
 }
 
-/** Deletes the relation, lesson or «searched — found nothing» of this workflow; whether it was there. */
+/** Deletes the relation, lesson or «searched — found nothing» of this deep agent; whether it was there. */
 export async function deleteRelation(
   tx: RuntimeTx,
   recordId: string,

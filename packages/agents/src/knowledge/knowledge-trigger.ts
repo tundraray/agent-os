@@ -32,7 +32,7 @@ import {
 /*
  * The consumer `agents.knowledge-trigger` (design-core.md, KD-3, KD-8): the end of a run that
  * learns creates one extraction task in the delivery transaction, the end of an extraction queues
- * the workflow's vector pass. The event carries neither the task type nor the owner, and `agents`
+ * the deep agent's vector pass. The event carries neither the task type nor the owner, and `agents`
  * does not read `runtime_tasks` (plan Notes 6): the task is recognised by the knowledge rows that
  * name it. Every decision is the pure `triggerDecision`; `handle` only reads and writes those rows
  * and creates tasks in `tx` — no model, embeddings or network call.
@@ -59,21 +59,21 @@ export type TriggerRun = Pick<
   'runId' | 'extractTaskId' | 'lastExtractTaskId' | 'needsRound'
 >;
 
-/** What the decision reads of a workflow vector row. */
+/** What the decision reads of a deep agent vector row. */
 export type TriggerEmbedding = Pick<KnowledgeEmbeddingRow, 'recordId' | 'passTaskId' | 'needsPass'>;
 
-/** `not_learning` — no knowledge row names the task; `record_deleted` — the workflow record is gone. */
+/** `not_learning` — no knowledge row names the task; `record_deleted` — the deep agent record is gone. */
 export type TriggerIgnoreReason = 'not_learning' | 'record_deleted';
 
 export type TriggerDecision<
   R extends TriggerRun = TriggerRun,
   E extends TriggerEmbedding = TriggerEmbedding,
 > =
-  /** Coordinator ended, no extraction in progress: a new extraction task. */
+  /** Deep agent ended, no extraction in progress: a new extraction task. */
   | { readonly action: 'create_extract'; readonly run: R }
-  /** Coordinator ended while an extraction is in progress: «one more round». */
+  /** Deep agent ended while an extraction is in progress: «one more round». */
   | { readonly action: 'mark_round'; readonly run: R }
-  /** Coordinator stopped: «skipped: stopped», the mark moves to the stop; no task (AC-03.2). */
+  /** Deep agent stopped: «skipped: stopped», the mark moves to the stop; no task (AC-03.2). */
   | { readonly action: 'stopped'; readonly run: R }
   /** Extraction task failed or was stopped: id released, «failed: interrupted», a new task on the mark. */
   | { readonly action: 'interrupted'; readonly run: R; readonly nextRound: boolean }
@@ -88,7 +88,7 @@ export type TriggerDecision<
 /**
  * Decides what the event of a task means for self-learning. `run` is the run row found for the task
  * (by `run_id`, or by `last_extract_task_id` on `task.completed` / `extract_task_id` otherwise);
- * `embedding` is the vector row of an ended extraction's workflow, or the row whose pass is the task.
+ * `embedding` is the vector row of an ended extraction's deep agent, or the row whose pass is the task.
  */
 export function triggerDecision<R extends TriggerRun, E extends TriggerEmbedding>(
   event: TriggerEvent,
@@ -239,7 +239,7 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
 }
 
 /**
- * The run row naming the task, locked: the coordinator by `run_id`; an extraction by
+ * The run row naming the task, locked: the deep agent by `run_id`; an extraction by
  * `last_extract_task_id` when it completed (its last round committed), by `extract_task_id` otherwise.
  */
 async function findRunOfTask(
@@ -247,15 +247,15 @@ async function findRunOfTask(
   type: string,
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
-  const coordinator = await findRunById(tx, taskId);
-  if (coordinator !== undefined) return coordinator;
+  const deepAgentRun = await findRunById(tx, taskId);
+  if (deepAgentRun !== undefined) return deepAgentRun;
   return type === COMPLETED
     ? findRunByLastExtractTask(tx, taskId)
     : findRunByExtractTask(tx, taskId);
 }
 
 /**
- * The vector row the decision needs: the workflow's row (created when missing) for an ended
+ * The vector row the decision needs: the deep agent's row (created when missing) for an ended
  * extraction, the row whose pass is the task when no run row names it. Lock order: run row, then
  * vector row.
  */
@@ -271,7 +271,7 @@ async function findEmbeddingOfTask(
 }
 
 /**
- * The workflow's vector row in a savepoint: when the workflow record was deleted meanwhile, the
+ * The deep agent's vector row in a savepoint: when the deep agent record was deleted meanwhile, the
  * foreign key fails only the savepoint and the branch ends quietly (`undefined`).
  */
 async function ensureEmbeddingRowOfLiveRecord(

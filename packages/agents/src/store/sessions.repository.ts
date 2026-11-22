@@ -109,7 +109,7 @@ function originOf(row: SessionRow): RunOrigin {
     author:
       row.authorId === null ? null : { id: row.authorId, name: z.string().parse(row.authorName) },
     builtinKey: row.builtinKey,
-    executor: row.executor,
+    subagent: row.subagent,
   };
 }
 
@@ -196,8 +196,8 @@ export const sessions = {
    * both the starter and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps their race
    * safe. The name, the model and the origin come from the snapshot, the parent and the root from the
    * task; `first_run` is set when the owner had no earlier session with the record. A root session
-   * starts with an empty title and its list time. The session that creates the row of the coordinator
-   * of a self-learning workflow also creates its run row (`agent_knowledge_runs`), once per run.
+   * starts with an empty title and its list time. The session that creates the row of a self-learning
+   * deep agent also creates its run row (`agent_knowledge_runs`), once per run.
    */
   async ensureSession(tx: RuntimeTx, task: SessionTask, input: SessionInput): Promise<void> {
     const { taskId, ownerId } = task;
@@ -223,7 +223,7 @@ export const sessions = {
         authorId: origin.author?.id ?? null,
         authorName: origin.author?.name ?? null,
         builtinKey: origin.builtinKey,
-        executor: origin.executor,
+        subagent: origin.subagent,
         firstRun,
         forkedFromTaskId: input.forkedFrom?.agentId ?? null,
         forkedThroughSeq: input.forkedFrom?.throughSeq ?? null,
@@ -238,7 +238,7 @@ export const sessions = {
       // The chip of a conversation's first message stays on the root's task (plan Notes 9а).
       content: { text: input.prompt, record: input.record ?? null },
     });
-    // A run that learns gets its row with its coordinator session, in this transaction (self-learning KD-2).
+    // A run that learns gets its row with its deep agent session, in this transaction (self-learning KD-2).
     const learning = learningRunOf(input.snapshot);
     if (learning !== null) await insertKnowledgeRun(tx, { runId: taskId, ...learning });
   },
@@ -267,7 +267,7 @@ export const sessions = {
 
   /**
    * How many runs of each record the owner started, for the order of the chat listing (KD-4): only
-   * sessions of the record itself — an executor carries its workflow's record id and a fork its
+   * sessions of the record itself — a subagent carries its deep agent's record id and a fork its
    * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
   async recordCounts(reader: StoreReader, ownerId: string): Promise<Map<string, number>> {
@@ -278,7 +278,7 @@ export const sessions = {
         and(
           eq(agentSessions.ownerId, ownerId),
           isNotNull(agentSessions.parentId),
-          isNull(agentSessions.executor),
+          isNull(agentSessions.subagent),
           isNull(agentSessions.forkedFromTaskId),
         ),
       )

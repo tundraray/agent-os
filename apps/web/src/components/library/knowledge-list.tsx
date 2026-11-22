@@ -109,7 +109,7 @@ type Deleting = { item: KnowledgeItem } & ReturnType<typeof knowledgeDeleteDialo
 
 export type KnowledgeListProps = {
   view: KnowledgeView;
-  /** The workflow whose knowledge this is. */
+  /** The deep agent whose knowledge this is. */
   recordId: string;
   /** Re-reads the graph: after a delete the server's new answer takes the row away (DC-3). */
   reload: () => void;

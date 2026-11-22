@@ -5,6 +5,7 @@ import {
   CHAT_BUILTIN_KEY,
   type ChipRecord,
   type DecisionStatus,
+  type RunTaskListView,
   type ToolCallState,
   ToolCallStateSchema,
   TaskStatusSchema,
@@ -28,6 +29,7 @@ import { foldCalls } from '../history/call-state';
 import { messagePayload } from '../step/continuation';
 import { ConfirmationResolutionSchema } from '../step/tool-step';
 import { history, type PageEntry } from '../store/history.repository';
+import { runTasks } from '../store/run-tasks.repository';
 import type { RecordLibrary } from '../start/record-library';
 import {
   auditStartRefusal,
@@ -47,6 +49,7 @@ import {
 import { logStart } from '../tools/builtin/start-child';
 import type { ToolDisplay } from '../tools/tool';
 import type { ToolRegistry } from '../tools/tool-registry';
+import { type DeepAgentRun, readDeepAgentRun } from './deep-agent-run';
 import { stopEntries } from './stop-entries';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
@@ -163,6 +166,16 @@ export interface AgentSessions {
   restart(request: AgentRef): Promise<{ agentId: string }>;
   /** The run's snapshot, for the view of a run; `null` when the task is not an agent. */
   snapshot(agentId: string, ownerId: string): Promise<RunSnapshot | null>;
+  /**
+   * The run view of a deep agent (deep-agents KD-2): its record, brief, team, steps and limit refusals.
+   * A missing agent, another owner's and one that is not a deep agent are alike `RUN_NOT_FOUND`.
+   */
+  run(agentId: string, ownerId: string): Promise<DeepAgentRun>;
+  /**
+   * The task list of the agent's run by number (deep-agents KD-5, `GET /api/agents/:agentId/tasks`); empty
+   * for an agent without one. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
+   */
+  taskList(agentId: string, ownerId: string): Promise<RunTaskListView>;
   get(agentId: string, ownerId: string): Promise<AgentView>;
   list(rootId: string, ownerId: string): Promise<AgentView[]>;
   history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
@@ -315,10 +328,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   /**
    * Where a restart takes its snapshot (KD-2): a record starts anew by its id, as the owner sees it now;
-   * an executor and a fork restart on their own snapshot.
+   * a subagent and a fork restart on their own snapshot.
    */
   function restartSource(snapshot: RunSnapshot, session: Session): StartSource {
-    if (snapshot.kind === 'executor' || session.forkedFromTaskId !== null) {
+    if (snapshot.kind === 'subagent' || session.forkedFromTaskId !== null) {
       return { kind: 'restart', snapshot };
     }
     return { kind: 'record', recordId: snapshot.origin.recordId, expected: snapshot.origin.kind };
@@ -411,7 +424,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return parsed.data;
   }
 
-  return {
+  const operations: AgentSessions = {
     start({ agentId, ownerId, prompt, description, record }) {
       return logged(
         'start',
@@ -731,5 +744,37 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ),
       );
     },
+
+    taskList(agentId, ownerId) {
+      return logged(
+        'taskList',
+        { agentId, ownerId },
+        async () => {
+          // The owner check first: the list is read only for the owner's agent (Contract «Список задач»).
+          await agentTask(agentId, ownerId);
+          const items = await runTasks.list(database, agentId);
+          return {
+            tasks: items.map((item) => ({
+              number: item.number,
+              text: item.text,
+              status: item.status,
+              createdAt: item.createdAt.toISOString(),
+              updatedAt: item.updatedAt.toISOString(),
+            })),
+          };
+        },
+        (view) => ({ tasks: view.tasks.length }),
+      );
+    },
+
+    run(agentId, ownerId) {
+      return logged(
+        'run',
+        { agentId, ownerId },
+        () => readDeepAgentRun(operations, agentId, ownerId),
+        (run) => ({ steps: run.steps.length, limitRefusals: run.limitRefusals.length }),
+      );
+    },
   };
+  return operations;
 }

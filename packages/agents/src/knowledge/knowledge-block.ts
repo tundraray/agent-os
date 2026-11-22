@@ -28,17 +28,7 @@ export interface KnowledgeBlockInput {
 }
 
 /**
- * The system text of a step (self-learning design-core.md, KD-6; plan Notes 4): the definition's prompt,
- * then an empty line and the knowledge block. The model step and the compaction step both build their
- * `instructions` here, so a compaction call carries the same text as the model call. No block — the
- * prompt unchanged, byte for byte.
- */
-export function withKnowledge(prompt: string, block: string | null): string {
-  return block === null ? prompt : `${prompt}\n\n${block}`;
-}
-
-/**
- * The knowledge block of a run step (KD-6, KD-5, C3 «шаг запуска с графом», Flow 2): `null` without a
+ * The knowledge block of a run step — the first block of the step's system text (`withStepBlocks`) (KD-6, KD-5, C3 «шаг запуска с графом», Flow 2): `null` without a
  * read for a session that does not learn. Otherwise the graph, read fresh — never cached between steps,
  * so a deleted record is gone from the next step (AC-09.2) — then the settings, the registry for the
  * lessons' tools and the stored question vector; with a vector, the store's closeness. The text depends
@@ -98,12 +88,12 @@ export async function knowledgeBlock(
 }
 
 /**
- * The workflow the session learns for and its team's servers (KD-2, KD-5), decided by the snapshot: a
- * coordinator — by the flag of its snapshot, the servers of the executors of its `WorkflowContent`; an
- * executor — by `learning`. `null` — the session does not learn.
+ * The deep agent the session learns for and the servers of its lessons (KD-2, KD-5; deep-agents KD-1),
+ * decided by the snapshot: a deep agent — by the flag of its snapshot, its own servers and those of its
+ * subagents; a subagent — by `learning`. `null` — the session does not learn.
  */
 export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
-  if (snapshot.kind === 'executor') {
+  if (snapshot.kind === 'subagent') {
     return snapshot.learning === null
       ? null
       : { recordId: snapshot.origin.recordId, servers: snapshot.learning.servers };
@@ -112,7 +102,7 @@ export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
 }
 
 /**
- * Whether a lesson's tool is still the workflow's (KD-5): its server is on the team (`*` — any) and the
+ * Whether a lesson's tool is still the deep agent's (KD-5): its server is on the team (`*` — any) and the
  * registry still lists the server with that tool. The registry only notices a missing server or tool.
  * The run step, the extraction round and the knowledge view all judge by it.
  */

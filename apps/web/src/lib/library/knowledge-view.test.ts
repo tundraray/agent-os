@@ -89,7 +89,7 @@ describe("knowledge view", () => {
     ["self-learning off: its line replaces 1–2, no lessons or selection line",
       () => knowledgeStateLines(view({ selfLearning: false, lessonsEnabled: false, selection: offNoModel, lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } }), AUTHOR, intl).map((line) => line.key),
       ["self_learning_off", "outdated", "last_run"]],
-    ["self-learning off, employee's workflow in the panel", () => texts(view({ selfLearning: false }), true)[0],
+    ["self-learning off, employee's deep agent in the panel", () => texts(view({ selfLearning: false }), true)[0],
       "Самообучение выключено: запуски не получают эти знания и не пополняют их. Включить его может автор."],
     ["empty graph: no lines", () => texts(view({ items: [], lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } })), []],
     ["tabs, selection on", () => tabLabels(base),

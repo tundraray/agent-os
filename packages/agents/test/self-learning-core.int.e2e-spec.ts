@@ -18,13 +18,13 @@
 //   service is a request of its own -, `vectorOf` for vectors by topic, `failure` for a 5xx). A second instance with `zombie` + `expireLease` is
 //   the restarted server (INT-4 row B).
 //   Support (test/support/knowledge.ts): `withLibraryRow` - the real `app.library_records` row the graph hangs on by its cascading key (KD-1),
-//   removed afterwards with the run and question rows; `learningWorkflow` - the double's record of the same id; `seedGraph` - graph rows and their
+//   removed afterwards with the run and question rows; `learningDeepAgent` - the double's record of the same id; `seedGraph` - graph rows and their
 //   vectors straight into the tables (the graphs over the size cap of INT-8, INT-10 .. INT-12); `withKnowledgeLimit` - the cap at
 //   `KNOWLEDGE_LIMIT_TOKENS_MIN`, the settings row put back afterwards; `waitForRound` / `waitForEmbedPass` - waits on the rows, never sleeps;
 //   `knowledgeTasksOf`, `knowledgeView` (`Agents.knowledge.view`), the package's reads (`readGraph`, `readQuestion`, `findRunById`). The real
 //   `KnowledgeVectorStore` is read through `list(collection)`, never doubled. The token ledger is read by owner and task (`ledgerRowsOf`,
 //   `PLATFORM_OWNER_ID` for the platform's rows).
-//   Isolation: a unique runner `newUser()` and a unique workflow record per test. The settings row is one per database: a case that sets the cap
+//   Isolation: a unique runner `newUser()` and a unique deep agent record per test. The settings row is one per database: a case that sets the cap
 //   does it through `withKnowledgeLimit` and puts it back; a run of the apps/api suite at the same time would see the changed cap.
 //
 // Proven elsewhere, not repeated here (CLAUDE.md: one test at the lowest level that catches the defect):
@@ -56,7 +56,7 @@
 //   - AC-02.2 / AC-02.1 / copy half of AC-02.3: the graph is keyed by the record number only, so a flag switch, a new version and a copy cannot
 //       touch it by construction; INT-8 row 3 reads the same graph after a flag round trip, INT-5 proves the delete half.
 //   - A task of extraction failing in the runtime (`task.failed` -> `interrupted`, a new task when the mark stands): one consumer decision,
-//       a branch of `knowledge-trigger`, left to its unit table. The same for `knowledge.embed` (one task per workflow, a second request
+//       a branch of `knowledge-trigger`, left to its unit table. The same for `knowledge.embed` (one task per deep agent, a second request
 //       while it runs only sets the "another pass" mark; Invariant 13): a branch of its consumer, left to its unit table.
 //   - The vector store port as such (`upsert` replaces the vector of a key, `query` is cosine within one model and honours `kind`, `list`):
 //       one contract table against real pgvector; INT-8 row 4, INT-10, INT-11 and INT-5 row B use the store only through the real wiring.
@@ -70,7 +70,7 @@
 //   AC-08.1 INT-1 (extraction) + INT-12 (embeddings of sessions and of the pass, on the starter) + INT-11 (recomputation, on the platform) ·
 //   AC-08.2 INT-6 · AC-08.3 INT-1 · AC-09.1 INT-9 · AC-09.2 INT-8 (delete -> next step) + INT-9 (delete route) · AC-09.3 INT-9 · AC-15.1 INT-1 ·
 //   AC-15.2 INT-1 · AC-15.3 unit · AC-16.1 unit · AC-16.2 INT-7 · AC-17.1 unit · AC-18.1 INT-8 (wiring) + unit (ordering) ·
-//   AC-18.2 INT-12 · AC-18.3 INT-10 · AC-18.4 INT-11 · AC-19.1 INT-8 row 4 (entity) + INT-5 row B (workflow) · AC-20.1 unit ·
+//   AC-18.2 INT-12 · AC-18.3 INT-10 · AC-18.4 INT-11 · AC-19.1 INT-8 row 4 (entity) + INT-5 row B (deep agent) · AC-20.1 unit ·
 //   NFR-01 INT-1 · NFR-02 INT-4.
 //
 // Charging rule (design-core v1.3): the `knowledge.embed` task is owned by the platform; each `embed` call decides who pays — items that
@@ -96,7 +96,12 @@ import {
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import { type LogFields, rememberSecret } from '@agent-os/common';
-import { KNOWLEDGE_LIMIT_TOKENS_MIN, type KnowledgeView, type WorkflowContent } from '@agent-os/contracts';
+import {
+  type DeepAgentContent,
+  KNOWLEDGE_LIMIT_TOKENS_MIN,
+  type KnowledgeView,
+  type Subagent,
+} from '@agent-os/contracts';
 import {
   agentMessages,
   createDatabase,
@@ -120,7 +125,7 @@ import {
   historyLines,
   historyOf,
   ledgerRowsOf,
-  START_TEST_WORKFLOW,
+  START_TEST_DEEP_AGENT,
   TEST_AUTHOR_ID,
   TEST_EMBEDDING_MODEL_A,
   TEST_EMBEDDING_MODEL_B,
@@ -140,7 +145,7 @@ import {
   type KnowledgeTask,
   knowledgeTasksOf,
   knowledgeView,
-  learningWorkflow,
+  learningDeepAgent,
   readGraph,
   readQuestion,
   recordKnowledge,
@@ -165,22 +170,20 @@ const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
 /** A quarter of an hour of the fixture's logs, one record a page: the call's result stays small. */
 const LOG_QUERY = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:00.000Z', pageSize: 1 } as const;
 
-/** The executor of every test workflow: it searches the logs server, up to three times per run. */
-const SCOUT_PROMPT = 'You search the payment logs for what the coordinator asks.';
-const SCOUT: WorkflowContent['executors'][number] = {
+/** The subagent of every test deep agent: it searches the logs server, up to three times per run. */
+const SCOUT_PROMPT = 'You search the payment logs for what the deep agent asks.';
+const SCOUT: Subagent = {
   name: 'scout',
-  role: 'Searches the payment logs',
+  description: 'Searches the payment logs',
   prompt: SCOUT_PROMPT,
   servers: [LOGS_SERVER],
   model: TEST_MODEL_DEFAULT,
   maxTurns: 20,
   maxRuns: 3,
-  tools: [],
-  source: null,
 };
 
 /** The envelope of the knowledge block in a step's system text (`knowledge-text.ts`). */
-const KNOWLEDGE_ENVELOPE = '<data source="knowledge" author="earlier runs of this workflow">';
+const KNOWLEDGE_ENVELOPE = '<data source="knowledge" author="earlier runs of this deep agent">';
 
 /** The answer of the first round of INT-1: c1 is the scout's `success` call, c2 the `empty` one. */
 const LEARNED: readonly unknown[] = [
@@ -263,8 +266,8 @@ function scoutScript(
   );
 }
 
-/** A turn of a coordinator: its task or a later employee message, and what it does with it. */
-interface CoordinatorTurn {
+/** A turn of a deep agent: its task or a later employee message, and what it does with it. */
+interface DeepAgentTurn {
   readonly text: string;
   /** The assignment of the scout the turn starts; `null` — the turn starts none and answers at once. */
   readonly scout: string | null;
@@ -277,15 +280,15 @@ function promptOf(args: unknown): unknown {
 }
 
 /**
- * A coordinator decided by its input, so a stop, a continuation or a report arriving with another message
+ * A deep agent decided by its input, so a stop, a continuation or a report arriving with another message
  * does not shift its answers: the latest turn it was given starts its scout once, waits for the scout's
  * report, then answers.
  */
-function coordinatorReplies(turns: readonly CoordinatorTurn[]): ReplyFromInput {
+function deepAgentReplies(turns: readonly DeepAgentTurn[]): ReplyFromInput {
   return (messages) => {
     const said = messages.flatMap((message) => (message.role === 'user' ? [message.content] : []));
     const turn = [...turns].reverse().find((candidate) => said.includes(candidate.text));
-    if (turn === undefined) throw new Error('The coordinator got none of its turns');
+    if (turn === undefined) throw new Error('The deep agent got none of its turns');
     const answer = turn.answer ?? { text: `Answer to: ${turn.text}` };
     const { scout } = turn;
     if (scout === null) return answer;
@@ -314,39 +317,39 @@ async function startedChild(harness: AgentsHarness, agentId: string): Promise<st
 }
 
 interface LearningRun {
-  readonly coordinatorId: string;
-  /** The coordinator's calls. */
-  readonly coordinator: Script;
+  readonly deepAgentId: string;
+  /** The deep agent's calls. */
+  readonly deepAgent: Script;
 }
 
 /**
- * Starts a run of the workflow `recordId` for `ownerId`: a conversation whose root starts the workflow with the
- * first turn's text, the coordinator answering by {@link coordinatorReplies}. Returns once the coordinator exists.
+ * Starts a run of the deep agent `recordId` for `ownerId`: a conversation whose root starts the deep agent with the
+ * first turn's text, the deep agent answering by {@link deepAgentReplies}. Returns once the deep agent exists.
  */
 async function startLearningRun(
   harness: AgentsHarness,
   model: ScriptedModel,
-  run: { readonly ownerId: string; readonly recordId: string; readonly turns: readonly CoordinatorTurn[] },
+  run: { readonly ownerId: string; readonly recordId: string; readonly turns: readonly DeepAgentTurn[] },
 ): Promise<LearningRun> {
   const [first] = run.turns;
   if (first === undefined) throw new Error('A run needs its first turn');
-  const rootTask = `Start the workflow: ${first.text}`;
-  const startWorkflow: ScriptedToolCall = {
-    tool: START_TEST_WORKFLOW,
-    args: { workflow: run.recordId, prompt: first.text, description: first.text },
+  const rootTask = `Start the deep agent: ${first.text}`;
+  const startDeepAgent: ScriptedToolCall = {
+    tool: START_TEST_DEEP_AGENT,
+    args: { deepAgent: run.recordId, prompt: first.text, description: first.text },
   };
-  model.script({ task: rootTask }, [{ calls: [startWorkflow] }], { thereafter: { text: 'noted' } });
-  const coordinator = model.script({ task: first.text }, [], { thereafter: coordinatorReplies(run.turns) });
+  model.script({ task: rootTask }, [{ calls: [startDeepAgent] }], { thereafter: { text: 'noted' } });
+  const deepAgent = model.script({ task: first.text }, [], { thereafter: deepAgentReplies(run.turns) });
   const { agentId: rootId } = await harness.sessions.start({
     ownerId: run.ownerId,
     prompt: rootTask,
     description: first.text,
   });
-  return { coordinatorId: await startedChild(harness, rootId), coordinator };
+  return { deepAgentId: await startedChild(harness, rootId), deepAgent };
 }
 
 /**
- * A harness whose root may start workflows and whose every employee may use the logs server; `settings` makes it
+ * A harness whose root may start deep agents and whose every employee may use the logs server; `settings` makes it
  * a zombie or a second instance (INT-4 row B), refuses models per owner (INT-6 row A) or lowers the compaction
  * threshold (INT-8, INT-12).
  */
@@ -363,15 +366,15 @@ function learningHarness(
     library,
     access: { '*': [LOGS_SERVER] },
     root: testRecord('chat', { tools: ['start_agent'] }),
-    workflowStarter: true,
+    deepAgentStarter: true,
     ...settings,
   });
 }
 
-/** The content of {@link learningWorkflow} with the scout team, to edit the record from. */
-function learningContent(recordId: string): WorkflowContent {
-  const record = learningWorkflow(recordId, [SCOUT]);
-  if (record.kind !== 'workflow') throw new Error('learningWorkflow made no workflow');
+/** The content of {@link learningDeepAgent} with the scout team, to edit the record from. */
+function learningContent(recordId: string): DeepAgentContent {
+  const record = learningDeepAgent(recordId, [SCOUT]);
+  if (record.kind !== 'deep_agent') throw new Error('learningDeepAgent made no deep agent');
   return record.content;
 }
 
@@ -497,7 +500,7 @@ function outcomeOf(round: KnowledgeRun): unknown[] {
 }
 
 /**
- * Continues a run with a turn of its coordinator that makes no call and waits for the round of its new end,
+ * Continues a run with a turn of its deep agent that makes no call and waits for the round of its new end,
  * written after `after`: a round whose mark did not move reads the run's calls again.
  */
 async function roundAfterTurn(
@@ -509,12 +512,12 @@ async function roundAfterTurn(
   return waitForRound(harness.db, turn.runId, after.lastAt);
 }
 
-/** The author deletes the workflow: its `app.library_records` row goes, and every key to it cascades. */
+/** The author deletes the deep agent: its `app.library_records` row goes, and every key to it cascades. */
 async function deleteLibraryRow(db: Database, recordId: string): Promise<void> {
   await db.delete(libraryRecords).where(eq(libraryRecords.id, recordId));
 }
 
-/** What the graph tables and the vector store keep of a workflow. */
+/** What the graph tables and the vector store keep of a deep agent. */
 async function knowledgeLeftOf(db: Database, recordId: string) {
   const graph = await readGraph(db, recordId);
   return {
@@ -582,7 +585,7 @@ const COMPACTION_REQUEST_START = 'The conversation above is getting too long.';
 /**
  * A scout of three calls, each held on its latch when given: the model step that searches the logs and reports
  * input tokens at the compaction threshold, the compaction step, and the model step after it that reports. Keyed
- * by the executor's name: after the compaction the scout no longer sees its task.
+ * by the subagent's name: after the compaction the scout no longer sees its task.
  */
 function compactingScoutScript(
   model: ScriptedModel,
@@ -724,7 +727,7 @@ function distinctBlocks(calls: readonly RecordedModelCall[]): (string[] | null)[
   return [...blocks.values()];
 }
 
-/** A call's system text with its knowledge block cut out: what `withKnowledge(prompt, null)` gives. */
+/** A call's system text with its knowledge block cut out: what `withStepBlocks` gives without a knowledge block. */
 function withoutKnowledge(instructions: string): string {
   const start = instructions.indexOf(`\n\n${KNOWLEDGE_RULE}\n`);
   if (start === -1) return instructions;
@@ -740,7 +743,7 @@ function graphKeysOf(graph: KnowledgeGraph): string[] {
   ];
 }
 
-/** The store's entries of the workflow's collection as `<key> <model>`, sorted. */
+/** The store's entries of the deep agent's collection as `<key> <model>`, sorted. */
 async function vectorLinesOf(db: Database, recordId: string): Promise<string[]> {
   return (await createPgvectorStore(db).list(recordId)).map((entry) => `${entry.key} ${entry.model}`).sort();
 }
@@ -789,23 +792,23 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   извлечение выполнено на модели A"; AC-15.1 "в графе есть урок с инструментом `logs.search`, видом вопроса, подсказкой и исходом";
   //   AC-15.2 "в графе есть запись «искал — не нашёл»"; AC-07.3 "текст, сформулированный как приказ, стоит внутри блока, помеченного как данные";
   //   NFR-01 "начало извлечения каждого запуска позже его конца". Design: UC-1.
-  // Behavior: the executor calls `search_logs` (`success`, service `payment-api`) -> the coordinator ends (row 1) or fails (row 2) ->
+  // Behavior: the subagent calls `search_logs` (`success`, service `payment-api`) -> the deep agent ends (row 1) or fails (row 2) ->
   //   `knowledge-trigger` creates one `knowledge.extract` task in the delivery transaction -> the round calls model A with
   //   `record_knowledge` -> the commit writes two entities, a fact, a lesson and a "searched, found nothing" item -> the next run's model
-  //   steps (coordinator and executor) carry them inside the data envelope under the "a hint, verify every claim by a call in this run"
+  //   steps (deep agent and subagent) carry them inside the data envelope under the "a hint, verify every claim by a call in this run"
   //   rule. The graph is below the limit, so the two-pass selection takes all of it in the common order and no embedding model is needed
   //   (INT-10 owns the no-embeddings path, INT-8 the over-the-limit path).
   //   As built: the MCP fixture answers every call with a structured result, so no real call is `empty`; the `empty` call a "searched,
-  //   found nothing" item needs (DC-11) is written into the finished executor's audit (`writeEmptyCall`) before the coordinator ends.
+  //   found nothing" item needs (DC-11) is written into the finished subagent's audit (`writeEmptyCall`) before the deep agent ends.
   // Verification items:
   //   - rows: (1) the run completes; (2) the run fails; in both the graph holds the items and the run's final state is untouched
-  //   - the author switched the coordinator to model B after the start: the extraction call, the run row and the ledger row name A
+  //   - the author switched the deep agent to model B after the start: the extraction call, the run row and the ledger row name A
   //   - while the round's model call is held, the run is already `completed` with its answer in its history and the extraction task was
   //     created at or after the run's `finished_at` (NFR-01); after the round the status and the history are the same
   //   - the token ledger row of the round's task is the starter's (model A, the call's tokens and cost); none of the author, none of the
   //     platform. The monthly spend is the sum of these rows by owner (`runtime.ledger.monthSpend`), so the row is the rise
-  //   - the next run's coordinator and executor system text carry the five items inside the envelope and the standing rule right above it
-  //   - the same workflow with the flag switched off: its next run gets no run row, no extraction task (the trigger ignores its end as
+  //   - the next run's deep agent and subagent system text carry the five items inside the envelope and the standing rule right above it
+  //   - the same deep agent with the flag switched off: its next run gets no run row, no extraction task (the trigger ignores its end as
   //     `not_learning`) and no block, although the graph is there
   // Catches: an extraction that bills the author or nobody instead of the starter, runs on the model the author switched to, runs before the
   //   run's end is visible, or leaves a graph the next run never receives (or receives outside the data envelope, as an instruction).
@@ -813,12 +816,12 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: knowledge-trigger, runtime tasks, ModelClient, token ledger, step prompt (modelStep), Postgres
   // @complexity: high
   it('INT-1: a finished or failed learning run is extracted on the model of its start, billed to the starter, and the next run gets the items in the data envelope', async () => {
-    // Given: a learning workflow with the scout team (row 1) and a second one whose run will fail (row 2)
+    // Given: a learning deep agent with the scout team (row 1) and a second one whose run will fail (row 2)
     const recordId = randomUUID();
     const failingId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
-    library.add(learningWorkflow(failingId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
+    library.add(learningDeepAgent(failingId, [SCOUT]));
     const starter = newUser();
     const failingStarter = newUser();
     const endHeld = createLatch();
@@ -836,7 +839,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       withLibraryRow(database.db, failingId, async () => {
         const harness = await learningHarness(model, library);
         try {
-          // When (row 1): the run's scout searches the logs; the coordinator's answer is held
+          // When (row 1): the run's scout searches the logs; the deep agent's answer is held
           const run = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
@@ -848,21 +851,21 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
               },
             ],
           });
-          const scoutId = await startedChild(harness, run.coordinatorId);
+          const scoutId = await startedChild(harness, run.deepAgentId);
           await endHeld.reached();
-          // When: the author switches the coordinator to model B mid-run; the finished scout gets its `empty` call
+          // When: the author switches the deep agent to model B mid-run; the finished scout gets its `empty` call
           const content = learningContent(recordId);
-          const switched = { ...content, coordinator: { ...content.coordinator, model: TEST_MODEL_CHOSEN } };
-          library.edit(recordId, { body: { kind: 'workflow', content: switched } });
+          const switched = { ...content, model: TEST_MODEL_CHOSEN };
+          library.edit(recordId, { body: { kind: 'deep_agent', content: switched } });
           await writeEmptyCall(database.db, scoutId, 'checkout-web');
           endHeld.open();
 
           // Then (NFR-01): when the round's model call arrives, the run has ended with its answer, and its one
           // extraction task, the starter's, was created at or after the end
           await roundHeld.reached();
-          const ended = await harness.runtime.tasks.get(run.coordinatorId, starter);
-          const historyAtRound = historyLines(await historyOf(harness, run.coordinatorId, starter));
-          const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.coordinatorId });
+          const ended = await harness.runtime.tasks.get(run.deepAgentId, starter);
+          const historyAtRound = historyLines(await historyOf(harness, run.deepAgentId, starter));
+          const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
           if (extract === undefined || ended.finishedAt === null) throw new Error('no extraction task or no end');
           expect(ended.status).toBe('completed');
           expect(historyAtRound).toContain('model_answer: Answer of learning run 1 []');
@@ -871,7 +874,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           expect(extract.createdAt.getTime()).toBeGreaterThanOrEqual(ended.finishedAt.getTime());
 
           roundHeld.open();
-          const round = await waitForRound(database.db, run.coordinatorId);
+          const round = await waitForRound(database.db, run.deepAgentId);
 
           // Then: the round read the run's two calls and ran once, on model A of the start
           expect(roundCallsOf(extraction.calls[0])).toEqual([
@@ -896,53 +899,53 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
           expect(await ledgerRowsOf(database.db, PLATFORM_OWNER_ID, extract.taskId)).toEqual([]);
           // Then: the run's final state and its history are as the end left them; its one task completed
-          expect((await harness.runtime.tasks.get(run.coordinatorId, starter)).status).toBe('completed');
-          expect(historyLines(await historyOf(harness, run.coordinatorId, starter))).toEqual(historyAtRound);
-          expect((await completedExtractsOf(database.db, run.coordinatorId)).map((task) => task.taskId)).toEqual([
+          expect((await harness.runtime.tasks.get(run.deepAgentId, starter)).status).toBe('completed');
+          expect(historyLines(await historyOf(harness, run.deepAgentId, starter))).toEqual(historyAtRound);
+          expect((await completedExtractsOf(database.db, run.deepAgentId)).map((task) => task.taskId)).toEqual([
             extract.taskId,
           ]);
 
-          // When: the starter runs the workflow again
+          // When: the starter runs the deep agent again
           const next = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
             turns: [{ text: 'Coordinate learning run 2', scout: 'Scout learning run 2' }],
           });
           await nextScout.called(1);
-          await waitForTaskStatus(harness, next.coordinatorId, starter, 'completed');
+          await waitForTaskStatus(harness, next.deepAgentId, starter, 'completed');
 
-          // Then (AC-01.1, AC-15.1, AC-15.2, AC-07.3): the coordinator, now on model B, and the scout carry the five items
+          // Then (AC-01.1, AC-15.1, AC-15.2, AC-07.3): the deep agent, now on model B, and the scout carry the five items
           // inside the data envelope, the rule right above it; the scout's prompt comes first
-          expect(next.coordinator.calls[0]?.model).toBe(TEST_MODEL_CHOSEN);
-          expect(knowledgeLinesOf(next.coordinator.calls[0])).toEqual(LEARNED_LINES);
+          expect(next.deepAgent.calls[0]?.model).toBe(TEST_MODEL_CHOSEN);
+          expect(knowledgeLinesOf(next.deepAgent.calls[0])).toEqual(LEARNED_LINES);
           expect(knowledgeLinesOf(nextScout.calls[0])).toEqual(LEARNED_LINES);
           expect(
             nextScout.calls[0]?.instructions.startsWith(`${SCOUT_PROMPT}\n\n${KNOWLEDGE_RULE}\n${KNOWLEDGE_ENVELOPE}\n`),
           ).toBe(true);
 
-          // When: the author switches the flag off and the starter runs the workflow once more
-          library.edit(recordId, { body: { kind: 'workflow', content: { ...switched, selfLearning: false } } });
+          // When: the author switches the flag off and the starter runs the deep agent once more
+          library.edit(recordId, { body: { kind: 'deep_agent', content: { ...switched, selfLearning: false } } });
           const unlearned = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
             turns: [{ text: 'Coordinate learning run 3', scout: null }],
           });
-          await waitForTaskStatus(harness, unlearned.coordinatorId, starter, 'completed');
+          await waitForTaskStatus(harness, unlearned.deepAgentId, starter, 'completed');
 
           // Then: the run has no row, its end creates no task, and its steps get no block although the graph is there
-          const decided = await triggerDecisionOf(harness, unlearned.coordinatorId);
+          const decided = await triggerDecisionOf(harness, unlearned.deepAgentId);
           expect([decided.decision, decided.reason]).toEqual(['ignore', 'not_learning']);
-          expect(await findRunById(database.db, unlearned.coordinatorId)).toBeUndefined();
-          expect(await knowledgeTasksOf(database.db, { runId: unlearned.coordinatorId })).toEqual([]);
-          expect(unlearned.coordinator.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
+          expect(await findRunById(database.db, unlearned.deepAgentId)).toBeUndefined();
+          expect(await knowledgeTasksOf(database.db, { runId: unlearned.deepAgentId })).toEqual([]);
+          expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
 
-          // When (row 2): a run of the second workflow fails at its coordinator's last call
+          // When (row 2): a run of the second deep agent fails at its deep agent's last call
           const failing = await startLearningRun(harness, model, {
             ownerId: failingStarter,
             recordId: failingId,
             turns: [{ text: 'Coordinate failing run', scout: 'Scout failing run', answer: modelError(400) }],
           });
-          const failedRound = await waitForRound(database.db, failing.coordinatorId);
+          const failedRound = await waitForRound(database.db, failing.deepAgentId);
 
           // Then (AC-03.1): the failed run is extracted on model A, its lesson is in its graph, and it stays failed
           expect(roundCallsOf(extraction.calls[1])).toEqual([`${LOGS_SERVER}/search_logs success ledger`]);
@@ -955,7 +958,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           expect((await readGraph(database.db, failingId)).relations.map((row) => `${row.kind} ${row.question}`)).toEqual([
             'lesson errors of ledger',
           ]);
-          expect((await harness.runtime.tasks.get(failing.coordinatorId, failingStarter)).status).toBe('failed');
+          expect((await harness.runtime.tasks.get(failing.deepAgentId, failingStarter)).status).toBe('failed');
         } finally {
           endHeld.open();
           roundHeld.open();
@@ -988,12 +991,12 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: knowledge-trigger, knowledge-runs row, runtime tasks, ModelClient (scripted), Postgres
   // @complexity: high
   it('INT-2: a stopped run produces no extraction, and calls of the stopped segment are never extracted after the run is continued', async () => {
-    // Given: two learning workflows, one per row, run by the same employee
+    // Given: two learning deep agents, one per row, run by the same employee
     const idleId = randomUUID();
     const inFlightId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(idleId, [SCOUT]));
-    library.add(learningWorkflow(inFlightId, [SCOUT]));
+    library.add(learningDeepAgent(idleId, [SCOUT]));
+    library.add(learningDeepAgent(inFlightId, [SCOUT]));
     const starter = newUser();
     const scoutHeld = createLatch();
     const roundHeld = createLatch();
@@ -1022,27 +1025,27 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             ],
           });
           await scoutHeld.reached();
-          await harness.sessions.stop({ agentId: idle.coordinatorId, ownerId: starter });
-          const stopped = await waitForRound(database.db, idle.coordinatorId);
+          await harness.sessions.stop({ agentId: idle.deepAgentId, ownerId: starter });
+          const stopped = await waitForRound(database.db, idle.deepAgentId);
 
           // Then: the stop is written as skipped / `stopped` with the mark at the stop; no task, no model call, no graph
-          expect((await triggerDecisionOf(harness, idle.coordinatorId)).decision).toBe('stopped');
+          expect((await triggerDecisionOf(harness, idle.deepAgentId)).decision).toBe('stopped');
           expect([stopped.lastStatus, stopped.lastReason, stopped.extractTaskId]).toEqual(['skipped', 'stopped', null]);
           expect(stopped.extractedUpTo).not.toBeNull();
-          expect(await knowledgeTasksOf(database.db, { runId: idle.coordinatorId })).toEqual([]);
+          expect(await knowledgeTasksOf(database.db, { runId: idle.deepAgentId })).toEqual([]);
           expect(extraction.calls).toHaveLength(0);
           const graphAfterStop = await readGraph(database.db, idleId);
           expect([graphAfterStop.entities.length, graphAfterStop.relations.length]).toEqual([0, 0]);
 
           // When: the employee continues the run; a new scout searches `fraud-check` and the run finishes
-          await harness.sessions.send({ agentId: idle.coordinatorId, ownerId: starter, text: 'Carry on after the stop' });
-          const resumed = await waitForRound(database.db, idle.coordinatorId, stopped.lastAt);
+          await harness.sessions.send({ agentId: idle.deepAgentId, ownerId: starter, text: 'Carry on after the stop' });
+          const resumed = await waitForRound(database.db, idle.deepAgentId, stopped.lastAt);
 
           // Then (AC-03.2, DC-3): the round's input holds the new call only, never the stopped stretch's `ledger` call
           expect(roundCallsOf(extraction.calls[0])).toEqual([`${LOGS_SERVER}/search_logs success fraud-check`]);
           expect([resumed.lastStatus, resumed.lastAdded]).toEqual(['done', 1]);
           expect(resumed.extractedUpTo?.getTime()).toBeGreaterThan(stopped.extractedUpTo?.getTime() ?? Infinity);
-          expect(await knowledgeTasksOf(database.db, { runId: idle.coordinatorId })).toHaveLength(1);
+          expect(await knowledgeTasksOf(database.db, { runId: idle.deepAgentId })).toHaveLength(1);
 
           // When (row B): a run ends after a `payment-api` search and its round's model call is held; the employee
           // continues it, its new scout searches `provider-adapter` and is held; the employee stops the run
@@ -1055,17 +1058,17 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             ],
           });
           await roundHeld.reached();
-          const [roundTask] = await knowledgeTasksOf(database.db, { runId: inFlight.coordinatorId });
+          const [roundTask] = await knowledgeTasksOf(database.db, { runId: inFlight.deepAgentId });
           if (roundTask === undefined) throw new Error('the run of row B has no extraction task');
           await harness.sessions.send({
-            agentId: inFlight.coordinatorId,
+            agentId: inFlight.deepAgentId,
             ownerId: starter,
             text: 'Carry on while the round runs',
           });
           await continuedScoutHeld.reached();
-          await harness.sessions.stop({ agentId: inFlight.coordinatorId, ownerId: starter });
+          await harness.sessions.stop({ agentId: inFlight.deepAgentId, ownerId: starter });
           const stoppedMidRound = await waitFor(
-            () => findRunById(database.db, inFlight.coordinatorId),
+            () => findRunById(database.db, inFlight.deepAgentId),
             (row) => row?.lastReason === 'stopped',
             'the stop of the run of row B to be written',
           );
@@ -1076,7 +1079,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
 
           // When: the round's model answers
           roundHeld.open();
-          const late = await waitForRound(database.db, inFlight.coordinatorId, stoppedMidRound.lastAt);
+          const late = await waitForRound(database.db, inFlight.deepAgentId, stoppedMidRound.lastAt);
 
           // Then (Invariant 2): the round writes its own outcome over the stop, the mark stays at the stop, and the
           // stopped stretch's `provider-adapter` call was never in a round
@@ -1089,7 +1092,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           expect(late.extractedUpTo?.getTime()).toBe(stoppedMidRound.extractedUpTo?.getTime());
           expect(roundCallsOf(extraction.calls[1])).toEqual([`${LOGS_SERVER}/search_logs success payment-api`]);
           expect(extraction.calls).toHaveLength(2);
-          expect((await knowledgeTasksOf(database.db, { runId: inFlight.coordinatorId })).map((task) => task.taskId)).toEqual([
+          expect((await knowledgeTasksOf(database.db, { runId: inFlight.deepAgentId })).map((task) => task.taskId)).toEqual([
             roundTask.taskId,
           ]);
         } finally {
@@ -1107,7 +1110,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-03.3 "Given запуск завершился, его извлечение выполнено, и сотрудник продолжил запуск сообщением, when запуск снова завершается,
   //   then извлечение получает только вызовы инструментов после прошлого извлечения". Design: UC-4, DC-4, DC-5, KD-3, Invariants 1 and 3.
-  // Behavior: the run ended with three calls and its round is done -> the employee continues the coordinator, two new calls, it ends
+  // Behavior: the run ended with three calls and its round is done -> the employee continues the deep agent, two new calls, it ends
   //   while the first round is still waiting on the model (latch) -> the consumer only sets "needs another round" -> the first round's commit
   //   sees the mark and continues the same task with a second round.
   // Rows:
@@ -1122,10 +1125,10 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: knowledge-trigger, knowledge.extract handler, runtime tasks, ModelClient (scripted, latch), Postgres
   // @complexity: high
   it('INT-3: a run revived and ended again gets one extraction task at a time and each round reads only the calls after the previous round', async () => {
-    // Given: a learning workflow; the first round's model call will be held
+    // Given: a learning deep agent; the first round's model call will be held
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const starter = newUser();
     const firstHeld = createLatch();
     const model = createScriptedModel();
@@ -1150,26 +1153,26 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           ],
         });
         await firstHeld.reached();
-        const [task] = await knowledgeTasksOf(database.db, { runId: run.coordinatorId });
+        const [task] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
         if (task === undefined) throw new Error('the run has no extraction task');
 
         // When: the employee continues the run, a new scout searches two more services, and the run ends again
-        await harness.sessions.send({ agentId: run.coordinatorId, ownerId: starter, text: 'Look at two more services' });
+        await harness.sessions.send({ agentId: run.deepAgentId, ownerId: starter, text: 'Look at two more services' });
         const marked = await waitFor(
-          () => findRunById(database.db, run.coordinatorId),
+          () => findRunById(database.db, run.deepAgentId),
           (row) => row?.needsRound === true,
           'the second end to ask for another round',
         );
 
         // Then: the second end only marked the row of the task in flight; the run still has that one task
         expect(marked?.extractTaskId).toBe(task.taskId);
-        expect((await knowledgeTasksOf(database.db, { runId: run.coordinatorId })).map((row) => row.taskId)).toEqual([
+        expect((await knowledgeTasksOf(database.db, { runId: run.deepAgentId })).map((row) => row.taskId)).toEqual([
           task.taskId,
         ]);
 
         // When: the first round's model answers
         firstHeld.open();
-        const second = await waitForRound(database.db, run.coordinatorId);
+        const second = await waitForRound(database.db, run.deepAgentId);
 
         // Then (AC-03.3, DC-4): the same task ran two rounds; the first read the three first calls, the second only the two new ones
         expect(extraction.calls).toHaveLength(2);
@@ -1183,7 +1186,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           `${LOGS_SERVER}/search_logs success provider-adapter`,
         ]);
         expect([second.lastStatus, second.lastAdded, second.lastExtractTaskId]).toEqual(['done', 1, task.taskId]);
-        expect((await completedExtractsOf(database.db, run.coordinatorId)).map((row) => row.taskId)).toEqual([
+        expect((await completedExtractsOf(database.db, run.deepAgentId)).map((row) => row.taskId)).toEqual([
           task.taskId,
         ]);
         expect((await readGraph(database.db, recordId)).relations.map((row) => row.question).sort(byText)).toEqual([
@@ -1192,11 +1195,11 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         ]);
 
         // When (row B): the employee continues the run and it ends with no new call
-        await harness.sessions.send({ agentId: run.coordinatorId, ownerId: starter, text: 'Wrap up without new searches' });
-        const third = await waitForRound(database.db, run.coordinatorId, second.lastAt);
+        await harness.sessions.send({ agentId: run.deepAgentId, ownerId: starter, text: 'Wrap up without new searches' });
+        const third = await waitForRound(database.db, run.deepAgentId, second.lastAt);
 
         // Then (DC-5): a new task wrote done with zeros without calling the model or billing anyone
-        const tasks = await completedExtractsOf(database.db, run.coordinatorId);
+        const tasks = await completedExtractsOf(database.db, run.deepAgentId);
         const [, emptyTask, ...more] = tasks;
         if (emptyTask === undefined) throw new Error('the third end created no extraction task');
         expect([tasks[0]?.taskId, more]).toEqual([task.taskId, []]);
@@ -1223,7 +1226,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // AC: AC-04.4 "Given два запуска одного workflow закончились одновременно, when оба извлечения выполнены, then в графе есть записи
   //   обоих"; NFR-02 "извлечение, прерванное рестартом процесса, выполняется снова, и ни одна операция не применяется дважды".
   //   Design: UC-E6, UC-N1, Invariant 5, KD-4 (`checkOperations` against the graph read again in the commit).
-  // Behavior: two runs of one workflow end together, both answers add different items and the same entity -> both commits run in parallel
+  // Behavior: two runs of one deep agent end together, both answers add different items and the same entity -> both commits run in parallel
   //   -> the graph holds both runs' items and the shared entity once, with two confirmations.
   // Rows:
   //   A. two concurrent rounds (both model calls latched, then released together): each round read its own run's call, records of both,
@@ -1239,13 +1242,13 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: knowledge.extract handler, graph repository, checkOperations, runtime recovery (`zombie`, `expireLease`), Postgres
   // @complexity: high
-  it('INT-4: two concurrent extractions of one workflow lose nothing and duplicate nothing, and a restart mid-round applies no operation twice', async () => {
-    // Given (row A): a learning workflow two employees run at once; both rounds name the same entity and their model calls are held together
+  it('INT-4: two concurrent extractions of one deep agent lose nothing and duplicate nothing, and a restart mid-round applies no operation twice', async () => {
+    // Given (row A): a learning deep agent two employees run at once; both rounds name the same entity and their model calls are held together
     const recordId = randomUUID();
     const restartId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
-    library.add(learningWorkflow(restartId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
+    library.add(learningDeepAgent(restartId, [SCOUT]));
     const [first, second, restartStarter] = [newUser(), newUser(), newUser()];
     const bothHeld = createLatch();
     const model = createScriptedModel();
@@ -1256,7 +1259,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
     ]);
     scoutScript(model, 'Scout concurrent run 1', ['payment-api']);
     scoutScript(model, 'Scout concurrent run 2', ['fraud-check']);
-    // Given (row B): a second workflow whose round runs on a zombie instance, its model call held; the re-run answers the same
+    // Given (row B): a second deep agent whose round runs on a zombie instance, its model call held; the re-run answers the same
     const restartHeld = createLatch();
     const restartModel = createScriptedModel();
     const restartOperations: readonly unknown[] = [
@@ -1287,7 +1290,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         ]);
         await bothHeld.reached(2);
         bothHeld.open();
-        const rounds = await Promise.all(runs.map((run) => waitForRound(database.db, run.coordinatorId)));
+        const rounds = await Promise.all(runs.map((run) => waitForRound(database.db, run.deepAgentId)));
 
         // Then (AC-04.4, Invariant 5): each round read its own run's call; one wrote the entity and its lesson, the
         // other confirmed the entity it found under the lock and wrote its lesson
@@ -1303,13 +1306,13 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         expect(graph.entities.map((entity) => `${entity.name} ${entity.confirmations}`)).toEqual(['ledger 2']);
         expect(
           graph.entities.flatMap((entity) => [entity.sourceRunId, entity.confirmedByRunId]).sort(),
-        ).toEqual(runs.map((run) => run.coordinatorId).sort());
+        ).toEqual(runs.map((run) => run.deepAgentId).sort());
         expect(graph.relations.map((relation) => relation.question).sort(byText)).toEqual([
           'errors of fraud-check',
           'errors of payment-api',
         ]);
         for (const run of runs) {
-          expect(await completedExtractsOf(database.db, run.coordinatorId)).toHaveLength(1);
+          expect(await completedExtractsOf(database.db, run.deepAgentId)).toHaveLength(1);
         }
       } finally {
         bothHeld.open();
@@ -1332,14 +1335,14 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           turns: [{ text: 'Coordinate the restarted run', scout: 'Scout the restarted run' }],
         });
         await restartHeld.reached();
-        const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.coordinatorId });
+        const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
         if (extract === undefined) throw new Error('the restarted run has no extraction task');
 
         // When: a second instance starts, the zombie's lease expires, and the second instance takes the round over
         const restarted = await learningHarness(restartModel, library, { fixture: zombie.fixture });
         harnesses.push(restarted);
         await expireLease(zombie.db, extract.taskId);
-        const round = await waitForRound(database.db, run.coordinatorId);
+        const round = await waitForRound(database.db, run.deepAgentId);
 
         // When: the zombie's held model call answers; its commit finds its attempt gone
         restartHeld.open();
@@ -1370,7 +1373,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           ),
         ).toEqual([`${TEST_MODEL_DEFAULT} 1000`, `${TEST_MODEL_DEFAULT} 1000`]);
         expect(moreExtracts).toEqual([]);
-        expect((await completedExtractsOf(database.db, run.coordinatorId)).map((task) => task.taskId)).toEqual([
+        expect((await completedExtractsOf(database.db, run.deepAgentId)).map((task) => task.taskId)).toEqual([
           extract.taskId,
         ]);
       } finally {
@@ -1381,12 +1384,12 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   }, TEST_TIMEOUT_MS);
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-5: the workflow record is deleted while its round waits for the model, or after it - graph and vectors go with it
+  // INT-5: the deep agent record is deleted while its round waits for the model, or after it - graph and vectors go with it
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-04.2 "Given модель предложила изменение, которое нельзя применить, например к уже удалённой записи, then остальные изменения этого
   //   извлечения записаны"; AC-02.3 "when автор удаляет workflow, then его граф удалён"; AC-19.1 (workflow half: "после удаления workflow его
   //   коллекция пуста", DC-16). Design: UC-E5, UC-E9 (workflow row), DC-8, DC-16, KD-1 (the cascading key), KD-8 (pgvector carries the vectors by cascade).
-  // Behavior: the round waits on the model -> the author deletes the workflow -> the model answers -> the commit's writes hit the missing
+  // Behavior: the round waits on the model -> the author deletes the deep agent -> the model answers -> the commit's writes hit the missing
   //   record -> they are undone at their save point, the task completes, `record_deleted` goes to the log.
   // Rows:
   //   A. delete before the answer: no graph rows, no vectors and no vector row for the record, no error of the step and no failed or parked
@@ -1397,17 +1400,17 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //      of the record is gone with it (the key cascades), and `list(collection)` of the record's vector collection is empty - no vector
   //      that `query` could find is left - and the vector row is gone.
   // Catches: a key violation that fails the whole step and retries it forever (or parks the delivery), a graph left orphaned after its
-  //   workflow is deleted, and vectors of a deleted workflow left in the store (a later query would still return their keys).
+  //   deep agent is deleted, and vectors of a deleted deep agent left in the store (a later query would still return their keys).
   // @category: edge-case
   // @dependency: knowledge.extract handler, graph repository, KnowledgeVectorStore (real pgvector), app.library_records (real row), runtime tasks, Postgres
   // @complexity: medium
-  it('INT-5: a workflow deleted during the round leaves no graph rows, no step error and a completed extraction task; deleted after it, no graph rows and no vectors', async () => {
-    // Given: two learning workflows, one per row; the first round's model call will be held; embeddings on model A
+  it('INT-5: a deep agent deleted during the round leaves no graph rows, no step error and a completed extraction task; deleted after it, no graph rows and no vectors', async () => {
+    // Given: two learning deep agents, one per row; the first round's model call will be held; embeddings on model A
     const midRoundId = randomUUID();
     const afterRoundId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(midRoundId, [SCOUT]));
-    library.add(learningWorkflow(afterRoundId, [SCOUT]));
+    library.add(learningDeepAgent(midRoundId, [SCOUT]));
+    library.add(learningDeepAgent(afterRoundId, [SCOUT]));
     const starter = newUser();
     const roundHeld = createLatch();
     const model = createScriptedModel();
@@ -1429,7 +1432,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         const harness = await learningHarness(model, library);
         harness.embeddingVerdict = embeddingModel;
         try {
-          // When (row A): the run ends, its round's model call is held, the author deletes the workflow, the model answers
+          // When (row A): the run ends, its round's model call is held, the author deletes the deep agent, the model answers
           const midRound = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId: midRoundId,
@@ -1438,8 +1441,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           await roundHeld.reached();
           await deleteLibraryRow(database.db, midRoundId);
           roundHeld.open();
-          const dropped = await waitForRound(database.db, midRound.coordinatorId);
-          const [extract, ...moreExtracts] = await completedExtractsOf(database.db, midRound.coordinatorId);
+          const dropped = await waitForRound(database.db, midRound.deepAgentId);
+          const [extract, ...moreExtracts] = await completedExtractsOf(database.db, midRound.deepAgentId);
           if (extract === undefined) throw new Error('the run of row A has no extraction task');
 
           // Then (AC-04.2, DC-8): the round's writes were undone at their save point and the round still ended `done`; the
@@ -1454,7 +1457,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             dropped.lastExtractTaskId,
           ]).toEqual(['done', null, 0, 0, 0, extract.taskId]);
           expect(
-            (await logFieldsOf(harness, 'knowledge graph writes dropped: workflow deleted', extract.taskId)).reason,
+            (await logFieldsOf(harness, 'knowledge graph writes dropped: deep agent deleted', extract.taskId)).reason,
           ).toBe('record_deleted');
           const decided = await triggerDecisionOf(harness, extract.taskId);
           expect([decided.decision, decided.reason]).toEqual(['ignore', 'record_deleted']);
@@ -1462,13 +1465,13 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           expect(await knowledgeTasksOf(database.db, { recordId: midRoundId })).toEqual([]);
           expect(troublesOf(harness, extract.taskId)).toEqual([]);
 
-          // When (row B): a run of the second workflow ends, its round writes, the vector pass embeds its items on model A
+          // When (row B): a run of the second deep agent ends, its round writes, the vector pass embeds its items on model A
           const finished = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId: afterRoundId,
             turns: [{ text: 'Coordinate the run deleted after its round', scout: 'Scout the run deleted after its round' }],
           });
-          const round = await waitForRound(database.db, finished.coordinatorId);
+          const round = await waitForRound(database.db, finished.deepAgentId);
           const pass = await waitForEmbedPass(database.db, afterRoundId, round.lastAt ?? new Date(0));
           const graph = await readGraph(database.db, afterRoundId);
           const keys = [
@@ -1480,7 +1483,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             (await createPgvectorStore(database.db).list(afterRoundId)).map((entry) => `${entry.key} ${entry.model}`).sort(),
           ).toEqual(keys.map((key) => `${key} ${embeddingModel.model}`).sort());
 
-          // When: the author deletes the workflow
+          // When: the author deletes the deep agent
           await deleteLibraryRow(database.db, afterRoundId);
 
           // Then (AC-02.3, AC-19.1, DC-16): its graph, its vectors and its vector row went with the record
@@ -1502,9 +1505,9 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   answer, a third only when similar-entity candidates exist), Flow 1 failure handling.
   // Behavior: the run ends -> the access check refuses, the provider errors, or the answer carries no valid `record_knowledge` -> the round
   //   writes its state and the mark does not move.
-  // Rows (literal `lastExtraction`; one workflow whose coordinator runs on model B, one starter per row, rows one after another):
+  // Rows (literal `lastExtraction`; one deep agent that runs on model B, one starter per row, rows one after another):
   //   A. quota of the starter exhausted: zero model calls and no ledger row; `skipped` / `quota_exhausted`. As built: the refusal of model B
-  //      for the starter is added while the coordinator's last answer is held (the run itself must still run), and withdrawn before row A's
+  //      for the starter is added while the deep agent's last answer is held (the run itself must still run), and withdrawn before row A's
   //      later round.
   //   B. provider error after the client's retries - `ModelClient` answers `model_error` with the reason `provider_unavailable` (a provider
   //      reason maps to `model_error`, the exact reason stays in the log, DC-13): `failed` / `model_error`. As built: three attempts (503 is
@@ -1520,13 +1523,13 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: ModelClient, AccessGate (double), knowledge.extract handler, knowledge-runs row, Postgres
   // @complexity: medium
   it('INT-6: a refused, failed or unparsable round writes its named state (provider reasons as `model_error`), calls the model at most twice, and changes neither graph nor run', async () => {
-    // Given: a learning workflow whose coordinator runs on model B; three employees, one per row
+    // Given: a learning deep agent that runs on model B; three employees, one per row
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const content = learningContent(recordId);
     library.edit(recordId, {
-      body: { kind: 'workflow', content: { ...content, coordinator: { ...content.coordinator, model: TEST_MODEL_CHOSEN } } },
+      body: { kind: 'deep_agent', content: { ...content, model: TEST_MODEL_CHOSEN } },
     });
     const [refused, failing, unparsable] = [newUser(), newUser(), newUser()];
     const refusals: Record<string, Record<string, typeof QUOTA_SPENT>> = {};
@@ -1550,7 +1553,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
     await withLibraryRow(database.db, recordId, async () => {
       const harness = await learningHarness(model, library, { ownerModelRefusals: refusals });
       try {
-        // When (row A): the starter's quota of model B runs out while the coordinator's last answer is held
+        // When (row A): the starter's quota of model B runs out while the deep agent's last answer is held
         const refusedRun = await startLearningRun(harness, model, {
           ownerId: refused,
           recordId,
@@ -1566,8 +1569,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         await endHeld.reached();
         refusals[refused] = { [TEST_MODEL_CHOSEN]: QUOTA_SPENT };
         endHeld.open();
-        const skipped = await waitForRound(database.db, refusedRun.coordinatorId);
-        const [refusedTask] = await completedExtractsOf(database.db, refusedRun.coordinatorId);
+        const skipped = await waitForRound(database.db, refusedRun.deepAgentId);
+        const [refusedTask] = await completedExtractsOf(database.db, refusedRun.deepAgentId);
         if (refusedTask === undefined) throw new Error('the run of row A has no extraction task');
 
         // Then (AC-08.2): skipped with the gate's reason, no model call, no ledger row, no graph, the mark not moved, the run as it ended
@@ -1575,8 +1578,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         expect(extraction.calls).toHaveLength(0);
         expect(await ledgerRowsOf(database.db, refused, refusedTask.taskId)).toEqual([]);
         expect(await readGraph(database.db, recordId)).toEqual({ entities: [], relations: [] });
-        expect((await harness.runtime.tasks.get(refusedRun.coordinatorId, refused)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, refusedRun.coordinatorId, refused))).toContain(
+        expect((await harness.runtime.tasks.get(refusedRun.deepAgentId, refused)).status).toBe('completed');
+        expect(historyLines(await historyOf(harness, refusedRun.deepAgentId, refused))).toContain(
           'model_answer: Answer of the refused run []',
         );
 
@@ -1584,7 +1587,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         refusals[refused] = {};
         const refusedRetry = await roundAfterTurn(
           harness,
-          { ownerId: refused, runId: refusedRun.coordinatorId, text: 'Coordinate the refused run again' },
+          { ownerId: refused, runId: refusedRun.deepAgentId, text: 'Coordinate the refused run again' },
           skipped,
         );
         expect(roundCallsOf(extraction.calls[0])).toEqual([`${LOGS_SERVER}/search_logs success payment-api`]);
@@ -1604,8 +1607,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             { text: 'Coordinate the failing run again', scout: null },
           ],
         });
-        const failed = await waitForRound(database.db, failingRun.coordinatorId);
-        const [failingTask] = await completedExtractsOf(database.db, failingRun.coordinatorId);
+        const failed = await waitForRound(database.db, failingRun.deepAgentId);
+        const [failingTask] = await completedExtractsOf(database.db, failingRun.deepAgentId);
         if (failingTask === undefined) throw new Error('the run of row B has no extraction task');
 
         // Then (AC-03.4, DC-13): `model_error` in the contract's list, the provider's reason only in the log; nothing billed,
@@ -1616,15 +1619,15 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         expect(extraction.calls).toHaveLength(4);
         expect(await ledgerRowsOf(database.db, failing, failingTask.taskId)).toEqual([]);
         expect(await readGraph(database.db, recordId)).toEqual(graphBeforeFailure);
-        expect((await harness.runtime.tasks.get(failingRun.coordinatorId, failing)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, failingRun.coordinatorId, failing))).toContain(
+        expect((await harness.runtime.tasks.get(failingRun.deepAgentId, failing)).status).toBe('completed');
+        expect(historyLines(await historyOf(harness, failingRun.deepAgentId, failing))).toContain(
           'model_answer: Answer to: Coordinate the failing run []',
         );
 
         // When: the run is continued; its next round reads the same call
         const failingRetry = await roundAfterTurn(
           harness,
-          { ownerId: failing, runId: failingRun.coordinatorId, text: 'Coordinate the failing run again' },
+          { ownerId: failing, runId: failingRun.deepAgentId, text: 'Coordinate the failing run again' },
           failed,
         );
         expect(roundCallsOf(extraction.calls[4])).toEqual(roundCallsOf(extraction.calls[1]));
@@ -1645,8 +1648,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             { text: 'Coordinate the unparsable run again', scout: null },
           ],
         });
-        const invalid = await waitForRound(database.db, unparsableRun.coordinatorId);
-        const [unparsableTask] = await completedExtractsOf(database.db, unparsableRun.coordinatorId);
+        const invalid = await waitForRound(database.db, unparsableRun.deepAgentId);
+        const [unparsableTask] = await completedExtractsOf(database.db, unparsableRun.deepAgentId);
         if (unparsableTask === undefined) throw new Error('the run of row C has no extraction task');
 
         // Then (DC-7, KD-4): exactly two calls, the second told what was wrong, no third; both billed; graph and mark unchanged
@@ -1659,15 +1662,15 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           TEST_MODEL_CHOSEN,
         ]);
         expect(await readGraph(database.db, recordId)).toEqual(graphBeforeInvalid);
-        expect((await harness.runtime.tasks.get(unparsableRun.coordinatorId, unparsable)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, unparsableRun.coordinatorId, unparsable))).toContain(
+        expect((await harness.runtime.tasks.get(unparsableRun.deepAgentId, unparsable)).status).toBe('completed');
+        expect(historyLines(await historyOf(harness, unparsableRun.deepAgentId, unparsable))).toContain(
           'model_answer: Answer to: Coordinate the unparsable run []',
         );
 
         // When: the run is continued; its next round reads the same call
         const unparsableRetry = await roundAfterTurn(
           harness,
-          { ownerId: unparsable, runId: unparsableRun.coordinatorId, text: 'Coordinate the unparsable run again' },
+          { ownerId: unparsable, runId: unparsableRun.deepAgentId, text: 'Coordinate the unparsable run again' },
           invalid,
         );
         expect(roundCallsOf(extraction.calls[7])).toEqual(roundCallsOf(extraction.calls[5]));
@@ -1706,11 +1709,11 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: knowledge.extract handler, checkOperations, createSecretMasker (reads the process secret memory, `rememberSecret`), Postgres
   // @complexity: medium
   it('INT-7: a round applies the valid operations of an answer, rejects the unknown-id and uncited ones, and stores no secret value', async () => {
-    // Given: the process remembers a secret; a learning workflow whose graph holds a lesson about `get_trace`, confirmed twice
+    // Given: the process remembers a secret; a learning deep agent whose graph holds a lesson about `get_trace`, confirmed twice
     rememberSecret(FAKE_SECRET);
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const starter = newUser();
     const model = createScriptedModel();
     scoutScript(model, 'Scout the payment service', ['payment-api']);
@@ -1766,8 +1769,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           recordId,
           turns: [{ text: 'Coordinate the run with a secret', scout: 'Scout the payment service' }],
         });
-        const round = await waitForRound(database.db, run.coordinatorId);
-        const [extract] = await completedExtractsOf(database.db, run.coordinatorId);
+        const round = await waitForRound(database.db, run.deepAgentId);
+        const [extract] = await completedExtractsOf(database.db, run.deepAgentId);
         if (extract === undefined) throw new Error('the run has no extraction task');
 
         // Then (AC-04.2, DC-6): the valid entity is written with the secret redacted; the rest changed nothing
@@ -1820,7 +1823,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   1. a learning run with an entity and its relation: the model step's system text and the compaction step's system text (history long
   //      enough to compact) carry the same block; after the author deletes the entity the next step of the same run carries neither the
   //      entity nor its relation (the relation went with it).
-  //   2. a workflow without the flag (and an executor whose snapshot has `learning = null`): the system text is byte-identical to a workflow
+  //   2. a deep agent without the flag (and a subagent whose snapshot has `learning = null`): the system text is byte-identical to a deep agent
   //      that never had the feature, and no run row exists.
   //   3. the author switches the flag off mid-run: the running run keeps its block and is still extracted; a new run gets no block and no row;
   //      after the flag is on again the graph is the one that was there before.
@@ -1828,7 +1831,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //      drops but whose vector is closest to the stored question is in the block of both steps, at the same position in both. Then the author
   //      deletes an entity whose vector is still in the store (the embedding pass has not run) and the question equals its text verbatim: the
   //      next step does not carry it nor its relations; after the `knowledge.embed` pass `list(collection)` holds none of their keys.
-  //   As built, one workflow and two runs carry all four rows. Run 1 (rows 1, 3, 4): the graph over the cap (`seedOverLimit`), billing and its
+  //   As built, one deep agent and two runs carry all four rows. Run 1 (rows 1, 3, 4): the graph over the cap (`seedOverLimit`), billing and its
   //   fact with vectors of model A; the question of the scout's session is about billing, so the closeness pass brings them in; the scout's
   //   three calls are the model step, the compaction step (held) and the model step after it (held). While the compaction is held the author
   //   switches the flag off (row 3) and deletes the billing entity (rows 1, 4): its fact goes with it, the deletion's pass removes both
@@ -1836,22 +1839,22 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   "a vector written for a record deleted meanwhile is dangling") - so the next step's store query returns their keys. The block of that
   //   step is the common order: the dangling keys are dropped, the archives' and refunds' vectors (the deletion's pass embedded them) are
   //   equally far from billing (closeness 0, the archives first by id), and the common order then takes the same four archives. The pass at
-  //   the run's end removes the dangling vectors again. Run 2 (rows 2, 3): the flag off, its executor's snapshot has `learning = null`;
+  //   the run's end removes the dangling vectors again. Run 2 (rows 2, 3): the flag off, its subagent's snapshot has `learning = null`;
   //   "byte-identical" is the learning scout's first system text with its block cut out. The vector values are in `OVER_LIMIT_VECTORS`.
   // Catches: the compaction call built without the block (the provider cache of the model step is then missed and the history summary loses
-  //   the context), a graph cached at run start so deletions never reach a running run, the block leaking into runs of a workflow that does not
+  //   the context), a graph cached at run start so deletions never reach a running run, the block leaking into runs of a deep agent that does not
   //   learn, a closeness pass that ignores the stored vector (the item near the question never reaches the prompt), and a deleted item found
   //   by its leftover vector and put in the prompt, or its vector kept in the store for ever.
   // @category: core-functionality
   // @dependency: modelStep, compactionStep, knowledgeBlock, selectKnowledge, KnowledgeVectorStore (real pgvector), question row, envelope, ensureSession, EmbeddingClient (double), ModelClient (scripted), Postgres
   // @complexity: high
-  it('INT-8: both the model step and the compaction step carry the two-pass block read fresh at each step, a deleted item is not found by its vector, and a non-learning workflow gets none', async () => {
-    // Given: a learning workflow whose graph is over the cap; embeddings on model A; the scout's compaction and report will be held
+  it('INT-8: both the model step and the compaction step carry the two-pass block read fresh at each step, a deleted item is not found by its vector, and a non-learning deep agent gets none', async () => {
+    // Given: a learning deep agent whose graph is over the cap; embeddings on model A; the scout's compaction and report will be held
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const flagged = (selfLearning: boolean) =>
-      library.edit(recordId, { body: { kind: 'workflow', content: { ...learningContent(recordId), selfLearning } } });
+      library.edit(recordId, { body: { kind: 'deep_agent', content: { ...learningContent(recordId), selfLearning } } });
     const starter = newUser();
     const compactionHeld = createLatch();
     const reportHeld = createLatch();
@@ -1911,7 +1914,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
 
           // When: the scout reports and the run ends
           reportHeld.open();
-          const round = await waitForRound(database.db, run.coordinatorId);
+          const round = await waitForRound(database.db, run.deepAgentId);
           const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
 
           // Then (row 3): the run whose flag went off mid-run is still extracted; (row 4) the pass removed the leftover vectors
@@ -1919,17 +1922,17 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           const graph = await readGraph(database.db, recordId);
           expect(await vectorLinesOf(database.db, recordId)).toEqual(everyKeyOn(graph, MODEL_A));
 
-          // When (rows 2, 3): the starter runs the workflow with the flag off
+          // When (rows 2, 3): the starter runs the deep agent with the flag off
           const unlearned = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
             turns: [{ text: 'Coordinate the run without learning', scout: 'Scout the run without learning' }],
           });
-          await waitForTaskStatus(harness, unlearned.coordinatorId, starter, 'completed');
+          await waitForTaskStatus(harness, unlearned.deepAgentId, starter, 'completed');
 
-          // Then: no run row, no block for the coordinator, and the executor's system text is the learning one without its block
-          expect(await findRunById(database.db, unlearned.coordinatorId)).toBeUndefined();
-          expect(unlearned.coordinator.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
+          // Then: no run row, no block for the deep agent, and the subagent's system text is the learning one without its block
+          expect(await findRunById(database.db, unlearned.deepAgentId)).toBeUndefined();
+          expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
           expect(unlearnedScout.calls[0]?.instructions).toBe(withoutKnowledge(modelCall?.instructions ?? ''));
 
           // When (row 3): the author switches the flag on again. Then (AC-02.2): the graph is the one that was there
@@ -1959,9 +1962,9 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //      for the session however many steps it makes; `selection` = `off`, reason `provider_failed`, `model` = the selected model's id.
   //   Both rows: the run's final state is `completed` and its reply is in the conversation; the block of every step is the common order over the
   //   whole limit (equal to what a graph with no vectors gives); in the view the records beyond the limit are `does_not_fit`, none `by_topic`.
-  //   As built: one workflow per row, the graph over the cap without vectors (`seedOverLimit`); the coordinator makes three or more model steps,
+  //   As built: one deep agent per row, the graph over the cap without vectors (`seedOverLimit`); the deep agent makes three or more model steps,
   //   the scout two. Row B's one `embed` per session is three provider requests - the call and the service's two retries (1 and 3 s) - so the
-  //   double records three `query` requests per learning session (coordinator, scout), and none from a later step. Each run is followed to
+  //   double records three `query` requests per learning session (deep agent, scout), and none from a later step. Each run is followed to
   //   the end of the vector pass its extraction queues (row A: `model_not_configured`, no request; row B: `provider_unavailable`).
   // Catches: an embedding outage failing a run or a step, a failing call repeated at every step (spend and latency multiplied by the step
   //   count), a prompt that is empty or half-filled instead of the common order over the whole limit, and a view that promises `by_topic`
@@ -1970,12 +1973,12 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: AgentStepHandler (question row), knowledgeBlock, selectKnowledge, EmbeddingClient (double: not selected / 5xx), Agents.knowledge.view, ModelClient (scripted), Postgres
   // @complexity: medium
   it('INT-10: with no embedding model or a failing provider the run completes, steps get the common order over the whole limit, one failed call per session, and the view says off with the reason', async () => {
-    // Given: two learning workflows over the cap, one per row, no vectors anywhere
+    // Given: two learning deep agents over the cap, one per row, no vectors anywhere
     const unselectedId = randomUUID();
     const failingId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(unselectedId, [SCOUT]));
-    library.add(learningWorkflow(failingId, [SCOUT]));
+    library.add(learningDeepAgent(unselectedId, [SCOUT]));
+    library.add(learningDeepAgent(failingId, [SCOUT]));
     const starter = newUser();
     const model = createScriptedModel();
     model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], { thereafter: RECORDS_NOTHING });
@@ -1994,13 +1997,13 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
               ...[graph.billing, graph.fact, graph.refunds].map((item) => `${item.key} does_not_fit`),
             ].sort();
           const harness = await learningHarness(model, library);
-          /** Runs the workflow to the end of the vector pass its extraction queues. */
+          /** Runs the deep agent to the end of the vector pass its extraction queues. */
           const runToItsPass = async (recordId: string, text: string, scout: string) => {
             const run = await startLearningRun(harness, model, { ownerId: starter, recordId, turns: [{ text, scout }] });
-            const round = await waitForRound(database.db, run.coordinatorId);
+            const round = await waitForRound(database.db, run.deepAgentId);
             const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
-            const ended = await harness.runtime.tasks.get(run.coordinatorId, starter);
-            const history = historyLines(await historyOf(harness, run.coordinatorId, starter));
+            const ended = await harness.runtime.tasks.get(run.deepAgentId, starter);
+            const history = historyLines(await historyOf(harness, run.deepAgentId, starter));
             return { run, pass, status: ended.status, history };
           };
           try {
@@ -2016,7 +2019,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             expect([unselected.status, unselected.pass.lastReason]).toEqual(['completed', 'model_not_configured']);
             expect(unselected.history).toContain('model_answer: Answer to: Coordinate with no embedding model []');
             expect(unselectedScout.calls).toHaveLength(2);
-            expect(distinctBlocks([...unselected.run.coordinator.calls, ...unselectedScout.calls])).toEqual([
+            expect(distinctBlocks([...unselected.run.deepAgent.calls, ...unselectedScout.calls])).toEqual([
               COMMON_BLOCK,
             ]);
             expect(harness.embeddings.calls).toEqual([]);
@@ -2034,7 +2037,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             expect([failing.status, failing.pass.lastReason]).toEqual(['completed', 'provider_unavailable']);
             expect(failing.history).toContain('model_answer: Answer to: Coordinate with failing embeddings []');
             expect(failingScout.calls).toHaveLength(2);
-            expect(distinctBlocks([...failing.run.coordinator.calls, ...failingScout.calls])).toEqual([COMMON_BLOCK]);
+            expect(distinctBlocks([...failing.run.deepAgent.calls, ...failingScout.calls])).toEqual([COMMON_BLOCK]);
             expect(
               embeddingRequestsOf(harness, 'query').map((call) => `${call.model} ${call.texts.join(' | ')}`),
             ).toEqual([
@@ -2075,7 +2078,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   As built: the graph over the cap (`seedOverLimit`), all seven records with vectors of model A (3 dimensions), and model B (4 dimensions)
   //   selected before the run. pgvector cannot compare vectors of different lengths, so a query that compared them would fail and the step would
   //   log "knowledge store query failed" and fall back to the common order: the test asserts that no such warning was logged, so the common order
-  //   comes from the model filter. The view is read while the coordinator's last answer is held; the round adds one lesson, so the one pass
+  //   comes from the model filter. The view is read while the deep agent's last answer is held; the round adds one lesson, so the one pass
   //   makes two `document` requests - the lesson (never had a vector) on the starter, the seven old records on the platform -, both under the
   //   pass's task, whose owner is the platform. The scripted provider counts 10 input tokens a text.
   // Catches: vectors of the old model compared with a question vector of the new one (nonsense closeness, a prompt with random items), a run
@@ -2085,10 +2088,10 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @dependency: AgentStepHandler (question row), knowledgeBlock, knowledge.embed handler, KnowledgeVectorStore (real pgvector), EmbeddingClient (double: model A -> B), token ledger, Agents.knowledge.view, Postgres
   // @complexity: high
   it('INT-11: after the embedding model changes, steps use the common order and the view says preparing until the pass re-embeds every item on the new model, billed to the platform', async () => {
-    // Given: a learning workflow over the cap, every record with a vector of model A; the administrator selected model B
+    // Given: a learning deep agent over the cap, every record with a vector of model A; the administrator selected model B
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const starter = newUser();
     const endHeld = createLatch();
     const model = createScriptedModel();
@@ -2102,7 +2105,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         harness.embeddingVerdict = TEST_EMBEDDING_MODEL_B;
         harness.embeddings.vectorOf = topicVector;
         try {
-          // When: a run about billing; its coordinator's last answer is held
+          // When: a run about billing; its deep agent's last answer is held
           const run = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
@@ -2118,8 +2121,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
 
           // Then (AC-18.4, Invariant 11): the question vector is of model B and meets no vector of B - every step got the common
           // order, billing's vector of A never compared (no failed store query); the view says preparing, all seven records pending
-          expect((await readQuestion(database.db, run.coordinatorId))?.model).toBe(MODEL_B);
-          expect(distinctBlocks([...run.coordinator.calls, ...scout.calls])).toEqual([COMMON_BLOCK]);
+          expect((await readQuestion(database.db, run.deepAgentId))?.model).toBe(MODEL_B);
+          expect(distinctBlocks([...run.deepAgent.calls, ...scout.calls])).toEqual([COMMON_BLOCK]);
           expect(
             harness.logs.filter((record) => record.message === 'knowledge store query failed; selection without closeness'),
           ).toEqual([]);
@@ -2130,10 +2133,10 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
 
           // When: the run ends, the round adds a lesson, the pass runs
           endHeld.open();
-          const round = await waitForRound(database.db, run.coordinatorId);
+          const round = await waitForRound(database.db, run.deepAgentId);
           const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
           expect([round.lastStatus, round.lastAdded, pass.lastReason, pass.lastModel]).toEqual(['done', 1, null, MODEL_B]);
-          expect((await harness.runtime.tasks.get(run.coordinatorId, starter)).status).toBe('completed');
+          expect((await harness.runtime.tasks.get(run.deepAgentId, starter)).status).toBe('completed');
 
           // Then: one vector per key, every one of model B; selection is on
           expect(await vectorLinesOf(database.db, recordId)).toEqual(
@@ -2166,20 +2169,20 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // AC: AC-18.2 "Given координатор ответил на одно сообщение, when сотрудник пишет новое сообщение на другую тему, then следующий шаг координатора
   //   получает записи, близкие к новому сообщению"; AC-08.1 (the embeddings half: "стоимость эмбеддингов запуска и извлечения" in the
   //   starter's monthly spend). Design: UC-9, DC-14, KD-6, Invariant 12 (the vector is computed at the session's start and at each new message
-  //   to the coordinator; model and compaction steps only read it).
-  // Behavior: the graph is above the limit, items have vectors (two topics) -> the coordinator and one executor session start and each make
-  //   several steps (some compacted) -> the employee writes the coordinator a message on the other topic -> the next coordinator step -> the
+  //   to the deep agent; model and compaction steps only read it).
+  // Behavior: the graph is above the limit, items have vectors (two topics) -> the deep agent and one subagent session start and each make
+  //   several steps (some compacted) -> the employee writes the deep agent a message on the other topic -> the next deep agent step -> the
   //   run ends, the extraction adds items, the embedding pass runs.
   // Verification items:
-  //   - embedding calls with `inputType` `query`: one per session (coordinator, executor) plus one for the new message, however many steps and
+  //   - embedding calls with `inputType` `query`: one per session (deep agent, subagent) plus one for the new message, however many steps and
   //     compaction steps ran; none is made by a step or by the compaction step
-  //   - the coordinator step after the message carries the items close to the new topic and not those close to the first topic; the executor's
+  //   - the deep agent step after the message carries the items close to the new topic and not those close to the first topic; the subagent's
   //     block is unchanged by the message
   //   - the ledger rows of the session vectors and of the pass belong to the starter (not the author, not the platform), each with its own task
   //     number (the session's task, the pass's task), and the starter's monthly spend rose by their sum
   //   As built: the graph over the cap (`seedOverLimit`) with vectors of model A on billing, its fact and refunds; the archives have none, so
   //   the pass the first round queues embeds them on the starter (the extraction adds nothing in either round). The scout's three calls are a
-  //   model step, a compaction step and a model step; the coordinator makes three or more model steps before the message. The new message is
+  //   model step, a compaction step and a model step; the deep agent makes three or more model steps before the message. The new message is
   //   sent after the first round and its pass; the run is followed to the second round and its pass. The scripted provider counts 10 input
   //   tokens a text and model A costs 0.25 USD a million, so the starter - a new user - has 70 tokens, 0.0000175 USD, on model A this month.
   // Catches: a question vector recomputed at every step (spend multiplied by the step count and the prompt cache rewritten every step), a new
@@ -2187,11 +2190,11 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: AgentStepHandler (question row, last `user_message`), knowledgeBlock, compactionStep, knowledge.embed handler, EmbeddingClient (double), KnowledgeVectorStore (real pgvector), token ledger, ModelClient (scripted), Postgres
   // @complexity: high
-  it('INT-12: the question vector is computed once per session and once per new coordinator message, steps get the items close to the latest message, and the spend lands on the starter', async () => {
-    // Given: a learning workflow over the cap with billing and refunds records that have vectors of model A; embeddings on model A
+  it('INT-12: the question vector is computed once per session and once per new deep agent message, steps get the items close to the latest message, and the spend lands on the starter', async () => {
+    // Given: a learning deep agent over the cap with billing and refunds records that have vectors of model A; embeddings on model A
     const recordId = randomUUID();
     const library = createLibraryDouble();
-    library.add(learningWorkflow(recordId, [SCOUT]));
+    library.add(learningDeepAgent(recordId, [SCOUT]));
     const starter = newUser();
     const refundsMessage = 'Now look into the refunds';
     const model = createScriptedModel();
@@ -2205,7 +2208,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
         harness.embeddings.vectorOf = topicVector;
         try {
-          // When: a run about billing - the coordinator starts the scout, the scout searches, compacts and reports, the run ends
+          // When: a run about billing - the deep agent starts the scout, the scout searches, compacts and reports, the run ends
           const run = await startLearningRun(harness, model, {
             ownerId: starter,
             recordId,
@@ -2214,17 +2217,17 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
               { text: refundsMessage, scout: null },
             ],
           });
-          const scoutId = await startedChild(harness, run.coordinatorId);
-          const first = await waitForRound(database.db, run.coordinatorId);
+          const scoutId = await startedChild(harness, run.deepAgentId);
+          const first = await waitForRound(database.db, run.deepAgentId);
           await waitForEmbedPass(database.db, recordId, first.lastAt ?? new Date(0));
           const [passTask, ...morePasses] = await knowledgeTasksOf(database.db, { recordId });
           if (passTask === undefined) throw new Error('no vector pass');
-          const beforeMessage = run.coordinator.calls.length;
+          const beforeMessage = run.deepAgent.calls.length;
 
-          // When: the employee writes the coordinator about refunds; the run ends again
+          // When: the employee writes the deep agent about refunds; the run ends again
           const second = await roundAfterTurn(
             harness,
-            { ownerId: starter, runId: run.coordinatorId, text: refundsMessage },
+            { ownerId: starter, runId: run.deepAgentId, text: refundsMessage },
             first,
           );
           await waitForEmbedPass(database.db, recordId, second.lastAt ?? new Date(0));
@@ -2240,19 +2243,19 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             `${MODEL_A} ${refundsMessage}`,
           ]);
 
-          // Then (AC-18.2): before the message every step of both sessions got the billing records; after it the coordinator's
+          // Then (AC-18.2): before the message every step of both sessions got the billing records; after it the deep agent's
           // steps get the refunds record and not the billing ones
           expect(
-            distinctBlocks([...run.coordinator.calls.slice(0, beforeMessage), ...scout.calls]),
+            distinctBlocks([...run.deepAgent.calls.slice(0, beforeMessage), ...scout.calls]),
           ).toEqual([BILLING_BLOCK]);
-          expect(distinctBlocks(run.coordinator.calls.slice(beforeMessage))).toEqual([REFUNDS_BLOCK]);
+          expect(distinctBlocks(run.deepAgent.calls.slice(beforeMessage))).toEqual([REFUNDS_BLOCK]);
 
           // Then (AC-08.1, DC-14): the session vectors are the starter's under each session's task, the pass's vectors of the
           // archives the starter's under the pass's task; nothing on the author or the platform; the month on model A is their sum
-          expect(await embeddingSpendOf(database.db, starter, run.coordinatorId)).toEqual([`${MODEL_A} 10`, `${MODEL_A} 10`]);
+          expect(await embeddingSpendOf(database.db, starter, run.deepAgentId)).toEqual([`${MODEL_A} 10`, `${MODEL_A} 10`]);
           expect(await embeddingSpendOf(database.db, starter, scoutId)).toEqual([`${MODEL_A} 10`]);
           expect(await embeddingSpendOf(database.db, starter, passTask.taskId)).toEqual([`${MODEL_A} 40`]);
-          for (const taskId of [run.coordinatorId, scoutId, passTask.taskId]) {
+          for (const taskId of [run.deepAgentId, scoutId, passTask.taskId]) {
             expect(await embeddingSpendOf(database.db, PLATFORM_OWNER_ID, taskId)).toEqual([]);
           }
           expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);

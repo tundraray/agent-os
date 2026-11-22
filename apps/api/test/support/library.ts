@@ -6,11 +6,12 @@ import {
   RecordSummarySchema,
   type AgentContent,
   type CreateRecordBody,
+  type DeepAgentContent,
   type RecordDetail,
   type RecordSummary,
+  type Subagent,
   type ThreadSummary,
   type UpdateRecordBody,
-  type WorkflowContent,
 } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
@@ -65,31 +66,35 @@ export function agentBody(
   };
 }
 
-/** The body of a workflow record with one executor, the coordinator and the executor on `model`. */
-export function workflowBody(
+/**
+ * The body of a deep agent record on `model`, without servers of its own: one subagent «Аналитик» unless
+ * `subagents` are given, each subagent's fields over the defaults.
+ */
+export function deepAgentBody(
   name: string,
   model: string,
-): Extract<CreateRecordBody, { kind: 'workflow' }> {
-  const content: WorkflowContent = {
-    coordinator: { rules: '', model, maxTurns: 20 },
-    executors: [
-      {
-        name: 'Аналитик',
-        role: 'Разбирает вопрос и пишет отчёт',
-        prompt: `Промпт исполнителя ${name}`,
-        servers: [],
-        model,
-        maxTurns: 20,
-        maxRuns: 3,
-        tools: [],
-        source: null,
-      },
-    ],
-    finalExecutor: null,
+  subagents: readonly Partial<Subagent>[] = [{}],
+): Extract<CreateRecordBody, { kind: 'deep_agent' }> {
+  const content: DeepAgentContent = {
+    prompt: `Промпт глубокого агента ${name}`,
+    servers: [],
+    model,
+    maxTurns: 20,
+    subagents: subagents.map((fields, index) => ({
+      name: index === 0 ? 'Аналитик' : `Аналитик ${index + 1}`,
+      description: 'Разбирает вопрос и пишет отчёт',
+      prompt: `Промпт сабагента ${name}`,
+      servers: [],
+      model,
+      maxTurns: 20,
+      maxRuns: 3,
+      ...fields,
+    })),
+    finalSubagent: null,
     selfLearning: false,
   };
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name,
     description: `Описание: ${name}`,
     content,
@@ -241,15 +246,15 @@ function panelRecord(
 }
 
 /**
- * The models of a record by part: the agent's, or the coordinator's followed by each executor's; `null` — the
+ * The models of a record by part: the agent's, or the deep agent's followed by each subagent's; `null` — the
  * default chat model.
  */
 function modelsOf(record: RecordDetail): (string | null)[] {
   return record.kind === 'agent'
     ? [record.content.model]
     : [
-        record.content.coordinator.model,
-        ...record.content.executors.map((executor) => executor.model),
+        record.content.model,
+        ...record.content.subagents.map((subagent) => subagent.model),
       ];
 }
 
@@ -270,15 +275,14 @@ function withModels(
       content: { ...record.content, model: modelOf(0) },
     };
   }
-  const { coordinator, executors } = record.content;
   return {
     ...fields,
-    kind: 'workflow',
+    kind: 'deep_agent',
     content: {
       ...record.content,
-      coordinator: { ...coordinator, model: modelOf(0) },
-      executors: executors.map((executor, index) => ({
-        ...executor,
+      model: modelOf(0),
+      subagents: record.content.subagents.map((subagent, index) => ({
+        ...subagent,
         model: modelOf(index + 1),
       })),
     },
@@ -301,9 +305,9 @@ function putSystemRecord(
 
 /**
  * Puts the run's `model` into every part of the built-in records through the panel routes: `chat`,
- * `general-purpose`, and the coordinator and each executor of `deep-research`. A part whose model is `null` runs
+ * `general-purpose`, and the deep agent and each subagent of `deep-research`. A part whose model is `null` runs
  * on the default chat model, but the developer may have given a part a model of his own (the `deep-research`
- * coordinator is seeded with one), and a suite's employees are allowed only the run's models, so without it a start
+ * deep agent is seeded with one), and a suite's employees are allowed only the run's models, so without it a start
  * may be START_REFUSED. Call it after `useRunModels`; the returned restore gives each part back the model it had
  * (`null` included) and runs before the run's rows are removed. A part whose former model is no longer in the
  * catalogue cannot get it back through the panel and gets `null` (the default chat model).

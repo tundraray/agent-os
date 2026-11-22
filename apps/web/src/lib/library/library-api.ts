@@ -52,7 +52,7 @@ export const libraryApi = {
       schema: CopyResultSchema,
     }),
   remove: (id: string): Promise<void> => apiRequest({ path: recordRoute(id), method: 'DELETE' }),
-  /** The workflow's knowledge graph; the library and the panel read the same route (KD-1). */
+  /** The deep agent's knowledge graph; the library and the panel read the same route (KD-1). */
   knowledge: (id: string): Promise<KnowledgeView> =>
     apiRequest({ path: knowledgeRoute(id), schema: KnowledgeViewSchema }),
   /** A record's id is unique only within its `type`, so each type has its own route (KD-5). */

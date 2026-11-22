@@ -94,6 +94,7 @@ import {
   auditOfRecord,
   createRecord,
   createSystemRecord,
+  deepAgentBody,
   getRecord,
   libraryRoutes,
   listLibrary,
@@ -101,7 +102,6 @@ import {
   recordName,
   setSystemAudience,
   shareWith,
-  workflowBody,
   type LibraryRoute,
 } from './support/library';
 import {
@@ -557,7 +557,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   1. UC-1 (AC-01.2): Аня creates an agent (`POST /api/library`) and opens it by number -> 201 then 200; name, description, "offer in
   //      chat" and content equal what she sent; `version` 1, the switch on, personal audience (no roles), no ban.
   //   2. UC-2 (AC-01.1, AC-02.2, AC-03.1): Аня is in «SRE» and «Оплаты», Борис in «SRE», Вера in none. `GET /api/auth/me/roles` of Аня
-  //      -> exactly those two (id and name). Аня shares an agent and a workflow with «SRE» (`PUT .../audience`); Борис opens both ->
+  //      -> exactly those two (id and name). Аня shares an agent and a deep agent with «SRE» (`PUT .../audience`); Борис opens both ->
   //      200 with the content; his `PUT` of the agent -> 403 `RECORD_READ_ONLY` and the record unchanged (version, prompt); Борис's view
   //      of the audience holds only his own roles (`member: true`), not «Оплаты»; Вера sees neither -> 404; the audit has two
   //      `library_audience` events of one shape (kind, object type, the same fields in "after").
@@ -574,7 +574,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   // Catches: membership copied into the record at share time (a role change that does not reach the record), an owner who loses his
   //   own record when he leaves the role, a share to a role the sharer is not in that passes, an audience that survives the role or
   //   the account (a missing foreign key cascade), a colleague who can write through a read-only view, a `/me/roles` that returns other
-  //   people's roles, a workflow shared by different rules than an agent.
+  //   people's roles, a deep agent shared by different rules than an agent.
   // @category: core-functionality
   // @dependency: LibraryController, LibraryService, IdentityDirectory (rolesOf, isActive), AuthController (me/roles), AdminRolesController, AuditLog, Postgres (cascade)
   // @complexity: high
@@ -626,14 +626,14 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
           { id: payments.id, name: runName('Оплаты') },
         ].sort(byId),
       );
-      // When: Аня shares the agent (with «SRE» and «Оплаты») and a workflow (with «SRE»)
-      const workflow = await createRecord(
+      // When: Аня shares the agent (with «SRE» and «Оплаты») and a deep agent (with «SRE»)
+      const deepAgent = await createRecord(
         app,
         anya,
-        workflowBody(recordName('Workflow Ани'), DEFAULT_MODEL),
+        deepAgentBody(recordName('Глубокий агент Ани'), DEFAULT_MODEL),
       );
       await shareWith(app, anya, created.id, [sre.id, payments.id]);
-      await shareWith(app, anya, workflow.id, [sre.id]);
+      await shareWith(app, anya, deepAgent.id, [sre.id]);
       // Then: Борис opens both by one rule, sees the content, and sees only his own role of the audience
       const borisAgent = await getRecord(app, boris, created.id);
       expect(borisAgent.content).toEqual(agentSent.content);
@@ -645,10 +645,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(borisAgent.audience).toStrictEqual({
         roles: [{ id: sre.id, name: runName('SRE'), member: true }],
       });
-      const borisWorkflow = await getRecord(app, boris, workflow.id);
-      expect(borisWorkflow.content).toEqual(workflow.content);
+      const borisDeepAgent = await getRecord(app, boris, deepAgent.id);
+      expect(borisDeepAgent.content).toEqual(deepAgent.content);
       expect(await visibleIds(boris)).toEqual(
-        expect.arrayContaining([created.id, workflow.id]),
+        expect.arrayContaining([created.id, deepAgent.id]),
       );
       // His save through the read-only view is refused and the record stays as it was.
       await expectRefusal(
@@ -664,7 +664,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(afterBorisSave.version).toBe(1);
       expect(afterBorisSave.content).toEqual(agentSent.content);
       // Вера, in no role, sees neither.
-      for (const id of [created.id, workflow.id])
+      for (const id of [created.id, deepAgent.id])
         await expectRefusal(
           apiRequest(app, vera, 'get', `/library/${id}`),
           404,
@@ -672,29 +672,29 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         );
       const veraSees = await visibleIds(vera);
       expect(veraSees).not.toContain(created.id);
-      expect(veraSees).not.toContain(workflow.id);
-      // The agent and the workflow are shared by one rule: one `library_audience` event each, of one shape.
+      expect(veraSees).not.toContain(deepAgent.id);
+      // The agent and the deep agent are shared by one rule: one `library_audience` event each, of one shape.
       const agentShares = await libraryAudience(created.id);
-      const workflowShares = await libraryAudience(workflow.id);
+      const deepAgentShares = await libraryAudience(deepAgent.id);
       expect(agentShares).toHaveLength(1);
-      expect(workflowShares).toHaveLength(1);
+      expect(deepAgentShares).toHaveLength(1);
       const [agentShare] = agentShares;
-      const [workflowShare] = workflowShares;
-      expect(Object.keys(workflowShare?.after ?? {}).sort()).toEqual(
+      const [deepAgentShare] = deepAgentShares;
+      expect(Object.keys(deepAgentShare?.after ?? {}).sort()).toEqual(
         Object.keys(agentShare?.after ?? {}).sort(),
       );
       expect(agentShare).toMatchObject({ actor: anya.id, outcome: 'ok' });
-      expect(workflowShare).toMatchObject({
+      expect(deepAgentShare).toMatchObject({
         actor: anya.id,
         outcome: 'ok',
-        after: { kind: 'workflow', roleIds: [sre.id] },
+        after: { kind: 'deep_agent', roleIds: [sre.id] },
       });
 
       // Step 3 (UC-E3 first half, AC-04.1) - When: Аня adds «Финансы», which she is not in, or a role that does not
       // exist; Then: 422 `role_not_member`, the audience still holds only «SRE», no event added
       for (const foreign of [finance.id, randomUUID()])
         await expectRefusal(
-          apiRequest(app, anya, 'put', `/library/${workflow.id}/audience`, {
+          apiRequest(app, anya, 'put', `/library/${deepAgent.id}/audience`, {
             roleIds: [sre.id, foreign],
             offerInChat: true,
           }),
@@ -703,11 +703,11 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
           'role_not_member',
         );
       expect(
-        (await getRecord(app, anya, workflow.id)).audience.roles.map(
+        (await getRecord(app, anya, deepAgent.id)).audience.roles.map(
           (role) => role.id,
         ),
       ).toEqual([sre.id]);
-      expect(await libraryAudience(workflow.id)).toHaveLength(1);
+      expect(await libraryAudience(deepAgent.id)).toHaveLength(1);
 
       // Step 4 (UC-3, AC-11.3, AC-11.1, AC-04.3) - on the case's own employees and role: Ася owns the agent, Богдан
       // and Денис are members of «Дежурные»
@@ -927,10 +927,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         model: DEFAULT_MODEL,
       });
       expect(copied.removedServers).toEqual([
-        { executor: null, servers: [LOGS_SERVER] },
+        { subagent: null, servers: [LOGS_SERVER] },
       ]);
       expect(copied.replacedModels).toEqual([
-        { executor: null, from: SECOND_MODEL, to: DEFAULT_MODEL },
+        { subagent: null, from: SECOND_MODEL, to: DEFAULT_MODEL },
       ]);
       const originalNow = await getRecord(app, alisa, original.id);
       expect(originalNow.version).toBe(1);

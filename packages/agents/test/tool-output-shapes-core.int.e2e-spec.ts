@@ -29,7 +29,7 @@
 // - unit, packages/agents/src, ONE table-driven test of the pure shape-text function and the description builder (UC-1, UC-2; per pure-decision.md, not skeletoned here):
 //   nested object with array and `string | null`, optional field, `enum`, array root, recursive `$ref`, unknown keyword, shape over the limit, tool without shape,
 //   an old stored list item without `outputSchema` - AC-02.1, AC-02.2, AC-03.1 (rule), AC-03.2 (before the refresh), DC-1, DC-2 (repeat build gives the same text), DC-3
-// - unit (existing), packages/agents/src/tools/tool-registry.spec.ts: agents started by other agents and workflow executors build their set through the same `sessionTools`
+// - unit (existing), packages/agents/src/tools/tool-registry.spec.ts: agents started by other agents and deep agent subagents build their set through the same `sessionTools`
 //   - AC-01.2; and the model step and the compaction step get their definitions from that one call - DC-2 (second half)
 // - existing, apps/api MCP servers panel test: the tool view is compared as a whole and has no shape - DC-4
 // - by construction (KD-6): each fixture tool's result passes its strict zod result schema before it is sent, so a shape that diverges from a real answer fails at the
