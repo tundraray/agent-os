@@ -16,7 +16,7 @@
 //   harness refuses a model per owner (`ownerModelRefusals`, read on every question) and answers `model_not_connected` for a model
 //   without a price. Mock boundary: the library double stands for `LibraryService` ONLY (its visibility and version rules are proven in
 //   the `library` part against the real service); the runtime, the agents package, the snapshot in `runtime_tasks.input`, the tool gate
-//   and the history are all real. A second instance (`zombie` + `expireLease`) is the "restarted server" exactly as in agents INT-3 row E.
+//   and the history are all real. A second instance over a zombie (`ZOMBIE_RUNTIME`) is the "restarted server" exactly as in agents INT-3 row E.
 //   Isolation: a unique runner `newUser()` (an author is a fresh uuid) and unique records per test.
 //
 // Proven elsewhere, not repeated here (CLAUDE.md: one test at the lowest level that catches the defect):
@@ -49,7 +49,7 @@ import {
   childReportsOf,
   closeAll,
   createAgentsHarness,
-  expireLease,
+  ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
   ledgerRowsOf,
@@ -286,7 +286,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   // Rows (literal expected values; each row has its own owner, records and tree):
   //   A. Frozen copy (AC-13.1, AC-13.3, DC-3). Given Аня's agent R in version 1 shared with Борис, and Борис's root; When Борис's root starts R
   //      by its number and the child's first model call is held on a latch; Аня saves version 2 of R (another prompt, another tool set) in the
-  //      double, and the administrator edits the `chat` record (another prompt); the second instance takes the child over after `expireLease`
+  //      double, and the administrator edits the `chat` record (another prompt); the second instance takes the child over at its start
   //      and the latch is released; Then the child's model inputs (before and after the takeover) carry the version-1 prompt and its tool set
   //      and never the version-2 prompt; Борис's root starts R again -> that child's inputs carry the version-2 prompt; the run origin of the
   //      first child says version 1, of the second version 2; the first child's tool call of a tool only version 2 has is refused by the gate
@@ -352,12 +352,11 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     const options = { model, library, access: {} };
     const harnesses: AgentsHarness[] = [];
     try {
-      // Instance A: one slot, a lease only the test expires, a heartbeat that never comes
+      // Instance A: one slot, a sweeper that never passes again
       const zombie = await createAgentsHarness({
         ...options,
         root: testRecord('chat', { prompt: 'Chat prompt, version 1.', tools: ['start_agent'] }),
-        zombie: true,
-        runtimeConfig: { concurrency: 1, leaseMs: 600_000 },
+        runtimeConfig: ZOMBIE_RUNTIME,
       });
       harnesses.push(zombie);
       const { agentId: rootId } = await zombie.sessions.start({
@@ -383,10 +382,9 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       });
       await setRootRecord(library, testRecord('chat', { prompt: 'Chat prompt, version 2.', tools: ['start_agent'] }));
 
-      // When: instance B starts, A's lease expires and B takes the held step over; then A's held call answers
+      // When: instance B starts, requeues the held step as a lost one and takes it over; then A's held call answers
       const restarted = await createAgentsHarness(options);
       harnesses.push(restarted);
-      await expireLease(zombie.db, firstChildId);
       await waitForTaskStatus(restarted, firstChildId, boris, 'completed');
       childHeld.open();
       await waitFor(

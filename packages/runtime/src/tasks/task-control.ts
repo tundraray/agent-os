@@ -142,8 +142,7 @@ function toTask(row: TaskRow): Task {
  * Creation, reading and the commands of tasks (design-runtime.md, Задачи; KD-4, Flow 4). Another
  * owner's task and a task of a deleted tree answer as a missing one: `TASK_NOT_FOUND` for a single
  * task, `[]` for a list (plan Notes 1). A command changes the status in its own transaction and
- * raises the attempt, so the step in flight is fenced; the step is then cut off — here at once,
- * elsewhere by NOTIFY or heartbeat.
+ * raises the attempt, so the step in flight is fenced; the step is then cut off at once.
  *
  * Each command is one transaction; called inside a caller's `db.transaction` it joins that one.
  */
@@ -236,7 +235,7 @@ export class TaskControl {
   /**
    * Interrupts a `queued`, `running` or `waiting` (not for a decision or tasks) task: without a
    * message it becomes `waiting` (`interrupted`), with one the message goes into its queue and it
-   * becomes `queued`; `attempt + 1`, the lease cleared, `task.interrupted`. A finished task or one
+   * becomes `queued`; `attempt + 1`, `task.interrupted`. A finished task or one
    * waiting for a decision or its tasks gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or another
    * owner's task, `PAYLOAD_TOO_LARGE` for a message over `INBOX_PAYLOAD_MAX_BYTES`.
    */

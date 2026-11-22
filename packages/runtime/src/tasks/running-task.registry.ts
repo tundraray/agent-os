@@ -21,8 +21,8 @@ interface RunningStep {
 
 /**
  * Steps executing in this process, by task. A cut-off step may still run beside the next step of
- * the same task (Invariant 1), so a task can hold more than one entry. Process-local: a step on
- * another instance learns about an interrupt through NOTIFY or its heartbeat.
+ * the same task (Invariant 1), so a task can hold more than one entry. One process executes
+ * steps: a `running` task without an entry here was lost.
  */
 @Injectable()
 export class RunningTaskRegistry {
@@ -55,6 +55,11 @@ export class RunningTaskRegistry {
         markReleased();
       },
     };
+  }
+
+  /** Whether this process executes the step the attempt claimed. */
+  isRunning(taskId: string, attempt: number): boolean {
+    return [...(this.running.get(taskId) ?? [])].some((step) => step.attempt === attempt);
   }
 
   /**

@@ -59,7 +59,7 @@ const READ_RUN = readRun(SERVERS);
 const WRITE_RUN = writeRun(SERVERS);
 
 const TEST_TIMEOUT_MS = 300_000;
-/** How long a step may take to reach its point, a lost step included (lease 1 s, reaper 0.2 s). */
+/** How long a step may take to reach its point, a lost step included (reaper 0.2 s). */
 const STEP_MS = 60_000;
 /** How long an executor may outlive its killed API process (it exits on the end of its stdin). */
 const EXECUTOR_EXIT_MS = 10_000;

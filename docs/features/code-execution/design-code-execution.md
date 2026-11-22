@@ -113,7 +113,7 @@
 
 ## Building-block Inventory
 
-Follows the [code system](../../code-system/README.md). Слой «Исполнитель кода» описан в README code system.
+Follows the [code system](../../code-system/README.md). Пакет `code-runner` описан в [code-system/packages/base.md](../../code-system/packages/base.md).
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|

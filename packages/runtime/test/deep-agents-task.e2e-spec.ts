@@ -1,5 +1,5 @@
 // deep-agents / task E2E - Design Doc: docs/features/deep-agents/design-task.md (Test Strategy UC-3; KD-1, KD-2, KD-3; Flow 2)
-// PRD: docs/features/deep-agents/prd.md (FR-22 AC-22.1, AC-22.2). ADR-0001 (runtime owner: one transaction per transition, recovery by lease).
+// PRD: docs/features/deep-agents/prd.md (FR-22 AC-22.1, AC-22.2). ADR-0001 (runtime owner: one transaction per transition, recovery of lost steps at the start).
 // Test type: End-to-End (child processes running the runtime from source + real Postgres), the harness of agent-platform-runtime.e2e-spec.ts.
 //
 // UC-3: a tracker of three tasks, and the runtime process killed before the commit that opens it, after that commit, and in a
@@ -237,7 +237,7 @@ describe('deep-agents / task - E2E (real Postgres, child processes)', () => {
         await openTrackerAndWrite(children, control, types, owner);
 
         // The first commit of a task's step dies inside its transaction; the other steps die with
-        // the process. Their leases expire and the sweeper of the next child requeues them.
+        // the process. The sweeper of the next child requeues them.
         const dying = await children.start({
           types: { trackerTask: types.trackerTask },
           crashAt: 'step.inside-commit',

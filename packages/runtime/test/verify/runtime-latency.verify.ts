@@ -1,15 +1,16 @@
 // agent-platform / runtime — on-demand timing checks, not part of any suite (testing-principles: timing-sensitive checks live in a separate
 // script). Run: `pnpm --filter @agent-os/runtime test:verify`.
 // Design Doc: docs/features/agent-platform/design-runtime.md, Non-Functional Use Cases UC-N1 (NFR-05), UC-N2 (NFR-01).
-// The step runs in a child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test process
-// creates the tasks and sends the commands through its own runtime with `RUNTIME_WORKERS=off`.
+// UC-N1: the step runs in a child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test
+// process creates the task through its own runtime with `RUNTIME_WORKERS=off`. UC-N2: one runtime in the test process runs the
+// steps and takes the commands, as the one process of the platform does.
 
 import { consoleSink, createLogger } from '@agent-os/common';
 import { afterAll, describe, expect, it } from 'vitest';
 import { newUser } from '../support/new-user';
 import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild';
 import { handlersFor } from '../support/runtimeChildHandlers';
-import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb';
+import { closeRuntimeDb, eventsOf, statusesOf, waitFor } from '../support/runtimeDb';
 import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness';
 import { uniqueType } from '../support/testHandlers';
 
@@ -62,6 +63,17 @@ async function runningHold(
   return taskId;
 }
 
+/** Creates a root task of the hold type in a runtime that runs steps and waits until its step runs. */
+async function heldHere(runtime: RuntimeHarness, holdType: string, ownerId: string): Promise<string> {
+  const taskId = await runtime.tasks.create({ type: holdType, ownerId, input: {} });
+  await waitFor(
+    () => statusOf(taskId),
+    (status) => status === 'running',
+    `task ${taskId} to run`,
+  );
+  return taskId;
+}
+
 afterAll(closeRuntimeDb);
 
 describe('UC-N1: a step killed with its process starts again within 60 s', () => {
@@ -106,38 +118,39 @@ describe('UC-N1: a step killed with its process starts again within 60 s', () =>
 
 describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', () => {
   it(
-    'measures from the command to the read of the new status while the step holds on another instance',
+    'measures from the command to the read of the new status while the step holds',
     async () => {
       const holdType = uniqueType('n2-hold');
-      const control = await holdRuntime(holdType);
-      const children = new Children();
+      const control = await createRuntimeHarness({ handlers: [], startWorkers: false });
       const ownerId = newUser();
       const interrupted: string[] = [];
       try {
-        const child = await children.start({
-          types: { hold: holdType },
-          settings: DEFAULT_SETTINGS,
-        });
+        for (const handler of handlersFor({ hold: holdType }, control.runtimeDb)) {
+          control.handlers.register(handler);
+        }
+        control.start();
         const interruptMs: number[] = [];
         const stopMs: number[] = [];
         for (let sample = 0; sample < SAMPLES; sample += 1) {
-          const toInterrupt = await runningHold(control, child, holdType, ownerId);
+          const toInterrupt = await heldHere(control, holdType, ownerId);
           const interruptAt = Date.now();
           expect(await control.tasks.interrupt(toInterrupt, ownerId)).toBe('interrupted');
-          await child.until(async () => (await statusOf(toInterrupt)) === 'waiting', {
-            what: 'the interrupted status',
-            timeoutMs: WAIT_MS,
-          });
+          await waitFor(
+            () => statusOf(toInterrupt),
+            (status) => status === 'waiting',
+            'the interrupted status',
+          );
           interruptMs.push(Date.now() - interruptAt);
           interrupted.push(toInterrupt);
 
-          const toStop = await runningHold(control, child, holdType, ownerId);
+          const toStop = await heldHere(control, holdType, ownerId);
           const stopAt = Date.now();
           expect(await control.tasks.stop(toStop, ownerId)).toEqual([toStop]);
-          await child.until(async () => (await statusOf(toStop)) === 'stopped', {
-            what: 'the stopped status',
-            timeoutMs: WAIT_MS,
-          });
+          await waitFor(
+            () => statusOf(toStop),
+            (status) => status === 'stopped',
+            'the stopped status',
+          );
           stopMs.push(Date.now() - stopAt);
         }
         logger.info('UC-N2: status read after the command, p95', {
@@ -147,11 +160,9 @@ describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', 
         });
 
         for (const taskId of interrupted) await control.tasks.stop(taskId, ownerId);
-        await child.stop();
         expect(p95(interruptMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
         expect(p95(stopMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
       } finally {
-        await children.killAll();
         await control.close();
       }
     },

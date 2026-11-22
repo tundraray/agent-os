@@ -10,6 +10,7 @@
 - **`ApiRequestError`** — вид (`not_found`, `http`, `invalid_response`, `network`), статус, `code` из `errorCode` тела, `reason` и `message` тела. Тело ошибки разбирается `ApiErrorSchema` из `@agent-os/contracts`.
 - **Общие обработчики** в ядре: ответ 401 — переход на вход ([design-identity.md](../../features/enterprise-access/design-identity.md), C3 · web); ответ 403 `ADMIN_REQUIRED` — сброс `isAdmin` в значении `CurrentUser`. Вызывающий их не повторяет.
 - **Модули области** — наборы функций поверх ядра: `threadsApiClient` в `lib/threads`, `lib/mcp`, `lib/access`, `adminApi` в `lib/admin`. Функция — одна операция API: путь, метод, вход и схема ответа из `@agent-os/contracts`. Сегменты пути из данных (имя, id с `/`) кодируются `encodeURIComponent`.
+- **Не запрос к API** — байты картинки, которые `components/image.tsx` копирует в буфер обмена, он читает обычным `fetch` по адресу картинки, без ядра.
 - **Переход вместо запроса** — операция, которая отвечает 302 к чужому серверу (подключение аккаунта OAuth), не вызывается `fetch`: модуль отдаёт адрес, и вкладка уходит на него.
 - **Лог** пишет то место, где ошибка окончательно обработана, через `src/lib/logger.ts` и `describeApiError`: метод, путь, статус, код, причина. Тела запросов и ответов в лог не попадают ([logging.md](./logging.md)).
 

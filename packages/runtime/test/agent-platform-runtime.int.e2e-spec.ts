@@ -5,20 +5,18 @@
 // File name follows the project convention (`*.e2e-spec.ts` under packages/runtime/test, picked up by vitest.config.e2e.ts, run with `pnpm --filter @agent-os/runtime test:e2e`, never in the default `vitest run`).
 // The `.int.` infix separates these in-process tests from the child-process file `agent-platform-runtime.e2e-spec.ts`. The Given/When/Then comments are the rows' specification.
 //
-// Light test process (CLAUDE.md "Tests", owner decision): tests exist only where a defect is invisible below this level - concurrency (two instances, one step), the inbox race, interrupt and stop with a step in flight, isolation
+// Light test process (CLAUDE.md "Tests", owner decision): tests exist only where a defect is invisible below this level - the inbox race, interrupt and stop with a step in flight, isolation
 // between users, and the money rows. Every pure rule is a unit test named in "Proven elsewhere". Restarts and the process-kill matrix are the sibling file (E2E-1).
 //
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup (`test/support/migrate.global-setup.ts`). Real `RuntimeModule` over a real pool; `RUNTIME_WORKERS` on. No mocks of
 //   Postgres or runtime components. The only doubles are test handlers (`TaskHandler`: scripted outcomes, gates and latches) and, for the clock rows, the injected `Clock`. No model is called.
-// - Two instances in one process (INT-1 row C, INT-3 rows A and B) are two `RuntimeModule` contexts over two pools to the same database, registering the same handler types. The second instance is what makes "another instance" real:
-//   claim contention and NOTIFY across connections need no second OS process.
 // - Isolation (project convention, no truncate): a unique `ownerId = 'e2e-' + randomUUID()` (`newUser()`) and a unique task type per test (a worker claims only types in its own `handlers` registry, so another file's workers never touch these
 //   rows); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on gates the handler waits on and on rows (`runtimeWorkSettled`-style). "Status changed within the command" (NFR-01) is asserted as: the status read right after the command's
 //   response, while the handler is still held; the 5 s p95 is the on-demand script `test/verify/runtime-latency.verify.ts` (UC-N2), not this file.
 // - Support (test/support): runtimeHarness.ts (DbModule + RuntimeModule with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
-//   `expireLease`, a second instance), runtimeDb.ts (read-only snapshots of `runtime_*` rows, a row-version snapshot for "nothing changed"), testHandlers.ts (step scripts, gates, a table of handler rows written through `commit`).
+//   held workers), runtimeDb.ts (read-only snapshots of `runtime_*` rows, a row-version snapshot for "nothing changed"), testHandlers.ts (step scripts, gates, a table of handler rows written through `commit`).
 //
 // Budget: Integration 5 of 3, extended to 5 under the integration-e2e-testing rule ("up to 5 only when each extra test names the defect no other test catches"). Core: INT-1, INT-2, INT-3. Extras: INT-4 and INT-5.
 //   INT-4 unique defect: one operation of the part that filters by id and forgets the owner - a pure unit cannot see it, the SQL does; it is the NFR-06 share this part owns and CLAUDE.md lists isolation first.
@@ -39,7 +37,7 @@
 // - AC-01.3: INT-2 (rows A, B, E: once and in order), E2E-1 (a message pending at the kill)
 // - AC-02.1, AC-02.2: INT-5 (rows A, B) and the cost-rule unit table
 // - DC-1: INT-1 row A + E2E-1 row "kill inside the commit"; DC-2, DC-3, DC-7: E2E-1; DC-4: INT-2; DC-5: INT-1 rows A, B and INT-3 row B; DC-6: INT-3; DC-8: INT-4; DC-10: INT-5 rows B, D; DC-11: unit (packages/common)
-// - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E, INT-1 row C; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
+// - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
 
 import { randomUUID } from 'node:crypto';
 import { runtimeDecisions, runtimeModelCalls, runtimeTasks } from '@agent-os/db';
@@ -66,7 +64,6 @@ import {
 } from './support/runtimeDb';
 import {
   createRuntimeHarness,
-  expireLease,
   type RuntimeHarness,
   settableClock,
   TEST_MODEL_ONE,
@@ -130,15 +127,6 @@ function ledgerRowsOf(harness: RuntimeHarness, ownerId: string) {
     .select()
     .from(runtimeModelCalls)
     .where(eq(runtimeModelCalls.ownerId, ownerId));
-}
-
-/** Closes every harness the test opened, also when one of them fails to close. */
-async function closeAll(harnesses: readonly RuntimeHarness[]): Promise<void> {
-  const closed = await Promise.allSettled(harnesses.map((harness) => harness.close()));
-  const failed = closed.find(
-    (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
-  );
-  if (failed) throw failed.reason;
 }
 
 /** Bound of a test that repeats a race; each iteration settles in well under a second. */
@@ -215,21 +203,21 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   afterAll(closeRuntimeDb);
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-1  A step is run once and committed as one: two instances, one step; the parent is told once
+  // INT-1  A step is run once and committed as one; the parent is told once
   // ---------------------------------------------------------------------------------------------------------------
   // Covers (original statements):
   // AC-01.1: "Given агент выполняет многошаговое задание, when сервер останавливают посреди работы и запускают снова, then агент продолжает и сдаёт отчёт, а в его истории нет потерянных и повторённых шагов." (the part without a crash; the crash half is E2E-1)
   // DC-1: "Записи обработчика за шаг, доставка взятых им сообщений, новый статус задачи и события фиксируются вместе или не фиксируются вовсе."
   // DC-5: "Когда задача заканчивается — завершена, упала или остановлена, — в очереди её родителя появляется ровно одно уведомление со статусом и итогом." (completed and failed here; stopped in INT-3)
   // NFR-04: "Каждое принятое сообщение, отчёт и уведомление доставляется ровно один раз и в порядке отправки" (the notification half)
-  // Use cases: UC-1, UC-E8, and the "second worker" half of the concurrency requirement. EARS: When. Design flow: Flow 1 (step runs and commits), KD-2 (one transaction per step), KD-3 (the runtime writes the child notification in the transition's transaction).
+  // Use cases: UC-1, UC-E8. EARS: When. Design flow: Flow 1 (step runs and commits), KD-2 (one transaction per step), KD-3 (the runtime writes the child notification in the transition's transaction).
   //
-  // Catches: (1) a step claimed by two workers at once - a handler row written twice or `stepNo` skipping, because the claim guard (`SKIP LOCKED`, attempt number, `status = queued` re-check) was weakened; (2) the handler's rows, the new status and the
-  //   parent's notification not in one transaction - a completed task with no `child_finished` in the parent's inbox, or two of them; (3) a throwing handler leaving the task `running` or the parent unnotified.
+  // Catches: (1) the handler's rows, the new status and the parent's notification not in one transaction - a completed task with no `child_finished` in the parent's inbox, or two of them; (2) a throwing handler leaving the task `running` or the
+  //   parent unnotified.
   // Not re-checked here: input validation, the shape of `StepResult` variants (types), the cost of the step (INT-5).
-  // Behavior: ready tasks -> claimed by one of two instances -> each step's handler rows + status + notification committed once -> the tree reads as one uninterrupted run
+  // Behavior: ready tasks -> claimed -> each step's handler rows + status + notification committed once -> the tree reads as one uninterrupted run
   // @category: core-functionality
-  // @dependency: RuntimeModule x2 (Dispatcher, TaskControl, Inbox, EventLog), test handlers, Postgres
+  // @dependency: RuntimeModule (Dispatcher, TaskControl, Inbox, EventLog), test handlers, Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; one child task under a parent task whose inbox is read):
@@ -237,9 +225,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   with `stepNo` 3 and the result stored; the parent's inbox holds exactly one `child_finished` with status `completed`, the child's `taskId`, the result, the step count and a duration; `task.step_committed` appears three times for the child.
   // - Row B "handler throws": the handler throws an error with a `cause` on its first step. Then: the child `failed` with reason `handler_error`; no row of that step in the handler's table; exactly one `child_finished` with status `failed` and the failure in the
   //   parent's inbox; the error is in the in-memory log with its stack and cause (the log side of DC-11 is the unit table, this row only checks that the failure is logged at all).
-  // - Row C "two instances, one step": two runtimes over the same database, the same handler type, 20 ready tasks of three steps each. Then: for every task each of the three step numbers has one handler row; `attempt` of each committed step is the one claimed;
-  //   every task has exactly one `child_finished` to its (shared) parent; both instances committed at least one step (the contention was real, not one worker doing everything). One executor per step is proven by the claim guard; this row turns red only when
-  //   both the guarded claim write and the re-check under the row lock are removed, which is the defect it names.
   it('INT-1 A: a three-step task writes one row per step, ends completed, and its parent holds exactly one child_finished with the result', async () => {
     // Given: a child of three steps under a parent that waits for messages
     const ownerId = newUser();
@@ -362,75 +347,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-1 C: two instances run twenty three-step tasks; every step is written once, every parent notification arrives once, both instances took part', async () => {
-    // Given: two instances over one database with the same handler types, workers held; twenty
-    // ready children of three steps under one parent
-    const ownerId = newUser();
-    const parentType = uniqueType('int1c-parent');
-    const childType = uniqueType('int1c-child');
-    const handlersOf = (instance: string) => [
-      waitingParent(parentType),
-      scriptedHandler({ type: childType, steps: THREE_STEPS, note: instance }),
-    ];
-    const harnesses: RuntimeHarness[] = [];
-    try {
-      harnesses.push(
-        await createRuntimeHarness({ handlers: handlersOf('A'), startWorkers: false }),
-      );
-      harnesses.push(
-        await createRuntimeHarness({ handlers: handlersOf('B'), startWorkers: false }),
-      );
-      const [first] = harnesses;
-      const parentId = await first.tasks.create({ type: parentType, ownerId, input: {} });
-      const childIds: string[] = [];
-      for (let index = 0; index < 20; index += 1) {
-        childIds.push(
-          await first.tasks.create({ type: childType, ownerId, input: {}, parentId }),
-        );
-      }
-
-      // When: both instances start at once
-      for (const harness of harnesses) harness.start();
-      await waitFor(
-        () => statusesOf(childIds),
-        (statuses) => childIds.every((childId) => statuses.get(childId) === 'completed'),
-        'twenty children to complete',
-      );
-
-      // Then: per task one row per step number, written by the attempt that committed it
-      const rows = await handlerRowsOf(childIds);
-      const written = Object.fromEntries(
-        childIds.map((childId) => [
-          childId,
-          rows
-            .filter((row) => row.taskId === childId)
-            .map((row) => ({ stepNo: row.stepNo, attempt: row.attempt })),
-        ]),
-      );
-      expect(Object.values(written).map((steps) => steps.map((step) => step.stepNo))).toEqual(
-        childIds.map(() => [0, 1, 2]),
-      );
-      const committed = Object.fromEntries(
-        await Promise.all(
-          childIds.map(async (childId) => [
-            childId,
-            (await eventsOf(childId))
-              .filter((event) => event.type === 'task.step_committed')
-              .map((event) => ({ stepNo: event.payload.stepNo, attempt: event.payload.attempt })),
-          ]),
-        ),
-      );
-      expect(written).toEqual(committed);
-      // every child told the shared parent exactly once
-      const notices = await childFinishedOf(parentId);
-      expect(notices.map((notice) => notice.sender).sort()).toEqual([...childIds].sort());
-      // the contention was real: both instances committed steps
-      expect(new Set(rows.map((row) => row.note))).toEqual(new Set(['A', 'B']));
-    } finally {
-      await closeAll(harnesses);
-    }
-  }, TEST_TIMEOUT_MS);
-
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2  The inbox: order, one delivery, wake-up, revive - and the race with the end of a step
   // ---------------------------------------------------------------------------------------------------------------
@@ -456,7 +372,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   next step receives the message.
   // - Row C "finished, no revive, then revive": the task is `completed`. Enqueue without `revive`: the task stays `completed`, the message is listed pending. Enqueue with `revive`: the task is `queued`; its next step receives both messages in number order.
   // - Row D "a child's notification does not revive a stopped parent": stop the parent (its children finish afterwards): the parent stays `stopped` and the `child_finished` messages wait. (A `completed` parent: the same.)
-  // - Row E "race": the step's handler returns `wait`; messages are enqueued in parallel with the commit of that step, with an `interrupt` of the task, and with the commit of a second step of the same task on the other instance after a lease expiry; the scenario is repeated
+  // - Row E "race": the step's handler returns `wait`; messages are enqueued in parallel with the commit of that step and with an `interrupt` of the task; the scenario is repeated
   //   100 times with a fresh task each. After every iteration: no task is `waiting` with reason `messages` while a message is pending (Invariant 2); every message is `delivered` exactly once and the delivery order equals the number order (Invariant 4); the
   //   number sequence of one recipient has no gaps and no repeats under 8 concurrent senders.
 // - Row F "revive during the last step" (UC-E10, Invariant 9, design v1.2): a child's step is held on a gate and will return `complete`. Enqueue a message without `revive`, then one with `revive`;
@@ -821,9 +737,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-2 E: messages racing the end of a step, an interrupt and a lease expiry, 100 times, never leave a waiting task over a pending message and never deliver twice or out of order', async () => {
-    // Given: two instances of one step at a time each; a task type whose first step holds on its
-    // task's gate and every step returns `wait`; sweepers that pass every 25 ms
+  it('INT-2 E: messages racing the end of a step and an interrupt, 100 times, never leave a waiting task over a pending message and never deliver twice or out of order', async () => {
+    // Given: a task type whose first step holds on its task's gate and every step returns `wait`
     const ownerId = newUser();
     const type = uniqueType('int2e');
     const senders = 8;
@@ -837,39 +752,25 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
       },
     };
-    const config = { concurrency: 1, reaperMs: 25, heartbeatMs: 60_000 };
-    const harnesses: RuntimeHarness[] = [];
+    const harness = await createRuntimeHarness({ handlers: [racingWaiter] });
     try {
-      harnesses.push(await createRuntimeHarness({ handlers: [racingWaiter], config }));
-      harnesses.push(await createRuntimeHarness({ handlers: [racingWaiter], config }));
-      const [first, second] = harnesses;
-
       for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
         const at = `iteration ${iteration}`;
-        const taskId = await first.tasks.create({ type, ownerId, input: {} });
+        const taskId = await harness.tasks.create({ type, ownerId, input: {} });
         const gate = firstSteps.of(taskId);
         await gate.reached;
-        // The step's process stops beating: a sweeper requeues the step, and the other instance -
-        // the holder's only slot is taken - claims it again and holds at the same gate.
-        await expireLease(first.db, taskId);
-        await waitFor(
-          () => eventsOf(taskId),
-          (events) => events.some((event) => event.type === 'task.recovered'),
-          `the lost step to be requeued (${at})`,
-        );
 
-        // When: both attempts of step 0 are let go while 8 senders and an interrupt hit the task
+        // When: step 0 is let go while 8 senders and an interrupt hit the task
         gate.open();
-        const interrupting = second.tasks.interrupt(taskId, ownerId, {
+        const interrupting = harness.tasks.interrupt(taskId, ownerId, {
           kind: 'note',
           sender: ownerId,
           payload: { interrupt: true },
         });
         await Promise.all(
           Array.from({ length: senders }, async (_, sender) => {
-            const via = harnesses[sender % 2];
             for (let n = 0; n < messagesPerSender; n += 1) {
-              await via.inbox.enqueue(note(taskId, ownerId, { sender, n }));
+              await harness.inbox.enqueue(note(taskId, ownerId, { sender, n }));
             }
           }),
         );
@@ -877,12 +778,12 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
 
         // Then: the task settles waiting for messages with none pending (Invariant 2)
         const settled = await waitFor(
-          () => first.tasks.get(taskId, ownerId),
+          () => harness.tasks.get(taskId, ownerId),
           (task) => task.status === 'waiting',
           `the task to wait again (${at})`,
         );
         expect(settled.waitReason, at).toBe('messages');
-        expect(await first.inbox.listPending(taskId, ownerId), at).toEqual([]);
+        expect(await harness.inbox.listPending(taskId, ownerId), at).toEqual([]);
 
         // And: numbers without gaps or repeats, each message delivered, in number order (Invariant 4)
         const messages = await inboxOf(taskId);
@@ -913,7 +814,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         expect([...deliveredIds].sort(), at).toEqual(
           messages.map((message) => message.messageId).sort(),
         );
-        // each step number was committed once: the lost attempt's late commit was refused
+        // each step number was committed once: the cut-off attempt's late commit was refused
         const rows = await handlerRowsOf([taskId]);
         expect(
           rows.map((row) => row.stepNo),
@@ -921,7 +822,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         ).toEqual(rows.map((_, stepNo) => stepNo));
       }
     } finally {
-      await closeAll(harnesses);
+      await harness.close();
     }
   }, RACE_TIMEOUT_MS);
 
@@ -1017,38 +918,38 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //
   // Catches: (1) an interrupted step whose late result is still applied (handler rows, delivery marks, a new status over `waiting`) - the fencing by attempt number; (2) a stop that leaves a grandchild running, a decision `open`, or notifies the parent twice or not
   //   at all; (3) a child spawned in the gap between the stop's tree read and its commit, which then runs under a stopped parent (the race of Invariant 6).
-  // Not re-checked here: the cooperative signal reaching the handler over NOTIFY (the handler's abort is observed only to release the gate), interrupting a finished task or one that waits for a decision (a branch of the command, trivial).
-  // Behavior: command on instance B -> status changes before the handler on instance A answers -> the late result is refused -> the next step runs with the message and the loss flag; stop closes the tree and its decisions and tells the parent once
+  // Not re-checked here: interrupting a finished task or one that waits for a decision (a branch of the command, trivial).
+  // Behavior: command -> status changes before the handler in flight answers -> the late result is refused -> the next step runs with the message and the loss flag; stop closes the tree and its decisions and tells the parent once
   // @category: core-functionality
-  // @dependency: RuntimeModule x2 (TaskControl, Dispatcher, Decisions, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres NOTIFY
+  // @dependency: RuntimeModule (TaskControl, Dispatcher, Decisions, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres
   // @complexity: high
   //
   // Verification items (table-driven):
-  // - Row A "interrupt with a message, step in flight on the other instance": a step on instance A holds on a gate after writing a guarded intent row (`guard`) and after `ledger.record` of one call. `interrupt(taskId, ownerId, message)` through instance B returns
+  // - Row A "interrupt with a message, step in flight": a step holds on a gate after writing a guarded intent row (`guard`) and after `ledger.record` of one call. `interrupt(taskId, ownerId, message)` returns
   //   `interrupted`. Then, before the gate opens: the task reads `queued` and the message is pending; the handler's signal reason is `interrupted`. The gate opens and the handler returns a result with a `commit` row. Then: that result is refused - the commit row is
   //   absent, `stepNo` is unchanged, the message is not marked delivered by it; the guarded intent row and the ledger row written before the signal remain; the NEXT step's context carries the message and `resumedAfterLoss` true; a `guard` call made by the
   //   cut-off handler after the command returns `fenced` and writes nothing.
   // - Row B "stop of a subtree": parent P with child C (running a held step) and grandchild G (queued); C has an open decision. `stop(C)` returns the stopped ids {C, G}. Then: C and G `stopped`; the decision `cancelled`; P's inbox holds exactly one
-  //   `child_finished` for C with status `stopped`; the late result of C's held step is refused; no step of C or G is claimed afterwards (a second runtime pass, workers on); P is not touched - it reads `queued` or `running`, and its next step receives the notification.
-  // - Row C "stop against spawn, repeated": a step on instance A spawns a child through `effects.spawn` in its commit while instance B calls `stop` on the parent, and `create({ parentId })` is called against the same parent in parallel; 100 iterations with a fresh
+  //   `child_finished` for C with status `stopped`; the late result of C's held step is refused; no step of C or G is claimed afterwards; P is not touched - it reads `queued` or `running`, and its next step receives the notification.
+  // - Row C "stop against spawn, repeated": a step spawns a child through `effects.spawn` in its commit while `stop` is called on the parent, and `create({ parentId })` is called against the same parent in parallel; 100 iterations with a fresh
   //   tree each. After each: the tree has no unfinished task; every `create` that lost the race answered `PARENT_FINISHED` and wrote no task; no task exists under a `stopped` parent in a non-final status.
   it('INT-3 A: interrupting a running step with a message changes the status in the command, refuses the late result, keeps intent and ledger rows, and the next step gets the message with the loss flag', async () => {
-    // Given: instance A runs one step at a time, so the held step keeps its only slot; instance B
-    // only takes commands. The step wrote an intent row through `guard` and recorded a model call.
+    // Given: the runtime runs one step at a time, so the held step keeps its only slot. The step
+    // wrote an intent row through `guard` and recorded a model call.
     const ownerId = newUser();
     const type = uniqueType('int3a');
     const held = createGate();
     const next = createGate();
     const probe: CutOffProbe = { later: [] };
-    const harnesses: RuntimeHarness[] = [];
+    let harness: RuntimeHarness | undefined;
     const handler = cutOffHandler({
       type,
       held,
       next,
       probe,
       // 1000 input + 200 output tokens on model one: 0.002 USD (by hand)
-      recordCall: (taskId) =>
-        harnesses[0].ledger.record({
+      recordCall: async (taskId) =>
+        harness?.ledger.record({
           ownerId,
           taskId,
           model: TEST_MODEL_ONE,
@@ -1058,26 +959,23 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     });
     const message = { kind: 'note', sender: ownerId, payload: { text: 'change course' } };
     try {
-      harnesses.push(
-        await createRuntimeHarness({ handlers: [handler], config: { concurrency: 1 } }),
-      );
-      harnesses.push(await createRuntimeHarness({ handlers: [handler], startWorkers: false }));
-      const [first, second] = harnesses;
-      const taskId = await second.tasks.create({ type, ownerId, input: {} });
+      harness = await createRuntimeHarness({ handlers: [handler], config: { concurrency: 1 } });
+      const runtime = harness;
+      const taskId = await runtime.tasks.create({ type, ownerId, input: {} });
       await held.reached;
 
-      // When: instance B interrupts the task with a message
-      const answer = await second.tasks.interrupt(taskId, ownerId, message);
+      // When: the task is interrupted with a message
+      const answer = await runtime.tasks.interrupt(taskId, ownerId, message);
 
       // Then: before the held handler answers, the status changed and the message waits
       expect(answer).toBe('interrupted');
-      expect(await second.tasks.get(taskId, ownerId)).toMatchObject({
+      expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
         status: 'queued',
         waitReason: null,
         stepNo: 0,
       });
       expect(
-        (await second.inbox.listPending(taskId, ownerId)).map((pending) => pending.payload),
+        (await runtime.inbox.listPending(taskId, ownerId)).map((pending) => pending.payload),
       ).toEqual([{ text: 'change course' }]);
       const signalReason = await waitFor(
         async (): Promise<unknown> =>
@@ -1102,7 +1000,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         note: 'intent',
       };
       expect(await handlerRowsOf([taskId])).toEqual([intentRow]);
-      expect(await first.tasks.get(taskId, ownerId)).toMatchObject({
+      expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
         status: 'running',
         stepNo: 0,
       });
@@ -1110,7 +1008,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         (await inboxOf(taskId)).map((stored) => [stored.seq, stored.status, stored.deliveredStep]),
       ).toEqual([[0, 'pending', null]]);
       expect(
-        (await ledgerRowsOf(first, ownerId)).map((row) => [row.taskId, row.model, row.costUsd]),
+        (await ledgerRowsOf(runtime, ownerId)).map((row) => [row.taskId, row.model, row.costUsd]),
       ).toEqual([[taskId, TEST_MODEL_ONE, 0.002]]);
       // the next step carries the message and the loss flag
       expect(probe.later).toEqual([
@@ -1138,13 +1036,13 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     } finally {
       held.open();
       next.open();
-      await closeAll(harnesses);
+      await harness?.close();
     }
   }, TEST_TIMEOUT_MS);
 
   it('INT-3 B: stopping a child closes it and its grandchild, cancels its decision, tells the parent once, and leaves the parent running', async () => {
     // Given: parent P waits for messages; child C waits for a decision; grandchild G holds a step
-    // deaf to its signal on instance A; instance B, workers held, takes the command
+    // deaf to its signal
     const ownerId = newUser();
     const parentType = uniqueType('int3b-parent');
     const childType = uniqueType('int3b-child');
@@ -1167,11 +1065,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         steps: [{ outcome: 'continue', gate: grandchildHeld, deaf: true }],
       }),
     ];
-    const harnesses: RuntimeHarness[] = [];
+    const first = await createRuntimeHarness({ handlers });
     try {
-      harnesses.push(await createRuntimeHarness({ handlers }));
-      harnesses.push(await createRuntimeHarness({ handlers, startWorkers: false }));
-      const [first, second] = harnesses;
       const parentId = await first.tasks.create({ type: parentType, ownerId, input: {} });
       const childId = await first.tasks.create({ type: childType, ownerId, input: {}, parentId });
       await waitFor(
@@ -1192,15 +1087,15 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       );
       expect(request.taskId).toBe(childId);
 
-      // When: instance B stops the child
-      const stoppedIds = await second.tasks.stop(childId, ownerId);
+      // When: the child is stopped
+      const stoppedIds = await first.tasks.stop(childId, ownerId);
 
       // Then: child and grandchild stopped, the decision cancelled, the parent told once and woken
       expect(stoppedIds).toEqual([childId, grandchildId]);
       const statuses = await statusesOf([parentId, childId, grandchildId]);
       expect([statuses.get(childId), statuses.get(grandchildId)]).toEqual(['stopped', 'stopped']);
       expect(['queued', 'running']).toContain(statuses.get(parentId));
-      expect(await decisionOf(second, request.decisionId)).toEqual({
+      expect(await decisionOf(first, request.decisionId)).toEqual({
         status: 'cancelled',
         resolution: null,
         deliveredStep: null,
@@ -1232,9 +1127,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       expect(await handlerRowsOf([grandchildId])).toEqual([]);
       expect((await statusesOf([grandchildId])).get(grandchildId)).toBe('stopped');
 
-      // And: with workers on both instances, the parent's next step receives the notice and no
-      // stopped task is claimed again
-      second.start();
+      // And: the parent's next step receives the notice and no stopped task is claimed again
       parentNext.open();
       await waitFor(
         () => statusesOf([parentId]),
@@ -1252,13 +1145,12 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     } finally {
       parentNext.open();
       grandchildHeld.open();
-      await closeAll(harnesses);
+      await first.close();
     }
   }, TEST_TIMEOUT_MS);
 
   it('INT-3 C: stop racing a spawn and a create never leaves an unfinished task in the tree and answers PARENT_FINISHED to the loser', async () => {
-    // Given: a parent type whose step holds on its task's gate and spawns a child in its commit;
-    // instance A runs the steps, instance B (workers held) takes the stop and the create
+    // Given: a parent type whose step holds on its task's gate and spawns a child in its commit
     const ownerId = newUser();
     const parentType = uniqueType('int3c-parent');
     const childType = uniqueType('int3c-child');
@@ -1278,29 +1170,25 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       },
     };
     const handlers = [spawningParent, scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] })];
-    const harnesses: RuntimeHarness[] = [];
+    const first = await createRuntimeHarness({ handlers });
     try {
-      harnesses.push(await createRuntimeHarness({ handlers }));
-      harnesses.push(await createRuntimeHarness({ handlers, startWorkers: false }));
-      const [first, second] = harnesses;
-
       for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
         const at = `iteration ${iteration}`;
         const parentId = await first.tasks.create({ type: parentType, ownerId, input: {} });
         const gate = spawnSteps.of(parentId);
         await gate.reached;
 
-        // When: the spawning step is let go while B stops the parent and creates a child under it
+        // When: the spawning step is let go while the parent is stopped and a child is created under it
         gate.open();
         const [stoppedIds, created] = await Promise.all([
-          second.tasks.stop(parentId, ownerId),
+          first.tasks.stop(parentId, ownerId),
           answerOf(() =>
-            second.tasks.create({ type: childType, ownerId, input: {}, parentId }),
+            first.tasks.create({ type: childType, ownerId, input: {}, parentId }),
           ),
         ]);
 
         // Then: every task of the tree is stopped, and by this stop
-        const tree = await second.tasks.listTree(parentId, ownerId);
+        const tree = await first.tasks.listTree(parentId, ownerId);
         expect(
           tree.filter((task) => task.status !== 'stopped').map((task) => task.taskId),
           at,
@@ -1318,7 +1206,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         expect(tree, at).toHaveLength(1 + spawned + (createdId === undefined ? 0 : 1));
       }
     } finally {
-      await closeAll(harnesses);
+      await first.close();
     }
   }, RACE_TIMEOUT_MS);
 

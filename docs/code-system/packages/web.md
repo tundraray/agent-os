@@ -53,7 +53,7 @@ flowchart LR
     class comp,area,core,next,api unchanged
 ```
 
-Компонент зовёт функцию модуля своей области, а та — ядро `apiRequest`, единственное место с `fetch` к API ([web-api-client.md](../patterns/web-api-client.md)). Экран, которому данные нужны только пока он открыт, читает их хуком `useResource` ([read-on-open.md](../patterns/read-on-open.md)); данные, которые видят несколько экранов оболочки, держит стор ([shell-store.md](../patterns/shell-store.md)). Живые обновления приходят потоком `GET /api/events` в стор `lib/live`.
+Компонент зовёт функцию модуля своей области, а та — ядро `apiRequest`, единственное место с `fetch` к API ([web-api-client.md](../patterns/web-api-client.md)). Отдельно `fetch` зовёт только `src/components/image.tsx`: копируя картинку в буфер обмена, он читает её байты по адресу картинки, мимо клиента API. Экран, которому данные нужны только пока он открыт, читает их хуком `useResource` ([read-on-open.md](../patterns/read-on-open.md)); данные, которые видят несколько экранов оболочки, держит стор ([shell-store.md](../patterns/shell-store.md)). Живые обновления приходят потоком `GET /api/events` в стор `lib/live`.
 
 ## Каталоги
 
@@ -70,5 +70,5 @@ flowchart LR
 | `src/lib/feed/` | лента одной беседы |
 | `src/lib/shell-route.ts` | вид маршрута по адресу и функции адресов |
 | `src/lib/logger.ts` | логгер веба на сервере Next и в браузере ([logging.md](../patterns/logging.md)) |
-| `src/i18n/` | каталоги сообщений и языковой корень ([interface-text.md](../patterns/interface-text.md)) |
+| `src/i18n/` | код текста интерфейса: языковой корень, выбор языка, форматы; переводы — файл на язык и область, `translations/<язык>/<область>.json` ([interface-text.md](../patterns/interface-text.md)) |
 | `src/test/` | помощники тестов |

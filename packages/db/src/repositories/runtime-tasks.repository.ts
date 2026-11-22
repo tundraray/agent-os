@@ -1,6 +1,6 @@
 import { type TaskStatus, TaskStatusSchema, type WaitReason } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { Db } from '../db';
 import { runtimeTasks } from '../schema';
@@ -145,17 +145,12 @@ export class RuntimeTasksRepository {
       .limit(limit);
   }
 
-  /** `running` tasks whose lease ran out before `now`, the oldest lease first, at most `limit`. */
-  listExpired(
-    now: Date,
-    limit: number,
-  ): Promise<{ taskId: string; attempt: number }[]> {
+  /** Every `running` task of the given types with the attempt that claimed it. */
+  listRunning(types: readonly string[]): Promise<{ taskId: string; attempt: number }[]> {
     return this.db.client
       .select({ taskId: runtimeTasks.taskId, attempt: runtimeTasks.attempt })
       .from(runtimeTasks)
-      .where(and(eq(runtimeTasks.status, running), lt(runtimeTasks.leaseExpiresAt, now)))
-      .orderBy(asc(runtimeTasks.leaseExpiresAt))
-      .limit(limit);
+      .where(and(eq(runtimeTasks.status, running), inArray(runtimeTasks.type, [...types])));
   }
 
   /**

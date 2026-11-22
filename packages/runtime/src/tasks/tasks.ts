@@ -20,12 +20,11 @@ const { running, waiting } = TaskStatusSchema.enum;
 
 const nextAttempt = sql`${runtimeTasks.attempt} + 1`;
 
-/** Columns that follow a new status: no wait reason, no lease, `finished_at` only when finished. */
+/** Columns that follow a new status: no wait reason, `finished_at` only when finished. */
 function leaveStatus(status: TaskStatus): PgUpdateSetSource<typeof runtimeTasks> {
   return {
     status,
     waitReason: null,
-    leaseExpiresAt: null,
     finishedAt: isFinished(status) ? sql`now()` : null,
   };
 }
@@ -37,7 +36,6 @@ function changeColumns(change: TaskChange): PgUpdateSetSource<typeof runtimeTask
         status: running,
         attempt: nextAttempt,
         stepClaims: sql`${runtimeTasks.stepClaims} + 1`,
-        leaseExpiresAt: change.leaseExpiresAt,
       };
     case 'wait':
       return {

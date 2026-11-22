@@ -1,6 +1,6 @@
 # Пакет `runtime`
 
-Durable-владелец работы ([ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md)): задачи, которые идут шагами и переживают рестарт сервера, очередь сообщений задачам, запросы решений человека, трекеры дочерних задач, журнал событий с доставкой, журнал токенов и возврат потерянных шагов. Об агентах и беседах пакет не знает: работу шага делает обработчик верхнего слоя, зарегистрированный по типу задачи. Контракт — [design-runtime.md](../../features/agent-platform/design-runtime.md#contract-definitions).
+Durable-владелец работы ([ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md)): задачи, которые идут шагами и переживают рестарт сервера, очередь сообщений задачам, запросы решений человека, трекеры дочерних задач, журнал событий с доставкой, журнал токенов и возврат брошенных задач. Об агентах и беседах пакет не знает: работу шага делает обработчик верхнего слоя или живой объект задачи, зарегистрированные по типу задачи. Шаги исполняет один процесс, и объекты задач он держит в памяти между шагами ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)). Контракт — [design-runtime.md](../../features/agent-platform/design-runtime.md#contract-definitions).
 
 ```mermaid
 ---
@@ -21,7 +21,7 @@ config:
 flowchart LR
     entry(["▶ шаг готов"])
     disp["1 · Dispatcher<br/>захватывает шаг"]
-    handler["2 · обработчик<br/>по типу задачи"]
+    handler["2 · объект задачи<br/>или обработчик типа"]
     commit["3 · StepCommitter<br/>итог одной транзакцией"]
     pg[("Postgres")]
     relay["4 · OutboxRelay<br/>доставка событий"]
@@ -48,28 +48,30 @@ flowchart LR
     class disp,handler,commit,pg,relay,consumer unchanged
 ```
 
-`Dispatcher` находит обработчик в `HandlerRegistry` по типу задачи и отдаёт ему контекст шага. Обработчик делает внешнюю работу вне транзакции и возвращает итог. `StepCommitter` одной транзакцией пишет новый статус задачи, записи обработчика, доставку сообщений и события. `OutboxRelay` доставляет события зарегистрированным потребителям. Как писать обработчик — [step-handler.md](../patterns/step-handler.md), потребителя событий — [transactional-outbox.md](../patterns/transactional-outbox.md).
+`Dispatcher` захватывает шаг и берёт у `LiveTasks` то, что его исполнит: объект задачи живого типа (хранимый или восстановленный из базы) или обработчик типа без состояния из `HandlerRegistry`. Тот делает внешнюю работу вне транзакции и возвращает итог. `StepCommitter` одной транзакцией пишет новый статус задачи, записи обработчика, доставку сообщений и события; после успешного коммита объект задачи забирает закоммиченное состояние (`committed`). `OutboxRelay` доставляет события зарегистрированным потребителям. Как писать обработчик и живой объект — [step-handler.md](../patterns/step-handler.md), потребителя событий — [transactional-outbox.md](../patterns/transactional-outbox.md).
 
 ## Каталоги
 
 | Путь | Что там |
 |---|---|
 | `src/tasks/` | `Tasks` — строки задач и охраняемые переходы статуса; `TaskControl` — команды над задачей (создать, прервать, остановить, удалить дерево); конец задачи; `Trackers` — трекеры дочерних задач; реестр задач, которые идут в этом процессе |
-| `src/steps/` | контракт шага (`TaskHandler`, `StepContext`, `StepResult`), `HandlerRegistry`, `Dispatcher`, `Heartbeat`, `StepCommitter` |
+| `src/steps/` | контракт шага (`TaskHandler`, `LiveTask`, `LiveTaskType`, `StepContext`, `StepResult`, `StepEffects`) в `step-contract.ts`, `HandlerRegistry`, `LiveTasks` — объекты задач в памяти, `Dispatcher`, `StepCommitter` |
 | `src/messaging/` | `Inbox` — очередь сообщений задаче; `Decisions` — запросы решений человека |
 | `src/events/` | `EventLog` — журнал событий; `EventConsumerRegistry` — потребители; `OutboxRelay` — доставка |
-| `src/workers/` | `WorkerLoop` — цикл фонового воркера; `RecoverySweeper` — возврат потерянных шагов; `RuntimeWorkers` — старт и остановка всех воркеров |
+| `src/workers/` | `WorkerLoop` — цикл фонового воркера; возврат брошенных задач; `RuntimeWorkers` — старт и остановка всех воркеров |
 | `src/ledger/` | `TokenLedger` — журнал токенов и цена вызова модели |
-| `src/` | `RuntimeModule`, токены (`runtime.tokens.ts`), разбор настроек `parseRuntimeConfig`, часы, ошибки, `retryingTransaction` — транзакция с повтором при deadlock |
+| `src/` | `RuntimeModule`, токены (`runtime.tokens.ts`), разбор настроек `parseRuntimeConfig`, часы, ошибки |
 
 Запросы к таблицам `runtime_*` лежат в `packages/db/src/repositories/runtime-*.repository.ts`, а сервисы этого пакета работают поверх них ([repository-over-transaction.md](../patterns/repository-over-transaction.md)).
 
 ## Модуль
 
-`RuntimeModule` глобальный. Он отдаёт сервисы, которые внедряют модули выше: `HandlerRegistry`, `EventConsumerRegistry`, `TaskControl`, `Inbox`, `Decisions`, `Trackers`, `EventLog`, `TokenLedger`, `RuntimeWorkers` и часы `CLOCK`. Верхние модули регистрируют обработчики и потребителей в своём `onModuleInit`; `RuntimeWorkers` запускает воркеры в `onApplicationBootstrap` и останавливает в `beforeApplicationShutdown` ([composition-root.md](../patterns/composition-root.md)).
+`RuntimeModule` глобальный. Он отдаёт сервисы, которые внедряют модули выше: `HandlerRegistry`, `EventConsumerRegistry`, `TaskControl`, `Inbox`, `Decisions`, `Trackers`, `EventLog`, `TokenLedger`, `RuntimeWorkers`, `LiveTasks` и часы `CLOCK`. Верхние модули регистрируют обработчики, живые типы и потребителей в своём `onModuleInit`. `RuntimeWorkers` запускает воркеры в `onApplicationBootstrap`, там же начинает прогрев объектов задач и останавливает воркеры в `beforeApplicationShutdown` ([composition-root.md](../patterns/composition-root.md)).
 
 ## Правила
 
 - Статус задачи меняют только сервисы этого пакета — итогом шага и командами `TaskControl`: правила переходов живут в них.
-- Транзакция идёт к обработчику, а не от него: `StepCommitter` открывает транзакцию итога шага и зовёт в ней `commit` итога, где обработчик пишет свои строки. Охраняемую запись посреди шага обработчик делает через `StepContext.guard`, который тоже даёт ему транзакцию.
+- Транзакция идёт к обработчику, а не от него: `StepCommitter` открывает транзакцию итога шага и зовёт в ней `commit(effects)` итога. Репозитории и сервисы, которые обработчик зовёт там, сами входят в эту транзакцию. Охраняемую запись посреди шага обработчик делает через `StepContext.guard(work)`: `work` идёт в короткой отдельной транзакции.
+- Шаги исполняет один процесс. Команда (прерывание, остановка, удаление дерева) обрывает идущий шаг в этом же процессе, через сигнал шага, и отпускает объект задачи. Задачу, которая после падения процесса осталась в `running`, процесс при старте возвращает в очередь ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)).
+- Объект задачи — кэш над базой: `LiveTasks` держит его после закоммиченного шага и отпускает при любом другом конце шага, после 15 минут простоя и сверх 500 объектов. Задаче без объекта новый строит `restore` её типа.
 - Чужой домен пакет не знает: проверку владельца, удаление беседы и цены моделей ему передают верхние слои параметрами или портом.

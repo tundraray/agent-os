@@ -87,7 +87,7 @@
 
 - PoC без обратной совместимости: одна версия схемы и API.
 - Слои `runtime ← agents ← приложения` и общий `common` — по [code system](../../code-system/README.md), Layer Map; runtime не зависит от Mastra, lint пакета это запрещает.
-- Всё состояние в базе: в памяти процесса только ссылки на шаги, которые идут сейчас, и сигналы их прерывания (KD-2).
+- Всё состояние в базе: в памяти процесса только ссылки на шаги, которые идут сейчас, сигналы их прерывания (KD-2) и объекты задач живых типов — кэш над базой, который runtime восстанавливает из неё ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)).
 - Вся работа с базой — через функции сборки и репозитории пакетов, один Postgres ([repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md)).
 - Логирование только через логгер `common`, без секретов (KD-6).
 - Лёгкий процесс тестов: тесты пишутся с задачами и запускаются один раз в конце; ревью тестов — только для рестартов, конкуренции и прерывания ([Test Strategy](#test-strategy)).
@@ -98,7 +98,7 @@ Follows the [code system](../../code-system/README.md).
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `createRuntime` и `RuntimeModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | модуль Nest читает настройки, собирает runtime и запускает воркеры с сервером |
+| `RuntimeModule` пакета и `ApiRuntimeModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | `ApiRuntimeModule` читает настройки из окружения для `RuntimeModule`, а `RuntimeWorkers` запускает воркеры с сервером |
 | Порт обработчика `TaskHandler` | [step-handler.md](../../code-system/patterns/step-handler.md) | extended | ключ — тип задачи без версии, один шаг за захват (KD-2) |
 | `Dispatcher` (захват, lease, heartbeat, фиксация) | step-handler.md | extended | итог шага с записями обработчика и доставкой сообщений; отсечение по команде (KD-4) |
 | `RecoverySweeper` | step-handler.md | reused | возвращает шаги с истёкшим lease |
@@ -247,7 +247,7 @@ flowchart LR
 ```
 
 - `web` пишет лог через логгер `common` с Sentry для Next; экранов у этой части нет.
-- `api` собирает runtime в модуле `RuntimeModule`, запускает его воркеры с сервером, направляет логгер Nest в логгер `common` и инициализирует Sentry до старта.
+- `api` подключает `RuntimeModule` через свой `ApiRuntimeModule` с настройками из окружения, запускает воркеры runtime с сервером, направляет логгер Nest в логгер `common` и инициализирует Sentry до старта.
 - `Postgres` хранит таблицы `runtime_*` в схеме `app`; их создают миграции вперёд ([ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md)).
 
 Пакеты внутри `api` и `web` и направление зависимостей между ними показывает схема ниже. Правила слоёв и границ записаны в [code system](../../code-system/README.md).
@@ -704,7 +704,7 @@ sequenceDiagram
 
 **Сборка**
 
-- **`createRuntime(options)`** — собирает runtime из базы (клиент и пул), разобранных настроек `RuntimeConfig`, логгера `common` и часов `Clock`. Возвращает `Runtime` с сервисами `handlers`, `tasks`, `inbox`, `decisions`, `events`, `eventConsumers`, `ledger` и методами `start()` и `stop()`. Обработчики и потребители регистрируются до `start()`.
+- **`RuntimeModule.forRootAsync(options)`** — глобальный модуль runtime над `DbModule` с разобранными настройками `RuntimeConfig`, логгером `LOGGER` и часами `CLOCK`. Отдаёт сервисы `HandlerRegistry`, `TaskControl`, `Inbox`, `Decisions`, `EventLog`, `EventConsumerRegistry`, `Trackers`, `TokenLedger`, `LiveTasks` и `RuntimeWorkers`. Обработчики, живые типы задач и потребители регистрируются в `onModuleInit`; `RuntimeWorkers` запускает воркеры в `onApplicationBootstrap` и останавливает в `beforeApplicationShutdown`.
 - **`parseRuntimeConfig(variables)`** — проверяет переменные из [Runtime settings](#runtime-settings) и отдаёт `RuntimeConfig`; неверное значение останавливает старт с именем переменной.
 
 **Порт обработчика**

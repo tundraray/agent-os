@@ -25,7 +25,7 @@ import { agentsModule, runtimeModules } from './runtimeContext';
  * `RuntimeModule` and `AgentsModule` with the REAL code executor (`createCodeRunner`, the default of the package), the
  * scripted model and the MCP fixture servers the test registered in the database at its own fixture
  * process. It reads its environment — `DATABASE_URL`, the Runtime
- * settings (workers on, short lease and reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
+ * settings (workers on, short reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
  * settings and the run's server names) — and logs every record as a JSON line to the console, which the
  * harness parses. It creates no agents and registers no server or model provider: the test process does. IPC:
  * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` closes the context — the workers stop,

@@ -44,7 +44,6 @@ export const runtimeTasks = app.table(
     stepClaims: integer('step_claims').notNull().default(0),
     /** Losses of the current step found by the sweeper; 0 after its outcome. */
     recoveries: integer('recoveries').notNull().default(0),
-    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
     /** Next number in the task's inbox. */
     nextMessageSeq: integer('next_message_seq').notNull().default(0),
     result: jsonb('result'),
@@ -83,10 +82,6 @@ export const runtimeTasks = app.table(
     index('runtime_tasks_ready_idx')
       .on(t.createdAt, t.taskId)
       .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.queued)}`),
-    /** The recovery sweeper: `running` tasks whose lease has expired, oldest first. */
-    index('runtime_tasks_lease_idx')
-      .on(t.leaseExpiresAt)
-      .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.running)}`),
     index('runtime_tasks_root_idx').on(t.rootId),
     index('runtime_tasks_parent_idx').on(t.parentId),
     /** The end of a tracker's task counts the tracker's unfinished tasks. */

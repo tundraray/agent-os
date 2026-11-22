@@ -18,19 +18,19 @@ import { Inbox } from '../messaging/inbox';
 import { WorkerLoop } from './worker-loop';
 import type { RuntimeConfig } from '../runtime-config';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
+import { HandlerRegistry } from '../steps/handler.registry';
+import { RunningTaskRegistry } from '../tasks/running-task.registry';
 import { endTask } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 
-/** Tasks taken by one pass. */
-const SWEEP_BATCH = 50;
-
 interface RecoverySweeperDeps {
   db: Db;
   config: RuntimeConfig;
-  clock: Clock;
   logger: Logger;
+  handlers: HandlerRegistry;
+  running: RunningTaskRegistry;
   tasks: Tasks;
   taskRows: RuntimeTasksRepository;
   trackers: RuntimeTrackersRepository;
@@ -39,20 +39,21 @@ interface RecoverySweeperDeps {
   crashPoints: CrashPoints;
 }
 
-/** What the sweeper did with one task whose lease expired. */
+/** What the sweeper did with one lost task. */
 type Recovery =
   | { kind: 'requeued'; row: TaskRow }
   | { kind: 'exhausted'; row: TaskRow }
-  /** A heartbeat extended the lease, the step committed, or another sweeper took it. */
+  /** The step was written meanwhile. */
   | { kind: 'skipped' };
 
 /**
- * Recovery of lost steps (Flow 2), every `RUNTIME_REAPER_MS`. A `running` task whose lease has
- * expired — its process is gone or lost the database — returns to `queued` with `recoveries + 1`,
- * `attempt + 1` (a late outcome of the lost attempt is fenced) and `task.recovered`, so that a new
- * claim runs the step again. Once the step was lost `RUNTIME_MAX_RECOVERIES` times in a row, the
- * task is `failed` with `recovery_exhausted` and its parent is told. No handler is called; each task
- * is one transaction.
+ * Recovery of lost steps (Flow 2): at the start and then every `RUNTIME_REAPER_MS`. One process
+ * executes steps, so a `running` task of a type registered here whose step this process does not
+ * execute (`RunningTaskRegistry`) is lost: the process that claimed it crashed, or its step ended
+ * without its write (the database was unreachable). The task returns to `queued` with
+ * `recoveries + 1`, `attempt + 1` and `task.recovered`, so that a new claim runs the step again.
+ * Once the step was lost `RUNTIME_MAX_RECOVERIES` times in a row, the task is `failed` with
+ * `recovery_exhausted` and its parent is told. No handler is called; each task is one transaction.
  */
 @Injectable()
 export class RecoverySweeper {
@@ -70,9 +71,23 @@ export class RecoverySweeper {
     @Inject(EventLog) events: EventLog,
     @Inject(Inbox) inbox: Inbox,
     @Inject(CrashPoints) crashPoints: CrashPoints,
+    @Inject(HandlerRegistry) handlers: HandlerRegistry,
+    @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
   ) {
     const logger = runtimeLogger.child({ worker: 'sweeper' });
-    this.deps = { db, config, clock, logger, tasks, taskRows, trackers, events, inbox, crashPoints };
+    this.deps = {
+      db,
+      config,
+      logger,
+      handlers,
+      running,
+      tasks,
+      taskRows,
+      trackers,
+      events,
+      inbox,
+      crashPoints,
+    };
     this.loop = new WorkerLoop({
       name: 'sweeper',
       periodMs: config.reaperMs,
@@ -91,35 +106,36 @@ export class RecoverySweeper {
     return this.loop.stop();
   }
 
-  /** One pass; `true` when the batch was full and more may be left. */
+  /** One pass over the `running` tasks; never leaves work for an immediate next pass. */
   private async sweep(): Promise<boolean> {
-    const now = this.deps.clock.now();
-    const expired = await this.deps.taskRows.listExpired(now, SWEEP_BATCH);
-    for (const task of expired) await this.recover(task, now);
-    return expired.length === SWEEP_BATCH;
+    const { taskRows, handlers, running } = this.deps;
+    const types = handlers.types();
+    if (types.length === 0) return false;
+    const claimed = await taskRows.listRunning(types);
+    for (const task of claimed) {
+      if (!running.isRunning(task.taskId, task.attempt)) await this.recover(task);
+    }
+    return false;
   }
 
-  private async recover(
-    expired: { taskId: string; attempt: number },
-    now: Date,
-  ): Promise<void> {
+  private async recover(lost: { taskId: string; attempt: number }): Promise<void> {
     const { db, logger, crashPoints, config } = this.deps;
     const startedAt = Date.now();
-    const recovery = await db.transaction(() => this.recoverIn(expired, now));
+    const recovery = await db.transaction(() => this.recoverIn(lost));
     const fields = {
-      taskId: expired.taskId,
-      attempt: expired.attempt,
+      taskId: lost.taskId,
+      attempt: lost.attempt,
       durationMs: Date.now() - startedAt,
     };
     switch (recovery.kind) {
       case 'skipped':
-        logger.debug('lost step not recovered: the lease is no longer expired', {
+        logger.debug('lost step not recovered: it was written meanwhile', {
           ...fields,
           outcome: 'skipped',
         });
         return;
       case 'requeued':
-        logger.warn('lost step requeued: the lease expired', {
+        logger.warn('lost step requeued: no step of this process runs the task', {
           ...fields,
           rootId: recovery.row.rootId,
           ownerId: recovery.row.ownerId,
@@ -145,18 +161,10 @@ export class RecoverySweeper {
     }
   }
 
-  private async recoverIn(
-    expired: { taskId: string; attempt: number },
-    now: Date,
-  ): Promise<Recovery> {
+  private async recoverIn(lost: { taskId: string; attempt: number }): Promise<Recovery> {
     const { tasks, taskRows, events, config } = this.deps;
-    const task = await taskRows.find(expired.taskId);
-    const stillLost =
-      task?.status === running &&
-      task.attempt === expired.attempt &&
-      task.leaseExpiresAt !== null &&
-      task.leaseExpiresAt < now;
-    if (!task || !stillLost) return { kind: 'skipped' };
+    const task = await taskRows.find(lost.taskId);
+    if (task?.status !== running || task.attempt !== lost.attempt) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {
       const row = await endTask(this.deps, task, {

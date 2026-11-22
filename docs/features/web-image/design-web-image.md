@@ -614,7 +614,7 @@ sequenceDiagram
 - `apps/web/README.md`: шаги 1–2 — без фразы о CORS, `.env.local` только с необязательными `SENTRY_DSN` и `API_INTERNAL_URL`.
 - `apps/api/README.md`, раздел Docker: `FRONTEND_ORIGIN` — адрес веба, ссылка на запуск стека compose.
 - `apps/api/.env.example` и `apps/web/.env.example` — по тем же правилам.
-- Каталог кода: [web-api-client.md](../../code-system/patterns/web-api-client.md) (ядро и путь без адреса, образец) и строка «клиент API в `apps/web`» в [README.md](../../code-system/README.md) — правятся вместе с этим документом.
+- Каталог кода: [web-api-client.md](../../code-system/patterns/web-api-client.md) (ядро и путь без адреса, образец) и описание клиента API в [code-system/packages/web.md](../../code-system/packages/web.md) — правятся вместе с этим документом.
 
 ## Test Strategy
 

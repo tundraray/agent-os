@@ -6,7 +6,6 @@ import type {
   RuntimeInboxRow,
   RuntimeTasksRepository,
 } from '@agent-os/db';
-import { sql } from 'drizzle-orm';
 import type { CrashPoints } from '../crash-points';
 import type { TaskRow } from '../tasks/guarded-transition';
 import type {
@@ -26,8 +25,6 @@ export interface StepContextDeps {
   crashPoints: CrashPoints;
   /** The runtime's logger; the step's logger is its child. */
   logger: Logger;
-  /** `RUNTIME_LEASE_MS`: the bound of a `guard` transaction. */
-  leaseMs: number;
 }
 
 /** What the claim knows about the step. */
@@ -42,18 +39,6 @@ export interface ClaimedStep {
    */
   decision: RuntimeDecisionRow | undefined;
   signal: AbortSignal;
-}
-
-/**
- * Bounds both timeouts of the transaction open in this async context by `ms`, for this transaction
- * only (`set_config` with `true`, the value as a parameter — ADR-0003), so that a stuck
- * transaction does not outlive the lease. Call it inside `db.transaction`.
- */
-export async function boundTransaction(db: Db, ms: number): Promise<void> {
-  const timeout = String(ms);
-  await db.client.execute(
-    sql`select set_config('statement_timeout', ${timeout}, true), set_config('idle_in_transaction_session_timeout', ${timeout}, true)`,
-  );
 }
 
 /**
@@ -130,7 +115,6 @@ export class TaskStepContext implements StepContext {
     const startedAt = Date.now();
     try {
       const result = await this.deps.db.transaction(async (): Promise<GuardResult<T>> => {
-        await boundTransaction(this.deps.db, this.deps.leaseMs);
         const own = await this.deps.taskRows.find(this.taskId);
         if (own?.status !== running || own.attempt !== this.attempt) {
           return { outcome: 'fenced' };

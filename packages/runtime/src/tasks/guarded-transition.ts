@@ -79,8 +79,8 @@ export type TaskFields = Omit<
 >;
 
 export type TaskChange =
-  /** `queued → running`: `attempt + 1` and `step_claims + 1` (only here), the lease. */
-  | { kind: 'claim'; leaseExpiresAt: Date }
+  /** `queued → running`: `attempt + 1` and `step_claims + 1` (only here). */
+  | { kind: 'claim' }
   /** → `waiting` with its reason (`waiting` ⇔ `wait_reason` not null). */
   | {
       kind: 'wait';
@@ -90,8 +90,8 @@ export type TaskChange =
       fence?: boolean;
     }
   /**
-   * Any other write. With `status` the row leaves its status, `wait_reason` and the lease are
-   * cleared and `finished_at` follows the status; without it only `fields` change (heartbeat).
+   * Any other write. With `status` the row leaves its status, `wait_reason` is cleared and
+   * `finished_at` follows the status; without it only `fields` change.
    */
   | {
       kind: 'set';

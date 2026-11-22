@@ -1,5 +1,5 @@
 // agent-platform / runtime E2E - Design Doc: docs/features/agent-platform/design-runtime.md (Test Strategy UC-2, UC-6, UC-7, UC-E1; Flows 1 and 2)
-// PRD: docs/features/agent-platform/prd.md (FR-01 AC-01.1..AC-01.3; NFR-04, NFR-05). ADR-0001 (runtime owner: one transaction per transition, recovery by lease).
+// PRD: docs/features/agent-platform/prd.md (FR-01 AC-01.1..AC-01.3; NFR-04, NFR-05). ADR-0001 (runtime owner: one transaction per transition, recovery of lost steps at the start).
 // Test type: End-to-End (child processes running the runtime from source + real Postgres), CI job `e2e-runtime`.
 // Counterpart in-process file: agent-platform-runtime.int.e2e-spec.ts (INT-1..INT-5). This file owns what an in-process test cannot do: a process that really dies between two writes.
 //
@@ -13,7 +13,7 @@
 //
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml. Child-process harness (test/support/runtimeChild.ts): spawns the child (`test/support/runtimeChildMain.ts`, from source through `tsx`), which runs the packages with test handlers under unique task types, with
-//   `RUNTIME_CRASH_AT=<point>[:n]` (never read under `NODE_ENV=production`), `RUNTIME_WORKERS=on`, short `RUNTIME_LEASE_MS`, `RUNTIME_REAPER_MS`, `RUNTIME_POLL_MS`, `RUNTIME_MAX_RECOVERIES` 3. The crash is `process.exit(137)` from the point;
+//   `RUNTIME_CRASH_AT=<point>[:n]` (never read under `NODE_ENV=production`), `RUNTIME_WORKERS=on`, short `RUNTIME_REAPER_MS`, `RUNTIME_POLL_MS`, `RUNTIME_MAX_RECOVERIES` 3. The crash is `process.exit(137)` from the point;
 //   the harness reads the rows the dead child left, then starts a fresh child without `RUNTIME_CRASH_AT`.
 // - The crash points are the old ones renamed for steps (Design Doc "Что сохраняется, меняется и уходит": `CrashPoints` kept, points renamed). Each is a named, test-only hook in the runtime: after the claim; after a `guard` write; before the step's
 //   commit transaction; inside it, after the handler's rows and before the delivery marks; after it, before the events are published; after a message enqueue, before the wake-up; after the sweeper's requeue. The plan fixes the exact names.
@@ -22,9 +22,9 @@
 // - No model, no network, no MCP. The "external action" of the guard row is a counter in a test double the handler calls.
 //
 // Budget: E2E 1 of 2 (the second slot is left free). E2E-1 is one journey - "a restart anywhere ends in the same state as an uninterrupted run" - with the rows below. Nothing below this level can prove it: a held in-process handler is still alive and may
-//   write later, a dead process cannot. An in-process zombie proves the fence (INT-3), not the recovery. Two instances over one database (concurrency) are INT-1 row C, not here.
+//   write later, a dead process cannot. An in-process zombie proves the fence (INT-3), not the recovery.
 //
-// AC -> proving test: AC-01.1 (steps neither lost nor repeated), DC-1 (the commit as one), DC-2 (another instance redoes the lost step with the loss flag), AC-01.3 (a pending message delivered once across a restart), NFR-04 (restart half), NFR-05 = E2E-1 reference
+// AC -> proving test: AC-01.1 (steps neither lost nor repeated), DC-1 (the commit as one), DC-2 (the next process redoes the lost step with the loss flag), AC-01.3 (a pending message delivered once across a restart), NFR-04 (restart half), NFR-05 = E2E-1 reference
 //   and kill rows; AC-01.2 (the action is not repeated, the intent is seen) = row "guard"; DC-3 = row "recovery exhausted"; DC-7 (a decision survives a restart and resolves once) = row "decision".
 
 import type { Task } from '@agent-os/runtime';

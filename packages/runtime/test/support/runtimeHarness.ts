@@ -21,7 +21,6 @@ import {
   Trackers,
 } from '@agent-os/runtime';
 import { Test } from '@nestjs/testing';
-import { sql } from 'drizzle-orm';
 import { databaseUrl } from './database-url';
 import { loggerModule } from './loggerModule';
 import { boundToDb, ensureHandlerRowsTable } from './testHandlers';
@@ -29,8 +28,7 @@ import { boundToDb, ensureHandlerRowsTable } from './testHandlers';
 /**
  * Test assembly of the runtime (design-runtime.md, Test Strategy): a Nest context of the package's
  * own `RuntimeModule` over `DbModule` with its own pool, without `apps/api`. The package is imported
- * by name, as the child of E2E-1 imports it. A second instance is a second harness over the same
- * database.
+ * by name, as the child of E2E-1 imports it.
  */
 
 /*
@@ -108,19 +106,6 @@ export interface RuntimeHarness {
   readonly logs: readonly LogRecord[];
   /** Closes the context: the workers stop, then `DbModule` closes the pool. */
   close(): Promise<void>;
-}
-
-/**
- * Moves the lease of the task's running step into the past, as if its process had stopped
- * beating: the next pass of a recovery sweeper requeues the step. Throws when the task is not
- * `running`, so a test never races a lease that was not there.
- */
-export async function expireLease(db: Database, taskId: string): Promise<void> {
-  const { rows } = await db.execute(sql`
-    UPDATE app.runtime_tasks SET lease_expires_at = now() - interval '1 minute'
-     WHERE task_id = ${taskId} AND status = 'running'
-    RETURNING task_id`);
-  if (rows.length !== 1) throw new Error(`Task ${taskId} has no running step to expire`);
 }
 
 /** Builds the runtime with the test handlers against the test database. */

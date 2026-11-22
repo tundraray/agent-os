@@ -48,7 +48,7 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 
 Контрактов `agents` и `runtime` не хватает в четырёх местах, и эта часть правит сами пакеты:
 
-- в `packages/agents` — хук `createAgents({ onTextDelta })`, ради которого `ModelClient` вызывает `Agent.stream` с `maxSteps: 1` (KD-3);
+- в `packages/agents` — порт `ON_TEXT_DELTA`, ради которого `ModelClient` вызывает `Agent.stream` с `maxSteps: 1` (KD-3);
 - в `packages/agents` — `agents.completeText` для заголовка: разовый вызов модели без задачи, который пишет строку журнала токенов без `taskId` (так журнал уже допускает), поэтому Mastra не остаётся в `apps/api`;
 - в `packages/runtime` — `decisions.listTree`, а в `packages/agents` на нём — `agents.sessions.confirmations(rootId, ownerId)`: запросы дерева со статусом `open`, `resolved` или `cancelled` и решением. Без этого беседа после перезагрузки теряла бы решённые копии запросов фоновых агентов (AC-14.2);
 - в `packages/agents` — `start` с id, который задаёт вызывающий, и операции корневой сессии `root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`, `deleteRoot`: беседа — корневая сессия (KD-1), и `apps/api` не читает таблицы `agents` сам.
@@ -71,7 +71,7 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 
 - **Part**: `chat` — четвёртая часть Delivery Parts в PRD.
 - **Covers**: FR-14, FR-15, FR-16, FR-17; API для FR-21–FR-24 и FR-29; NFR-06 на каждой точке доступа этого API; NFR-02 и NFR-03 в доле беседы.
-- **Depends on**: [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `createAgents`, операции агентов `start`, `send`, `interrupt`, `stop`, `restart`, `get`, `list`, `history`, `resolveConfirmation` и операции корня из KD-6, `AgentView`, `HistoryEntry`, событие `agents.history_appended`. Операции агентов — сервис `agents.sessions` (`agents.sessions.start` и так далее); `start()` и `stop()` жизненного цикла — на `Agents`; [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `tasks.get`, `inbox.listPending`, канал `runtime_events`, `ledger.monthSpend`, логгер `common`.
+- **Depends on**: [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `AgentsModule`, операции агентов `start`, `send`, `interrupt`, `stop`, `restart`, `get`, `list`, `history`, `resolveConfirmation` и операции корня из KD-6, `AgentView`, `HistoryEntry`, событие `agents.history_appended`. Операции агентов — сервисы `StartOperations`, `ControlOperations` и `ViewOperations`, которые `apps/api` внедряет; [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `tasks.get`, `inbox.listPending`, канал `runtime_events`, `ledger.monthSpend`, логгер `common`.
 - **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (состояние только в Postgres), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) (правила пакетов).
 - **Sibling parts**: `runtime`, `agents` — контракты выше; `web` — экраны поверх этого API.
 
@@ -310,7 +310,7 @@ flowchart TB
 
 #### Сборка
 
-`AppModule` собирает пакеты по [composition-root.md](../../code-system/patterns/composition-root.md): `RuntimeModule` (`createRuntime`) → `AgentsModule` (`createAgents` с хуком `onTextDelta` от `DeltaPublisher`) → `ChatModule`. Инструменты регистрируются в фабриках провайдеров, потому что `agents.start()` идёт в `AgentsModule.onModuleInit`, до старта воркеров в `RuntimeModule.onApplicationBootstrap`. `ChatModule` открывает `LISTEN` хаба при старте приложения и закрывает потоки и соединение хаба перед остановкой воркеров. Логгер и Sentry уже подключила часть `runtime`, воркеры работают в процессе `api`, как там описано.
+`AppModule` собирает пакеты по [composition-root.md](../../code-system/patterns/composition-root.md): `DbModule` → `ApiRuntimeModule` (`RuntimeModule`) → `AgentsModule` (модуль пакета `agents` с портами `AgentsPortsModule`, в том числе `ON_TEXT_DELTA` от `DeltaPublisher`) → `ChatModule`. Инструменты регистрируются в `onModuleInit` своих модулей; реестр инструментов закрывается в `onApplicationBootstrap`, после старта воркеров `RuntimeWorkers`. `ChatModule` открывает `LISTEN` хаба при старте приложения и закрывает потоки и соединение хаба перед остановкой воркеров. Логгер и Sentry уже подключила часть `runtime`, воркеры работают в процессе `api`, как там описано.
 
 ### Runtime Flows
 
@@ -742,7 +742,7 @@ sequenceDiagram
 
 **Расширения нижних пакетов** (KD-6)
 
-- **`createAgents({ ..., onTextDelta })`** — `ModelClient` вызывает хук на каждую часть текста с `ownerId`, `rootId`, `agentId`, `offset`, `text`; ошибка хука логируется и не ломает шаг.
+- **Порт `ON_TEXT_DELTA`** (`OnTextDelta`) — `ModelClient` вызывает хук на каждую часть текста с `ownerId`, `rootId`, `agentId`, `offset`, `text`; ошибка хука логируется и не ломает шаг.
 - **`agents.completeText({ ownerId, system, prompt, maxOutputTokens, signal })`** — один вызов модели вне задачи; пишет строку журнала без `taskId`; возвращает текст.
 - **`agents.sessions.confirmations(rootId, ownerId)`** отдаёт `Confirmation` всех статусов; строится на `decisions.listTree(rootId, ownerId)` runtime, который возвращает запросы дерева со статусом, решением и временем.
 - **`agents.sessions.start({ agentId?, ownerId, prompt, description, record? })`** — создаёт задачу и корневую сессию в одной транзакции; без `agentId` id новый, а занятый id — `TASK_EXISTS` runtime.

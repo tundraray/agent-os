@@ -23,11 +23,11 @@
 // - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its `logs` (read-only) and `backoffice` (with the new mutating `create_incident_note`) registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
 //   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. The harness `access` option per test maps the test's owners to servers (the `AccessGate` double of `@agent-os/agents/testing`).
 // - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `RuntimeModule` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
-//   else from the database; "lease expired" is the harness `expireLease`, a held handler of the first instance is the zombie.
+//   else from the database; a lost step is a step held on the first instance (`ZOMBIE_RUNTIME`, the zombie) that the start of the second requeues.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test and the test's own library double (`createLibraryDouble`: a root runs its `chat` record, a child the record its parent names by id); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on latches the double and the fixture wait on, and on rows. "Status within 5 s" (NFR-01) is asserted as: the status read right after the command returns, while the call is still held; the 5 s figure
 //   belongs to the runtime part's on-demand script.
-// - Support to write alongside (test/support): agentsHarness.ts (database + runtime + agents, scripted double, fixture config, second instance, `expireLease`), scriptedModel.ts (scenarios, latches, recorded inputs), fixtureLog.ts (read and filter the call log).
+// - Support to write alongside (test/support): agentsHarness.ts (database + runtime + agents, scripted double, fixture config, second instance, `ZOMBIE_RUNTIME`), scriptedModel.ts (scenarios, latches, recorded inputs), fixtureLog.ts (read and filter the call log).
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
 //   INT-4 unique defect: an `agents` operation that reads `agent_sessions`, `agent_messages` or tool calls in `agent_messages` by id (history, list, restart, confirmations) before, or without, the runtime owner check - the runtime's own INT-4 covers only the `runtime_*`
@@ -90,7 +90,7 @@ import {
   closeAll,
   createAgentsHarness,
   eventsOf,
-  expireLease,
+  ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
   historyRowVersionsOf,
@@ -1309,8 +1309,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Row C "approve, on a second instance" (AC-12.3, AC-12.5): continue from row B: the first instance is stopped (its MCP processes closed) and a second instance is started over the same database; `confirmations` there still lists the request; `resolveConfirmation(approve)`
   //   returns `resolved`. Then: the journal has exactly ONE `create_incident_note` entry with the arguments shown to the employee; the call outcome is `success`, the agent continues and reports.
   // - Row D "reject" (AC-12.4): as row B, `resolveConfirmation(reject)`. Then: the journal has ZERO `create_incident_note` entries; the outcome is `rejected`; the agent's next model input holds the rejection result and the agent continues to its report.
-  // - Row E "step lost after the intent" (UC-E6, DC-5, AC-01.2): the agent has an open read call and a confirmed mutating call and a pending employee message; instance A starts the step, the mutating call reaches the fixture (held there by a latch, intent already written, state `sending`), then the lease
-  //   expires and instance B takes the step. Then: the mutating call's outcome is `unknown`; the journal has AT MOST ONE `create_incident_note` entry (the zombie's own one) and instance B sent none; the open read call ran once more and has one result and one audit row; the message stands in the history once;
+  // - Row E "step lost after the intent" (UC-E6, DC-5, AC-01.2): the agent has an open read call and a confirmed mutating call and a pending employee message; instance A starts the step, the mutating call reaches the fixture (held there by a latch, intent already written, state `sending`), then instance B
+  //   starts and takes the step as a lost one. Then: the mutating call's outcome is `unknown`; the journal has AT MOST ONE `create_incident_note` entry (the zombie's own one) and instance B sent none; the open read call ran once more and has one result and one audit row; the message stands in the history once;
   //   after the latch is released the zombie's late result is not written; the agent finishes with a report.
   // - Row F "server fails" (UC-E5, AC-11.2): the fixture's fault schedule drops the connection (`drop_connection`) on the agent's read call. Then: the call outcome is `transport_failure` with a reason in the history, the task is not `failed`, and the agent's next model input holds that result and it reaches its report.
   it('INT-3 A: a call to a server the owner may not use, or a tool outside the definition, is refused with its reason, shows in the history and never reaches the MCP server, while an allowed owner\'s call succeeds', async () => {
@@ -1582,7 +1582,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-3 E: a step lost after the intent leaves the mutating call unknown and sent at most once, runs the open read call once more and delivers the message once', async () => {
-    // Given: on instance A (one slot, a lease only the test expires, a heartbeat that never comes) a writer
+    // Given: on instance A (one slot, a sweeper that never passes again) a writer
     // whose one answer is create_incident_note, then a read call; the note is held on the fixture
     const ownerId = newUser();
     const fixture = createFixtureFiles();
@@ -1609,8 +1609,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     try {
       const zombie = await createAgentsHarness({
         ...options,
-        zombie: true,
-        runtimeConfig: { concurrency: 1, leaseMs: 600_000 },
+        runtimeConfig: ZOMBIE_RUNTIME,
       });
       harnesses.push(zombie);
       const { agentId, decisionId } = await startWriterUntilConfirmation(zombie, {
@@ -1632,10 +1631,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'get_trace requested',
       ]);
 
-      // When: instance B starts, A's lease expires, and B takes the lost step (A's only slot is held)
+      // When: instance B starts, requeues the step no step of its own runs, and takes it (A's only slot is held)
       const restarted = await createAgentsHarness(options);
       harnesses.push(restarted);
-      await expireLease(zombie.db, agentId);
       await writer.called(2);
       await waitForTaskStatus(restarted, agentId, ownerId, 'waiting');
 

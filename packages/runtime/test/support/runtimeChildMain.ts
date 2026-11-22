@@ -9,7 +9,7 @@ import { ensureHandlerRowsTable } from './testHandlers';
 
 /**
  * Entry of the E2E-1 child process, run from source through `tsx`. It is the composition root of its runtime: it reads its
- * environment — `DATABASE_URL`, the Runtime settings (`RUNTIME_WORKERS=on`, short lease, reaper and
+ * environment — `DATABASE_URL`, the Runtime settings (`RUNTIME_WORKERS=on`, short reaper and
  * poll, `RUNTIME_MAX_RECOVERIES`, `RUNTIME_CRASH_AT` for a dying start) and the task types it
  * registers — then builds a Nest context of `DbModule` + `RuntimeModule` from the packages, whose
  * start registers the handlers and starts the workers. It creates no tasks: the test process does.

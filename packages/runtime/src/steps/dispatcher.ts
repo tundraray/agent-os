@@ -21,9 +21,8 @@ import { CrashPoints } from '../crash-points';
 import { EventLog, RUNTIME_EVENTS_CHANNEL } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
 import { HandlerRegistry } from './handler.registry';
-import { Heartbeat } from './heartbeat';
 import { LiveTasks } from './live-tasks';
-import type { StepResult, StepSignalReason } from './step-contract';
+import type { StepResult } from './step-contract';
 import { Decisions } from '../messaging/decisions';
 import { Inbox } from '../messaging/inbox';
 import type { RuntimeConfig } from '../runtime-config';
@@ -33,7 +32,7 @@ import {
   RunningTaskRegistry,
 } from '../tasks/running-task.registry';
 import { type StepCommit, StepCommitter } from './step-commit';
-import { boundTransaction, TaskStepContext } from './step-context';
+import { TaskStepContext } from './step-context';
 import { endTask } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
 import { backoffDelay } from '../workers/worker-loop';
@@ -44,37 +43,6 @@ const FAILURE = RuntimeFailureReasonSchema.enum;
 
 /** Bound of a failure message the runtime writes; it travels in the parent's notice. */
 const FAILURE_MESSAGE_MAX = 2_000;
-
-/** Commands whose event cuts off the task's step in flight, and the signal reason they give. */
-const CUT_OFF_REASONS: ReadonlyMap<string, StepSignalReason> = new Map([
-  [EVENT['task.interrupted'], 'interrupted'],
-  [EVENT['task.stopped'], 'stopped'],
-]);
-
-/** The payload of a `runtime_events` notice (plan Notes 7). */
-interface TaskNotice {
-  rootId: string;
-  taskId: string;
-  type: string;
-}
-
-/** The notice's payload, or `undefined` when it is not one the runtime wrote. */
-function parseNotice(payload: string | undefined): TaskNotice | undefined {
-  if (payload === undefined) return undefined;
-  try {
-    const value = JSON.parse(payload) as Partial<Record<keyof TaskNotice, unknown>> | null;
-    if (
-      typeof value?.rootId !== 'string' ||
-      typeof value.taskId !== 'string' ||
-      typeof value.type !== 'string'
-    ) {
-      return undefined;
-    }
-    return { rootId: value.rootId, taskId: value.taskId, type: value.type };
-  } catch {
-    return undefined;
-  }
-}
 
 const errorMessage = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).slice(
@@ -95,13 +63,14 @@ type Execution =
 type HandlerEnd = Extract<Execution, { kind: 'returned' | 'threw' }>;
 
 /**
- * A claimed step: the task row after the claim, the messages pending at its start and the resolved
- * decision no committed step has received yet.
+ * A claimed step: the task row after the claim, the messages pending at its start, the resolved
+ * decision no committed step has received yet and the step's entry among the running ones.
  */
 interface ClaimedTask {
   task: TaskRow;
   messages: RuntimeInboxRow[];
   decision: RuntimeDecisionRow | undefined;
+  handle: RunningStepHandle;
 }
 
 /** A promise with its resolve, to race the shutdown against steps in flight. */
@@ -139,9 +108,9 @@ interface DispatcherDeps {
  * NOTIFY of `runtime_events` or when a slot frees — claims while slots (`RUNTIME_CONCURRENCY`) are
  * free the oldest `queued` task of a type registered here: a plain read, then the guarded claim
  * re-checks `queued`. Each step runs its handler outside any
- * transaction with a signal (step limit, heartbeat, shutdown) and ends in the commit transaction,
- * or — exception, step limit, shutdown — in a guarded write of the dispatcher that raises the
- * attempt, so that a late result and `guard` of the step are fenced (Invariant 1).
+ * transaction with a signal (a stop or an interrupt, step limit, shutdown) and ends in the commit
+ * transaction, or — exception, step limit, shutdown — in a guarded write of the dispatcher that
+ * raises the attempt, so that a late result and `guard` of the step are fenced (Invariant 1).
  */
 @Injectable()
 export class Dispatcher {
@@ -283,40 +252,45 @@ export class Dispatcher {
 
   /**
    * Claims the oldest ready task in one transaction: `running`, `attempt + 1`, `step_claims + 1`,
-   * the lease, the pending messages and `task.step_started`.
+   * the pending messages and `task.step_started`. The step is entered among the running ones
+   * before the claim commits, so the recovery sweeper never takes a step of this process for a
+   * lost one.
    */
   private async claimNext(): Promise<ClaimedTask | undefined> {
-    const { db, handlers, tasks, taskRows, events, inbox, decisions, clock, config, crashPoints } =
+    const { db, handlers, tasks, taskRows, events, inbox, decisions, running, crashPoints } =
       this.deps;
     const types = handlers.types();
     if (types.length === 0) return undefined;
-    const claimed = await db.transaction(async () => {
-      const taskId = await taskRows.findReady(types);
-      if (!taskId) return undefined;
-      // The guard re-checks `queued`.
-      const task = await tasks.transition(
-        { taskId, from: [queued] },
-        {
-          kind: 'claim',
-          leaseExpiresAt: new Date(clock.now().getTime() + config.leaseMs),
-        },
-      );
-      if (!task) return undefined;
-      const messages = await inbox.loadPending(taskId);
-      const decision = await decisions.loadUndelivered(taskId);
-      await events.append({
-        type: EVENT['task.step_started'],
-        task,
-        payload: {
-          stepNo: task.stepNo,
-          attempt: task.attempt,
-          messages: messages.length,
-        },
+    const entered: { handle?: RunningStepHandle } = {};
+    try {
+      const claimed = await db.transaction(async () => {
+        const taskId = await taskRows.findReady(types);
+        if (!taskId) return undefined;
+        // The guard re-checks `queued`.
+        const task = await tasks.transition({ taskId, from: [queued] }, { kind: 'claim' });
+        if (!task) return undefined;
+        const handle = running.register(task);
+        entered.handle = handle;
+        const messages = await inbox.loadPending(taskId);
+        const decision = await decisions.loadUndelivered(taskId);
+        await events.append({
+          type: EVENT['task.step_started'],
+          task,
+          payload: {
+            stepNo: task.stepNo,
+            attempt: task.attempt,
+            messages: messages.length,
+          },
+        });
+        return { task, messages, decision, handle };
       });
-      return { task, messages, decision };
-    });
-    if (claimed) crashPoints.hit('step.after-claim');
-    return claimed;
+      if (claimed) crashPoints.hit('step.after-claim');
+      return claimed;
+    } catch (error) {
+      // The claim rolled back: no step runs.
+      entered.handle?.release();
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -325,19 +299,16 @@ export class Dispatcher {
 
   /** Runs the claimed step to its write; never rejects. */
   private async runStep(claimed: ClaimedTask): Promise<void> {
-    const { task, messages, decision } = claimed;
-    const handle = this.deps.running.register(task);
+    const { task, messages, decision, handle } = claimed;
     const step = new TaskStepContext(
       {
         db: this.deps.db,
         taskRows: this.deps.taskRows,
         crashPoints: this.deps.crashPoints,
         logger: this.deps.logger,
-        leaseMs: this.deps.config.leaseMs,
       },
       { task, messages, decision, signal: handle.signal },
     );
-    const heartbeat = new Heartbeat(this.deps, task, handle);
     const startedAt = Date.now();
     step.logger.info('step started', {
       messageIds: step.messageIds,
@@ -345,17 +316,14 @@ export class Dispatcher {
     });
     let commit: StepCommit | undefined;
     try {
-      heartbeat.start();
       const execution = await this.execute(step, handle);
-      await heartbeat.stop();
       commit = await this.settle(step, execution, startedAt);
     } catch (error) {
-      step.logger.error('step write failed; left to lease expiry', {
+      step.logger.error('step write failed; left to the recovery sweeper', {
         durationMs: Date.now() - startedAt,
         error,
       });
     } finally {
-      await heartbeat.stop();
       // Before the release: the step holds its slot, and the shutdown waits, until the task's
       // object has taken the commit in or is let go.
       await this.deps.live.settled(step, commit);
@@ -364,8 +332,8 @@ export class Dispatcher {
   }
 
   /**
-   * The handler's step raced against the step limit and the shutdown. An interrupt or a lost lease
-   * only aborts the signal: the handler is expected to end the step, and its result is fenced. On
+   * The handler's step raced against the step limit and the shutdown. An interrupt or a stop only
+   * aborts the signal: the handler is expected to end the step, and its result is fenced. On
    * shutdown the handler gets up to `RUNTIME_SHUTDOWN_GRACE_MS` to return.
    */
   private async execute(
@@ -428,7 +396,7 @@ export class Dispatcher {
         return this.deps.committer.commit(step, execution.result);
       case 'threw':
         if (step.signal.aborted) {
-          // The step was cut off (interrupt, stop, lost lease): its attempt is no longer current.
+          // The step was cut off (interrupt, stop): its attempt is no longer current.
           step.logger.warn('step ended by its signal; nothing written', {
             signal: step.signal.reason,
             durationMs: Date.now() - startedAt,
@@ -462,9 +430,8 @@ export class Dispatcher {
     error: unknown,
     startedAt: number,
   ): Promise<void> {
-    const { db, taskRows, config } = this.deps;
+    const { db, taskRows } = this.deps;
     const ended = await db.transaction(async () => {
-      await boundTransaction(db, config.leaseMs);
       const task = await taskRows.find(step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return undefined;
       return endTask(this.deps, task, {
@@ -526,10 +493,7 @@ export class Dispatcher {
     let client: pg.PoolClient | undefined;
     try {
       client = await pool.connect();
-      client.on('notification', (notice) => {
-        this.cutOff(notice.payload);
-        this.wake();
-      });
+      client.on('notification', () => this.wake());
       client.on('error', (error) => {
         logger.warn('listen connection lost, polling until it is back', { error });
         this.dropListener(error);
@@ -540,32 +504,6 @@ export class Dispatcher {
       client?.release(error instanceof Error ? error : true);
       logger.warn('listen failed, polling only', { error });
     }
-  }
-
-  /**
-   * KD-4: a `task.interrupted` or `task.stopped` notice cuts off this process's steps of the task
-   * whose attempt is below the task's current one — a step claimed after the command keeps going.
-   * A deleted task cuts off all of them. A failure only logs: the heartbeat finds the step anyway.
-   */
-  private cutOff(payload: string | undefined): void {
-    const notice = parseNotice(payload);
-    const reason = notice && CUT_OFF_REASONS.get(notice.type);
-    if (!notice || !reason) return;
-    this.cutOffTask(notice, reason).catch((error: unknown) => {
-      this.deps.logger.warn('cut-off on notice failed; left to the heartbeat', {
-        taskId: notice.taskId,
-        rootId: notice.rootId,
-        signal: reason,
-        error,
-      });
-    });
-  }
-
-  private async cutOffTask(notice: TaskNotice, reason: StepSignalReason): Promise<void> {
-    const current = await this.deps.taskRows.find(notice.taskId);
-    // Not awaited: the steps end when their handlers answer the signal.
-    void this.deps.running.abortTask(notice.taskId, reason, current?.attempt);
-    this.deps.live.evict([notice.taskId]);
   }
 
   private dropListener(error?: Error): void {

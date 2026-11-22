@@ -43,13 +43,13 @@ import {
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG } from '../runtime.tokens';
 import { Tasks } from '../tasks/tasks';
-import { boundTransaction, type TaskStepContext } from './step-context';
+import type { TaskStepContext } from './step-context';
 
 const { queued, running, completed, failed } = TaskStatusSchema.enum;
 const { messages, decision, tasks: tasksReason } = WaitReasonSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
 
-/** Retries of a failed commit transaction; then the step is left to its lease expiry (Flow 1). */
+/** Retries of a failed commit transaction; then the step is left to the recovery sweeper (Flow 1). */
 const COMMIT_RETRIES = 3;
 
 /** Services of the step's commit. */
@@ -61,15 +61,13 @@ interface StepCommitDeps extends TaskEndDeps {
   crashPoints: CrashPoints;
   /** `INBOX_PAYLOAD_MAX_BYTES`: bound of a message payload, a `result` and a failure. */
   inboxPayloadMaxBytes: number;
-  /** `RUNTIME_LEASE_MS`: the bound of a commit transaction. */
-  leaseMs: number;
 }
 
 /**
  * How the commit of a step ended: `committed`; `rejected` — the attempt is not current, nothing
  * written; `invalid` — the result broke a rule, nothing of it written, the task `failed` with
- * `invalid_step_result`; `abandoned` — the transaction failed every retry, the step is left to its
- * lease expiry.
+ * `invalid_step_result`; `abandoned` — the transaction failed every retry, the step is left to the
+ * recovery sweeper.
  */
 export type StepCommitOutcome = 'committed' | 'rejected' | 'invalid' | 'abandoned';
 
@@ -151,7 +149,6 @@ export class StepCommitter {
       handlers,
       crashPoints,
       inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,
-      leaseMs: config.leaseMs,
     };
   }
 
@@ -202,7 +199,7 @@ export class StepCommitter {
         });
       }
     }
-    logger.error('step commit abandoned to lease expiry', {
+    logger.error('step commit abandoned to the recovery sweeper', {
       outcome: outcomeOf(result),
       retries: COMMIT_RETRIES,
     });
@@ -213,9 +210,8 @@ export class StepCommitter {
     step: TaskStepContext,
     result: StepResult,
   ): Promise<CommittedStep | typeof REJECTED> {
-    const { db, tasks, taskRows, inbox, decisions, events, crashPoints, leaseMs } = this.deps;
+    const { db, tasks, taskRows, inbox, decisions, events, crashPoints } = this.deps;
     return db.transaction(async () => {
-      await boundTransaction(db, leaseMs);
       const task = await taskRows.find(step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return REJECTED;
       this.checkOutcome(result);
@@ -490,7 +486,6 @@ export class StepCommitter {
     let ended: boolean;
     try {
       ended = await this.deps.db.transaction(async () => {
-        await boundTransaction(this.deps.db, this.deps.leaseMs);
         const task = await this.deps.taskRows.find(step.taskId);
         if (task?.status !== running || task.attempt !== step.attempt) return false;
         await endTask(this.deps, task, {
@@ -502,7 +497,7 @@ export class StepCommitter {
         return true;
       });
     } catch (failError) {
-      logger.error('failing an invalid step result failed; left to lease expiry', {
+      logger.error('failing an invalid step result failed; left to the recovery sweeper', {
         reason: failure.reason,
         durationMs,
         error: failError,

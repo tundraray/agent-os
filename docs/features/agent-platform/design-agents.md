@@ -63,7 +63,7 @@ MCP-инструмент читающий, только если сервер в
 
 - **Part**: `agents` — вторая часть Delivery Parts в PRD.
 - **Covers**: FR-03–FR-13, FR-25, FR-27; NFR-01 и NFR-04 в доле агента; NFR-06 и NFR-07.
-- **Depends on**: [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `createRuntime`, `TaskHandler`, `StepContext`, `StepResult`, `tasks`, `inbox`, `decisions`, `events`, `eventConsumers`, `ledger`, логгер `packages/common`.
+- **Depends on**: [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `RuntimeModule`, `TaskHandler`, `LiveTaskType`, `StepContext`, `StepResult`, `tasks`, `inbox`, `decisions`, `events`, `eventConsumers`, `ledger`, логгер `packages/common`.
 - **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (Postgres — единственный владелец состояния, Mastra без durability), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) в части правил пакетов. Код следует и более поздним решениям: [ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md) (реестр MCP), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md) (`AccessGate` и каталог моделей), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md) (снимок запуска), [ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md) и [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md) (id модели и реестр провайдеров).
 - **Sibling parts**: `chat` (беседа как корневая сессия, стриминг, API для веба), `web`.
 
@@ -75,7 +75,7 @@ MCP-инструмент читающий, только если сервер в
 **Constraints**
 
 - Слои: `packages/agents` зависит только от `runtime`, `db`, `contracts`, `common` и `code-runner`; Mastra и пакеты AI SDK объявляет только он ([code system](../../code-system/README.md)).
-- Всё состояние агента в своих таблицах `agent_*`, после каждого шага; в памяти процесса только реестр инструментов, открытые запросы подключения MCP-аккаунтов и обновления токенов в работе. Один вызов модели на шаг, без памяти, хранилища и цикла инструментов Mastra (KD-1, KD-6); каждый оплачиваемый вызов — строка журнала токенов runtime, месячные квоты проверяет `AccessGate` ([design-access.md](../enterprise-access/design-access.md), KD-5).
+- Всё состояние агента в своих таблицах `agent_*`, после каждого шага. В памяти процесса — реестр инструментов, открытые запросы подключения MCP-аккаунтов, обновления токенов в работе и объекты агентов, которые runtime держит между шагами как кэш над базой ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)). Один вызов модели на шаг, без памяти, хранилища и цикла инструментов Mastra (KD-1, KD-6); каждый оплачиваемый вызов — строка журнала токенов runtime, месячные квоты проверяет `AccessGate` ([design-access.md](../enterprise-access/design-access.md), KD-5).
 - Логирование через логгер `common`: каждый шаг, вызов модели и вызов инструмента с идентификаторами, без секретов ([logging.md](../../code-system/patterns/logging.md)).
 - Тесты — немного и только критичное, модель подменяется на границе обёртки ([Test Strategy](#test-strategy)).
 
@@ -85,7 +85,7 @@ Follows the [code system](../../code-system/README.md).
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `createAgents`, `parseAgentsConfig`, `AgentsModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | настройки разбирает пакет, а не `apps/api` |
+| `AgentsModule` пакета, `parseAgentsConfig`, `AgentsModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | настройки разбирает пакет, а не `apps/api` |
 | `AgentStepHandler` — классы `ChatAgent`, `Agent` и `DeepAgent` над общим `BaseAgent`, обработчики задач `chat`, `agent` и `deep_agent` | [step-handler.md](../../code-system/patterns/step-handler.md) | new — KD-1 | всё читать заново из базы каждый шаг |
 | Репозитории `agent_sessions`, `agent_messages` и записей вызова | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | вызов — элемент `model_answer`; состояние выводит чистая функция `foldCalls` из записей вызова; запись в транзакции шага |
 | `ModelClient` над Mastra | — | new — KD-6 | `retry-policy.ts`; модель и подключение — адаптеры и реестр провайдеров ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3) |
@@ -261,7 +261,7 @@ flowchart TB
     class e9 w8
 ```
 
-- `AgentStepHandler` — это класс агента (`BaseAgent` и его наследники в `packages/agents/src/agent/` и `deep/`). Он читает сессию из своих таблиц и снимок из входа задачи, выбирает вид шага по правилу ниже и возвращает runtime итог с записями истории. Между шагами он ничего не держит в памяти. У запуска, который учится, шаг считает вектор вопроса и добавляет к промпту блок знаний ([self-learning/design-core.md](../self-learning/design-core.md), KD-6).
+- `AgentStepHandler` — это класс агента (`BaseAgent` и его наследники в `packages/agents/src/agent/` и `deep/`). Каждая задача агента — свой объект класса, который runtime держит в памяти между шагами ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)). Объект держит снимок из входа задачи и состояние сессии из своих таблиц, выбирает вид шага по правилу ниже и возвращает runtime итог с записями истории. Состояние он меняет только после коммита шага (`absorb`); права, инструменты сессии, список записей и знания читает на каждом шаге. У запуска, который учится, шаг считает вектор вопроса и добавляет к промпту блок знаний ([self-learning/design-core.md](../self-learning/design-core.md), KD-6).
 - `ModelClient` превращает историю в сообщения провайдера, оборачивает данные инструментов, детей и родителя в конверт `<data>`, спрашивает `AccessGate.model`, вызывает модель через Mastra и пишет строку журнала токенов через `ledger.record` (KD-6).
 - `ToolRunner` проверяет вызов (инструмент в наборе, право на пару «сервер — инструмент» у `AccessGate`, аргументы встроенного инструмента), решает, нужно ли подтверждение, и исполняет его: MCP, `run_code`, `list_agents` и `stop_agent` — вне транзакции, `start_agent` и `message_agent` — в транзакции итога шага через `effects`.
 - `McpClient` на каждый вызов открывает соединение Streamable HTTP с токеном вызова и закрывает его после ответа; список инструментов сервера лежит в реестре в базе ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-2, KD-3).
@@ -725,10 +725,10 @@ sequenceDiagram
 
 **Сборка**
 
-- **`createAgents(options)`** — собирает пакет из базы, `Runtime`, логгера `common`, разобранных настроек `AgentsConfig`, шва модели, порта `AccessGate` с хуком аудита и порта библиотеки `RecordLibrary`. Сразу регистрирует в runtime обработчики задач `agent`, `knowledge.extract` и `knowledge.embed` и потребителей событий. Возвращает `Agents`: `tools`, операции `sessions` ниже, `start()` и `stop()`, а также входы более поздних фич — `resolveStart` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)), `mcp` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md#contract-definitions)), `providers`, `embeddings` и `completeText` ([model-providers/design-core.md](../model-providers/design-core.md#contract-definitions)), `knowledge` ([self-learning/design-core.md](../self-learning/design-core.md#contract-definitions)), `toolResults`.
+- **`AgentsModule.forRootAsync(options)`** — модуль пакета над `DbModule` и `RuntimeModule`: разобранные настройки `AgentsConfig`, шов модели, порт `AccessGate` с хуком аудита и порт библиотеки `RecordLibrary`, которые привязывает `AgentsPortsModule` в `apps/api`. В `onModuleInit` регистрирует в runtime живые типы задач `chat`, `agent` и `deep_agent` и обработчики `knowledge.extract` и `knowledge.embed`, а также потребителей событий. Отдаёт сервисы: `ToolRegistry`, операции ниже (`StartOperations`, `ControlOperations`, `ViewOperations`), а также сервисы более поздних фич — `AgentsMcp` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md#contract-definitions)), `AgentsProviders`, `AgentsEmbeddings` и `ModelClient` с `completeText` ([model-providers/design-core.md](../model-providers/design-core.md#contract-definitions)), `AgentsKnowledge` ([self-learning/design-core.md](../self-learning/design-core.md#contract-definitions)), `AgentsToolResults`. Процедура старта `resolveStart` — [custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions).
 - **`parseAgentsConfig(variables)`** — проверяет переменные из `Runtime settings`; неверное значение останавливает старт с именем переменной.
-- **`start()`** — закрывает регистрацию инструментов. Записи и их модели проверяет каждый старт, MCP-соединений `start()` не открывает. Вызывается до старта воркеров runtime.
-- **`stop()`** — только пишет лог: соединение MCP живёт один вызов, закрывать нечего.
+- **Закрытие реестра инструментов** — в `onApplicationBootstrap` пакет закрывает регистрацию инструментов (`ToolRegistry.seal`). Записи и их модели проверяет каждый старт, MCP-соединений пакет при старте не открывает.
+- **Остановка** — только пишет лог: соединение MCP живёт один вызов, закрывать нечего.
 
 **Определения агентов**
 
@@ -736,7 +736,7 @@ sequenceDiagram
 
 **Инструменты (`tools`)**
 
-- **`register(tool)`** — добавляет инструмент верхней части до `start()`. Инструмент задаёт `name`, `description`, zod-схему аргументов и один из двух способов исполнения. Внутри транзакции итога шага он получает транзакцию, `effects` и помощник запуска дочернего агента и внешних вызовов не делает; запросы, которые нельзя делать при открытой транзакции, он делает в необязательном `prepare` до неё. Помощник берёт снимок, задание, описание и ссылку ответвления, а владельца и родителя — от вызывающего агента, и возвращает `agentId` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Вне транзакции инструмент может звать внешнюю систему и получает сигнал отмены и `guard` шага. По желанию инструмент объявляет подтверждение: вид запроса, содержимое для сотрудника, признак, можно ли править аргументы, и условие, нужно ли подтверждение этому вызову. Признак `rootOnly` даёт инструмент только корню, `everySession` — каждой сессии.
+- **`register(tool)`** — добавляет инструмент верхней части в `onModuleInit`, до закрытия реестра. Инструмент задаёт `name`, `description`, zod-схему аргументов и один из двух способов исполнения. Внутри транзакции итога шага (`mode: 'in_commit'`) он транзакцию не получает — его записи сами входят в открытую транзакцию; он получает `effects` и помощник запуска дочернего агента и внешних вызовов не делает; запросы, которые нельзя делать при открытой транзакции, он делает в необязательном `prepare` до неё. Помощник берёт снимок, задание, описание и ссылку ответвления, а владельца и родителя — от вызывающего агента, и возвращает `agentId` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Вне транзакции инструмент может звать внешнюю систему и получает сигнал отмены и `guard` шага. По желанию инструмент объявляет подтверждение: вид запроса, содержимое для сотрудника, признак, можно ли править аргументы, и условие, нужно ли подтверждение этому вызову. Признак `rootOnly` даёт инструмент только корню, `everySession` — каждой сессии.
 - Встроенные инструменты пакета, имена для модели:
   - `start_agent` — аргументы `description` (несколько слов для списка и карточки), `agent`, `prompt`; `agent` — номер записи или `fork` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Запускает ребёнка в транзакции итога и возвращает `agentId` сразу. С `fork` ребёнок получает снимок вызывающего и ссылку на его историю до текущего ответа (KD-7).
   - `message_agent` — `agentId`, `message`: кладёт сообщение потомку с `revive`, поэтому законченный потомок продолжает работу.
@@ -747,7 +747,7 @@ sequenceDiagram
   - Цель `message_agent` и `stop_agent` — только потомок вызывающего; иначе отказ `unknown_agent`.
 - MCP-инструмент виден модели под именем `mcp__<server>__<tool>`, с описанием и схемой сервера. В набор попадают инструменты включённых серверов снимка, чью пару «сервер — инструмент» `AccessGate` разрешает владельцу; у сервера с личным OAuth — только при аккаунте владельца ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-2).
 
-**Операции агентов** (`Agents.sessions`)
+**Операции агентов** (`StartOperations`, `ControlOperations`, `ViewOperations`)
 
 - **`start({ agentId?, ownerId, prompt, description, record? })`** — создаёт корень беседы из встроенной записи `chat`: задачу и сессию одной транзакцией. Детей создаёт только помощник запуска в транзакции итога шага. Возвращает `agentId`. Ошибки: `START_REFUSED` с причиной и моделью ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)), `TASK_EXISTS` runtime для занятого `agentId`.
 - **`send({ agentId, ownerId, text, record? })`** — сообщение сотрудника, вид `user_message`, с `revive`; `record` — чип сообщения. Возвращает `messageId`. Ошибки: `AGENT_NOT_FOUND`, `PAYLOAD_TOO_LARGE`.

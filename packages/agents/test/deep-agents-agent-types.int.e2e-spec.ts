@@ -4,7 +4,7 @@
 // Test type: Integration, run with `pnpm --filter @agent-os/agents test:e2e`.
 //
 // Harness: `createAgentsHarness` of support/agentsHarness.ts (real Postgres, real runtime and agents, scripted `ModelClient` as the only model double), the library double with a `deep_agent` record.
-// "The restarted server" is a second harness over the same database; a lost step is `expireLease`. A unique owner `newUser()` per test; no sleeps, `script.called(n)` and `waitForTaskStatus`
+// "The restarted server" is a second harness over the same database; a lost step is a step held on the first harness (`ZOMBIE_RUNTIME`), which the start of the second requeues. A unique owner `newUser()` per test; no sleeps, `script.called(n)` and `waitForTaskStatus`
 // order the steps.
 //
 // Proven elsewhere (not restated here):
@@ -21,7 +21,7 @@ import {
   childNoticesOf,
   closeAll,
   createAgentsHarness,
-  expireLease,
+  ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
   sessionTaskRowsOf,
@@ -166,8 +166,7 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
     try {
       const zombie = await createAgentsHarness({
         ...options,
-        zombie: true,
-        runtimeConfig: { concurrency: 1, leaseMs: 600_000 },
+        runtimeConfig: ZOMBIE_RUNTIME,
       });
       harnesses.push(zombie);
       const { agentId: rootId } = await zombie.sessions.start({
@@ -187,10 +186,9 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
       // Then: nothing of the list is written before the commit
       expect(await sessionTaskRowsOf(zombie.db, deepAgentId)).toEqual([]);
 
-      // When: the restarted server starts, the zombie's lease expires and the restarted server replays the tool step
+      // When: the restarted server starts, requeues the zombie's step as a lost one and replays the tool step
       const restarted = await createAgentsHarness(options);
       harnesses.push(restarted);
-      await expireLease(zombie.db, deepAgentId);
       await secondCallHeld.reached();
 
       // Then (row A): three tasks, numbered 1-3, written once; each call has one result

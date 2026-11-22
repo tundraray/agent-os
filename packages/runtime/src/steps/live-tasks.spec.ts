@@ -50,7 +50,7 @@ function setup() {
   handlers.register(plain);
   const active: LiveTaskIdentity[] = [];
   const taskRows = { listActive: () => Promise.resolve(active) } as unknown as RuntimeTasksRepository;
-  const config = { workers: true, leaseMs: 1_000 } as RuntimeConfig;
+  const config = { workers: true } as RuntimeConfig;
   const live = new LiveTasks(handlers, taskRows, clock, config, logger);
 
   const task = (taskId: string, type = LIVE): LiveTaskIdentity => ({

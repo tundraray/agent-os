@@ -35,15 +35,12 @@ export const CHILD_MODEL = 'agents-harness/test-default';
 
 /**
  * Runtime settings of the child, copied from `KILL_MATRIX_SETTINGS` of the runtime's E2E harness: a
- * short lease and reaper so a lost step comes back within seconds, a heartbeat well inside the lease,
- * fast polling.
+ * short reaper so a lost step comes back within seconds, fast polling.
  */
 const KILL_MATRIX_SETTINGS: Readonly<Record<string, string>> = {
   RUNTIME_CONCURRENCY: '4',
   RUNTIME_POLL_MS: '50',
   RUNTIME_NOTIFY: 'on',
-  RUNTIME_LEASE_MS: '1000',
-  RUNTIME_HEARTBEAT_MS: '300',
   RUNTIME_REAPER_MS: '200',
   RUNTIME_MAX_RECOVERIES: '3',
   DB_POOL_MAX: '4',

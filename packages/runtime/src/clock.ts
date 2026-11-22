@@ -3,7 +3,7 @@ export type CancelTimer = () => void;
 
 /**
  * Port of time, randomness and timers of the runtime (the `CLOCK` provider), replaceable so that
- * leases, deadlines, backoff with jitter and polling are deterministic in tests (design-runtime.md,
+ * deadlines, backoff with jitter and polling are deterministic in tests (design-runtime.md,
  * Test Boundaries).
  */
 export interface Clock {

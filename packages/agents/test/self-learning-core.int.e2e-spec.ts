@@ -15,7 +15,7 @@
 //   block" and "the extraction call carries these tool calls"), the real MCP fixture process, the access-gate double of the harness
 //   (`ownerModelRefusals`; the embedding model `harness.embeddingVerdict`: none, model A of 3 dimensions or model B of 4), and the embeddings
 //   double under the embeddings service (`harness.embeddings`: every provider request with its `inputType`, model and texts - each retry of the
-//   service is a request of its own -, `vectorOf` for vectors by topic, `failure` for a 5xx). A second instance with `zombie` + `expireLease` is
+//   service is a request of its own -, `vectorOf` for vectors by topic, `failure` for a 5xx). A second instance over a zombie (`ZOMBIE_RUNTIME`) is
 //   the restarted server (INT-4 row B).
 //   Support (test/support/knowledge.ts): `withLibraryRow` - the real `app.library_records` row the graph hangs on by its cascading key (KD-1),
 //   removed afterwards with the run and question rows; `learningDeepAgent` - the double's record of the same id; `seedGraph` - graph rows and their
@@ -121,7 +121,7 @@ import {
   type AgentsHarnessOptions,
   closeAll,
   createAgentsHarness,
-  expireLease,
+  ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
   ledgerRowsOf,
@@ -357,7 +357,7 @@ function learningHarness(
   library: LibraryDouble,
   settings: Pick<
     AgentsHarnessOptions,
-    'zombie' | 'runtimeConfig' | 'fixture' | 'ownerModelRefusals' | 'variables'
+    'runtimeConfig' | 'fixture' | 'ownerModelRefusals' | 'variables'
   > = {},
 ): Promise<AgentsHarness> {
   return createAgentsHarness({
@@ -1231,7 +1231,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   A. two concurrent rounds (both model calls latched, then released together): each round read its own run's call, records of both,
   //      one entity of the shared name with two confirmations (added by one run, confirmed by the other), the rounds' counts 2 + 0 and
   //      1 + 1, both tasks completed (none failed), no lost operation.
-  //   B. as built: the zombie instance's round holds its model call; its lease expires and the second instance re-runs the step from the
+  //   B. as built: the zombie instance's round holds its model call; the second instance starts, requeues the step as a lost one and re-runs it from the
   //      start (its own model call, same input) and commits; the zombie's call then answers and its guarded commit is fenced
   //      (`knowledge round abandoned without writes`). The graph has the run's items once, the ledger has two rows for the round's task.
   //      A step lost AFTER its guarded commit (the re-run finds the row no longer names it: `not_current`) is not reproduced: the harness
@@ -1239,7 +1239,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // Catches: the lost update or the duplicate entity of two commits that check the graph before either writes (the rule is `checkOperations`
   //   on the graph read inside the commit, not on the graph read before the model call), and a commit that is not atomic across a restart.
   // @category: core-functionality
-  // @dependency: knowledge.extract handler, graph repository, checkOperations, runtime recovery (`zombie`, `expireLease`), Postgres
+  // @dependency: knowledge.extract handler, graph repository, checkOperations, runtime recovery (`ZOMBIE_RUNTIME`, a second instance), Postgres
   // @complexity: high
   it('INT-4: two concurrent extractions of one deep agent lose nothing and duplicate nothing, and a restart mid-round applies no operation twice', async () => {
     // Given (row A): a learning deep agent two employees run at once; both rounds name the same entity and their model calls are held together
@@ -1322,11 +1322,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
     await withLibraryRow(database.db, restartId, async () => {
       const harnesses: AgentsHarness[] = [];
       try {
-        // When (row B): the zombie instance (one slot, a lease only the test expires) runs the run and holds its round's model call
-        const zombie = await learningHarness(restartModel, library, {
-          zombie: true,
-          runtimeConfig: { concurrency: 1, leaseMs: 600_000 },
-        });
+        // When (row B): the zombie instance (one slot, a sweeper that never passes again) runs the run and holds its round's model call
+        const zombie = await learningHarness(restartModel, library, { runtimeConfig: ZOMBIE_RUNTIME });
         harnesses.push(zombie);
         const run = await startLearningRun(zombie, restartModel, {
           ownerId: restartStarter,
@@ -1337,10 +1334,9 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
         const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
         if (extract === undefined) throw new Error('the restarted run has no extraction task');
 
-        // When: a second instance starts, the zombie's lease expires, and the second instance takes the round over
+        // When: a second instance starts, requeues the zombie's step as a lost one and takes the round over
         const restarted = await learningHarness(restartModel, library, { fixture: zombie.fixture });
         harnesses.push(restarted);
-        await expireLease(zombie.db, extract.taskId);
         const round = await waitForRound(database.db, run.deepAgentId);
 
         // When: the zombie's held model call answers; its commit finds its attempt gone

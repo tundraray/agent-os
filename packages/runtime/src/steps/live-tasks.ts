@@ -21,6 +21,9 @@ export const LIVE_TASK_IDLE_MS = 15 * 60_000;
 /** Most objects kept; over it the ones unused longest and not in a step are let go. */
 export const LIVE_TASKS_MAX = 500;
 
+/** Longest an object's `committed` may take; past it the object is let go. */
+const COMMITTED_MAX_MS = 30_000;
+
 /** Objects the warm-up restores at once. */
 const WARM_CONCURRENCY = 4;
 
@@ -289,20 +292,20 @@ export class LiveTasks {
   }
 
   /**
-   * The object's `committed`, bounded by the lease so that a stuck one does not hold the step's
-   * slot and the shutdown. `false` when it threw or ran out of time.
+   * The object's `committed`, bounded by {@link COMMITTED_MAX_MS} so that a stuck one does not
+   * hold the step's slot and the shutdown. `false` when it threw or ran out of time.
    */
   private async absorbed(object: LiveTask, step: StepContext): Promise<boolean> {
     if (!object.committed) return true;
     const startedAt = Date.now();
     let cancel: CancelTimer | undefined;
     const late = new Promise<'late'>((resolve) => {
-      cancel = this.clock.setTimer(this.config.leaseMs, () => resolve('late'));
+      cancel = this.clock.setTimer(COMMITTED_MAX_MS, () => resolve('late'));
     });
     try {
       const first = await Promise.race([object.committed(step), late]);
       if (first !== 'late') return true;
-      step.logger.error('live task committed() ran past the lease; object let go', {
+      step.logger.error('live task committed() ran too long; object let go', {
         durationMs: Date.now() - startedAt,
       });
       return false;

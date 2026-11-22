@@ -9,7 +9,6 @@ export type StepSignalReason =
   | 'interrupted'
   | 'stopped'
   | 'shutdown'
-  | 'lease_lost'
   | 'step_timeout';
 
 /** A message that waited in the task's inbox when the step began. */
@@ -53,7 +52,7 @@ export interface StepContext {
   readonly input: unknown;
   /** How many steps of the task are committed already. */
   readonly stepNo: number;
-  /** The previous attempt of this step ended without a commit (crash, interrupt or sweeper requeue). */
+  /** The previous attempt of this step ended without a commit (crash, interrupt or shutdown). */
   readonly resumedAfterLoss: boolean;
   /** Messages pending at the start of the step, by `seq`; the step's commit marks them delivered. */
   readonly messages: readonly StepMessage[];
@@ -183,7 +182,7 @@ export interface LiveTask {
   step(ctx: StepContext): Promise<StepResult>;
   /**
    * Called after the step's commit succeeded and before the task's next step: the place to take
-   * the committed state in. An exception, or a call longer than the lease, drops the object.
+   * the committed state in. An exception, or a call longer than 30 s, drops the object.
    */
   committed?(ctx: StepContext): Promise<void>;
   /**

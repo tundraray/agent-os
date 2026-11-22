@@ -7,8 +7,6 @@ const DEFAULTS: RuntimeConfig = {
   concurrency: 16,
   pollMs: 500,
   notify: true,
-  leaseMs: 30_000,
-  heartbeatMs: 10_000,
   reaperMs: 5_000,
   maxRecoveries: 3,
   stepMs: 900_000,
@@ -28,7 +26,7 @@ describe('parseRuntimeConfig', () => {
       {
         RUNTIME_WORKERS: '',
         RUNTIME_CONCURRENCY: '',
-        RUNTIME_LEASE_MS: '',
+        RUNTIME_REAPER_MS: '',
         RUNTIME_CRASH_AT: '',
       },
       DEFAULTS,

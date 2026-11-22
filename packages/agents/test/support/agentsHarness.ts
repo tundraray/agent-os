@@ -137,8 +137,12 @@ export const TEST_EMBEDDING_MODEL_B: EmbeddingVerdict = {
 const DEFAULT_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice'];
 const ALL_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice', 'tracker'];
 
-/** A heartbeat that never comes within a test: the instance's lease is renewed only by the test. */
-const ZOMBIE_HEARTBEAT_MS = 600_000;
+/**
+ * Runtime settings of a zombie instance — the process that "died" with a step in flight: one slot, which
+ * the held step keeps, and a sweeper that never passes again within a test. The start of a second harness
+ * ("the restarted server") requeues its step as a lost one.
+ */
+export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = { concurrency: 1, reaperMs: 600_000 };
 
 /** Polling of {@link waitFor}. */
 const SETTLE_POLL_MS = 25;
@@ -354,10 +358,8 @@ interface AgentsHarnessSettings {
   readonly ownerModelRefusals?: AccessGateDoubleOptions['ownerModelRefusals'];
   /** The code executor; the real one (`createCodeRunner`) by default. */
   readonly codeRunner?: CodeRunner;
-  /** Runtime settings over the harness defaults (workers on, 6 slots, short polls and lease). */
+  /** Runtime settings over the harness defaults (workers on, 6 slots, short polls). */
   readonly runtimeConfig?: Partial<RuntimeConfig>;
-  /** A zombie instance: its heartbeat never renews the lease, so `expireLease` hands its step to another instance. */
-  readonly zombie?: boolean;
   /** Catalogue prices of the test's own models, next to the harness's two; the access gate double answers them. */
   readonly prices?: Readonly<Record<string, ModelPrice>>;
   /** Gets every text part of an agent's answer (the `ON_TEXT_DELTA` port); none by default. */
@@ -394,7 +396,7 @@ export interface AgentsHarness {
   readonly sessions: HarnessSessions;
   /** The library double every start of this instance asks. */
   readonly library: LibraryDouble;
-  /** The Drizzle client of the harness's pool; the tests only read through it (and `expireLease`). */
+  /** The Drizzle client of the harness's pool; the tests only read through it. */
   readonly db: Database;
   readonly fixture: FixtureFiles;
   /** The harness's fixture process, writing into {@link fixture}. */
@@ -453,8 +455,6 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     workers: true,
     concurrency: 6,
     pollMs: 50,
-    leaseMs: 5_000,
-    heartbeatMs: options.zombie === true ? ZOMBIE_HEARTBEAT_MS : 1_000,
     reaperMs: 200,
     shutdownGraceMs: 1_000,
     dbPoolMax: 8,
@@ -596,19 +596,6 @@ export async function closeAll(harnesses: readonly AgentsHarness[]): Promise<voi
     (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
   );
   if (failed) throw failed.reason;
-}
-
-/**
- * Moves the lease of the task's running step into the past, as if its process had stopped beating: the
- * next pass of a recovery sweeper requeues the step. The one write of the tests to `runtime_*` (as in the
- * runtime part's harness). Throws when the task is not `running`.
- */
-export async function expireLease(db: Database, taskId: string): Promise<void> {
-  const { rows } = await db.execute(sql`
-    UPDATE app.runtime_tasks SET lease_expires_at = now() - interval '1 minute'
-     WHERE task_id = ${taskId} AND status = 'running'
-    RETURNING task_id`);
-  if (rows.length !== 1) throw new Error(`Task ${taskId} has no running step to expire`);
 }
 
 /**
