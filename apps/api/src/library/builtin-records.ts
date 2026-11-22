@@ -33,7 +33,8 @@ const AGENT_TOOLS: RecordTool[] = [
  * The employee's main chat (DC-2): the root session of every conversation, found by its key. The choice
  * rules of AC-15.5–AC-15.7, the record tools and the choice of servers (deep-agents KD-2, FR-26) live in
  * its prompt; the records it may start reach the model through the descriptions of `start_agent` and
- * `start_deep_agent`.
+ * `start_deep_agent`. It names no `taskList`: as the conversation's root it keeps a task list whatever its
+ * record says (design-task-list.md KD-2).
  */
 function chatRecord(): unknown {
   return {
@@ -93,6 +94,8 @@ function generalPurposeRecord(): unknown {
       maxTurns: 40,
       agents: [GENERAL_PURPOSE_ID],
       tools: AGENT_TOOLS,
+      // One-off short work keeps no task list (design-task-list.md KD-2).
+      taskList: false,
     },
   };
 }
@@ -140,6 +143,7 @@ function deepResearchRecord(): unknown {
           model: null,
           maxTurns: 6,
           maxRuns: 1,
+          taskList: false,
         },
         {
           name: 'deep-research-gather',
@@ -158,6 +162,7 @@ function deepResearchRecord(): unknown {
           model: null,
           maxTurns: 16,
           maxRuns: 5,
+          taskList: false,
         },
         {
           name: 'deep-research-answer',
@@ -174,9 +179,12 @@ function deepResearchRecord(): unknown {
           model: null,
           maxTurns: 2,
           maxRuns: 2,
+          taskList: false,
         },
       ],
       finalSubagent: 'deep-research-answer',
+      // The deep agent keeps a task list; its subagents' one-off work does not (design-task-list.md KD-2).
+      taskList: true,
     },
   };
 }

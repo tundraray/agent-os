@@ -21,8 +21,8 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolR
  * defaults are read by the grant dialog, the company record editor and the «Модели» section; a ready
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
  * «Системные» tab of «Агенты и глубокие агенты» (self-learning AS-01); the settings of large tool results by the
- * «MCP-серверы» list (tool-result-reading R-5). A deep agent's task list is read by its page and by the
- * diagram panel of the conversation that started it (deep-agents DA-04, DA-12). A test that cares overrides them with
+ * «MCP-серверы» list (tool-result-reading R-5). A session's task list is read by a deep agent's page and, for
+ * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [

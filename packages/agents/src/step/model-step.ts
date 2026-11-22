@@ -5,8 +5,8 @@ import {
   type ChipRecord,
   HistoryEventSchema,
   RUN_CODE_TOOL,
-  type RunTaskStatus,
-  RunTaskStatusSchema,
+  type SessionTaskStatus,
+  SessionTaskStatusSchema,
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import {
@@ -43,13 +43,13 @@ import {
 } from '../store/sessions.repository';
 import { callTargetOf, type ToolRegistry } from '../tools/tool-registry';
 import { entriesOf, rootTurnReset } from './deliver';
-import { planBlock, planOf, withStepBlocks } from './plan-block';
+import { taskBlock, tasksOf, withStepBlocks } from './task-block';
 import { endOfTurn, noticeContent, type FinalSubagentReport } from './turn-rules';
 
-/** Plan items that keep a deep agent from finishing (deep-agents KD-5, FR-09). */
-const OPEN_PLAN_STATUSES: readonly RunTaskStatus[] = [
-  RunTaskStatusSchema.enum.waiting,
-  RunTaskStatusSchema.enum.running,
+/** Tasks that keep an agent from finishing its turn (design-task-list.md KD-4). */
+const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
+  SessionTaskStatusSchema.enum.pending,
+  SessionTaskStatusSchema.enum.in_progress,
 ];
 
 /** The step kind in the step log. */
@@ -417,8 +417,9 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       { database, store: vectorStore },
       { snapshot, taskId: ctx.taskId, logger: ctx.logger },
     );
-    // The plan too (deep-agents KD-5): only a tool step changes it, so `endOfTurn` below reads the same items.
-    const plan = await planOf(database, snapshot, ctx.taskId);
+    // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
+    // same tasks.
+    const tasks = await tasksOf(database, { snapshot, root: isRoot, sessionId: ctx.taskId });
     const sessionTools = await registry.sessionTools({
       snapshot,
       ownerId: session.ownerId,
@@ -432,7 +433,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: withStepBlocks(definition.prompt, { knowledge, plan: planBlock(plan) }),
+        instructions: withStepBlocks(definition.prompt, { knowledge, tasks: taskBlock(tasks) }),
         messages: providerMessagesOf(view, shown),
         tools: sessionTools,
         streamsText: true,
@@ -526,7 +527,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         isRoot || finalSubagent === null
           ? null
           : await finalSubagentReport(ctx.taskId, finalSubagent, delivered),
-      openPlanItems: plan.filter((item) => OPEN_PLAN_STATUSES.includes(item.status)),
+      openTasks: tasks.filter((task) => OPEN_TASK_STATUSES.includes(task.status)),
       text: result.text,
       cutOff: result.cutOff,
     });
@@ -541,14 +542,14 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         });
         return { outcome: 'wait', commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch) };
       case 'notice':
-        if (ending.openPlanItems !== undefined) {
-          // Every reminder is logged, so how often a deep agent answers with work open shows (KD-5, Risks).
-          ctx.logger.info('deep agent reminded of open plan items', {
+        if (ending.openTasks !== undefined) {
+          // Every reminder is logged, numbers only, so how often an agent answers with tasks open shows (Risks).
+          ctx.logger.info('agent reminded of open tasks', {
             agentId: ctx.taskId,
             rootId: ctx.rootId,
             ownerId: ctx.ownerId,
             stepNo: ctx.stepNo,
-            openPlanItems: ending.openPlanItems,
+            openTasks: ending.openTasks,
           });
         }
         if (ending.missingReport !== undefined) {

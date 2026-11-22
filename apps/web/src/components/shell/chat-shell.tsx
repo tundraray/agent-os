@@ -27,7 +27,7 @@ import { ConnectionBar } from './connection-bar';
 import { DocumentTitle } from './document-title';
 import { LeaveGuardDialog } from './leave-guard-dialog';
 import { MainView, useConversationFeed } from './main-view';
-import { SchemaPanel } from './schema-panel';
+import { SchemaPanel, useChatTasks, type ChatTasks } from './schema-panel';
 import { useShellServices } from './shell-actions';
 import {
   FEED_MIN_WIDTH,
@@ -77,8 +77,8 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
   );
 }
 
-/** Focus actions that open the panel by themselves from 1024 px (deep-agents KD-6); a read or a delete does not. */
-const OPENING_ACTIONS: ReadonlySet<RecordFocusAction> = new Set(['created', 'changed', 'started']);
+/** Focus actions that open the panel by themselves from 1024 px (deep-agents UXRD KD-7); a read, a delete or a start does not. */
+const OPENING_ACTIONS: ReadonlySet<RecordFocusAction> = new Set(['created', 'changed']);
 
 /**
  * The main area: the chat panel and the diagram panel (WS-01…WS-03, deep-agents DA-12) — beside the feed while
@@ -100,6 +100,7 @@ function ShellMain({ children }: { children: ReactNode }) {
   const sidebarOpenRef = useRef(sidebarOpen);
   const sidebarFoldedRef = useRef(false);
   const feed = useConversationFeed();
+  const chatTasks = useChatTasks(workspaceAllowed ? feed : null);
 
   // The user expanding the sidebar while the panel is open takes the fold over.
   useEffect(() => {
@@ -142,7 +143,7 @@ function ShellMain({ children }: { children: ReactNode }) {
 
   return (
     <SidebarInset ref={mainRef} className="min-h-0 min-w-0">
-      {workspaceAllowed && feed !== null && <SchemaAutoOpen feed={feed} desktop={desktop} />}
+      {workspaceAllowed && feed !== null && <SchemaAutoOpen feed={feed} chatTasks={chatTasks} desktop={desktop} />}
       <ResizablePanelGroup orientation="horizontal" onLayoutChanged={rememberWorkspaceSize}>
         <ResizablePanel id="chat" minSize={FEED_MIN_WIDTH} className="flex flex-col" style={{ overflow: 'hidden' }}>
           <RouteFeedProvider route={route}>
@@ -159,13 +160,13 @@ function ShellMain({ children }: { children: ReactNode }) {
             defaultSize={workspaceSize === undefined ? WORKSPACE_DEFAULT_SIZE : `${workspaceSize}%`}
             onClose={closeWorkspace}
           >
-            <SchemaPanel feed={feed} />
+            <SchemaPanel feed={feed} chatTasks={chatTasks} />
           </WorkspacePanel>
         )}
       </ResizablePanelGroup>
       {workspaceAllowed && !desktop && (
         <WorkspaceDrawer open={workspaceOpen} onClose={() => workspace.close()}>
-          <SchemaPanel feed={feed} />
+          <SchemaPanel feed={feed} chatTasks={chatTasks} />
         </WorkspaceDrawer>
       )}
       {children}
@@ -173,13 +174,16 @@ function ShellMain({ children }: { children: ReactNode }) {
   );
 }
 
+type SchemaAutoOpenProps = { feed: FeedStore; chatTasks: ChatTasks; desktop: boolean };
+
 /**
- * KD-6: from 1024 px the panel opens by itself when the conversation's focus moves to a new event that created
- * or changed a record or started a deep agent; a start also turns it to «Задачи». The focus the conversation
- * already had when it was opened is not an event, and after «×» the panel waits for the next one. Focus stays
- * in the feed; below 1024 px nothing opens by itself, so the drawer never covers the conversation.
+ * deep-agents UXRD KD-7, DA-12: from 1024 px the panel opens by itself — on «Схема» when the conversation's focus
+ * moves to a new event that created or changed a record, on «Задачи» when the conversation gets its first task.
+ * What the conversation already had when it was opened is not an event, and after «×» the panel waits for the
+ * next one. Focus stays in the feed; below 1024 px nothing opens and no tab is switched, so the drawer never covers
+ * the conversation.
  */
-function SchemaAutoOpen({ feed, desktop }: { feed: FeedStore; desktop: boolean }) {
+function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
   const { workspace } = useShellServices();
   const desktopRef = useRef(desktop);
   useEffect(() => {
@@ -198,14 +202,26 @@ function SchemaAutoOpen({ feed, desktop }: { feed: FeedStore; desktop: boolean }
         return;
       }
       seen = key;
-      if (focus === null || !OPENING_ACTIONS.has(focus.action)) return;
-      const tab = focus.action === 'started' ? 'tasks' : undefined;
-      if (desktopRef.current) workspace.show({ tab, focusHeading: false });
-      else if (tab !== undefined) workspace.setTab(tab);
+      if (focus !== null && OPENING_ACTIONS.has(focus.action) && desktopRef.current) {
+        workspace.show({ tab: 'schema', focusHeading: false });
+      }
     };
     check(feed.getState());
     return feed.subscribe(check);
   }, [feed, workspace]);
+
+  // The tab «Задачи» as the last read of this root showed it; the first read only records it.
+  const { rootAgentId, tasks, tabShown } = chatTasks;
+  const read = tasks.status === 'ready' && rootAgentId !== null;
+  const seenTab = useRef<{ rootAgentId: string; tabShown: boolean } | null>(null);
+  useEffect(() => {
+    if (!read || rootAgentId === null) return;
+    const before = seenTab.current;
+    seenTab.current = { rootAgentId, tabShown };
+    if (before?.rootAgentId === rootAgentId && !before.tabShown && tabShown && desktopRef.current) {
+      workspace.show({ tab: 'tasks', focusHeading: false });
+    }
+  }, [read, rootAgentId, tabShown, workspace]);
 
   return null;
 }

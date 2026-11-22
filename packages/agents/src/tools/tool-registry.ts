@@ -13,9 +13,11 @@ import type { JsonSchemaObject } from '../model/mastra-turn';
 import type { RecordLibrary } from '../start/record-library';
 import type { RunSnapshot } from '../start/snapshot';
 import { snapshotDefinition } from '../start/snapshot-definition';
+import { hasTaskList } from '../step/task-block';
 import { sessions } from '../store/sessions.repository';
 import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent';
 import { START_DEEP_AGENT_TOOL } from './builtin/start-deep-agent';
+import { TASK_TOOLS } from './builtin/task-tools';
 import type { AgentTool, ToolDisplay } from './tool';
 
 /** The description of `start_deep_agent` at the root: the tool's own text, then the deep agents the chat offers. */
@@ -217,11 +219,14 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
   }
 
   /**
-   * The built-in tools the snapshot names, the root's tools at the root only, the tools of every session
-   * (`everySession`), then `run_code` (KD-6).
+   * The built-in tools the snapshot names, the four task tools of a session with a task list (design-task-list.md
+   * KD-2), the root's tools at the root only, the tools of every session (`everySession`), then `run_code` (KD-6).
    */
   function agentTools(input: SessionToolsInput, listing: ChatListing | null): SessionTool[] {
-    const named = snapshotDefinition(input.snapshot).tools.map((name) => registered(name, input));
+    const taskTools = hasTaskList(input.snapshot, input.root) ? TASK_TOOLS : [];
+    const named = [...snapshotDefinition(input.snapshot).tools, ...taskTools].map((name) =>
+      registered(name, input),
+    );
     const rootTools = input.root ? [...tools.values()].filter((tool) => tool.rootOnly === true) : [];
     const everySession = [...tools.values()].filter((tool) => tool.everySession === true);
     return [

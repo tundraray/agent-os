@@ -16,7 +16,25 @@
     "title": "Start deep agent",
     "args": { "deepAgent": "Deep agent", "question": "Question", "boundaries": "Scope", "result": "Result" }
   },
-  "task_list": { "title": "Task list", "args": { "add": "New items", "set": "Statuses" } },
+  "task_create": {
+    "title": "New task",
+    "args": { "subject": "Subject", "description": "Description", "activeForm": "In-progress text" }
+  },
+  "task_update": {
+    "title": "Update task",
+    "args": {
+      "taskId": "Task",
+      "status": "Status",
+      "subject": "Subject",
+      "description": "Description",
+      "activeForm": "In-progress text",
+      "owner": "Owner",
+      "addBlockedBy": "Waits for",
+      "addBlocks": "Blocks"
+    }
+  },
+  "task_get": { "title": "Task", "args": { "taskId": "Task" } },
+  "task_list": { "title": "Task list", "args": {} },
   "list_records": { "title": "Library list", "args": {} },
   "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
   "create_record": {

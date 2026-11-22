@@ -31,7 +31,7 @@ import { createToolStep } from './step/tool-step';
 import { toolResults } from './store/tool-results.repository';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index';
 import { createRunCodeTool } from './tools/builtin/run-code';
-import { createTaskListTool } from './tools/builtin/task-list';
+import { createTaskTools } from './tools/builtin/task-tools';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry';
 import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings';
 import { createToolRunner } from './tools/tool-runner';
@@ -186,8 +186,8 @@ export function createAgents(options: AgentsOptions): Agents {
         database,
         tasks: runtime.tasks,
       }),
-      // Only a deep agent's definition names it (deep-agents KD-5).
-      createTaskListTool({ logger }),
+      // Offered to a session with a task list (design-task-list.md KD-2).
+      ...createTaskTools({ logger }),
     ],
     runCode,
     database,

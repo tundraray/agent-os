@@ -16,7 +16,25 @@
     "title": "Запустить глубокого агента",
     "args": { "deepAgent": "Глубокий агент", "question": "Вопрос", "boundaries": "Границы", "result": "Результат" }
   },
-  "task_list": { "title": "Список задач", "args": { "add": "Новые пункты", "set": "Статусы" } },
+  "task_create": {
+    "title": "Новая задача",
+    "args": { "subject": "Тема", "description": "Описание", "activeForm": "Текст в работе" }
+  },
+  "task_update": {
+    "title": "Изменение задачи",
+    "args": {
+      "taskId": "Задача",
+      "status": "Статус",
+      "subject": "Тема",
+      "description": "Описание",
+      "activeForm": "Текст в работе",
+      "owner": "Исполнитель",
+      "addBlockedBy": "Ждёт",
+      "addBlocks": "Блокирует"
+    }
+  },
+  "task_get": { "title": "Задача", "args": { "taskId": "Задача" } },
+  "task_list": { "title": "Список задач", "args": {} },
   "list_records": { "title": "Список библиотеки", "args": {} },
   "read_record": { "title": "Чтение записи", "args": { "recordId": "Запись" } },
   "create_record": {

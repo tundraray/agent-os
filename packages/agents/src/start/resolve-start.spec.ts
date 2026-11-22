@@ -38,7 +38,7 @@ const PRICE: ModelPrice = {
 };
 
 function agentContent(model: string, agents: string[] = []): AgentContent & { model: string } {
-  return { prompt: 'You help.', servers: [], model, maxTurns: 10, agents, tools: ['start_agent'] };
+  return { prompt: 'You help.', servers: [], model, maxTurns: 10, agents, tools: ['start_agent'], taskList: false };
 }
 
 function subagent(name: string): DeepAgentSnapshot['content']['subagents'][number] {
@@ -50,6 +50,7 @@ function subagent(name: string): DeepAgentSnapshot['content']['subagents'][numbe
     model: HAIKU,
     maxTurns: 6,
     maxRuns: 2,
+    taskList: false,
   };
 }
 
@@ -62,6 +63,7 @@ function deepAgentContent(): DeepAgentSnapshot['content'] {
     maxTurns: 30,
     subagents: [subagent('gather')],
     finalSubagent: null,
+    taskList: true,
     selfLearning: false,
   };
 }

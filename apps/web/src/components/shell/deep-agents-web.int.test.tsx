@@ -1,7 +1,7 @@
 // deep-agents / web - integration tests (Vitest + RTL + MSW 2, jsdom)
 // Design Doc: docs/features/deep-agents/design-agent-types.md (v1.3), Test Strategy UC-10 (the diagram panel, the task list and the record
 //   card in the library), §KD-6 and §C3 web (the panel, the tab «Задачи», the «Запись» card); UXRD: docs/features/deep-agents/uxrd.md
-//   DA-04, DA-05, DA-11, DA-12, DA-13, MC-9–MC-14, MC-24, MC-25.
+//   DA-04, DA-05, DA-11, DA-12, DA-13, MC-9–MC-14, MC-24, MC-25; design-task-list.md KD-5 (the tab «Задачи» shows the conversation's list).
 // Budget Used: WEB-1 and WEB-2 of the part (work plan phases 9 and 8).
 // Test Type: Integration.
 //
@@ -22,7 +22,6 @@ import {
   type DecisionResponse,
   type LibraryChoices,
   type MyRoleList,
-  type RecordDetail,
   type RunTaskView,
   type Subagent,
 } from '@agent-os/contracts';
@@ -63,6 +62,7 @@ const subagent = (name: string, description: string, prompt = `Ты — ${name}.
   model: MODEL,
   maxTurns: 20,
   maxRuns: 3,
+  taskList: false,
 });
 
 /** Desktop: the panel «Схема» sits beside the feed and opens by itself (UXRD DA-12, Responsive Behavior). */
@@ -72,7 +72,7 @@ const DESKTOP = { '(min-width: 1024px)': true, '(min-width: 768px)': true };
 const DEEP_RUN_ID = 'deep-1';
 const deepOrigin = () => ({ ...deepAgentOrigin(), recordId: DEEP_AGENT_ID, name: DEEP_AGENT_NAME, builtinKey: null });
 
-/** The task list's rows as their expand buttons read them (MC-12): «Задача {N}: {текст}, {статус}». */
+/** The task list's rows as their expand buttons read them (MC-12): «Задача {N}: {тема}, {статус}». */
 function taskRows(list: HTMLElement): (string | null)[] {
   return within(list)
     .getAllByRole('button')
@@ -251,31 +251,23 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     expect(within(done).queryByRole('button', { name: 'Сохранить изменения' })).toBeNull();
   });
 
-  // AC: AC-28.1 "Когда чат создал запись, схема показывает её", AC-28.2 "После правки схема показывает новую версию без перезагрузки",
-  //   AC-28.3 "У запущенного глубокого агента в панели есть вкладка «Задачи»" (UXRD DA-12, DA-05; DD §KD-6)
-  // Behavior: Аня's conversation touches no record -> the chat creates «Разбор ошибок оплаты» with three subagents (a `tree` note brings
-  //   `focus` «создано») -> the panel opens by itself, focus stays in the feed, and shows the three -> the chat drops «Сборщик» (`focus`
-  //   «изменено» at a new time, the record's version 2) -> two without a reload -> the chat starts the deep agent (`focus` «запущено»,
-  //   a deep agent among the conversation's agents) -> the panel turns to «Задачи · 3» with the items and their statuses.
-  // Catches: a panel that keeps the version it read first (AC-28.2 is about exactly this), a panel that never opens or steals focus, and a
-  //   started deep agent whose list the conversation never shows - no unit test sees the store, the live note and the panel together.
+  // AC: AC-15.1 "Сотрудник видит список задач беседы, и он обновляется без перезагрузки" (UXRD DA-12, KD-3, KD-7; design-task-list.md KD-5)
+  // Behavior: Аня's conversation has no task and a deep agent with its own list -> the chat creates three tasks (a `tree` note) -> the panel
+  //   opens by itself on «Задачи · 3», focus stays in the feed, and shows the conversation's tasks: the one in progress with its in-progress
+  //   text, the blocked one with «ждёт 2» -> the chat finishes task 2 and starts task 3 (another note) -> the rows follow without a reload.
+  // Catches: a tab that shows a deep agent's list instead of the conversation's, a list read once and never again, and a panel that does not
+  //   open on the first task or steals focus - no unit test sees the live note, the shell and the panel together.
   // @category: core-functionality
-  // @dependency: ChatShell, SchemaAutoOpen, SchemaPanel, DefinitionView, RunTaskList, FeedStore, LiveStore, MSW, next/navigation mock
-  // @complexity: high
-  it('WEB-1 (a-c): the panel opens on a created deep agent, re-reads it after a change and shows «Задачи» once it starts', async () => {
-    // Arrange: a conversation with no record in focus; the record and the list answer from the state below
-    const description = 'Ищет причины ошибок оплаты';
-    const detail = (version: number, subagents: Subagent[]): RecordDetail =>
-      recordDetail({ id: DEEP_AGENT_ID, kind: 'deep_agent', name: DEEP_AGENT_NAME, description, version, content: deepAgentContent({ subagents }) });
-    const analyst = subagent('Аналитик', 'Ищет причины ошибок');
-    const collector = subagent('Сборщик', 'Собирает логи');
-    const writer = subagent('Писатель', 'Пишет сводку по находкам');
-    let record = detail(1, [analyst, collector, writer]);
+  // @dependency: ChatShell, SchemaAutoOpen, SchemaPanel, RunTaskList, FeedStore, LiveStore, MSW, next/navigation mock
+  // @complexity: medium
+  it('WEB-1: the panel opens on the first tasks of the conversation and its tab «Задачи» follows them after each `tree` note', async () => {
+    // Arrange: the conversation «a» (root «root») with no task; a deep agent it started keeps a list of its own
     let tasks: RunTaskView[] = [];
-    const thread = threadSummary({ id: 'a', title: 'Разбор ошибок' });
-    let view: ConversationView = conversationView({
+    const thread = threadSummary({ id: 'a', title: 'Релизы и инциденты' });
+    const view: ConversationView = conversationView({
       thread,
-      entries: [historyEntry({ kind: 'task', seq: 1, content: { text: 'Сделай глубокого агента для ошибок оплаты' } })],
+      entries: [historyEntry({ kind: 'task', seq: 1, content: { text: 'Сравни релизы за год с инцидентами' } })],
+      agents: [agentNode({ agentId: DEEP_RUN_ID, name: DEEP_AGENT_NAME, origin: deepOrigin(), status: 'working', createdAt: fixtureTime(1) })],
     });
     server.use(
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([thread]))),
@@ -284,74 +276,74 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
         const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
         return HttpResponse.json({ ...view, entries: view.entries.filter((entry) => entry.seq > afterSeq) });
       }),
-      http.get(`${API}/api/library/${DEEP_AGENT_ID}`, () => HttpResponse.json(record)),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/run`, () => HttpResponse.json(deepAgentRunView({ origin: deepOrigin() }))),
-      http.get(`${API}/api/agents/${DEEP_RUN_ID}/tasks`, () => HttpResponse.json({ tasks })),
+      http.get(`${API}/api/agents/root/tasks`, () => HttpResponse.json({ tasks })),
+      http.get(`${API}/api/agents/${DEEP_RUN_ID}/tasks`, () =>
+        HttpResponse.json({ tasks: [runTask({ id: 1, subject: 'Собрать логи за ночь', status: 'in_progress' })] }),
+      ),
     );
     const { live } = renderWithRuntime({ pathname: '/chat/a', media: DESKTOP });
-    await screen.findByText('Сделай глубокого агента для ошибок оплаты');
+    await screen.findByText('Сравни релизы за год с инцидентами');
     expect(screen.queryByRole('complementary', { name: 'Схема' })).toBeNull();
 
-    // Act 1: the chat created the deep agent
-    view = { ...view, focus: { recordId: DEEP_AGENT_ID, action: 'created', at: fixtureTime(3) } };
-    live.emit('tree', { threadId: 'a' });
-
-    // Assert 1 (AC-28.1): the panel opened by itself, focus stayed out of it, the three subagents are drawn
-    const panel = await screen.findByRole('complementary', { name: 'Схема' });
-    const team = await within(panel).findByRole('list', { name: TEAM_LIST });
-    expect(within(team).getAllByRole('listitem')).toHaveLength(3);
-    expect(panel.contains(document.activeElement)).toBe(false);
-
-    // Act 2: the chat dropped «Сборщик»: version 2, the same record in focus at a new time
-    record = detail(2, [analyst, writer]);
-    view = { ...view, focus: { recordId: DEEP_AGENT_ID, action: 'changed', at: fixtureTime(4) } };
-    live.emit('tree', { threadId: 'a' });
-
-    // Assert 2 (AC-28.2): two subagents, without a reload
-    await waitFor(() => {
-      expect(within(within(panel).getByRole('list', { name: TEAM_LIST })).getAllByRole('listitem')).toHaveLength(2);
-    });
-    expect(within(panel).queryByText('Сборщик')).toBeNull();
-
-    // Act 3: the chat started the deep agent; its plan has three items
+    // Act 1: the chat created three tasks and started the second
     tasks = [
-      runTask({ number: 1, text: 'Собрать логи за ночь', status: 'done' }),
-      runTask({ number: 2, text: 'Найти причину отказов', status: 'running' }),
-      runTask({ number: 3, text: 'Написать сводку' }),
+      runTask({ id: 1, subject: 'Найти релизы за год', status: 'completed' }),
+      runTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'in_progress', activeForm: 'Сравниваю релизы с инцидентами' }),
+      runTask({ id: 3, subject: 'Написать сводку', blockedBy: [2] }),
     ];
-    view = {
-      ...view,
-      agents: [
-        agentNode({ agentId: DEEP_RUN_ID, name: DEEP_AGENT_NAME, origin: deepOrigin(), status: 'working', createdAt: fixtureTime(5) }),
-      ],
-      focus: { recordId: DEEP_AGENT_ID, action: 'started', at: fixtureTime(5) },
-    };
     live.emit('tree', { threadId: 'a' });
 
-    // Assert 3 (AC-28.3): the panel is on «Задачи · 3» with each item's number, text and status
+    // Assert 1 (AC-15.1, KD-7): the panel opened by itself on «Задачи · 3», focus stayed out of it, the conversation's tasks are listed
+    const panel = await screen.findByRole('complementary', { name: 'Схема' });
     const tasksTab = await within(panel).findByRole('tab', { name: 'Задачи · 3' });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
-    expect(taskRows(within(panel).getByRole('list', { name: 'Задачи' }))).toEqual([
-      'Задача 1: Собрать логи за ночь, Готова',
-      'Задача 2: Найти причину отказов, В работе',
+    expect(panel.contains(document.activeElement)).toBe(false);
+    const list = within(panel).getByRole('list', { name: 'Задачи' });
+    expect(taskRows(list)).toEqual([
+      'Задача 1: Найти релизы за год, Готова',
+      'Задача 2: Сравнить с инцидентами, В работе',
       'Задача 3: Написать сводку, Ожидает',
     ]);
+    expect(within(list).getByText('В работе · Сравниваю релизы с инцидентами')).toBeInTheDocument();
+    expect(within(list).getByText('Ожидает · ждёт 2')).toBeInTheDocument();
+
+    // Act 2: task 2 is done, task 3 is in progress
+    tasks = [
+      tasks[0],
+      runTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'completed' }),
+      runTask({ id: 3, subject: 'Написать сводку', status: 'in_progress', activeForm: 'Пишу сводку', blockedBy: [2] }),
+    ];
+    live.emit('tree', { threadId: 'a' });
+
+    // Assert 2 (AC-15.1): the rows follow without a reload; task 3 waits for nothing any more
+    await waitFor(() => {
+      expect(taskRows(within(panel).getByRole('list', { name: 'Задачи' }))).toEqual([
+        'Задача 1: Найти релизы за год, Готова',
+        'Задача 2: Сравнить с инцидентами, Готова',
+        'Задача 3: Написать сводку, В работе',
+      ]);
+    });
+    expect(within(panel).getByText('В работе · Пишу сводку')).toBeInTheDocument();
   });
 
   // AC: AC-04.1 "Сотрудник видит план глубокого агента на его странице" (вид); UXRD DA-04 "Выбранная вкладка живёт в адресе"
-  // Behavior: Аня opens the address of the deep agent's tab «Задачи» -> the page shows that tab chosen, the plan items with their statuses
+  // Behavior: Аня opens the address of the deep agent's tab «Задачи» -> the page shows that tab chosen, its tasks with their statuses
   //   in place of the feed, and the composer under it.
   // Catches: an address whose tab is lost (a link or «Назад» lands on «Ход работы»), and a tab that drops the composer.
   // @category: core-functionality
   // @dependency: parseShellRoute, AgentScreen, RunTaskList, Thread, MSW, next/navigation mock
   // @complexity: low
   it('WEB-1 (d): the deep agent page opened at its «Задачи» address shows the list under the chosen tab', async () => {
-    // Arrange: the deep agent's page and a plan of two items
+    // Arrange: the deep agent's page and a list of two tasks
     const page = agentPageView({
       agent: { agentId: DEEP_RUN_ID, name: DEEP_AGENT_NAME, origin: deepOrigin(), status: 'working', threadId: 'a' },
       entries: [historyEntry({ kind: 'task', seq: 1, content: { text: 'Почему падают платежи?' } })],
     });
-    const tasks = [runTask({ number: 1, text: 'Собрать логи за ночь', status: 'done' }), runTask({ number: 2, text: 'Найти причину отказов' })];
+    const tasks = [
+      runTask({ id: 1, subject: 'Собрать логи за ночь', status: 'completed' }),
+      runTask({ id: 2, subject: 'Найти причину отказов' }),
+    ];
     server.use(
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/history`, () => HttpResponse.json(page)),
@@ -362,7 +354,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     // Act
     renderWithRuntime({ pathname: `/agents/${DEEP_RUN_ID}/tasks` });
 
-    // Assert (AC-04.1, DA-04): «Задачи · 2» chosen, the items with their statuses, the composer stays
+    // Assert (AC-04.1, DA-04): «Задачи · 2» chosen, the tasks with their statuses, the composer stays
     const tasksTab = await screen.findByRole('tab', { name: 'Задачи · 2' });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Ход работы' })).toHaveAttribute('aria-selected', 'false');

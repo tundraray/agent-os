@@ -193,6 +193,7 @@ function teamV1(): DeepAgentContent {
       }),
     ],
     finalSubagent: null,
+    taskList: true,
     selfLearning: false,
   };
 }
@@ -486,9 +487,11 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
             model: TEST_MODEL_CHOSEN,
             maxTurns: 20,
             maxRuns: 1,
+            taskList: false,
           },
         ],
         finalSubagent: null,
+        taskList: true,
         selfLearning: false,
       },
     });

@@ -29,7 +29,7 @@ import { foldCalls } from '../history/call-state';
 import { messagePayload } from '../step/continuation';
 import { ConfirmationResolutionSchema } from '../step/tool-step';
 import { history, type PageEntry } from '../store/history.repository';
-import { runTasks } from '../store/run-tasks.repository';
+import { sessionTasks } from '../store/session-tasks.repository';
 import type { RecordLibrary } from '../start/record-library';
 import {
   auditStartRefusal,
@@ -172,8 +172,8 @@ export interface AgentSessions {
    */
   run(agentId: string, ownerId: string): Promise<DeepAgentRun>;
   /**
-   * The task list of the agent's run by number (deep-agents KD-5, `GET /api/agents/:agentId/tasks`); empty
-   * for an agent without one. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
+   * The task list of the session by number (design-task-list.md, `GET /api/agents/:agentId/tasks`), the root
+   * included; empty for a session without one. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
    */
   taskList(agentId: string, ownerId: string): Promise<RunTaskListView>;
   get(agentId: string, ownerId: string): Promise<AgentView>;
@@ -750,16 +750,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'taskList',
         { agentId, ownerId },
         async () => {
-          // The owner check first: the list is read only for the owner's agent (Contract «Список задач»).
+          // The owner check first: the list is read only for the owner's session (AC-17.1).
           await agentTask(agentId, ownerId);
-          const items = await runTasks.list(database, agentId);
+          const tasks = await sessionTasks.list(database, agentId);
           return {
-            tasks: items.map((item) => ({
-              number: item.number,
-              text: item.text,
-              status: item.status,
-              createdAt: item.createdAt.toISOString(),
-              updatedAt: item.updatedAt.toISOString(),
+            tasks: tasks.map((task) => ({
+              id: task.number,
+              subject: task.subject,
+              description: task.description,
+              activeForm: task.activeForm,
+              status: task.status,
+              owner: task.owner,
+              blockedBy: [...task.blockedBy],
             })),
           };
         },

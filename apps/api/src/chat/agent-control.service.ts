@@ -178,9 +178,12 @@ export class AgentControlService {
     return toDeepAgentRunView(await this.agents.sessions.run(agentId, ownerId));
   }
 
-  /** The agent's task list in number order; an agent without one has an empty list (deep-agents KD-5). */
+  /**
+   * The task list of any of the owner's sessions, the conversation's root included, in number order; a
+   * session without one has an empty list (deep-agents KD-5). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
+   */
   async tasks(agentId: string, ownerId: string): Promise<RunTaskListView> {
-    await this.agent(agentId, ownerId);
+    if (!isUuid(agentId)) throw agentNotFound();
     return this.agents.sessions.taskList(agentId, ownerId);
   }
 

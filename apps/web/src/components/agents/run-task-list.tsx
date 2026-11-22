@@ -1,36 +1,41 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState } from "react";
 import { ChevronRight, ListTodo } from "lucide-react";
 import { useTranslations } from "next-intl";
-import type { RunTaskListView, RunTaskStatus, RunTaskView } from "@agent-os/contracts";
-import { TaskStatus } from "@/components/agents/agent-status";
+import type { RunTaskListView, RunTaskView } from "@agent-os/contracts";
+import { TaskStatusGlyph } from "@/components/agents/agent-status";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResource, type Resource } from "@/hooks/use-resource";
 import { cn } from "@/lib/utils";
 
-/** The summary's order (run-task-list.md, part 1); a status without tasks is left out. */
-const SUMMARY_ORDER: readonly RunTaskStatus[] = ["running", "waiting", "done", "failed", "cancelled"];
-
 /** Skeleton rows of the loading state and their widths. */
 const SKELETON_ROWS = ["w-11/12", "w-3/4", "w-5/6", "w-2/3", "w-4/5", "w-1/2"];
 
+/** The list of a session that has none yet: a conversation before its root is known. */
+const NO_TASKS: RunTaskListView = { tasks: [] };
+
 /**
- * A deep agent's task list (`GET /api/agents/:agentId/tasks`), read on open and again on every `tree` note of
- * its conversation (deep-agents KD-6): new items and statuses show without a reload.
+ * A session's task list (`GET /api/agents/:agentId/tasks`), read on open and again on every `tree` note of its
+ * conversation (deep-agents design-task-list.md, KD-5): new tasks and statuses show without a reload. A null
+ * `agentId` — the session is not known yet — reads as an empty list without a request.
  */
-export function useRunTasks(agentId: string, threadId: string): Resource<RunTaskListView> {
+export function useRunTasks(agentId: string | null, threadId: string | null): Resource<RunTaskListView> {
   const { apiClient, live } = useShellServices();
-  const tasks = useResource(() => apiClient.getRunTasks(agentId), agentId, "agents");
+  const tasks = useResource(
+    () => (agentId === null ? Promise.resolve(NO_TASKS) : apiClient.getRunTasks(agentId)),
+    agentId ?? "",
+    "agents",
+  );
   const { reload } = tasks;
   useEffect(
     () =>
       live.onTree((noted) => {
-        if (noted === threadId) reload();
+        if (agentId !== null && noted === threadId) reload();
       }),
-    [live, threadId, reload],
+    [live, agentId, threadId, reload],
   );
   return tasks;
 }
@@ -42,8 +47,9 @@ export type RunTaskListProps = {
 };
 
 /**
- * The task list, variant «План» (design-system run-task-list.md; deep-agents UXRD DA-05, MC-10–MC-14): only the
- * deep agent's own plan items, each with its number, status and text. Read-only: the agent keeps the list.
+ * The task list, variant «Задачи» (design-system run-task-list.md; deep-agents UXRD KD-4, MC-11, MC-12, MC-14):
+ * one session's tasks by number, each with its status, subject and owner, the description on expand. Read-only:
+ * the agent keeps the list, the employee asks the chat to change it.
  */
 export function RunTaskList({ tasks, layout }: RunTaskListProps) {
   const t = useTranslations("agents.tasks");
@@ -72,145 +78,133 @@ export function RunTaskList({ tasks, layout }: RunTaskListProps) {
     );
   }
 
-  const allExpanded = items.every((task) => expanded.has(task.number));
-  const toggle = (number: number): void =>
+  const toggle = (id: number): void =>
     setExpanded((current) => {
       const next = new Set(current);
-      if (!next.delete(number)) next.add(number);
+      if (!next.delete(id)) next.add(id);
       return next;
     });
-  const toggleAll = (): void => setExpanded(allExpanded ? new Set() : new Set(items.map((task) => task.number)));
-  // The number column is as wide as the longest number (part 3).
-  const numberWidth = `${String(Math.max(...items.map((task) => task.number))).length}ch`;
+  // The number column is as wide as the longest number (part 1).
+  const numberWidth = `${String(Math.max(...items.map((task) => task.id))).length}ch`;
+  const completed = new Set(items.filter((task) => task.status === "completed").map((task) => task.id));
 
   return (
-    <div className="@container flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="text-muted-foreground text-xs leading-4 font-medium">{summaryOf(t, items)}</p>
-        <Button variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={toggleAll}>
-          {t(allExpanded ? "collapseAll" : "expandAll")}
-        </Button>
-      </div>
-      <ul aria-label={t("listLabel")} className="divide-border flex flex-col divide-y">
-        {items.map((task) => (
-          <TaskRow
-            key={task.number}
-            task={task}
-            layout={layout}
-            numberWidth={numberWidth}
-            expanded={expanded.has(task.number)}
-            onToggle={() => toggle(task.number)}
-          />
-        ))}
-      </ul>
-    </div>
+    <ul
+      aria-label={t("listLabel")}
+      className="@container divide-border flex flex-col divide-y"
+      style={{ ["--task-number-width" as string]: numberWidth }}
+    >
+      {items.map((task) => (
+        <TaskRow
+          key={task.id}
+          task={task}
+          waitsFor={task.blockedBy.filter((id) => !completed.has(id))}
+          wide={layout === "page"}
+          expanded={expanded.has(task.id)}
+          onToggle={() => toggle(task.id)}
+        />
+      ))}
+    </ul>
   );
-}
-
-type TasksTranslator = ReturnType<typeof useTranslations<"agents.tasks">>;
-
-/** «В работе: 2 · Ожидают: 1 · Готовы: 3» — only the statuses some item has (MC-10). */
-function summaryOf(t: TasksTranslator, items: readonly RunTaskView[]): string {
-  return SUMMARY_ORDER.flatMap((status) => {
-    const count = items.filter((task) => task.status === status).length;
-    return count === 0 ? [] : [t(`summary.${status}`, { count })];
-  }).join(" · ");
 }
 
 type TaskRowProps = {
   task: RunTaskView;
-  layout: RunTaskListProps["layout"];
-  numberWidth: string;
+  /** The blockers not completed yet: «ждёт {номера}». */
+  waitsFor: readonly number[];
+  /** The page from 560 px puts the owner on the first line; the panel and a narrower page — on the second. */
+  wide: boolean;
   expanded: boolean;
   onToggle: () => void;
 };
 
 /**
- * One row: status icon, number, text truncated at the end and who does it — for a plan item «свой пункт». The
- * whole row is the expand button, so a click anywhere on it and Enter or Space open the details. From 720 px of
- * the page the row is one line; in a narrower area and always in the panel «кто делает» goes under the text.
+ * One task (run-task-list.md, parts 1–3): status icon, number, subject and owner, then the status in words with
+ * the in-progress text or the tasks it waits for. The whole row is the expand button, so a click anywhere on it
+ * and Enter or Space open the description.
  */
-function TaskRow({ task, layout, numberWidth, expanded, onToggle }: TaskRowProps) {
+function TaskRow({ task, waitsFor, wide, expanded, onToggle }: TaskRowProps) {
   const t = useTranslations("agents.tasks");
   const tAgents = useTranslations("agents");
-  const detailsId = useId();
-  const wide = layout === "page";
+  const descriptionId = useId();
+  const status = tAgents(`taskStatus.${task.status}`);
+  const details = [
+    status,
+    ...(task.status === "in_progress" && task.activeForm !== null ? [task.activeForm] : []),
+    ...(waitsFor.length > 0 ? [t("waitsFor", { numbers: waitsFor.join(", ") })] : []),
+  ];
 
   return (
-    <li style={{ ["--task-number-width" as string]: numberWidth }}>
+    <li>
       <button
         type="button"
         aria-expanded={expanded}
-        aria-controls={detailsId}
-        aria-label={t("rowButton", { number: task.number, text: task.text, status: tAgents(`taskStatus.${task.status}`) })}
+        aria-controls={descriptionId}
+        aria-label={t("rowButton", { number: task.id, subject: task.subject, status })}
         onClick={onToggle}
         className={cn(
           "hover:bg-accent focus-visible:ring-ring grid w-full grid-cols-[1rem_var(--task-number-width)_minmax(0,1fr)_1.5rem] items-center gap-x-2 px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset pointer-coarse:min-h-11",
-          wide && "@[45rem]:grid-cols-[1rem_var(--task-number-width)_minmax(0,1fr)_minmax(0,12.5rem)_1.5rem] @[45rem]:min-h-8",
+          wide && "@[35rem]:grid-cols-[1rem_var(--task-number-width)_minmax(0,1fr)_fit-content(12.5rem)_1.5rem]",
         )}
       >
-        <TaskStatus status={task.status} variant="icon" />
-        <span className="text-muted-foreground text-right font-mono text-xs leading-5 tabular-nums">{task.number}</span>
-        <span className="text-foreground min-w-0 truncate text-sm leading-5">{task.text}</span>
+        <TaskStatusGlyph status={task.status} />
+        <span className="text-muted-foreground text-right font-mono text-xs leading-5 tabular-nums">{task.id}</span>
         <span
           className={cn(
-            "text-muted-foreground col-start-3 row-start-2 truncate text-sm leading-5",
-            wide && "@[45rem]:col-start-4 @[45rem]:row-start-1",
+            "min-w-0 truncate text-sm leading-5",
+            task.status === "completed" ? "text-muted-foreground" : "text-foreground",
           )}
         >
-          {t("ownItem")}
+          {task.subject}
         </span>
+        {wide && task.owner !== null && (
+          <span className="text-muted-foreground hidden min-w-0 truncate text-sm leading-5 @[35rem]:col-start-4 @[35rem]:row-start-1 @[35rem]:block">
+            {task.owner}
+          </span>
+        )}
         <span
           className={cn(
             "col-start-4 row-start-1 flex size-6 items-center justify-center justify-self-end",
-            wide && "@[45rem]:col-start-5",
+            wide && "@[35rem]:col-start-5",
           )}
         >
           <ChevronRight
             aria-hidden
-            className={cn("text-muted-foreground size-3.5 transition-transform duration-150 motion-reduce:transition-none", expanded && "rotate-90")}
+            className={cn(
+              "text-muted-foreground size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+              expanded && "rotate-90",
+            )}
           />
         </span>
+        <span
+          className={cn(
+            "text-muted-foreground col-start-3 row-start-2 min-w-0 text-xs leading-5",
+            wide && "@[35rem]:col-end-5",
+            expanded ? "wrap-break-word" : "truncate",
+          )}
+        >
+          {task.owner !== null && (
+            <span className={cn(wide && "@[35rem]:hidden")}>{`${task.owner} · `}</span>
+          )}
+          {details.join(" · ")}
+        </span>
       </button>
-      <div id={detailsId} hidden={!expanded} className="@container pb-2 pl-[calc(1rem+var(--task-number-width)+1.25rem)]">
-        {expanded && <TaskDetails task={task} />}
+      <div
+        id={descriptionId}
+        hidden={!expanded}
+        className="text-foreground pr-1 pb-2 pl-[calc(1rem+var(--task-number-width)+1.25rem)] text-sm leading-5 wrap-break-word whitespace-pre-wrap"
+      >
+        {expanded && task.description}
       </div>
     </li>
   );
 }
 
-/** «подпись — значение» like the record definition: the label in a 120 px column from 560 px, above the value below it. */
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-0.5 @[35rem]:grid-cols-[7.5rem_minmax(0,1fr)] @[35rem]:gap-x-4">
-      <dt className="text-muted-foreground text-xs leading-4 font-medium @[35rem]:pt-0.5">{label}</dt>
-      <dd className="text-foreground min-w-0 text-sm leading-5">{children}</dd>
-    </div>
-  );
-}
-
-/** The details of a plan item: its status, its whole text and who keeps it (variant «План»: no assignee, no result). */
-function TaskDetails({ task }: { task: RunTaskView }) {
-  const t = useTranslations("agents.tasks.details");
-  return (
-    <dl className="flex flex-col gap-1">
-      <DetailRow label={t("status")}>
-        <TaskStatus status={task.status} variant="label" />
-      </DetailRow>
-      <DetailRow label={t("task")}>
-        <span className="break-words whitespace-pre-wrap">{task.text}</span>
-      </DetailRow>
-      <DetailRow label={t("who")}>{t("ownItem")}</DetailRow>
-    </dl>
-  );
-}
-
-/** Loading: the summary and six 32 px rows of different widths (run-task-list.md, States). */
+/** Loading: six 32 px rows of different widths (run-task-list.md, States). */
 function TaskListSkeleton() {
   const t = useTranslations("agents.tasks");
   return (
-    <div role="status" aria-label={t("loading")} className="flex flex-col gap-2">
-      <Skeleton className="h-4 w-1/2 motion-reduce:animate-none" />
+    <div role="status" aria-label={t("loading")} className="flex flex-col">
       {SKELETON_ROWS.map((width) => (
         <div key={width} className="flex h-8 items-center">
           <Skeleton className={cn("h-4 motion-reduce:animate-none", width)} />

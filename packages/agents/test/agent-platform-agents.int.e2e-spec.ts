@@ -73,7 +73,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentTurnMessage } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
 import type { RecordTool, Subagent } from '@agent-os/contracts';
-import { agentRunTasks } from '@agent-os/db';
+import { agentSessionTasks } from '@agent-os/db';
 import {
   createLatch,
   createLibraryDouble,
@@ -136,6 +136,9 @@ const COMPACTION_REQUEST =
 function startAgent(args: { agent: string; description: string; prompt: string }): ScriptedToolCall {
   return { tool: 'start_agent', args };
 }
+
+/** The task tools the conversation's root always has (deep-agents design-task-list.md KD-2), first in its set. */
+const ROOT_TASK_TOOLS = ['task_create', 'task_update', 'task_get', 'task_list'];
 
 /** Every built-in tool a record may hold, as the built-in `general-purpose` record has them. */
 const ALL_RECORD_TOOLS: RecordTool[] = ['start_agent', 'message_agent', 'list_agents', 'stop_agent'];
@@ -693,6 +696,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model: TEST_MODEL_DEFAULT,
       maxTurns: 20,
       maxRuns: 1,
+      taskList: false,
     });
     const deepAgentRecordId = library.add({
       kind: 'deep_agent',
@@ -707,6 +711,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         maxTurns: 20,
         subagents: [subagent('planner'), subagent('answer')],
         finalSubagent: 'answer',
+        taskList: true,
         selfLearning: false,
       },
     });
@@ -1384,6 +1389,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: U1's model was offered the `logs` tools (the registry keeps a server's list by tool name) and its
       // read reached the server once
       expect(allowed.calls[0]?.toolNames).toEqual([
+        ...ROOT_TASK_TOOLS,
         'start_deep_agent',
         'read_tool_result',
         'search_tool_result',
@@ -1408,7 +1414,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: U2's model was offered no server tool (only the tools every session has); its forced
       // call was refused `no_access` (the server is in the definition, the owner may not use it), is in its
       // history, and nothing of it reached a server
-      expect(denied.calls[0]?.toolNames).toEqual(['start_deep_agent', 'read_tool_result', 'search_tool_result', 'run_code']);
+      expect(denied.calls[0]?.toolNames).toEqual([
+        ...ROOT_TASK_TOOLS,
+        'start_deep_agent',
+        'read_tool_result',
+        'search_tool_result',
+        'run_code',
+      ]);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
         `mcp__${LOGS_SERVER}__get_trace done refused no_access timed`,
@@ -1787,7 +1799,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @complexity: medium
   //
   // Verification items (table-driven by operation; A has a root, a child, history entries with tool calls, and one open confirmation):
-  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `taskList` (deep-agents UC-7: A's child has three plan items), `resolveConfirmation` (approve and reject).
+  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `taskList` (deep-agents task-list UC-2: A's root, the chat, has three tasks; its child sees none of them), `resolveConfirmation` (approve and reject).
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`AGENT_NOT_FOUND`, and `DECISION_NOT_FOUND` for the confirmation), with nothing of A's data
   //   (no definition, task text, argument or count) in the answer or the error message.
   // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, tool calls in `agent_messages` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
@@ -1831,11 +1843,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitForTaskStatus(harness, childId, ownerA, 'completed');
       const [request] = (await harness.sessions.confirmations(rootId, ownerA)).filter((c) => c.status === 'open');
       if (request === undefined) throw new Error('A has no confirmation request');
-      // deep-agents UC-7, AC-04.1 (isolation): three items of a run's task list, as `task_list` would leave them
-      await harness.db.insert(agentRunTasks).values([
-        { taskId: childId, number: 1, text: 'item one of A', status: 'running' },
-        { taskId: childId, number: 2, text: 'item two of A' },
-        { taskId: childId, number: 3, text: 'item three of A' },
+      // deep-agents task-list UC-2, AC-13.2, AC-17.1 (isolation): three tasks of A's chat, as `task_create` and
+      // `task_update` would leave them
+      await harness.db.insert(agentSessionTasks).values([
+        { taskId: rootId, number: 1, subject: 'task one of A', description: 'd1', activeForm: 'doing one', status: 'in_progress' },
+        { taskId: rootId, number: 2, subject: 'task two of A', description: 'd2' },
+        { taskId: rootId, number: 3, subject: 'task three of A', description: 'd3', blockedBy: [2] },
       ]);
       const before = await treeRowVersionsOf(harness.db, [rootId, childId]);
 
@@ -1850,7 +1863,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         { name: 'stop', foreignId: rootId, call: (id) => sessions.stop({ agentId: id, ownerId: ownerB }) },
         { name: 'restart', foreignId: childId, call: (id) => sessions.restart({ agentId: id, ownerId: ownerB }) },
         { name: 'confirmations', foreignId: rootId, call: (id) => sessions.confirmations(id, ownerB) },
-        { name: 'taskList', foreignId: childId, call: (id) => sessions.taskList(id, ownerB) },
+        { name: 'taskList', foreignId: rootId, call: (id) => sessions.taskList(id, ownerB) },
         {
           name: 'resolveConfirmation approve',
           foreignId: request.decisionId,
@@ -1922,9 +1935,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'task: Child task of owner A',
         'model_answer: report of the child of A []',
       ]);
-      expect(
-        (await harness.sessions.taskList(childId, ownerA)).tasks.map((item) => `${item.number} ${item.status} ${item.text}`),
-      ).toEqual(['1 running item one of A', '2 waiting item two of A', '3 waiting item three of A']);
+      // Then: A reads the chat's list on the root, and the child, a session of its own, sees none of it
+      const taskLines = async (agentId: string) =>
+        (await harness.sessions.taskList(agentId, ownerA)).tasks.map(
+          (task) => `${task.id} ${task.status} ${task.subject} ${task.activeForm ?? '-'} [${task.blockedBy.join(',')}]`,
+        );
+      expect(await taskLines(rootId)).toEqual([
+        '1 in_progress task one of A doing one []',
+        '2 pending task two of A - []',
+        '3 pending task three of A - [2]',
+      ]);
+      expect(await taskLines(childId)).toEqual([]);
     } finally {
       await harness.close();
     }

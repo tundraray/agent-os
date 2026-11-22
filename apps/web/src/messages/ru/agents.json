@@ -144,7 +144,7 @@
     "stopped_with_parent": "Остановлен вместе с родителем",
     "continued": "Продолжен с историей",
     "compacted": "История сжата для модели",
-    "planItemsOpen": "Ответ не принят: открыты пункты плана {numbers}",
+    "tasksOpen": "Ответ не принят: открыты задачи {numbers}",
     "reportMissing": "Ответ не принят: нужен отчёт «{name}»"
   },
   "queue": {
@@ -160,11 +160,9 @@
     }
   },
   "taskStatus": {
-    "waiting": "Ожидает",
-    "running": "В работе",
-    "done": "Готова",
-    "failed": "Сбой",
-    "cancelled": "Отменена"
+    "pending": "Ожидает",
+    "in_progress": "В работе",
+    "completed": "Готова"
   },
   "tasks": {
     "tabs": {
@@ -172,28 +170,12 @@
       "tasks": "Задачи · {count}"
     },
     "listLabel": "Задачи",
-    "summary": {
-      "running": "В работе: {count}",
-      "waiting": "Ожидают: {count}",
-      "done": "Готовы: {count}",
-      "failed": "Сбой: {count}",
-      "cancelled": "Отменены: {count}"
-    },
-    "expandAll": "Раскрыть все",
-    "collapseAll": "Свернуть все",
-    "ownItem": "свой пункт",
-    "rowButton": "Задача {number}: {text}, {status}",
-    "details": {
-      "status": "Статус",
-      "task": "Задача",
-      "who": "Кто делает",
-      "ownItem": "свой пункт — ведёт сам агент"
-    },
+    "rowButton": "Задача {number}: {subject}, {status}",
+    "waitsFor": "ждёт {numbers}",
     "emptyTitle": "Задач пока нет",
-    "emptyHint": "Агент добавит план, когда начнёт работу.",
+    "emptyHint": "Здесь появятся задачи и поручения агента.",
     "loading": "Загружаем задачи…",
     "loadError": "Не удалось загрузить задачи",
-    "retry": "Повторить",
-    "openRun": "Открыть запуск"
+    "retry": "Повторить"
   }
 }

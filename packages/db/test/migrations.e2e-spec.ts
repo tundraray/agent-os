@@ -37,7 +37,7 @@ import {
   ModelPurposeSchema,
   ProviderTypeSchema,
   RecordKindSchema,
-  RunTaskStatusSchema,
+  SessionTaskStatusSchema,
   TaskStatusSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
@@ -70,7 +70,8 @@ const APP_TABLES = [
   'agent_mcp_servers',
   'agent_messages',
   'agent_model_providers',
-  'agent_run_tasks',
+  // '_' (0x5f) before 's' (0x73), as below.
+  'agent_session_tasks',
   'agent_sessions',
   // `name` sorts bytewise: '_' (0x5f) before 's' (0x73).
   'agent_tool_result_settings',
@@ -266,7 +267,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         access_grants_effect_check: sorted(GrantEffectSchema.options),
         access_grants_target_kind_check: sorted(GrantTargetKindSchema.options),
         library_records_kind_check: sorted(RecordKindSchema.options),
-        agent_run_tasks_status_check: sorted(RunTaskStatusSchema.options),
+        agent_session_tasks_status_check: sorted(SessionTaskStatusSchema.options),
         agent_knowledge_relations_kind_check: sorted(KnowledgeItemKindSchema.options),
         agent_knowledge_runs_last_status_check: sorted(LastExtractionStatusSchema.options),
         agent_knowledge_runs_last_reason_check: sorted(LastExtractionReasonSchema.options),

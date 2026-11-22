@@ -89,8 +89,8 @@ export const HistoryContentSchemas = {
   /** A message of the package's code to the model, such as a refusal to finish. */
   notice: z.object({
     text: z.string(),
-    /** The numbers of the open plan items the notice names, when they are its reason (deep-agents KD-5). */
-    openPlanItems: z.array(z.number().int().positive()).optional(),
+    /** The numbers of the open tasks the notice names, when they are its reason (design-task-list.md KD-4). */
+    openTasks: z.array(z.number().int().positive()).optional(),
     /** The final subagent whose completed report the notice asks for, when its absence is the reason (deep-agents AC-05.1). */
     missingReport: z.string().min(1).optional(),
   }),

@@ -4,22 +4,22 @@ import { useEffect, useRef, useState } from 'react';
 import { Workflow } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
-import type { AgentNode, Confirmation, RecordFocus, RecordKind } from '@agent-os/contracts';
+import type { Confirmation, RecordFocus, RecordKind, RunTaskListView } from '@agent-os/contracts';
 import { RunTaskList, useRunTasks } from '@/components/agents/run-task-list';
 import { DefinitionView } from '@/components/library/definition-view';
 import { RecordLabel } from '@/components/library/record-label';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useResource } from '@/hooks/use-resource';
+import { useResource, type Resource } from '@/hooks/use-resource';
 import { isApiRequestError } from '@/lib/api/api-request';
-import { FeedProvider, useFeedSelector } from '@/lib/feed/feed-context';
+import { FeedProvider, useFeedSelector, useFeedStoreSelector } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
-import { isDeepAgentRun, recordCardOf, type FeedView } from '@/lib/feed/to-feed';
+import { recordCardOf } from '@/lib/feed/to-feed';
 import { formatListTime } from '@/lib/i18n/formats';
 import { libraryApi } from '@/lib/library/library-api';
 import type { SchemaTab } from '@/lib/shell/workspace-store';
-import { agentPath, recordPath } from '@/lib/shell-route';
+import { recordPath } from '@/lib/shell-route';
 import { useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
 
@@ -33,57 +33,66 @@ const LINK_CLASS =
 
 /** The record the conversation last touched (KD-6); null off a conversation and while it touched none. */
 const selectFocus = (state: FeedState): RecordFocus | null => (state.view?.kind === 'thread' ? state.view.focus : null);
+const selectRoot = (state: FeedState): string | null => (state.view?.kind === 'thread' ? state.view.chat.rootAgentId : null);
+const selectThread = (state: FeedState): string | null => (state.view?.kind === 'thread' ? state.view.threadId : null);
 
-/** The last deep agent the conversation started: its run fills the tab «Задачи» (DD C3 web, second point). */
-function lastDeepAgent(view: FeedView | null): AgentNode | null {
-  if (view?.kind !== 'thread') return null;
-  let last: AgentNode | null = null;
-  for (const node of view.children) {
-    if (isDeepAgentRun(node) && (last === null || Date.parse(node.createdAt) >= Date.parse(last.createdAt))) last = node;
-  }
-  return last;
+/** The conversation's own task list as the panel and its automatic open read it. */
+export type ChatTasks = {
+  /** The conversation's root; null off a conversation and before its first read. */
+  rootAgentId: string | null;
+  tasks: Resource<RunTaskListView>;
+  /** The tab «Задачи» is there: it comes with the conversation's first task and stays (UXRD DA-12). */
+  tabShown: boolean;
+};
+
+/**
+ * The open conversation's task list — its root's list, read once for the shell and re-read on every `tree` note of
+ * the conversation (design-task-list.md, KD-5). `feed` is null where the panel is not offered.
+ */
+export function useChatTasks(feed: FeedStore | null): ChatTasks {
+  const rootAgentId = useFeedStoreSelector(feed, selectRoot, null);
+  const threadId = useFeedStoreSelector(feed, selectThread, null);
+  const tasks = useRunTasks(rootAgentId, threadId);
+  // The root that has had a task in this visit: deleting every task does not take the tab away.
+  const [listedRoot, setListedRoot] = useState<string | null>(null);
+  const hasTasks = (tasks.data?.tasks.length ?? 0) > 0;
+  if (hasTasks && rootAgentId !== null && listedRoot !== rootAgentId) setListedRoot(rootAgentId);
+  return { rootAgentId, tasks, tabShown: rootAgentId !== null && (hasTasks || listedRoot === rootAgentId) };
 }
 
 /**
- * The content of the panel «Схема» (deep-agents UXRD DA-12): the record in focus drawn as a column and, once a
- * deep agent ran from the conversation, the tab «Задачи» with its list. Read-only; `feed` is the open
- * conversation's store, null on `/` before its first message.
+ * The content of the panel «Схема» (deep-agents UXRD DA-12): the record in focus drawn as a column and, once the
+ * conversation has a task, the tab «Задачи» with its own list. Read-only; `feed` is the open conversation's
+ * store, null on `/` before its first message.
  */
-export function SchemaPanel({ feed }: { feed: FeedStore | null }) {
+export function SchemaPanel({ feed, chatTasks }: { feed: FeedStore | null; chatTasks: ChatTasks }) {
   return (
     <FeedProvider feed={feed}>
-      <SchemaPanelContent />
+      <SchemaPanelContent chatTasks={chatTasks} />
     </FeedProvider>
   );
 }
 
-function SchemaPanelContent() {
+function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
   const { workspace } = useShellServices();
   const tab = useStore(workspace, (state) => state.tab);
   const focus = useFeedSelector(selectFocus, null);
-  const run = useFeedSelector((state) => lastDeepAgent(state.view), null);
-  const threadId = useFeedSelector((state) => (state.view?.kind === 'thread' ? state.view.threadId : null), null);
 
-  if (run === null || threadId === null) return <FocusSchema focus={focus} />;
-  return <RunTabs run={run} threadId={threadId} tab={tab} onTab={(next) => workspace.setTab(next)} focus={focus} />;
+  if (!chatTasks.tabShown) return <FocusSchema focus={focus} />;
+  return <SchemaTabs tasks={chatTasks.tasks} tab={tab} onTab={(next) => workspace.setTab(next)} focus={focus} />;
 }
 
-type RunTabsProps = {
-  run: AgentNode;
-  threadId: string;
+type SchemaTabsProps = {
+  tasks: Resource<RunTaskListView>;
   tab: SchemaTab;
   onTab: (tab: SchemaTab) => void;
   focus: RecordFocus | null;
 };
 
-/**
- * «Схема» and «Задачи · {N}» (MC-9): they stay to the end of the conversation, and «Задачи» shows the last run's
- * list whatever record is in focus; after the run ends the list keeps its final statuses.
- */
-function RunTabs({ run, threadId, tab, onTab, focus }: RunTabsProps) {
+/** «Схема» and «Задачи · {N}» (MC-9): «Задачи» shows the conversation's list whatever record is in focus. */
+function SchemaTabs({ tasks, tab, onTab, focus }: SchemaTabsProps) {
   const t = useTranslations('agents.tasks');
   const tSchema = useTranslations('shell.schema');
-  const tasks = useRunTasks(run.agentId, threadId);
   const count = tasks.data?.tasks.length ?? 0;
   return (
     <Tabs value={tab} onValueChange={(value: SchemaTab) => onTab(value)} className="gap-3">
@@ -98,11 +107,8 @@ function RunTabs({ run, threadId, tab, onTab, focus }: RunTabsProps) {
       <TabsContent value="schema">
         <FocusSchema focus={focus} />
       </TabsContent>
-      <TabsContent value="tasks" className="flex flex-col gap-3">
+      <TabsContent value="tasks">
         <RunTaskList tasks={tasks} layout="panel" />
-        <ShellLink href={agentPath(run.agentId, 'tasks')} className={LINK_CLASS}>
-          {t('openRun')}
-        </ShellLink>
       </TabsContent>
     </Tabs>
   );

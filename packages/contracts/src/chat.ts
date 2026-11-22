@@ -266,8 +266,8 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
     'notice',
     z.object({
       text: z.string(),
-      /** The numbers of the open plan items a deep agent's refused answer left (MC-15); absent for other notices. */
-      openPlanItems: z.array(z.number().int().positive()).optional(),
+      /** The numbers of the open tasks an agent's refused answer left (MC-15); absent for other notices. */
+      openTasks: z.array(z.number().int().positive()).optional(),
       /** The final subagent whose completed report a deep agent's refused answer lacked (MC-15); absent for other notices. */
       missingReport: z.string().min(1).optional(),
     }),
@@ -452,24 +452,29 @@ export const DeepAgentRunViewSchema = z.object({
 });
 export type DeepAgentRunView = z.infer<typeof DeepAgentRunViewSchema>;
 
-/** Max length of the text of one item of a run's task list. */
-export const RUN_TASK_TEXT_MAX_LENGTH = 2000;
+/**
+ * Status of a task of a session's task list (deep-agents design-task-list.md, Data Model); not the runtime's
+ * `TaskStatusSchema`. A deleted task leaves the list, so `deleted` is no stored status.
+ */
+export const SessionTaskStatusSchema = z.enum(['pending', 'in_progress', 'completed']);
+export type SessionTaskStatus = z.infer<typeof SessionTaskStatusSchema>;
 
-/** Status of an item of a run's task list (not the runtime's `TaskStatusSchema`); `done`, `cancelled` are final. */
-export const RunTaskStatusSchema = z.enum(['waiting', 'running', 'done', 'failed', 'cancelled']);
-export type RunTaskStatus = z.infer<typeof RunTaskStatusSchema>;
-
-/** One item of a run's task list: its number in the run counts from 1 and is never reused. */
+/**
+ * One task of a session's list (Contract «`GET /api/agents/:agentId/tasks`»): its number in the session counts
+ * from 1 and is never reused; `blockedBy` — the numbers of the tasks that must be completed first.
+ */
 export const RunTaskViewSchema = z.object({
-  number: z.number().int().positive(),
-  text: z.string().max(RUN_TASK_TEXT_MAX_LENGTH),
-  status: RunTaskStatusSchema,
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
+  id: z.number().int().positive(),
+  subject: z.string().min(1),
+  description: z.string().min(1),
+  activeForm: z.string().min(1).nullable(),
+  status: SessionTaskStatusSchema,
+  owner: z.string().min(1).nullable(),
+  blockedBy: z.array(z.number().int().positive()),
 });
 export type RunTaskView = z.infer<typeof RunTaskViewSchema>;
 
-/** GET /agents/:agentId/tasks: the run's items by number; empty for an agent without a list. */
+/** GET /agents/:agentId/tasks: the session's tasks by number; empty for a session without a list. */
 export const RunTaskListViewSchema = z.object({ tasks: z.array(RunTaskViewSchema) });
 export type RunTaskListView = z.infer<typeof RunTaskListViewSchema>;
 

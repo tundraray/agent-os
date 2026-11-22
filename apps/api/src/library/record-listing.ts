@@ -114,7 +114,9 @@ function cutLines(lines: readonly string[], maxChars: number): string {
 /**
  * The answer of `read_record`: the whole definition of a record the employee sees — its header, whose it
  * is, its version and its content. The self-learning flag stands on its own line: only a person changes
- * it, so the content an edit sends back holds no flag.
+ * it, so the content an edit sends back holds no flag. The task-list flags (`taskList` of the agent, the deep
+ * agent and each subagent; design-task-list.md KD-2) stay in the content: the chat may change them, and an
+ * edit that sends the content back keeps them.
  */
 export function recordText(record: ChatRecord): string {
   const { selfLearning, content } = splitFlag(record.body);

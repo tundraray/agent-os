@@ -128,6 +128,11 @@ const ServersSchema = listWithoutRepeats(z.union([McpServerNameSchema, z.literal
 const ToolsSchema = listWithoutRepeats(RecordToolSchema);
 /** `null` — the default chat model at the start of a run. */
 const RecordModelSchema = ModelIdSchema.nullable();
+/**
+ * The run keeps a task list (deep-agents design-task-list.md KD-2): on by default for an agent and a deep
+ * agent, off for a subagent. The conversation's root keeps one whatever its record says.
+ */
+const taskListSchema = (byDefault: boolean) => z.boolean().default(byDefault);
 
 export const AgentContentSchema = z.object({
   prompt: PromptSchema,
@@ -137,6 +142,7 @@ export const AgentContentSchema = z.object({
   /** Agent records this agent may start. */
   agents: listWithoutRepeats(IdSchema),
   tools: ToolsSchema,
+  taskList: taskListSchema(true),
 });
 export type AgentContent = z.infer<typeof AgentContentSchema>;
 
@@ -151,6 +157,7 @@ const SubagentSchema = z.object({
   maxTurns: MaxTurnsSchema,
   /** Runs of the subagent within one run of its deep agent. */
   maxRuns: z.number().int().min(SUBAGENT_MAX_RUNS_MIN).max(SUBAGENT_MAX_RUNS_MAX),
+  taskList: taskListSchema(false),
 });
 export type Subagent = z.infer<typeof SubagentSchema>;
 
@@ -163,6 +170,7 @@ export const DeepAgentContentSchema = z
     subagents: z.array(SubagentSchema).min(DEEP_AGENT_SUBAGENTS_MIN).max(DEEP_AGENT_SUBAGENTS_MAX),
     /** Subagent whose report becomes the answer; `null` — the deep agent writes it. */
     finalSubagent: z.string().nullable(),
+    taskList: taskListSchema(true),
     /** Runs learn into the deep agent's knowledge graph; only people change it. */
     selfLearning: z.boolean().default(false),
   })

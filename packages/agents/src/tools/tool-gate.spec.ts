@@ -48,6 +48,7 @@ const NO_TOOLS: AgentSnapshot = {
     maxTurns: 10,
     agents: [],
     tools: [],
+    taskList: false,
   },
   agents: [],
 };

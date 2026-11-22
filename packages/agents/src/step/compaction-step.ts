@@ -17,7 +17,7 @@ import {
 } from '../store/sessions.repository';
 import type { ToolRegistry } from '../tools/tool-registry';
 import { entriesOf, rootTurnReset } from './deliver';
-import { planBlock, planOf, withStepBlocks } from './plan-block';
+import { taskBlock, tasksOf, withStepBlocks } from './task-block';
 import {
   appendWithEvent,
   callUnlessAborted,
@@ -89,18 +89,19 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
     // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
-    // the summary would be written without the plan (deep-agents KD-5, DC-4).
+    // the summary would be written without the task list (design-task-list.md KD-2).
     const knowledge = await knowledgeBlock(
       { database, store: vectorStore },
       { snapshot, taskId: ctx.taskId, logger: ctx.logger },
     );
-    const plan = planBlock(await planOf(database, snapshot, ctx.taskId));
+    const root = ctx.parentId === null;
+    const tasks = taskBlock(await tasksOf(database, { snapshot, root, sessionId: ctx.taskId }));
     // History holds tool calls, and the provider takes them only with the tools defined.
     const sessionTools = await registry.sessionTools({
       snapshot,
       ownerId: session.ownerId,
       agentId: ctx.taskId,
-      root: ctx.parentId === null,
+      root,
     });
 
     const result = await callUnlessAborted(ctx, () =>
@@ -110,7 +111,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: withStepBlocks(definition.prompt, { knowledge, plan }),
+        instructions: withStepBlocks(definition.prompt, { knowledge, tasks }),
         messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
         tools: sessionTools,
         // The summary is not an answer the employee reads: its parts do not go to the hook.

@@ -13,7 +13,8 @@ import type { DeepAgentSnapshot } from './snapshot';
 // comes from the snapshot alone — an agent's prompt, tools, servers and limit with the visible records of
 // its `agents`; a deep agent's prompt with the platform rules after it, its own servers, the team as
 // «имя (up to N runs): описание», and who writes the answer; a subagent taken from the deep agent by its
-// name, learning on the servers of the deep agent and its whole team.
+// name, learning on the servers of the deep agent and its whole team. design-task-list.md KD-2: the task-list
+// flag is the one of the snapshot's own content — the agent's, the deep agent's, the subagent's.
 
 const HAIKU = 'anthropic/claude-haiku-5-5';
 const SONNET = 'anthropic/claude-sonnet-5-5';
@@ -41,6 +42,7 @@ const AGENT_RECORD: ResolvedRecord = {
     maxTurns: 12,
     agents: [VISIBLE_ID, HIDDEN_ID],
     tools: ['start_agent', 'list_agents'],
+    taskList: true,
   },
 };
 
@@ -72,10 +74,14 @@ function subagent(
     model: HAIKU,
     maxTurns: 6,
     maxRuns,
+    taskList: name === 'gather',
   };
 }
 
-function deepAgent(finalSubagent: string | null, selfLearning = false): DeepAgentSnapshot {
+function deepAgent(
+  finalSubagent: string | null,
+  { selfLearning = false, taskList = true } = {},
+): DeepAgentSnapshot {
   return {
     kind: 'deep_agent',
     name: 'Глубокий ресерч',
@@ -99,6 +105,7 @@ function deepAgent(finalSubagent: string | null, selfLearning = false): DeepAgen
         subagent('answer', 2, 'Пишет ответ'),
       ],
       finalSubagent,
+      taskList,
       selfLearning,
     },
   };
@@ -127,6 +134,7 @@ describe('snapshotDefinition', () => {
         servers: ['billing'],
         startable: [`${VISIBLE_ID}: Сверка — Сверяет выписки`],
         finalSubagent: null,
+        taskList: true,
       },
     },
     {
@@ -137,24 +145,26 @@ describe('snapshotDefinition', () => {
         prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nThe answer is the report of answer: after it reports, end with a short text without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['start_agent', 'message_agent', 'task_list'],
+        tools: ['start_agent', 'message_agent'],
         servers: ['tickets'],
         startable: TEAM_LINES,
         finalSubagent: 'answer',
+        taskList: true,
       },
     },
     {
-      case: 'a deep agent without a final subagent writes the answer itself',
-      definition: () => snapshotDefinition(deepAgent(null)),
+      case: 'a deep agent without a final subagent writes the answer itself; its task list is off',
+      definition: () => snapshotDefinition(deepAgent(null, { taskList: false })),
       expected: {
         name: 'Глубокий ресерч',
         prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nWhen the work is done, write the answer yourself as plain text without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['start_agent', 'message_agent', 'task_list'],
+        tools: ['start_agent', 'message_agent'],
         servers: ['tickets'],
         startable: TEAM_LINES,
         finalSubagent: null,
+        taskList: false,
       },
     },
     {
@@ -172,6 +182,7 @@ describe('snapshotDefinition', () => {
         servers: ['logs'],
         startable: [],
         finalSubagent: null,
+        taskList: true,
       },
     },
     {
@@ -187,7 +198,7 @@ describe('snapshotDefinition', () => {
   });
 
   it('a subagent of a learning deep agent keeps its origin with its own name and learns on the servers of the deep agent and the team', () => {
-    const snapshot = subagentSnapshot(deepAgent('answer', true), 'gather');
+    const snapshot = subagentSnapshot(deepAgent('answer', { selfLearning: true }), 'gather');
     expect({ origin: snapshot?.origin, learning: snapshot?.learning }).toEqual({
       origin: {
         recordId: DEEP_AGENT_ID,

@@ -23,6 +23,7 @@ import {
   createScriptedModel,
 } from './testing';
 import type { AgentTool } from './tools/tool';
+import { createTaskTools } from './tools/builtin/task-tools';
 import { createToolRegistry } from './tools/tool-registry';
 import { createToolRunner } from './tools/tool-runner';
 
@@ -73,7 +74,7 @@ const SNAPSHOT: AgentSnapshot = {
     builtinKey: null,
     subagent: null,
   },
-  content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP] },
+  content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP], taskList: false },
   agents: [],
 };
 
@@ -163,7 +164,7 @@ function refusedAgent(refusal: Refusal) {
     audits.push(entry);
   };
   const registry = createToolRegistry({
-    builtins: [lookup],
+    builtins: [lookup, ...createTaskTools({ logger })],
     runCode: { ...lookup, name: 'run_code' },
     database,
     access,

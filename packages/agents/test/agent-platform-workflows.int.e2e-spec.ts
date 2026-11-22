@@ -103,6 +103,7 @@ function deepResearchRecord(): TestDeepAgentRecord {
       testSubagent(ANSWER_AGENT, { description: 'Writes the answer from the reports of the directions.', maxTurns: 2, maxRuns: 2 }),
     ],
     finalSubagent: ANSWER_AGENT,
+    taskList: true,
     selfLearning: false,
   });
 }
@@ -120,6 +121,7 @@ function limitsRecord(): TestDeepAgentRecord {
     maxTurns: 6,
     subagents: [testSubagent(LIMITS_ANSWER_AGENT, { description: 'Writes the answer of the limits check.', maxTurns: 2, maxRuns: 2 })],
     finalSubagent: LIMITS_ANSWER_AGENT,
+    taskList: true,
     selfLearning: false,
   });
 }

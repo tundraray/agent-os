@@ -1,3 +1,4 @@
+import type { SessionTask } from '../store/session-tasks.repository';
 import { type EndOfTurn, type EndOfTurnInput, endOfTurn, noticeContent } from './turn-rules';
 
 // KD-2, «Конец хода», DC-3, DC-4 (final subagent, design-runtime.md KD-5), Invariant 4, Notes 6: an
@@ -8,7 +9,7 @@ const CHILD: EndOfTurnInput = {
   pendingChildNotices: 0,
   finalSubagent: null,
   finalSubagentReport: null,
-  openPlanItems: [],
+  openTasks: [],
   text: 'my own answer',
   cutOff: false,
 };
@@ -73,61 +74,77 @@ describe('a cut-off answer is not a report', () => {
   });
 });
 
-// deep-agents UC-8, AC-09.1 (rule), AC-09.2, KD-5: a deep agent without children in work does not finish while a plan
-// item is waiting or running; the branch stands after the wait for children and before the final subagent rule. The
-// caller passes only the open items (waiting, running) of a deep agent's plan, and none for any other run.
-describe('a deep agent with open plan items does not finish', () => {
-  const COLLECT = { number: 1, text: 'собрать логи', status: 'running' } as const;
-  const CHECK = { number: 2, text: 'сверить с заказами', status: 'waiting' } as const;
-  /** The notice naming the open items, line by line, and their numbers. */
+// design-task-list.md AC-14.4, KD-4: an agent other than the main chat does not finish its turn while a task is
+// pending or in_progress; the branch stands after the wait for children and before the final subagent rule. The
+// caller passes only the open tasks (pending, in_progress) of a session with a task list.
+describe('an agent with open tasks does not finish its turn', () => {
+  const COLLECT: SessionTask = {
+    number: 1,
+    subject: 'Собрать логи',
+    description: 'Логи оплат за неделю',
+    activeForm: 'Собираю логи',
+    status: 'in_progress',
+    owner: null,
+    blockedBy: [],
+  };
+  const CHECK: SessionTask = {
+    number: 2,
+    subject: 'Сверить с заказами',
+    description: 'Сверить оплаты с заказами',
+    activeForm: null,
+    status: 'pending',
+    owner: 'gather',
+    blockedBy: [1],
+  };
+  /** The notice naming the open tasks, line by line, and their numbers. */
   const openNotice = (lines: readonly string[], numbers: readonly number[]): EndOfTurn => ({
     kind: 'notice',
     text: [
-      'You cannot finish yet: these items of your plan are still open:',
+      'You cannot finish yet: these tasks of your list are still open:',
       ...lines,
-      'Do the work they name, or mark each done or cancelled with task_list, then answer.',
+      'Do the work they name and mark each completed with task_update, or delete the ones no longer needed; then answer.',
     ].join('\n'),
-    openPlanItems: numbers,
+    openTasks: numbers,
   });
   it.each<[string, EndOfTurnInput, EndOfTurn]>([
     [
-      'an item running: notice naming it',
-      { ...CHILD, openPlanItems: [COLLECT] },
-      openNotice(['1. [running] собрать логи'], [1]),
+      'a task in progress: notice naming it by its active form',
+      { ...CHILD, openTasks: [COLLECT] },
+      openNotice(['1. [in_progress] Собираю логи'], [1]),
     ],
     [
-      'an item waiting: notice naming it',
-      { ...CHILD, openPlanItems: [CHECK] },
-      openNotice(['2. [waiting] сверить с заказами'], [2]),
+      'a pending task: notice naming it with its blockers and label',
+      { ...CHILD, openTasks: [CHECK] },
+      openNotice(['2. [pending] Сверить с заказами; blocked by 1; owner gather'], [2]),
     ],
     [
-      'every item done or cancelled (none open): the answer is the report',
+      'no open task: the answer is the report',
       CHILD,
       { kind: 'complete', report: 'my own answer' },
     ],
     [
-      'open items come before the final subagent rule, even after its completed report',
+      'open tasks come before the final subagent rule, even after its completed report',
       {
         ...CHILD,
-        openPlanItems: [COLLECT, CHECK],
+        openTasks: [COLLECT, CHECK],
         finalSubagent: 'answer',
         finalSubagentReport: { status: 'completed', text: 'final report' },
       },
-      openNotice(['1. [running] собрать логи', '2. [waiting] сверить с заказами'], [1, 2]),
+      openNotice(['1. [in_progress] Собираю логи', '2. [pending] Сверить с заказами; blocked by 1; owner gather'], [1, 2]),
     ],
     [
       'an unfinished child still comes first: wait',
-      { ...CHILD, openPlanItems: [COLLECT], unfinishedChildren: 1 },
+      { ...CHILD, openTasks: [COLLECT], unfinishedChildren: 1 },
       { kind: 'wait' },
     ],
-    ['the root still waits', { ...CHILD, openPlanItems: [COLLECT], isRoot: true }, { kind: 'wait' }],
+    ['the main chat waits, open tasks or not', { ...CHILD, openTasks: [COLLECT], isRoot: true }, { kind: 'wait' }],
   ])('%s', (_, input, outcome) => {
     expect(endOfTurn(input)).toStrictEqual(outcome);
   });
 
-  // uxrd.md MC-15, AC-05.1: the history entry carries what the feed line names, and only when it is the notice's reason.
-  it.each<[string, EndOfTurnInput, { openPlanItems?: number[]; missingReport?: string }]>([
-    ['open items: the notice entry carries their numbers', { ...CHILD, openPlanItems: [COLLECT, CHECK] }, { openPlanItems: [1, 2] }],
+  // uxrd.md MC-15: the history entry carries what the feed line names, and only when it is the notice's reason.
+  it.each<[string, EndOfTurnInput, { openTasks?: number[]; missingReport?: string }]>([
+    ['open tasks: the notice entry carries their numbers', { ...CHILD, openTasks: [COLLECT, CHECK] }, { openTasks: [1, 2] }],
     [
       'no completed report of the final subagent: the notice entry names it',
       { ...CHILD, finalSubagent: 'answer', finalSubagentReport: { status: 'failed', text: null } },

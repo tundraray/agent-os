@@ -18,7 +18,7 @@ import {
 } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
 import { formatListTime } from "@/lib/i18n/formats";
-import type { EventPartData, PlanNoticePartData } from "@/lib/feed/to-feed";
+import type { EventPartData, AnswerRefusedPartData } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
 
 type StatusEvent = Exclude<HistoryEvent, "continued" | "compacted">;
@@ -88,17 +88,17 @@ function MarkLine({ Icon, text, at }: { Icon: LucideIcon; text: string; at: stri
 }
 
 /**
- * A deep agent's refused answer (uxrd.md MC-15, DA-06, AC-05.1): «Ответ не принят: открыты пункты плана {номера}» or
- * «Ответ не принят: нужен отчёт «{имя}»», built from the fields the `notice` entry carries. The deep agent keeps
+ * An agent's refused answer (uxrd.md MC-15, AC-04.1, AC-14.4): «Ответ не принят: открыты задачи {номера}» or
+ * «Ответ не принят: нужен отчёт «{имя}»», built from the fields the `notice` entry carries. The agent keeps
  * working, so the line marks a moment rather than a status.
  */
-export function PlanNoticeLine({ data }: { data: PlanNoticePartData }) {
+export function AnswerRefusedLine({ data }: { data: AnswerRefusedPartData }) {
   const tAgents = useTranslations("agents");
   if ("missingReport" in data) {
     const text = tAgents("event.reportMissing", { name: data.missingReport });
     return <MarkLine Icon={FileTextIcon} text={text} at={data.createdAt} />;
   }
-  const text = tAgents("event.planItemsOpen", { numbers: data.openPlanItems.join(", ") });
+  const text = tAgents("event.tasksOpen", { numbers: data.openTasks.join(", ") });
   return <MarkLine Icon={ListTodoIcon} text={text} at={data.createdAt} />;
 }
 

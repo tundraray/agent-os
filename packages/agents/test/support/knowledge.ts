@@ -67,6 +67,7 @@ export function learningDeepAgent(
       maxTurns: 20,
       subagents,
       finalSubagent: null,
+      taskList: true,
       selfLearning: true,
     },
   };

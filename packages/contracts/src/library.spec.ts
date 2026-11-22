@@ -70,6 +70,21 @@ const deepAgentContent = {
   finalSubagent: null,
 };
 
+// deep-agents design-task-list.md KD-2, AC-16.1: a record that names no task-list flag keeps a list for
+// an agent and a deep agent, never for a subagent — a wrong default would hand every subagent the task tools.
+describe('the task-list flag a record leaves out', () => {
+  it('is on for an agent and a deep agent and off for a subagent', () => {
+    const agentBody = CreateRecordBodySchema.parse(agent);
+    const deepAgent = DeepAgentContentSchema.parse(deepAgentContent);
+
+    expect({
+      agent: agentBody.content.taskList,
+      deepAgent: deepAgent.taskList,
+      subagent: deepAgent.subagents[0]?.taskList,
+    }).toEqual({ agent: true, deepAgent: true, subagent: false });
+  });
+});
+
 // UC-1 (AC-27.1, AC-01.1): the content schema is the tool's argument schema, so the chat learns the
 // path and the rule of a broken deep agent from the refusal before any card.
 describe('deep agent content is refused with the path and the rule', () => {

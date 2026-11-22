@@ -180,6 +180,7 @@ const SCOUT: Subagent = {
   model: TEST_MODEL_DEFAULT,
   maxTurns: 20,
   maxRuns: 3,
+  taskList: false,
 };
 
 /** The envelope of the knowledge block in a step's system text (`knowledge-text.ts`). */

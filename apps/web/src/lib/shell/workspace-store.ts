@@ -1,6 +1,6 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-/** The panel's tabs once a deep agent ran from the conversation (deep-agents UXRD DA-12, MC-9). */
+/** The panel's tabs; «tasks» shows the conversation's own task list and appears with its first task (deep-agents UXRD DA-12, MC-9). */
 export type SchemaTab = 'schema' | 'tasks';
 
 export type WorkspaceState = {

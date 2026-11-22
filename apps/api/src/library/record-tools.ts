@@ -141,10 +141,11 @@ function bodyOf(args: {
 const CONTENT_FORMS = [
   'content of an agent: { prompt, servers (MCP server names), model (a model id or null for the default chat',
   'model), maxTurns, agents (ids of agent records it may start), tools (any of start_agent, message_agent,',
-  'list_agents, stop_agent) }.',
+  'list_agents, stop_agent), taskList (it keeps a task list; true unless given) }.',
   `content of a deep agent: { prompt, servers, model, maxTurns, subagents: 1 to ${DEEP_AGENT_SUBAGENTS_MAX} of { name,`,
-  `description (when to call it), prompt, servers, model, maxTurns, maxRuns (1 to ${SUBAGENT_MAX_RUNS_MAX}) },`,
-  'finalSubagent (the name of the subagent whose report is the answer, or null) }.',
+  `description (when to call it), prompt, servers, model, maxTurns, maxRuns (1 to ${SUBAGENT_MAX_RUNS_MAX}), taskList`,
+  '(false unless given) }, finalSubagent (the name of the subagent whose report is the answer, or null), taskList',
+  '(true unless given) }.',
   'Give the deep agent and each subagent only the servers it needs, from the servers list_records names.',
 ].join('\n');
 

@@ -31,6 +31,7 @@ function subagent(name: string, maxRuns: number) {
     model: MODEL,
     maxTurns: 5,
     maxRuns,
+    taskList: false,
   };
 }
 
@@ -45,6 +46,7 @@ const deepAgentSnapshot: DeepAgentSnapshot = {
     maxTurns: 20,
     subagents: [subagent('gather', 2), subagent('check', 1), subagent('answer', 1)],
     finalSubagent: 'answer',
+    taskList: true,
     selfLearning: false,
   },
 };

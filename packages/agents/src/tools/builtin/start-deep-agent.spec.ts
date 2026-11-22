@@ -40,9 +40,11 @@ const snapshot: DeepAgentSnapshot = {
         model: MODEL,
         maxTurns: 5,
         maxRuns: 1,
+        taskList: false,
       },
     ],
     finalSubagent: 'answer',
+    taskList: true,
     selfLearning: false,
   },
 };

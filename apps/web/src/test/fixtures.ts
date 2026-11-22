@@ -80,6 +80,7 @@ import {
   type RoleSummary,
   type RunOrigin,
   type RunTaskView,
+  RunTaskViewSchema,
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
@@ -690,12 +691,19 @@ export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
   });
 }
 
-/** GET /agents/:id/run of the deep agent `deep` «Исследование»: one subagent «Аналитик», nothing called yet. */
-/** One item of a deep agent's task list (`GET /api/agents/:agentId/tasks`). */
-export function runTask(overrides: Partial<RunTaskView> & Pick<RunTaskView, 'number' | 'text'>): RunTaskView {
-  return { status: 'waiting', createdAt: fixtureTime(10), updatedAt: fixtureTime(10), ...overrides };
+/** One task of a session's list (`GET /api/agents/:agentId/tasks`): pending, unowned and unblocked unless overridden. */
+export function runTask(overrides: Partial<RunTaskView> & Pick<RunTaskView, 'id' | 'subject'>): RunTaskView {
+  return RunTaskViewSchema.parse({
+    description: `Описание задачи ${overrides.id}`,
+    activeForm: null,
+    status: 'pending',
+    owner: null,
+    blockedBy: [],
+    ...overrides,
+  });
 }
 
+/** GET /agents/:id/run of the deep agent `deep` «Исследование»: one subagent «Аналитик», nothing called yet. */
 export function deepAgentRunView(overrides: Partial<DeepAgentRunView> = {}): DeepAgentRunView {
   return DeepAgentRunViewSchema.parse({
     origin: deepAgentOrigin(),

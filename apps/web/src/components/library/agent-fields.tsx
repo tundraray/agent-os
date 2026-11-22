@@ -132,7 +132,16 @@ export function blankAgent({ defaultModel, defaultMaxTurns }: RecordDefaults): A
     name: "",
     description: "",
     kind: "agent",
-    content: { prompt: "", servers: [], model: defaultModel, maxTurns: defaultMaxTurns, agents: [], tools: [] },
+    content: {
+      prompt: "",
+      servers: [],
+      model: defaultModel,
+      maxTurns: defaultMaxTurns,
+      agents: [],
+      tools: [],
+      // An agent keeps a task list by default (deep-agents design-task-list.md, KD-2).
+      taskList: true,
+    },
   };
 }
 

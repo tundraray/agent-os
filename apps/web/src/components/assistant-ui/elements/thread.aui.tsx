@@ -23,7 +23,7 @@ import {
 } from "@/components/assistant-ui/elements/tool-group.aui";
 import { AgentReport } from "@/components/agents/agent-report";
 import { DecisionCard } from "@/components/agents/decision-card";
-import { EventLine, PlanNoticeLine } from "@/components/agents/event-line";
+import { EventLine, AnswerRefusedLine } from "@/components/agents/event-line";
 import { InterruptButton } from "@/components/agents/interrupt-button";
 import { QueueTray } from "@/components/agents/queue-tray";
 import { RunCard } from "@/components/agents/run-card";
@@ -40,7 +40,7 @@ import {
   type DecisionPartData,
   type EventPartData,
   type OptimisticEntry,
-  type PlanNoticePartData,
+  type AnswerRefusedPartData,
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
@@ -457,8 +457,8 @@ const EventPart: DataMessagePartComponent<EventPartData> = ({ data }) => (
   <EventLine data={data} />
 );
 
-const PlanNoticePart: DataMessagePartComponent<PlanNoticePartData> = ({ data }) => (
-  <PlanNoticeLine data={data} />
+const AnswerRefusedPart: DataMessagePartComponent<AnswerRefusedPartData> = ({ data }) => (
+  <AnswerRefusedLine data={data} />
 );
 
 /** The feed's `data-*` parts by name (spike S-1, e): each renders its own component. */
@@ -469,7 +469,7 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.decision]: DecisionPart,
       [FEED_PART.report]: ReportPart,
       [FEED_PART.event]: EventPart,
-      [FEED_PART.planNotice]: PlanNoticePart,
+      [FEED_PART.answerRefused]: AnswerRefusedPart,
     },
   },
 };

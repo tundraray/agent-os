@@ -140,7 +140,7 @@ export const FEED_PART = {
   decision: "decision",
   report: "report",
   event: "event",
-  planNotice: "plan-notice",
+  answerRefused: "answer-refused",
 } as const;
 
 /** The deep agent card also shows the question of the brief that started it (agent-run-card.md, part 4). */
@@ -183,11 +183,11 @@ export type EventPartData = Extract<HistoryEntry, { kind: "event" }>["content"] 
 };
 
 /**
- * A deep agent's refused answer (uxrd.md MC-15), from the `notice` entry: the numbers of the plan items left open,
+ * An agent's refused answer (uxrd.md MC-15), from the `notice` entry: the numbers of the tasks left open,
  * or the final subagent whose completed report is lacking.
  */
-export type PlanNoticePartData = { createdAt: string } & (
-  | { openPlanItems: readonly number[] }
+export type AnswerRefusedPartData = { createdAt: string } & (
+  | { openTasks: readonly number[] }
   | { missingReport: string }
 );
 
@@ -314,9 +314,9 @@ function dataMessage(id: string, createdAt: string, name: string, data: unknown)
 }
 
 /** The feed line of a deep agent's refused answer; null for a notice meant for the model only. */
-function planNoticeOf(content: NoticeContent, createdAt: string): PlanNoticePartData | null {
-  const { openPlanItems, missingReport } = content;
-  if (openPlanItems !== undefined && openPlanItems.length > 0) return { openPlanItems, createdAt };
+function answerRefusedOf(content: NoticeContent, createdAt: string): AnswerRefusedPartData | null {
+  const { openTasks, missingReport } = content;
+  if (openTasks !== undefined && openTasks.length > 0) return { openTasks, createdAt };
   if (missingReport !== undefined) return { missingReport, createdAt };
   return null;
 }
@@ -391,10 +391,10 @@ function entryMessage(
       return dataMessage(id, entry.createdAt, FEED_PART.event, data);
     }
     case "notice": {
-      // MC-15: a refusal over open plan items or a lacking final report is a feed line built from the entry's fields;
+      // MC-15: a refusal over open tasks or a lacking final report is a feed line built from the entry's fields;
       // other notices are for the model only.
-      const data = planNoticeOf(entry.content, entry.createdAt);
-      return data === null ? null : dataMessage(id, entry.createdAt, FEED_PART.planNotice, data);
+      const data = answerRefusedOf(entry.content, entry.createdAt);
+      return data === null ? null : dataMessage(id, entry.createdAt, FEED_PART.answerRefused, data);
     }
     case "tool_result":
     case "compaction":

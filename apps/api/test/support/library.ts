@@ -61,6 +61,7 @@ export function agentBody(
       maxTurns: 20,
       agents: [],
       tools: [],
+      taskList: false,
       ...content,
     },
   };
@@ -88,9 +89,11 @@ export function deepAgentBody(
       model,
       maxTurns: 20,
       maxRuns: 3,
+      taskList: false,
       ...fields,
     })),
     finalSubagent: null,
+    taskList: true,
     selfLearning: false,
   };
   return {

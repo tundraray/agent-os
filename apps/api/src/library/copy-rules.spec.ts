@@ -18,6 +18,7 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
       maxTurns: 20,
       agents: [],
       tools: [],
+      taskList: true,
       ...fields,
     },
   };
@@ -31,6 +32,7 @@ const subagent = {
   model: PLATFORM_MODEL,
   maxTurns: 10,
   maxRuns: 1,
+  taskList: false,
 };
 
 const deepAgent: RecordBody = {
@@ -42,6 +44,7 @@ const deepAgent: RecordBody = {
     maxTurns: 20,
     subagents: [subagent],
     finalSubagent: null,
+    taskList: true,
     selfLearning: false,
   },
 };

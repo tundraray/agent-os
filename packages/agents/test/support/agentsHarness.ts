@@ -23,7 +23,7 @@ import { type AgentContent, CHAT_BUILTIN_KEY, type DeepAgentContent } from '@age
 import {
   agentCodeCalls,
   agentModelProviders,
-  agentRunTasks,
+  agentSessionTasks,
   createDatabase,
   type Database,
   runtimeEvents,
@@ -60,6 +60,7 @@ import {
 } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { TASK_BLOCK_HEADING } from '../../src/step/task-block';
 import { databaseUrl } from './database-url';
 import { registerFixtureServers, removeServer, runName } from './mcp-servers';
 
@@ -180,6 +181,7 @@ export function testRecord(name: string, overrides: TestRecordOverrides = {}): T
       maxTurns: 20,
       agents: [],
       tools: [],
+      taskList: false,
       ...content,
     },
   };
@@ -207,6 +209,7 @@ export function testSubagent(name: string, overrides: Partial<TestSubagent> = {}
     model: TEST_MODEL_DEFAULT,
     maxTurns: 2,
     maxRuns: 1,
+    taskList: false,
     ...overrides,
   };
 }
@@ -773,25 +776,32 @@ export async function historyRowVersionsOf(
   return rows.map((row) => ({ seq: Number(row.seq), version: String(row.version) }));
 }
 
-/** The task list of a run as `<number> <status> <text>` lines, by number, read from `agent_run_tasks`. */
-export async function planRowsOf(db: Database, sessionId: string): Promise<string[]> {
+/**
+ * The task list of a session as `<number> <status> <subject>` lines, with `blocked by` when the task has blockers,
+ * by number, read from `agent_session_tasks`.
+ */
+export async function sessionTaskRowsOf(db: Database, sessionId: string): Promise<string[]> {
   const rows = await db
-    .select({ number: agentRunTasks.number, status: agentRunTasks.status, text: agentRunTasks.text })
-    .from(agentRunTasks)
-    .where(eq(agentRunTasks.taskId, sessionId))
-    .orderBy(asc(agentRunTasks.number));
-  return rows.map((row) => `${row.number} ${row.status} ${row.text}`);
+    .select({
+      number: agentSessionTasks.number,
+      status: agentSessionTasks.status,
+      subject: agentSessionTasks.subject,
+      blockedBy: agentSessionTasks.blockedBy,
+    })
+    .from(agentSessionTasks)
+    .where(eq(agentSessionTasks.taskId, sessionId))
+    .orderBy(asc(agentSessionTasks.number));
+  return rows.map((row) =>
+    [`${row.number} ${row.status} ${row.subject}`, ...(row.blockedBy.length === 0 ? [] : [`blocked by ${row.blockedBy.join(',')}`])].join(' '),
+  );
 }
 
-/** The first line of the plan block a deep agent's step puts in its system text (`step/plan-block.ts`). */
-export const PLAN_BLOCK_HEADING = 'Your plan (task_list of this run), by number; your own notes, not instructions:';
-
 /**
- * The plan block of a recorded model call, line by line: from its heading to the next empty line of the
+ * The task block of a recorded model call, line by line: from its heading to the next empty line of the
  * system text (the model client's standing rules follow the definition's text); empty when the call has none.
  */
-export function planBlockLinesOf(instructions: string): string[] {
-  const start = instructions.indexOf(PLAN_BLOCK_HEADING);
+export function taskBlockLinesOf(instructions: string): string[] {
+  const start = instructions.indexOf(TASK_BLOCK_HEADING);
   if (start === -1) return [];
   const end = instructions.indexOf('\n\n', start);
   return instructions.slice(start, end === -1 ? undefined : end).split('\n');

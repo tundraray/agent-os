@@ -222,9 +222,11 @@ function accessCheckDeepAgent(): Extract<CreateRecordBody, { kind: 'deep_agent' 
           model: MODEL_A,
           maxTurns: 4,
           maxRuns: 1,
+          taskList: false,
         },
       ],
       finalSubagent: ACCESS_SUBAGENT,
+      taskList: true,
       selfLearning: false,
     },
   };

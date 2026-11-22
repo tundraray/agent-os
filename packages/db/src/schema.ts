@@ -32,7 +32,7 @@ import {
   RECORD_MAX_TURNS_MAX,
   RECORD_MAX_TURNS_MIN,
   RecordKindSchema,
-  RunTaskStatusSchema,
+  SessionTaskStatusSchema,
   SINGLE_CALL_RECORD_KINDS,
   TaskStatusSchema,
   TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
@@ -383,6 +383,11 @@ export const agentSessions = app.table(
     closed: boolean('closed').notNull().default(false),
     /** Input tokens of the last model call; drives compaction. */
     lastInputTokens: integer('last_input_tokens'),
+    /**
+     * The last number given to a task of the session's list (deep-agents design-task-list.md, KD-1); never
+     * goes back, so a deleted task's number is not given again.
+     */
+    lastTaskNumber: integer('last_task_number').notNull().default(0),
     createdAt: createdAt(),
     /** Set only on the root session of a deleted conversation, which answers as a missing one. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -534,19 +539,24 @@ export const agentCodeCalls = app.table(
 );
 
 /**
- * The task list of a deep agent's run (deep-agents/design-agent-types.md, KD-5, Data Model): one row per
- * item, numbered from 1 within the run and never reused. Written in the step transaction with the
- * `tool_result` that changed it; deleting the session deletes its items, as `agent_messages`.
+ * The task list of a session (deep-agents/design-task-list.md, KD-1, Data Model): one row per task, keyed by
+ * the session and the task's number, which `agent_sessions.last_task_number` gives and never gives again.
+ * `blocked_by` holds numbers of the same list. Written in the step transaction with the `tool_result` that
+ * changed it; deleting the session deletes its tasks.
  */
-export const agentRunTasks = app.table(
-  'agent_run_tasks',
+export const agentSessionTasks = app.table(
+  'agent_session_tasks',
   {
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
     number: integer('number').notNull(),
-    text: text('text').notNull(),
-    status: text('status').notNull().default(RunTaskStatusSchema.enum.waiting),
+    subject: text('subject').notNull(),
+    description: text('description').notNull(),
+    activeForm: text('active_form'),
+    status: text('status').notNull().default(SessionTaskStatusSchema.enum.pending),
+    owner: text('owner'),
+    blockedBy: integer('blocked_by').array().notNull().default(sql`'{}'::integer[]`),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -554,7 +564,7 @@ export const agentRunTasks = app.table(
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.number] }),
-    check('agent_run_tasks_status_check', isOneOf(t.status, RunTaskStatusSchema.options)),
+    check('agent_session_tasks_status_check', isOneOf(t.status, SessionTaskStatusSchema.options)),
   ],
 );
 

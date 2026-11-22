@@ -26,7 +26,11 @@ const noSubscription = (): (() => void) => () => {};
  * stored in the state (or a primitive): a new object on every call would re-render without end.
  */
 export function useFeedSelector<T>(selector: (state: FeedState) => T, fallback: T): T {
-  const feed = useFeed();
+  return useFeedStoreSelector(useFeed(), selector, fallback);
+}
+
+/** `useFeedSelector` for a component that holds the store itself rather than sitting under `FeedProvider`. */
+export function useFeedStoreSelector<T>(feed: FeedStore | null, selector: (state: FeedState) => T, fallback: T): T {
   const read = (): T => (feed === null ? fallback : selector(feed.getState()));
   return useSyncExternalStore(feed === null ? noSubscription : feed.subscribe, read, read);
 }

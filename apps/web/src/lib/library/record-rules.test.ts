@@ -40,6 +40,7 @@ const agentContent: AgentContent = {
   maxTurns: 40,
   agents: [],
   tools: [],
+  taskList: true,
 };
 
 const agent = (content: Partial<AgentContent> = {}, name = 'Сбор логов'): AgentDefinition => ({

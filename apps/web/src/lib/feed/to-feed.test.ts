@@ -21,7 +21,7 @@ import {
   trayEntries,
   type DraftPart,
   type OptimisticEntry,
-  type PlanNoticePartData,
+  type AnswerRefusedPartData,
 } from './to-feed';
 
 /** `id` and the non-text parts of each message: `tool:<name>#<callId>` or the `data-*` part type. */
@@ -31,9 +31,9 @@ function summary(messages: readonly ThreadMessageLike[]): string[] {
     const marks = parts.flatMap((part) => {
       if (part.type === 'text') return [];
       if (part.type === 'tool-call') return [`tool:${part.toolName}#${part.toolCallId}`];
-      if (part.type === 'data-plan-notice') {
-        const data = part.data as PlanNoticePartData;
-        return [`${part.type}:${'missingReport' in data ? data.missingReport : data.openPlanItems.join(',')}`];
+      if (part.type === 'data-answer-refused') {
+        const data = part.data as AnswerRefusedPartData;
+        return [`${part.type}:${'missingReport' in data ? data.missingReport : data.openTasks.join(',')}`];
       }
       return [part.type];
     });
@@ -81,12 +81,12 @@ const notice: HistoryEntry = {
   createdAt: fixtureTime(2),
   content: { text: 'Заметка для модели' },
 };
-/** A refusal over open plan items: the model's text names other numbers, so the line must come from `openPlanItems`. */
-const planNotice: HistoryEntry = {
+/** A refusal over open tasks: the model's text names other numbers, so the line must come from `openTasks`. */
+const answerRefused: HistoryEntry = {
   seq: 5,
   kind: 'notice',
   createdAt: fixtureTime(5),
-  content: { text: 'You cannot finish yet: 9. [running] x', openPlanItems: [2, 3] },
+  content: { text: 'You cannot finish yet: 9. [in_progress] x', openTasks: [2, 3] },
 };
 /** A refusal for want of the final subagent's completed report: the line names it from `missingReport`. */
 const reportNotice: HistoryEntry = {
@@ -220,11 +220,11 @@ describe('toFeed', () => {
     },
     {
       // uxrd.md MC-15, deep-agents KD-5: the employee sees the refusal, built from the numbers in the entry.
-      name: 'a notice over open plan items is a feed line with their numbers',
-      view: conversationView({ entries: [task, notice, answer(4), planNotice] }),
+      name: 'a notice over open tasks is a feed line with their numbers',
+      view: conversationView({ entries: [task, notice, answer(4), answerRefused] }),
       draft: null,
       optimistic: [],
-      feed: ['seq-1', 'seq-4', 'seq-5 data-plan-notice:2,3'],
+      feed: ['seq-1', 'seq-4', 'seq-5 data-answer-refused:2,3'],
       tray: [],
     },
     {
@@ -233,7 +233,7 @@ describe('toFeed', () => {
       view: conversationView({ entries: [task, answer(4), reportNotice] }),
       draft: null,
       optimistic: [],
-      feed: ['seq-1', 'seq-4', 'seq-6 data-plan-notice:answer'],
+      feed: ['seq-1', 'seq-4', 'seq-6 data-answer-refused:answer'],
       tray: [],
     },
     {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { AgentStatus as AgentStatusValue, RunTaskStatus } from "@agent-os/contracts";
+import type { AgentStatus as AgentStatusValue, SessionTaskStatus } from "@agent-os/contracts";
 import { useFormatter, useTranslations } from "next-intl";
 import {
   CircleCheckIcon,
@@ -36,12 +36,10 @@ const STATUS_LOOK: Record<AgentStatusValue, StatusLook> = {
 };
 
 /** Task statuses take the agent statuses' icons and colours (agent-status.md, «Статусы задачи»); MC-11 labels — `agents.taskStatus.{status}`. */
-const TASK_STATUS_LOOK: Record<RunTaskStatus, StatusLook> = {
-  waiting: { Icon: CircleIcon, tone: "text-muted-foreground" },
-  running: STATUS_LOOK.working,
-  done: STATUS_LOOK.completed,
-  failed: STATUS_LOOK.failed,
-  cancelled: STATUS_LOOK.stopped,
+const TASK_STATUS_LOOK: Record<SessionTaskStatus, StatusLook> = {
+  pending: { Icon: CircleIcon, tone: "text-muted-foreground" },
+  in_progress: STATUS_LOOK.working,
+  completed: STATUS_LOOK.completed,
 };
 
 /** The icon and colour role of a status, for blocks that show the same state (a running or waiting tool call). */
@@ -149,19 +147,12 @@ export function AgentStatus(props: AgentStatusProps) {
   );
 }
 
-/** A task's or plan item's status (agent-status.md, «Статусы задачи»): the «Метка» and «Иконка» variants of an agent's. */
-export function TaskStatus({ status, variant, className }: { status: RunTaskStatus; variant: "label" | "icon"; className?: string }) {
-  const t = useTranslations("agents");
-  return (
-    <StatusView
-      variant={variant}
-      look={TASK_STATUS_LOOK[status]}
-      label={t(`taskStatus.${status}`)}
-      status={status}
-      spinning={status === "running"}
-      className={className}
-    />
-  );
+/**
+ * A task's status icon (agent-status.md, «Статусы задачи»): decorative, because the task row says its status in
+ * words (run-task-list.md, Accessibility); the MC-11 words are `agents.taskStatus.{status}`.
+ */
+export function TaskStatusGlyph({ status }: { status: SessionTaskStatus }) {
+  return <ToneGlyph look={TASK_STATUS_LOOK[status]} status={status} spinning={status === "in_progress"} />;
 }
 
 const toneTransition = "transition-colors duration-(--duration-fast) motion-reduce:transition-none";
