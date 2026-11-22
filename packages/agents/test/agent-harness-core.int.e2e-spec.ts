@@ -1,4 +1,4 @@
-// agent-harness / core - agents-package integration skeletons (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
+// agent-harness / core - agents-package integration skeletons (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
 // Design Doc: docs/features/agent-harness/design-core.md (v1.0, Draft), Test Strategy UC-2, UC-4, UC-6, UC-8, UC-9, UC-10 (+ the journal half of UC-2) (KD-1, KD-3, KD-4, KD-5, KD-6, KD-7)
 // PRD: docs/features/agent-harness/prd.md FR-01..FR-07 (AC-01.1, AC-01.2, AC-02.1, AC-03.1, AC-04.1, AC-04.2, AC-05.1, AC-06.1, AC-06.2, AC-07.1, AC-07.2) and NFR-01
 // Generated: 2026-11-21 | Part: core | Test type: Integration (no E2E file: see "Budget")

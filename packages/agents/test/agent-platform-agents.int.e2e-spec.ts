@@ -1,6 +1,6 @@
 // agent-platform / agents Integration Test Skeletons - Design Doc: docs/features/agent-platform/design-agents.md (Test Strategy UC-1..UC-5, UC-E1..UC-E11; Flows 1-7; Invariants 1-6; DC-1..DC-6)
 // PRD: docs/features/agent-platform/prd.md (FR-03..FR-13, FR-25, FR-27 acceptance criteria; AC-01.2 and AC-02.1 in the agent's share; NFR-01, NFR-04, NFR-06, NFR-07). Upstream: docs/features/agent-platform/design-runtime.md (Contract Definitions, Test Strategy)
-// Generated: 2026-11-14 | Part: agents | Test type: Integration (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model), CI job `e2e-agents`
+// Generated: 2026-11-14 | Part: agents | Test type: Integration (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model), CI job `e2e-agents`
 // Implementation timing: created alongside the slice each test names (INT-1 the agent loop and its history; INT-2 interrupt and stop; INT-3 the tool gate - refusals, confirmation, lost step; INT-4 the owner check of the agents operations).
 //
 // File name follows the project convention used by the runtime part (`*.e2e-spec.ts` under packages/<pkg>/test, picked up by `vitest.config.e2e.ts`, run with `pnpm --filter @agent-os/agents test:e2e`, never in the default `vitest run`).
@@ -14,7 +14,7 @@
 // operation (runtime INT-4), the cost rule, the month window and the ledger surviving `deleteTree` (runtime INT-5), the decision surviving a restart and resolving once (runtime E2E-1 row "decision").
 //
 // Environment (Design Doc "Test Strategy"):
-// - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations (runtime and agents) applied once by the global setup. Real `createRuntime` and real `createAgents` over a real pool, `RUNTIME_WORKERS` on. No mock of Postgres, of the runtime
+// - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations (runtime and agents) applied once by the global setup. Real `RuntimeModule` and real `createAgents` over a real pool, `RUNTIME_WORKERS` on. No mock of Postgres, of the runtime
 //   or of any agents component.
 // - The model is the only double: a scripted `ModelClient` double at the wrapper boundary (Design Doc: "модель подменяется на границе `ModelClient` сценарием ответов"). A scenario is a list of answers per agent (keyed by the agent's description), each answer text
 //   and/or tool calls plus `usage`; the double records the input of every call (the messages as the provider would get them), which is the assertion surface for "the next model call sees X". The double sits INSIDE the wrapper, below its ledger write
@@ -22,7 +22,7 @@
 //   step is held with its model call in flight.
 // - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its `logs` (read-only) and `backoffice` (with the new mutating `create_incident_note`) registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
 //   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. The harness `access` option per test maps the test's owners to servers (the `AccessGate` double of `@agent-os/agents/testing`).
-// - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `createRuntime` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
+// - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `RuntimeModule` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
 //   else from the database; "lease expired" is the harness `expireLease`, a held handler of the first instance is the zombie.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test and the test's own library double (`createLibraryDouble`: a root runs its `chat` record, a child the record its parent names by id); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on latches the double and the fixture wait on, and on rows. "Status within 5 s" (NFR-01) is asserted as: the status read right after the command returns, while the call is still held; the 5 s figure
@@ -283,7 +283,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Not re-checked here: the order, single delivery and wake-up of the inbox (runtime INT-2), the rules of the turn counter, the end-of-turn decision and the history assembly (unit), the cost of a call (runtime INT-5).
   // Behavior: scripted model answers drive tools -> steps commit history, tasks, reports and ledger rows -> the tree's histories read as one coherent conversation, in order, with every report going to its own parent
   // @category: core-functionality
-  // @dependency: createRuntime, createAgents (AgentStepHandler, start_agent / message_agent built-ins, history repositories, ModelClient wrapper with ledger write), scripted model double, MCP fixture (`logs` read, delayed), Postgres
+  // @dependency: RuntimeModule, createAgents (AgentStepHandler, start_agent / message_agent built-ins, history repositories, ModelClient wrapper with ledger write), scripted model double, MCP fixture (`logs` read, delayed), Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; costs and model ids are hardcoded literals):
@@ -994,7 +994,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Not re-checked here: the fence that refuses the cut-off step's late result, the cancelled decision row and the closure of the task tree (runtime INT-3), the status table (unit), `NOT_ACTIVE` for a finished agent (a branch of the operation, trivial).
   // Behavior: command while a call is held -> status changes before the call returns -> the open calls are closed in the history -> the agent waits for a message, or (stop) never calls the model again
   // @category: core-functionality
-  // @dependency: createRuntime x1-2, createAgents (interrupt, stop, history, get; step that consumes the interrupt message), scripted model double with call counter, MCP fixture (delayed read, delayed mutating call), Postgres
+  // @dependency: RuntimeModule x1-2, createAgents (interrupt, stop, history, get; step that consumes the interrupt message), scripted model double with call counter, MCP fixture (delayed read, delayed mutating call), Postgres
   // @complexity: high
   //
   // Verification items (table-driven by command):
@@ -1297,7 +1297,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   //   MCP result to outcome mapping (unit), HTTP transport (out of scope), the confirmation card (web part).
   // Behavior: model asks for a tool -> gate (definition, access table, confirmation) -> the fixture journal shows exactly what reached the server -> the history shows one outcome per call
   // @category: core-functionality
-  // @dependency: createRuntime x1-2, createAgents (tool gate, McpClients, ToolAccess, guard intent, confirmations, resolveConfirmation), scripted model double, MCP fixture processes with `FIXTURE_CALL_LOG` and fault schedule, Postgres
+  // @dependency: RuntimeModule x1-2, createAgents (tool gate, McpClients, ToolAccess, guard intent, confirmations, resolveConfirmation), scripted model double, MCP fixture processes with `FIXTURE_CALL_LOG` and fault schedule, Postgres
   // @complexity: high
   //
   // Verification items (table-driven by row; every row reads the fixture journal and the tool calls in `agent_messages` of its agent):
@@ -1760,7 +1760,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Not re-checked here: the owner check of the `runtime_*` operations (runtime INT-4), authentication and the HTTP edge (the `chat` part's API), the MCP access table (INT-3 row A).
   // Behavior: owner B calls each operation on owner A's agent, tree and confirmation -> the answer equals the answer for an id that exists for nobody -> nothing of A's changed
   // @category: core-functionality
-  // @dependency: createRuntime, createAgents (all operations), scripted model double, MCP fixture (one mutating call awaiting confirmation), Postgres
+  // @dependency: RuntimeModule, createAgents (all operations), scripted model double, MCP fixture (one mutating call awaiting confirmation), Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by operation; A has a root, a child, history entries with tool calls, and one open confirmation):

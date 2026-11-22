@@ -1,20 +1,10 @@
 import { Global, Module } from '@nestjs/common';
-import type { DatabaseConnection } from '@agent-os/db';
-import { RuntimeModule } from '../runtime/runtime.module';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { AuditLog } from './audit-log.repository';
+import { AuditLog } from './audit-log';
 
-/** Gives every module the application's `AuditLog` over the runtime's pool (design-identity.md KD-7). */
+/** Gives every module the application's `AuditLog` over the pool of `DbModule` (design-identity.md KD-7). */
 @Global()
 @Module({
-  imports: [RuntimeModule],
-  providers: [
-    {
-      provide: AuditLog,
-      inject: [RUNTIME_DATABASE],
-      useFactory: (database: DatabaseConnection) => new AuditLog(database.db),
-    },
-  ],
+  providers: [AuditLog],
   exports: [AuditLog],
 })
 export class AuditModule {}

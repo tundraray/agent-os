@@ -1,5 +1,5 @@
 import { type HttpException, Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   ADMIN_USER_PAGE_SIZE,
   IdentityValidationReason,
@@ -14,40 +14,37 @@ import {
   type PasswordChangeBody,
   type UserStatus,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  IdentityRolesRepository,
+  IdentitySessionsRepository,
+  type IdentityUserRow,
+  IdentityUsersRepository,
+  type MemberRoleRow,
+  type UserListPosition,
+} from '@agent-os/db';
 import { z } from 'zod';
-import { AuditLog, PASSWORD_SET } from '../audit/audit-log.repository';
+import { AuditLog, PASSWORD_SET } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { identityError, validationFailed } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword, verifyPassword } from './password';
-import { deleteSessionsOf, endSessionsByBlock } from './sessions.repository';
-import {
-  findUserById,
-  insertLocalUser,
-  pageUsers,
-  rolesOfUsers,
-  setLanguage,
-  setPasswordHash,
-  setPersonalAdmin,
-  setUserStatus,
-  takenField,
-  type MemberRole,
-  type UserListPosition,
-  type UserRow,
-} from './users.repository';
+import { ENDED_BY_BLOCK } from './session.store';
+import { takenField } from './taken-field';
 
 /** The `{ id, name }` of each role, as the admin views and the audit carry it. */
-export function roleRefs(roles: MemberRole[]): { id: string; name: string }[] {
+export function roleRefs(
+  roles: MemberRoleRow[],
+): { id: string; name: string }[] {
   return roles.map(({ id, name }) => ({ id, name }));
 }
 
 /** The admin view of an employee; roles are passed by the caller. */
 function toAdminUserSummary(
-  user: UserRow,
-  roles: MemberRole[],
+  user: IdentityUserRow,
+  roles: MemberRoleRow[],
 ): AdminUserSummary {
   return {
     id: user.id,
@@ -89,9 +86,12 @@ export class UsersService {
   private readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly users: IdentityUsersRepository,
+    private readonly roles: IdentityRolesRepository,
+    private readonly sessions: IdentitySessionsRepository,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
@@ -100,13 +100,13 @@ export class UsersService {
   async list(query: AdminUserListQuery): Promise<AdminUserPage> {
     const after =
       query.cursor === undefined ? undefined : decodeUserCursor(query.cursor);
-    const rows = await pageUsers(this.db, {
+    const rows = await this.users.page(this.db, {
       search: query.query,
       after,
       limit: ADMIN_USER_PAGE_SIZE + 1,
     });
     const page = rows.slice(0, ADMIN_USER_PAGE_SIZE);
-    const roles = await rolesOfUsers(
+    const roles = await this.roles.ofUsers(
       this.db,
       page.map((user) => user.id),
     );
@@ -128,7 +128,7 @@ export class UsersService {
   /** The employee with where his admin right comes from. 404 USER_NOT_FOUND. */
   async detail(userId: string): Promise<AdminUserDetail> {
     const user = await this.findOr404(userId);
-    const roles = await rolesOfUsers(this.db, [user.id]);
+    const roles = await this.roles.ofUsers(this.db, [user.id]);
     return {
       ...toAdminUserSummary(user, roles),
       adminRight: {
@@ -151,7 +151,7 @@ export class UsersService {
     const passwordHash = await hashPassword(body.password);
     const user = await this.db
       .transaction(async (tx) => {
-        const created = await insertLocalUser(tx, {
+        const created = await this.users.insertLocal(tx, {
           login: normalizeIdentifier(body.login),
           email: normalizeIdentifier(body.email),
           name: body.name,
@@ -204,8 +204,8 @@ export class UsersService {
     checkNewPassword(password);
     const passwordHash = await hashPassword(password);
     await this.db.transaction(async (tx) => {
-      await setPasswordHash(tx, user.id, passwordHash);
-      await deleteSessionsOf(tx, user.id);
+      await this.users.setPasswordHash(tx, user.id, passwordHash);
+      await this.sessions.deleteOfUser(tx, user.id);
       const target = {
         actor: actorId,
         objectType: 'user',
@@ -237,7 +237,7 @@ export class UsersService {
     const startedAt = Date.now();
     const user = await this.findOr404(userId);
     await this.db.transaction(async (tx) => {
-      await setPersonalAdmin(tx, user.id, enabled);
+      await this.users.setPersonalAdmin(tx, user.id, enabled);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,
@@ -283,8 +283,9 @@ export class UsersService {
     const user = await this.findOr404(userId);
     const disabling = status === UserStatusSchema.enum.disabled;
     await this.db.transaction(async (tx) => {
-      await setUserStatus(tx, user.id, status);
-      if (disabling) await endSessionsByBlock(tx, user.id);
+      await this.users.setStatus(tx, user.id, status);
+      if (disabling)
+        await this.sessions.endLive(tx, user.id, ENDED_BY_BLOCK);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,
@@ -303,13 +304,13 @@ export class UsersService {
       outcome: 'ok',
       durationMs: Date.now() - startedAt,
     });
-    const roles = await rolesOfUsers(this.db, [user.id]);
+    const roles = await this.roles.ofUsers(this.db, [user.id]);
     return toAdminUserSummary({ ...user, status }, roles);
   }
 
   /** The employee's own roles by name, for the share window (AC-03.1); no members, no other roles. */
   async ownRoles(userId: string): Promise<MyRoleList> {
-    return roleRefs(await rolesOfUsers(this.db, [userId]));
+    return roleRefs(await this.roles.ofUsers(this.db, [userId]));
   }
 
   /**
@@ -321,7 +322,7 @@ export class UsersService {
     body: PasswordChangeBody,
   ): Promise<void> {
     const startedAt = Date.now();
-    const user = await findUserById(this.db, userId);
+    const user = await this.users.findById(this.db, userId);
     if (user?.passwordHash == null) {
       throw this.refuseOwnChange(
         userId,
@@ -337,7 +338,7 @@ export class UsersService {
     checkNewPassword(body.newPassword);
     const passwordHash = await hashPassword(body.newPassword);
     await this.db.transaction(async (tx) => {
-      await setPasswordHash(tx, userId, passwordHash);
+      await this.users.setPasswordHash(tx, userId, passwordHash);
       await this.auditLog.record(tx, {
         kind: 'password_changed',
         actor: userId,
@@ -355,7 +356,7 @@ export class UsersService {
 
   /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
   async setOwnLanguage(userId: string, language: Language): Promise<void> {
-    await setLanguage(this.db, userId, language);
+    await this.users.setLanguage(this.db, userId, language);
   }
 
   /** Logs a refused own change and gives its 400 answer; the password stays as it was (AC-33.4). */
@@ -372,9 +373,9 @@ export class UsersService {
   }
 
   /** The employee, or 404 USER_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
-  async findOr404(userId: string): Promise<UserRow> {
+  async findOr404(userId: string): Promise<IdentityUserRow> {
     const user = isUuid(userId)
-      ? await findUserById(this.db, userId)
+      ? await this.users.findById(this.db, userId)
       : undefined;
     if (user === undefined) throw identityError('USER_NOT_FOUND');
     return user;

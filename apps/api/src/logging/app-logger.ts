@@ -8,9 +8,6 @@ import {
   type Logger,
 } from '@agent-os/common';
 
-/** Nest token of the application logger (`Logger` from `@agent-os/common`). */
-export const APP_LOGGER = Symbol('APP_LOGGER');
-
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 /**

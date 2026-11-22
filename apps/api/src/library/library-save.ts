@@ -1,6 +1,11 @@
 import { type HttpException, Injectable } from '@nestjs/common';
 import type { RecordDetail } from '@agent-os/contracts';
-import type { Executor, Transaction } from '@agent-os/db';
+import {
+  type Executor,
+  LibraryRecordsRepository,
+  type LibraryViewer,
+  type Transaction,
+} from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import {
   LibraryRecords,
@@ -10,12 +15,6 @@ import {
   refersToRecords,
 } from './library-records';
 import { kindChangedError, libraryError } from './library.errors';
-import {
-  insertRecord,
-  recordNames,
-  updateRecordContent,
-  type Viewer,
-} from './library.repository';
 import type {
   LibraryRecord,
   SaveCheck,
@@ -58,7 +57,10 @@ function saveRefusalError(refusal: SaveRefusal): HttpException {
 /** The save of a record, shared by the employee's routes, the panel's and the main chat (Flow 1). */
 @Injectable()
 export class LibrarySave {
-  constructor(private readonly records: LibraryRecords) {}
+  constructor(
+    private readonly records: LibraryRecords,
+    private readonly repository: LibraryRecordsRepository,
+  ) {}
 
   /**
    * The one save path of POST and PUT (employee and panel) and of the chat's save (Flow 1): visibility →
@@ -138,8 +140,14 @@ export class LibrarySave {
     const { scope, author, body } = request;
     const exceptId = previous?.id;
     const [ownNames, systemNames, visibleAgentIds, models] = await Promise.all([
-      scope === 'employee' ? recordNames(executor, author.id, exceptId) : [],
-      recordNames(executor, null, scope === 'system' ? exceptId : undefined),
+      scope === 'employee'
+        ? this.repository.names(executor, author.id, exceptId)
+        : [],
+      this.repository.names(
+        executor,
+        null,
+        scope === 'system' ? exceptId : undefined,
+      ),
       this.records.visibleAgentIds(executor, author, refersToRecords(body)),
       request.models ??
         (scope === 'employee'
@@ -174,13 +182,14 @@ export class LibrarySave {
     request: SaveRequest,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const inserted = await insertRecord(tx, {
+    const inserted = await this.repository.insert(tx, {
       ...(request.newId === undefined ? {} : { id: request.newId }),
       ownerId: scope === 'employee' ? author.id : null,
       name: body.name,
       description: body.description,
       offerInChat: true,
-      body,
+      kind: body.kind,
+      content: body.content,
     });
     if (inserted.outcome === 'name_taken') throw new SaveRefused('name_taken');
     const record = present(
@@ -200,12 +209,12 @@ export class LibrarySave {
     previous: LibraryRecord,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const updated = await updateRecordContent(tx, {
+    const updated = await this.repository.updateContent(tx, {
       id: previous.id,
       version: request.target?.version ?? previous.version,
       name: body.name,
       description: body.description,
-      body,
+      content: body.content,
     });
     if (updated.outcome === 'name_taken') throw new SaveRefused('name_taken');
     const current = await this.readOne(tx, scope, author, previous.id);
@@ -220,7 +229,7 @@ export class LibrarySave {
 
   async savedDetail(
     result: SaveResult,
-    author: Viewer,
+    author: LibraryViewer,
     isAdmin: boolean,
     scope: ViewScope,
     facts: ServerFacts,
@@ -233,7 +242,7 @@ export class LibrarySave {
   private readOne(
     executor: Executor,
     scope: SaveScope,
-    viewer: Viewer,
+    viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord | undefined> {
     return scope === 'employee'

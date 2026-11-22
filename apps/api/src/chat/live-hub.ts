@@ -6,17 +6,14 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type { LiveEvent } from '@agent-os/contracts';
-import { RUNTIME_EVENTS_CHANNEL, type CancelTimer, type Clock } from '@agent-os/runtime';
+import { CLOCK, RUNTIME_EVENTS_CHANNEL, type CancelTimer, type Clock } from '@agent-os/runtime';
 import pg from 'pg';
 import { Observable, type Subscriber } from 'rxjs';
 import { z } from 'zod';
-import type { Agents } from '@agent-os/agents';
-import { AGENTS } from '../agents/agents.tokens';
+import { ViewOperations } from '@agent-os/agents';
 import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_CLOCK } from '../runtime/runtime.tokens';
 import { deltaTargets, noteTargets, type LiveStream, type Watch } from './live-filter';
 
 /** `application_name` of the hub's connection: tells it apart from the pool in `pg_stat_activity`. */
@@ -79,9 +76,9 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
 
   constructor(
     private readonly config: ConfigService,
-    @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(RUNTIME_CLOCK) private readonly clock: Clock,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(CLOCK) private readonly clock: Clock,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.live' });
   }
@@ -189,7 +186,7 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
   /** A runtime event of a tree: a `tree` note to every stream of the conversation's owner. */
   private async note(payload: string): Promise<void> {
     const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
-    const ownerId = await this.agents.sessions.rootOwner(rootId);
+    const ownerId = await this.views.rootOwner(rootId);
     if (ownerId === undefined) return;
     const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
     for (const stream of noteTargets(ownerId, this.streams)) stream.subscriber.next(event);

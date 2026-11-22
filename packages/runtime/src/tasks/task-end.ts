@@ -7,8 +7,8 @@ import {
   TaskStatusSchema,
   TrackerStatusSchema,
 } from '@agent-os/contracts';
-import type { Transaction } from '@agent-os/db';
-import type { EventLog } from '../events/event-log.repository';
+import type { RuntimeTrackersRepository, Transaction } from '@agent-os/db';
+import type { EventLog } from '../events/event-log';
 import type { Inbox } from '../messaging/inbox';
 import type {
   TaskChange,
@@ -16,8 +16,7 @@ import type {
   TaskFields,
   TaskRow,
 } from './guarded-transition';
-import type { TaskRepository } from './task.repository';
-import type { TrackerRepository } from './tracker.repository';
+import type { Tasks } from './tasks';
 
 const { queued, completed, failed, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
@@ -27,8 +26,8 @@ const EVENT_MESSAGE_MAX = 1_000;
 
 /** Services the end of a task writes through. */
 export interface TaskEndDeps {
-  tasks: TaskRepository;
-  trackers: TrackerRepository;
+  tasks: Tasks;
+  trackers: RuntimeTrackersRepository;
   events: EventLog;
   inbox: Inbox;
 }
@@ -60,7 +59,7 @@ const eventFailure = (failure: TaskFailure): TaskFailure => ({
 /** A guarded write of a task whose row the caller holds FOR UPDATE; it cannot be fenced then. */
 export async function writeLocked(
   tx: Transaction,
-  tasks: TaskRepository,
+  tasks: Tasks,
   task: TaskRow,
   change: TaskChange,
 ): Promise<TaskRow> {

@@ -1,7 +1,7 @@
 import { McpError, type McpRefusalCode } from '@agent-os/agents';
 import { apiError } from '../common/api-error';
 
-/** HTTP status of each refusal of `Agents.mcp` (design-mcp-connect.md, Error handling). */
+/** HTTP status of each refusal of `AgentsMcp` (design-mcp-connect.md, Error handling). */
 const STATUS_OF: Record<McpRefusalCode, number> = {
   MCP_SERVER_NOT_FOUND: 404,
   MCP_SERVER_NAME_TAKEN: 409,
@@ -13,7 +13,7 @@ const STATUS_OF: Record<McpRefusalCode, number> = {
 };
 
 /**
- * Runs an `Agents.mcp` operation and answers its `McpError` with its status, body `ApiErrorSchema`; a
+ * Runs an `AgentsMcp` operation and answers its `McpError` with its status, body `ApiErrorSchema`; a
  * failed server check carries its `reason`. Any other error leaves as it came.
  */
 export async function mcpAnswer<T>(operation: Promise<T>): Promise<T> {

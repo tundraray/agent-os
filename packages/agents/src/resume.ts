@@ -2,7 +2,7 @@ import { HistoryEventSchema, TaskStatusSchema } from '@agent-os/contracts';
 import type { Task } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { NewHistoryEntry } from './store/history.repository';
+import type { NewHistoryEntry } from './store/history';
 
 const { stopped } = TaskStatusSchema.enum;
 

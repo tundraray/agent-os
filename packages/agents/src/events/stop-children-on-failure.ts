@@ -3,14 +3,15 @@ import { RuntimeEventTypeSchema } from '@agent-os/contracts';
 import {
   type EventConsumer,
   isFinished,
-  type Runtime,
+  type TaskControl,
   RUNTIME_EVENT_SCHEMA_VERSION,
 } from '@agent-os/runtime';
 
-import { sessions } from '../store/sessions.repository';
+import type { Sessions } from '../store/sessions';
 
 export interface StopChildrenOnFailureDeps {
-  readonly tasks: Pick<Runtime['tasks'], 'listTree' | 'stop'>;
+  readonly tasks: Pick<TaskControl, 'listTree' | 'stop'>;
+  readonly sessions: Sessions;
   readonly logger: Logger;
 }
 
@@ -30,7 +31,7 @@ export function createStopChildrenOnFailure(deps: StopChildrenOnFailureDeps): Ev
     async handle(tx, event) {
       if (event.taskId === null) return;
       const agentId = event.taskId;
-      const session = await sessions.get(tx, agentId);
+      const session = await deps.sessions.get(tx, agentId);
       if (session === undefined) return;
 
       const tree = await deps.tasks.listTree(event.rootId, session.ownerId);

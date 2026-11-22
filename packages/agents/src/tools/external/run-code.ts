@@ -9,18 +9,18 @@ import {
   RunCodeConfirmationContentSchema,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import { AgentCodeCallsRepository, AgentToolResultsRepository, DATABASE, type Database } from '@agent-os/db';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import { OwnerDisabledError } from '../../access-gate';
-import type { CodeRunConfig } from '../../config';
-import { callRecords } from '../../store/call-records.repository';
-import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository';
-import { toolResults } from '../../store/tool-results.repository';
+import { AGENTS_CONFIG, CODE_RUNNER, MASK_SECRETS } from '../../agents.tokens';
+import type { AgentsConfig, CodeRunConfig } from '../../config';
+import { CallRecords, interruptedRunOutcome } from '../../store/call-records';
 import type { CodeCallScope } from '../code-call';
 import { RESULT_NOT_FOUND } from '../large-result';
 import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool';
-import { callTargetOf, type ToolRegistry } from '../tool-registry';
-import type { ToolRunner } from '../tool-runner';
+import { callTargetOf, ToolRegistry } from '../tool-registry';
+import { ToolRunner } from '../tool-runner';
 import { canCallOf } from './can-call';
 
 /** What the texts of a run name: the run settings with its result limit. */
@@ -127,12 +127,13 @@ export function confirmedNamesOf(confirmed: unknown): ConfirmedNames {
 export interface RunCodeDeps {
   readonly codeRunner: CodeRunner;
   readonly database: Database;
-  /**
-   * Read at execution, not at build: the registry is built with `run_code` in it, so the tool takes
-   * it lazily and the build has no cycle.
-   */
-  readonly registry: () => ToolRegistry;
-  readonly runner: ToolRunner;
+  /** The attempts of a read run, the audit rows of the calls a script makes and the results it reads. */
+  readonly callRecords: CallRecords;
+  readonly codeCallRows: AgentCodeCallsRepository;
+  readonly toolResultRows: AgentToolResultsRepository;
+  /** The MCP tools a run checks its calls against and the names a script never calls. */
+  readonly registry: Pick<ToolRegistry, 'declaredMcpTools' | 'toolNames'>;
+  readonly runner: Pick<ToolRunner, 'callFromCode'>;
   readonly codeRun: CodeRunConfig;
   /**
    * The logger's redaction by value over the settings' secrets (FR-11): applied to a run's output and
@@ -209,7 +210,7 @@ interface RunScope {
  * KD-11): runs the model's script through `CodeRunner` on behalf of the owner. Every tool call of the
  * script gets its audit row through the step's `guard` before it reaches its server.
  */
-export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
+function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
   const texts = runTexts(deps.codeRun);
   const seats = createSeats(deps.codeRun.maxConcurrentPerUser);
 
@@ -235,7 +236,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     const target = callTargetOf(run.codeScope.snapshot, request.name);
     const key = { taskId: run.caller.agentId, runCallId: run.callId, attempt: run.attempt, seq };
     const opened = await run.guard((tx) =>
-      codeCalls.open(tx, { ...key, ...target, args: request.args }),
+      deps.codeCallRows.open(tx, { ...key, ...target, args: request.args }),
     );
     if (opened.outcome === 'fenced') {
       run.logger.warn('code call not sent: its audit row was fenced', { seq, ...target });
@@ -252,7 +253,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         // The gate refused a disabled owner before the call started (KD-4): `interrupted` even in a `write`
         // run, never `unknown`. The rejection still ends the run; the agent fails at its next model call.
         if (error instanceof OwnerDisabledError) {
-          await codeCalls.close(deps.database, key, {
+          await deps.codeCallRows.close(deps.database, key, {
             outcome: ToolOutcomeSchema.enum.interrupted,
             finishedAt: new Date(),
           });
@@ -261,14 +262,14 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
       });
     if (execution.kind === 'aborted') {
       // A record that the call was cancelled, not a new action: its own transaction, no `guard` (Flow 4).
-      await codeCalls.close(deps.database, key, {
+      await deps.codeCallRows.close(deps.database, key, {
         outcome: interruptedRunOutcome(run.runArgs),
         finishedAt: new Date(),
       });
       return { kind: 'finish', reason: 'aborted' };
     }
     if (execution.kind === 'refused') {
-      await codeCalls.close(deps.database, key, {
+      await deps.codeCallRows.close(deps.database, key, {
         outcome: 'refused',
         refusalReason: execution.reason,
         finishedAt: new Date(),
@@ -278,7 +279,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         error: { outcome: 'refused', reason: execution.reason, text: execution.text },
       };
     }
-    await codeCalls.close(deps.database, key, { outcome: execution.outcome, finishedAt: new Date() });
+    await deps.codeCallRows.close(deps.database, key, { outcome: execution.outcome, finishedAt: new Date() });
     if (execution.outcome === 'success' || execution.outcome === 'empty') {
       return { kind: 'value', value: execution.fullResult?.value ?? null };
     }
@@ -293,7 +294,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     run: RunScope,
     request: Extract<BridgeRequest, { op: 'read' }>,
   ): Promise<RequestAnswer> {
-    const found = await toolResults.findForRun(deps.database, {
+    const found = await deps.toolResultRows.findForRun(deps.database, {
       callId: request.resultId,
       taskId: run.caller.agentId,
       ownerId: run.caller.ownerId,
@@ -352,7 +353,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
   async function attemptOf(input: OutsideToolInput<RunCodeArgs>, logger: Logger): Promise<number | DoneResult> {
     if (input.args.class === 'write') return 1;
     const bumped = await input.guard((tx) =>
-      callRecords.startAttempt(tx, { taskId: input.caller.agentId, callId: input.callId }, input.args),
+      deps.callRecords.startAttempt(tx, { taskId: input.caller.agentId, callId: input.callId }, input.args),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');
@@ -402,7 +403,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
       try {
         const attempt = await attemptOf(input, logger);
         if (typeof attempt !== 'number') return attempt;
-        const registry = deps.registry();
+        const { registry } = deps;
         // The servers the caller declares from its snapshot, not the library's record now (ADR-0011, ADR-0017).
         const snapshot = await registry.declaredMcpTools(caller.servers);
         return await runScript(
@@ -431,4 +432,39 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
       }
     },
   };
+}
+
+/**
+ * Builds `run_code` and hands it to the tools library when the module starts: the tool reads the registry, so
+ * the registry gets it through `useRunCode` rather than its constructor (no provider cycle).
+ */
+@Injectable()
+export class RunCodeTool implements OnModuleInit {
+  constructor(
+    @Inject(CODE_RUNNER) private readonly codeRunner: CodeRunner,
+    @Inject(DATABASE) private readonly database: Database,
+    @Inject(CallRecords) private readonly callRecords: CallRecords,
+    @Inject(AgentCodeCallsRepository) private readonly codeCallRows: AgentCodeCallsRepository,
+    @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(ToolRegistry) private readonly registry: ToolRegistry,
+    @Inject(ToolRunner) private readonly runner: ToolRunner,
+    @Inject(AGENTS_CONFIG) private readonly config: Pick<AgentsConfig, 'codeRun'>,
+    @Inject(MASK_SECRETS) private readonly maskSecrets: (text: string) => string,
+  ) {}
+
+  onModuleInit(): void {
+    this.registry.useRunCode(
+      createRunCodeTool({
+        codeRunner: this.codeRunner,
+        database: this.database,
+        callRecords: this.callRecords,
+        codeCallRows: this.codeCallRows,
+        toolResultRows: this.toolResultRows,
+        registry: this.registry,
+        runner: this.runner,
+        codeRun: this.config.codeRun,
+        maskSecrets: this.maskSecrets,
+      }),
+    );
+  }
 }

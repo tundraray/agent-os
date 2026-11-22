@@ -4,20 +4,18 @@ import {
   type SessionTaskStatus,
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
-import type { Transaction } from '@agent-os/db';
+import type { SessionPatch, Transaction } from '@agent-os/db';
 import { isFinished, type StepContext, type StepEffects, type StepResult } from '@agent-os/runtime';
 
-import type { HistoryEntry } from '../history/history';
 import { knowledgeBlock } from '../knowledge/knowledge-block';
 import { modelErrorMessage } from '../model/model-client';
 import type { AgentToolCall, AgentToolDefinition } from '../model/mastra-turn';
-import type { RunSnapshot } from '../start/snapshot';
-import { snapshotDefinition } from '../start/snapshot-definition';
-import type { NewHistoryEntry } from '../store/history.repository';
-import { type Session, type SessionPatch, sessionInputOf, sessions } from '../store/sessions.repository';
+import type { NewHistoryEntry } from '../store/history';
+import type { Session } from '../store/sessions';
 import { taskBlock, tasksOf } from '../tools/system/task-list-block';
 import { callTargetOf } from '../tools/tool-registry';
 import type { AgentDeps } from './agent-deps';
+import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
 import {
@@ -28,7 +26,6 @@ import {
   logStep,
   previewEntries,
   providerMessagesOf,
-  readSessionHistory,
   refusedResult,
   type StepPrelude,
   withStepBlocks,
@@ -74,9 +71,7 @@ export interface ChildrenInFlight {
 }
 
 /** What the agent knows of the model's answer without tool calls when it ends its turn. */
-export type TurnAnswer = Pick<EndOfTurnInput, 'answerFields' | 'openTasks' | 'text' | 'cutOff'> & {
-  readonly snapshot: RunSnapshot;
-};
+export type TurnAnswer = Pick<EndOfTurnInput, 'answerFields' | 'openTasks' | 'text' | 'cutOff'>;
 
 /** How a turn ends, with the children the agent counted for it (the step log names them). */
 export interface TurnEnd {
@@ -120,20 +115,20 @@ export async function childrenInFlight(
  */
 export async function runModelStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'offeredDeclaration' | 'turnsAfterDelivery' | 'endOfTurn'>,
+  agent: Pick<BaseAgent, 'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery' | 'endOfTurn'>,
   ctx: StepContext,
   session: Session,
-  /** The session's entries from its last compaction on, as the agent read them. */
-  own: readonly HistoryEntry[],
+  /** The history the model sees, as the agent holds it. */
+  view: SessionHistory,
   prelude?: StepPrelude,
 ): Promise<StepResult> {
-  const { database, registry, modelClient, audit, vectorStore } = deps;
+  const { database, registry, modelClient, audit } = deps;
   const startedAt = Date.now();
   // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
-  const { snapshot, answerFields: askedFields } = sessionInputOf(ctx.input);
-  const definition = snapshotDefinition(snapshot);
+  const { snapshot, answerFields: askedFields } = agent.input;
+  const { definition } = agent;
   const turns = agent.turnsAfterDelivery(prelude?.patch.turns ?? session.turns, ctx.messages);
-  const delivered = await entriesOf(database, ctx.messages);
+  const delivered = await entriesOf(deps, database, ctx.messages);
   const writeStepEntries = async (tx: Transaction): Promise<NewHistoryEntry[]> => [
     ...(prelude === undefined ? [] : await prelude.write(tx)),
     ...delivered,
@@ -144,6 +139,7 @@ export async function runModelStep(
   if (turns >= definition.maxTurns) {
     logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turn_limit, turns });
     return failResult({
+      deps,
       ctx,
       reason: FAILURE_REASONS.turn_limit,
       message: `Agent ${definition.name} used all ${definition.maxTurns} turns of its assignment`,
@@ -152,17 +148,13 @@ export async function runModelStep(
     });
   }
 
-  const view = await readSessionHistory(database, session, own);
   const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
   // The graph is live data read beside the snapshot on every step (KD-6); a failed read fails the step.
-  const knowledge = await knowledgeBlock(
-    { database, store: vectorStore },
-    { snapshot, taskId: ctx.taskId, logger: ctx.logger },
-  );
+  const knowledge = await knowledgeBlock(deps, { snapshot, taskId: ctx.taskId, logger: ctx.logger });
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
-  const declaration = await agent.offeredDeclaration(ctx, snapshot);
-  const tasks = await tasksOf(database, ctx.taskId, declaration.taskList);
+  const declaration = await agent.offeredDeclaration(ctx);
+  const tasks = await tasksOf(deps, database, ctx.taskId, declaration.taskList);
   // The owner the runtime names and what the agent declares: the library answers with the session's tools.
   const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
   const result = await callUnlessAborted(ctx, () =>
@@ -184,6 +176,7 @@ export async function runModelStep(
 
   if (result.kind === 'not_started') {
     return refusedResult({
+      deps,
       ctx,
       stepKind: STEP_KIND,
       startedAt,
@@ -201,6 +194,7 @@ export async function runModelStep(
       statusCode: result.statusCode,
     });
     return failResult({
+      deps,
       ctx,
       reason: result.reason,
       message: modelErrorMessage(session.model, result),
@@ -235,12 +229,12 @@ export async function runModelStep(
     after: readonly NewHistoryEntry[],
     patch: SessionPatch,
   ): Promise<void> => {
-    await appendWithEvent(tx, effects, ctx.taskId, [
+    await appendWithEvent(deps, tx, effects, ctx.taskId, [
       ...(await writeStepEntries(tx)),
       answerEntry,
       ...after,
     ]);
-    await sessions.update(tx, ctx.taskId, patch);
+    await deps.sessionRows.update(tx, ctx.taskId, patch);
   };
 
   if (result.toolCalls.length > 0) {
@@ -256,7 +250,6 @@ export async function runModelStep(
   }
 
   const { ending, inFlight } = await agent.endOfTurn(ctx, {
-    snapshot,
     answerFields: (askedFields ?? []).map((field) => field.name),
     openTasks: tasks.filter((task) => OPEN_TASK_STATUSES.includes(task.status)),
     text: result.text,

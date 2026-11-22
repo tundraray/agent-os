@@ -9,10 +9,9 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createPgvectorStore } from '../src/knowledge/pgvector-store.repository';
 import type { KnowledgeVector, KnowledgeVectorStore } from '../src/knowledge/vector-store';
 import { databaseUrl } from './support/database-url';
-import { withLibraryRow } from './support/knowledge';
+import { createPgvectorStore, withLibraryRow } from './support/knowledge';
 
 const MODEL_A = 'test-embed/model-a';
 const MODEL_B = 'test-embed/model-b';

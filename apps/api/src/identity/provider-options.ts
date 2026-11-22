@@ -7,6 +7,7 @@ import {
   type ProviderOptionsView,
   type ProviderType,
 } from '@agent-os/contracts';
+import type { IdentityProviderRow } from '@agent-os/db';
 import { z } from 'zod';
 import { identityError, validationFailed } from './identity.errors';
 
@@ -20,6 +21,28 @@ export const ProviderOptionsSchema = z.object({
   clientSecret: z.string().optional(),
 });
 export type ProviderOptions = z.infer<typeof ProviderOptionsSchema>;
+
+/** A provider row with its type and settings read. */
+export interface Provider {
+  id: string;
+  type: ProviderType;
+  name: string;
+  enabled: boolean;
+  /** Raised by every change, so the sign-in rebuilds its client config (AC-03.3). */
+  version: number;
+  options: ProviderOptions;
+}
+
+export function toProvider(row: IdentityProviderRow): Provider {
+  return {
+    id: row.id,
+    type: ProviderTypeSchema.parse(row.type),
+    name: row.name,
+    enabled: row.enabled,
+    version: row.version,
+    options: ProviderOptionsSchema.parse(row.options),
+  };
+}
 
 /** Settings with the client of every type set: what `isComplete` guarantees to the sign-in. */
 type CompleteOptions = ProviderOptions & {

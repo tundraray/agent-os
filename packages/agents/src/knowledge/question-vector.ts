@@ -1,18 +1,17 @@
 import { AgentMessageKindSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type {
+  AgentKnowledgeRunsRepository,
+  Database,
+  EmbeddingOutcome,
+  KnowledgeQuestionRow,
+} from '@agent-os/db';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AgentsEmbeddings, EmbedResult } from '../embeddings/embeddings';
-import { type Session, sessionInputOf } from '../store/sessions.repository';
+import type { RunSnapshot } from '../start/snapshot';
+import type { Session } from '../store/sessions';
 import { sessionLearningOf } from './knowledge-block';
-import {
-  type EmbeddingOutcome,
-  type KnowledgeQuestionRow,
-  readQuestion,
-  writeQuestion,
-  writeQuestionOutcome,
-} from './knowledge-runs.repository';
 
 /** The `source` of a question taken from the session's `task`; otherwise it is the employee message's id. */
 const TASK_QUESTION_SOURCE = 'task';
@@ -31,6 +30,7 @@ export interface SessionQuestion {
 export interface QuestionVectorDeps {
   /** Reads the question row outside the guarded write. */
   readonly database: Database;
+  readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly embeddings: Pick<AgentsEmbeddings, 'embed'>;
 }
 
@@ -81,15 +81,16 @@ export async function embedQuestion(
   deps: QuestionVectorDeps,
   ctx: StepContext,
   session: Session,
+  /** The snapshot of the run: whether its session learns. */
+  snapshot: RunSnapshot,
   /** The agent embeds the employee's messages as new questions (a deep agent). */
   embedsEmployeeMessages: boolean,
 ): Promise<boolean> {
-  const snapshot = sessionInputOf(ctx.input).snapshot;
   const learning = sessionLearningOf(snapshot);
   if (learning === null) return true;
   const { recordId } = learning;
 
-  const stored = await readQuestion(deps.database, ctx.taskId);
+  const stored = await deps.knowledgeRunRows.readQuestion(deps.database, ctx.taskId);
   const question = questionToEmbed(session, embedsEmployeeMessages, ctx.messages, stored);
   if (question === null) return true;
 
@@ -120,7 +121,7 @@ export async function embedQuestion(
   const model = attempt.kind === 'error' ? null : attempt.model;
   const outcome = outcomeOf(attempt);
   const written = await ctx.guard(async (tx) => {
-    await writeQuestion(tx, {
+    await deps.knowledgeRunRows.writeQuestion(tx, {
       taskId: ctx.taskId,
       source: question.source,
       model,
@@ -129,7 +130,7 @@ export async function embedQuestion(
     if (outcome === null) return;
     // A deep agent deleted during the run takes its vector row with it: the outcome is lost, not the step.
     await tx
-      .transaction((savepoint) => writeQuestionOutcome(savepoint, recordId, outcome))
+      .transaction((savepoint) => deps.knowledgeRunRows.writeQuestionOutcome(savepoint, recordId, outcome))
       .catch((error: unknown) => {
         ctx.logger.warn('question outcome not written', {
           ...fields,

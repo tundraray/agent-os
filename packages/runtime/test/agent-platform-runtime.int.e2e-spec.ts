@@ -9,15 +9,15 @@
 // between users, and the money rows. Every pure rule is a unit test named in "Proven elsewhere". Restarts and the process-kill matrix are the sibling file (E2E-1).
 //
 // Environment (Design Doc "Test Strategy"):
-// - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup (`test/support/migrate.global-setup.ts`). Real `createRuntime` over a real pool; `RUNTIME_WORKERS` on. No mocks of
+// - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup (`test/support/migrate.global-setup.ts`). Real `RuntimeModule` over a real pool; `RUNTIME_WORKERS` on. No mocks of
 //   Postgres or runtime components. The only doubles are test handlers (`TaskHandler`: scripted outcomes, gates and latches) and, for the clock rows, the injected `Clock`. No model is called.
-// - Two instances in one process (INT-1 row C, INT-3 rows A and B) are two `createRuntime` calls over two pools to the same database, registering the same handler types. The second instance is what makes "another instance" real:
+// - Two instances in one process (INT-1 row C, INT-3 rows A and B) are two `RuntimeModule` contexts over two pools to the same database, registering the same handler types. The second instance is what makes "another instance" real:
 //   claim contention and NOTIFY across connections need no second OS process.
 // - Isolation (project convention, no truncate): a unique `ownerId = 'e2e-' + randomUUID()` (`newUser()`) and a unique task type per test (a worker claims only types in its own `handlers` registry, so another file's workers never touch these
 //   rows); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on gates the handler waits on and on rows (`runtimeWorkSettled`-style). "Status changed within the command" (NFR-01) is asserted as: the status read right after the command's
 //   response, while the handler is still held; the 5 s p95 is the on-demand script `test/verify/runtime-latency.verify.ts` (UC-N2), not this file.
-// - Support (test/support): runtimeHarness.ts (createDatabase + createRuntime with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
+// - Support (test/support): runtimeHarness.ts (DbModule + RuntimeModule with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
 //   `expireLease`, a second instance), runtimeDb.ts (read-only snapshots of `runtime_*` rows, a row-version snapshot for "nothing changed"), testHandlers.ts (step scripts, gates, a table of handler rows written through `commit`).
 //
 // Budget: Integration 5 of 3, extended to 5 under the integration-e2e-testing rule ("up to 5 only when each extra test names the defect no other test catches"). Core: INT-1, INT-2, INT-3. Extras: INT-4 and INT-5.
@@ -229,7 +229,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: input validation, the shape of `StepResult` variants (types), the cost of the step (INT-5).
   // Behavior: ready tasks -> claimed by one of two instances -> each step's handler rows + status + notification committed once -> the tree reads as one uninterrupted run
   // @category: core-functionality
-  // @dependency: createRuntime x2 (Dispatcher, TaskControl, Inbox, EventLog), test handlers, Postgres
+  // @dependency: RuntimeModule x2 (Dispatcher, TaskControl, Inbox, EventLog), test handlers, Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; one child task under a parent task whose inbox is read):
@@ -446,7 +446,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: the kill half of UC-E4 (E2E-1 row "message pending at the kill"), the decision-waiting case (E2E-1 row "decision across a restart", which holds the pending message), `PAYLOAD_TOO_LARGE`.
   // Behavior: messages enqueued -> task busy / free / finished / racing with the end of a step -> delivered in the next committed step once, in number order, with the task never left asleep over them
   // @category: core-functionality
-  // @dependency: createRuntime (Inbox, Dispatcher, TaskControl), test handlers with gates, Postgres NOTIFY
+  // @dependency: RuntimeModule (Inbox, Dispatcher, TaskControl), test handlers with gates, Postgres NOTIFY
   // @complexity: high
   //
   // Verification items (table-driven by recipient state):
@@ -1020,7 +1020,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: the cooperative signal reaching the handler over NOTIFY (the handler's abort is observed only to release the gate), interrupting a finished task or one that waits for a decision (a branch of the command, trivial).
   // Behavior: command on instance B -> status changes before the handler on instance A answers -> the late result is refused -> the next step runs with the message and the loss flag; stop closes the tree and its decisions and tells the parent once
   // @category: core-functionality
-  // @dependency: createRuntime x2 (TaskControl, Dispatcher, Decisions, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres NOTIFY
+  // @dependency: RuntimeModule x2 (TaskControl, Dispatcher, Decisions, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres NOTIFY
   // @complexity: high
   //
   // Verification items (table-driven):
@@ -1382,7 +1382,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: authentication (the owner id is handed in by `apps/api` from the session; that edge is tested in the api part), the authorization of MCP servers and of the web routes (later parts).
   // Behavior: owner B calls each operation on owner A's task, message or decision -> the answer equals the answer for an id that does not exist -> nothing in A's tree changed
   // @category: core-functionality
-  // @dependency: createRuntime (TaskControl, Inbox, Decisions, EventLog), a test handler that opens a decision, Postgres
+  // @dependency: RuntimeModule (TaskControl, Inbox, Decisions, EventLog), a test handler that opens a decision, Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by operation; A has a tree: a root, a child, a pending message, an open decision, events):
@@ -1512,7 +1512,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: the cost rule's variants (tier, cache read and write) - the unit table proves the rule; one literal price per model proves it is wired.
   // Behavior: calls recorded on two priced models for two owners across a month boundary -> rows and costs per model price -> `monthSpend` is the owner's sum for the UTC month -> the sum survives `deleteTree`; an unpriced model leaves no row
   // @category: core-functionality
-  // @dependency: createRuntime (TokenLedger, TaskControl), the injected Clock, a test price table of two models with different input and output prices, Postgres
+  // @dependency: RuntimeModule (TokenLedger, TaskControl), the injected Clock, a test price table of two models with different input and output prices, Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by step; costs are hardcoded literals computed by hand from the test price table, not by the rule):

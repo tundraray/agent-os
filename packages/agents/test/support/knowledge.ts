@@ -3,39 +3,45 @@ import type { LibraryDoubleRecord, ScriptedToolCall } from '@agent-os/agents/tes
 import type { DeepAgentContent, KnowledgeView } from '@agent-os/contracts';
 import {
   agentKnowledgeEntities,
+  AgentKnowledgeRepository,
   agentKnowledgeRelations,
   agentKnowledgeRuns,
+  AgentKnowledgeRunsRepository,
   agentKnowledgeSettings,
+  AgentKnowledgeVectorsRepository,
   type Database,
+  type KnowledgeEmbeddingRow,
   libraryRecords,
   runtimeTasks,
 } from '@agent-os/db';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
-import {
-  findEmbeddingRow,
-  findRunById,
-  type KnowledgeEmbeddingRow,
-  type KnowledgeRun,
-} from '../../src/knowledge/knowledge-runs.repository';
+import { type KnowledgeRun, knowledgeRunOf } from '../../src/knowledge/knowledge-runs';
 import {
   KNOWLEDGE_EMBED_TASK_TYPE,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
 } from '../../src/knowledge/knowledge-tasks';
 import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations';
-import { createPgvectorStore } from '../../src/knowledge/pgvector-store.repository';
-import type { KnowledgeVector } from '../../src/knowledge/vector-store';
+import type { KnowledgeVector, KnowledgeVectorStore } from '../../src/knowledge/vector-store';
 import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from './agentsHarness';
 
 /**
  * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.library_records` row the
  * graph hangs on, graph rows and vectors written straight into the tables, the size cap, waits on the rows of
- * the background work, and the reads the cases assert on. The reads are the package's own repositories and
- * store, re-exported so a case has one import place.
+ * the background work, and the reads the cases assert on. The reads are the queries of the `@agent-os/db`
+ * repositories and the store the package itself uses, so a case has one import place.
  */
-export { readGraph } from '../../src/knowledge/knowledge.repository';
-export { findEmbeddingRow, findRunById, readQuestion } from '../../src/knowledge/knowledge-runs.repository';
-export { createPgvectorStore } from '../../src/knowledge/pgvector-store.repository';
+const knowledgeRows = new AgentKnowledgeRepository();
+const knowledgeRunRows = new AgentKnowledgeRunsRepository();
+
+export const readGraph = (db: Database, recordId: string) => knowledgeRows.readGraph(db, recordId);
+export const findRunById = async (db: Database, runId: string) =>
+  knowledgeRunOf(await knowledgeRunRows.findRunById(db, runId));
+export const findEmbeddingRow = (db: Database, recordId: string) =>
+  knowledgeRunRows.findEmbeddingRow(db, recordId);
+export const readQuestion = (db: Database, taskId: string) => knowledgeRunRows.readQuestion(db, taskId);
+export const createPgvectorStore = (db: Database): KnowledgeVectorStore =>
+  new AgentKnowledgeVectorsRepository(db);
 
 /** The agent name of the extraction's model calls: the scripted model's key `{ agent: KNOWLEDGE_EXTRACT_AGENT }`. */
 export const KNOWLEDGE_EXTRACT_AGENT = 'knowledge-extract';

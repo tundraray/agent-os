@@ -11,7 +11,7 @@
         "patterns": [
           {
             "group": ["@nestjs/*", "@nestjs/**"],
-            "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
+            "message": "ADR-0022: this package stays free of NestJS; it is plain functions and classes."
           },
           {
             "group": ["@sentry/*", "@sentry/**"],

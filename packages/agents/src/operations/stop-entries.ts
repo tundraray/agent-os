@@ -1,11 +1,11 @@
-import type { Executor } from '@agent-os/db';
+import type { AgentMessagesRepository, Executor } from '@agent-os/db';
 import type { Task } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import { stopEvent, stoppedTogether } from '../resume';
-import { interruptedResults } from '../store/call-records.repository';
-import { history } from '../store/history.repository';
+import { interruptedResults } from '../store/call-records';
+import type { History } from '../store/history';
 
 /** A derived stop record: a closed call or the stop event. */
 export type StopEntry = Extract<HistoryEntry, { kind: 'tool_result' | 'event' }>;
@@ -25,6 +25,7 @@ export interface StopEntriesInput {
  * writes for real, with the numbers after the last stored one and the time of the stop.
  */
 export async function stopEntries(
+  deps: { readonly history: History; readonly messageRows: AgentMessagesRepository },
   reader: Executor,
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {
@@ -32,8 +33,8 @@ export async function stopEntries(
   const stoppedAt = task.finishedAt ?? task.updatedAt;
 
   // An open call never stands before the last compaction, so the entries a step works on hold them all.
-  const visible = await history.visible(reader, task.taskId);
-  const lastSeq = await history.lastSeq(reader, task.taskId);
+  const visible = await deps.history.visible(reader, task.taskId);
+  const lastSeq = await deps.messageRows.lastSeq(reader, task.taskId);
   const records = [
     ...interruptedResults(openCalls(visible), stoppedAt),
     stopEvent(stoppedTogether(task, parent)),

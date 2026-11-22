@@ -5,7 +5,7 @@
 //   apps/api/test/enterprise-access-mcp-connect.int.e2e-spec.ts. 0 E2E: the Test Strategy names none.
 // Test Type: Integration.
 //
-// Harness (follows packages/agents/test/support/agentsHarness.ts): the package's own `createRuntime` + `createAgents` over their own pool, no
+// Harness (follows packages/agents/test/support/agentsHarness.ts): the package's own `RuntimeModule` + `createAgents` over their own pool, no
 //   `apps/api`, ONE instance (the feature is one API process, Constraints). Only the model (`createScriptedModel`) is a double. Postgres,
 //   the runtime, `ToolRegistry`, `McpRegistry`, `McpAccounts`, `McpClient` and the MCP servers are real. MCP servers are the
 //   `packages/mcp-fixture` PROCESS over HTTP with its own authorization server (KD-7); the fixture's journal (source, tool, ACCOUNT of the

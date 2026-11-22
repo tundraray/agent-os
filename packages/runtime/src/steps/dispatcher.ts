@@ -5,34 +5,39 @@ import {
   type RuntimeFailureReason,
   TaskStatusSchema,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  DATABASE,
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type RuntimeDecisionRow,
+  type RuntimeInboxRow,
+  RuntimeTrackersRepository,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 import type pg from 'pg';
 import type { CancelTimer, Clock } from '../clock';
-import type { CrashPoints } from '../crash-points';
-import { type EventLog, RUNTIME_EVENTS_CHANNEL } from '../events/event-log.repository';
+import { CrashPoints } from '../crash-points';
+import { EventLog, RUNTIME_EVENTS_CHANNEL } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
-import type { HandlerRegistry } from './handler.registry';
+import { HandlerRegistry } from './handler.registry';
 import { Heartbeat } from './heartbeat';
-import type {
-  StepResult,
-  StepSignalReason,
-  TaskHandler,
-} from './step-contract';
-import type { Decisions } from '../messaging/decisions';
-import type { DecisionRow } from '../messaging/decisions.repository';
-import type { Inbox } from '../messaging/inbox';
-import type { MessageRow } from '../messaging/inbox.repository';
+import { LiveTasks } from './live-tasks';
+import type { StepResult, StepSignalReason } from './step-contract';
+import { Decisions } from '../messaging/decisions';
+import { Inbox } from '../messaging/inbox';
 import type { RuntimeConfig } from '../runtime-config';
-import type {
-  RunningStepHandle,
+import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
+import {
+  type RunningStepHandle,
   RunningTaskRegistry,
 } from '../tasks/running-task.registry';
-import type { StepCommitter } from './step-commit';
+import { type StepCommit, StepCommitter } from './step-commit';
 import { boundTransaction, TaskStepContext } from './step-context';
 import { endTask } from '../tasks/task-end';
-import type { TaskRepository } from '../tasks/task.repository';
+import { Tasks } from '../tasks/tasks';
 import { backoffDelay } from '../workers/worker-loop';
-import type { TrackerRepository } from '../tasks/tracker.repository';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
@@ -96,8 +101,8 @@ type HandlerEnd = Extract<Execution, { kind: 'returned' | 'threw' }>;
  */
 interface ClaimedTask {
   task: TaskRow;
-  messages: MessageRow[];
-  decision: DecisionRow | undefined;
+  messages: RuntimeInboxRow[];
+  decision: RuntimeDecisionRow | undefined;
 }
 
 /** A promise with its resolve, to race the shutdown against steps in flight. */
@@ -109,7 +114,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-export interface DispatcherDeps {
+interface DispatcherDeps {
   db: Database;
   /** The pool of `db`: one of its connections LISTENs. */
   pool: pg.Pool;
@@ -117,14 +122,17 @@ export interface DispatcherDeps {
   clock: Clock;
   logger: Logger;
   handlers: HandlerRegistry;
-  tasks: TaskRepository;
-  trackers: TrackerRepository;
+  tasks: Tasks;
+  taskRows: RuntimeTasksRepository;
+  trackers: RuntimeTrackersRepository;
   events: EventLog;
   inbox: Inbox;
   decisions: Decisions;
   running: RunningTaskRegistry;
   committer: StepCommitter;
   crashPoints: CrashPoints;
+  /** Objects of the tasks of live types, kept between steps. */
+  live: LiveTasks;
 }
 
 /**
@@ -136,6 +144,7 @@ export interface DispatcherDeps {
  * or — exception, step limit, shutdown — in a guarded write of the dispatcher that raises the
  * attempt, so that a late result and `guard` of the step are fenced (Invariant 1).
  */
+@Injectable()
 export class Dispatcher {
   private started = false;
   /** Slots taken by claims in flight and running steps. */
@@ -147,8 +156,45 @@ export class Dispatcher {
   private loopFailures = 0;
   private listener: pg.PoolClient | undefined;
   private shutdownSignal = deferred();
+  private readonly deps: DispatcherDeps;
 
-  constructor(private readonly deps: DispatcherDeps) {}
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(DATABASE_CONNECTION) connection: DatabaseConnection,
+    @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
+    @Inject(CLOCK) clock: Clock,
+    @Inject(RUNTIME_LOGGER) logger: Logger,
+    @Inject(HandlerRegistry) handlers: HandlerRegistry,
+    @Inject(Tasks) tasks: Tasks,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(Inbox) inbox: Inbox,
+    @Inject(Decisions) decisions: Decisions,
+    @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
+    @Inject(StepCommitter) committer: StepCommitter,
+    @Inject(CrashPoints) crashPoints: CrashPoints,
+    @Inject(LiveTasks) live: LiveTasks,
+  ) {
+    this.deps = {
+      db,
+      pool: connection.pool,
+      config,
+      clock,
+      logger: logger.child({ worker: 'dispatcher' }),
+      handlers,
+      tasks,
+      taskRows,
+      trackers,
+      events,
+      inbox,
+      decisions,
+      running,
+      committer,
+      crashPoints,
+      live,
+    };
+  }
 
   start(): void {
     if (this.started) return;
@@ -194,6 +240,7 @@ export class Dispatcher {
     const { config, logger } = this.deps;
     let delay = config.pollMs;
     try {
+      this.deps.live.sweep(this.deps.clock.now());
       await this.listen();
       await this.claimFreeSlots();
       this.loopFailures = 0;
@@ -240,12 +287,12 @@ export class Dispatcher {
    * the lease, the pending messages and `task.step_started`.
    */
   private async claimNext(): Promise<ClaimedTask | undefined> {
-    const { db, handlers, tasks, events, inbox, decisions, clock, config, crashPoints } =
+    const { db, handlers, tasks, taskRows, events, inbox, decisions, clock, config, crashPoints } =
       this.deps;
     const types = handlers.types();
     if (types.length === 0) return undefined;
     const claimed = await db.transaction(async (tx) => {
-      const taskId = await tasks.lockReady(tx, types);
+      const taskId = await taskRows.lockReady(tx, types);
       if (!taskId) return undefined;
       // The guard re-checks `queued` under the lock.
       const task = await tasks.transition(
@@ -285,7 +332,7 @@ export class Dispatcher {
     const step = new TaskStepContext(
       {
         db: this.deps.db,
-        tasks: this.deps.tasks,
+        taskRows: this.deps.taskRows,
         crashPoints: this.deps.crashPoints,
         logger: this.deps.logger,
         leaseMs: this.deps.config.leaseMs,
@@ -298,11 +345,12 @@ export class Dispatcher {
       messageIds: step.messageIds,
       resumedAfterLoss: step.resumedAfterLoss,
     });
+    let commit: StepCommit | undefined;
     try {
       heartbeat.start();
       const execution = await this.execute(step, handle);
       await heartbeat.stop();
-      await this.settle(step, execution, startedAt);
+      commit = await this.settle(step, execution, startedAt);
     } catch (error) {
       step.logger.error('step write failed; left to lease expiry', {
         durationMs: Date.now() - startedAt,
@@ -310,6 +358,9 @@ export class Dispatcher {
       });
     } finally {
       await heartbeat.stop();
+      // Before the release: the step holds its slot, and the shutdown waits, until the task's
+      // object has taken the commit in or is let go.
+      await this.deps.live.settled(step, commit);
       handle.release();
     }
   }
@@ -323,13 +374,11 @@ export class Dispatcher {
     step: TaskStepContext,
     handle: RunningStepHandle,
   ): Promise<Execution> {
-    const { handlers, clock, config } = this.deps;
-    const handler: TaskHandler | undefined = handlers.get(step.type);
+    const { live, clock, config } = this.deps;
     const run: Promise<HandlerEnd> = Promise.resolve()
-      .then(() => {
-        if (!handler) throw new Error(`No handler is registered for task type "${step.type}"`);
-        return handler.step(step);
-      })
+      // Rejects for an unregistered type and for a live task whose object could not be restored.
+      .then(() => live.obtain(step, handle))
+      .then((runner) => runner.step(step))
       .then(
         (result): HandlerEnd => ({ kind: 'returned', result }),
         (error: unknown): HandlerEnd => ({ kind: 'threw', error }),
@@ -370,16 +419,15 @@ export class Dispatcher {
     }
   }
 
-  /** Writes how the step ended. */
+  /** Writes how the step ended; answers the commit of a returned result, else `undefined`. */
   private async settle(
     step: TaskStepContext,
     execution: Execution,
     startedAt: number,
-  ): Promise<void> {
+  ): Promise<StepCommit | undefined> {
     switch (execution.kind) {
       case 'returned':
-        await this.deps.committer.commit(step, execution.result);
-        return;
+        return this.deps.committer.commit(step, execution.result);
       case 'threw':
         if (step.signal.aborted) {
           // The step was cut off (interrupt, stop, lost lease): its attempt is no longer current.
@@ -388,10 +436,10 @@ export class Dispatcher {
             durationMs: Date.now() - startedAt,
             error: execution.error,
           });
-          return;
+          return undefined;
         }
         await this.failStep(step, FAILURE.handler_error, execution.error, startedAt);
-        return;
+        return undefined;
       case 'timed_out':
         await this.failStep(
           step,
@@ -399,10 +447,10 @@ export class Dispatcher {
           new Error(`The step ran past ${this.deps.config.stepMs} ms`),
           startedAt,
         );
-        return;
+        return undefined;
       case 'shut_down':
         await this.requeue(step, startedAt);
-        return;
+        return undefined;
     }
   }
 
@@ -416,11 +464,11 @@ export class Dispatcher {
     error: unknown,
     startedAt: number,
   ): Promise<void> {
-    const { db, tasks, config } = this.deps;
+    const { db, taskRows, config } = this.deps;
     const ended = await db.transaction(async (tx) => {
       await boundTransaction(tx, config.leaseMs);
       // The failure notifies the parent: the parent is locked first (Invariant 6).
-      const task = await tasks.lockWithParent(tx, step.taskId);
+      const task = await taskRows.lockWithParent(tx, step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return undefined;
       return endTask(tx, this.deps, task, {
         status: failed,
@@ -518,9 +566,10 @@ export class Dispatcher {
   }
 
   private async cutOffTask(notice: TaskNotice, reason: StepSignalReason): Promise<void> {
-    const current = await this.deps.tasks.find(this.deps.db, notice.taskId);
+    const current = await this.deps.taskRows.find(this.deps.db, notice.taskId);
     // Not awaited: the steps end when their handlers answer the signal.
     void this.deps.running.abortTask(notice.taskId, reason, current?.attempt);
+    this.deps.live.evict([notice.taskId]);
   }
 
   private dropListener(error?: Error): void {

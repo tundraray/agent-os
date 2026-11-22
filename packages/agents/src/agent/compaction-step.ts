@@ -1,20 +1,14 @@
 import { HistoryEventSchema } from '@agent-os/contracts';
-import type { Transaction } from '@agent-os/db';
+import type { SessionPatch, Transaction } from '@agent-os/db';
 import type { StepContext, StepResult } from '@agent-os/runtime';
 
 import { knowledgeBlock } from '../knowledge/knowledge-block';
 import { modelErrorMessage } from '../model/model-client';
-import { snapshotDefinition } from '../start/snapshot-definition';
-import type { HistoryEntry } from '../history/history';
-import { history, type NewHistoryEntry } from '../store/history.repository';
-import {
-  type Session,
-  type SessionPatch,
-  sessionInputOf,
-  sessions,
-} from '../store/sessions.repository';
+import type { NewHistoryEntry } from '../store/history';
+import type { Session } from '../store/sessions';
 import { taskBlock, tasksOf } from '../tools/system/task-list-block';
 import type { AgentDeps } from './agent-deps';
+import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
 import {
@@ -24,7 +18,6 @@ import {
   logStep,
   previewEntries,
   providerMessagesOf,
-  readSessionHistory,
   refusedResult,
   type StepPrelude,
   withStepBlocks,
@@ -60,29 +53,25 @@ export function compactionDue(session: Pick<Session, 'lastInputTokens'>, compact
  */
 export async function runCompactionStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'offeredDeclaration' | 'turnsAfterDelivery'>,
+  agent: Pick<BaseAgent, 'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery'>,
   ctx: StepContext,
   session: Session,
-  /** The session's entries from its last compaction on, as the agent read them. */
-  own: readonly HistoryEntry[],
+  /** The history the model sees, as the agent holds it. */
+  view: SessionHistory,
   prelude?: StepPrelude,
 ): Promise<StepResult> {
-  const { database, registry, modelClient, audit, vectorStore } = deps;
+  const { database, registry, modelClient, audit, history, messageRows, sessionRows } = deps;
   const startedAt = Date.now();
-  const { snapshot } = sessionInputOf(ctx.input);
-  const definition = snapshotDefinition(snapshot);
-  const delivered = await entriesOf(database, ctx.messages);
-  const view = await readSessionHistory(database, session, own);
+  const { snapshot } = agent.input;
+  const { definition } = agent;
+  const delivered = await entriesOf(deps, database, ctx.messages);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
   // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
   // the summary would be written without the task list (design-task-list.md KD-2).
-  const knowledge = await knowledgeBlock(
-    { database, store: vectorStore },
-    { snapshot, taskId: ctx.taskId, logger: ctx.logger },
-  );
-  const declaration = await agent.offeredDeclaration(ctx, snapshot);
-  const tasks = taskBlock(await tasksOf(database, ctx.taskId, declaration.taskList));
+  const knowledge = await knowledgeBlock(deps, { snapshot, taskId: ctx.taskId, logger: ctx.logger });
+  const declaration = await agent.offeredDeclaration(ctx);
+  const tasks = taskBlock(await tasksOf(deps, database, ctx.taskId, declaration.taskList));
   // History holds tool calls, and the provider takes them only with the tools defined.
   const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
 
@@ -116,6 +105,7 @@ export async function runCompactionStep(
   ];
   if (result.kind === 'not_started') {
     return refusedResult({
+      deps,
       ctx,
       stepKind: STEP_KIND,
       startedAt,
@@ -133,6 +123,7 @@ export async function runCompactionStep(
       statusCode: result.statusCode,
     });
     return failResult({
+      deps,
       ctx,
       reason: result.reason,
       message: modelErrorMessage(session.model, result),
@@ -155,8 +146,8 @@ export async function runCompactionStep(
     return {
       outcome: 'continue',
       commit: async (tx, effects) => {
-        await appendWithEvent(tx, effects, ctx.taskId, await writeOwedEntries(tx));
-        await sessions.update(tx, ctx.taskId, patch);
+        await appendWithEvent(deps, tx, effects, ctx.taskId, await writeOwedEntries(tx));
+        await sessionRows.update(tx, ctx.taskId, patch);
       },
     };
   }
@@ -177,13 +168,13 @@ export async function runCompactionStep(
       // The prelude goes first in its own appends, so the summary knows the last `seq` it covers.
       // `agents.history_appended` goes once, with the last `seq`, from the last append.
       await history.append(tx, ctx.taskId, await writePrelude(tx));
-      const throughSeq = await history.lastSeq(tx, ctx.taskId);
-      await appendWithEvent(tx, effects, ctx.taskId, [
+      const throughSeq = await messageRows.lastSeq(tx, ctx.taskId);
+      await appendWithEvent(deps, tx, effects, ctx.taskId, [
         { kind: 'compaction', content: { summary, throughSeq } },
         { kind: 'event', content: { event: HistoryEventSchema.enum.compacted, reason: null } },
         ...delivered,
       ]);
-      await sessions.update(tx, ctx.taskId, patch);
+      await sessionRows.update(tx, ctx.taskId, patch);
     },
   };
 }

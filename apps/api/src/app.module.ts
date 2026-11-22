@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { DbModule } from '@agent-os/db';
 import { AuditModule } from './audit/audit.module';
-import { RuntimeModule } from './runtime/runtime.module';
+import { ApiRuntimeModule } from './runtime/api-runtime.module';
+import { readRuntimeSettings } from './runtime/runtime-settings';
 import { LoggingModule } from './logging/logging.module';
 import { AgentsModule } from './agents/agents.module';
 import { ChatModule } from './chat/chat.module';
@@ -15,9 +17,17 @@ import { KnowledgeApiModule } from './knowledge/knowledge-api.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     LoggingModule,
+    DbModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connectionString: config.getOrThrow<string>('DATABASE_URL'),
+        poolMax: readRuntimeSettings((name) => config.get<string>(name))
+          .dbPoolMax,
+      }),
+    }),
     AuditModule,
     IdentityModule,
-    RuntimeModule,
+    ApiRuntimeModule,
     AccessModule,
     AgentsModule,
     AccessAdminModule,

@@ -40,7 +40,7 @@ export type EmbeddingVerdict =
 
 /**
  * Rights, quotas, the model catalogue and the default models as the agents see them (design-access.md,
- * «Пакеты»; ADR-0015; design-core.md KD-5, KD-6). The upper part supplies it to `createAgents`; the package
+ * «Пакеты»; ADR-0015; design-core.md KD-5, KD-6). The upper part provides it as `ACCESS_GATE`; the package
  * reads no environment.
  */
 export interface AccessGate {

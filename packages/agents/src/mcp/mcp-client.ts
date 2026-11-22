@@ -7,6 +7,7 @@ import {
   type RequestOptions,
   type Tool,
 } from '@modelcontextprotocol/client';
+import { Injectable } from '@nestjs/common';
 import { type McpFailure, mcpFailureReason } from './mcp-failure';
 
 export const CLIENT_INFO = { name: 'agent-os-agents', version: '1.0.0' } as const;
@@ -82,6 +83,7 @@ async function withConnection<T>(
  * MCP over Streamable HTTP with a connection per call (KD-3): each call creates its client and transport,
  * does `initialize` and its request, and closes the connection. Nothing is kept between calls.
  */
+@Injectable()
 export class McpClient {
   /** Lists the server's tools as the server listed them; any failure is an exception for the caller to classify. */
   async listTools(options: McpConnectionOptions): Promise<Tool[]> {

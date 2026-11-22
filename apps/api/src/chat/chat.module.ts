@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { AGENT_PAGE_SIZE } from '@agent-os/contracts';
 import { AgentsModule } from '../agents/agents.module';
 import { LibraryModule } from '../library/library.module';
-import { RuntimeModule } from '../runtime/runtime.module';
 import { AgentControlService } from './agent-control.service';
 import { AgentsController } from './agents.controller';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
@@ -22,7 +21,7 @@ import { TitleService } from './title.service';
  * at application bootstrap and closes the streams and the connection before shutdown.
  */
 @Module({
-  imports: [RuntimeModule, AgentsModule, LibraryModule],
+  imports: [AgentsModule, LibraryModule],
   controllers: [
     ThreadsController,
     AgentsController,

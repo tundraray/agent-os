@@ -1,6 +1,11 @@
 import { createLogger } from '@agent-os/common';
 import { CHAT_BUILTIN_KEY, type RunOrigin } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  AgentMcpAccountsRepository,
+  AgentMcpServersRepository,
+  AgentSessionsRepository,
+  type Database,
+} from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -11,9 +16,10 @@ import type { AgentSnapshot, DeepAgentSnapshot, RunSnapshot } from '../start/sna
 import { createLibraryDouble } from '../testing';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { AgentTool } from '../tools/tool';
-import { createToolRegistry } from '../tools/tool-registry';
+import { ToolRegistry } from '../tools/tool-registry';
 import { Agent } from './agent';
 import type { AgentDeps } from './agent-deps';
+import type { AgentRun } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { ChatAgent, type ChatAgentDeps } from './chat-agent';
 
@@ -37,10 +43,21 @@ function emptyDatabase(): Database {
 }
 
 // A declaration reads only the snapshot; the chat's listing also reads the library and the owner's sessions.
-const DEPS = { database: emptyDatabase(), library: createLibraryDouble(), logger: SILENT };
-const CHAT = new ChatAgent(DEPS as unknown as ChatAgentDeps);
-const AGENT = new Agent(DEPS as unknown as AgentDeps);
-const DEEP = new DeepAgent(DEPS as unknown as DeepAgentDeps);
+const DEPS = {
+  database: emptyDatabase(),
+  sessionRows: new AgentSessionsRepository(),
+  library: createLibraryDouble(),
+  logger: SILENT,
+};
+/** The agent of each class for a snapshot: a declaration is data of the run the object is made for. */
+type AgentOf = (snapshot: RunSnapshot) => BaseAgent;
+const runOf = (snapshot: RunSnapshot): AgentRun => ({
+  task: { taskId: CTX.taskId, rootId: CTX.taskId, parentId: null, ownerId: OWNER, depth: 0, type: 'stub', input: null },
+  input: { snapshot, prompt: 'Do it', description: 'Do it' },
+});
+const CHAT: AgentOf = (snapshot) => new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(snapshot));
+const AGENT: AgentOf = (snapshot) => new Agent(DEPS as unknown as AgentDeps, runOf(snapshot));
+const DEEP: AgentOf = (snapshot) => new DeepAgent(DEPS as unknown as DeepAgentDeps, runOf(snapshot));
 
 function stubTool(name: string, rootOnly = false): AgentTool {
   return {
@@ -116,12 +133,12 @@ const SUBAGENT = subagentSnapshot(DEEP_AGENT, 'searcher');
 if (SUBAGENT === null) throw new Error('the deep agent has the subagent searcher');
 
 /** The tools of a model call: what the agent declares for its snapshot, answered by the library for the owner. */
-async function toolsOf(agent: BaseAgent, snapshot: RunSnapshot) {
-  return registryOfStubs().toolsFor(OWNER, await agent.offeredDeclaration(CTX, snapshot));
+async function toolsOf(agentOf: AgentOf, snapshot: RunSnapshot) {
+  return registryOfStubs().toolsFor(OWNER, await agentOf(snapshot).offeredDeclaration(CTX));
 }
 
 describe('the root alone gets the root tools; the task tools follow the flag, and the root always has them', () => {
-  it.each<[string, BaseAgent, RunSnapshot, readonly string[]]>([
+  it.each<[string, AgentOf, RunSnapshot, readonly string[]]>([
     [
       "a conversation's root with the task list off in its record",
       CHAT,
@@ -140,11 +157,10 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
 });
 
 function registryOfStubs() {
-  const registry = createToolRegistry({
-    runCode: stubTool('run_code'),
-    database: emptyDatabase(),
-    access: { tools: async () => ({ kind: 'allowed', allows: () => true }) },
+  const registry = new ToolRegistry(emptyDatabase(), new AgentMcpServersRepository(), new AgentMcpAccountsRepository(), {
+    tools: async () => ({ kind: 'allowed', allows: () => true }),
   });
+  registry.useRunCode(stubTool('run_code'));
   [
     ...['start_agent', 'message_agent', 'list_agents', 'stop_agent', ...TASK_LIST_TOOLS].map((name) => stubTool(name)),
     stubTool('start_deep_agent', true),

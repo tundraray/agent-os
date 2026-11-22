@@ -1,6 +1,6 @@
 import type { FinalSubagentReport } from './delegation';
 import type { HistoryContent } from '../history/history';
-import type { SessionTask } from '../store/session-tasks.repository';
+import type { SessionTask } from '@agent-os/db';
 import { blockLine } from '../tools/system/task-list-block';
 
 export interface EndOfTurnInput {

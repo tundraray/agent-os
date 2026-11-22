@@ -2,6 +2,7 @@ export {
   createLogger,
   createSecretMasker,
   isSecretFieldName,
+  LOGGER,
   rememberSecret,
   withoutQueryParams,
   withoutQueryParamsText,

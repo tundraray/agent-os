@@ -3,7 +3,8 @@ import { z } from 'zod';
 
 import type { AgentView } from '../agent-view';
 import { AgentsError } from '../errors';
-import type { AgentHistoryEntry, AgentSessions } from '../operations/agent-sessions';
+import type { AgentHistoryEntry } from '../operations/agent-sessions';
+import type { ViewOperations } from '../operations/view-operations';
 import type { DeepAgentSnapshot } from '../start/snapshot';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
 import { TASK_TOOL } from './deep-definition';
@@ -35,7 +36,7 @@ export interface DeepAgentRun {
 }
 
 /** The operations of agents the run view reads through. */
-export type DeepAgentRunSessions = Pick<AgentSessions, 'get' | 'list' | 'history' | 'snapshot'>;
+export type DeepAgentRunSessions = Pick<ViewOperations, 'get' | 'list' | 'history' | 'snapshot'>;
 
 /** The `subagentType` of a `task` call: the subagent's name in a refusal the view lists. */
 const DelegatedSubagentSchema = z.object({ subagentType: z.string() });

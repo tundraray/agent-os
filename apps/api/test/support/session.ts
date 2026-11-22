@@ -3,17 +3,22 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
-import type { DatabaseConnection } from '@agent-os/db';
+import {
+  DATABASE_CONNECTION,
+  type DatabaseConnection,
+  IdentityRolesRepository,
+  IdentitySessionsRepository,
+  IdentityUsersRepository,
+} from '@agent-os/db';
 import request, { type Test } from 'supertest';
 import type { App } from 'supertest/types.js';
-import { AuditLog } from '../../src/audit/audit-log.repository';
+import { AuditLog } from '../../src/audit/audit-log';
 import { hashPassword } from '../../src/identity/password';
 import {
   SESSION_COOKIE,
   frontendOrigin,
 } from '../../src/identity/session-cookie';
 import { seedSuperAdmin as seedSuperAdminRow } from '../../src/identity/super-admin';
-import { RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens';
 
 /**
  * Sign-in for the e2e suites (design-identity.md, Contract «Вход в тестах»): an employee signs in through
@@ -118,13 +123,17 @@ export async function seedSuperAdmin(
   login: string,
   password = DEFAULT_PASSWORD,
 ): Promise<Session> {
-  const { db } = app.get<DatabaseConnection>(RUNTIME_DATABASE);
-  await seedSuperAdminRow(db, app.get(AuditLog), {
-    login,
-    name: login,
-    email: `${login}@example.test`,
-    password,
-  });
+  const { db } = app.get<DatabaseConnection>(DATABASE_CONNECTION);
+  await seedSuperAdminRow(
+    db,
+    {
+      users: app.get(IdentityUsersRepository),
+      roles: app.get(IdentityRolesRepository),
+      sessions: app.get(IdentitySessionsRepository),
+    },
+    app.get(AuditLog),
+    { login, name: login, email: `${login}@example.test`, password },
+  );
   return signInWithPassword(app, login, password);
 }
 

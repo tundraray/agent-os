@@ -1,25 +1,24 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   LanguageSchema,
   UserStatusSchema,
   type Language,
   type SignInError,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log.repository';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type IdentityUserRow,
+  IdentityUsersRepository,
+} from '@agent-os/db';
+import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
 import { normalizeIdentifier } from './identity-input';
 import { identityError } from './identity.errors';
 import { OidcSignIn, type ReturnFromProvider } from './oidc-sign-in';
 import { PasswordSignIn } from './password-sign-in';
-import { openSession, type OpenedSession } from './session.store';
-import {
-  markSignedIn,
-  upsertProviderUser,
-  type UserRow,
-} from './users.repository';
+import { SessionStore, type OpenedSession } from './session.store';
 
 /** How the employee signed in; written to the audit and the log. */
 type SignInMethod = 'password' | 'provider';
@@ -37,7 +36,7 @@ interface Attempt {
 interface Rejection {
   attempt: Attempt;
   reason: string;
-  user: UserRow | undefined;
+  user: IdentityUserRow | undefined;
   /** The cause behind a provider reason, for the log only. */
   detail?: string;
 }
@@ -66,11 +65,13 @@ export class SignInService {
   private readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly passwordSignIn: PasswordSignIn,
     private readonly oidcSignIn: OidcSignIn,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    private readonly sessionStore: SessionStore,
+    private readonly users: IdentityUsersRepository,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
@@ -153,7 +154,7 @@ export class SignInService {
       await this.reject({ attempt, reason: 'no_email', user: undefined });
       return { ok: false, reason: 'no_email' };
     }
-    const user = await upsertProviderUser(this.db, {
+    const user = await this.users.upsertFromProvider(this.db, {
       email,
       name: finished.name,
     });
@@ -172,7 +173,7 @@ export class SignInService {
    * disabled one.
    */
   private async openFor(
-    user: UserRow,
+    user: IdentityUserRow,
     attempt: Attempt,
   ): Promise<SignedIn | undefined> {
     if (user.status === UserStatusSchema.enum.disabled) {
@@ -180,8 +181,8 @@ export class SignInService {
       return undefined;
     }
     const opened = await this.db.transaction(async (tx) => {
-      const session = await openSession(tx, user.id);
-      await markSignedIn(tx, user.id);
+      const session = await this.sessionStore.open(tx, user.id);
+      await this.users.markSignedIn(tx, user.id);
       await this.auditLog.record(tx, {
         kind: 'sign_in',
         actor: user.id,

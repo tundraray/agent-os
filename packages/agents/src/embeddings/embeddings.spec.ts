@@ -10,7 +10,7 @@ import type { Clock, ModelCallRecord } from '@agent-os/runtime';
 
 import type { EmbeddingVerdict } from '../access-gate';
 import { createProviderRegistryDouble, createScriptedEmbeddings, type ScriptedEmbeddings } from '../testing';
-import { createEmbeddings } from './embeddings';
+import { AgentsEmbeddings } from './embeddings';
 
 const SMALL: EmbeddingVerdict = {
   kind: 'allowed',
@@ -185,18 +185,18 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         return () => {};
       },
     };
-    const embeddings = createEmbeddings({
-      client: seam.client,
-      access: { embedding: async () => row.verdict },
-      providers: createProviderRegistryDouble({ gemini: 'ready' }),
-      ledger: {
+    const embeddings = new AgentsEmbeddings(
+      seam.client,
+      { embedding: async () => row.verdict },
+      createProviderRegistryDouble({ gemini: 'ready' }),
+      {
         record: async (call) => {
           ledgerRows.push(call);
           return { callId: `model-call-${ledgerRows.length}`, costUsd: 0 };
         },
       },
       clock,
-    });
+    );
 
     const result = await embeddings.embed({
       texts: row.texts,

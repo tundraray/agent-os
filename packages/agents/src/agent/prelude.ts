@@ -1,11 +1,13 @@
 import { HistoryEventSchema } from '@agent-os/contracts';
+import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepResult } from '@agent-os/runtime';
 
 import type { CallState } from '../history/call-state';
 import { stopEvent } from '../resume';
-import { callRecords, interruptedResults } from '../store/call-records.repository';
-import type { NewHistoryEntry } from '../store/history.repository';
-import { type Session, type SessionPatch, sessions } from '../store/sessions.repository';
+import { interruptedResults } from '../store/call-records';
+import type { NewHistoryEntry } from '../store/history';
+import type { Session } from '../store/sessions';
+import type { AgentDeps } from './agent-deps';
 import type { Continuation } from './continuation';
 import { appendWithEvent, logStep, type StepPrelude } from './step-common';
 
@@ -58,7 +60,12 @@ function preludeEvents(plan: StepPlan): NewHistoryEntry[] {
  * `interrupted` mark cleared by a message of another kind. The model sees the open calls as the commit
  * will close them. `undefined` when there is nothing to write.
  */
-export function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrelude | undefined {
+export function preludeOf(
+  deps: Pick<AgentDeps, 'callRecords'>,
+  ctx: StepContext,
+  session: Session,
+  plan: StepPlan,
+): StepPrelude | undefined {
   const closes = closesOpen(plan);
   const events = preludeEvents(plan);
   const entries = [...(closes ? interruptedResults(plan.open, new Date()) : []), ...events];
@@ -75,7 +82,7 @@ export function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): S
     patch,
     write: async (tx) => {
       // The results are appended here, ahead of the events the caller appends.
-      if (closes) await callRecords.closeOpen(tx, ctx.taskId);
+      if (closes) await deps.callRecords.closeOpen(tx, ctx.taskId);
       return events;
     },
   };
@@ -85,14 +92,19 @@ export function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): S
  * The tool step does not know the prelude: its commit is wrapped so the prelude goes first, in the same
  * transaction. A step abandoned without a commit stays so.
  */
-export function withPrelude(ctx: StepContext, result: StepResult, prelude: StepPrelude | undefined): StepResult {
+export function withPrelude(
+  deps: Pick<AgentDeps, 'history' | 'sessionRows'>,
+  ctx: StepContext,
+  result: StepResult,
+  prelude: StepPrelude | undefined,
+): StepResult {
   const inner = result.commit;
   if (prelude === undefined || inner === undefined) return result;
   return {
     ...result,
     commit: async (tx, effects) => {
-      await appendWithEvent(tx, effects, ctx.taskId, await prelude.write(tx));
-      await sessions.update(tx, ctx.taskId, prelude.patch);
+      await appendWithEvent(deps, tx, effects, ctx.taskId, await prelude.write(tx));
+      await deps.sessionRows.update(tx, ctx.taskId, prelude.patch);
       await inner(tx, effects);
     },
   };
@@ -102,14 +114,19 @@ export function withPrelude(ctx: StepContext, result: StepResult, prelude: StepP
  * An `interrupt` and no other message (KD-3): the open calls closed, the `interrupted`
  * event, the session marked «прерван» with its turn counter reset; the agent waits for a message.
  */
-export function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number): StepResult {
+export function interruptWait(
+  deps: Pick<AgentDeps, 'history' | 'sessionRows'>,
+  ctx: StepContext,
+  prelude: StepPrelude,
+  startedAt: number,
+): StepResult {
   logStep(ctx, 'interrupt', startedAt, 'wait');
   return {
     outcome: 'wait',
     commit: async (tx, effects) => {
       // The step's only messages are `interrupt`s: they add no entry of their own.
-      await appendWithEvent(tx, effects, ctx.taskId, await prelude.write(tx));
-      await sessions.update(tx, ctx.taskId, {
+      await appendWithEvent(deps, tx, effects, ctx.taskId, await prelude.write(tx));
+      await deps.sessionRows.update(tx, ctx.taskId, {
         ...prelude.patch,
         interrupted: true,
         turns: 0,

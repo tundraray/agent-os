@@ -1,4 +1,4 @@
-// model-providers / core - agents-package integration skeleton (in-process `createRuntime` + `createAgents` over real Postgres, provider faked on the wire)
+// model-providers / core - agents-package integration skeleton (in-process `RuntimeModule` + `createAgents` over real Postgres, provider faked on the wire)
 // Design Doc: docs/features/model-providers/design-core.md (v1.0), Test Strategy UC-1, UC-2, DC-4; PRD: docs/features/model-providers/prd.md FR-01..FR-04, FR-10.
 // Generated: 2026-11-20
 // Part: core. THE PART'S BUDGET, THE FULL acProof AND THE LIST OF UNIT TABLES ARE HERE (one place).
@@ -8,7 +8,7 @@
 // Test Type: Integration. Run with `pnpm --filter @agent-os/agents test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`).
 //
 // Harness (follows agent-platform-agents.int.e2e-spec.ts and test/support/agentsHarness.ts):
-//   real Postgres, real `createRuntime` and `createAgents`, the REAL `ModelClient` + `createMastraTurnClient` + adapters of the three kinds
+//   real Postgres, real `RuntimeModule` and `createAgents`, the REAL `ModelClient` + `createMastraTurnClient` + adapters of the three kinds
 //   (not the `AgentTurnModelClient` double: this level exists to prove what is BELOW that seam - the adapter's request and its usage), the
 //   provider faked at the network edge by a local HTTP server per kind. The access-gate double of the harness answers the catalogue price.
 //   The seam `AgentTurnModelClient` stays the double in apps/api (INT-2 .. INT-7), where the adapters are not under test.

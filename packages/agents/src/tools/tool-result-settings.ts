@@ -1,8 +1,9 @@
 import type { Logger } from '@agent-os/common';
 import type { ToolResultSettings } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import { AgentToolResultsRepository, DATABASE, type Database, type ToolResultSettingsRow } from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 
-import { type ToolResultSettingsRow, toolResults } from '../store/tool-results.repository';
+import { AGENTS_LOGGER } from '../agents.tokens';
 
 export interface ToolResultSettingsUpdate {
   /** The administrator, named in the log. */
@@ -24,41 +25,42 @@ export interface ToolResultSettingsChange {
  * them — the route is admin-only. The runner and the reading tools read the row on every call, so a change
  * takes effect on the next MCP call without a restart.
  */
-export interface AgentsToolResults {
-  settings(): Promise<ToolResultSettings>;
-  updateSettings(update: ToolResultSettingsUpdate): Promise<ToolResultSettingsChange>;
-}
+@Injectable()
+export class AgentsToolResults {
+  private readonly logger: Logger;
 
-export interface AgentsToolResultsDeps {
-  readonly database: Database;
-  readonly logger: Logger;
-}
+  constructor(
+    @Inject(DATABASE) private readonly database: Database,
+    @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(AGENTS_LOGGER) logger: Logger,
+  ) {
+    this.logger = logger.child({ service: 'agents.tool-results' });
+  }
 
-export function createAgentsToolResults(deps: AgentsToolResultsDeps): AgentsToolResults {
-  const { database } = deps;
-  const logger = deps.logger.child({ service: 'agents.tool-results' });
+  async settings(): Promise<ToolResultSettings> {
+    return settingsView(await this.toolResultRows.readSettings(this.database));
+  }
 
-  return {
-    async settings() {
-      return settingsView(await toolResults.readSettings(database));
-    },
-
-    async updateSettings({ actorId, storeFromChars, previewChars, readMaxTokens }) {
-      const startedAt = Date.now();
-      const change = await database.transaction((tx) =>
-        toolResults.writeSettings(tx, { storeFromChars, previewChars, readMaxTokens }),
-      );
-      const before = settingsView(change.before);
-      const after = settingsView(change.after);
-      logger.info('tool result settings changed', {
-        actorId,
-        before: valuesOf(before),
-        after: valuesOf(after),
-        durationMs: Date.now() - startedAt,
-      });
-      return { before, after };
-    },
-  };
+  async updateSettings({
+    actorId,
+    storeFromChars,
+    previewChars,
+    readMaxTokens,
+  }: ToolResultSettingsUpdate): Promise<ToolResultSettingsChange> {
+    const startedAt = Date.now();
+    const change = await this.database.transaction((tx) =>
+      this.toolResultRows.writeSettings(tx, { storeFromChars, previewChars, readMaxTokens }),
+    );
+    const before = settingsView(change.before);
+    const after = settingsView(change.after);
+    this.logger.info('tool result settings changed', {
+      actorId,
+      before: valuesOf(before),
+      after: valuesOf(after),
+      durationMs: Date.now() - startedAt,
+    });
+    return { before, after };
+  }
 }
 
 function settingsView(row: ToolResultSettingsRow): ToolResultSettings {

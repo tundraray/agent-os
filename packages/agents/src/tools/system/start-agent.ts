@@ -1,4 +1,4 @@
-import type { Transaction } from '@agent-os/db';
+import type { AgentMessagesRepository, Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { START_AGENT_TOOL, type RecordKind } from '@agent-os/contracts';
 import { z } from 'zod';
@@ -14,7 +14,6 @@ import {
   type StartResolution,
   type StartSource,
 } from '../../start/resolve-start';
-import { history } from '../../store/history.repository';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool';
 import { gateStart, type LaunchSet, type StartGate, type StartTarget } from './tool-gate';
 import { logStart } from './start-child';
@@ -68,6 +67,8 @@ export interface StartAgentDeps {
   readonly audit: AccessAudit;
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
+  /** The fork's link is read from the caller's history. */
+  readonly messageRows: AgentMessagesRepository;
   readonly logger: Logger;
 }
 
@@ -238,7 +239,7 @@ export function createStartAgentTool(
         description: args.description,
         prompt: args.prompt,
         ...(target.kind === 'fork'
-          ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(tx, caller, callId) } }
+          ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(deps.messageRows, tx, caller, callId) } }
           : {}),
       });
       logStart(logger, {
@@ -262,8 +263,13 @@ export function createStartAgentTool(
 }
 
 /** The fork's link (KD-7): the last entry of the caller before the `model_answer` that requested this call. */
-async function seqBeforeAnswer(tx: Transaction, caller: ToolCaller, callId: string): Promise<number> {
-  const answerSeq = await history.answerSeqOf(tx, caller.agentId, callId);
+async function seqBeforeAnswer(
+  messageRows: AgentMessagesRepository,
+  tx: Transaction,
+  caller: ToolCaller,
+  callId: string,
+): Promise<number> {
+  const answerSeq = await messageRows.answerSeqOf(tx, caller.agentId, callId);
   if (answerSeq === undefined) {
     throw new Error(`No answer of agent ${caller.agentId} requested call ${callId}`);
   }

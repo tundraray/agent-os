@@ -1,4 +1,4 @@
-// custom-agents / runtime - agents-package integration skeleton (in-process `createRuntime` + `createAgents` over real Postgres, scripted model, library double)
+// custom-agents / runtime - agents-package integration skeleton (in-process `RuntimeModule` + `createAgents` over real Postgres, scripted model, library double)
 // Design Doc: docs/features/custom-agents/design-runtime.md (v1.1), Test Strategy UC-5, UC-E1, UC-E2 (the start procedure and the snapshot);
 //   PRD: docs/features/custom-agents/prd.md FR-13, FR-14 (AC-13.1 .. AC-13.4, AC-14.1, AC-14.3, AC-14.4).
 // Generated: 2026-11-17
@@ -8,7 +8,7 @@
 // Test Type: Integration. Run with `pnpm --filter @agent-os/agents test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`), never in the default `vitest run`.
 //
 // Harness (follows agent-platform-agents.int.e2e-spec.ts and test/support/agentsHarness.ts):
-//   real Postgres, real `createRuntime` and `createAgents`, workers on; the scripted `ModelClient` is the only model double and records the
+//   real Postgres, real `RuntimeModule` and `createAgents`, workers on; the scripted `ModelClient` is the only model double and records the
 //   input of every call (the assertion surface for "the next model call carries prompt X"; the system prompt is read by a thin wrapper of
 //   its `turnClient`, below); the MCP fixture process is the real one. The library is `options.library` - a `createLibraryDouble` of
 //   `@agent-os/agents/testing` (records in memory with owner, "visible to all", viewers; operations to edit a record into a new version,

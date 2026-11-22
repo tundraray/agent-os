@@ -641,7 +641,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Not re-checked here: the order, single delivery and wake-up of the inbox, the cut-off step and the closure of open calls (runtime INT-2, INT-3; agents INT-2), the tool gate and the decision's one execution (agents INT-3), the history loop and routing of reports between agents (agents INT-1), the chat-status derivation, the coalescing arithmetic and the hub's filter (unit), the foreign owner's stream (INT-4).
   // Behavior: HTTP command (202) -> worker step with scripted model -> text parts as `delta` events and the finished step as history rows + `tree` note -> the view re-read from the last number equals the live picture -> pending, interrupt, report and reconnect leave one consistent history
   // @category: core-functionality
-  // @dependency: AppModule (ConversationsService, ThreadsController, EventsController, LiveHub, DeltaPublisher), createRuntime, createAgents (onTextDelta), createWorkflows, scripted model double, MCP fixture (`logs` delayed read, `backoffice` mutating), Postgres
+  // @dependency: AppModule (ConversationsService, ThreadsController, EventsController, LiveHub, DeltaPublisher), RuntimeModule, createAgents (onTextDelta), createWorkflows, scripted model double, MCP fixture (`logs` delayed read, `backoffice` mutating), Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; ids, texts and counts are hardcoded literals):
@@ -1301,7 +1301,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Not re-checked here: the tool-confirmation lifecycle and its one execution (agents INT-3, runtime E2E-1), the coordinator's own steps and the run view's content (workflows part), the status derivation and the `Confirmation`/`AgentNode` mapping (unit), the cost of a call and the month window (runtime INT-5), the foreign owner's answers (INT-4), the stream notes (INT-1).
   // Behavior: the web reads the owner's agents, one agent's page, a run and the month's spend -> the controls and the decision change the state through the same operations as the chat -> the next read shows the new state and the right HTTP outcome
   // @category: core-functionality
-  // @dependency: AppModule (AgentControlService, AgentsController, DecisionsController, SpendController, ThreadsController), createAgents (sessions.list/history/send/interrupt/stop/restart/confirmations, completeText), createAgents (sessions.run, start_deep_agent), createRuntime (ledger.monthSpend), scripted model double, MCP fixture, Postgres
+  // @dependency: AppModule (AgentControlService, AgentsController, DecisionsController, SpendController, ThreadsController), createAgents (sessions.list/history/send/interrupt/stop/restart/confirmations, completeText), createAgents (sessions.run, start_deep_agent), RuntimeModule (ledger.monthSpend), scripted model double, MCP fixture, Postgres
   // @complexity: high
   //
   // Verification items (table-driven by route family; every row validates the body with the contract schema and asserts literal ids and counts):
@@ -2273,7 +2273,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Not re-checked here: the stop of the tree's tasks and the rows `deleteTree` marks (runtime INT-5 D), the ledger surviving `deleteTree` as a runtime rule (runtime INT-5; here only through the HTTP spend), the cursor encoding, the title rules and the schemas (unit), the foreign owner (INT-4), the stream (INT-1).
   // Behavior: HTTP list/rename/delete/send -> the root sessions and the agents tree -> the next list, read, send and spend show the new state; the title is written in the background under the conditional update
   // @category: core-functionality
-  // @dependency: AppModule (ConversationsService, TitleService, ThreadsController), agents.completeText, agents.sessions.deleteRoot, createRuntime (ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
+  // @dependency: AppModule (ConversationsService, TitleService, ThreadsController), agents.completeText, agents.sessions.deleteRoot, RuntimeModule (ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by scenario):
@@ -2654,7 +2654,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Not re-checked here: the owner check of the `runtime_*` and `agent_*` operations themselves (runtime INT-4, agents INT-4), the MCP access table (agents INT-3 row A), authentication in production (every route 401 before real auth: one SessionGuard unit/contract check, not repeated per route).
   // Behavior: owner B calls each route with owner A's ids and watches A's agent on a stream while A's agent writes history and text -> every answer equals the answer for an id that exists for nobody and B's stream stays silent -> nothing of A's changed
   // @category: core-functionality
-  // @dependency: AppModule (every controller, LiveHub), createAgents, createWorkflows, createRuntime, scripted model double, MCP fixture (one mutating call awaiting confirmation), Postgres
+  // @dependency: AppModule (every controller, LiveHub), createAgents, createWorkflows, RuntimeModule, scripted model double, MCP fixture (one mutating call awaiting confirmation), Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by route; A has a conversation with a root, a child agent, a deep agent run, one open request, a held read call and ledger rows; B has own conversation and agent):

@@ -9,8 +9,8 @@ import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { type ResumeMark, ResumeMarkSchema } from '../resume';
-import { history, type NewHistoryEntry } from '../store/history.repository';
-import { sessions } from '../store/sessions.repository';
+import type { NewHistoryEntry } from '../store/history';
+import type { AgentDeps } from './agent-deps';
 
 /** Payloads of the queue messages the package sends (plan Notes 3). */
 const MessagePayloadSchemas = {
@@ -52,6 +52,7 @@ export function resumeMarkOf(message: StepMessage): ResumeMark | undefined {
 }
 
 async function childReport(
+  deps: Pick<AgentDeps, 'messageRows'>,
   reader: Executor,
   notice: ChildFinishedPayload,
   description: string,
@@ -64,7 +65,7 @@ async function childReport(
       status: notice.status,
       reason: notice.failure?.reason ?? null,
       text: notice.result?.report ?? null,
-      toolCalls: await history.toolCallCount(reader, notice.taskId),
+      toolCalls: await deps.messageRows.toolCallCount(reader, notice.taskId),
       durationMs: notice.durationMs,
     },
   };
@@ -80,6 +81,7 @@ async function childReport(
  * queue of an agent holds only these five.
  */
 export async function entriesOf(
+  deps: Pick<AgentDeps, 'sessions' | 'messageRows'>,
   reader: Executor,
   messages: readonly StepMessage[],
 ): Promise<NewHistoryEntry[]> {
@@ -89,7 +91,7 @@ export async function entriesOf(
       notices.set(message.messageId, ChildFinishedPayloadSchema.parse(message.payload));
     }
   }
-  const children = await sessions.getMany(
+  const children = await deps.sessions.getMany(
     reader,
     [...notices.values()].map((notice) => notice.taskId),
   );
@@ -108,7 +110,7 @@ export async function entriesOf(
       // A child started by `start` outside a step may end before its first step made its session:
       // the report still reaches the parent, without a description.
       const description = children.get(notice.taskId)?.description ?? '';
-      entries.push(await childReport(reader, notice, description));
+      entries.push(await childReport(deps, reader, notice, description));
     } else if (message.kind !== interrupt && message.kind !== TASKS_FINISHED_KIND) {
       throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
     }

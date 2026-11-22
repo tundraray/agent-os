@@ -1,4 +1,4 @@
-import { PLATFORM_OWNER_ID, type Runtime } from '@agent-os/runtime';
+import { PLATFORM_OWNER_ID, type TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
 /*
@@ -21,7 +21,7 @@ export type KnowledgeEmbedInput = z.infer<typeof KnowledgeEmbedInputSchema>;
  * The request of a vector pass of the deep agent. The pass belongs to the platform; who pays is the
  * vector row's `payer_id`, decided per embed call (KD-8).
  */
-export function embedPassRequest(recordId: string): Parameters<Runtime['tasks']['create']>[0] {
+export function embedPassRequest(recordId: string): Parameters<TaskControl['create']>[0] {
   const input: KnowledgeEmbedInput = { recordId };
   return { type: KNOWLEDGE_EMBED_TASK_TYPE, ownerId: PLATFORM_OWNER_ID, input };
 }

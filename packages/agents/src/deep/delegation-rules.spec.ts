@@ -1,4 +1,4 @@
-import type { SessionTask } from '../store/session-tasks.repository';
+import type { SessionTask } from '@agent-os/db';
 import {
   type DelegationCall,
   type DelegationDecision,

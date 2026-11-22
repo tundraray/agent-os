@@ -10,13 +10,13 @@ import {
   type ToolOutcome,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import { AgentMessagesRepository, type Database } from '@agent-os/db';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
 import type { EmbeddingClient } from './embeddings/embedding-client';
 import { foldCalls } from './history/call-state';
-import { history } from './store/history.repository';
+import { History } from './store/history';
 import type { EmbeddingInputType } from './providers/adapters';
 import type { ProviderReadiness } from './providers/provider-readiness';
 import type { AgentsProviders } from './providers/provider-registry';
@@ -32,7 +32,7 @@ import type {
 
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
- * `@agent-os/agents/testing`): an `AgentTurnModelClient` for `createAgents({ turnClient })`, so it stands
+ * `@agent-os/agents/testing`): an `AgentTurnModelClient` behind `AGENT_TURN_CLIENT`, so it stands
  * INSIDE `ModelClient`, below its ledger write — the token ledger, the retries, the text parts with
  * their offsets and the provider messages are the package's own. A script is a list of replies of one
  * agent; every call is recorded with the messages exactly as the provider would get them, which is the
@@ -209,7 +209,7 @@ export interface TextScript {
 }
 
 export interface ScriptedModel {
-  /** The double, for `createAgents({ turnClient })`. */
+  /** The double, behind `AGENT_TURN_CLIENT`. */
   readonly turnClient: AgentTurnModelClient;
   /** Every agent call of every script, in order of arrival; `completeText` calls are not among them. */
   readonly calls: readonly RecordedModelCall[];
@@ -397,7 +397,7 @@ export interface RecordedEmbeddingCall {
 }
 
 /**
- * The embeddings seam double (ADR-0004), for `createAgents({ embeddingClient })`: it stands below the service,
+ * The embeddings seam double (ADR-0004), behind `EMBEDDING_CLIENT`: it stands below the service,
  * so the batches, retries, ledger rows and checks are the package's own. The switches are read on every call.
  */
 export interface ScriptedEmbeddings {
@@ -753,7 +753,7 @@ export interface ToolCallRow {
  * by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
 export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await history.all(db, agentId);
+  const entries = await new History(new AgentMessagesRepository()).all(db, agentId);
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {

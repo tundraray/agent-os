@@ -1,4 +1,4 @@
-// deep-agents / task-list - agents-package integration test (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
+// deep-agents / task-list - agents-package integration test (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
 // Design Doc: docs/features/deep-agents/design-task-list.md, Test Strategy UC-3, KD-1 – KD-4, DC-3
 // PRD: docs/features/deep-agents/prd.md FR-13, FR-14 (AC-13.1, AC-14.5)
 // Test type: Integration, run with `pnpm --filter @agent-os/agents test:e2e`.

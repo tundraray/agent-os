@@ -1,17 +1,15 @@
 import { Body, Controller, Get, Inject, Put, Req } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
+import { AgentsKnowledge } from '@agent-os/agents';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   UpdateKnowledgeSettingsBodySchema,
   type KnowledgeSettings,
   type UpdateKnowledgeSettingsBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens';
-import { AuditLog } from '../audit/audit-log.repository';
+import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
-import { APP_LOGGER } from '../logging/app-logger';
 import { loggedRoute } from '../common/logged-route';
 
 const SETTINGS_OBJECT_TYPE = 'knowledge_settings';
@@ -36,9 +34,9 @@ export class AdminKnowledgeSettingsController {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsKnowledge) private readonly knowledge: AgentsKnowledge,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'knowledge.routes' });
   }
@@ -49,7 +47,7 @@ export class AdminKnowledgeSettingsController {
     return loggedRoute(this.logger, {
       route: 'GET /admin/knowledge/settings',
       fields: { actorId: req.user.id },
-      work: () => this.agents.knowledge.settings(),
+      work: () => this.knowledge.settings(),
     });
   }
 
@@ -65,7 +63,7 @@ export class AdminKnowledgeSettingsController {
       route: 'PUT /admin/knowledge/settings',
       fields: { actorId: actor },
       work: async () => {
-        const { before, after } = await this.agents.knowledge.updateSettings({
+        const { before, after } = await this.knowledge.updateSettings({
           actorId: actor,
           limitTokens: body.limitTokens,
           lessonsEnabled: body.lessonsEnabled,

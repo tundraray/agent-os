@@ -7,7 +7,8 @@ import type {
   SystemRecordAudienceBody,
   UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AuditLog } from '../audit/audit-log.repository';
+import { LibraryRecordsRepository } from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
 import { decideSystemAudience } from './audience-rules';
@@ -21,13 +22,6 @@ import {
 } from './library-records';
 import { LibrarySave } from './library-save';
 import { libraryError } from './library.errors';
-import {
-  closeSharing,
-  liftBan,
-  lockRecord,
-  replaceHolders,
-  setOfferInChat,
-} from './library.repository';
 import type {
   LibraryActor,
   LibraryRecord,
@@ -53,6 +47,7 @@ export class LibraryPanelService {
   constructor(
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
+    private readonly repository: LibraryRecordsRepository,
     private readonly identity: IdentityDirectory,
     private readonly auditLog: AuditLog,
   ) {}
@@ -174,7 +169,7 @@ export class LibraryPanelService {
       async () => {
         if (!isUuid(id)) throw notFound();
         const record = await this.records.db.transaction(async (tx) => {
-          if (!(await lockRecord(tx, id))) throw notFound();
+          if (!(await this.repository.lock(tx, id))) throw notFound();
           const before = await this.records.panelOr404(tx, id);
           if (before.ownerId !== null) throw readOnly();
           const existing = await this.identity.existing(body);
@@ -187,8 +182,8 @@ export class LibraryPanelService {
           });
           if (decision.kind === 'refused')
             throw libraryError('RECORD_REJECTED', decision.reason);
-          await replaceHolders(tx, id, body);
-          await setOfferInChat(tx, id, body.offerInChat);
+          await this.repository.replaceHolders(tx, id, body);
+          await this.repository.setOfferInChat(tx, id, body.offerInChat);
           const after = present(await this.records.panelOne(tx, id), id);
           await this.records.audit(tx, actor.id, 'library_audience', before, after);
           return after;
@@ -225,10 +220,10 @@ export class LibraryPanelService {
       async () => {
         if (!isUuid(id)) throw notFound();
         await this.records.db.transaction(async (tx) => {
-          if (!(await lockRecord(tx, id))) throw notFound();
+          if (!(await this.repository.lock(tx, id))) throw notFound();
           const before = await this.records.panelOr404(tx, id);
           if (before.ownerId === null) throw notFound();
-          const closedAt = await closeSharing(tx, id);
+          const closedAt = await this.repository.closeSharing(tx, id);
           const after = { ...before, holders: NO_HOLDERS, closedAt };
           await this.records.audit(tx, actor.id, 'library_close', before, after);
         });
@@ -244,9 +239,9 @@ export class LibraryPanelService {
       async () => {
         if (!isUuid(id)) throw notFound();
         await this.records.db.transaction(async (tx) => {
-          if (!(await lockRecord(tx, id))) throw notFound();
+          if (!(await this.repository.lock(tx, id))) throw notFound();
           const ban = await this.records.ban(tx, id);
-          if (ban === undefined || !(await liftBan(tx, id))) throw notFound();
+          if (ban === undefined || !(await this.repository.liftBan(tx, id))) throw notFound();
           await this.auditLog.record(tx, {
             kind: 'library_unban',
             actor: actor.id,

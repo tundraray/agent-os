@@ -1,4 +1,4 @@
-// self-learning / core - agents-package integration tests (in-process `createRuntime` + `createAgents` over real Postgres, scripted model)
+// self-learning / core - agents-package integration tests (in-process `RuntimeModule` + `createAgents` over real Postgres, scripted model)
 // Design Doc: docs/features/self-learning/design-core.md (v1.3), Test Strategy UC-1, UC-2, UC-4, UC-6, UC-7, UC-9, UC-E1..UC-E9, UC-N1;
 //   PRD: docs/features/self-learning/prd.md (v1.3: AC-01.1 .. AC-20.1, NFR-01, NFR-02).
 // Generated: 2026-11-19 as skeletons; updated 2026-11-20 for Design Doc v1.2 (vector store, `knowledge.embed`, two-pass selection, question
@@ -10,7 +10,7 @@
 // Test Type: Integration. Run with `pnpm --filter @agent-os/agents test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`).
 //
 // Harness (as built; follows custom-agents-runtime.int.e2e-spec.ts, agent-platform-agents.int.e2e-spec.ts and test/support/agentsHarness.ts):
-//   real Postgres with the `vector` extension (`pgvector/pgvector:pg16`, KD-8), real `createRuntime` and `createAgents`, workers on, the scripted
+//   real Postgres with the `vector` extension (`pgvector/pgvector:pg16`, KD-8), real `RuntimeModule` and `createAgents`, workers on, the scripted
 //   model under `ModelClient` recording every call's system text (`instructions`) and input (the assertion surface for "the model call carries the
 //   block" and "the extraction call carries these tool calls"), the real MCP fixture process, the access-gate double of the harness
 //   (`ownerModelRefusals`; the embedding model `harness.embeddingVerdict`: none, model A of 3 dimensions or model B of 4), and the embeddings
@@ -107,14 +107,14 @@ import {
   createDatabase,
   type Database,
   type DatabaseConnection,
+  type KnowledgeGraph,
   libraryRecords,
 } from '@agent-os/db';
 import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
 import { eq, max } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { KnowledgeGraph } from '../src/knowledge/knowledge.repository';
-import type { KnowledgeRun } from '../src/knowledge/knowledge-runs.repository';
+import type { KnowledgeRun } from '../src/knowledge/knowledge-runs';
 import { KNOWLEDGE_RULE, knowledgeKey } from '../src/knowledge/knowledge-text';
 import {
   type AgentsHarness,

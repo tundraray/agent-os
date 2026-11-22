@@ -55,7 +55,7 @@ export interface TaskGuard {
   waitReason?: WaitReason;
 }
 
-/** Identity and input never change; the guarded columns are set only by `TaskRepository.transition`. */
+/** Identity and input never change; the guarded columns are set only by `Tasks.transition`. */
 type ImmutableColumn =
   | 'taskId'
   | 'type'

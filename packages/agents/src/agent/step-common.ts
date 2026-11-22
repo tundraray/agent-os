@@ -1,14 +1,15 @@
 import { AgentFailureReasonSchema, AGENTS_HISTORY_APPENDED, type ChipRecord, HistoryEventSchema } from '@agent-os/contracts';
-import type { Executor, Transaction } from '@agent-os/db';
+import type { SessionPatch, Transaction } from '@agent-os/db';
 import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
 import type { HistoryEntry } from '../history/history';
 import { modelDeniedEntry, type ModelRefusal, modelRefusalMessage, refusalFields } from '../model/model-client';
 import type { AgentTurnMessage } from '../model/mastra-turn';
-import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages';
-import { history, type NewHistoryEntry } from '../store/history.repository';
-import { type Session, type SessionPatch, sessions } from '../store/sessions.repository';
+import { buildProviderMessages } from '../model/provider-messages';
+import type { NewHistoryEntry } from '../store/history';
+import type { AgentDeps } from './agent-deps';
+import type { SessionHistory } from './agent-state';
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
 export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
@@ -24,37 +25,6 @@ export interface StepPrelude {
   readonly entries: readonly NewHistoryEntry[];
   readonly write: (tx: Transaction) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
-}
-
-/** The history the model sees, read outside the commit: the fork prefix and the own entries. */
-export interface SessionHistory {
-  readonly forkPrefix?: ForkPrefix;
-  /** The own entries from the last compaction on, in `seq` order (`history.visible`). */
-  readonly entries: readonly HistoryEntry[];
-  /** `seq` of the last own entry; 0 for an empty history. */
-  readonly lastSeq: number;
-}
-
-/**
- * The session's history as the model sees it: `own` — its entries from the last compaction on — and,
- * for a fork that has not compacted yet, the parent's part (KD-7); a summary covers that part too.
- */
-export async function readSessionHistory(
-  reader: Executor,
-  session: Session,
-  own: readonly HistoryEntry[],
-): Promise<SessionHistory> {
-  const lastSeq = own.at(-1)?.seq ?? 0;
-  const compacted = own.some((entry) => entry.kind === 'compaction');
-  if (compacted || session.forkedFromTaskId === null || session.forkedThroughSeq === null) {
-    return { entries: own, lastSeq };
-  }
-  const throughSeq = session.forkedThroughSeq;
-  const forkPrefix: ForkPrefix = {
-    throughSeq,
-    entries: await history.through(reader, session.forkedFromTaskId, throughSeq),
-  };
-  return { forkPrefix, entries: own, lastSeq };
 }
 
 /**
@@ -113,13 +83,14 @@ export function providerMessagesOf(
  * event names the last of them when nothing follows.
  */
 export async function appendWithEvent(
+  deps: Pick<AgentDeps, 'history'>,
   tx: Transaction,
   effects: StepEffects,
   taskId: string,
   entries: readonly NewHistoryEntry[],
   before: readonly HistoryEntry[] = [],
 ): Promise<HistoryEntry[]> {
-  const appended = await history.append(tx, taskId, entries);
+  const appended = await deps.history.append(tx, taskId, entries);
   const last = appended.at(-1) ?? before.at(-1);
   if (last !== undefined) {
     await effects.emit(AGENTS_HISTORY_APPENDED, { agentId: taskId, seq: last.seq });
@@ -138,6 +109,7 @@ function failedEvent(reason: string): NewHistoryEntry {
  * continuation (KD-1).
  */
 export function failResult(input: {
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
   readonly ctx: StepContext;
   readonly reason: string;
   readonly message: string;
@@ -145,15 +117,15 @@ export function failResult(input: {
   readonly writeEntries: (tx: Transaction, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): StepResult {
-  const { ctx, reason, message } = input;
+  const { deps, ctx, reason, message } = input;
   return {
     outcome: 'fail',
     reason,
     message,
     commit: async (tx, effects) => {
       const entries = await input.writeEntries(tx, effects);
-      await appendWithEvent(tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
-      await sessions.update(tx, ctx.taskId, {
+      await appendWithEvent(deps, tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
+      await deps.sessionRows.update(tx, ctx.taskId, {
         ...input.patch,
         turns: 0,
         closed: true,
@@ -168,6 +140,7 @@ export function failResult(input: {
  * written to the audit first (KD-6, plan Notes 3): a failing hook rejects, and the runtime repeats the step.
  */
 export async function refusedResult(input: {
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
   readonly ctx: StepContext;
   readonly stepKind: string;
   readonly startedAt: number;
@@ -184,6 +157,7 @@ export async function refusedResult(input: {
   }
   logStep(ctx, input.stepKind, input.startedAt, 'fail', { model, ...refusalFields(refusal) });
   return failResult({
+    deps: input.deps,
     ctx,
     reason: refusal.reason,
     message: `Agent ${ctx.taskId}: ${modelRefusalMessage(ctx.ownerId, model, refusal)}`,

@@ -70,4 +70,4 @@ Accepted (2026-11-15).
 - [design-mcp-connect.md](../features/enterprise-access/design-mcp-connect.md) — KD-1, Contract Definitions, Data Model
 - [prd.md](../features/enterprise-access/prd.md) — FR-12, FR-13, Constraints
 - [ADR-0004](ADR-0004-agent-framework-packages.md)
-- [code-system README](../code-system/README.md) — Module Boundaries, строка «MCP в `agents`»
+- [code-system, пакет `agents`](../code-system/packages/agents.md) — Правила, пункт «MCP»

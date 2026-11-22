@@ -3,17 +3,30 @@
 // The model, the MCP server and the database are doubles: the database answers every query with no rows, as for
 // an agent with an empty history.
 import type { Logger } from '@agent-os/common';
-import type { Database } from '@agent-os/db';
-import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
+import {
+  AgentCodeCallsRepository,
+  AgentKnowledgeRepository,
+  AgentKnowledgeRunsRepository,
+  AgentMcpAccountsRepository,
+  AgentMcpServersRepository,
+  AgentMessagesRepository,
+  AgentSessionsRepository,
+  AgentSessionTasksRepository,
+  AgentToolResultsRepository,
+  type Database,
+} from '@agent-os/db';
+import { type ModelPrice, type StepContext, type StepResult, systemClock } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AccessDeniedEntry, AuditRecord, ModelVerdict } from './access-gate';
 import type { CallState } from './history/call-state';
 import { ChatAgent } from './agent/chat-agent';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
-import { createModelClient } from './model/model-client';
+import { ModelClient } from './model/model-client';
 import type { AgentSnapshot } from './start/snapshot';
-import type { Session, SessionInput } from './store/sessions.repository';
+import { CallRecords } from './store/call-records';
+import { History } from './store/history';
+import { type Session, type SessionInput, Sessions } from './store/sessions';
 import {
   createAccessGateDouble,
   createLibraryDouble,
@@ -22,8 +35,8 @@ import {
 } from './testing';
 import type { AgentTool } from './tools/tool';
 import { createTaskListTools } from './tools/system/task-list-tools';
-import { createToolRegistry } from './tools/tool-registry';
-import { createToolRunner } from './tools/tool-runner';
+import { ToolRegistry } from './tools/tool-registry';
+import { ToolRunner } from './tools/tool-runner';
 
 const OWNER = 'employee-1';
 const AGENT = 'agent-1';
@@ -162,37 +175,58 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AuditRecord) => {
     audits.push(entry);
   };
-  const registry = createToolRegistry({ runCode: { ...lookup, name: 'run_code' }, database, access });
-  [lookup, ...createTaskListTools({ logger })].forEach((tool) => registry.register(tool));
-  const runner = createToolRunner({
-    client: {
+  const sessionRows = new AgentSessionsRepository();
+  const messageRows = new AgentMessagesRepository();
+  const history = new History(messageRows);
+  const stores = {
+    sessions: new Sessions(sessionRows),
+    sessionRows,
+    history,
+    messageRows,
+    callRecords: new CallRecords(history, new AgentCodeCallsRepository()),
+    toolResultRows: new AgentToolResultsRepository(),
+    sessionTaskRows: new AgentSessionTasksRepository(),
+    knowledgeRows: new AgentKnowledgeRepository(),
+    knowledgeRunRows: new AgentKnowledgeRunsRepository(),
+    mcpServerRows: new AgentMcpServersRepository(),
+  };
+  const registry = new ToolRegistry(database, stores.mcpServerRows, new AgentMcpAccountsRepository(), access);
+  registry.useRunCode({ ...lookup, name: 'run_code' });
+  [lookup, ...createTaskListTools({ ...stores, logger })].forEach((tool) => registry.register(tool));
+  const runner = new ToolRunner(
+    stores.callRecords,
+    {
       callTool: async () => {
         toolRuns += 1;
         return { kind: 'failure', reason: 'connection_lost' } as const;
       },
     },
-    accounts: { credentialsFor: async () => ({ kind: 'server_gone' }) as const },
+    { credentialsFor: async () => ({ kind: 'server_gone' }) as const },
     access,
     audit,
-    callTimeoutMs: 1000,
-    resultSettings: async () => ({
-      storeFromChars: 50_000,
-      previewChars: 2_000,
-      readMaxTokens: 25_000,
-      updatedAt: null,
-    }),
-    maskSecrets: (text) => text,
-    startChildFor: () => async () => ({ agentId: 'child-1' }),
-  });
-  const modelClient = createModelClient({
-    turnClient: model.turnClient,
-    ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
-    config: { maxOutputTokens: 100 },
+    { mcpCallTimeoutMs: 1000 },
+    database,
+    {
+      readSettings: async () => ({
+        storeFromChars: 50_000,
+        previewChars: 2_000,
+        readMaxTokens: 25_000,
+        updatedAt: null,
+      }),
+    },
+    (text) => text,
+  );
+  runner.useStartChild(() => async () => ({ agentId: 'child-1' }));
+  const modelClient = new ModelClient(
+    model.turnClient,
+    { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
+    { maxOutputTokens: 100 },
     logger,
     access,
-    providers: createProviderRegistryDouble({ anthropic: 'ready' }),
+    createProviderRegistryDouble({ anthropic: 'ready' }),
     audit,
-  });
+    systemClock,
+  );
   // The agent's snapshot does not learn: the knowledge block never reaches the store.
   const notCalled = async (): Promise<never> => {
     throw new Error('the vector store is not called for a session that does not learn');
@@ -204,23 +238,28 @@ function refusedAgent(refusal: Refusal) {
     list: notCalled,
   };
   // The specs run a conversation's root: the chat, which delegates no call and never learns.
-  const agent = new ChatAgent({
-    database,
-    registry,
-    runner,
-    access,
-    audit,
-    modelClient,
-    tasks: { listTree: async () => [] },
-    inbox: { listPending: async () => [] },
-    vectorStore,
-    embeddings: { embed: notCalled },
-    compactAtTokens: 100_000,
-    library: createLibraryDouble(),
-    logger,
-  });
+  const ctx = stepContext(logger);
+  const agent = new ChatAgent(
+    {
+      database,
+      ...stores,
+      registry,
+      runner,
+      access,
+      audit,
+      modelClient,
+      tasks: { listTree: async () => [] },
+      inbox: { listPending: async () => [] },
+      vectorStore,
+      embeddings: { embed: notCalled },
+      compactAtTokens: 100_000,
+      library: createLibraryDouble(),
+      logger,
+    },
+    { task: ctx, input: INPUT },
+  );
   return {
-    ctx: stepContext(logger),
+    ctx,
     agent,
     audits,
     /** Model calls and tool runs that started. */
@@ -236,7 +275,10 @@ function deniedModel(reason: string): AccessDeniedEntry {
   return { kind: 'access_denied', actor: OWNER, objectType: 'model', objectId: MODEL, outcome: 'rejected', reason };
 }
 
-const modelStep = ({ agent, ctx }: RefusedAgent) => agent.modelStep(ctx, SESSION, []);
+/** The history of a session with no entry yet. */
+const NO_HISTORY = { entries: [], lastSeq: 0 };
+
+const modelStep = ({ agent, ctx }: RefusedAgent) => agent.modelStep(ctx, SESSION, NO_HISTORY);
 
 describe("an agent whose model or tool call is refused by the gate ends `failed` with the verdict's reason; the audit hook runs once, never for `owner_disabled`", () => {
   it.each<[string, Refusal, (agent: RefusedAgent) => Promise<StepResult>, readonly AccessDeniedEntry[]]>([
@@ -245,7 +287,7 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the compaction step on a spent quota',
       QUOTA,
-      ({ agent, ctx }) => agent.compactionStep(ctx, SESSION, []),
+      ({ agent, ctx }) => agent.compactionStep(ctx, SESSION, NO_HISTORY),
       [deniedModel('quota_exhausted')],
     ],
     [

@@ -1,4 +1,4 @@
-import type { RootSession } from '@agent-os/agents';
+import type { RootSession } from '@agent-os/db';
 import type { ThreadSummary } from '@agent-os/contracts';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';

@@ -1,16 +1,24 @@
 import type { Logger } from '@agent-os/common';
 import { DeliveryStatusSchema } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import {
+  DATABASE,
+  type Database,
+  type Transaction,
+  type RuntimeEventDeliveryKey,
+  RuntimeEventDeliveriesRepository,
+  type RuntimeEventDeliveryRow,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '../clock';
-import type {
-  EventConsumer,
+import {
+  type EventConsumer,
   EventConsumerRegistry,
-  StoredEvent,
+  type StoredEvent,
 } from './event-consumer.registry';
 import type { RuntimeConfig } from '../runtime-config';
-import type { TaskRepository } from '../tasks/task.repository';
-import type { DeliveryKey, DeliveryRepository, DeliveryRow } from './delivery.repository';
-import type { EventLog } from './event-log.repository';
+import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
+import { EventLog } from './event-log';
 import { WorkerLoop } from '../workers/worker-loop';
 
 const { done, needs_attention } = DeliveryStatusSchema.enum;
@@ -47,15 +55,15 @@ function deliveryBackoffMs(attempts: number, random: number): number {
  */
 export type DeliveryOutcome = 'done' | 'retry' | 'needs_attention' | 'skipped';
 
-export interface OutboxRelayDeps {
+interface OutboxRelayDeps {
   db: Database;
   config: RuntimeConfig;
   clock: Clock;
   logger: Logger;
   consumers: EventConsumerRegistry;
-  tasks: TaskRepository;
+  taskRows: RuntimeTasksRepository;
   events: EventLog;
-  deliveries: DeliveryRepository;
+  deliveries: RuntimeEventDeliveriesRepository;
 }
 
 /**
@@ -67,16 +75,29 @@ export interface OutboxRelayDeps {
  * savepoint while its counters are written; after `RUNTIME_DELIVERY_MAX_ATTEMPTS` — or at once for
  * an unknown `schemaVersion` — the delivery is parked as `needs_attention` and the others go on.
  */
+@Injectable()
 export class OutboxRelay {
   private readonly loop: WorkerLoop;
+  private readonly deps: OutboxRelayDeps;
 
-  constructor(private readonly deps: OutboxRelayDeps) {
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
+    @Inject(CLOCK) clock: Clock,
+    @Inject(RUNTIME_LOGGER) runtimeLogger: Logger,
+    @Inject(EventConsumerRegistry) consumers: EventConsumerRegistry,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(RuntimeEventDeliveriesRepository) deliveries: RuntimeEventDeliveriesRepository,
+  ) {
+    const logger = runtimeLogger.child({ worker: 'relay' });
+    this.deps = { db, config, clock, logger, consumers, taskRows, events, deliveries };
     this.loop = new WorkerLoop({
       name: 'relay',
-      periodMs: deps.config.pollMs,
-      pollMs: deps.config.pollMs,
-      clock: deps.clock,
-      logger: deps.logger,
+      periodMs: config.pollMs,
+      pollMs: config.pollMs,
+      clock,
+      logger,
       pass: () => this.deliverDue(),
     });
   }
@@ -90,7 +111,7 @@ export class OutboxRelay {
   }
 
   /** Delivers one delivery in its own transaction; a delivery that is not due is `skipped`. */
-  async deliver(key: DeliveryKey): Promise<DeliveryOutcome> {
+  async deliver(key: RuntimeEventDeliveryKey): Promise<DeliveryOutcome> {
     const consumer = this.deps.consumers.get(key.consumer);
     if (!consumer) return 'skipped';
     return this.deps.db.transaction((tx) => this.deliverIn(tx, key, consumer));
@@ -108,14 +129,14 @@ export class OutboxRelay {
 
   private async deliverIn(
     tx: Transaction,
-    key: DeliveryKey,
+    key: RuntimeEventDeliveryKey,
     consumer: EventConsumer,
   ): Promise<DeliveryOutcome> {
     const now = this.deps.clock.now();
     const event = await this.deps.events.find(tx, key.eventId);
     if (!event) return 'skipped';
     // Lock order: the root task, then the delivery.
-    if (!(await this.deps.tasks.lockAgainstDelete(tx, event.rootId))) {
+    if (!(await this.deps.taskRows.lockAgainstDelete(tx, event.rootId))) {
       return 'skipped';
     }
     const delivery = await this.deps.deliveries.lockDue(tx, key, now);
@@ -157,7 +178,7 @@ export class OutboxRelay {
 
   private async recordFailure(
     tx: Transaction,
-    delivery: DeliveryRow,
+    delivery: RuntimeEventDeliveryRow,
     failure: { error: unknown },
     now: Date,
   ): Promise<DeliveryOutcome> {
@@ -190,7 +211,7 @@ export class OutboxRelay {
   /** An event of a `schemaVersion` the consumer does not know: parked without calling it. */
   private async parkUnknownVersion(
     tx: Transaction,
-    delivery: DeliveryRow,
+    delivery: RuntimeEventDeliveryRow,
     event: StoredEvent,
   ): Promise<DeliveryOutcome> {
     await this.deps.deliveries.update(tx, delivery, {

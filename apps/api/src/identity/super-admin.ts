@@ -1,21 +1,26 @@
 import { UserStatusSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type {
+  Database,
+  IdentityRolesRepository,
+  IdentitySessionsRepository,
+  IdentityUsersRepository,
+} from '@agent-os/db';
 import {
   PASSWORD_SET,
   SYSTEM_ACTOR,
   type AuditLog,
-} from '../audit/audit-log.repository';
+} from '../audit/audit-log';
 import { identityError } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword } from './password';
-import { addRoleMember, builtinRoleId } from './roles.repository';
-import { deleteSessionsOf } from './sessions.repository';
-import {
-  findUserByLogin,
-  insertLocalUser,
-  setPasswordAndEnable,
-  takenField,
-} from './users.repository';
+import { takenField } from './taken-field';
+
+/** The repositories the command writes through; built with `new` outside Nest. */
+export interface SuperAdminRepositories {
+  users: IdentityUsersRepository;
+  roles: IdentityRolesRepository;
+  sessions: IdentitySessionsRepository;
+}
 
 export interface SuperAdminInput {
   login: string;
@@ -37,6 +42,7 @@ export interface SeededSuperAdmin {
  */
 export async function seedSuperAdmin(
   db: Database,
+  { users, roles, sessions }: SuperAdminRepositories,
   auditLog: AuditLog,
   input: SuperAdminInput,
 ): Promise<SeededSuperAdmin> {
@@ -45,20 +51,20 @@ export async function seedSuperAdmin(
   const login = normalizeIdentifier(input.login);
   return db
     .transaction(async (tx) => {
-      const found = await findUserByLogin(tx, login);
+      const found = await users.findByLogin(tx, login);
       const user =
         found ??
-        (await insertLocalUser(tx, {
+        (await users.insertLocal(tx, {
           login,
           email: normalizeIdentifier(input.email),
           name: input.name,
           passwordHash,
         }));
       if (found !== undefined) {
-        await setPasswordAndEnable(tx, found.id, passwordHash);
-        await deleteSessionsOf(tx, found.id);
+        await users.setPasswordAndEnable(tx, found.id, passwordHash);
+        await sessions.deleteOfUser(tx, found.id);
       }
-      await addRoleMember(tx, await builtinRoleId(tx), user.id);
+      await roles.addMember(tx, await roles.builtinId(tx), user.id);
       await auditLog.record(tx, {
         kind: 'admin_change',
         actor: SYSTEM_ACTOR,

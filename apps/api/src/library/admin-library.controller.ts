@@ -10,7 +10,7 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
+import { AgentsMcp } from '@agent-os/agents';
 import {
   CreateRecordBodySchema,
   SystemRecordAudienceBodySchema,
@@ -25,7 +25,6 @@ import {
   type UpdateLibrarySettingsBody,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
@@ -37,7 +36,7 @@ import { serverFacts } from './server-facts';
 /**
  * The library of the admin panel (design-library.md, «Маршруты панели», FR-09): system records, records
  * shared with roles, the bans. `@AdminOnly()` answers anyone else 403 ADMIN_REQUIRED. A system record
- * chooses from the whole MCP registry, read through `Agents.mcp` (ADR-0014). Static paths come before `:id`.
+ * chooses from the whole MCP registry, read through `AgentsMcp` (ADR-0014). Static paths come before `:id`.
  */
 @Controller('admin/library')
 @AdminOnly()
@@ -45,7 +44,7 @@ export class AdminLibraryController {
   constructor(
     private readonly library: LibraryPanelService,
     private readonly settings: LibrarySettingsService,
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
   ) {}
 
   /** Every system record, whole audience and `builtinKey`. */
@@ -54,7 +53,7 @@ export class AdminLibraryController {
     return this.library.panelList(
       req.user,
       'system',
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -64,7 +63,7 @@ export class AdminLibraryController {
     return this.library.panelList(
       req.user,
       'shared',
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -99,7 +98,7 @@ export class AdminLibraryController {
     return this.library.panelGet(
       req.user,
       id,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -143,7 +142,7 @@ export class AdminLibraryController {
       req.user,
       id,
       body,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -170,8 +169,8 @@ export class AdminLibraryController {
 
   private async panelServerFacts(adminId: string): Promise<PanelServerFacts> {
     const [facts, registry] = await Promise.all([
-      serverFacts(this.agents, adminId),
-      this.agents.mcp.list(),
+      serverFacts(this.mcp, adminId),
+      this.mcp.list(),
     ]);
     return { ...facts, registryServers: registry.map((server) => server.name) };
   }

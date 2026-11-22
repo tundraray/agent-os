@@ -1,80 +1,153 @@
 # Code System
 
+Карта кода Agent OS: из чего состоит система, какие правила действуют везде и где искать подробности. Начните с этого файла, затем откройте файл пакета, в котором работаете, и паттерн своей задачи.
+
 ## Source
 
 | Source | Link | Covers |
 |---|---|---|
-| Выведено из кода | `packages/runtime`, `packages/db`, `packages/contracts`, `apps/api`, `apps/web`, прочитаны 2026-11-14 | функция сборки пакета, репозиторий над транзакцией, outbox, правила пакетов |
+| Выведено из кода | `packages/*`, `apps/api`, `apps/web`, прочитаны 2026-11-22 | слои, раскладка пакетов, репозиторий и сервис, модули NestJS |
 | Решения владельца | [agent-platform/prd.md](../features/agent-platform/prd.md), Constraints; [CLAUDE.md](../../CLAUDE.md), Code rules и Logging | слои `runtime ← agents ← приложения`, общий пакет `common`, логирование |
-| Определено здесь | [design-runtime.md](../features/agent-platform/design-runtime.md), [design-code-execution.md](../features/code-execution/design-code-execution.md), [design-identity.md](../features/enterprise-access/design-identity.md), [design-mcp-connect.md](../features/enterprise-access/design-mcp-connect.md), [design-access.md](../features/enterprise-access/design-access.md), [design-admin.md](../features/enterprise-access/design-admin.md), [design-library.md](../features/custom-agents/design-library.md), [design-runtime.md](../features/custom-agents/design-runtime.md), [design-web.md](../features/custom-agents/design-web.md), [design-core.md](../features/self-learning/design-core.md), [design-core.md](../features/model-providers/design-core.md), [design-agent-types.md](../features/deep-agents/design-agent-types.md), [design-task.md](../features/deep-agents/design-task.md) | снимок записи на запуск; встроенные записи; сторы оболочки веба; шаг задачи как единица durable-работы; ожидание дочерних задач трекером рантайма; слой исполнителя кода; граница аутентификации API; реестр MCP-серверов и аккаунты сотрудников в пакете `agents`; права, квоты и каталог моделей в `apps/api` за портом `AccessGate`; чистая функция решения; экраны в оболочке веба, общий клиент API веба и чтение данных при открытии экрана; строка настроек; знания глубокого агента в пакете `agents`; блок промпта шага и инструменты записей главного чата; провайдеры моделей и эмбеддинги в пакете `agents`; секрет только на запись |
-| [ADR-0001](../adr/ADR-0001-durable-runtime-owner.md), [ADR-0003](../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../adr/ADR-0004-agent-framework-packages.md) | `docs/adr/` | владелец состояния задач, схема `app` и миграции, правила приватных пакетов |
+| ADR | [ADR-0001](../adr/ADR-0001-durable-runtime-owner.md), [ADR-0003](../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../adr/ADR-0004-agent-framework-packages.md), [ADR-0022](../adr/ADR-0022-one-database-and-nestjs-modules.md) | runtime — владелец состояния задач; Drizzle и миграции; правила приватных пакетов; одна база и модули NestJS |
+| Design Docs | раздел Used In каждого паттерна | паттерны каталога |
 
 ## Style
 
-Самый простой код, который делает работу, и одно место для каждой логики и каждого значения. Пакет — граница владения: он владеет своими таблицами и своей логикой и отдаёт их только через свою функцию сборки. Состояние живёт в Postgres, а не в памяти процесса, поэтому любой экземпляр сервера продолжает любую работу. Новая абстракция, опция или слой появляются, когда есть второе реальное использование. Прежде чем писать новое, ищем, что уже есть, и расширяем это.
+Самый простой код, который делает работу, и одно место для каждой логики и каждого значения. Пакет — граница логики: правила своей области он держит в своих сервисах и отдаёт их через свой модуль NestJS. Данные лежат в одной базе, и все запросы к ней — в `packages/db`. Состояние живёт в Postgres, а не в памяти процесса, поэтому любой экземпляр сервера продолжает любую работу. Новая абстракция, опция или слой появляются, когда есть второе реальное использование. Прежде чем писать новое, ищем, что уже есть, и расширяем это.
 
 ## Layer Map
 
-Таблица перечисляет слои сверху вниз.
+```mermaid
+---
+title: "Пакеты и направление зависимостей"
+config:
+  theme: base
+  look: classic
+  themeVariables:
+    primaryColor: "#eef1f5"
+    primaryBorderColor: "#4b5563"
+    primaryTextColor: "#1a1a1a"
+    lineColor: "#6b7280"
+  flowchart:
+    curve: step
+---
+flowchart TB
+    web["apps/web<br/>экраны"]
+    api["apps/api<br/>HTTP API, точка сборки"]
+    agents["agents<br/>агенты и инструменты"]
+    runner["code-runner<br/>исполнитель кода"]
+    runtime["runtime<br/>durable-задачи"]
+    db["db<br/>одна база"]
+    contracts["contracts<br/>zod-схемы"]
+    common["common<br/>логгер"]
+    api --> agents
+    agents --> runtime
+    agents --> runner
+    runtime --> db
+    db --> contracts
+    db --> common
+    runner --> common
+    web --> contracts
+    web --> common
+    classDef unchanged fill:#eef1f5,stroke:#4b5563,stroke-width:1.5px,color:#1a1a1a
+    class web,api,agents,runner,runtime,db,contracts,common unchanged
+```
 
-| Layer | Holds | Lives in | May depend on |
+Стрелка значит «зависит от». Пакет может зависеть от любого пакета ниже себя по стрелкам; `apps/web` — только от `contracts` и `common`.
+
+| Слой | Что держит | Где | NestJS |
 |---|---|---|---|
-| Приложения | HTTP, аутентификация, чтение окружения, сборка пакетов в модули Nest; экраны | `apps/api`, `apps/web` | любой пакет ниже; `apps/web` — только `contracts` и `common` |
-| Agents | агент и глубокий агент, их сессии, снимки и список задач запуска, инструменты, запуск через бриф, обёртка вызова модели над Mastra; реестр MCP-серверов, аккаунты сотрудников и вызов MCP по HTTP | `packages/agents` | runtime, code-runner и всё ниже |
-| Исполнитель кода | процесс на один скрипт с QuickJS внутри, мост с процессом API, пределы и убийство процесса; ничего не знает об агентах, таблиц нет | `packages/code-runner` | common |
-| Runtime | задачи и их шаги, очередь сообщений, запросы решений, трекеры дочерних задач, журнал событий, журнал токенов, восстановление | `packages/runtime` | db, contracts, common |
-| Данные | пул `pg`, клиент Drizzle, модель схемы `app`, миграции | `packages/db` | contracts |
-| Контракты | zod-схемы данных, пересекающих границу, и наборы значений для CHECK | `packages/contracts` | — |
-| Общее | логгер и его приёмники | `packages/common` | — |
+| Приложения | HTTP API, вход, права, библиотека записей, аудит, чат; экраны | `apps/api`, `apps/web` | `apps/api` — да; `apps/web` — Next |
+| Агенты | агенты и глубокие агенты, инструменты, MCP, провайдеры моделей, знания | `packages/agents` | да |
+| Исполнитель кода | процесс QuickJS на один скрипт | `packages/code-runner` | нет |
+| Runtime | durable-задачи шагами, сообщения, решения, трекеры, события, журнал токенов | `packages/runtime` | да |
+| Данные | пул, схема `app`, миграции, репозитории всех таблиц | `packages/db` | да |
+| Контракты | zod-схемы данных, пересекающих границу, и наборы значений для CHECK | `packages/contracts` | нет |
+| Общее | логгер и маска секретов | `packages/common` | нет |
 
-- **Dependency rule**: зависимость идёт только вниз и объявлена в `package.json`. Нижний слой никогда не импортирует верхний; цикл отвергает turbo, необъявленный импорт отмечает knip.
-- **Каталоги `packages/runtime/src`**: `tasks/` — строки задач, охраняемые переходы, команды над задачей, конец задачи, трекеры; `steps/` — контракт шага, диспетчер, heartbeat и коммит шага; `messaging/` — очередь сообщений и запросы решений; `events/` — журнал событий, потребители и доставка; `workers/` — цикл фонового воркера и возврат потерянных шагов; `ledger/` — журнал токенов и цена вызова. В корне лежат вход пакета, функция сборки, настройки, часы, ошибки и транзакция с повтором. Наружу виден только `src/index.ts`.
-- **Каталоги `packages/agents/src`**: агент — это класс, и он же обработчик задач runtime. `agent/` держит абстрактный `BaseAgent` с общим шагом: метод `step` в `base-agent.ts` задаёт порядок стадий, а стадии лежат рядом — `tool-step.ts`, `compaction-step.ts`, `model-step.ts`, начало шага в `prelude.ts`, чистые правила в `turn-rules.ts`, `repeat-rule.ts`, `continuation.ts`. Runtime запускает три его наследника, у каждого свой тип задачи: `Agent` (`agent/agent.ts`, тип `agent`) — запись агента и сабагент глубокого агента; `ChatAgent` (`agent/chat-agent.ts`, тип `chat`) — корень беседы: объявляет себя корнем (инструменты корня, список задач всегда, живой список записей сотрудника в описаниях инструментов), новый ход на каждое сообщение сотрудника, ход кончается ожиданием; `DeepAgent` (`deep/deep-agent.ts`, тип `deep_agent`) — делегирование через `task`, ответ финального сабагента, строка запуска самообучения. В `deep/` лежит и остальное, что есть только у глубокого агента: инструменты `task` и `start_deep_agent`, бриф, промпт и команда, вид запуска. Класс выбирают один раз, там, где создаётся задача: корень беседы — в `operations/start-operations.ts`, остальных по виду снимка — `childStart` в `create-agents.ts`; дальше runtime сам находит класс по типу задачи. Что запуск отдаёт модели (промпт, инструменты, флажки), считает чистая функция `snapshotDefinition` в `start/`. Инструменты агент не выбирает, а объявляет ([patterns/tool-declaration.md](./patterns/tool-declaration.md)): `BaseAgent.toolDeclaration` собирает из определения объявление — серверы MCP и имена системных инструментов — и передаёт его с владельцем задачи в единственный вход библиотеки инструментов, `toolsFor` реестра. В `tools/` лежит ядро библиотеки: контракт инструмента и объявления (`tool.ts`), реестр (`tool-registry.ts`), исполнитель (`tool-runner.ts`) и его части — проверка вызова и прав на каждом вызове (`call-check.ts`), исход вызова и отправка на сервер MCP (`tool-execution.ts`), вызов из кода (`code-call.ts`) — и большие результаты; ядро и `tools/external/` не импортируют `agent/`, `deep/`, `operations/` и `knowledge/`. `tools/system/` — системные инструменты платформы (старт, остановка, сообщения и список агентов, список задач в `task-list-*.ts`, чтение результатов, проверка старта); `tools/external/` — `run_code` и проверка его вызовов. Системные инструменты регистрирует в реестре `create-agents.ts`, инструменты записей — `apps/api`. `store/` — репозитории таблиц `agent_*`, `history/` — записи истории, `start/` — снимок и процедура старта, `operations/` — операции для `apps/api`: контракт `AgentSessions` в `agent-sessions.ts`, его части по группам — старт и перезапуск (`start-operations.ts`), управление (`control-operations.ts`), чтение (`view-operations.ts`) — и сборка в `create-agent-sessions.ts`; `mcp/`, `providers/`, `model/`, `embeddings/`, `knowledge/` — по одной области. Наружу виден только `src/index.ts`.
-- **`common`** не зависит ни от одного пакета workspace и ни от одного SDK. Его используют все пакеты и оба приложения.
-- **Mastra** объявляет только `agents`; `apps/api` его не импортирует. Корневой `.oxlintrc.json` запрещает импорт `@mastra/*` всем пакетам и `apps/api`; разрешён он только в `agents`.
-- Остальные правила пакетов — один вход `.`, закрытые подпути, отсутствие `@nestjs/*` в пакетах, настройки параметрами — действуют по [ADR-0004](../adr/ADR-0004-agent-framework-packages.md), Implementation Guidance.
+## Правила для всего кода
+
+1. **Зависимость идёт только вниз** и объявлена в `package.json`. Цикл отвергает turbo, необъявленный импорт отмечает knip.
+2. **У пакета один вход `.`**, а подпути закрыты; вход `./testing` допустим только для тестовых двойников. Пакеты потребляются исходным TypeScript ([ADR-0004](../adr/ADR-0004-agent-framework-packages.md), Implementation Guidance).
+3. **Одна база.** Схема `app` и все репозитории лежат в `packages/db`. Любой модуль бэкенда внедряет любой репозиторий; запросов к таблицам вне `packages/db` нет ([packages/db.md](./packages/db.md)).
+4. **Репозиторий — запросы, сервис — логика.** Репозиторий только читает и пишет строки в транзакции вызывающего. Сервис держит правила, открывает транзакцию и превращает строки в объекты домена ([repository-over-transaction.md](./patterns/repository-over-transaction.md)).
+5. **Правило области живёт в одном месте** — в сервисе или чистой функции ([pure-decision.md](./patterns/pure-decision.md)). Другой код зовёт этот сервис и не повторяет его запрос с тем же условием: видимость записи, переход задачи, право сотрудника.
+6. **Бэкенд связан через NestJS DI.** `db`, `runtime`, `agents` и `apps/api` — модули NestJS, и потребитель внедряет сервис, который зовёт. `common`, `contracts` и `code-runner` обходятся без NestJS, и lint запрещает им `@nestjs/*` ([composition-root.md](./patterns/composition-root.md)).
+7. **Чужой домен приходит портом.** Пакет объявляет интерфейс порта и токен внедрения, а `apps/api` привязывает токен к своему сервису. Пакеты не импортируют `apps/api` ([composition-root.md](./patterns/composition-root.md)).
+8. **Окружение читает только `apps/api`.** Пакет получает настройки из фабрики своего `forRootAsync`.
+9. **Лог пишет только обёртка из `common`**, она отправляет запись в консоль и Sentry ([logging.md](./patterns/logging.md)). Sentry импортируют только приложения.
+10. **Mastra объявляет только `agents`.** Корневой `.oxlintrc.json` запрещает импорт `@mastra/*` остальным пакетам и `apps/api`.
 
 ## Module Boundaries
 
-| Boundary | Owns | Exposed through | Crossed by |
-|---|---|---|---|
-| `runtime` | таблицы `runtime_*`: задачи, сообщения, запросы решений, трекеры, события, журнал токенов | функция сборки `createRuntime` и порт обработчика шага | верхние пакеты и `apps/api`; чужой код не читает и не пишет таблицы `runtime_*` |
-| `agents` | свои таблицы с префиксом `agent_`, в том числе список задач сессии `agent_session_tasks` | функция сборки `createAgents` | `apps/api` |
-| `db` | модель схемы `app` всех пакетов и историю миграций | пул, клиент, типы `Transaction` и `Executor` (клиент или транзакция), функции миграций | все пакеты с таблицами |
-| `common` | логгер и память секретов процесса | `createLogger`, приёмники, `createSecretMasker` — маскировка секретов логгера для текста вне лога — и `rememberSecret`, которым код добавляет секрет, прочитанный из базы или принятый от администратора | все |
-| `identity` в `apps/api` | таблицы `identity_*`: сотрудники и их пароли, роли, провайдеры входа, запросы входа, сеансы, настройки входа; таблица `audit_events` модуля аудита | `SessionGuard` и `req.user` ([auth-boundary.md](./patterns/auth-boundary.md)), `IdentityDirectory` (`isActive`, `rolesOf`, `isAdmin`, `existing` — какие из названных ролей и сотрудников есть, `roleNames` и `userNames` — их имена по id), `AuditLog`; репозитории `identity` вне модуля никто не импортирует, и таблицы `identity_*` в чужих запросах не соединяются | модули `apps/api`; пакеты получают только строку владельца ([design-identity.md](../features/enterprise-access/design-identity.md)) |
-| `access` в `apps/api` | таблицы `access_*`: каталог моделей с ценами и назначением (чат или эмбеддинги), модели по умолчанию, права и запреты ролей и сотрудников с квотами | реализация порта `AccessGate` и хука `audit` для `createAgents`; операции администратора и `GET /api/access/models` | пакеты получают только порт: он отвечает, включён ли сотрудник, разрешён ли инструмент и вызов модели, с ценой и квотой; ни один пакет не читает таблицы `access_*` ([design-access.md](../features/enterprise-access/design-access.md), KD-1) |
-| MCP в `agents` | таблицы `agent_mcp_*`: серверы реестра с их инструментами, личные учётные данные сотрудников (сотрудник, сервер, токен) | операции `Agents.mcp`; пишущая операция возвращает «было» и «стало», и `apps/api` пишет по ним аудит после неё; перед удалением сервера `apps/api` удаляет права на него через `AccessService` | `apps/api` (контроллеры реестра, подключения и возврата из OAuth); адрес возврата OAuth `apps/api` передаёт в операции подключения параметром; токен не выходит из пакета, кроме как в заголовке запроса к серверу ([design-mcp-connect.md](../features/enterprise-access/design-mcp-connect.md), KD-1) |
-| Провайдеры моделей в `agents` | таблица `agent_model_providers`: провайдеры с видом, адресом, ключом и признаком «включён»; адаптеры видов над пакетами AI SDK; служба эмбеддингов | операции `Agents.providers` и `Agents.embeddings`; пишущая операция возвращает «было» и «стало» без ключа, и `apps/api` пишет по ним аудит | `apps/api` (контроллер провайдеров); каталог в `access` ссылается на провайдера первой частью id модели, текстом без внешнего ключа; ключ не выходит из пакета, кроме как в запросе к провайдеру ([design-core.md](../features/model-providers/design-core.md), KD-1, KD-6) |
-| `code-runner` | процесс исполнителя кода и его вход; процесс запускается только с флагами модели разрешений Node и читает только каталог своего входа (`dist/executor` в сборке `apps/api`, `src/executor` пакета в тестах) и QuickJS из каталогов, где ни одна ссылка не ведёт наружу | функция сборки `createCodeRunner` и операция `CodeRunner.run` | только `agents`; правила вызовов держит вызывающий, а не пакет ([design-code-execution.md](../features/code-execution/design-code-execution.md), KD-1, KD-2; [ADR-0011](../adr/ADR-0011-code-runner-quickjs-process.md)) |
-| `library` в `apps/api` | таблицы `library_*`: записи библиотеки любого вида и адресаты их аудитории | маршруты `/api/library` и `/api/admin/library`; операции `LibraryService` для запуска записей; пять инструментов записей главного чата, которые модуль регистрирует в реестре `agents` ([design-agent-types.md](../features/deep-agents/design-agent-types.md), KD-3) | пакеты получают записи только через порт, который реализует `LibraryService`; чтения маршрутов сотрудника и операций для запуска идут через одно условие видимости, маршруты панели — через условие панели, которое не находит личных записей ([design-library.md](../features/custom-agents/design-library.md), KD-1, KD-2) |
-| Знания в `agents` | таблицы `agent_knowledge_*`: граф глубокого агента (сущности и связи; внешний ключ с каскадом на запись библиотеки — единственное отступление от правила «таблица пакета не ссылается на таблицу приложения»), строки запусков, которые учатся, настройки знаний | операции `Agents.knowledge`; шаг агента и задача `knowledge.extract` читают и пишут их сами | `apps/api` (маршруты графа и настроек) после проверки доступа через `LibraryService.knowledgeTarget`; аудит пишет `apps/api` по итогу операции ([design-core.md](../features/self-learning/design-core.md), KD-1, KD-7) |
-| чат в `apps/api` | своих таблиц нет: беседа — корневая сессия агента `chat` в `agent_sessions`, её id — id корня, и появляется она с первым сообщением. Удаление беседы не стирает строк: дерево останавливается и помечается (`deleted_at` у каждой задачи дерева и у корневой сессии) | маршруты `/api/threads`, `/api/agents`, `/api/decisions`, `/api/events` | беседу `apps/api` читает, меняет и удаляет только операциями `Agents.sessions` (`root`, `roots`, `renameRoot`, `touchRoot`, `titleRootIfEmpty`, `start` с id беседы, `deleteRoot`); `deleteRoot(rootId, ownerId)` в одной транзакции вызывает `deleteTree(…, tx)` из runtime, который останавливает и помечает дерево, и помечает корневую сессию |
-| клиент API в `apps/web` | связь браузера с API: путь `/api` на адресе веба, который сервер Next пересылает в API, cookie, разбор ответов схемами `contracts`, обработчики 401 и 403 `ADMIN_REQUIRED` | ядро `apiRequest` в `lib/api` и модули областей (`lib/threads`, `lib/mcp`, `lib/access`, `lib/admin`, `lib/library`) ([web-api-client.md](./patterns/web-api-client.md)) | компоненты и хуки веба; ни один компонент не вызывает `fetch` к API сам |
+| Модуль | Отдаёт | Кто зовёт |
+|---|---|---|
+| `db` | `DbModule`: клиент базы, все репозитории и типы строк, типы `Transaction` и `Executor`, функции миграций | все модули бэкенда |
+| `runtime` | `RuntimeModule`: сервисы задач, сообщений, решений, трекеров, событий, журнала токенов и контракт обработчика шага | `agents`, `apps/api` |
+| `agents` | `AgentsModule`: сервисы сессий агентов, реестра MCP, провайдеров моделей, эмбеддингов и знаний; интерфейсы портов, которые реализует `apps/api` | `apps/api` |
+| `code-runner` | `createCodeRunner` и операция `CodeRunner.run` | только `agents` |
+| `common` | логгер, токен `LOGGER`, маска и память секретов | все |
+| `contracts` | zod-схемы и наборы значений | все, включая `apps/web` |
+| `apps/api` | маршруты `/api/...` | `apps/web` через клиент API |
 
-Пакет пишет и читает только таблицы со своим префиксом, и каждый запрос к таблице лежит в файле `*.repository.ts` этого пакета ([repository-over-transaction.md](./patterns/repository-over-transaction.md)). Данные другого пакета он получает через операции этого пакета. Транзакция пересекает границу только в одну сторону: runtime открывает транзакцию шага и даёт её обработчику верхнего слоя для его собственных записей. Инструмент записи модуля `library` получает транзакцию шага от `agents` и передаёт её в `LibraryService`, и запись с её аудитом пишется в точке сохранения внутри неё. Так одобренная карточка сохраняет запись не больше одного раза и одним коммитом с результатом вызова ([design-agent-types.md](../features/deep-agents/design-agent-types.md), KD-3).
+Как устроен каждый модуль внутри и какие правила действуют на его границе — в файле пакета.
 
 ## Index
 
+### Пакеты
+
+| Файл | О чём |
+|---|---|
+| [packages/db.md](./packages/db.md) | схема, репозитории, миграции, `DbModule` |
+| [packages/runtime.md](./packages/runtime.md) | задачи и шаги, сообщения, события, воркеры, `RuntimeModule` |
+| [packages/agents.md](./packages/agents.md) | классы агентов, шаг агента, инструменты, MCP, провайдеры, знания |
+| [packages/base.md](./packages/base.md) | нижние пакеты без NestJS: `common`, `contracts`, `code-runner` |
+| [packages/api.md](./packages/api.md) | модули `apps/api`: вход, права, библиотека, аудит, чат, связывание пакетов |
+| [packages/web.md](./packages/web.md) | устройство `apps/web`: оболочка, клиент API, сторы, текст |
+
+### Паттерны
+
+**Сборка и границы**
+
 | Pattern | Problem | Spec |
 |---|---|---|
-| Функция сборки пакета | как пакет без Nest получает настройки и порты и встраивается в `apps/api` | [patterns/composition-root.md](./patterns/composition-root.md) |
-| Репозиторий над транзакцией | как пакет читает и пишет свои таблицы, в том числе внутри чужой транзакции | [patterns/repository-over-transaction.md](./patterns/repository-over-transaction.md) |
-| Обработчик шага | как долгая работа переживает рестарт и продолжается на любом экземпляре | [patterns/step-handler.md](./patterns/step-handler.md) |
-| Журнал событий с доставкой | как изменение становится видно потребителям и наблюдателям без потерь | [patterns/transactional-outbox.md](./patterns/transactional-outbox.md) |
-| Логирование через `common` | как любой код пишет лог в консоль и Sentry, не утекая секретами | [patterns/logging.md](./patterns/logging.md) |
-| Граница аутентификации API | как маршрут узнаёт сотрудника и не открывается по забывчивости | [patterns/auth-boundary.md](./patterns/auth-boundary.md) |
-| Чистая функция решения | где живёт правило, которое по данным решает «можно ли» или «какой статус» | [patterns/pure-decision.md](./patterns/pure-decision.md) |
-| Экран в оболочке по адресу | как новый экран веба встаёт в оболочку чата, не перезапуская её | [patterns/shell-route.md](./patterns/shell-route.md) |
-| Клиент API веба | как код веба зовёт API и получает разобранный ответ или типизированную ошибку | [patterns/web-api-client.md](./patterns/web-api-client.md) |
-| Чтение при открытии | как экран веба читает свои данные, показывает загрузку и ошибку и перечитывает их после изменения | [patterns/read-on-open.md](./patterns/read-on-open.md) |
-| Модуль порта и модуль маршрутов | как модуль `apps/api` отдаёт порт `AgentsModule` и при этом зовёт `Agents` из своих маршрутов | [patterns/port-module-split.md](./patterns/port-module-split.md) |
-| Снимок запуска | как идущая работа не замечает правки и удаления записи, с которой стартовала | [patterns/run-snapshot.md](./patterns/run-snapshot.md) |
-| Строка настроек | где живут значения, которые администратор меняет в панели для всей платформы | [patterns/settings-row.md](./patterns/settings-row.md) |
-| Секрет только на запись | как администратор задаёт секрет чужой системы, который никто не может прочитать обратно | [patterns/write-only-secret.md](./patterns/write-only-secret.md) |
-| Стор оболочки | как значение, которое кладёт один экран веба, видят другие экраны оболочки после перехода | [patterns/shell-store.md](./patterns/shell-store.md) |
-| Текст интерфейса | как код веба показывает текст, дату и число на языке сотрудника и как язык доходит до каждой страницы | [patterns/interface-text.md](./patterns/interface-text.md) |
-| Структурный ответ модели | как код получает от модели данные заданной формы и проверяет их сам | [patterns/tool-call-answer.md](./patterns/tool-call-answer.md) |
-| Блок промпта шага | как модель на каждом шаге видит живое состояние из таблиц, которое переживает сжатие истории | [patterns/step-prompt-block.md](./patterns/step-prompt-block.md) |
-| Встроенная запись | как запись, которую поставляет код, попадает в базу и как до базы доходит её новое содержимое | [patterns/builtin-record.md](./patterns/builtin-record.md) |
-| Объявление инструментов | как сессия агента получает свой набор инструментов: внешние — по правам сотрудника, системные — по объявлению агента | [patterns/tool-declaration.md](./patterns/tool-declaration.md) |
+| Модуль пакета | как пакет встраивается в DI, получает настройки и порты и стартует вместе с сервером | [composition-root.md](./patterns/composition-root.md) |
+| Модуль порта и модуль маршрутов | как модуль `apps/api` реализует порт для `AgentsModule` и при этом зовёт его сервисы из своих маршрутов | [port-module-split.md](./patterns/port-module-split.md) |
+| Граница аутентификации API | как маршрут узнаёт сотрудника и не открывается по забывчивости | [auth-boundary.md](./patterns/auth-boundary.md) |
+| Логирование через `common` | как любой код пишет лог в консоль и Sentry, не утекая секретами | [logging.md](./patterns/logging.md) |
+
+**Данные**
+
+| Pattern | Problem | Spec |
+|---|---|---|
+| Репозиторий над транзакцией | где лежат запросы к таблицам и кто открывает транзакцию | [repository-over-transaction.md](./patterns/repository-over-transaction.md) |
+| Строка настроек | где живут значения, которые администратор меняет в панели для всей платформы | [settings-row.md](./patterns/settings-row.md) |
+| Секрет только на запись | как администратор задаёт секрет чужой системы, который никто не может прочитать обратно | [write-only-secret.md](./patterns/write-only-secret.md) |
+| Встроенная запись | как запись, которую поставляет код, попадает в базу и как до базы доходит её новое содержимое | [builtin-record.md](./patterns/builtin-record.md) |
+| Снимок запуска | как идущая работа не замечает правки и удаления записи, с которой стартовала | [run-snapshot.md](./patterns/run-snapshot.md) |
+
+**Логика и durable-работа**
+
+| Pattern | Problem | Spec |
+|---|---|---|
+| Чистая функция решения | где живёт правило, которое по данным решает «можно ли» или «какой статус» | [pure-decision.md](./patterns/pure-decision.md) |
+| Обработчик шага | как долгая работа переживает рестарт и продолжается на любом экземпляре | [step-handler.md](./patterns/step-handler.md) |
+| Журнал событий с доставкой | как изменение становится видно потребителям и наблюдателям без потерь | [transactional-outbox.md](./patterns/transactional-outbox.md) |
+
+**Агенты**
+
+| Pattern | Problem | Spec |
+|---|---|---|
+| Объявление инструментов | как сессия агента получает свой набор инструментов: внешние — по правам сотрудника, системные — по объявлению агента | [tool-declaration.md](./patterns/tool-declaration.md) |
+| Блок промпта шага | как модель на каждом шаге видит живое состояние из таблиц, которое переживает сжатие истории | [step-prompt-block.md](./patterns/step-prompt-block.md) |
+| Структурный ответ модели | как код получает от модели данные заданной формы и проверяет их сам | [tool-call-answer.md](./patterns/tool-call-answer.md) |
+
+**Веб**
+
+| Pattern | Problem | Spec |
+|---|---|---|
+| Экран в оболочке по адресу | как новый экран веба встаёт в оболочку чата, не перезапуская её | [shell-route.md](./patterns/shell-route.md) |
+| Клиент API веба | как код веба зовёт API и получает разобранный ответ или типизированную ошибку | [web-api-client.md](./patterns/web-api-client.md) |
+| Чтение при открытии | как экран веба читает свои данные, показывает загрузку и ошибку и перечитывает их после изменения | [read-on-open.md](./patterns/read-on-open.md) |
+| Стор оболочки | как значение, которое кладёт один экран веба, видят другие экраны оболочки после перехода | [shell-store.md](./patterns/shell-store.md) |
+| Текст интерфейса | как код веба показывает текст, дату и число на языке сотрудника и как язык доходит до каждой страницы | [interface-text.md](./patterns/interface-text.md) |

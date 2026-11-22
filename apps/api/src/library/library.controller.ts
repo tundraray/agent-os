@@ -10,7 +10,7 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
+import { AgentsMcp } from '@agent-os/agents';
 import {
   CopyRecordBodySchema,
   CreateRecordBodySchema,
@@ -25,7 +25,6 @@ import {
   type RecordSummary,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
 import { LibraryService } from './library.service';
@@ -33,7 +32,7 @@ import { serverFacts } from './server-facts';
 
 /**
  * The employee's library (design-library.md, «Маршруты сотрудника», KD-6). The employee is only
- * `req.user`; the facts only `Agents` has — usable servers — are read here and handed to
+ * `req.user`; the facts only the agents package has — usable servers — are read here and handed to
  * `LibraryService`. A number that is not a UUID is answered by the service as 404, so no route
  * parses it. Static paths come before `:id`.
  */
@@ -41,7 +40,7 @@ import { serverFacts } from './server-facts';
 export class LibraryController {
   constructor(
     private readonly library: LibraryService,
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
   ) {}
 
   /** The records the viewer sees, by name. */
@@ -49,7 +48,7 @@ export class LibraryController {
   async list(@Req() req: AuthedRequest): Promise<RecordSummary[]> {
     return this.library.list(
       req.user,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -58,7 +57,7 @@ export class LibraryController {
   async choices(@Req() req: AuthedRequest): Promise<LibraryChoices> {
     return this.library.choices(
       req.user,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -71,7 +70,7 @@ export class LibraryController {
     return this.library.get(
       req.user,
       id,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -84,7 +83,7 @@ export class LibraryController {
     return this.library.create(
       req.user,
       body,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -99,7 +98,7 @@ export class LibraryController {
       req.user,
       id,
       body,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -115,7 +114,7 @@ export class LibraryController {
       req.user,
       id,
       body,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 
@@ -130,7 +129,7 @@ export class LibraryController {
       req.user,
       id,
       body,
-      await serverFacts(this.agents, req.user.id),
+      await serverFacts(this.mcp, req.user.id),
     );
   }
 

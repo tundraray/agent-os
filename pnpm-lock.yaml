@@ -348,6 +348,9 @@ importers:
       '@agent-os/mcp-fixture':
         specifier: workspace:*
         version: link:../mcp-fixture
+      '@nestjs/testing':
+        specifier: ^12.6.0
+        version: 12.6.0(@nestjs/common@12.6.0(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.6.0)(@nestjs/platform-express@12.6.0)
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -443,9 +446,6 @@ importers:
       '@nestjs/common':
         specifier: ^12.6.0
         version: 12.6.0(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@nestjs/core':
-        specifier: ^12.6.0
-        version: 12.6.0(@nestjs/common@12.6.0(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.6.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
@@ -533,6 +533,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@nestjs/testing':
+        specifier: ^12.6.0
+        version: 12.6.0(@nestjs/common@12.6.0(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.6.0)(@nestjs/platform-express@12.6.0)
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6

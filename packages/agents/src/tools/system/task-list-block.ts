@@ -1,7 +1,5 @@
-import type { Executor } from '@agent-os/db';
+import type { AgentSessionTasksRepository, Executor, SessionTask } from '@agent-os/db';
 import { SessionTaskStatusSchema } from '@agent-os/contracts';
-
-import { type SessionTask, sessionTasks } from '../../store/session-tasks.repository';
 
 /**
  * The first line of the task block. The tasks are texts the agent wrote, possibly copied from a tool result,
@@ -35,6 +33,11 @@ export function taskBlock(tasks: readonly SessionTask[]): string | null {
  * a continuation or a restart cannot lose them (step-prompt-block.md). A session whose agent declares no task
  * list (`ToolDeclaration.taskList`) reads nothing.
  */
-export function tasksOf(reader: Executor, agentId: string, taskList: boolean): Promise<SessionTask[]> {
-  return taskList ? sessionTasks.list(reader, agentId) : Promise.resolve([]);
+export function tasksOf(
+  deps: { readonly sessionTaskRows: AgentSessionTasksRepository },
+  reader: Executor,
+  agentId: string,
+  taskList: boolean,
+): Promise<SessionTask[]> {
+  return taskList ? deps.sessionTaskRows.list(reader, agentId) : Promise.resolve([]);
 }

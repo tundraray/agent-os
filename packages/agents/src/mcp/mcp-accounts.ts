@@ -1,6 +1,14 @@
 import type { LogFields, Logger } from '@agent-os/common';
 import { McpServerModeSchema, type McpConnection } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  AgentMcpAccountsRepository,
+  AgentMcpServersRepository,
+  DATABASE,
+  type Database,
+  type McpAccountRow,
+  type McpServerRow,
+  type McpTokens,
+} from '@agent-os/db';
 import {
   IssuerMismatchError,
   OAuthError,
@@ -14,21 +22,14 @@ import {
   type OAuthClientInformationMixed,
   type OAuthTokens,
 } from '@modelcontextprotocol/client';
+import { Inject, Injectable } from '@nestjs/common';
 
 import type { AccessGate, ToolAccess } from '../access-gate';
-import type { ConnectRequest, ConnectRequests, ConnectTarget } from './connect-requests';
-import {
-  type McpAccountRow,
-  type McpTokens,
-  accountsOf,
-  deleteAccount,
-  findAccount,
-  updateTokens,
-  upsertAccount,
-} from './mcp-accounts.repository';
+import { ACCESS_GATE, AGENTS_CONFIG, AGENTS_LOGGER } from '../agents.tokens';
+import type { AgentsConfig } from '../config';
+import { type ConnectRequest, ConnectRequests, type ConnectTarget } from './connect-requests';
 import { type McpAuth, deadlineFetch } from './mcp-client';
 import { type McpFailure, failureName, transportFailureReason } from './mcp-failure';
-import { type McpServerRow, findServer, listServers } from './mcp-servers.repository';
 import { storedMcpTools } from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
 
@@ -39,18 +40,6 @@ const REFRESH_BEFORE_EXPIRY_MS = 60 * 1000;
 export interface UsableMcpServer {
   readonly server: string;
   readonly tools: readonly string[];
-}
-
-export interface McpAccountsOptions {
-  readonly database: Database;
-  readonly requests: ConnectRequests;
-  /** The one access check (Contract «Для `access`»): the same as in the tool set and the call check. */
-  readonly access: Pick<AccessGate, 'tools'>;
-  readonly logger: Logger;
-  /** `MCP_CALL_TIMEOUT_MS`: bounds a code exchange and a token refresh. */
-  readonly callTimeoutMs: number;
-  /** Development only: an `http` authorization address passes the address rule. */
-  readonly allowHttp: boolean;
 }
 
 export interface McpConnectBegin {
@@ -172,11 +161,30 @@ function isExchangeFailure(error: unknown): boolean {
  * requests and the refreshes in flight (ADR-0001). The authorization server is called outside any
  * transaction (repository-over-transaction.md). No operation returns a token, and none is logged.
  */
+@Injectable()
 export class McpAccounts {
   /** One refresh at a time per pair «server — owner» (DC-4, Invariant 4): the others wait for it. */
   private readonly refreshes = new Map<string, Promise<string | undefined>>();
+  private readonly logger: Logger;
+  /** `MCP_CALL_TIMEOUT_MS`: bounds a code exchange and a token refresh. */
+  private readonly callTimeoutMs: number;
+  /** Development only: an `http` authorization address passes the address rule. */
+  private readonly allowHttp: boolean;
 
-  constructor(private readonly options: McpAccountsOptions) {}
+  constructor(
+    @Inject(DATABASE) private readonly database: Database,
+    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentMcpAccountsRepository) private readonly mcpAccountRows: AgentMcpAccountsRepository,
+    @Inject(ConnectRequests) private readonly requests: ConnectRequests,
+    /** The one access check (Contract «Для `access`»): the same as in the tool set and the call check. */
+    @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,
+    @Inject(AGENTS_LOGGER) logger: Logger,
+    @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs' | 'allowHttpUrls'>,
+  ) {
+    this.logger = logger.child({ service: 'agents.mcp' });
+    this.callTimeoutMs = config.mcpCallTimeoutMs;
+    this.allowHttp = config.allowHttpUrls;
+  }
 
   /**
    * Enabled `oauth` servers with at least one tool the gate allows the employee, by name, with his account
@@ -185,7 +193,7 @@ export class McpAccounts {
   async connections(ownerId: string): Promise<McpConnection[]> {
     const servers = (await this.usableServers(ownerId)).rows.filter(isOAuthServer);
     if (servers.length === 0) return [];
-    const connected = new Set((await accountsOf(this.options.database, ownerId)).map((account) => account.server));
+    const connected = new Set((await this.mcpAccountRows.listOwned(this.database, ownerId)).map((account) => account.server));
     return servers.map((row) => ({
       server: row.name,
       url: row.url,
@@ -200,9 +208,9 @@ export class McpAccounts {
    */
   async begin(input: McpConnectBegin): Promise<McpConnectStart> {
     const fields = { ownerId: input.ownerId, server: input.server, target: input.target };
-    const row = await findServer(this.options.database, input.server);
+    const row = await this.mcpServerRows.find(this.database, input.server);
     if (!isOAuthServer(row) || !(await this.mayBegin(input, row))) {
-      this.options.logger.warn('mcp connect refused', { ...fields, outcome: 'refused' });
+      this.logger.warn('mcp connect refused', { ...fields, outcome: 'refused' });
       return { kind: 'refused' };
     }
     const { url, metadata, client } = oauthServerOf(row);
@@ -212,11 +220,11 @@ export class McpAccounts {
       redirectUrl: input.redirectUrl,
       resource: url,
     });
-    if (checkServerUrl(authorizationUrl, { allowHttp: this.options.allowHttp }) !== 'ok') {
-      this.options.logger.warn('mcp connect refused', { ...fields, outcome: 'refused', reason: 'insecure_url' });
+    if (checkServerUrl(authorizationUrl, { allowHttp: this.allowHttp }) !== 'ok') {
+      this.logger.warn('mcp connect refused', { ...fields, outcome: 'refused', reason: 'insecure_url' });
       return { kind: 'refused' };
     }
-    const { id, state } = this.options.requests.open({
+    const { id, state } = this.requests.open({
       ownerId: input.ownerId,
       server: input.server,
       target: input.target,
@@ -225,7 +233,7 @@ export class McpAccounts {
       issuer: metadata.issuer,
     });
     authorizationUrl.searchParams.set('state', state);
-    this.options.logger.info('mcp connect begun', { ...fields, requestId: id, outcome: 'redirect' });
+    this.logger.info('mcp connect begun', { ...fields, requestId: id, outcome: 'redirect' });
     return { kind: 'redirect', authorizationUrl };
   }
 
@@ -237,9 +245,9 @@ export class McpAccounts {
    * the code is exchanged with the PKCE verifier and the account is stored.
    */
   async finish(input: McpConnectReturn): Promise<McpConnectFinish> {
-    const request = this.options.requests.take(input.state, input.ownerId, new Date());
+    const request = this.requests.take(input.state, input.ownerId, new Date());
     if (request === undefined) {
-      this.options.logger.warn('mcp connect returned', {
+      this.logger.warn('mcp connect returned', {
         ownerId: input.ownerId,
         outcome: 'connect_failed',
         reason: 'no_request',
@@ -253,8 +261,8 @@ export class McpAccounts {
       requestId: request.id,
     };
     const ended = (outcome: McpConnectOutcome, reason?: string, details: LogFields = {}): McpConnectFinish => {
-      if (outcome === 'connected') this.options.logger.info('mcp connect returned', { ...fields, outcome });
-      else this.options.logger.warn('mcp connect returned', { ...fields, ...details, outcome, reason });
+      if (outcome === 'connected') this.logger.info('mcp connect returned', { ...fields, outcome });
+      else this.logger.warn('mcp connect returned', { ...fields, ...details, outcome, reason });
       return { outcome, request: { server: request.server, target: request.target } };
     };
     // Each server has its own return address: a code that came back at another server's is not this request's.
@@ -264,13 +272,13 @@ export class McpAccounts {
     if (input.error !== undefined) return ended('connect_failed', `authorization_${input.error}`);
     if (request.target === 'admin' && !input.isAdmin) return ended('access_denied', 'not_admin');
     if (input.code === undefined) return ended('connect_failed', 'no_code');
-    const row = await findServer(this.options.database, request.server);
+    const row = await this.mcpServerRows.find(this.database, request.server);
     if (!isOAuthServer(row)) return ended('connect_failed', 'server_gone');
     const server = oauthServerOf(row);
     if (server.metadata.issuer !== request.issuer) return ended('connect_failed', 'issuer_changed');
     const exchanged = await this.exchange(server, request, { code: input.code, iss: input.iss });
     if (exchanged === undefined) return ended('connect_failed', 'exchange_failed');
-    await upsertAccount(this.options.database, { ownerId: request.ownerId, server: request.server, ...exchanged });
+    await this.mcpAccountRows.upsert(this.database, { ownerId: request.ownerId, server: request.server, ...exchanged });
     return ended('connected');
   }
 
@@ -283,9 +291,9 @@ export class McpAccounts {
    * tools of a server in any status.
    */
   async credentialsFor(server: string, ownerId: string, use: 'call' | 'admin'): Promise<McpCredentials> {
-    const row = await findServer(this.options.database, server);
+    const row = await this.mcpServerRows.find(this.database, server);
     if (row === undefined || (use === 'call' && !row.enabled)) {
-      this.options.logger.warn('mcp token not issued', { server, ownerId, outcome: 'server_gone', use });
+      this.logger.warn('mcp token not issued', { server, ownerId, outcome: 'server_gone', use });
       return { kind: 'server_gone' };
     }
     if (row.mode === McpServerModeSchema.enum.shared) {
@@ -298,9 +306,9 @@ export class McpAccounts {
         rejected: async () => {},
       };
     }
-    const account = await findAccount(this.options.database, server, ownerId);
+    const account = await this.mcpAccountRows.find(this.database, server, ownerId);
     if (account === undefined) {
-      this.options.logger.info('mcp token issued', { server, ownerId, outcome: 'auth_required', reason: 'no_account' });
+      this.logger.info('mcp token issued', { server, ownerId, outcome: 'auth_required', reason: 'no_account' });
       return { kind: 'auth_required' };
     }
     let accessToken = account.accessToken;
@@ -315,7 +323,7 @@ export class McpAccounts {
         return { kind: 'failure', reason };
       }
     } else {
-      this.options.logger.info('mcp token issued', {
+      this.logger.info('mcp token issued', {
         server,
         ownerId,
         outcome: 'issued',
@@ -327,8 +335,8 @@ export class McpAccounts {
 
   /** Removes the employee's account on the server; no account is a success too (AC-14.4). */
   async disconnect(ownerId: string, server: string): Promise<void> {
-    const removed = await deleteAccount(this.options.database, server, ownerId);
-    this.options.logger.info('mcp account disconnected', { ownerId, server, outcome: removed ? 'removed' : 'none' });
+    const removed = await this.mcpAccountRows.delete(this.database, server, ownerId);
+    this.logger.info('mcp account disconnected', { ownerId, server, outcome: removed ? 'removed' : 'none' });
   }
 
   /** Names of enabled servers of any mode with at least one tool the gate allows the employee, by name (KD-4). */
@@ -353,16 +361,16 @@ export class McpAccounts {
 
   /** Enabled servers of any mode the employee may use, by name, with the gate's answer; none for a disabled employee. */
   private async usableServers(ownerId: string): Promise<{ rows: McpServerRow[]; access: ToolAccess }> {
-    const access = await this.options.access.tools(ownerId);
+    const access = await this.access.tools(ownerId);
     if (access.kind === 'owner_disabled') return { rows: [], access };
-    const rows = (await listServers(this.options.database)).filter((row) => usableServer(row, access));
+    const rows = (await this.mcpServerRows.list(this.database)).filter((row) => usableServer(row, access));
     return { rows, access };
   }
 
   /** The admin connects his `oauth` server in any status; an employee only one he may use (`connections`' rule). */
   private async mayBegin(input: McpConnectBegin, row: McpServerRow): Promise<boolean> {
     if (input.target === 'admin') return true;
-    return usableServer(row, await this.options.access.tools(input.ownerId));
+    return usableServer(row, await this.access.tools(input.ownerId));
   }
 
   /** Tokens for the code, or `undefined` when the authorization server or the network refused the exchange. */
@@ -380,12 +388,12 @@ export class McpAccounts {
         codeVerifier: request.codeVerifier,
         redirectUri: request.redirectUrl,
         resource: server.url,
-        fetchFn: deadlineFetch(this.options.callTimeoutMs),
+        fetchFn: deadlineFetch(this.callTimeoutMs),
       });
       return tokensOf(tokens, new Date());
     } catch (error) {
       if (!isExchangeFailure(error)) throw error;
-      this.options.logger.warn('mcp code exchange failed', {
+      this.logger.warn('mcp code exchange failed', {
         ownerId: request.ownerId,
         server: request.server,
         requestId: request.id,
@@ -419,10 +427,10 @@ export class McpAccounts {
         },
       },
       rejected: async () => {
-        const account = await findAccount(this.options.database, server, ownerId);
+        const account = await this.mcpAccountRows.find(this.database, server, ownerId);
         if (account?.accessToken !== current) return;
-        await deleteAccount(this.options.database, server, ownerId);
-        this.options.logger.warn('mcp account lost', { server, ownerId, reason: 'unauthorized_after_refresh' });
+        await this.mcpAccountRows.delete(this.database, server, ownerId);
+        this.logger.warn('mcp account lost', { server, ownerId, reason: 'unauthorized_after_refresh' });
       },
     };
   }
@@ -436,7 +444,7 @@ export class McpAccounts {
     const key = JSON.stringify([server, ownerId]);
     const running = this.refreshes.get(key);
     if (running !== undefined) {
-      this.options.logger.info('mcp token refresh joined', { server, ownerId });
+      this.logger.info('mcp token refresh joined', { server, ownerId });
       return running;
     }
     const refresh = this.runRefresh(server, ownerId, staleToken).finally(() => this.refreshes.delete(key));
@@ -450,19 +458,19 @@ export class McpAccounts {
    * failure propagates and the account stays. The new tokens are stored before the promise resolves.
    */
   private async runRefresh(server: string, ownerId: string, staleToken: string): Promise<string | undefined> {
-    const { database, logger } = this.options;
+    const { database, logger, mcpServerRows, mcpAccountRows } = this;
     const startedAt = performance.now();
     const fields = { server, ownerId };
     const durationMs = () => Math.round(performance.now() - startedAt);
     const lost = async (reason: string): Promise<undefined> => {
-      await deleteAccount(database, server, ownerId);
+      await mcpAccountRows.delete(database, server, ownerId);
       logger.warn('mcp token refresh', { ...fields, outcome: 'account_lost', reason, durationMs: durationMs() });
       return undefined;
     };
-    const account = await findAccount(database, server, ownerId);
+    const account = await mcpAccountRows.find(database, server, ownerId);
     if (account === undefined) return lost('no_account');
     if (account.accessToken !== staleToken) return account.accessToken;
-    const row = await findServer(database, server);
+    const row = await mcpServerRows.find(database, server);
     if (account.refreshToken === null || !isOAuthServer(row)) return lost('no_refresh_token');
     const { url, metadata, client } = oauthServerOf(row);
     let tokens: McpTokens;
@@ -472,7 +480,7 @@ export class McpAccounts {
         clientInformation: client,
         refreshToken: account.refreshToken,
         resource: url,
-        fetchFn: deadlineFetch(this.options.callTimeoutMs),
+        fetchFn: deadlineFetch(this.callTimeoutMs),
       });
       tokens = tokensOf(refreshed, new Date());
     } catch (error) {
@@ -486,7 +494,7 @@ export class McpAccounts {
       });
       throw error;
     }
-    if (!(await updateTokens(database, server, ownerId, tokens))) return lost('disconnected_meanwhile');
+    if (!(await mcpAccountRows.updateTokens(database, server, ownerId, tokens))) return lost('disconnected_meanwhile');
     logger.info('mcp token refresh', {
       ...fields,
       outcome: 'refreshed',

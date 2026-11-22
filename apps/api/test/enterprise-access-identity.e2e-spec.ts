@@ -29,7 +29,7 @@ import {
   RoleListSchema,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SYSTEM_ACTOR } from '../src/audit/audit-log.repository';
+import { SYSTEM_ACTOR } from '../src/audit/audit-log';
 import { expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {

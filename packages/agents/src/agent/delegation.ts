@@ -3,7 +3,7 @@ import type { StepContext, StepEffects } from '@agent-os/runtime';
 
 import type { CallState } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import type { CallEnding } from '../store/call-records.repository';
+import type { CallEnding } from '../store/call-records';
 import type { ToolCaller } from '../tools/tool';
 
 /**

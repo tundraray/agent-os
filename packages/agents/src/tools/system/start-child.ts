@@ -1,24 +1,35 @@
 import type { Logger } from '@agent-os/common';
+import type { Transaction } from '@agent-os/db';
+import type { LiveTask, LiveTaskIdentity } from '@agent-os/runtime';
 
 import { AgentsError } from '../../errors';
 import type { StartResolution, StartSource } from '../../start/resolve-start';
-import type { ChildStart, SessionInput } from '../../store/sessions.repository';
+import type { RunSnapshot } from '../../start/snapshot';
+import type { SessionInput } from '../../store/sessions';
 import type { StartChild } from '../tool';
 import type { StartChildScope } from '../tool-runner';
 
 export interface StartChildDeps {
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
-  /** The class the child runs as: its task type and the making of its session. */
-  readonly childStart: ChildStart;
+  /** The task type the child's snapshot runs as (`childTypeOf`). */
+  readonly childType: (snapshot: RunSnapshot) => string;
+  /** Makes the child's object with its session inside the commit (`AgentFactory.createIn`). */
+  readonly createIn: (
+    tx: Transaction,
+    type: string,
+    task: Omit<LiveTaskIdentity, 'type' | 'input'>,
+    input: SessionInput,
+  ) => Promise<LiveTask>;
 }
 
 /**
  * The only start of a child agent inside a step's commit transaction (design-runtime.md, «Операции
  * `agents`»): the child is not deeper than `AGENT_MAX_DEPTH` (`DEPTH_LIMIT`), then `effects.spawn` of a
- * task of the child's class (`childStart`) with the snapshot in its input and the child's session with its `task` entry in the same
- * transaction (plan Notes 11), so the caller gets the `agentId` at once. Owner and parent are the
- * caller's. Bound to one call's scope by the tool runner (`startChildFor`).
+ * task of the child's type (`childType`) with the snapshot in its input, then the child's object with its session and
+ * `task` entry in the same transaction (plan Notes 11), handed to the runtime with `effects.adopt`: it keeps the
+ * object once the commit succeeds, and the child's first step runs on it. The caller gets the `agentId` at once.
+ * Owner and parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
  */
 export function createStartChild(deps: StartChildDeps): (scope: StartChildScope) => StartChild {
   return ({ tx, effects, caller }) =>
@@ -35,13 +46,21 @@ export function createStartChild(deps: StartChildDeps): (scope: StartChildScope)
         description,
         ...(forkedFrom === undefined ? {} : { forkedFrom }),
       };
-      const start = deps.childStart(snapshot);
-      const agentId = await effects.spawn({ type: start.type, input });
-      await start.startSession(
+      const type = deps.childType(snapshot);
+      const agentId = await effects.spawn({ type, input });
+      const child = await deps.createIn(
         tx,
-        { taskId: agentId, ownerId: caller.ownerId, parentId: caller.agentId, rootId: caller.rootId },
+        type,
+        {
+          taskId: agentId,
+          ownerId: caller.ownerId,
+          parentId: caller.agentId,
+          rootId: caller.rootId,
+          depth: caller.depth + 1,
+        },
         input,
       );
+      effects.adopt(agentId, child);
       return { agentId };
     };
 }

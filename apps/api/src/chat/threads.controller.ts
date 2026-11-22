@@ -11,7 +11,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import { loggedRoute } from '../common/logged-route';
 import {
   HistoryQuerySchema,
@@ -31,7 +31,6 @@ import {
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
-import { APP_LOGGER } from '../logging/app-logger';
 import { chatRoute, type Command } from './chat.errors';
 import { ConversationsService } from './conversations.service';
 
@@ -47,7 +46,7 @@ export class ThreadsController {
 
   constructor(
     private readonly conversations: ConversationsService,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.threads' });
   }

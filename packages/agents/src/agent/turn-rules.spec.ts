@@ -1,4 +1,4 @@
-import type { SessionTask } from '../store/session-tasks.repository';
+import type { SessionTask } from '@agent-os/db';
 import { type EndOfTurn, type EndOfTurnInput, endOfTurn, noticeContent } from './turn-rules';
 
 // KD-2, «Конец хода», DC-3, DC-4 (final subagent, design-runtime.md KD-5), Invariant 4, Notes 6: an

@@ -5,7 +5,8 @@ import type {
   RecordAuthor,
   RecordBody,
 } from '@agent-os/contracts';
-import type { StoredBan, StoredRecord, Viewer } from './library.repository';
+import type { LibraryViewer } from '@agent-os/db';
+import type { StoredBan, StoredRecord } from './stored-records';
 import type { RefusedField } from './save-rules';
 
 /**
@@ -44,7 +45,7 @@ export interface LibraryActor {
   readonly isAdmin: boolean;
 }
 
-/** Facts only `Agents` has, given by the caller (KD-4, port-module-split.md): servers usable to the actor. */
+/** Facts only the agents package has, given by the caller (KD-4, port-module-split.md): servers usable to the actor. */
 export interface ServerFacts {
   readonly usableServers: readonly string[];
 }
@@ -87,7 +88,7 @@ export type SaveScope = 'employee' | 'system';
 
 export interface SaveRequest {
   readonly scope: SaveScope;
-  readonly author: Viewer;
+  readonly author: LibraryViewer;
   readonly target: { readonly id: string; readonly version: number } | null;
   readonly body: CreateRecordBody;
   /** Servers usable to the author (employee) or the MCP registry (system). */
@@ -144,7 +145,7 @@ export type ChatChange =
 /** The facts a chat call is decided with, read before any transaction (`LibraryChatService.chatContext`). */
 export interface ChatContext {
   readonly actor: LibraryActor;
-  readonly viewer: Viewer;
+  readonly viewer: LibraryViewer;
   /** The servers usable to the employee and, for an admin, the MCP registry. */
   readonly servers: PanelServerFacts;
   readonly allowedModels: readonly string[];

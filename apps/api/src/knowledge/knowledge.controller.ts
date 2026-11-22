@@ -7,16 +7,13 @@ import {
   Param,
   Req,
 } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
+import { AgentsKnowledge } from '@agent-os/agents';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type { KnowledgeView } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens';
-import { AuditLog } from '../audit/audit-log.repository';
+import { AuditLog } from '../audit/audit-log';
 import { loggedRoute } from '../common/logged-route';
 import type { AuthedRequest } from '../identity/auth-user';
 import { LibraryService } from '../library/library.service';
-import { APP_LOGGER } from '../logging/app-logger';
-
 const LIBRARY_RECORD_OBJECT_TYPE = 'library_record';
 const KNOWLEDGE_DELETE_KIND = 'knowledge_delete';
 /** Graph ids are Postgres `integer` identities: nothing above this exists. */
@@ -36,7 +33,7 @@ function itemIdOf(raw: string): number | null {
  * The knowledge graph of a record (self-learning design-core.md, KD-7, Contract «Для части `web`»): one
  * route family for the library and the admin panel. Every route first asks
  * `LibraryService.knowledgeTarget` — the only place of the access rule (404 RECORD_NOT_FOUND, 403
- * KNOWLEDGE_FORBIDDEN) — and acts only on the record id it returns; `Agents.knowledge` touches only that
+ * KNOWLEDGE_FORBIDDEN) — and acts only on the record id it returns; `AgentsKnowledge` touches only that
  * record's rows. A delete is audited as `knowledge_delete` with the entry's kind and id, never its
  * text; an entry that is not there answers 204 with no audit (DC-10).
  */
@@ -46,9 +43,9 @@ export class KnowledgeController {
 
   constructor(
     private readonly library: LibraryService,
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsKnowledge) private readonly knowledge: AgentsKnowledge,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'knowledge.routes' });
   }
@@ -63,7 +60,7 @@ export class KnowledgeController {
       route: 'GET /library/:id/knowledge',
       fields: { actorId: req.user.id, recordId: id },
       work: async () =>
-        this.agents.knowledge.view(
+        this.knowledge.view(
           await this.library.knowledgeTarget(req.user, id),
         ),
       outcomeOf: (view) => ({ items: view.items.length }),
@@ -91,7 +88,7 @@ export class KnowledgeController {
         const { recordId } = await this.library.knowledgeTarget(req.user, id);
         const entityId = itemIdOf(rawEntityId);
         if (entityId === null) return { deleted: false, relations: 0 };
-        const deletion = await this.agents.knowledge.deleteEntity({
+        const deletion = await this.knowledge.deleteEntity({
           recordId,
           entityId,
         });
@@ -131,7 +128,7 @@ export class KnowledgeController {
         const { recordId } = await this.library.knowledgeTarget(req.user, id);
         const relationId = itemIdOf(rawRelationId);
         if (relationId === null) return { deleted: false };
-        const deletion = await this.agents.knowledge.deleteRelation({
+        const deletion = await this.knowledge.deleteRelation({
           recordId,
           relationId,
         });

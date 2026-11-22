@@ -1,8 +1,17 @@
 import { createSecretMasker, type Logger } from '@agent-os/common';
 import type { LastExtractionReason, LastExtractionStatus } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import type {
+  AgentCodeCallsRepository,
+  AgentKnowledgeRepository,
+  AgentKnowledgeRunsRepository,
+  AgentMcpServersRepository,
+  AgentMessagesRepository,
+  Database,
+  NewKnowledgeRelation,
+  Transaction,
+} from '@agent-os/db';
 import {
-  type Runtime,
+  type TaskControl,
   RuntimeError,
   type StepContext,
   type StepResult,
@@ -14,26 +23,10 @@ import type { AgentToolCall, AgentToolDefinition, AgentTurnMessage } from '../mo
 import type { ModelCallRequest, ModelCallResult, ModelClient } from '../model/model-client';
 import { envelope } from '../model/provider-messages';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
-import { sessions } from '../store/sessions.repository';
+import type { Sessions } from '../store/sessions';
 import { type CheckedOperations, checkOperations, type RoundCall } from './check-operations';
 import { type ExtractionInput, readExtractionInput } from './extraction-input';
-import {
-  advanceExtractedUpTo,
-  findRunById,
-  type KnowledgeRun,
-  updateKnowledgeRun,
-  writeRoundOutcome,
-} from './knowledge-runs.repository';
-import {
-  confirmItem,
-  insertEntity,
-  insertRelations,
-  lockGraph,
-  markOutdated,
-  type NewKnowledgeRelation,
-  readGraph,
-  readKnowledgeSettings,
-} from './knowledge.repository';
+import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
 import { graphItemsOf, registryToolAlive } from './knowledge-block';
 import {
   isForeignKeyViolation,
@@ -105,8 +98,14 @@ const CHOOSE_ENTITIES: AgentToolDefinition = {
 export interface KnowledgeExtractHandlerDeps {
   /** Reads outside the commit: the run row, the session, the graph, the settings, the registry, the calls. */
   readonly database: Database;
+  readonly sessions: Sessions;
+  readonly knowledgeRows: AgentKnowledgeRepository;
+  readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
+  readonly mcpServerRows: AgentMcpServersRepository;
+  readonly messageRows: AgentMessagesRepository;
+  readonly codeCallRows: AgentCodeCallsRepository;
   /** The deep agent's subtree for the round's input (`readExtractionInput`). */
-  readonly tasks: Pick<Runtime['tasks'], 'get' | 'listTree'>;
+  readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
   /** The only way to the model: access check, ledger row and monthly spend of an ordinary call. */
   readonly modelClient: Pick<ModelClient, 'call'>;
   /** Vectors of the answer's new entities, charged to the starter (KD-4, FR-20). */
@@ -199,6 +198,7 @@ function retryMessages(
 
 /** Inserts the additions in the answer's order (a `ref` before what uses it), then confirms and marks. */
 async function applyChecked(
+  knowledgeRows: AgentKnowledgeRepository,
   tx: Transaction,
   recordId: string,
   runId: string,
@@ -222,7 +222,7 @@ async function applyChecked(
   const relationRows: NewKnowledgeRelation[] = [];
   for (const addition of checked.apply) {
     if (addition.type === 'entity') {
-      const row = await insertEntity(tx, {
+      const row = await knowledgeRows.insertEntity(tx, {
         ...born,
         name: addition.name,
         description: addition.description,
@@ -262,16 +262,16 @@ async function applyChecked(
         break;
     }
   }
-  await insertRelations(tx, relationRows);
+  await knowledgeRows.insertRelations(tx, relationRows);
   for (const confirmation of checked.confirm) {
-    await confirmItem(tx, recordId, {
+    await knowledgeRows.confirmItem(tx, recordId, {
       item: { type: confirmation.type, id: confirmation.id },
       confirmations: confirmation.confirmations,
       at: confirmation.confirmedAt,
       runId: confirmation.confirmedByRunId,
     });
   }
-  for (const item of checked.outdated) await markOutdated(tx, recordId, item);
+  for (const item of checked.outdated) await knowledgeRows.markOutdated(tx, recordId, item);
 }
 
 function statusOf(result: RoundResult): {
@@ -337,7 +337,7 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  * nothing was applied. Nothing is applied twice — every write is inside the one transaction.
  */
 export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps): TaskHandler {
-  const { database, modelClient, embeddings, store } = deps;
+  const { database, modelClient, embeddings, store, sessions, knowledgeRows, knowledgeRunRows } = deps;
   const mask = createSecretMasker([]);
 
   /** The round's model call through `ModelClient`: the starter as owner, the extraction task as task and root. */
@@ -523,15 +523,15 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     window: { readonly calls: ReadonlyMap<string, RoundCall>; readonly readAt: Date } | null,
   ): Promise<Settled | 'fenced'> {
     const guarded = await ctx.guard(async (tx: Transaction): Promise<Settled> => {
-      await lockGraph(tx, round.recordId);
-      const run = await findRunById(tx, round.runId);
+      await knowledgeRows.lockGraph(tx, round.recordId);
+      const run = knowledgeRunOf(await knowledgeRunRows.findRunById(tx, round.runId));
       if (run === undefined || run.extractTaskId !== ctx.taskId) return { kind: 'not_current' };
 
       let counts = NO_COUNTS;
       let recordDeleted = false;
       const roundAt = new Date();
       if (result?.kind === 'answered' && window !== null) {
-        const graph = await readGraph(tx, round.recordId);
+        const graph = await knowledgeRows.readGraph(tx, round.recordId);
         const checked = checkOperations({
           graph,
           calls: window.calls,
@@ -550,7 +550,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         });
         try {
           await tx.transaction((savepoint) =>
-            applyChecked(savepoint, round.recordId, round.runId, roundAt, checked),
+            applyChecked(knowledgeRows, savepoint, round.recordId, round.runId, roundAt, checked),
           );
           counts = {
             added: checked.apply.length,
@@ -567,7 +567,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       }
 
       if (result !== null) {
-        await writeRoundOutcome(tx, round.runId, {
+        await knowledgeRunRows.writeRoundOutcome(tx, round.runId, {
           ...statusOf(result),
           ...counts,
           model: round.model,
@@ -576,15 +576,15 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         });
         // Only a done round moves the mark, and only forward (Invariant 2, DC-3).
         if (window !== null && (result.kind === 'answered' || result.kind === 'empty')) {
-          await advanceExtractedUpTo(tx, round.runId, window.readAt);
+          await knowledgeRunRows.advanceExtractedUpTo(tx, round.runId, window.readAt);
         }
       }
 
       if (run.needsRound && result !== null && !recordDeleted) {
-        await updateKnowledgeRun(tx, round.runId, { needsRound: false });
+        await knowledgeRunRows.updateRun(tx, round.runId, { needsRound: false });
         return { kind: 'continue', counts, recordDeleted };
       }
-      await updateKnowledgeRun(tx, round.runId, { extractTaskId: null, needsRound: false });
+      await knowledgeRunRows.updateRun(tx, round.runId, { extractTaskId: null, needsRound: false });
       return { kind: 'complete', counts, recordDeleted };
     });
     return guarded.outcome === 'fenced' ? 'fenced' : guarded.value;
@@ -640,7 +640,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
   /** The deep agent's task, read by `readExtractionInput`, is gone: the conversation was deleted. */
   async function inputOf(run: KnowledgeRun): Promise<ExtractionInput | undefined> {
     try {
-      return await readExtractionInput({ database, tasks: deps.tasks }, run);
+      return await readExtractionInput(deps, run);
     } catch (error) {
       if (error instanceof RuntimeError && error.code === 'TASK_NOT_FOUND') return undefined;
       throw error;
@@ -652,7 +652,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     const { runId, rootId } = KnowledgeExtractInputSchema.parse(ctx.input);
     const baseLogger = ctx.logger.child({ runId, conversationRootId: rootId });
 
-    const run = await findRunById(database, runId);
+    const run = knowledgeRunOf(await knowledgeRunRows.findRunById(database, runId));
     if (run === undefined) {
       baseLogger.info('knowledge round ended: run row gone', {
         outcome: 'gone',
@@ -690,12 +690,12 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     });
     if (input.counts.calls === 0) return finish(ctx, round, { kind: 'empty' }, input, startedAt);
 
-    const settings = await readKnowledgeSettings(database);
-    const graphItems = graphItemsOf(await readGraph(database, recordId));
+    const settings = await knowledgeRows.readSettings(database);
+    const graphItems = graphItemsOf(await knowledgeRows.readGraph(database, recordId));
     const choice = selectKnowledge({
       items: graphItems,
       settings,
-      toolAlive: await registryToolAlive(database, run.servers),
+      toolAlive: await registryToolAlive(deps, run.servers),
       closeness: [],
     });
     const graphText = choice.chosen.map(knowledgeLineWithKey).join('\n');

@@ -18,7 +18,7 @@
 
 ## Reference
 
-- `apps/api/src/identity/session.guard.ts` — глобальная проверка и пометки (появляется с частью `identity`)
+- `apps/api/src/identity/session.guard.ts` — глобальная проверка и пометки
 - `apps/api/src/chat/threads.controller.ts` — владелец в первой строке обработчика, поиск «чужое = нет»
 
 ## Not For

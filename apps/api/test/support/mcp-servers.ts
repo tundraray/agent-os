@@ -1,4 +1,4 @@
-import type { Agents, McpServerWrite } from '@agent-os/agents';
+import type { AgentsMcp, McpServerWrite } from '@agent-os/agents';
 import { McpError } from '@agent-os/agents';
 import { McpErrorCode, type McpServerMode } from '@agent-os/contracts';
 import {
@@ -40,7 +40,9 @@ function mcpRedirectUrl(server: string): string {
 }
 
 /** The registry part of the package the helpers need. */
-type McpOf = Pick<Agents, 'mcp'>;
+interface McpOf {
+  readonly mcp: AgentsMcp;
+}
 
 export interface TestServer {
   readonly name: string;

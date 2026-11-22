@@ -8,7 +8,7 @@ import { KnowledgeController } from './knowledge.controller';
 /**
  * The knowledge routes (port-module-split.md, self-learning design-core.md KD-7): the access rule comes
  * from `LibraryModule` (`knowledgeTarget`), the graph and the settings from `AgentsModule`
- * (`Agents.knowledge`). They live apart from `LibraryModule`, which may not import `AgentsModule`.
+ * (`AgentsKnowledge`). They live apart from `LibraryModule`, which may not import `AgentsModule`.
  */
 @Module({
   imports: [LibraryModule, AgentsModule, AuditModule],

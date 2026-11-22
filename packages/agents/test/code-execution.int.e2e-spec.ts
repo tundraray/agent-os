@@ -1,6 +1,6 @@
 // code-execution / code-execution Integration Test Skeletons - Design Doc: docs/features/code-execution/design-code-execution.md (Test Strategy UC-1, UC-2, UC-E2 call rows, UC-E3, UC-E6, UC-E8, UC-E9, UC-E11; Invariants 1-7; DC-2, DC-5..DC-12, DC-16, DC-18)
 // PRD: docs/features/code-execution/prd.md v1.8 (FR-01, FR-03..FR-05, FR-07..FR-11). UXRD: docs/features/code-execution/uxrd.md v1.3 (the decision card is a web unit test, see "Proven elsewhere")
-// Generated: 2026-11-14 | Part: code-execution (single part) | Test type: Integration (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model, REAL `packages/code-runner` executor process unless a row says "substituted CodeRunner")
+// Generated: 2026-11-14 | Part: code-execution (single part) | Test type: Integration (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model, REAL `packages/code-runner` executor process unless a row says "substituted CodeRunner")
 // Implementation timing: created alongside the slice each test names (INT-1 the read run and its history, audit and log; INT-2 the write run's confirmation; INT-3 the rights and isolation of calls from code; INT-4 interrupt, stop and the per-employee limit).
 //
 // File name follows the repo convention of the `agents` part (`*.int.e2e-spec.ts` under packages/agents/test, picked up by `vitest.config.e2e.ts`, run with `pnpm --filter @agent-os/agents test:e2e`, never in the default `vitest run`). The single-part feature
@@ -12,7 +12,7 @@
 // a restart as a runtime row, the step commit boundary, the owner check of the `agents` operations (agents INT-4).
 //
 // Environment (Design Doc "Test Strategy"):
-// - Postgres 16 from infra/docker-compose.yml, migrations applied once by the global setup. Real `createRuntime` and real `createAgents` over a real pool. No mock of Postgres, of the runtime or of any agents component.
+// - Postgres 16 from infra/docker-compose.yml, migrations applied once by the global setup. Real `RuntimeModule` and real `createAgents` over a real pool. No mock of Postgres, of the runtime or of any agents component.
 // - The model is the only double: a scripted `ModelClient` double at the wrapper boundary ("модель подменяется на границе `ModelClient` сценарием ответов"); it records the input of every call, which is the assertion surface for "the next model call sees X".
 // - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its sources registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
 //   test/support/mcp-servers.ts; `logs` read-only with `search_logs` over a week of logs and a result larger than the slice; `backoffice` with `create_incident_note` and `close_ticket`; `tracker`). `FIXTURE_CALL_LOG` (JSONL journal) is the

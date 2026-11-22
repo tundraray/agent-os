@@ -145,4 +145,4 @@ flowchart LR
 - [ADR-0015](ADR-0015-access-gate-and-model-catalogue.md)
 - [ADR-0004](ADR-0004-agent-framework-packages.md)
 - [ADR-0012](ADR-0012-closed-api-and-server-issued-employee-id.md)
-- [code-system README](../code-system/README.md) — Module Boundaries, строка `library` в `apps/api`
+- [code-system, приложение `apps/api`](../code-system/packages/api.md) — Правила областей, пункт «Библиотека»

@@ -1,28 +1,26 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   PublicUrlSchema,
   type SignInSettings,
   type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.repository';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type IdentitySettingsChange,
+  type IdentitySettingsRow,
+  IdentitySettingsRepository,
+} from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
 import { identityError } from './identity.errors';
 import { frontendOrigin } from './session-cookie';
-import {
-  readSettings,
-  savePublicUrlIfUnset,
-  writeSettings,
-  type SettingsChange,
-  type SettingsRow,
-} from './settings.repository';
 
 /** The audit object of the sign-in settings (FR-11). */
 const SETTINGS_OBJECT_TYPE = 'sign_in_settings';
 
-function toSignInSettings(row: SettingsRow): SignInSettings {
+function toSignInSettings(row: IdentitySettingsRow): SignInSettings {
   return {
     publicUrl: row.publicUrl,
     idleMinutes: row.idleMinutes,
@@ -35,7 +33,7 @@ const auditState = ({
   publicUrl,
   idleMinutes,
   absoluteMinutes,
-}: SettingsChange): SettingsChange => ({
+}: IdentitySettingsChange): IdentitySettingsChange => ({
   publicUrl,
   idleMinutes,
   absoluteMinutes,
@@ -50,16 +48,17 @@ export class IdentitySettings {
   private readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly settings: IdentitySettingsRepository,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
 
   /** The saved public address, or null: the sign-in reads only this, never the request's address. */
   async savedPublicUrl(): Promise<string | null> {
-    return (await readSettings(this.db)).publicUrl;
+    return (await this.settings.read(this.db)).publicUrl;
   }
 
   /**
@@ -82,7 +81,7 @@ export class IdentitySettings {
       });
       throw identityError('PUBLIC_URL_REQUIRED');
     }
-    if (!(await savePublicUrlIfUnset(this.db, candidate)))
+    if (!(await this.settings.savePublicUrlIfUnset(this.db, candidate)))
       return (await this.savedPublicUrl()) ?? candidate;
     this.logger.info('public url saved from frontend origin', {
       publicUrl: candidate,
@@ -93,7 +92,7 @@ export class IdentitySettings {
 
   /** GET /api/admin/settings/sign-in (FR-26). */
   async get(): Promise<SignInSettings> {
-    return toSignInSettings(await readSettings(this.db));
+    return toSignInSettings(await this.settings.read(this.db));
   }
 
   /**
@@ -106,8 +105,8 @@ export class IdentitySettings {
   ): Promise<SignInSettings> {
     const startedAt = Date.now();
     const { before, after } = await this.db.transaction(async (tx) => {
-      const previous = await readSettings(tx);
-      const updated = await writeSettings(tx, auditState(body));
+      const previous = await this.settings.read(tx);
+      const updated = await this.settings.write(tx, auditState(body));
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

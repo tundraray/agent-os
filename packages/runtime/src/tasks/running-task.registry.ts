@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import type { StepSignalReason } from '../steps/step-contract';
 
 /** One step executing in this process. */
@@ -23,6 +24,7 @@ interface RunningStep {
  * the same task (Invariant 1), so a task can hold more than one entry. Process-local: a step on
  * another instance learns about an interrupt through NOTIFY or its heartbeat.
  */
+@Injectable()
 export class RunningTaskRegistry {
   private readonly running = new Map<string, Set<RunningStep>>();
 

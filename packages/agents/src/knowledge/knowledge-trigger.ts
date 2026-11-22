@@ -1,27 +1,19 @@
-import type { Transaction } from '@agent-os/db';
+import type {
+  AgentKnowledgeRunsRepository,
+  AgentSessionsRepository,
+  KnowledgeEmbeddingRow,
+  RoundOutcome,
+  Transaction,
+} from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { RuntimeEventTypeSchema } from '@agent-os/contracts';
 import {
   type EventConsumer,
-  type Runtime,
+  type TaskControl,
   RUNTIME_EVENT_SCHEMA_VERSION,
 } from '@agent-os/runtime';
 
-import { sessions } from '../store/sessions.repository';
-import {
-  advanceExtractedUpTo,
-  ensureEmbeddingRow,
-  findEmbeddingByPassTask,
-  findRunByExtractTask,
-  findRunById,
-  findRunByLastExtractTask,
-  type KnowledgeEmbeddingRow,
-  type KnowledgeRun,
-  type RoundOutcome,
-  updateEmbeddingRow,
-  updateKnowledgeRun,
-  writeRoundOutcome,
-} from './knowledge-runs.repository';
+import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
 import {
   embedPassRequest,
   isForeignKeyViolation,
@@ -121,12 +113,15 @@ export function triggerDecision<R extends TriggerRun, E extends TriggerEmbedding
 
 export interface KnowledgeTriggerDeps {
   /** `create` only with the delivery `tx`. */
-  readonly tasks: Pick<Runtime['tasks'], 'create'>;
+  readonly tasks: Pick<TaskControl, 'create'>;
+  readonly sessionRows: AgentSessionsRepository;
+  readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly logger: Logger;
 }
 
 export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsumer {
   const logger = deps.logger.child({ consumer: CONSUMER_NAME });
+  const { sessionRows, knowledgeRunRows: runRows } = deps;
 
   async function createExtract(tx: Transaction, run: KnowledgeRun, rootId: string): Promise<string> {
     const input: KnowledgeExtractInput = { runId: run.runId, rootId };
@@ -149,41 +144,41 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
     switch (decision.action) {
       case 'create_extract': {
         const taskId = await createExtract(tx, decision.run, event.rootId);
-        await updateKnowledgeRun(tx, decision.run.runId, { extractTaskId: taskId });
+        await runRows.updateRun(tx, decision.run.runId, { extractTaskId: taskId });
         return taskId;
       }
       case 'mark_round':
-        await updateKnowledgeRun(tx, decision.run.runId, { needsRound: true });
+        await runRows.updateRun(tx, decision.run.runId, { needsRound: true });
         return undefined;
       case 'stopped':
         // A round in progress commits later and writes its own outcome over this one; the mark
         // never goes back (Invariant 2), so calls of the stopped stretch are never extracted.
-        await writeRoundOutcome(tx, decision.run.runId, outcomeOf('skipped', 'stopped', event));
-        await advanceExtractedUpTo(tx, decision.run.runId, event.createdAt);
+        await runRows.writeRoundOutcome(tx, decision.run.runId, outcomeOf('skipped', 'stopped', event));
+        await runRows.advanceExtractedUpTo(tx, decision.run.runId, event.createdAt);
         return undefined;
       case 'interrupted': {
         const { run } = decision;
-        await writeRoundOutcome(tx, run.runId, outcomeOf('failed', 'interrupted', event));
+        await runRows.writeRoundOutcome(tx, run.runId, outcomeOf('failed', 'interrupted', event));
         if (!decision.nextRound) {
-          await updateKnowledgeRun(tx, run.runId, { extractTaskId: null });
+          await runRows.updateRun(tx, run.runId, { extractTaskId: null });
           return undefined;
         }
         // The failed task's event is rooted at itself; the next round needs the conversation root. It is
         // read from the run's own session: the runtime answers a deleted conversation's tree as missing.
-        const rootId = await sessions.rootIdOf(tx, run.runId);
+        const rootId = await sessionRows.rootIdOf(tx, run.runId);
         if (rootId === undefined) throw new Error(`Learning run ${run.runId} has no session`);
         const taskId = await createExtract(tx, run, rootId);
-        await updateKnowledgeRun(tx, run.runId, { extractTaskId: taskId, needsRound: false });
+        await runRows.updateRun(tx, run.runId, { extractTaskId: taskId, needsRound: false });
         return taskId;
       }
       case 'queue_embed': {
         const { run } = decision;
         const taskId = await createPass(tx, run.recordId);
-        await updateEmbeddingRow(tx, run.recordId, { passTaskId: taskId, payerId: run.ownerId });
+        await runRows.updateEmbeddingRow(tx, run.recordId, { passTaskId: taskId, payerId: run.ownerId });
         return taskId;
       }
       case 'mark_pass':
-        await updateEmbeddingRow(tx, decision.run.recordId, {
+        await runRows.updateEmbeddingRow(tx, decision.run.recordId, {
           needsPass: true,
           payerId: decision.run.ownerId,
         });
@@ -191,11 +186,11 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
       case 'release_pass': {
         const { recordId } = decision.embedding;
         if (!decision.nextPass) {
-          await updateEmbeddingRow(tx, recordId, { passTaskId: null });
+          await runRows.updateEmbeddingRow(tx, recordId, { passTaskId: null });
           return undefined;
         }
         const taskId = await createPass(tx, recordId);
-        await updateEmbeddingRow(tx, recordId, { passTaskId: taskId, needsPass: false });
+        await runRows.updateEmbeddingRow(tx, recordId, { passTaskId: taskId, needsPass: false });
         return taskId;
       }
       case 'ignore':
@@ -212,8 +207,8 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
       if (event.taskId === null) return;
       const taskId = event.taskId;
 
-      const run = await findRunOfTask(tx, event.type, taskId);
-      const embedding = await findEmbeddingOfTask(tx, event.type, taskId, run);
+      const run = await findRunOfTask(runRows, tx, event.type, taskId);
+      const embedding = await findEmbeddingOfTask(runRows, tx, event.type, taskId, run);
       const decision = triggerDecision({ type: event.type, taskId }, run, embedding);
       const createdTaskId = await apply(tx, event, decision);
 
@@ -243,15 +238,18 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
  * `last_extract_task_id` when it completed (its last round committed), by `extract_task_id` otherwise.
  */
 async function findRunOfTask(
+  runRows: AgentKnowledgeRunsRepository,
   tx: Transaction,
   type: string,
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
-  const deepAgentRun = await findRunById(tx, taskId);
+  const deepAgentRun = knowledgeRunOf(await runRows.findRunById(tx, taskId));
   if (deepAgentRun !== undefined) return deepAgentRun;
-  return type === COMPLETED
-    ? findRunByLastExtractTask(tx, taskId)
-    : findRunByExtractTask(tx, taskId);
+  return knowledgeRunOf(
+    type === COMPLETED
+      ? await runRows.findRunByLastExtractTask(tx, taskId)
+      : await runRows.findRunByExtractTask(tx, taskId),
+  );
 }
 
 /**
@@ -260,14 +258,15 @@ async function findRunOfTask(
  * vector row.
  */
 async function findEmbeddingOfTask(
+  runRows: AgentKnowledgeRunsRepository,
   tx: Transaction,
   type: string,
   taskId: string,
   run: KnowledgeRun | undefined,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
-  if (run === undefined) return findEmbeddingByPassTask(tx, taskId);
+  if (run === undefined) return runRows.findEmbeddingByPassTask(tx, taskId);
   if (run.runId === taskId || type !== COMPLETED) return undefined;
-  return ensureEmbeddingRowOfLiveRecord(tx, run.recordId);
+  return ensureEmbeddingRowOfLiveRecord(runRows, tx, run.recordId);
 }
 
 /**
@@ -275,11 +274,12 @@ async function findEmbeddingOfTask(
  * foreign key fails only the savepoint and the branch ends quietly (`undefined`).
  */
 async function ensureEmbeddingRowOfLiveRecord(
+  runRows: AgentKnowledgeRunsRepository,
   tx: Transaction,
   recordId: string,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   try {
-    return await tx.transaction((savepoint) => ensureEmbeddingRow(savepoint, recordId));
+    return await tx.transaction((savepoint) => runRows.ensureEmbeddingRow(savepoint, recordId));
   } catch (error) {
     if (isForeignKeyViolation(error)) return undefined;
     throw error;

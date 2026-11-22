@@ -1,6 +1,13 @@
 import { createSecretMasker, type Logger } from '@agent-os/common';
 import type { KnowledgeItemType } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import type {
+  AgentKnowledgeRepository,
+  AgentKnowledgeRunsRepository,
+  Database,
+  EmbeddingOutcome,
+  KnowledgeGraph,
+  Transaction,
+} from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 
 import {
@@ -8,20 +15,14 @@ import {
   EMBEDDING_BATCH_SIZE,
   type EmbedUnavailable,
 } from '../embeddings/embeddings';
-import {
-  type EmbeddingOutcome,
-  findEmbeddingByPassTask,
-  findEmbeddingRow,
-  updateEmbeddingRow,
-  writeEmbeddingOutcome,
-} from './knowledge-runs.repository';
-import { type KnowledgeGraph, readGraph } from './knowledge.repository';
 import { KNOWLEDGE_EMBED_TASK_TYPE, KnowledgeEmbedInputSchema } from './knowledge-tasks';
 import { knowledgeKey } from './knowledge-text';
 import type { KnowledgeVectorKey, KnowledgeVectorStore } from './vector-store';
 
 export interface KnowledgeEmbedHandlerDeps {
   readonly database: Database;
+  readonly knowledgeRows: AgentKnowledgeRepository;
+  readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly embeddings: Pick<AgentsEmbeddings, 'embed' | 'model'>;
   readonly store: KnowledgeVectorStore;
 }
@@ -123,7 +124,7 @@ function recordedOutcome(result: EmbedUnavailable): EmbeddingOutcome | null {
  * The step never returns `fail`: unavailable embeddings end the pass as completed with the reason on the row.
  */
 export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): TaskHandler {
-  const { database, embeddings, store } = deps;
+  const { database, embeddings, store, knowledgeRows, knowledgeRunRows } = deps;
 
   /** The pass is not this task's any more: the record was deleted (its row with it) or the row moved on. */
   function notCurrent(logger: Logger, startedAt: number): StepResult {
@@ -145,15 +146,15 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     next: PassNext,
   ): Promise<'continue' | 'complete' | 'not_current' | 'fenced'> {
     const settled = await ctx.guard(async (tx: Transaction) => {
-      const row = await findEmbeddingByPassTask(tx, ctx.taskId);
+      const row = await knowledgeRunRows.findEmbeddingByPassTask(tx, ctx.taskId);
       if (row?.recordId !== recordId) return 'not_current' as const;
-      if (outcome !== null) await writeEmbeddingOutcome(tx, recordId, outcome);
+      if (outcome !== null) await knowledgeRunRows.writeEmbeddingOutcome(tx, recordId, outcome);
       if (next === 'more') return 'continue' as const;
       if (next === 'end' && row.needsPass) {
-        await updateEmbeddingRow(tx, recordId, { needsPass: false });
+        await knowledgeRunRows.updateEmbeddingRow(tx, recordId, { needsPass: false });
         return 'continue' as const;
       }
-      await updateEmbeddingRow(tx, recordId, { passTaskId: null, payerId: null, needsPass: false });
+      await knowledgeRunRows.updateEmbeddingRow(tx, recordId, { passTaskId: null, payerId: null, needsPass: false });
       return 'complete' as const;
     });
     return settled.outcome === 'fenced' ? 'fenced' : settled.value;
@@ -198,7 +199,7 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
       await store.upsert(recordId, vectors);
       return true;
     } catch (error) {
-      const row = await findEmbeddingRow(database, recordId);
+      const row = await knowledgeRunRows.findEmbeddingRow(database, recordId);
       if (row?.passTaskId !== ctx.taskId) return false;
       throw error;
     }
@@ -209,7 +210,7 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     const { recordId } = KnowledgeEmbedInputSchema.parse(ctx.input);
     const logger = ctx.logger.child({ recordId });
 
-    const row = await findEmbeddingRow(database, recordId);
+    const row = await knowledgeRunRows.findEmbeddingRow(database, recordId);
     if (row === undefined || row.passTaskId !== ctx.taskId) return notCurrent(logger, startedAt);
     const payerId = row.payerId;
     const stats: PassStats = {
@@ -223,7 +224,7 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     };
     const end = (outcome: EmbeddingOutcome | null, next: PassNext) => ({ recordId, outcome, next, stats, startedAt });
 
-    const items = passItems(await readGraph(database, recordId), createSecretMasker([]));
+    const items = passItems(await knowledgeRows.readGraph(database, recordId), createSecretMasker([]));
     const stored = await store.list(recordId);
     // Deleted first: the pass removes vectors of deleted records even when embeddings are unavailable (AC-19.1).
     const dangling = danglingKeys(items, stored);

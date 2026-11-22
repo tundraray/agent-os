@@ -6,29 +6,46 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
-import type { CrashPoints } from '../crash-points';
+import {
+  DATABASE,
+  type Database,
+  RuntimeTasksRepository,
+  RuntimeTrackersRepository,
+  type Transaction,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
+import { CrashPoints } from '../crash-points';
 import { RuntimeError } from '../errors';
-import { upperEventProblem } from '../events/event-log.repository';
+import { EventLog, upperEventProblem } from '../events/event-log';
 import type {
   TaskFailure,
   TaskFields,
   TaskRow,
 } from '../tasks/guarded-transition';
+import { isFinished } from '../tasks/guarded-transition';
 import { endTask, type TaskEndDeps, writeLocked } from '../tasks/task-end';
 import {
   type ChildTask,
   type EnqueueMessage,
   type EnqueuedMessage,
+  type LiveTask,
   type OpenedTracker,
   type StepEffects,
   type StepResult,
   TRACKER_MAX_TASKS,
 } from './step-contract';
-import type { HandlerRegistry } from './handler.registry';
-import type { Decisions } from '../messaging/decisions';
-import { jsonByteLength, payloadTooLarge, reservedKindProblem } from '../messaging/inbox';
+import { HandlerRegistry } from './handler.registry';
+import { Decisions } from '../messaging/decisions';
+import {
+  Inbox,
+  jsonByteLength,
+  payloadTooLarge,
+  reservedKindProblem,
+} from '../messaging/inbox';
+import type { RuntimeConfig } from '../runtime-config';
 import { retryingTransaction } from '../runtime-tx';
+import { RUNTIME_CONFIG } from '../runtime.tokens';
+import { Tasks } from '../tasks/tasks';
 import { boundTransaction, type TaskStepContext } from './step-context';
 
 const { queued, running, completed, failed } = TaskStatusSchema.enum;
@@ -39,8 +56,9 @@ const EVENT = RuntimeEventTypeSchema.enum;
 const COMMIT_RETRIES = 3;
 
 /** Services of the step's commit. */
-export interface StepCommitDeps extends TaskEndDeps {
+interface StepCommitDeps extends TaskEndDeps {
   db: Database;
+  taskRows: RuntimeTasksRepository;
   handlers: HandlerRegistry;
   decisions: Decisions;
   crashPoints: CrashPoints;
@@ -58,15 +76,45 @@ export interface StepCommitDeps extends TaskEndDeps {
  */
 export type StepCommitOutcome = 'committed' | 'rejected' | 'invalid' | 'abandoned';
 
+/** An object handed over with `effects.adopt` for a task the commit spawned. */
+export interface AdoptedTask {
+  readonly taskId: string;
+  readonly object: LiveTask;
+}
+
+/** What `StepCommitter.commit` answers. */
+export interface StepCommit {
+  readonly outcome: StepCommitOutcome;
+  /** The committed step finished the task (`complete`, `fail`). */
+  readonly ended: boolean;
+  /** Objects adopted by the transaction that committed; empty for any other outcome. */
+  readonly adopted: readonly AdoptedTask[];
+}
+
+const notCommitted = (
+  outcome: Exclude<StepCommitOutcome, 'committed'>,
+): StepCommit => ({ outcome, ended: false, adopted: [] });
+
 /** A step result that breaks a rule of the runtime; the commit rolls back. */
 class InvalidStepResultError extends Error {
   override readonly name = 'InvalidStepResultError';
 }
 
-/** What a step's `commit` left besides its writes: a broken rule, the tracker it opened. */
+/**
+ * What a step's `commit` left besides its writes: a broken rule, the tracker it opened, the objects
+ * it handed over. One per run of the commit transaction: a retry or a rollback drops it.
+ */
 interface EffectsState {
   problem: string | undefined;
   tracker: OpenedTracker | undefined;
+  adopted: AdoptedTask[];
+}
+
+/** What one run of the commit transaction wrote. */
+interface CommittedStep {
+  row: TaskRow;
+  tracker: OpenedTracker | undefined;
+  adopted: readonly AdoptedTask[];
 }
 
 /** The attempt is no longer current when the commit locks the task. */
@@ -79,10 +127,38 @@ const outcomeOf = (result: unknown): unknown =>
   (result as { outcome?: unknown } | null | undefined)?.outcome;
 
 /** Commits a step's result: the one transaction that fixes a step entirely (KD-2, Flow 1). */
+@Injectable()
 export class StepCommitter {
-  constructor(private readonly deps: StepCommitDeps) {}
+  private readonly deps: StepCommitDeps;
 
-  async commit(step: TaskStepContext, result: StepResult): Promise<StepCommitOutcome> {
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(Tasks) tasks: Tasks,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(Inbox) inbox: Inbox,
+    @Inject(Decisions) decisions: Decisions,
+    @Inject(HandlerRegistry) handlers: HandlerRegistry,
+    @Inject(CrashPoints) crashPoints: CrashPoints,
+    @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
+  ) {
+    this.deps = {
+      db,
+      tasks,
+      taskRows,
+      trackers,
+      events,
+      inbox,
+      decisions,
+      handlers,
+      crashPoints,
+      inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,
+      leaseMs: config.leaseMs,
+    };
+  }
+
+  async commit(step: TaskStepContext, result: StepResult): Promise<StepCommit> {
     const { crashPoints } = this.deps;
     const logger = step.logger;
     crashPoints.hit('step.before-commit');
@@ -96,7 +172,7 @@ export class StepCommitter {
             outcome: outcomeOf(result),
             durationMs,
           });
-          return 'rejected';
+          return notCommitted('rejected');
         }
         crashPoints.hit('step.after-commit');
         logger.info('step committed', {
@@ -107,12 +183,19 @@ export class StepCommitter {
             trackerId: outcome.tracker.trackerId,
             trackerTaskIds: outcome.tracker.taskIds,
           }),
+          ...(outcome.adopted.length > 0 && {
+            adoptedTaskIds: outcome.adopted.map((adopted) => adopted.taskId),
+          }),
           durationMs,
         });
-        return 'committed';
+        return {
+          outcome: 'committed',
+          ended: isFinished(outcome.row.status),
+          adopted: outcome.adopted,
+        };
       } catch (error) {
         if (error instanceof InvalidStepResultError || error instanceof RuntimeError) {
-          return this.failInvalid(step, error, Date.now() - startedAt);
+          return notCommitted(await this.failInvalid(step, error, Date.now() - startedAt));
         }
         logger.warn('step commit transaction failed', {
           outcome: outcomeOf(result),
@@ -126,26 +209,28 @@ export class StepCommitter {
       outcome: outcomeOf(result),
       retries: COMMIT_RETRIES,
     });
-    return 'abandoned';
+    return notCommitted('abandoned');
   }
 
   private commitOnce(
     step: TaskStepContext,
     result: StepResult,
-  ): Promise<{ row: TaskRow; tracker: OpenedTracker | undefined } | typeof REJECTED> {
-    const { db, tasks, inbox, decisions, events, crashPoints, leaseMs } = this.deps;
+  ): Promise<CommittedStep | typeof REJECTED> {
+    const { db, tasks, taskRows, inbox, decisions, events, crashPoints, leaseMs } = this.deps;
     const outcome = outcomeOf(result);
     const endsTask = outcome === 'complete' || outcome === 'fail';
     return retryingTransaction(db, step.logger, 'step.commit', async (tx) => {
       await boundTransaction(tx, leaseMs);
       // A step that ends the task notifies its parent: the parent is locked first (Invariant 6).
       const task = endsTask
-        ? await tasks.lockWithParent(tx, step.taskId)
-        : await tasks.lock(tx, step.taskId);
+        ? await taskRows.lockWithParent(tx, step.taskId)
+        : await taskRows.lock(tx, step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return REJECTED;
       this.checkOutcome(result);
 
       let tracker: OpenedTracker | undefined;
+      // Collected by this run of the transaction only: a retry starts from none.
+      let adopted: readonly AdoptedTask[] = [];
       if (result.commit) {
         const effects = this.effects(tx, task, result.outcome);
         await result.commit(tx, effects.api);
@@ -153,6 +238,7 @@ export class StepCommitter {
           throw new InvalidStepResultError(effects.state.problem);
         }
         tracker = effects.state.tracker;
+        adopted = effects.state.adopted;
       }
       crashPoints.hit('step.inside-commit');
       await inbox.markDelivered(tx, task, step.messageIds, step.stepNo);
@@ -191,7 +277,7 @@ export class StepCommitter {
               : undefined,
           fields: stepFields,
         });
-        return { row: ended, tracker };
+        return { row: ended, tracker, adopted };
       }
 
       if (tracker) {
@@ -208,7 +294,7 @@ export class StepCommitter {
           task: row,
           payload: { reason: tasksReason, trackerId: tracker.trackerId },
         });
-        return { row, tracker };
+        return { row, tracker, adopted };
       }
 
       if (result.outcome === 'await_decision') {
@@ -229,7 +315,7 @@ export class StepCommitter {
           task: row,
           payload: { reason: decision, decisionId: request.decisionId },
         });
-        return { row, tracker };
+        return { row, tracker, adopted };
       }
 
       const pending = await inbox.loadPending(tx, task.taskId);
@@ -250,7 +336,7 @@ export class StepCommitter {
           ? { reason: messages }
           : { cause: 'step', outcome: result.outcome, from: running },
       });
-      return { row, tracker };
+      return { row, tracker, adopted };
     });
   }
 
@@ -304,7 +390,9 @@ export class StepCommitter {
     outcome: StepResult['outcome'],
   ): { api: StepEffects; state: EffectsState } {
     const { handlers, tasks, trackers, events, inbox, inboxPayloadMaxBytes } = this.deps;
-    const state: EffectsState = { problem: undefined, tracker: undefined };
+    const state: EffectsState = { problem: undefined, tracker: undefined, adopted: [] };
+    /** Tasks this commit created, with their types. */
+    const spawned = new Map<string, string>();
     const invalid = (problem: string): never => {
       state.problem ??= problem;
       throw new InvalidStepResultError(problem);
@@ -338,6 +426,7 @@ export class StepCommitter {
         task: row,
         payload: { type: child.type, parentId: task.taskId, depth: row.depth, trackerId },
       });
+      spawned.set(row.taskId, child.type);
       return row.taskId;
     };
     const api: StepEffects = {
@@ -384,6 +473,12 @@ export class StepCommitter {
         if (problem !== undefined) return invalid(problem);
         await events.appendUpper(tx, { type, task, payload });
       },
+      adopt: (taskId, object) => {
+        const type = spawned.get(taskId);
+        if (type === undefined) return invalid(`adopt of task ${taskId}, not spawned in this commit`);
+        if (!handlers.live(type)) return invalid(`adopt of task ${taskId} of stateless type "${type}"`);
+        state.adopted.push({ taskId, object });
+      },
     };
     return { api, state };
   }
@@ -396,7 +491,7 @@ export class StepCommitter {
     step: TaskStepContext,
     error: Error,
     durationMs: number,
-  ): Promise<StepCommitOutcome> {
+  ): Promise<Exclude<StepCommitOutcome, 'committed'>> {
     const logger: Logger = step.logger;
     const failure: TaskFailure = {
       reason: RuntimeFailureReasonSchema.enum.invalid_step_result,
@@ -406,7 +501,7 @@ export class StepCommitter {
     try {
       ended = await retryingTransaction(this.deps.db, logger, 'step.fail-invalid', async (tx) => {
         await boundTransaction(tx, this.deps.leaseMs);
-        const task = await this.deps.tasks.lockWithParent(tx, step.taskId);
+        const task = await this.deps.taskRows.lockWithParent(tx, step.taskId);
         if (task?.status !== running || task.attempt !== step.attempt) return false;
         await endTask(tx, this.deps, task, {
           status: failed,

@@ -14,13 +14,13 @@
 
 ## Reference
 
-- `packages/agents/src/mcp/mcp-registry.ts` — метка `changed` и признак «задан»; `apps/api/src/audit/audit-log.repository.ts` — `secret_changed`
+- `packages/agents/src/mcp/mcp-registry.ts` — метка `changed` и признак «задан»; `AuditLog` в `apps/api/src/audit/` — `secret_changed`
 
 ## Not For
 
 | Looks like | Use instead |
 |---|---|
-| секрет, который нужен до подключения к базе | переменная окружения, разобранная функцией сборки ([composition-root.md](./composition-root.md)) |
+| секрет, который нужен до подключения к базе | переменная окружения, которую `apps/api` передаёт в `forRootAsync` модуля ([composition-root.md](./composition-root.md)) |
 | значение, которое сервер только сверяет (пароль) | хеш, а не значение |
 | несекретная настройка панели | строка настроек ([settings-row.md](./settings-row.md)) |
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type {
   AdminUserDetail,
   CreateRoleBody,
@@ -8,28 +8,24 @@ import type {
   RoleSummary,
   UpdateRoleBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection, Executor, Transaction } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.repository';
-import { isUuid } from '../common/is-uuid';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { identityError } from './identity.errors';
 import {
-  addRoleMember,
-  deleteRole,
-  insertRole,
-  removeRoleMember,
-  roleMembers,
-  roleSummaries,
-  updateRole,
-  type RoleRow,
-  type RoleWithCount,
-} from './roles.repository';
-import { rolesOfUsers, takenField } from './users.repository';
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type Executor,
+  type IdentityRoleRow,
+  IdentityRolesRepository,
+  type RoleSummaryRow,
+  type Transaction,
+} from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
+import { isUuid } from '../common/is-uuid';
+import { identityError } from './identity.errors';
+import { takenField } from './taken-field';
 import { roleRefs, UsersService } from './users.service';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
-const roleState = (role: Pick<RoleRow, 'name' | 'isAdmin'>) => ({
+const roleState = (role: Pick<IdentityRoleRow, 'name' | 'isAdmin'>) => ({
   name: role.name,
   isAdmin: role.isAdmin,
 });
@@ -50,23 +46,24 @@ export class RolesService {
   private readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly roles: IdentityRolesRepository,
     private readonly auditLog: AuditLog,
     private readonly users: UsersService,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
 
   /** The roles by name with their employee count. */
   list(): Promise<RoleList> {
-    return roleSummaries(this.db);
+    return this.roles.summaries(this.db);
   }
 
   /** One role with its employees. 404 ROLE_NOT_FOUND. */
   async detail(roleId: string): Promise<RoleDetail> {
     const role = await this.findOr404(roleId);
-    return { ...role, members: await roleMembers(this.db, role.id) };
+    return { ...role, members: await this.roles.members(this.db, role.id) };
   }
 
   /** A role without the admin right and without employees. 409 ROLE_NAME_TAKEN. */
@@ -74,7 +71,7 @@ export class RolesService {
     const startedAt = Date.now();
     const role = await this.db
       .transaction(async (tx) => {
-        const created = await insertRole(tx, body.name);
+        const created = await this.roles.insert(tx, body.name);
         await this.recordRoleChange(
           tx,
           actorId,
@@ -117,7 +114,7 @@ export class RolesService {
     };
     await this.db
       .transaction(async (tx) => {
-        await updateRole(tx, role.id, after);
+        await this.roles.update(tx, role.id, after);
         await this.recordRoleChange(
           tx,
           actorId,
@@ -144,7 +141,7 @@ export class RolesService {
     const role = await this.findOr404(roleId);
     if (role.builtin) throw this.refuseBuiltin(actorId, role.id, 'delete');
     await this.db.transaction(async (tx) => {
-      await deleteRole(tx, role.id);
+      await this.roles.delete(tx, role.id);
       await this.recordRoleChange(tx, actorId, role.id, roleState(role), null);
     });
     this.logger.info('role deleted', {
@@ -190,8 +187,8 @@ export class RolesService {
       const before = await this.roleRefsOf(tx, userId);
       const has = before.some((held) => held.id === role.id);
       if (has === (change === 'assign')) return false;
-      if (change === 'assign') await addRoleMember(tx, role.id, userId);
-      else await removeRoleMember(tx, role.id, userId);
+      if (change === 'assign') await this.roles.addMember(tx, role.id, userId);
+      else await this.roles.removeMember(tx, role.id, userId);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,
@@ -221,7 +218,7 @@ export class RolesService {
     executor: Executor,
     userId: string,
   ): Promise<{ id: string; name: string }[]> {
-    return roleRefs(await rolesOfUsers(executor, [userId]));
+    return roleRefs(await this.roles.ofUsers(executor, [userId]));
   }
 
   private recordRoleChange(
@@ -258,8 +255,8 @@ export class RolesService {
   }
 
   /** The role with its employee count, or 404 ROLE_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
-  private async findOr404(roleId: string): Promise<RoleWithCount> {
-    const [role] = isUuid(roleId) ? await roleSummaries(this.db, roleId) : [];
+  private async findOr404(roleId: string): Promise<RoleSummaryRow> {
+    const [role] = isUuid(roleId) ? await this.roles.summaries(this.db, roleId) : [];
     if (role === undefined) throw identityError('ROLE_NOT_FOUND');
     return role;
   }

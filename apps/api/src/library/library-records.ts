@@ -1,32 +1,42 @@
 import { HttpException, Inject, Injectable } from '@nestjs/common';
-import type { LogFields, Logger } from '@agent-os/common';
-import type { RecordAuthor, RecordBody, RecordDetail } from '@agent-os/contracts';
-import type { Database, DatabaseConnection, Executor, Transaction } from '@agent-os/db';
-import { AccessService } from '../access/access.service';
-import { AuditLog } from '../audit/audit-log.repository';
-import { isUuid } from '../common/is-uuid';
-import { IdentityDirectory, type UserName } from '../identity/identity-directory';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { libraryError } from './library.errors';
+import { LOGGER, type LogFields, type Logger } from '@agent-os/common';
+import type {
+  RecordAuthor,
+  RecordBody,
+  RecordDetail,
+} from '@agent-os/contracts';
 import {
-  deleteRecord,
-  findBan,
-  findPanelRecords,
-  findVisibleRecords,
-  listBans,
-  type PanelQuery,
-  type RecordKey,
-  type StoredBan,
-  type StoredRecord,
-  type Viewer,
-} from './library.repository';
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type Executor,
+  type LibraryPanelQuery,
+  type LibraryRecordKey,
+  type LibraryRecordRow,
+  LibraryRecordsRepository,
+  type LibraryViewer,
+  type Transaction,
+} from '@agent-os/db';
+import { AccessService } from '../access/access.service';
+import { AuditLog } from '../audit/audit-log';
+import { isUuid } from '../common/is-uuid';
+import {
+  IdentityDirectory,
+  type UserName,
+} from '../identity/identity-directory';
+import { libraryError } from './library.errors';
 import type {
   BannedRecordRow,
   LibraryRecord,
   ServerFacts,
 } from './library.types';
 import { auditSample, recordDetail, type ViewContext } from './record-view';
+import {
+  toStoredBan,
+  toStoredRecords,
+  type StoredBan,
+  type StoredRecord,
+} from './stored-records';
 
 type ViewScope = ViewContext['scope'];
 
@@ -118,11 +128,12 @@ export class LibraryRecords {
   readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly repository: LibraryRecordsRepository,
     private readonly identity: IdentityDirectory,
     private readonly access: AccessService,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
@@ -132,20 +143,36 @@ export class LibraryRecords {
   /** The records the viewer sees, or the one with this id or built-in key when it is visible (KD-2). */
   async visible(
     executor: Executor,
-    viewer: Viewer,
-    key?: RecordKey,
+    viewer: LibraryViewer,
+    key?: LibraryRecordKey,
   ): Promise<LibraryRecord[]> {
-    return this.named(executor, await findVisibleRecords(executor, viewer, key));
+    return this.named(
+      executor,
+      await this.stored(
+        executor,
+        await this.repository.findVisible(executor, viewer, key),
+      ),
+    );
   }
 
   /** The records of the admin panel: all of them, one list, or one by id when the panel shows it. */
-  async panel(executor: Executor, query?: PanelQuery): Promise<LibraryRecord[]> {
-    return this.named(executor, await findPanelRecords(executor, query));
+  async panel(
+    executor: Executor,
+    query?: LibraryPanelQuery,
+  ): Promise<LibraryRecord[]> {
+    return this.named(
+      executor,
+      await this.stored(
+        executor,
+        await this.repository.findInPanel(executor, query),
+      ),
+    );
   }
 
   /** The panel's ban list. */
   async bans(executor: Executor): Promise<BannedRecordRow[]> {
-    return this.namedBans(executor, await listBans(executor));
+    const rows = await this.repository.listBans(executor);
+    return this.namedBans(executor, rows.map(toStoredBan));
   }
 
   /** The ban of one record; `undefined` — the record has none (or is gone). */
@@ -153,13 +180,16 @@ export class LibraryRecords {
     executor: Executor,
     id: string,
   ): Promise<BannedRecordRow | undefined> {
-    const stored = await findBan(executor, id);
-    const [ban] = await this.namedBans(executor, stored ? [stored] : []);
+    const row = await this.repository.findBan(executor, id);
+    const [ban] = await this.namedBans(
+      executor,
+      row ? [toStoredBan(row)] : [],
+    );
     return ban;
   }
 
   /** Who looks: enabled or not and his roles now, read at every operation (KD-2). */
-  async viewerOf(id: string): Promise<Viewer> {
+  async viewerOf(id: string): Promise<LibraryViewer> {
     const [active, roleIds] = await Promise.all([
       this.identity.isActive(id),
       this.identity.rolesOf(id),
@@ -168,7 +198,7 @@ export class LibraryRecords {
   }
 
   async contextOf(
-    viewer: Viewer,
+    viewer: LibraryViewer,
     isAdmin: boolean,
     scope: ViewScope,
     facts: ServerFacts,
@@ -185,28 +215,36 @@ export class LibraryRecords {
 
   async detail(
     record: LibraryRecord,
-    viewer: Viewer,
+    viewer: LibraryViewer,
     isAdmin: boolean,
     scope: ViewScope,
     facts: ServerFacts,
   ): Promise<RecordDetail> {
-    return recordDetail(record, await this.contextOf(viewer, isAdmin, scope, facts));
+    return recordDetail(
+      record,
+      await this.contextOf(viewer, isAdmin, scope, facts),
+    );
   }
 
   /** Ids of the agent records the viewer sees; read only when the content names records. */
   async visibleAgentIds(
     executor: Executor,
-    viewer: Viewer,
+    viewer: LibraryViewer,
     needed: boolean,
   ): Promise<string[]> {
     if (!needed) return [];
-    const records = await findVisibleRecords(executor, viewer);
-    return records.filter((record) => record.body.kind === 'agent').map((record) => record.id);
+    const records = await this.stored(
+      executor,
+      await this.repository.findVisible(executor, viewer),
+    );
+    return records
+      .filter((record) => record.body.kind === 'agent')
+      .map((record) => record.id);
   }
 
   async visibleOne(
     executor: Executor,
-    viewer: Viewer,
+    viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord | undefined> {
     const [record] = await this.visible(executor, viewer, { id });
@@ -224,7 +262,7 @@ export class LibraryRecords {
   /** A number that is not a UUID is answered without the database (DC-2). */
   async visibleOr404(
     executor: Executor,
-    viewer: Viewer,
+    viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord> {
     const record = isUuid(id)
@@ -234,10 +272,7 @@ export class LibraryRecords {
     return record;
   }
 
-  async panelOr404(
-    executor: Executor,
-    id: string,
-  ): Promise<LibraryRecord> {
+  async panelOr404(executor: Executor, id: string): Promise<LibraryRecord> {
     const record = isUuid(id) ? await this.panelOne(executor, id) : undefined;
     if (record === undefined) throw notFound();
     return record;
@@ -252,6 +287,18 @@ export class LibraryRecords {
     return (await this.access.listModels())
       .filter((model) => model.purpose === 'chat')
       .map((model) => model.id);
+  }
+
+  /** The record rows with their holders, read on the same executor; the order of the records stays. */
+  private async stored(
+    executor: Executor,
+    rows: readonly LibraryRecordRow[],
+  ): Promise<StoredRecord[]> {
+    const shares = await this.repository.sharesOf(
+      executor,
+      rows.map((record) => record.id),
+    );
+    return toStoredRecords(rows, shares);
   }
 
   /** The records with their authors and holders by name; the order of the records stays. */
@@ -317,7 +364,7 @@ export class LibraryRecords {
   ): Promise<void> {
     if (record.builtinKey !== null)
       throw libraryError('RECORD_REJECTED', 'builtin');
-    await deleteRecord(tx, record.id);
+    await this.repository.delete(tx, record.id);
     await this.audit(tx, actorId, 'library_delete', record, null);
   }
 

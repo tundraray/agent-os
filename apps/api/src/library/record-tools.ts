@@ -1,5 +1,10 @@
-import type { AgentsMcp, InCommitAgentTool } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
+import {
+  AgentsMcp,
+  ToolRegistry,
+  type InCommitAgentTool,
+} from '@agent-os/agents';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   AgentContentSchema,
   CREATE_RECORD_TOOL,
@@ -21,13 +26,10 @@ import {
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { z } from 'zod';
-import type { IdentityDirectory } from '../identity/identity-directory';
-import type { LibraryChatService } from './library-chat.service';
+import { IdentityDirectory } from '../identity/identity-directory';
+import { LibraryChatService } from './library-chat.service';
 import type { ChatChange, ChatContext, ChatRefusal } from './library.types';
 import { recordListText, recordText } from './record-listing';
-
-/** The registration of the record tools in `LibraryApiModule`: a marker provider whose factory does the work. */
-export const RECORD_TOOLS_REGISTRATION = Symbol('RECORD_TOOLS_REGISTRATION');
 
 type ToolReview = Awaited<
   ReturnType<NonNullable<NonNullable<InCommitAgentTool<unknown>['confirmation']>['review']>>
@@ -300,7 +302,7 @@ const CARD_ACTION: Record<string, LibraryRecordAction> = {
  * transaction (`review`, `prepare`). The log names the employee, the agent, the call, the action, the
  * record, the outcome and the reason; `loggedArgs` name only the record (Security Considerations).
  */
-export function createRecordTools(options: RecordToolsOptions) {
+function createRecordTools(options: RecordToolsOptions) {
   const { library, identity, mcp } = options;
   const logger = options.logger.child({ service: 'library.record_tools' });
 
@@ -492,5 +494,30 @@ function savedText(
       return `Saved: record ${saved.recordId} is now in version ${saved.version}.`;
     case 'delete':
       return `Deleted: record ${saved.recordId}.`;
+  }
+}
+
+/**
+ * Registers the five record tools of the main chat (deep-agents KD-3) in the tools library of the agents, in
+ * `onModuleInit`: the library closes in `onApplicationBootstrap`.
+ */
+@Injectable()
+export class RecordToolsRegistration implements OnModuleInit {
+  constructor(
+    @Inject(ToolRegistry) private readonly registry: ToolRegistry,
+    @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
+    private readonly library: LibraryChatService,
+    private readonly identity: IdentityDirectory,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  onModuleInit(): void {
+    const tools = createRecordTools({
+      library: this.library,
+      identity: this.identity,
+      mcp: this.mcp,
+      logger: this.logger,
+    });
+    for (const tool of tools) this.registry.register(tool);
   }
 }

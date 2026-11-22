@@ -1,11 +1,11 @@
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema, WaitReasonSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type { Database, RuntimeTasksRepository } from '@agent-os/db';
 import type { CancelTimer, Clock } from '../clock';
 import type { RuntimeConfig } from '../runtime-config';
 import type { TaskRow } from '../tasks/guarded-transition';
 import type { RunningStepHandle } from '../tasks/running-task.registry';
-import type { TaskRepository } from '../tasks/task.repository';
+import type { Tasks } from '../tasks/tasks';
 import { backoffDelay } from '../workers/worker-loop';
 import type { StepSignalReason } from './step-contract';
 
@@ -14,7 +14,8 @@ const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 /** Services of a step heartbeat. */
 export interface HeartbeatDeps {
   db: Database;
-  tasks: TaskRepository;
+  tasks: Tasks;
+  taskRows: RuntimeTasksRepository;
   clock: Clock;
   config: RuntimeConfig;
   logger: Logger;
@@ -79,7 +80,7 @@ export class Heartbeat {
   }
 
   private async beat(): Promise<void> {
-    const { db, tasks, clock, config, logger } = this.deps;
+    const { db, tasks, taskRows, clock, config, logger } = this.deps;
     const { taskId, attempt } = this.task;
     const expiresAt = new Date(clock.now().getTime() + config.leaseMs);
     const startedAt = Date.now();
@@ -91,7 +92,7 @@ export class Heartbeat {
           { kind: 'set', fields: { leaseExpiresAt: expiresAt } },
         );
         if (row) return undefined;
-        return fencedSignal(await tasks.find(tx, taskId));
+        return fencedSignal(await taskRows.find(tx, taskId));
       });
       this.failures = 0;
       if (fenced) {

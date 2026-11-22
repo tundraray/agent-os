@@ -1,3 +1,4 @@
+import type { Logger } from '@agent-os/common';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from './schema';
@@ -46,4 +47,18 @@ export function createDatabase(options: DatabaseOptions): DatabaseConnection {
     pool,
     close: () => pool.end(),
   };
+}
+
+/**
+ * Logs the errors of the pool's clients. A pooled client has no `error` listener while it is
+ * checked out, so a session the server ends (the `idle_in_transaction_session_timeout` of a bounded
+ * transaction) would crash the process. The query in flight still fails, and the pool replaces the
+ * client.
+ */
+export function logClientErrors(pool: pg.Pool, logger: Logger): void {
+  pool.on('connect', (client) => {
+    client.on('error', (error) => {
+      logger.warn('database client error', { error });
+    });
+  });
 }

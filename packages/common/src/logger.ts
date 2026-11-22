@@ -14,6 +14,9 @@ export interface LogSink {
   write(record: LogRecord): void;
 }
 
+/** Injection token of the application `Logger`: a plain symbol, bound by the composition root. */
+export const LOGGER = Symbol('LOGGER');
+
 export interface Logger {
   debug(message: string, fields?: LogFields): void;
   info(message: string, fields?: LogFields): void;

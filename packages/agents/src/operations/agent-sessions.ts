@@ -1,12 +1,16 @@
-import type { AgentTasksView, ChipRecord, DecisionStatus, ToolCallState } from '@agent-os/contracts';
-import type { ResolveOutcome } from '@agent-os/runtime';
+import type { ChipRecord, DecisionStatus, ToolCallState } from '@agent-os/contracts';
+import type { RootPosition } from '@agent-os/db';
 
-import type { AgentView } from '../agent-view';
-import type { DeepAgentRun } from '../deep/deep-agent-run';
-import type { RunSnapshot } from '../start/snapshot';
-import type { PageEntry } from '../store/history.repository';
-import type { RootPosition, RootSession } from '../store/sessions.repository';
+import type { PageEntry } from '../store/history';
 import type { ToolDisplay } from '../tools/tool';
+
+/**
+ * The requests and results of the agent operations over the runtime (design-agents.md, Contract «Операции
+ * агентов», Security; plan Notes 1, 2): `StartOperations`, `ControlOperations` and `ViewOperations`. Each
+ * operation calls a runtime operation with `ownerId` first — it checks the owner — and reads `agent_*`
+ * only after it, so another owner's agent answers exactly as a missing one (AC-13.3, NFR-06). Every
+ * operation is logged with its ids and outcome.
+ */
 
 /** The root of a conversation (design-runtime.md, «Операции `agents`»): it runs the `chat` record. */
 export interface StartRequest {
@@ -102,56 +106,4 @@ export interface AgentConfirmation extends ToolDisplay {
   readonly resolution: { readonly approve: boolean; readonly args: unknown } | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;
-}
-
-/**
- * The operations of agents (design-agents.md, «Операции агентов»; plan Notes 1, 2): the contract
- * `createAgentSessions` implements from `start-operations`, `control-operations` and `view-operations`.
- */
-export interface AgentSessions {
-  start(request: StartRequest): Promise<{ agentId: string }>;
-  send(request: SendRequest): Promise<{ messageId: string }>;
-  /** Marks the agent «прерван»: it closes its open calls and waits for a message (KD-3). */
-  interrupt(request: AgentRef): Promise<'interrupted' | 'not_active'>;
-  stop(request: AgentRef): Promise<string[]>;
-  restart(request: AgentRef): Promise<{ agentId: string }>;
-  /** The run's snapshot, for the view of a run; `null` when the task is not an agent. */
-  snapshot(agentId: string, ownerId: string): Promise<RunSnapshot | null>;
-  /**
-   * The run view of a deep agent (deep-agents KD-2): its record, brief, team, steps and limit refusals.
-   * A missing agent, another owner's and one that is not a deep agent are alike `RUN_NOT_FOUND`.
-   */
-  run(agentId: string, ownerId: string): Promise<DeepAgentRun>;
-  /**
-   * The task list of the session by number (design-task-list.md, `GET /api/agents/:agentId/tasks`), the root
-   * included, and the tasks of its trackers in order (design-task.md, «Запись и маршрут»); each empty when there
-   * is none. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
-   */
-  taskList(agentId: string, ownerId: string): Promise<AgentTasksView>;
-  get(agentId: string, ownerId: string): Promise<AgentView>;
-  list(rootId: string, ownerId: string): Promise<AgentView[]>;
-  history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
-  confirmations(rootId: string, ownerId: string): Promise<AgentConfirmation[]>;
-  resolveConfirmation(request: ResolveConfirmationRequest): Promise<ResolveOutcome>;
-  /**
-   * The owner's root session — the conversation the employee sees; `undefined` for a missing one,
-   * another owner's and a session that is not a root.
-   */
-  root(rootId: string, ownerId: string): Promise<RootSession | undefined>;
-  /** The owner of a root session, whoever it is: for a signal of a tree that carries no owner. */
-  rootOwner(rootId: string): Promise<string | undefined>;
-  /** The owner's root sessions, last changed first (`updatedAt` DESC, then `rootId` DESC). */
-  roots(request: RootsRequest): Promise<RootSession[]>;
-  /** Moves the owner's root session to the top of the list. */
-  touchRoot(rootId: string, ownerId: string): Promise<void>;
-  /** Sets the title and moves the root session up; `undefined` as in `root`. */
-  renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined>;
-  /** Writes a generated title only into an empty one; `true` when it was written. */
-  titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean>;
-  /**
-   * Stops the conversation's tree and marks it and its root session deleted, in one transaction: from
-   * then on the conversation answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
-   * a missing, another owner's or an already deleted root.
-   */
-  deleteRoot(rootId: string, ownerId: string): Promise<void>;
 }

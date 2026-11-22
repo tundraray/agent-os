@@ -138,7 +138,7 @@ Accepted (2026-11-22).
 - [design-code-execution.md](../features/code-execution/design-code-execution.md) — KD-1, KD-2, KD-8, Contract Definitions, Security Considerations
 - [prd.md](../features/code-execution/prd.md) — Constraints, Won't Have, NFR-01, NFR-02, NFR-05, NFR-06
 - [spike-node-permissions.md](../features/code-execution/spike-node-permissions.md) — спайк на Windows и Linux
-- [Code System](../code-system/README.md) — слой «Исполнитель кода»
+- [Code System](../code-system/packages/base.md) — пакет `code-runner`
 - [ADR-0004](ADR-0004-agent-framework-packages.md) — правила приватных пакетов
 - [Node.js Permissions](https://nodejs.org/api/permissions.html)
 - [Node.js CHANGELOG_V25](https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_V25.md)

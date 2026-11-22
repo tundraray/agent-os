@@ -1,7 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import type {
+  Database,
+  Transaction,
+  RuntimeDecisionRow,
+  RuntimeInboxRow,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
 import { sql } from 'drizzle-orm';
 import type { CrashPoints } from '../crash-points';
 import type { TaskRow } from '../tasks/guarded-transition';
@@ -11,17 +17,14 @@ import type {
   StepDecision,
   StepMessage,
 } from './step-contract';
-import type { DecisionRow } from '../messaging/decisions.repository';
 import { toStepMessage } from '../messaging/inbox';
-import type { MessageRow } from '../messaging/inbox.repository';
-import type { TaskRepository } from '../tasks/task.repository';
 
 const { running } = TaskStatusSchema.enum;
 
 /** Services a step context writes through. */
 export interface StepContextDeps {
   db: Database;
-  tasks: TaskRepository;
+  taskRows: RuntimeTasksRepository;
   crashPoints: CrashPoints;
   /** The runtime's logger; the step's logger is its child. */
   logger: Logger;
@@ -34,12 +37,12 @@ export interface ClaimedStep {
   /** The task row right after the claim (`running`, its new attempt). */
   task: TaskRow;
   /** Messages pending at the start of the step, read in the claim transaction. */
-  messages: readonly MessageRow[];
+  messages: readonly RuntimeInboxRow[];
   /**
    * The resolved request no committed step has received yet, read in the claim transaction; the
    * step's commit marks it delivered, so it comes in exactly one committed step.
    */
-  decision: DecisionRow | undefined;
+  decision: RuntimeDecisionRow | undefined;
   signal: AbortSignal;
 }
 
@@ -140,7 +143,7 @@ export class TaskStepContext implements StepContext {
       const result = await this.deps.db.transaction(
         async (tx): Promise<GuardResult<T>> => {
           await boundTransaction(tx, this.deps.leaseMs);
-          const own = await this.deps.tasks.lock(tx, this.taskId);
+          const own = await this.deps.taskRows.lock(tx, this.taskId);
           if (own?.status !== running || own.attempt !== this.attempt) {
             return { outcome: 'fenced' };
           }

@@ -11,12 +11,16 @@ import type {
   ResolvedRecord,
   UpdateRecordBody,
 } from '@agent-os/contracts';
+import {
+  type LibraryRecordKey,
+  LibraryRecordsRepository,
+  LibrarySettingsRepository,
+} from '@agent-os/db';
 import { AccessService } from '../access/access.service';
-import { SYSTEM_ACTOR } from '../audit/audit-log.repository';
+import { SYSTEM_ACTOR } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { decideEmployeeAudience } from './audience-rules';
 import { planCopy, replaceModel } from './copy-rules';
-import { readLibrarySettings } from './library-settings.repository';
 import {
   LibraryRecords,
   notFound,
@@ -27,15 +31,6 @@ import {
 } from './library-records';
 import { LibrarySave } from './library-save';
 import { libraryError } from './library.errors';
-import {
-  insertBuiltinRecord,
-  insertRecord,
-  lockRecord,
-  recordNames,
-  replaceHolders,
-  setOfferInChat,
-  type RecordKey,
-} from './library.repository';
 import type {
   BuiltinRecordInput,
   KnowledgeTarget,
@@ -49,7 +44,7 @@ import { recordHeader, recordSummary, resolvedRecord } from './record-view';
  * The library for the employee and for the `runtime` part (design-library.md, KD-1, KD-2, KD-4–KD-7).
  * Records are read only through the repository's two conditions — visibility and the panel's
  * (ADR-0016) — and an invisible record answers as a missing one. A write and its audit event are one
- * transaction; the facts of `Agents` come in as input, so the module does not import `AgentsModule`
+ * transaction; the facts of the agents package come in as input, so the module does not import `AgentsModule`
  * (KD-6). The admin panel is `LibraryPanelService`, the main chat's record tools `LibraryChatService`.
  */
 @Injectable()
@@ -57,6 +52,8 @@ export class LibraryService {
   constructor(
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
+    private readonly repository: LibraryRecordsRepository,
+    private readonly settings: LibrarySettingsRepository,
     private readonly access: AccessService,
   ) {}
 
@@ -175,7 +172,7 @@ export class LibraryService {
       async () => {
         if (!isUuid(id)) throw notFound();
         const { record, viewer } = await this.records.db.transaction(async (tx) => {
-          if (!(await lockRecord(tx, id))) throw notFound();
+          if (!(await this.repository.lock(tx, id))) throw notFound();
           const owner = await this.records.viewerOf(actor.id);
           const before = await this.records.visibleOr404(tx, owner, id);
           if (before.ownerId !== owner.id) throw readOnly();
@@ -187,12 +184,12 @@ export class LibraryService {
           });
           if (decision.kind === 'refused')
             throw libraryError('RECORD_REJECTED', decision.reason);
-          await replaceHolders(tx, id, {
+          await this.repository.replaceHolders(tx, id, {
             everyone: false,
             roleIds: body.roleIds,
             userIds: [],
           });
-          await setOfferInChat(tx, id, body.offerInChat);
+          await this.repository.setOfferInChat(tx, id, body.offerInChat);
           const after = present(await this.records.visibleOne(tx, owner, id), id);
           await this.records.audit(tx, owner.id, 'library_audience', before, after);
           return { record: after, viewer: owner };
@@ -221,8 +218,8 @@ export class LibraryService {
             this.records.allowedModelIds(viewer.id),
             this.access.defaultChatModel(),
             this.records.visibleAgentIds(this.records.db, viewer, refersToRecords(source.body)),
-            recordNames(this.records.db, viewer.id),
-            recordNames(this.records.db, null),
+            this.repository.names(this.records.db, viewer.id),
+            this.repository.names(this.records.db, null),
           ]);
         const plan = planCopy({
           name: source.name,
@@ -236,12 +233,13 @@ export class LibraryService {
           builtinKey: source.builtinKey,
         });
         const copied = await this.records.db.transaction(async (tx) => {
-          const inserted = await insertRecord(tx, {
+          const inserted = await this.repository.insert(tx, {
             ownerId: viewer.id,
             name: plan.name,
             description: source.description,
             offerInChat: true,
-            body: plan.body,
+            kind: plan.body.kind,
+            content: plan.body.content,
           });
           if (inserted.outcome === 'name_taken')
             throw libraryError('RECORD_NAME_TAKEN', 'own');
@@ -303,7 +301,7 @@ export class LibraryService {
       const [allowedModels, defaultModel, settings] = await Promise.all([
         this.records.allowedModelIds(actor.id),
         this.access.defaultChatModel(),
-        readLibrarySettings(this.records.db),
+        this.settings.read(this.records.db),
       ]);
       return {
         servers: [...facts.usableServers].sort(),
@@ -397,8 +395,11 @@ export class LibraryService {
       },
       () =>
         this.records.db.transaction(async (tx) => {
-          const inserted = await insertBuiltinRecord(tx, {
-            ...input,
+          const { body, ...row } = input;
+          const inserted = await this.repository.insertBuiltin(tx, {
+            ...row,
+            kind: body.kind,
+            content: body.content,
             offerInChat: true,
           });
           if (!inserted) return false;
@@ -413,7 +414,7 @@ export class LibraryService {
   private async resolveBy(
     operation: string,
     viewerId: string,
-    key: RecordKey,
+    key: LibraryRecordKey,
   ): Promise<ResolvedRecord | null> {
     return this.records.logged(
       operation,

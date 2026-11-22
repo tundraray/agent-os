@@ -1,4 +1,4 @@
-// tool-output-shapes / core - agents-package integration tests (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
+// tool-output-shapes / core - agents-package integration tests (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model)
 // Design Doc: docs/features/tool-output-shapes/design-core.md (v1.0), Test Strategy UC-3, UC-4 (KD-1, KD-2, KD-5, KD-6, DC-1, DC-4)
 // PRD: docs/features/tool-output-shapes/prd.md (AC-01.1, AC-03.1, AC-03.2 after the refresh, AC-04.1, AC-05.1)
 // Generated: 2026-11-21 | Part: core (single part) | Test type: Integration (no E2E file: see "Budget")
@@ -10,7 +10,7 @@
 // Tests are written with their tasks and run once, at the end of the part (project rule "Tests only at the end").
 //
 // Harness (follows custom-agents-runtime.int.e2e-spec.ts and code-execution.int.e2e-spec.ts, support/agentsHarness.ts):
-//   real Postgres, real `createRuntime` and `createAgents`; the scripted `ModelClient` of `@agent-os/agents/testing` is the only model double and records every call;
+//   real Postgres, real `RuntimeModule` and `createAgents`; the scripted `ModelClient` of `@agent-os/agents/testing` is the only model double and records every call;
 //   the MCP fixture process is the real one, its three sources registered through the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER`, `TRACKER_SERVER`
 //   of support/mcp-servers.ts) - `createAgentsHarness({ mcpServers: ['logs', 'backoffice', 'tracker'], ... })`, because the harness registers `logs` and `backoffice` only by
 //   default and `search_tickets` lives on `tracker`. Registration goes through `registerFixtureServers`, which re-reads `tools/list` (the registry's `listChecked`),

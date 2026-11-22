@@ -28,6 +28,7 @@
         "@ai-sdk/openai-compatible",
         "@jitl/quickjs-wasmfile-release-sync",
         "@mastra/core",
+        "drizzle-orm",
         "@modelcontextprotocol/client",
         "@modelcontextprotocol/server",
         "quickjs-emscripten-core"

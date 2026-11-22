@@ -1,6 +1,6 @@
 import { type SessionTaskStatus, SessionTaskStatusSchema } from '@agent-os/contracts';
 
-import type { SessionTask } from '../../store/session-tasks.repository';
+import type { SessionTask } from '@agent-os/db';
 
 /** At most this many tasks in one session's list; `task_create` past it is refused (Data Model). */
 const TASK_LIST_MAX_TASKS = 50;

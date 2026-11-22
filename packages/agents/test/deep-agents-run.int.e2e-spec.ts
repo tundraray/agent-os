@@ -1,7 +1,7 @@
 // deep-agents / agent-types - the brief (`start_deep_agent`) and the deep agent run in `agents`
 // Design Doc: docs/features/deep-agents/design-agent-types.md (KD-2, Contract «`start_deep_agent`», «Маршруты» `/run`, Test Strategy UC-6)
 // PRD: docs/features/deep-agents/prd.md (AC-03.1, AC-07.1, AC-02.2, AC-05.1, AC-05.2). Upstream: agent-platform design-workflows.md (archived), whose INT-1..INT-3 these rows were.
-// Test type: Integration (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model), run with
+// Test type: Integration (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model), run with
 //   `pnpm --filter @agent-os/agents test:e2e` (`*.e2e-spec.ts`), never in the default `vitest run`.
 //
 // The tree root runs the library double's `chat` record without tools of its own, so the built-in, root-only `start_deep_agent` is the tool

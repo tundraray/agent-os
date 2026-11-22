@@ -1,7 +1,7 @@
 import type { AgentStatus, RunOrigin, TaskStatus, WaitReason } from '@agent-os/contracts';
 import type { Task } from '@agent-os/runtime';
 
-import type { Session } from './store/sessions.repository';
+import type { Session } from './store/sessions';
 
 export interface AgentStatusInput {
   readonly taskStatus: TaskStatus;

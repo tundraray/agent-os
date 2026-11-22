@@ -4,5 +4,8 @@
     // Nest DI: decorators with emitted metadata.
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
-  }
+  },
+  // The child processes of the tests run from source through `tsx`, which applies these options
+  // only to the files listed here: the decorated source of the packages below is listed too.
+  "include": ["${configDir}/src", "${configDir}/test", "${configDir}/*.ts", "../db/src", "../runtime/src"]
 }

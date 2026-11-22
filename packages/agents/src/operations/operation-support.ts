@@ -1,32 +1,8 @@
 import type { Logger } from '@agent-os/common';
-import type { Database } from '@agent-os/db';
-import { type Runtime, RuntimeError, type Task } from '@agent-os/runtime';
+import { RuntimeError, type Task, type TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessAudit, AccessGate } from '../access-gate';
 import { AgentsError } from '../errors';
-import type { RecordLibrary } from '../start/record-library';
-import type { StartDeps } from '../start/resolve-start';
-import type { ChildStart, RunStart } from '../store/sessions.repository';
-import type { ToolRegistry } from '../tools/tool-registry';
-
-export interface AgentSessionsDeps {
-  readonly database: Database;
-  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions' | 'trackers'>;
-  readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
-  /** `resolveStart` asks it for the record of a start or a restart. */
-  readonly library: RecordLibrary;
-  readonly access: AccessGate;
-  /** `resolveStart` asks it whether the model of a start has a ready provider (model-providers KD-2). */
-  readonly providers: StartDeps['providers'];
-  readonly audit: AccessAudit;
-  /** The class a conversation's root runs as (`ChatAgent`): its task type and the making of its session. */
-  readonly chatStart: RunStart;
-  /** The class a run under a parent runs as, by its snapshot. */
-  readonly childStart: ChildStart;
-  /** `createAgentSessions` takes the package's logger and hands the groups of operations its `agents.sessions` child. */
-  readonly logger: Logger;
-}
 
 /** The part of a confirmation request (`ToolRunner.confirmationRequest`) the operations read. */
 export const ConfirmationPayloadSchema = z.object({
@@ -56,17 +32,13 @@ export function agentNotFound(id: string): AgentsError {
 }
 
 /** The owner's agent; `AGENT_NOT_FOUND` for a missing or another owner's one. */
-export function agentTask(runtime: AgentSessionsDeps['runtime'], agentId: string, ownerId: string): Promise<Task> {
-  return asAgent(runtime.tasks.get(agentId, ownerId));
+export function agentTask(tasks: Pick<TaskControl, 'get'>, agentId: string, ownerId: string): Promise<Task> {
+  return asAgent(tasks.get(agentId, ownerId));
 }
 
 /** The parent of a task; `null` for a root. */
-export async function parentOf(
-  runtime: AgentSessionsDeps['runtime'],
-  task: Task,
-  ownerId: string,
-): Promise<Task | null> {
-  return task.parentId === null ? null : asAgent(runtime.tasks.get(task.parentId, ownerId));
+export async function parentOf(tasks: Pick<TaskControl, 'get'>, task: Task, ownerId: string): Promise<Task | null> {
+  return task.parentId === null ? null : asAgent(tasks.get(task.parentId, ownerId));
 }
 
 /** Runs an operation and logs it with its ids, outcome and duration: `agents.<operation> answered` or `failed`. */

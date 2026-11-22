@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@agent-os/mcp-fixture": "workspace:*",
+    "@nestjs/testing": "^12.6.0",
     "@types/node": "^26.6.6",
     "fast-check": "^4.10.3",
     "oxlint": "^1.94.0",

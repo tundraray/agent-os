@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { RuntimeModule } from '../runtime/runtime.module';
 import { AdminProvidersController } from './admin-providers.controller';
 import { AdminRolesController } from './admin-roles.controller';
 import { AdminSettingsController } from './admin-settings.controller';
@@ -27,7 +26,6 @@ import { UsersService } from './users.service';
  * of the whole API: every route of every module needs a session unless marked `@Public()` (KD-3).
  */
 @Module({
-  imports: [RuntimeModule],
   controllers: [
     AuthController,
     HealthController,

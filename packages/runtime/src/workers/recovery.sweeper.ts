@@ -4,31 +4,39 @@ import {
   RuntimeFailureReasonSchema,
   TaskStatusSchema,
 } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import {
+  DATABASE,
+  type Database,
+  type Transaction,
+  RuntimeTrackersRepository,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '../clock';
-import type { CrashPoints } from '../crash-points';
-import type { EventLog } from '../events/event-log.repository';
+import { CrashPoints } from '../crash-points';
+import { EventLog } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
-import type { Inbox } from '../messaging/inbox';
+import { Inbox } from '../messaging/inbox';
 import { WorkerLoop } from './worker-loop';
 import type { RuntimeConfig } from '../runtime-config';
 import { retryingTransaction } from '../runtime-tx';
+import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { endTask } from '../tasks/task-end';
-import type { TaskRepository } from '../tasks/task.repository';
-import type { TrackerRepository } from '../tasks/tracker.repository';
+import { Tasks } from '../tasks/tasks';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 
 /** Tasks taken by one pass. */
 const SWEEP_BATCH = 50;
 
-export interface RecoverySweeperDeps {
+interface RecoverySweeperDeps {
   db: Database;
   config: RuntimeConfig;
   clock: Clock;
   logger: Logger;
-  tasks: TaskRepository;
-  trackers: TrackerRepository;
+  tasks: Tasks;
+  taskRows: RuntimeTasksRepository;
+  trackers: RuntimeTrackersRepository;
   events: EventLog;
   inbox: Inbox;
   crashPoints: CrashPoints;
@@ -49,16 +57,31 @@ type Recovery =
  * task is `failed` with `recovery_exhausted` and its parent is told. No handler is called; each task
  * is one transaction under its row lock.
  */
+@Injectable()
 export class RecoverySweeper {
   private readonly loop: WorkerLoop;
+  private readonly deps: RecoverySweeperDeps;
 
-  constructor(private readonly deps: RecoverySweeperDeps) {
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
+    @Inject(CLOCK) clock: Clock,
+    @Inject(RUNTIME_LOGGER) runtimeLogger: Logger,
+    @Inject(Tasks) tasks: Tasks,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(Inbox) inbox: Inbox,
+    @Inject(CrashPoints) crashPoints: CrashPoints,
+  ) {
+    const logger = runtimeLogger.child({ worker: 'sweeper' });
+    this.deps = { db, config, clock, logger, tasks, taskRows, trackers, events, inbox, crashPoints };
     this.loop = new WorkerLoop({
       name: 'sweeper',
-      periodMs: deps.config.reaperMs,
-      pollMs: deps.config.pollMs,
-      clock: deps.clock,
-      logger: deps.logger,
+      periodMs: config.reaperMs,
+      pollMs: config.pollMs,
+      clock,
+      logger,
       pass: () => this.sweep(),
     });
   }
@@ -74,7 +97,7 @@ export class RecoverySweeper {
   /** One pass; `true` when the batch was full and more may be left. */
   private async sweep(): Promise<boolean> {
     const now = this.deps.clock.now();
-    const expired = await this.deps.tasks.listExpired(this.deps.db, now, SWEEP_BATCH);
+    const expired = await this.deps.taskRows.listExpired(this.deps.db, now, SWEEP_BATCH);
     for (const task of expired) await this.recover(task, now);
     return expired.length === SWEEP_BATCH;
   }
@@ -132,9 +155,9 @@ export class RecoverySweeper {
     expired: { taskId: string; attempt: number },
     now: Date,
   ): Promise<Recovery> {
-    const { tasks, events, config } = this.deps;
+    const { tasks, taskRows, events, config } = this.deps;
     // An exhausted task ends and notifies its parent: the parent is locked first (Invariant 6).
-    const task = await tasks.lockWithParent(tx, expired.taskId);
+    const task = await taskRows.lockWithParent(tx, expired.taskId);
     const stillLost =
       task?.status === running &&
       task.attempt === expired.attempt &&

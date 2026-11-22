@@ -1,14 +1,17 @@
 import type { Logger } from '@agent-os/common';
 import { ALL_SERVERS, KnowledgeItemKindSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type {
+  AgentKnowledgeRepository,
+  AgentKnowledgeRunsRepository,
+  AgentMcpServersRepository,
+  Database,
+  KnowledgeGraph,
+} from '@agent-os/db';
 
-import { findServers, listServers } from '../mcp/mcp-servers.repository';
 import { storedMcpTools } from '../mcp/mcp-tool';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 import { type LearningRun, learningRunOf } from '../deep/deep-definition';
 import type { RunSnapshot } from '../start/snapshot';
-import { readQuestion } from './knowledge-runs.repository';
-import { type KnowledgeGraph, readGraph, readKnowledgeSettings } from './knowledge.repository';
 import { knowledgeText } from './knowledge-text';
 import { type GraphItem, selectKnowledge, type ToolAlive } from './select-knowledge';
 import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
@@ -16,7 +19,10 @@ import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 export interface KnowledgeBlockDeps {
   /** Reads the graph, the settings, the registry and the question row on every step (KD-6). */
   readonly database: Database;
-  readonly store: KnowledgeVectorStore;
+  readonly knowledgeRows: AgentKnowledgeRepository;
+  readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
+  readonly mcpServerRows: AgentMcpServersRepository;
+  readonly vectorStore: KnowledgeVectorStore;
 }
 
 export interface KnowledgeBlockInput {
@@ -46,9 +52,9 @@ export async function knowledgeBlock(
   if (learning === null) return null;
 
   const startedAt = Date.now();
-  const { database } = deps;
+  const { database, knowledgeRows, knowledgeRunRows } = deps;
   const { recordId } = learning;
-  const items = graphItemsOf(await readGraph(database, recordId));
+  const items = graphItemsOf(await knowledgeRows.readGraph(database, recordId));
   // An empty graph gives no block whatever the rest says: the other reads are skipped.
   if (items.length === 0) {
     logger.info('knowledge block built', {
@@ -60,15 +66,15 @@ export async function knowledgeBlock(
     return null;
   }
 
-  const settings = await readKnowledgeSettings(database);
-  const toolAlive = await registryToolAlive(database, learning.servers);
-  const question = await readQuestion(database, taskId);
+  const settings = await knowledgeRows.readSettings(database);
+  const toolAlive = await registryToolAlive(deps, learning.servers);
+  const question = await knowledgeRunRows.readQuestion(database, taskId);
   const vector = question?.vector ?? null;
   const model = question?.model ?? null;
   // `limit` — every record of the graph: selection itself decides which pairs it takes (KD-6).
   const closeness =
     vector !== null && model !== null
-      ? await closenessOrNone(deps.store, { recordId, taskId, logger }, vector, model, items.length)
+      ? await closenessOrNone(deps.vectorStore, { recordId, taskId, logger }, vector, model, items.length)
       : [];
 
   const choice = selectKnowledge({ items, settings, toolAlive, closeness });
@@ -106,9 +112,14 @@ export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
  * registry still lists the server with that tool. The registry only notices a missing server or tool.
  * The run step, the extraction round and the knowledge view all judge by it.
  */
-export async function registryToolAlive(database: Database, servers: readonly string[]): Promise<ToolAlive> {
+export async function registryToolAlive(
+  { database, mcpServerRows }: Pick<KnowledgeBlockDeps, 'database' | 'mcpServerRows'>,
+  servers: readonly string[],
+): Promise<ToolAlive> {
   const anyServer = servers.includes(ALL_SERVERS);
-  const rows = anyServer ? await listServers(database) : await findServers(database, servers);
+  const rows = anyServer
+    ? await mcpServerRows.list(database)
+    : await mcpServerRows.findMany(database, servers);
   const tools = new Set(
     rows.flatMap((row) =>
       (storedMcpTools(row.tools) ?? []).map((tool) => toolKey(row.name, tool.tool)),

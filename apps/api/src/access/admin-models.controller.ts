@@ -10,7 +10,7 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
+import { AgentsProviders } from '@agent-os/agents';
 import {
   CreateCatalogModelBodySchema,
   UpdateCatalogModelBodySchema,
@@ -19,7 +19,6 @@ import {
   type CreateCatalogModelBody,
   type UpdateCatalogModelBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
@@ -29,14 +28,14 @@ import { AccessService } from './access.service';
  * The model catalogue for an administrator (design-access.md, Contract «Операции администратора»).
  * The model id is a path segment encoded by the client (`anthropic%2F…`); Nest hands it decoded.
  * The service audits every write in the write's transaction; the kind of a new model's provider comes from
- * `Agents.providers` (port-module-split.md).
+ * `AgentsProviders` (port-module-split.md).
  */
 @Controller('admin/models')
 @AdminOnly()
 export class AdminModelsController {
   constructor(
     private readonly access: AccessService,
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsProviders) private readonly providers: AgentsProviders,
   ) {}
 
   /** The catalogue by name. */
@@ -52,7 +51,7 @@ export class AdminModelsController {
     body: CreateCatalogModelBody,
     @Req() req: AuthedRequest,
   ): Promise<CatalogModel> {
-    const providerKind = await this.agents.providers.kindOf(
+    const providerKind = await this.providers.kindOf(
       modelProvider(body.id),
     );
     return this.access.createModel(req.user.id, body, providerKind);

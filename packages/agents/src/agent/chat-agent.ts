@@ -1,13 +1,11 @@
 import type { Logger } from '@agent-os/common';
-import { CHAT_TASK_TYPE } from '@agent-os/contracts';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 
 import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-listing';
 import type { RecordLibrary } from '../start/record-library';
-import type { RunSnapshot } from '../start/snapshot';
-import { sessions } from '../store/sessions.repository';
 import type { ToolDeclaration } from '../tools/tool';
 import type { AgentDeps } from './agent-deps';
+import type { AgentRun } from './agent-state';
 import { BaseAgent } from './base-agent';
 import { chatTurns } from './deliver';
 import type { TurnEnd } from './model-step';
@@ -22,17 +20,21 @@ export interface ChatAgentDeps extends AgentDeps {
 
 /**
  * The chat: the root of a conversation, the agent the employee talks to (design-agents.md KD-2, KD-6). Its task
- * is created only by `sessions.start` and the restart of a root. Over the shared step it differs in this:
+ * is created only by `sessions.start` and the restart of a root, with the `chat` task type. Over the shared step it differs in this:
  * it declares itself a root — so it gets the root's tools and always keeps a task list — and lists the employee's
  * records as they are now in the descriptions of its tools, starts a new turn with every message of the
  * employee, never ends by itself — it waits for the next message — and never learns.
  */
 export class ChatAgent extends BaseAgent {
-  readonly type = CHAT_TASK_TYPE;
-  protected override readonly root = true;
+  constructor(
+    private readonly chatDeps: ChatAgentDeps,
+    run: AgentRun,
+  ) {
+    super(chatDeps, run);
+  }
 
-  constructor(private readonly chatDeps: ChatAgentDeps) {
-    super(chatDeps);
+  protected override get root(): boolean {
+    return true;
   }
 
   /** A chat never learns: no question is embedded and its input is not even parsed. */
@@ -44,17 +46,17 @@ export class ChatAgent extends BaseAgent {
    * The model call's declaration lists whom the chat may start as the employee's library is now: the agents
    * for `start_agent`, the deep agents for `start_deep_agent`. The check of its calls needs no listing.
    */
-  override async offeredDeclaration(ctx: StepContext, snapshot: RunSnapshot): Promise<ToolDeclaration> {
+  override async offeredDeclaration(ctx: StepContext): Promise<ToolDeclaration> {
     const listing = await this.listing(ctx);
-    return { ...this.toolDeclaration(snapshot), startable: listing.agents, deepAgents: listing.deepAgents };
+    return { ...this.declaration, startable: listing.agents, deepAgents: listing.deepAgents };
   }
 
   /** The chat listing of the root's owner (KD-4): his `listVisible` and his session counts, read now. */
   private async listing(ctx: StepContext): Promise<ChatListing> {
-    const { library, database } = this.chatDeps;
+    const { library, database, sessionRows } = this.chatDeps;
     const startedAt = Date.now();
     const headers = await library.listVisible(ctx.ownerId);
-    const sessionCounts = await sessions.recordCounts(database, ctx.ownerId);
+    const sessionCounts = await sessionRows.recordCounts(database, ctx.ownerId);
     const listing = chatListing({ headers, sessionCounts, budget: CHAT_LISTING_BUDGET });
     this.chatDeps.logger.child({ service: 'agents.tools' }).info('chat listing built', {
       ownerId: ctx.ownerId,

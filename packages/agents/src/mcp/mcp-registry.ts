@@ -11,7 +11,14 @@ import {
   type RegisterMcpServerBody,
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  AgentMcpServersRepository,
+  DATABASE,
+  type Database,
+  type McpServerPatch,
+  type McpServerRow,
+  type NewMcpServerRow,
+} from '@agent-os/db';
 import {
   LATEST_PROTOCOL_VERSION,
   RegistrationRejectedError,
@@ -22,20 +29,13 @@ import {
   type FetchLike,
   type OAuthServerInfo,
 } from '@modelcontextprotocol/client';
+import { Inject, Injectable } from '@nestjs/common';
 
-import { CLIENT_INFO, type McpAuth, type McpClient, deadlineFetch } from './mcp-client';
+import { AGENTS_CONFIG, AGENTS_LOGGER } from '../agents.tokens';
+import type { AgentsConfig } from '../config';
+import { CLIENT_INFO, type McpAuth, McpClient, deadlineFetch } from './mcp-client';
 import { McpError } from './mcp-errors';
 import { type McpFailureReason, failureName, mcpFailureReason, transportFailureReason } from './mcp-failure';
-import {
-  type McpServerPatch,
-  type McpServerRow,
-  type NewMcpServerRow,
-  deleteServer,
-  findServer,
-  insertServer,
-  listServers,
-  updateServer,
-} from './mcp-servers.repository';
 import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
 import { shapeBlockOf } from './tool-shape';
@@ -82,16 +82,6 @@ export type McpServerRegistration = RegisterMcpServerBody & { readonly redirectU
 export type McpAdminAccountCompletion =
   | { readonly outcome: 'connected'; readonly change: McpToolsRefresh }
   | { readonly outcome: 'tools_failed' | 'connect_failed' };
-
-export interface McpRegistryOptions {
-  readonly database: Database;
-  readonly client: McpClient;
-  readonly logger: Logger;
-  /** `MCP_CALL_TIMEOUT_MS`: bounds each check, the OAuth discovery and registration included. */
-  readonly callTimeoutMs: number;
-  /** Development only: `http` addresses pass the address rule. */
-  readonly allowHttp: boolean;
-}
 
 const CHECK_REASON_OF_FAILURE: Record<McpFailureReason, McpCheckFailureReason> = {
   connection_lost: 'unreachable',
@@ -201,11 +191,28 @@ function difference(from: readonly string[] | null, without: readonly string[] |
  * check, OAuth discovery and client registration run before the write and outside any transaction
  * (repository-over-transaction.md). Writes return «было/стало» without secret values for the audit (Invariant 6).
  */
+@Injectable()
 export class McpRegistry {
-  constructor(private readonly options: McpRegistryOptions) {}
+  private readonly logger: Logger;
+  /** `MCP_CALL_TIMEOUT_MS`: bounds each check, the OAuth discovery and registration included. */
+  private readonly callTimeoutMs: number;
+  /** Development only: `http` addresses pass the address rule. */
+  private readonly allowHttp: boolean;
+
+  constructor(
+    @Inject(DATABASE) private readonly database: Database,
+    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(McpClient) private readonly client: McpClient,
+    @Inject(AGENTS_LOGGER) logger: Logger,
+    @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs' | 'allowHttpUrls'>,
+  ) {
+    this.logger = logger.child({ service: 'agents.mcp' });
+    this.callTimeoutMs = config.mcpCallTimeoutMs;
+    this.allowHttp = config.allowHttpUrls;
+  }
 
   async list(): Promise<McpServerSummary[]> {
-    const rows = await listServers(this.options.database);
+    const rows = await this.mcpServerRows.list(this.database);
     return rows.map((row) => summaryOf(row));
   }
 
@@ -221,7 +228,7 @@ export class McpRegistry {
   register(input: McpServerRegistration): Promise<McpServerWrite> {
     return this.logged('mcp server registration', { server: input.name, mode: input.mode }, async () => {
       const { name, url, mode } = input;
-      if ((await findServer(this.options.database, name)) !== undefined) throw nameTaken(name);
+      if ((await this.mcpServerRows.find(this.database, name)) !== undefined) throw nameTaken(name);
       this.requireSecureUrl(url);
       const row: NewMcpServerRow =
         input.mode === 'shared'
@@ -234,7 +241,7 @@ export class McpRegistry {
               sharedToken: input.sharedToken,
             }
           : { name, url, mode, ...(await this.registerOAuthClient(url, input.redirectUrl)) };
-      const inserted = await insertServer(this.options.database, row);
+      const inserted = await this.mcpServerRows.insert(this.database, row);
       if (inserted === undefined) throw nameTaken(name);
       return { view: viewOf(inserted), before: null, after: auditStateOf(inserted, mode === 'shared') };
     });
@@ -295,20 +302,22 @@ export class McpRegistry {
   /** Removes the server; the cascade removes every account on it (AC-13.6). */
   remove(name: string): Promise<McpServerRemoval> {
     return this.logged('mcp server removal', { server: name }, async () => {
-      const row = await deleteServer(this.options.database, name);
+      const row = await this.mcpServerRows.delete(this.database, name);
       if (row === undefined) throw notFound(name);
       return { before: auditStateOf(row, false), after: null };
     });
   }
 
   private async rowOf(name: string): Promise<McpServerRow> {
-    const row = await findServer(this.options.database, name);
+    const row = await this.mcpServerRows.find(this.database, name);
     if (row === undefined) throw notFound(name);
     return row;
   }
 
   private async write(name: string, patch: McpServerPatch, tokenChanged: boolean): Promise<McpServerWrite> {
-    const change = await this.options.database.transaction((tx) => updateServer(tx, name, patch));
+    const change = await this.database.transaction((tx) =>
+      this.mcpServerRows.update(tx, name, patch),
+    );
     if (change === undefined) throw notFound(name);
     return {
       view: viewOf(change.after),
@@ -318,12 +327,12 @@ export class McpRegistry {
   }
 
   private requireSecureUrl(url: string | URL): void {
-    if (checkServerUrl(url, { allowHttp: this.options.allowHttp }) !== 'ok') throw checkFailed('insecure_url');
+    if (checkServerUrl(url, { allowHttp: this.allowHttp }) !== 'ok') throw checkFailed('insecure_url');
   }
 
   /** The server's tools by name as `McpTool`s, or the reason the listing failed. */
   private async listChecked(name: string, url: string, auth: McpAuth): Promise<McpTool[]> {
-    const { client, callTimeoutMs } = this.options;
+    const { client, callTimeoutMs } = this;
     try {
       const listed = await client.listTools({ url, auth, timeoutMs: callTimeoutMs });
       const tools = listed.map((tool) => toMcpTool(name, tool)).sort((a, b) => a.tool.localeCompare(b.tool));
@@ -331,7 +340,7 @@ export class McpRegistry {
       return tools;
     } catch (error) {
       const reason = listingFailureReason(error, auth.mode);
-      this.options.logger.warn('mcp server did not list its tools', {
+      this.logger.warn('mcp server did not list its tools', {
         server: name,
         mode: auth.mode,
         reason,
@@ -349,7 +358,7 @@ export class McpRegistry {
     const shapes = tools.flatMap(({ tool, outputSchema }) =>
       outputSchema === undefined ? [] : [{ tool, ...shapeBlockOf(outputSchema) }],
     );
-    this.options.logger.info('mcp server tools listed', {
+    this.logger.info('mcp server tools listed', {
       server,
       tools: tools.length,
       withShape: shapes.length,
@@ -368,7 +377,7 @@ export class McpRegistry {
     url: string,
     redirectUrl: string,
   ): Promise<Pick<NewMcpServerRow, 'oauthServer' | 'oauthClientId' | 'oauthClientSecret'>> {
-    const fetchFn = deadlineFetch(this.options.callTimeoutMs);
+    const fetchFn = deadlineFetch(this.callTimeoutMs);
     const resourceMetadataUrl = await this.challengeOf(url, fetchFn);
     if (resourceMetadataUrl !== undefined) this.requireSecureUrl(resourceMetadataUrl);
     const metadata = await this.discoverRegistrable(url, resourceMetadataUrl, fetchFn);
@@ -408,7 +417,7 @@ export class McpRegistry {
     }
     await response.body?.cancel();
     if (response.status === 401) return extractWWWAuthenticateParams(response).resourceMetadataUrl;
-    this.options.logger.warn('mcp server did not ask for a token', { url, status: response.status });
+    this.logger.warn('mcp server did not ask for a token', { url, status: response.status });
     throw checkFailed(response.ok ? 'oauth_not_supported' : 'not_mcp');
   }
 
@@ -431,7 +440,7 @@ export class McpRegistry {
       metadata?.registration_endpoint === undefined ||
       !(metadata.code_challenge_methods_supported ?? []).includes(PKCE_METHOD)
     ) {
-      this.options.logger.warn('mcp server has no usable OAuth metadata', {
+      this.logger.warn('mcp server has no usable OAuth metadata', {
         url,
         resourceMetadata: info.resourceMetadata !== undefined,
         registrationEndpoint: metadata?.registration_endpoint !== undefined,
@@ -453,7 +462,7 @@ export class McpRegistry {
   /** Logs the error class and, for a rejected registration, only its status: bodies of the authorization server stay out. */
   private oauthCheckFailed(url: string, error: unknown, otherwise: McpCheckFailureReason): McpError {
     const reason = oauthFailureReason(error, otherwise);
-    this.options.logger.warn('mcp server OAuth check failed', {
+    this.logger.warn('mcp server OAuth check failed', {
       url,
       reason,
       ...(error instanceof RegistrationRejectedError
@@ -469,18 +478,18 @@ export class McpRegistry {
     const durationMs = () => Math.round(performance.now() - startedAt);
     try {
       const result = await work();
-      this.options.logger.info(`${operation} done`, { ...fields, outcome: 'done', durationMs: durationMs() });
+      this.logger.info(`${operation} done`, { ...fields, outcome: 'done', durationMs: durationMs() });
       return result;
     } catch (error) {
       if (error instanceof McpError) {
-        this.options.logger.warn(`${operation} refused`, {
+        this.logger.warn(`${operation} refused`, {
           ...fields,
           outcome: error.code,
           reason: error.reason,
           durationMs: durationMs(),
         });
       } else {
-        this.options.logger.error(`${operation} failed`, { ...fields, durationMs: durationMs(), error });
+        this.logger.error(`${operation} failed`, { ...fields, durationMs: durationMs(), error });
       }
       throw error;
     }

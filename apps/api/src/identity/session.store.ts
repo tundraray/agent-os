@@ -1,22 +1,20 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import type { Database, DatabaseConnection, Executor } from '@agent-os/db';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type Executor,
+  IdentitySessionsRepository,
+  IdentitySettingsRepository,
+} from '@agent-os/db';
 import {
   LanguageSchema,
   UserStatusSchema,
   type Language,
   type UserStatus,
 } from '@agent-os/contracts';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { isSessionExpired, needsTouch } from './session-lifetime';
-import {
-  deleteSession,
-  deleteSessionsOlderThan,
-  findSessionByTokenHash,
-  insertSession,
-  touchSession,
-} from './sessions.repository';
-import { readSessionLimits } from './settings.repository';
 
 /** Random bytes of a session token (KD-2). */
 const TOKEN_BYTES = 32;
@@ -55,30 +53,42 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-/** Opens a session of the employee and deletes his rows older than the absolute limit. */
-export async function openSession(
-  executor: Executor,
-  userId: string,
-): Promise<OpenedSession> {
-  const limits = await readSessionLimits(executor);
-  await deleteSessionsOlderThan(executor, userId, limits.absoluteMinutes);
-  const token = randomBytes(TOKEN_BYTES).toString('base64url');
-  const sessionId = await insertSession(executor, userId, hashToken(token));
-  return { sessionId, token };
-}
+/** `ended_reason` of a session ended by a block (KD-4, DC-9). */
+export const ENDED_BY_BLOCK = 'account_disabled';
 
 /**
  * Sessions as rows of `identity_sessions` (KD-2, ADR-0001): the browser holds 32 random bytes in
  * base64url, the database their SHA-256. Limits are not stored in the row: they are read from
  * `identity_settings` with the session, so a new value applies from the next request. The request
- * path's own reads and writes, on the pool; the queries are in `sessions.repository.ts`.
+ * path's own reads and writes, on the pool; the queries are in `IdentitySessionsRepository`.
  */
 @Injectable()
 export class SessionStore {
   private readonly db: Database;
 
-  constructor(@Inject(RUNTIME_DATABASE) database: DatabaseConnection) {
+  constructor(
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly sessions: IdentitySessionsRepository,
+    private readonly settings: IdentitySettingsRepository,
+  ) {
     this.db = database.db;
+  }
+
+  /** Opens a session of the employee and deletes his rows older than the absolute limit. */
+  async open(executor: Executor, userId: string): Promise<OpenedSession> {
+    const limits = await this.settings.readSessionLimits(executor);
+    await this.sessions.deleteOlderThan(
+      executor,
+      userId,
+      limits.absoluteMinutes,
+    );
+    const token = randomBytes(TOKEN_BYTES).toString('base64url');
+    const sessionId = await this.sessions.insert(
+      executor,
+      userId,
+      hashToken(token),
+    );
+    return { sessionId, token };
   }
 
   /** The session of the token with its employee, admin right and expiry, or undefined when there is none. */
@@ -86,7 +96,7 @@ export class SessionStore {
     token: string,
     now: Date = new Date(),
   ): Promise<FoundSession | undefined> {
-    const row = await findSessionByTokenHash(this.db, hashToken(token));
+    const row = await this.sessions.findByTokenHash(this.db, hashToken(token));
     if (row === undefined) return undefined;
     const {
       userId,
@@ -123,11 +133,11 @@ export class SessionStore {
     now: Date = new Date(),
   ): Promise<void> {
     if (!needsTouch(session.lastSeenAt, now)) return;
-    await touchSession(this.db, session.sessionId, now);
+    await this.sessions.touch(this.db, session.sessionId, now);
   }
 
   /** Sign-out: the row is deleted. */
   async end(sessionId: string): Promise<void> {
-    await deleteSession(this.db, sessionId);
+    await this.sessions.delete(this.db, sessionId);
   }
 }

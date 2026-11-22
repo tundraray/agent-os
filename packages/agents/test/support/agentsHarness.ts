@@ -1,20 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  AGENT_TURN_CLIENT,
   type AgentHistoryEntry,
-  type Agents,
-  type AgentSessions,
+  AgentsKnowledge,
+  AgentsMcp,
+  AgentsProviders,
   type AgentTurnMessage,
-  type AgentTurnModelClient,
   type AgentView,
   type AuditRecord,
-  createAgents,
+  CODE_RUNNER,
+  ControlOperations,
+  EMBEDDING_CLIENT,
   type EmbeddingVerdict,
-  createMastraTurnClient,
   type InCommitAgentTool,
   parseAgentsConfig,
+  StartOperations,
   type StartResolution,
   type TextDelta,
+  ToolRegistry,
+  ViewOperations,
 } from '@agent-os/agents';
 import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
@@ -24,7 +29,7 @@ import {
   agentCodeCalls,
   agentModelProviders,
   agentSessionTasks,
-  createDatabase,
+  DATABASE,
   type Database,
   runtimeEvents,
   runtimeInbox,
@@ -51,23 +56,26 @@ import {
 
 export { toolCallRowsOf } from '@agent-os/agents/testing';
 import {
-  createRuntime,
   type ModelPrice,
   parseRuntimeConfig,
-  type Runtime,
   type RuntimeConfig,
-  systemClock,
+  RuntimeWorkers,
   type Task,
+  TaskControl,
+  TokenLedger,
 } from '@agent-os/runtime';
+import { Test } from '@nestjs/testing';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { resolveStart, type StartDeps } from '../../src/start/resolve-start';
 import { TASK_BLOCK_HEADING } from '../../src/tools/system/task-list-block';
 import { databaseUrl } from './database-url';
+import { agentsModule, runtimeModules } from './runtimeContext';
 import { registerFixtureServers, removeServer, runName } from './mcp-servers';
 
 /**
- * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `createRuntime` and
- * `createAgents` over their own pool, without `apps/api`. Postgres, the runtime and every agents component
+ * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `RuntimeModule` and
+ * `AgentsModule` over their own pool, without `apps/api`. Postgres, the runtime and every agents component
  * are real; the model is the scripted double under `ModelClient` (plan Notes 9), the library of agents and
  * deep agents is the `createLibraryDouble` of the test (a root starts from its `chat` record, a child from
  * the record its parent names) and MCP is the fixture
@@ -279,7 +287,7 @@ const StartTestDeepAgentArgsSchema = z.object({
  * refusal as `start_agent` does. Only the brief tests go through the real `start_deep_agent`.
  */
 function startTestDeepAgentTool(
-  agents: Agents,
+  startDeps: StartDeps,
 ): InCommitAgentTool<z.infer<typeof StartTestDeepAgentArgsSchema>, StartResolution> {
   return {
     name: START_TEST_DEEP_AGENT,
@@ -288,10 +296,10 @@ function startTestDeepAgentTool(
     mode: 'in_commit',
     rootOnly: true,
     prepare: ({ args, caller }) =>
-      agents.resolveStart({
-        ownerId: caller.ownerId,
-        source: { kind: 'record', recordId: args.deepAgent, expected: 'deep_agent' },
-      }),
+      resolveStart(
+        { ownerId: caller.ownerId, source: { kind: 'record', recordId: args.deepAgent, expected: 'deep_agent' } },
+        startDeps,
+      ),
     async execute({ args, startChild, prepared }) {
       if (prepared === undefined) throw new Error(`${START_TEST_DEEP_AGENT} runs without its prepare`);
       if (prepared.kind === 'refused') {
@@ -352,16 +360,38 @@ interface AgentsHarnessSettings {
   readonly zombie?: boolean;
   /** Catalogue prices of the test's own models, next to the harness's two; the access gate double answers them. */
   readonly prices?: Readonly<Record<string, ModelPrice>>;
-  /** Gets every text part of an agent's answer (`createAgents`' `onTextDelta`); none by default. */
+  /** Gets every text part of an agent's answer (the `ON_TEXT_DELTA` port); none by default. */
   readonly onTextDelta?: (delta: TextDelta) => void;
   /** The embeddings double under the service; shared with a second instance; a fresh one by default. */
   readonly embeddings?: ScriptedEmbeddings;
 }
 
+/** The runtime of a harness: its task operations, the ledger and the workers. */
+export interface HarnessRuntime {
+  readonly tasks: TaskControl;
+  readonly ledger: TokenLedger;
+  /** Starts the workers (`RuntimeWorkers.start`). */
+  start(): void;
+  /** Stops the workers (`RuntimeWorkers.stop`). */
+  stop(): Promise<void>;
+}
+
+/** The services of the agents package the tests reach besides the operations. */
+export interface HarnessAgents {
+  readonly mcp: AgentsMcp;
+  readonly providers: AgentsProviders;
+  readonly knowledge: AgentsKnowledge;
+}
+
+/** The agent operations the tests call, over the three operation services. */
+export type HarnessSessions = Pick<StartOperations, 'start' | 'restart'> &
+  Pick<ControlOperations, 'send' | 'interrupt' | 'stop' | 'resolveConfirmation'> &
+  Pick<ViewOperations, 'snapshot' | 'get' | 'list' | 'history' | 'confirmations' | 'taskList' | 'run' | 'roots'>;
+
 export interface AgentsHarness {
-  readonly runtime: Runtime;
-  readonly agents: Agents;
-  readonly sessions: AgentSessions;
+  readonly runtime: HarnessRuntime;
+  readonly agents: HarnessAgents;
+  readonly sessions: HarnessSessions;
   /** The library double every start of this instance asks. */
   readonly library: LibraryDouble;
   /** The Drizzle client of the harness's pool; the tests only read through it (and `expireLease`). */
@@ -371,9 +401,9 @@ export interface AgentsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Every record `createAgents` gave its audit port, in order (the API hook writes each as is). */
+  /** Every record the agents gave their audit port, in order (the API hook writes each as is). */
   readonly auditEntries: readonly AuditRecord[];
-  /** The embeddings double `createAgents` got: its calls, `vectorOf`, `failure`. */
+  /** The embeddings double the agents got: its calls, `vectorOf`, `failure`. */
   readonly embeddings: ScriptedEmbeddings;
   /**
    * What the access gate double answers for embeddings, read on every question: {@link NO_EMBEDDING_MODEL}
@@ -381,14 +411,10 @@ export interface AgentsHarness {
    */
   embeddingVerdict: EmbeddingVerdict;
   /**
-   * Stops the workers, the agents, deletes the provider row when this is the file's last open harness, closes
+   * Stops the workers, deletes the provider row when this is the file's last open harness, closes
    * the pool, then the fixture process — each also when the one before fails.
    */
   close(): Promise<void>;
-}
-
-function turnClientOf(options: HarnessTurnClient): AgentTurnModelClient {
-  return options.turnClient === 'real' ? createMastraTurnClient() : options.model.turnClient;
 }
 
 /** Open harnesses of this test file (files run one at a time): the provider row lives while one of them does. */
@@ -447,63 +473,88 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
   let embeddingVerdict = NO_EMBEDDING_MODEL;
   if (options.root !== undefined) await setRootRecord(library, options.root);
   const fixtureProcess = await startFixtureProcess(fixture);
-  const database = createDatabase({
-    connectionString: databaseUrl(),
-    poolMax: runtimeConfig.dbPoolMax,
+  const access = createAccessGateDouble({
+    servers: options.access,
+    prices: { ...TEST_MODEL_PRICES, ...options.prices },
+    defaultChatModel: TEST_MODEL_DEFAULT,
+    embedding: () => embeddingVerdict,
+    ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
+    ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
   });
-  const runtime = createRuntime({
-    database,
-    config: runtimeConfig,
-    logger,
-    clock: systemClock,
-  });
-  const agents = createAgents({
-    database: database.db,
-    runtime,
-    logger,
-    config: agentsConfig,
-    turnClient: turnClientOf(options),
-    embeddingClient: embeddings.client,
-    access: createAccessGateDouble({
-      servers: options.access,
-      prices: { ...TEST_MODEL_PRICES, ...options.prices },
-      defaultChatModel: TEST_MODEL_DEFAULT,
-      embedding: () => embeddingVerdict,
-      ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
-      ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
-    }),
-    audit: async (entry) => {
-      auditEntries.push(entry);
-    },
-    library,
-    ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
-    ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
-  });
-  if (options.deepAgentStarter === true) agents.tools.register(startTestDeepAgentTool(agents));
+  let builder = Test.createTestingModule({
+    imports: [
+      ...runtimeModules(logger, databaseUrl(), runtimeConfig),
+      agentsModule(agentsConfig, {
+        access,
+        audit: async (entry) => {
+          auditEntries.push(entry);
+        },
+        library,
+        ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
+      }),
+    ],
+  })
+    .overrideProvider(EMBEDDING_CLIENT)
+    .useValue(embeddings.client);
+  // The real turn client is the package's default.
+  if (options.turnClient !== 'real') {
+    builder = builder.overrideProvider(AGENT_TURN_CLIENT).useValue(options.model.turnClient);
+  }
+  if (options.codeRunner !== undefined) builder = builder.overrideProvider(CODE_RUNNER).useValue(options.codeRunner);
+  const app = await builder.compile();
+  const db = app.get<Database>(DATABASE);
+  const workers = app.get(RuntimeWorkers);
+  const runtime: HarnessRuntime = {
+    tasks: app.get(TaskControl),
+    ledger: app.get(TokenLedger),
+    start: () => workers.start(),
+    stop: () => workers.stop(),
+  };
+  const providers = app.get(AgentsProviders);
+  const agents: HarnessAgents = { mcp: app.get(AgentsMcp), providers, knowledge: app.get(AgentsKnowledge) };
+  const starts = app.get(StartOperations);
+  const control = app.get(ControlOperations);
+  const views = app.get(ViewOperations);
+  const sessions: HarnessSessions = {
+    start: (request) => starts.start(request),
+    restart: (request) => starts.restart(request),
+    send: (request) => control.send(request),
+    interrupt: (request) => control.interrupt(request),
+    stop: (request) => control.stop(request),
+    resolveConfirmation: (request) => control.resolveConfirmation(request),
+    snapshot: (agentId, ownerId) => views.snapshot(agentId, ownerId),
+    get: (agentId, ownerId) => views.get(agentId, ownerId),
+    list: (rootId, ownerId) => views.list(rootId, ownerId),
+    history: (request) => views.history(request),
+    confirmations: (rootId, ownerId) => views.confirmations(rootId, ownerId),
+    taskList: (agentId, ownerId) => views.taskList(agentId, ownerId),
+    run: (agentId, ownerId) => views.run(agentId, ownerId),
+    roots: (request) => views.roots(request),
+  };
+  // Before `init`: the tools library closes in `onApplicationBootstrap`.
+  if (options.deepAgentStarter === true) {
+    app.get(ToolRegistry).register(startTestDeepAgentTool({ library, access, providers }));
+  }
 
   const close = async () => {
     try {
       await runtime.stop();
     } finally {
       try {
-        await agents.stop();
+        await closeHarnessProvider(db);
       } finally {
         try {
-          await closeHarnessProvider(database.db);
+          // The workers are stopped above; closing the context ends the pool of `DbModule`.
+          await app.close();
         } finally {
-          try {
-            await database.close();
-          } finally {
-            await fixtureProcess.stop();
-          }
+          await fixtureProcess.stop();
         }
       }
     }
   };
   try {
     // First in the block: `close` below then always pairs with this open.
-    await openHarnessProvider(database.db);
-    await agents.start();
+    await openHarnessProvider(db);
     const sources = options.mcpServers ?? DEFAULT_SOURCES;
     if (sources.length === 0) {
       for (const source of ALL_SOURCES) await removeServer(agents, runName(source));
@@ -513,14 +564,16 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     await close();
     throw error;
   }
-  runtime.start();
+  // The context's start runs the registrations of `onModuleInit`, then `onApplicationBootstrap`, which starts
+  // the workers and closes the tools library.
+  await app.init();
 
   return {
     runtime,
     agents,
-    sessions: agents.sessions,
+    sessions,
     library,
-    db: database.db,
+    db,
     fixture,
     fixtureProcess,
     logs: sink.records,

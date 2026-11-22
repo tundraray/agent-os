@@ -14,26 +14,35 @@ export {
 export type { AgentView } from './agent-view';
 export { inRootLaunchSet } from './chat-listing';
 export { type AgentsConfig, parseAgentsConfig } from './config';
-export { type Agents, createAgents } from './create-agents';
-export { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client';
-export type {
+export { AgentsModule } from './agents.module';
+export {
+  ACCESS_AUDIT,
+  ACCESS_GATE,
+  AGENT_TURN_CLIENT,
+  CODE_RUNNER,
+  EMBEDDING_CLIENT,
+  ON_TEXT_DELTA,
+  RECORD_LIBRARY,
+} from './agents.tokens';
+export type { EmbeddingClient } from './embeddings/embedding-client';
+export {
   AgentsEmbeddings,
-  EmbeddingModelChoice,
-  EmbedRequest,
-  EmbedResult,
+  type EmbeddingModelChoice,
+  type EmbedRequest,
+  type EmbedResult,
 } from './embeddings/embeddings';
 export { AgentsError, type StartRefusalDetail } from './errors';
-export type {
+export {
   AgentsKnowledge,
-  KnowledgeEntityDelete,
-  KnowledgeEntityDeletion,
-  KnowledgeRelationDelete,
-  KnowledgeRelationDeletion,
-  KnowledgeSettingsChange,
-  KnowledgeSettingsUpdate,
-  KnowledgeViewRequest,
+  type KnowledgeEntityDelete,
+  type KnowledgeEntityDeletion,
+  type KnowledgeRelationDelete,
+  type KnowledgeRelationDeletion,
+  type KnowledgeSettingsChange,
+  type KnowledgeSettingsUpdate,
+  type KnowledgeViewRequest,
 } from './knowledge/knowledge';
-export type { AgentsMcp, McpConnectResult } from './mcp/mcp';
+export { AgentsMcp, type McpConnectResult } from './mcp/mcp';
 export type {
   McpConnectBegin,
   McpConnectReturn,
@@ -48,27 +57,25 @@ export type {
   McpServerWrite,
   McpToolsRefresh,
 } from './mcp/mcp-registry';
-export {
-  type AgentTurnMessage,
-  type AgentTurnModelClient,
-  createMastraTurnClient,
-} from './model/mastra-turn';
-export type { TextDelta } from './model/model-client';
-export type { AgentConfirmation, AgentHistoryEntry, AgentSessions } from './operations/agent-sessions';
+export type { AgentTurnMessage, AgentTurnModelClient } from './model/mastra-turn';
+export { ModelClient, type OnTextDelta, type TextDelta } from './model/model-client';
+export type { AgentConfirmation, AgentHistoryEntry } from './operations/agent-sessions';
+export { ControlOperations } from './operations/control-operations';
+export { StartOperations } from './operations/start-operations';
+export { ViewOperations } from './operations/view-operations';
 export type { DeepAgentRun } from './deep/deep-agent-run';
-export type { RootSession } from './store/sessions.repository';
 export type { EmbeddingInputType } from './providers/adapters';
 export { ModelProviderError } from './providers/model-provider-errors';
 export { PROVIDER_KINDS } from './providers/provider-kinds';
 export type { ProviderReadiness } from './providers/provider-readiness';
-export type {
+export {
   AgentsProviders,
-  ModelProviderAuditState,
-  ModelProviderRemoval,
-  ModelProviderRemove,
-  ModelProviderWrite,
-  ProviderConnection,
-  ProviderRegistryView,
+  type ModelProviderAuditState,
+  type ModelProviderRemoval,
+  type ModelProviderRemove,
+  type ModelProviderWrite,
+  type ProviderConnection,
+  type ProviderRegistryView,
 } from './providers/provider-registry';
 export type { RecordLibrary } from './start/record-library';
 export type { StartResolution } from './start/resolve-start';
@@ -80,8 +87,9 @@ export type {
 } from './start/snapshot';
 export { WAITING_RULE } from './tools/system/start-agent';
 export type { InCommitAgentTool } from './tools/tool';
-export type {
+export { ToolRegistry } from './tools/tool-registry';
+export {
   AgentsToolResults,
-  ToolResultSettingsChange,
-  ToolResultSettingsUpdate,
+  type ToolResultSettingsChange,
+  type ToolResultSettingsUpdate,
 } from './tools/tool-result-settings';

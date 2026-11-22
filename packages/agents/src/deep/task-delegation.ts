@@ -1,7 +1,16 @@
 import type { Logger } from '@agent-os/common';
 import { AGENT_TASK_TYPE, ToolOutcomeSchema } from '@agent-os/contracts';
-import type { Database, Executor, Transaction } from '@agent-os/db';
-import type { Runtime, StepEffects, Tracker, TrackerTask } from '@agent-os/runtime';
+import type {
+  AgentMessagesRepository,
+  AgentSessionTasksRepository,
+  AgentToolResultsRepository,
+  Database,
+  Executor,
+  StoredToolResult,
+  ToolResultSettingsRow,
+  Transaction,
+} from '@agent-os/db';
+import type { Trackers, StepEffects, Tracker, TrackerTask } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { descriptionLine } from '../chat-listing';
@@ -9,15 +18,9 @@ import type { CallState } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import type { DeepAgentSnapshot } from '../start/snapshot';
 import { snapshotDefinition } from '../start/snapshot-definition';
-import { type CallEnding, callRecords } from '../store/call-records.repository';
-import { history } from '../store/history.repository';
-import { sessionTasks } from '../store/session-tasks.repository';
-import { AnswerFieldSchema, type SessionInput, sessions } from '../store/sessions.repository';
-import {
-  type StoredToolResult,
-  type ToolResultSettingsRow,
-  toolResults,
-} from '../store/tool-results.repository';
+import type { CallEnding, CallRecords } from '../store/call-records';
+import type { History } from '../store/history';
+import { AnswerFieldSchema, type SessionInput, type Sessions } from '../store/sessions';
 import { wrapperText } from '../tools/large-result';
 import { decideTaskChange } from '../tools/system/task-list-rules';
 import type { InCommitAgentTool, ToolCaller, ToolDeclaration } from '../tools/tool';
@@ -34,7 +37,6 @@ import {
   type TableRow,
   type TaskArgs,
 } from './delegation-rules';
-import { singleTaskRuns } from './task-history.repository';
 
 /** Field limits of Contract «Инструмент `task`». */
 const ASSIGNMENT_MAX_LENGTH = 8_000;
@@ -184,8 +186,15 @@ export interface Delegations {
 export interface DelegationsDeps {
   /** The deep agent's history and task list are read from it before the commit. */
   readonly database: Database;
-  /** The outcomes of the tracker's tasks (`Runtime.trackers.list`). */
-  readonly trackers: Pick<Runtime['trackers'], 'list'>;
+  /** The session of each subagent, the `tool_sent` and the closing of each call, and the deep agent's task list. */
+  readonly sessions: Sessions;
+  readonly history: History;
+  readonly messageRows: AgentMessagesRepository;
+  readonly callRecords: CallRecords;
+  readonly sessionTaskRows: AgentSessionTasksRepository;
+  readonly toolResultRows: AgentToolResultsRepository;
+  /** The outcomes of the tracker's tasks (`Trackers.list`). */
+  readonly trackers: Pick<Trackers, 'list'>;
   /** The threshold of a stored result, as for an MCP result (tool-result-reading R-5). */
   readonly resultSettings: () => Promise<ToolResultSettingsRow>;
   /** `AGENT_MAX_DEPTH`. */
@@ -200,7 +209,11 @@ function deepAgentOf(caller: ToolCaller): DeepAgentSnapshot {
 }
 
 /** The brief of a deep agent `start_deep_agent` started: its first entry; `null` for any other task. */
-async function briefOf(reader: Executor, agentId: string): Promise<DeepAgentBrief | null> {
+async function briefOf(
+  history: History,
+  reader: Executor,
+  agentId: string,
+): Promise<DeepAgentBrief | null> {
   const [first] = await history.through(reader, agentId, 1);
   if (first?.kind !== 'task') return null;
   try {
@@ -273,6 +286,7 @@ function withLine(text: string, line: string | null): string {
 
 export function createDelegations(deps: DelegationsDeps): Delegations {
   const { database, trackers, resultSettings, maxDepth } = deps;
+  const { sessions, history, messageRows, callRecords, sessionTaskRows, toolResultRows } = deps;
 
   /** The ending of a single call: the answer, a long one stored as an MCP result is; a failure or a cancel as an error. */
   function singleEnding(
@@ -340,8 +354,8 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       const deepAgent = deepAgentOf(caller);
       const definition = snapshotDefinition(deepAgent);
       const [singleRuns, tasks] = await Promise.all([
-        singleTaskRuns(database, caller.agentId),
-        definition.taskList ? sessionTasks.read(database, caller.agentId) : Promise.resolve(null),
+        messageRows.singleTaskRuns(database, caller.agentId, TASK_TOOL),
+        definition.taskList ? sessionTaskRows.read(database, caller.agentId) : Promise.resolve(null),
       ]);
       const delegationCalls: DelegationCall[] = calls.map(({ call, args }) => ({ callId: call.callId, args }));
       return decideDelegations({
@@ -355,7 +369,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
 
     async open({ tx, effects, caller, accepted, logger }) {
       const deepAgent = deepAgentOf(caller);
-      const brief = await briefOf(tx, caller.agentId);
+      const brief = await briefOf(history, tx, caller.agentId);
       const children = accepted.flatMap((delegation) =>
         partsOf(delegation).map(({ description, body }) => {
           const snapshot = subagentSnapshot(deepAgent, delegation.subagent);
@@ -412,7 +426,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
           },
         ]);
         if (delegation.listTask !== null) {
-          await changeListTask(tx, caller.agentId, delegation.listTask, {
+          await changeListTask(sessionTaskRows, tx, caller.agentId, delegation.listTask, {
             status: 'in_progress',
             owner: delegation.subagent,
           });
@@ -458,8 +472,8 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
     async close(tx, agentId, { call, ending, stored, completedTask }) {
       const closed = await callRecords.close(tx, agentId, call, ending);
       if (closed === undefined) return undefined;
-      if (stored !== null) await toolResults.insert(tx, { taskId: agentId, callId: call.callId, ...stored });
-      if (completedTask !== null) await changeListTask(tx, agentId, completedTask, { status: 'completed' });
+      if (stored !== null) await toolResultRows.insert(tx, { taskId: agentId, callId: call.callId, ...stored });
+      if (completedTask !== null) await changeListTask(sessionTaskRows, tx, agentId, completedTask, { status: 'completed' });
       return closed;
     },
   };
@@ -470,15 +484,16 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
  * the deep agent's steps write its list, and the call was checked against it, so a refusal here is a defect.
  */
 async function changeListTask(
+  sessionTaskRows: AgentSessionTasksRepository,
   tx: Transaction,
   agentId: string,
   taskId: number,
   change: { readonly status: 'in_progress' | 'completed'; readonly owner?: string },
 ): Promise<void> {
-  const state = await sessionTasks.read(tx, agentId);
+  const state = await sessionTaskRows.read(tx, agentId);
   const decision = decideTaskChange(state, { tool: 'update', args: { taskId, ...change } });
   if (decision.kind === 'refused') {
     throw new Error(`Task ${taskId} of agent ${agentId} cannot become ${change.status}: ${decision.text}`);
   }
-  await sessionTasks.write(tx, agentId, decision);
+  await sessionTaskRows.write(tx, agentId, decision);
 }

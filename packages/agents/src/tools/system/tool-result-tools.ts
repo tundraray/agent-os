@@ -1,7 +1,6 @@
-import type { Database } from '@agent-os/db';
+import type { AgentToolResultsRepository, Database } from '@agent-os/db';
 import { z } from 'zod';
 
-import { toolResults } from '../../store/tool-results.repository';
 import { pageOf, RESULT_NOT_FOUND, searchOf } from '../large-result';
 import type { OutsideAgentTool, ToolCaller, ToolRunResult } from '../tool';
 
@@ -52,27 +51,28 @@ function notFound(): ToolRunResult {
 export interface ToolResultToolsDeps {
   /** The stored results and the settings row are read from it on every call. */
   readonly database: Database;
+  readonly toolResultRows: AgentToolResultsRepository;
 }
 
 /**
  * `read_tool_result` and `search_tool_result` (tool-result-reading R-2): in every session, without a grant.
- * Both read only through `toolResults.findForRun` with the caller's session and owner, so a result of another
+ * Both read only through `AgentToolResultsRepository.findForRun` with the caller's session and owner, so a result of another
  * session or owner answers exactly as a missing one. Their own answers are never stored: only the direct MCP
  * path of the runner stores a result.
  */
 export function createToolResultTools(
   deps: ToolResultToolsDeps,
 ): [OutsideAgentTool<ReadToolResultArgs>, OutsideAgentTool<SearchToolResultArgs>] {
-  const { database } = deps;
+  const { database, toolResultRows } = deps;
 
   /** The stored text of the caller's own call, and the settings, read now. */
   async function storedOf(callId: string, caller: ToolCaller) {
-    const found = await toolResults.findForRun(database, {
+    const found = await toolResultRows.findForRun(database, {
       callId,
       taskId: caller.agentId,
       ownerId: caller.ownerId,
     });
-    return found === undefined ? undefined : { text: found.text, settings: await toolResults.readSettings(database) };
+    return found === undefined ? undefined : { text: found.text, settings: await toolResultRows.readSettings(database) };
   }
 
   const read: OutsideAgentTool<ReadToolResultArgs> = {

@@ -1,26 +1,59 @@
-import type { TaskHandler } from './step-contract';
+import { Injectable } from '@nestjs/common';
+import type { LiveTaskType, TaskHandler } from './step-contract';
+
+/** What creation checks of a task type, stateless or live. */
+export type RegisteredTaskType = Pick<TaskHandler, 'type' | 'inputSchema'>;
 
 /**
- * Handlers of this process, registered before `Runtime.start()`. Creation accepts and the
- * dispatcher claims only the types registered here.
+ * Task types of this process, registered in `onModuleInit`, before `RuntimeWorkers.start()`.
+ * Creation accepts and the dispatcher claims only the types registered here. A stateless handler
+ * (`register`) serves every task of its type and keeps nothing between steps; a live type
+ * (`registerLive`) gives each task its own object, kept by `LiveTasks`.
  */
+@Injectable()
 export class HandlerRegistry {
   private readonly handlers = new Map<string, TaskHandler>();
+  private readonly liveTypes = new Map<string, LiveTaskType>();
 
   /** Throws on a second handler of the same type, which stops the start. */
   register(handler: TaskHandler): void {
-    if (this.handlers.has(handler.type)) {
-      throw new Error(`Handler of task type "${handler.type}" is already registered`);
-    }
+    this.checkFree(handler.type);
     this.handlers.set(handler.type, handler);
   }
 
-  get(type: string): TaskHandler | undefined {
+  /** Throws on a second registration of the same type, which stops the start. */
+  registerLive(type: LiveTaskType): void {
+    this.checkFree(type.type);
+    this.liveTypes.set(type.type, type);
+  }
+
+  get(type: string): RegisteredTaskType | undefined {
+    return this.handlers.get(type) ?? this.liveTypes.get(type);
+  }
+
+  /** The stateless handler of the type. */
+  handler(type: string): TaskHandler | undefined {
     return this.handlers.get(type);
   }
 
-  /** Registered task types. */
+  /** The live type of that name. */
+  live(type: string): LiveTaskType | undefined {
+    return this.liveTypes.get(type);
+  }
+
+  /** Registered task types, stateless and live. */
   types(): string[] {
-    return [...this.handlers.keys()];
+    return [...this.handlers.keys(), ...this.liveTypes.keys()];
+  }
+
+  /** Registered live task types. */
+  liveTypeNames(): string[] {
+    return [...this.liveTypes.keys()];
+  }
+
+  private checkFree(type: string): void {
+    if (this.handlers.has(type) || this.liveTypes.has(type)) {
+      throw new Error(`Handler of task type "${type}" is already registered`);
+    }
   }
 }

@@ -7,12 +7,44 @@
 ## Shape
 
 ```mermaid
+---
+title: "Откуда сессия получает инструменты"
+config:
+  theme: base
+  look: classic
+  themeVariables:
+    primaryColor: "#eef1f5"
+    primaryBorderColor: "#4b5563"
+    primaryTextColor: "#1a1a1a"
+    lineColor: "#6b7280"
+  flowchart:
+    curve: step
+  themeCSS: |
+    @keyframes litr_tools{0%,30%{stroke:#1d4ed8;stroke-width:6px}33.3%,100%{stroke:#9ec1f7;stroke-width:2px}}
+---
 flowchart LR
-  R[runtime: владелец задачи] --> A[класс агента]
-  S[снимок запуска] --> A
-  A -- "владелец + объявление" --> L["toolsFor (библиотека инструментов)"]
-  G[AccessGate: права сотрудника] --> L
-  L --> T[набор сессии: системные + внешние]
+    entry(["▶ runtime отдаёт шаг<br/>с владельцем задачи"])
+    snap["снимок запуска"]
+    agent["1 · класс агента<br/>объявление"]
+    lib["2 · toolsFor<br/>библиотека инструментов"]
+    gate["AccessGate<br/>права сотрудника"]
+    set["3 · набор сессии<br/>системные и внешние"]
+    entry --> agent
+    snap --> agent
+    agent e1@-->|"владелец и объявление"| lib
+    gate -->|"права"| lib
+    lib e2@-->|"набор"| set
+    set e3@-->|"инструменты модели"| agent
+    classDef r1 stroke:#9ec1f7,stroke-width:2px,animation:litr_tools 3.6s linear 0s infinite
+    classDef r2 stroke:#9ec1f7,stroke-width:2px,animation:litr_tools 3.6s linear 1.2s infinite
+    classDef r3 stroke:#9ec1f7,stroke-width:2px,animation:litr_tools 3.6s linear 2.4s infinite
+    class e1 r1
+    class e2 r2
+    class e3 r3
+    classDef entry fill:#ffffff,stroke:#1f2937,stroke-width:1.5px,color:#1a1a1a
+    classDef unchanged fill:#eef1f5,stroke:#4b5563,stroke-width:1.5px,color:#1a1a1a
+    class entry entry
+    class snap,agent,lib,gate,set unchanged
 ```
 
 - **Один вход** — `toolsFor(ownerId, declaration)` реестра. Владельца даёт runtime в контексте шага, объявление — класс агента. Ответ — набор инструментов сессии; между шагами он не хранится.
@@ -27,7 +59,7 @@ flowchart LR
 - `packages/agents/src/tools/tool.ts` — `ToolDeclaration`, контракт инструмента с `describe`
 - `packages/agents/src/tools/tool-registry.ts` — `toolsFor`, `checkTools`, регистрация
 - `packages/agents/src/agent/base-agent.ts` — `toolDeclaration`; `agent/chat-agent.ts` — объявление корня
-- `packages/agents/src/create-agents.ts` — регистрация системных инструментов; `apps/api/src/library/record-tools.ts` — инструменты записей
+- `packages/agents/src/tools/system/index.ts` — набор системных инструментов; `apps/api/src/library/record-tools.ts` — инструменты записей
 
 ## Not For
 

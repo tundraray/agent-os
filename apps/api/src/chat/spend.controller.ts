@@ -1,9 +1,8 @@
 import { Controller, Get, Inject, Req } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import { loggedRoute } from '../common/logged-route';
 import type { SpendResponse } from '@agent-os/contracts';
 import type { AuthedRequest } from '../identity/auth-user';
-import { APP_LOGGER } from '../logging/app-logger';
 import { AgentControlService } from './agent-control.service';
 import { chatRoute } from './chat.errors';
 
@@ -14,7 +13,7 @@ export class SpendController {
 
   constructor(
     private readonly control: AgentControlService,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.spend' });
   }

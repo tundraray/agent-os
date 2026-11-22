@@ -1,19 +1,28 @@
 import { createLogger } from '@agent-os/common';
 import { type RecordHeader, RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  AgentCodeCallsRepository,
+  AgentMcpAccountsRepository,
+  AgentMcpServersRepository,
+  AgentMessagesRepository,
+  type Database,
+} from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 import { type AccessDeniedEntry, type AccessGate, type AuditRecord, OwnerDisabledError } from '../../access-gate';
 import type { JsonSchemaObject } from '../../model/mastra-turn';
 import type { AgentSnapshot } from '../../start/snapshot';
 import type { CallState } from '../../history/call-state';
-import type { Session, SessionInput } from '../../store/sessions.repository';
+import type { McpAccounts } from '../../mcp/mcp-accounts';
+import { CallRecords } from '../../store/call-records';
+import { History } from '../../store/history';
+import type { Session, SessionInput } from '../../store/sessions';
 import type { AgentDeps } from '../../agent/agent-deps';
 import { ChatAgent, type ChatAgentDeps } from '../../agent/chat-agent';
 import type { AgentTool, ToolCaller } from '../tool';
 import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate';
-import { createToolRegistry, type McpSessionTool, type SessionTool } from '../tool-registry';
-import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from '../tool-runner';
+import { type McpSessionTool, type SessionTool, ToolRegistry } from '../tool-registry';
+import { ToolRunner } from '../tool-runner';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
 // (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`);
@@ -138,29 +147,34 @@ function allowsOf(pairs: readonly string[]) {
 
 interface RunnerDoubles {
   readonly pairs?: readonly string[] | 'owner_disabled';
-  readonly credentialsFor?: ToolRunnerOptions['accounts']['credentialsFor'];
+  readonly credentialsFor?: McpAccounts['credentialsFor'];
   readonly audits?: AuditRecord[];
 }
 
 /** A runner over the gate double whose client sends nothing: a call that reaches a server throws. */
 function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
-  return createToolRunner({
-    client: { callTool: NO_SERVER_CALLS },
-    accounts: { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
-    access: gateOf(doubles.pairs ?? []),
-    audit: async (entry) => {
+  const runner = new ToolRunner(
+    new CallRecords(new History(new AgentMessagesRepository()), new AgentCodeCallsRepository()),
+    { callTool: NO_SERVER_CALLS },
+    { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
+    gateOf(doubles.pairs ?? []),
+    async (entry) => {
       doubles.audits?.push(entry);
     },
-    callTimeoutMs: 1000,
-    resultSettings: async () => ({
-      storeFromChars: 50_000,
-      previewChars: 2_000,
-      readMaxTokens: 25_000,
-      updatedAt: null,
-    }),
-    maskSecrets: (text) => text,
-    startChildFor: () => async () => ({ agentId: 'child-1' }),
-  });
+    { mcpCallTimeoutMs: 1000 },
+    {} as Database,
+    {
+      readSettings: async () => ({
+        storeFromChars: 50_000,
+        previewChars: 2_000,
+        readMaxTokens: 25_000,
+        updatedAt: null,
+      }),
+    },
+    (text) => text,
+  );
+  runner.useStartChild(() => async () => ({ agentId: 'child-1' }));
+  return runner;
 }
 
 /** `ToolRunner.check` with the given pairs; a check calls no server. */
@@ -194,12 +208,14 @@ const RUN_CODE_STUB: AgentTool = {
 
 /** `check` of a `run_code` call against the set the registry builds for a child running `NO_TOOLS`. */
 async function checkRunCode(runClass: 'read' | 'write', script: string): Promise<Gate> {
-  const registry = createToolRegistry({
-    runCode: RUN_CODE_STUB,
+  const registry = new ToolRegistry(
     // A declaration that names no server reads nothing of the registry.
-    database: {} as Database,
-    access: gateOf([]),
-  });
+    {} as Database,
+    new AgentMcpServersRepository(),
+    new AgentMcpAccountsRepository(),
+    gateOf([]),
+  );
+  registry.useRunCode(RUN_CODE_STUB);
   const sessionTools = await registry.toolsFor(OWNER, {
     servers: [],
     system: [],
@@ -570,8 +586,9 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
               audits.push(entry);
             },
           };
-          const agent = new ChatAgent(deps as ChatAgentDeps);
-          const result = await agent.toolStep(stepContext(), SESSION, [OPEN_PURGE], [OPEN_PURGE]);
+          const ctx = stepContext();
+          const agent = new ChatAgent(deps as ChatAgentDeps, { task: ctx, input: HELPER_INPUT });
+          const result = await agent.toolStep(ctx, SESSION, [OPEN_PURGE], [OPEN_PURGE]);
           return result.outcome;
         }),
       { end: 'continue', audits: [DENIED_PURGE], credentialsRead: 0 },

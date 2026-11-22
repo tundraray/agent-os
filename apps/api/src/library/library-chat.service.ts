@@ -6,11 +6,14 @@ import {
   type LibraryRecordCard,
   type RecordBody,
 } from '@agent-os/contracts';
-import type { Executor, Transaction } from '@agent-os/db';
+import {
+  type Executor,
+  LibraryRecordsRepository,
+  type Transaction,
+} from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import { LibraryRecords, recordFields } from './library-records';
 import { LibrarySave } from './library-save';
-import { lockRecord } from './library.repository';
 import type {
   ChatChange,
   ChatContext,
@@ -165,6 +168,7 @@ export class LibraryChatService {
   constructor(
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
+    private readonly repository: LibraryRecordsRepository,
   ) {}
 
   /**
@@ -354,7 +358,7 @@ export class LibraryChatService {
       throw new Error(
         `${card.action} card of record ${card.recordId} has no previous version`,
       );
-    if (!(await lockRecord(tx, card.recordId))) return chatRefused('not_found');
+    if (!(await this.repository.lock(tx, card.recordId))) return chatRefused('not_found');
     const target = await this.chatTarget(tx, context, card.recordId);
     const scope = chatScope(target, context, card.action);
     if (scope.outcome === 'refused') return scope;

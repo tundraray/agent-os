@@ -1,25 +1,36 @@
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { createDatabase, type Database } from '@agent-os/db';
+import { DATABASE, type Database, DbModule } from '@agent-os/db';
 import {
+  CLOCK,
   type Clock,
-  createRuntime,
+  Decisions,
+  EventConsumerRegistry,
+  EventLog,
+  HandlerRegistry,
+  Inbox,
   type ModelPrice,
   parseRuntimeConfig,
-  type Runtime,
   type RuntimeConfig,
+  RuntimeModule,
+  RuntimeWorkers,
   systemClock,
   type TaskHandler,
+  TaskControl,
+  TokenLedger,
+  Trackers,
 } from '@agent-os/runtime';
+import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
 import { databaseUrl } from './database-url';
+import { loggerModule } from './loggerModule';
 import { ensureHandlerRowsTable } from './testHandlers';
 
 /**
- * Test assembly of the runtime (design-runtime.md, Test Strategy): the package's own
- * `createRuntime` over its own pool, without `apps/api`. The package is imported by name, as the child of
- * E2E-1 imports it. A second instance is
- * a second harness over the same database.
+ * Test assembly of the runtime (design-runtime.md, Test Strategy): a Nest context of the package's
+ * own `RuntimeModule` over `DbModule` with its own pool, without `apps/api`. The package is imported
+ * by name, as the child of E2E-1 imports it. A second instance is a second harness over the same
+ * database.
  */
 
 /*
@@ -76,12 +87,24 @@ export interface RuntimeHarnessOptions {
   startWorkers?: boolean;
 }
 
-export interface RuntimeHarness extends Runtime {
+export interface RuntimeHarness {
+  readonly handlers: HandlerRegistry;
+  readonly tasks: TaskControl;
+  readonly inbox: Inbox;
+  readonly decisions: Decisions;
+  readonly trackers: Trackers;
+  readonly events: EventLog;
+  readonly eventConsumers: EventConsumerRegistry;
+  readonly ledger: TokenLedger;
+  /** Starts the workers (`RuntimeWorkers.start`). */
+  start(): void;
+  /** Stops the workers (`RuntimeWorkers.stop`). */
+  stop(): Promise<void>;
   /** The Drizzle client of the runtime's pool. */
   readonly db: Database;
   /** Every record the runtime logged, in order: the in-memory sink of `@agent-os/common/testing`. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, then closes the pool — the pool is closed even when the stop fails. */
+  /** Closes the context: the workers stop, then `DbModule` closes the pool. */
   close(): Promise<void>;
 }
 
@@ -112,30 +135,40 @@ export async function createRuntimeHarness(
   };
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
-  const database = createDatabase({
-    connectionString: databaseUrl(),
-    poolMax: config.dbPoolMax,
-  });
-  await ensureHandlerRowsTable(database.db);
-  const runtime = createRuntime({
-    database,
-    config,
-    logger,
-    clock: options.clock ?? systemClock,
-  });
-  for (const handler of options.handlers) runtime.handlers.register(handler);
-  if (options.startWorkers ?? true) runtime.start();
+  const app = await Test.createTestingModule({
+    imports: [
+      loggerModule(logger),
+      DbModule.forRootAsync({
+        useFactory: () => ({ connectionString: databaseUrl(), poolMax: config.dbPoolMax }),
+      }),
+      RuntimeModule.forRootAsync({ useFactory: () => config }),
+    ],
+  })
+    .overrideProvider(CLOCK)
+    .useValue(options.clock ?? systemClock)
+    .compile();
+  const db = app.get<Database>(DATABASE);
+  await ensureHandlerRowsTable(db);
+  const handlers = app.get(HandlerRegistry);
+  for (const handler of options.handlers) handlers.register(handler);
+  const workers = app.get(RuntimeWorkers);
+  // The context's start runs `onApplicationBootstrap`, which starts the workers; held workers
+  // start by `start()`. `close()` runs the shutdown hooks either way.
+  if (options.startWorkers ?? true) await app.init();
 
   return {
-    ...runtime,
-    db: database.db,
+    handlers,
+    tasks: app.get(TaskControl),
+    inbox: app.get(Inbox),
+    decisions: app.get(Decisions),
+    trackers: app.get(Trackers),
+    events: app.get(EventLog),
+    eventConsumers: app.get(EventConsumerRegistry),
+    ledger: app.get(TokenLedger),
+    start: () => workers.start(),
+    stop: () => workers.stop(),
+    db,
     logs: sink.records,
-    close: async () => {
-      try {
-        await runtime.stop();
-      } finally {
-        await database.close();
-      }
-    },
+    close: () => app.close(),
   };
 }

@@ -397,7 +397,7 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
   //   twice or repeats the external action, a lost-step flag the handler never sees, a decision or a pending message dropped by the restart, a step that kills its process forever and is requeued forever.
   // Behavior: perturbation (process killed at point P) -> a fresh process continues -> the end state equals the uninterrupted reference run; each effect counted once
   // @category: e2e
-  // @dependency: full-system (a child process running createDatabase + createRuntime through test/support/runtimeChildMain.ts: Dispatcher, Inbox, Decisions, RecoverySweeper, CrashPoints; Postgres)
+  // @dependency: full-system (a child process running DbModule + RuntimeModule through test/support/runtimeChildMain.ts: Dispatcher, Inbox, Decisions, RecoverySweeper, CrashPoints; Postgres)
   // @complexity: high
   //
   // Verification items (table-driven by perturbation; every row compares its end state to the reference end state):

@@ -28,7 +28,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createLatch, type ScriptedToolCall } from '@agent-os/agents/testing';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   AGENTS_BRIEF_CONFIRMATION,
   AdminUserSummarySchema,
@@ -53,7 +53,6 @@ import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { APP_LOGGER } from '../src/logging/app-logger';
 import {
   addModel,
   allowRole,
@@ -469,7 +468,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         shown?.apiKeyLast4,
       ];
       const path = `/admin/model-providers/${KEYED_PROVIDER}`;
-      const logger = app.get<Logger>(APP_LOGGER);
+      const logger = app.get<Logger>(LOGGER);
       /** The one captured console line holding `marker`, parsed. */
       const probeLine = (marker: string) => {
         const lines = harness.log.filter((line) => line.includes(marker));
@@ -997,7 +996,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     'INT-5: embeddings are charged to the starter without grant or quota, refused for a disabled employee, and recorded as platform spend when no employee is named',
     async () => {
       const { app } = harness;
-      const logger = app.get<Logger>(APP_LOGGER);
+      const logger = app.get<Logger>(LOGGER);
       const embed = (ownerId: string | null, texts: readonly string[]) =>
         harness.agents.embeddings.embed({
           texts,

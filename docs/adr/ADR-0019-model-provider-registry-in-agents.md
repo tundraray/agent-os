@@ -80,7 +80,7 @@ Accepted (2026-11-20). Следует [ADR-0014](ADR-0014-mcp-registry-owned-by-
 
 - [design-core.md](../features/model-providers/design-core.md) — KD-1, KD-2, KD-7, Contract Definitions, Data Model (инвариант 5)
 - [prd.md](../features/model-providers/prd.md) — FR-01, FR-02, NFR-02
-- [code-system README](../code-system/README.md) — Module Boundaries, строка «Провайдеры моделей в `agents`»
+- [code-system, пакет `agents`](../code-system/packages/agents.md) — Правила, пункт «Провайдеры моделей»
 - [ADR-0014](ADR-0014-mcp-registry-owned-by-agents.md)
 - [ADR-0015](ADR-0015-access-gate-and-model-catalogue.md)
 - [ADR-0018](ADR-0018-model-id-provider-prefix.md)

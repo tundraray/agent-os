@@ -1,16 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
-import type { Database, DatabaseConnection, Executor } from '@agent-os/db';
-import { isUuid } from '../common/is-uuid';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { existingRoleIds, roleNames } from './roles.repository';
 import {
-  existingUserIds,
-  findUserById,
-  hasAdminRight,
-  rolesOfUsers,
-  userNames,
-} from './users.repository';
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type Executor,
+  IdentityRolesRepository,
+  IdentityUsersRepository,
+} from '@agent-os/db';
+import { isUuid } from '../common/is-uuid';
 
 /** Role ids and employee ids, read together. */
 export interface HolderIds {
@@ -45,28 +43,32 @@ function uniqueUuids(ids: readonly string[]): string[] {
 export class IdentityDirectory {
   private readonly db: Database;
 
-  constructor(@Inject(RUNTIME_DATABASE) database: DatabaseConnection) {
+  constructor(
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly users: IdentityUsersRepository,
+    private readonly roles: IdentityRolesRepository,
+  ) {
     this.db = database.db;
   }
 
   /** Ids of the employee's roles at the moment of the call; none for an unknown employee. */
   async rolesOf(userId: string): Promise<string[]> {
     if (!isUuid(userId)) return [];
-    const roles = await rolesOfUsers(this.db, [userId]);
+    const roles = await this.roles.ofUsers(this.db, [userId]);
     return roles.map((role) => role.id);
   }
 
   /** Whether the employee is on; `false` for an unknown one. */
   async isActive(userId: string): Promise<boolean> {
     if (!isUuid(userId)) return false;
-    const user = await findUserById(this.db, userId);
+    const user = await this.users.findById(this.db, userId);
     return user?.status === UserStatusSchema.enum.active;
   }
 
   /** Whether the employee has the admin right now, by the rule of the session; `false` for an unknown one. */
   async isAdmin(userId: string): Promise<boolean> {
     if (!isUuid(userId)) return false;
-    return hasAdminRight(this.db, userId);
+    return this.users.hasAdminRight(this.db, userId);
   }
 
   /** Of the roles and employees named, those that exist; an id that is not a UUID names nobody. */
@@ -74,8 +76,8 @@ export class IdentityDirectory {
     ids: HolderIds,
   ): Promise<{ roleIds: string[]; userIds: string[] }> {
     const [roleIds, userIds] = await Promise.all([
-      existingRoleIds(this.db, ids.roleIds.filter(isUuid)),
-      existingUserIds(this.db, ids.userIds.filter(isUuid)),
+      this.roles.existingIds(this.db, ids.roleIds.filter(isUuid)),
+      this.users.existingIds(this.db, ids.userIds.filter(isUuid)),
     ]);
     return { roleIds, userIds };
   }
@@ -89,7 +91,7 @@ export class IdentityDirectory {
     executor: Executor,
     roleIds: readonly string[],
   ): Promise<RoleName[]> {
-    return roleNames(executor, uniqueUuids(roleIds));
+    return this.roles.names(executor, uniqueUuids(roleIds));
   }
 
   /** The same for employees, each with whether he is on. */
@@ -97,7 +99,7 @@ export class IdentityDirectory {
     executor: Executor,
     userIds: readonly string[],
   ): Promise<UserName[]> {
-    const users = await userNames(executor, uniqueUuids(userIds));
+    const users = await this.users.names(executor, uniqueUuids(userIds));
     return users.map(({ id, name, status }) => ({
       id,
       name,

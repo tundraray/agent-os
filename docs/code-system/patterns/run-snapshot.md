@@ -15,7 +15,6 @@
 ## Reference
 
 - `packages/agents/src/start/resolve-start.ts` — процедура старта
-- `packages/agents/src/store/sessions.repository.ts` — схема входа задачи `AgentTaskInputSchema` и чтение снимка `sessionInputOf`
 
 ## Not For
 

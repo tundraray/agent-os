@@ -1,16 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  type IdentityUserRow,
+  IdentityUsersRepository,
+} from '@agent-os/db';
 import { normalizeIdentifier } from './identity-input';
 import { verifyPassword } from './password';
-import { findUserByLogin, type UserRow } from './users.repository';
 
 /** The real reason of a refused password; the client always gets the same answer (KD-5). */
 export type PasswordRejection = 'unknown_login' | 'wrong_password';
 
 export type PasswordCheck =
-  | { ok: true; user: UserRow }
-  | { ok: false; reason: PasswordRejection; user: UserRow | undefined };
+  | { ok: true; user: IdentityUserRow }
+  | { ok: false; reason: PasswordRejection; user: IdentityUserRow | undefined };
 
 /**
  * Checks a login and a password (KD-5, C3 api): the employee by the normalized login, then the
@@ -20,12 +24,18 @@ export type PasswordCheck =
 export class PasswordSignIn {
   private readonly db: Database;
 
-  constructor(@Inject(RUNTIME_DATABASE) database: DatabaseConnection) {
+  constructor(
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly users: IdentityUsersRepository,
+  ) {
     this.db = database.db;
   }
 
   async check(login: string, password: string): Promise<PasswordCheck> {
-    const user = await findUserByLogin(this.db, normalizeIdentifier(login));
+    const user = await this.users.findByLogin(
+      this.db,
+      normalizeIdentifier(login),
+    );
     const matches = await verifyPassword(password, user?.passwordHash ?? null);
     if (user === undefined) return { ok: false, reason: 'unknown_login', user };
     if (!matches) return { ok: false, reason: 'wrong_password', user };

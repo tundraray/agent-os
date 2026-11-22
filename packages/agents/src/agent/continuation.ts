@@ -1,7 +1,7 @@
 import type { StepMessage } from '@agent-os/runtime';
 
 import type { ResumeMark } from '../resume';
-import type { Session } from '../store/sessions.repository';
+import type { Session } from '../store/sessions';
 import { resumeMarkOf } from './deliver';
 
 /** A finished agent continues with this step (Flow 6); `stop` is set when the runtime had stopped it (Flow 7). */

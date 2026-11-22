@@ -7,13 +7,22 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
+import {
+  DATABASE,
+  type Database,
+  type Transaction,
+  RuntimeDecisionsRepository,
+  type RuntimeDecisionRow,
+  type RuntimeDecisionView,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 import { RuntimeError } from '../errors';
-import type { EventLog } from '../events/event-log.repository';
+import { EventLog } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
 import { retryingTransaction } from '../runtime-tx';
-import type { TaskRepository } from '../tasks/task.repository';
-import type { DecisionRepository, DecisionRow, DecisionView } from './decisions.repository';
+import { RUNTIME_LOGGER } from '../runtime.tokens';
+import { Tasks } from '../tasks/tasks';
 
 /** A request of a tree, in any status, as `listTree` returns it. */
 export interface TreeDecision {
@@ -38,10 +47,11 @@ export interface DecisionRequest {
   payload: unknown;
 }
 
-export interface DecisionsDeps {
+interface DecisionsDeps {
   db: Database;
-  repository: DecisionRepository;
-  tasks: TaskRepository;
+  repository: RuntimeDecisionsRepository;
+  tasks: Tasks;
+  taskRows: RuntimeTasksRepository;
   events: EventLog;
   logger: Logger;
 }
@@ -56,14 +66,33 @@ const EVENT = RuntimeEventTypeSchema.enum;
  * committed step — the one whose commit sets `delivered_step`. Lock order: the task before its
  * request, as in a step's commit and in a stop.
  */
+@Injectable()
 export class Decisions {
-  constructor(private readonly deps: DecisionsDeps) {}
+  private readonly deps: DecisionsDeps;
+
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(RuntimeDecisionsRepository) repository: RuntimeDecisionsRepository,
+    @Inject(Tasks) tasks: Tasks,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(RUNTIME_LOGGER) logger: Logger,
+  ) {
+    this.deps = {
+      db,
+      repository,
+      tasks,
+      taskRows,
+      events,
+      logger: logger.child({ service: 'decisions' }),
+    };
+  }
 
   /**
    * Opens the request of an `await_decision` step with `decision.requested`, in the step's commit
    * transaction under the task's lock. The caller puts the task in `waiting` (`decision`).
    */
-  async open(tx: Transaction, task: TaskRow, request: DecisionRequest): Promise<DecisionRow> {
+  async open(tx: Transaction, task: TaskRow, request: DecisionRequest): Promise<RuntimeDecisionRow> {
     const row = await this.deps.repository.insert(tx, {
       decisionId: randomUUID(),
       taskId: task.taskId,
@@ -81,7 +110,7 @@ export class Decisions {
   }
 
   /** The task's resolved request that no committed step has received yet; read by the claim. */
-  loadUndelivered(tx: Transaction, taskId: string): Promise<DecisionRow | undefined> {
+  loadUndelivered(tx: Transaction, taskId: string): Promise<RuntimeDecisionRow | undefined> {
     return this.deps.repository.findUndelivered(tx, taskId);
   }
 
@@ -149,13 +178,13 @@ export class Decisions {
     ownerId: string,
     resolution: unknown,
   ): Promise<{ outcome: ResolveOutcome; taskId: string; rootId: string }> {
-    const { repository, tasks, events } = this.deps;
+    const { repository, tasks, taskRows, events } = this.deps;
     const found = await repository.findTaskAndOwner(tx, decisionId);
     if (found?.ownerId !== ownerId) {
       throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
     }
     // The task first, then its request: the order of a step's commit and of a stop.
-    const task = await tasks.lock(tx, found.taskId);
+    const task = await taskRows.lock(tx, found.taskId);
     const request = await repository.lock(tx, decisionId);
     // A request of a deleted tree answers as a missing one: the stop cancelled it, and
     // `already_resolved` would tell the deleted tree apart.
@@ -192,6 +221,6 @@ export class Decisions {
   }
 }
 
-function toTreeDecision(row: DecisionView): TreeDecision {
+function toTreeDecision(row: RuntimeDecisionView): TreeDecision {
   return { ...row, status: DecisionStatusSchema.parse(row.status) };
 }

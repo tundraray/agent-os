@@ -3,7 +3,7 @@
 // Test Type: End-to-End Test (child-process harness: a real process is killed, a second one continues)
 //
 // Harness: the child-process technique of `packages/runtime/test/agent-platform-runtime.e2e-spec.ts`. Here the child (`test/support/codeRunChildMain.ts`, run from source through `tsx`, started by
-// `test/support/codeRunChild.ts`) is an API-equivalent process with `createRuntime` + `createAgents` + the REAL `packages/code-runner` executor, a scripted model and the MCP fixture over real Postgres;
+// `test/support/codeRunChild.ts`) is an API-equivalent process with `RuntimeModule` + `createAgents` + the REAL `packages/code-runner` executor, a scripted model and the MCP fixture over real Postgres;
 // the test process starts the fixture process (through its own harness, which registers the run's servers at it before the first child starts; the children only read the registry rows), so the
 // fixture outlives every killed child, and `FIXTURE_CALL_LOG` is the evidence of what reached a server across all processes. The test kills the child from outside while the fixture holds a call of the script (`holdCall`); a fresh child
 // without the hold continues. The test process itself only starts agents and decides requests (`createAgentsHarness` with the runtime workers off). Run with

@@ -1,14 +1,14 @@
 import type { Database } from '@agent-os/db';
-import type { Runtime } from '@agent-os/runtime';
+import type { TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { agentStatus } from '../../agent-view';
-import { sessions } from '../../store/sessions.repository';
+import type { Sessions } from '../../store/sessions';
 import { descendantsOf } from '../../task-tree';
 import type { OutsideAgentTool } from '../tool';
 
 /** The task operations the built-in tools use. */
-export type BuiltinTasks = Pick<Runtime['tasks'], 'listTree' | 'stop'>;
+export type BuiltinTasks = Pick<TaskControl, 'listTree' | 'stop'>;
 
 const ListAgentsArgsSchema = z.object({});
 type ListAgentsArgs = z.infer<typeof ListAgentsArgsSchema>;
@@ -16,6 +16,7 @@ type ListAgentsArgs = z.infer<typeof ListAgentsArgsSchema>;
 export interface ListAgentsDeps {
   readonly tasks: BuiltinTasks;
   readonly database: Database;
+  readonly sessions: Sessions;
 }
 
 /** `list_agents` (design-agents.md, «Инструменты»): the caller's descendants — id, description, name, model, status. */
@@ -30,7 +31,7 @@ export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<Lis
     async execute({ caller }) {
       const tree = await deps.tasks.listTree(caller.rootId, caller.ownerId);
       const descendants = descendantsOf(tree, caller.agentId);
-      const sessionsById = await sessions.getMany(
+      const sessionsById = await deps.sessions.getMany(
         deps.database,
         descendants.map((task) => task.taskId),
       );

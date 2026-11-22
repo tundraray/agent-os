@@ -1,8 +1,9 @@
 import type { Transaction } from '@agent-os/db';
-import { DEEP_AGENT_TASK_TYPE, ToolOutcomeSchema } from '@agent-os/contracts';
+import { ToolOutcomeSchema } from '@agent-os/contracts';
 import type { StepContext } from '@agent-os/runtime';
 
 import type { AgentDeps } from '../agent/agent-deps';
+import type { AgentRun } from '../agent/agent-state';
 import { BaseAgent } from '../agent/base-agent';
 import type {
   CallClosing,
@@ -12,13 +13,11 @@ import type {
   FinalSubagentReport,
 } from '../agent/delegation';
 import type { CallState } from '../history/call-state';
-import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository';
 import type { DeepAgentSnapshot, RunSnapshot } from '../start/snapshot';
 import type { SessionTool } from '../tools/tool-registry';
 import { learningRunOf, TASK_TOOL } from './deep-definition';
 import type { TaskArgs } from './delegation-rules';
 import { createDelegations, type Delegations, type DelegationsDeps, reportOf, type TaskCall } from './task-delegation';
-import { lastSingleTask } from './task-history.repository';
 
 const { refused } = ToolOutcomeSchema.enum;
 
@@ -33,28 +32,30 @@ function deepAgentOf(snapshot: RunSnapshot, agentId: string): DeepAgentSnapshot 
 export type DeepAgentDeps = AgentDeps & DelegationsDeps;
 
 /**
- * The deep agent over the shared step of `BaseAgent` (deep-agents KD-2; design-task.md KD-4, KD-6): it gives
+ * The deep agent, the `deep_agent` task type, over the shared step of `BaseAgent` (deep-agents KD-2; design-task.md KD-4, KD-6): it gives
  * work to its subagents with `task`, whose calls of one answer are checked together and wait for one tracker;
  * with a final subagent only that subagent's completed answer ends the run; a run that learns gets its knowledge
  * run with its session and embeds each question of the employee.
  */
 export class DeepAgent extends BaseAgent {
-  readonly type = DEEP_AGENT_TASK_TYPE;
   protected override readonly embedsEmployeeMessages = true;
   private readonly delegations: Delegations;
   /** The outcomes of the trackers' tasks: the final subagent's answer is read through them. */
   private readonly trackers: DelegationsDeps['trackers'];
+  /** The subagent whose answer ends the run, from the snapshot; `null` — the deep agent's own answer does. */
+  private readonly finalSubagent: string | null;
 
-  constructor(deps: DeepAgentDeps) {
-    super(deps);
+  constructor(deps: DeepAgentDeps, run: AgentRun) {
+    super(deps, run);
     this.delegations = createDelegations(deps);
     this.trackers = deps.trackers;
+    this.finalSubagent = deepAgentOf(run.input.snapshot, run.task.taskId).content.finalSubagent;
   }
 
   /** A run that learns gets its row with its deep agent session, in the same transaction (self-learning KD-2). */
-  protected override async sessionStarted(tx: Transaction, taskId: string, snapshot: RunSnapshot): Promise<void> {
-    const learning = learningRunOf(snapshot);
-    if (learning !== null) await insertKnowledgeRun(tx, { runId: taskId, ...learning });
+  protected override async sessionCreated(tx: Transaction): Promise<void> {
+    const learning = learningRunOf(this.input.snapshot);
+    if (learning !== null) await this.deps.knowledgeRunRows.insertRun(tx, { runId: this.task.taskId, ...learning });
   }
 
   /**
@@ -126,14 +127,15 @@ export class DeepAgent extends BaseAgent {
    * kind, not from the step's entries: the result may stand before the last compaction. `null` — the snapshot
    * names no final subagent, and the deep agent's own answer ends the run.
    */
-  protected override async finalAnswer(ctx: StepContext, snapshot: RunSnapshot): Promise<FinalAnswer | null> {
-    const subagent = deepAgentOf(snapshot, ctx.taskId).content.finalSubagent;
+  protected override async finalAnswer(ctx: StepContext): Promise<FinalAnswer | null> {
+    const subagent = this.finalSubagent;
     if (subagent === null) return null;
     return { subagent, report: await this.finalSubagentReport(ctx, subagent) };
   }
 
   private async finalSubagentReport(ctx: StepContext, subagent: string): Promise<FinalSubagentReport | null> {
-    const childTaskId = await lastSingleTask(this.deps.database, ctx.taskId, subagent);
+    const { database, messageRows } = this.deps;
+    const childTaskId = await messageRows.lastSingleTask(database, ctx.taskId, TASK_TOOL, subagent);
     if (childTaskId === undefined) return null;
     const trackers = await this.trackers.list(ctx.taskId, ctx.ownerId);
     const task = trackers.flatMap((tracker) => tracker.tasks).find((candidate) => candidate.taskId === childTaskId);

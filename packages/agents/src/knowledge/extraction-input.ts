@@ -1,13 +1,11 @@
-import type { Executor } from '@agent-os/db';
-import type { Runtime } from '@agent-os/runtime';
+import type { AgentCodeCallsRepository, AgentMessagesRepository, Executor } from '@agent-os/db';
+import type { TaskControl } from '@agent-os/runtime';
 
 import { envelope } from '../model/provider-messages';
 import { utf8Bytes } from '../model/token-estimate';
-import { codeCalls } from '../store/code-calls.repository';
-import { history } from '../store/history.repository';
 import { descendantsOf } from '../task-tree';
 import type { RoundCall, RoundCallOutcome } from './check-operations';
-import type { KnowledgeRun } from './knowledge-runs.repository';
+import type { KnowledgeRun } from './knowledge-runs';
 
 /*
  * The input of an extraction round (design-core.md, Contract «Вход извлечения», KD-3): the MCP calls
@@ -34,7 +32,9 @@ export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedU
 
 export interface ExtractionInputDeps {
   readonly database: Executor;
-  readonly tasks: Pick<Runtime['tasks'], 'get' | 'listTree'>;
+  readonly messageRows: AgentMessagesRepository;
+  readonly codeCallRows: AgentCodeCallsRepository;
+  readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
 }
 
 /** What is told to the log about the input: numbers only. */
@@ -169,10 +169,15 @@ export async function readExtractionInput(
   const taskIds = await subtreeTaskIds(deps, run);
   // `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round.
   const window = { after: run.extractedUpTo, through: readAt };
-  const results = await history.mcpResults(deps.database, taskIds, ROUND_OUTCOMES, window);
+  const results = await deps.messageRows.mcpResults(deps.database, taskIds, ROUND_OUTCOMES, window);
   const direct: InputCall[] = results.map(({ text, ...call }) => ({ ...call, resultText: text, inCode: false }));
   // Calls a `run_code` script made, of its latest attempt only (Invariant 3).
-  const scripted = await codeCalls.mcpCallsOfLatestAttempts(deps.database, taskIds, ROUND_OUTCOMES, window);
+  const scripted = await deps.codeCallRows.mcpCallsOfLatestAttempts(
+    deps.database,
+    taskIds,
+    ROUND_OUTCOMES,
+    window,
+  );
   const inCode: InputCall[] = scripted.map((call) => ({ ...call, resultText: null, inCode: true }));
   // A stable sort: calls ending at the same moment keep their order within each table.
   const ordered = [...direct, ...inCode].sort(

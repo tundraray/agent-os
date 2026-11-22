@@ -1,18 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type {
   LibrarySettings,
   UpdateLibrarySettingsBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.repository';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import {
-  readLibrarySettings,
-  writeLibrarySettings,
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+  LibrarySettingsRepository,
   type LibrarySettingsRow,
-} from './library-settings.repository';
+} from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
 
 const SETTINGS_OBJECT_TYPE = 'library_settings';
 
@@ -32,16 +31,17 @@ export class LibrarySettingsService {
   private readonly db: Database;
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly settings: LibrarySettingsRepository,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
+    @Inject(LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
   }
 
   /** GET /api/admin/library/settings. */
   async get(): Promise<LibrarySettings> {
-    return toLibrarySettings(await readLibrarySettings(this.db));
+    return toLibrarySettings(await this.settings.read(this.db));
   }
 
   /**
@@ -54,8 +54,8 @@ export class LibrarySettingsService {
   ): Promise<LibrarySettings> {
     const startedAt = Date.now();
     const { before, after } = await this.db.transaction(async (tx) => {
-      const previous = await readLibrarySettings(tx);
-      const updated = await writeLibrarySettings(tx, defaultMaxTurns);
+      const previous = await this.settings.read(tx);
+      const updated = await this.settings.write(tx, defaultMaxTurns);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

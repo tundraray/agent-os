@@ -127,6 +127,12 @@ export interface StepEffects {
    * `inbox.` or `decision.`.
    */
   emit(type: string, payload: unknown): Promise<void>;
+  /**
+   * Hands over the ready object of a task of a live type spawned in this commit: the runtime keeps
+   * it once the commit succeeds, and the task's first step runs on it instead of a `restore`. An
+   * id not spawned in this commit or of a stateless type is `invalid_step_result`.
+   */
+  adopt(taskId: string, object: LiveTask): void;
 }
 
 /** The outcome of a step (design-runtime.md, StepResult). */
@@ -160,4 +166,40 @@ export interface TaskHandler {
   /** Checks `input` when a task of this type is created. */
   readonly inputSchema: z.ZodType;
   step(ctx: StepContext): Promise<StepResult>;
+}
+
+/** What `restore` knows about a task: the fields of {@link StepContext} that never change. */
+export type LiveTaskIdentity = Pick<
+  StepContext,
+  'taskId' | 'rootId' | 'parentId' | 'ownerId' | 'depth' | 'type' | 'input'
+>;
+
+/**
+ * The object of one task of a live type, kept in memory between the task's steps by the one
+ * process that executes steps. The database stays the source of truth: the object is dropped on
+ * every end of a step other than a commit, and the next step gets a restored one.
+ */
+export interface LiveTask {
+  /** As `TaskHandler.step`; one step at a time, except a cut-off step that has not ended yet. */
+  step(ctx: StepContext): Promise<StepResult>;
+  /**
+   * Called after the step's commit succeeded and before the task's next step: the place to take
+   * the committed state in. An exception, or a call longer than the lease, drops the object.
+   */
+  committed?(ctx: StepContext): Promise<void>;
+  /**
+   * The runtime let the object go. A step that was cut off, timed out or shut down may still be
+   * running on it.
+   */
+  dispose?(): void;
+}
+
+/** A task type whose tasks are {@link LiveTask} objects; registered with `registerLive`. */
+export interface LiveTaskType {
+  /** Unique in the process, among live and stateless types together. */
+  readonly type: string;
+  /** Checks `input` when a task of this type is created. */
+  readonly inputSchema: z.ZodType;
+  /** Builds the task's object from the database. A failure fails the step with `handler_error`. */
+  restore(task: LiveTaskIdentity): Promise<LiveTask>;
 }

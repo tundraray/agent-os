@@ -6,12 +6,12 @@
 // `classifyRejection` and `ModelClient` are real; the seam, the gate, the registry and the ledger are doubles.
 import type { Logger } from '@agent-os/common';
 import type { ModelProviderState } from '@agent-os/contracts';
-import type { CallUsage, Clock, ModelCallRecord } from '@agent-os/runtime';
+import { type CallUsage, type Clock, type ModelCallRecord, systemClock } from '@agent-os/runtime';
 
 import type { AuditRecord } from '../access-gate';
 import { createProviderRegistryDouble } from '../testing';
 import type { AgentTurnModelClient } from './mastra-turn';
-import { createModelClient } from './model-client';
+import { ModelClient } from './model-client';
 
 /** One provider answer of the seam: a rejection in the shape of `AI_APICallError`, or an answer with its usage. */
 type SeamAttempt =
@@ -62,6 +62,33 @@ function seamDouble(attempts: readonly SeamAttempt[], calls: { count: number }):
       return { finishReason: 'stop', text: 'ok', toolCalls: [], usage: attempt.usage };
     },
   };
+}
+
+type ModelClientArgs = ConstructorParameters<typeof ModelClient>;
+
+/** `ModelClient` from named doubles; the real clock unless a test gives its own. */
+function createModelClient(deps: {
+  turnClient: ModelClientArgs[0];
+  ledger: ModelClientArgs[1];
+  config: ModelClientArgs[2];
+  logger: ModelClientArgs[3];
+  access: ModelClientArgs[4];
+  providers: ModelClientArgs[5];
+  audit: ModelClientArgs[6];
+  clock?: Clock;
+  onTextDelta?: ModelClientArgs[8];
+}): ModelClient {
+  return new ModelClient(
+    deps.turnClient,
+    deps.ledger,
+    deps.config,
+    deps.logger,
+    deps.access,
+    deps.providers,
+    deps.audit,
+    deps.clock ?? systemClock,
+    deps.onTextDelta,
+  );
 }
 
 function loggerDouble(): Logger & { warn: ReturnType<typeof vi.fn> } {

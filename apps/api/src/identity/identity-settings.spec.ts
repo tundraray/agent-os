@@ -1,14 +1,15 @@
 import type { Logger } from '@agent-os/common';
-import type { DatabaseConnection } from '@agent-os/db';
-import type { AuditLog } from '../audit/audit-log.repository';
+import type {
+  DatabaseConnection,
+  IdentitySettingsRepository,
+  IdentitySettingsRow,
+} from '@agent-os/db';
+import type { AuditLog } from '../audit/audit-log';
 import { IdentitySettings } from './identity-settings';
-import {
-  readSettings,
-  savePublicUrlIfUnset,
-  type SettingsRow,
-} from './settings.repository';
 
-vi.mock('./settings.repository');
+const readSettings = vi.fn<IdentitySettingsRepository['read']>();
+const savePublicUrlIfUnset =
+  vi.fn<IdentitySettingsRepository['savePublicUrlIfUnset']>();
 
 const logger: Logger = {
   debug: vi.fn(),
@@ -18,7 +19,7 @@ const logger: Logger = {
   child: () => logger,
 };
 
-function settingsRow(publicUrl: string | null): SettingsRow {
+function settingsRow(publicUrl: string | null): IdentitySettingsRow {
   return {
     publicUrl,
     idleMinutes: 60,
@@ -32,13 +33,17 @@ function settingsRow(publicUrl: string | null): SettingsRow {
 describe('public address without a saved one: the saved one wins, a valid FRONTEND_ORIGIN is returned and saved, http on another host is refused and nothing is saved', () => {
   const settings = new IdentitySettings(
     { db: {} } as DatabaseConnection,
+    {
+      read: readSettings,
+      savePublicUrlIfUnset,
+    } as unknown as IdentitySettingsRepository,
     {} as AuditLog,
     logger,
   );
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.mocked(savePublicUrlIfUnset).mockReset();
+    savePublicUrlIfUnset.mockReset();
   });
 
   it.each([
@@ -58,8 +63,8 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
     'saved $saved, FRONTEND_ORIGIN $frontendOrigin -> $expected',
     async ({ saved, frontendOrigin, expected, savedNow }) => {
       vi.stubEnv('FRONTEND_ORIGIN', frontendOrigin);
-      vi.mocked(readSettings).mockResolvedValue(settingsRow(saved));
-      vi.mocked(savePublicUrlIfUnset).mockResolvedValue(true);
+      readSettings.mockResolvedValue(settingsRow(saved));
+      savePublicUrlIfUnset.mockResolvedValue(true);
 
       await expect(settings.publicUrlFor()).resolves.toBe(expected);
 
@@ -75,7 +80,7 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
 
   it('refuses http on a host other than localhost with PUBLIC_URL_REQUIRED and saves nothing', async () => {
     vi.stubEnv('FRONTEND_ORIGIN', 'http://aos.example.com');
-    vi.mocked(readSettings).mockResolvedValue(settingsRow(null));
+    readSettings.mockResolvedValue(settingsRow(null));
 
     await expect(settings.publicUrlFor()).rejects.toMatchObject({
       status: 409,

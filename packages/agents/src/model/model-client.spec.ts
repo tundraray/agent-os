@@ -4,11 +4,11 @@
 // cancel or failed after its answer began is one with an estimate from UTF-8 bytes. The port, the gate, the
 // provider registry and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
-import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
+import { type Clock, type ModelCallRecord, type ModelPrice, systemClock } from '@agent-os/runtime';
 import type { AccessDeniedEntry, AccessGate, AuditRecord, ModelVerdict } from '../access-gate';
 import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn';
 import { createProviderRegistryDouble } from '../testing';
-import { CODE_RULE, createModelClient, type TextDelta } from './model-client';
+import { CODE_RULE, ModelClient, type TextDelta } from './model-client';
 import { DATA_PREAMBLE } from './provider-messages';
 
 /** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
@@ -58,6 +58,33 @@ function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () =>
       return { finishReason: 'stop', text: attempt.parts.join(''), toolCalls: [], usage: LEDGER_USAGE };
     },
   };
+}
+
+type ModelClientArgs = ConstructorParameters<typeof ModelClient>;
+
+/** `ModelClient` from named doubles; the real clock unless a test gives its own. */
+function createModelClient(deps: {
+  turnClient: ModelClientArgs[0];
+  ledger: ModelClientArgs[1];
+  config: ModelClientArgs[2];
+  logger: ModelClientArgs[3];
+  access: ModelClientArgs[4];
+  providers: ModelClientArgs[5];
+  audit: ModelClientArgs[6];
+  clock?: Clock;
+  onTextDelta?: ModelClientArgs[8];
+}): ModelClient {
+  return new ModelClient(
+    deps.turnClient,
+    deps.ledger,
+    deps.config,
+    deps.logger,
+    deps.access,
+    deps.providers,
+    deps.audit,
+    deps.clock ?? systemClock,
+    deps.onTextDelta,
+  );
 }
 
 function loggerDouble(): Logger & { warn: ReturnType<typeof vi.fn> } {

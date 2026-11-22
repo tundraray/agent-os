@@ -1,18 +1,16 @@
 import { Body, Controller, Get, Inject, Put, Req } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
+import { AgentsToolResults } from '@agent-os/agents';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   UpdateToolResultSettingsBodySchema,
   type ToolResultSettings,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
-import { AuditLog } from '../audit/audit-log.repository';
+import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
 import { loggedRoute } from '../common/logged-route';
-import { APP_LOGGER } from '../logging/app-logger';
-import { AGENTS } from './agents.tokens';
 
 const SETTINGS_OBJECT_TYPE = 'tool_result_settings';
 
@@ -37,9 +35,9 @@ export class AdminToolResultsController {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsToolResults) private readonly toolResults: AgentsToolResults,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'tool-results.routes' });
   }
@@ -50,7 +48,7 @@ export class AdminToolResultsController {
     return loggedRoute(this.logger, {
       route: 'GET /admin/tool-results/settings',
       fields: { actorId: req.user.id },
-      work: () => this.agents.toolResults.settings(),
+      work: () => this.toolResults.settings(),
     });
   }
 
@@ -66,7 +64,7 @@ export class AdminToolResultsController {
       route: 'PUT /admin/tool-results/settings',
       fields: { actorId: actor },
       work: async () => {
-        const { before, after } = await this.agents.toolResults.updateSettings({
+        const { before, after } = await this.toolResults.updateSettings({
           actorId: actor,
           storeFromChars: body.storeFromChars,
           previewChars: body.previewChars,

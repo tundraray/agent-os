@@ -7,19 +7,28 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import type { Database, Transaction } from '@agent-os/db';
-import type { CrashPoints } from '../crash-points';
+import {
+  DATABASE,
+  type Database,
+  type Transaction,
+  RuntimeInboxRepository,
+  type RuntimeInboxRow,
+  RuntimeTasksRepository,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
+import { CrashPoints } from '../crash-points';
 import { RuntimeError } from '../errors';
-import type { EventLog } from '../events/event-log.repository';
+import { EventLog } from '../events/event-log';
 import {
   isFinished,
   type TaskChange,
   type TaskRow,
 } from '../tasks/guarded-transition';
 import type { EnqueuedMessage, StepMessage } from '../steps/step-contract';
+import type { RuntimeConfig } from '../runtime-config';
 import { retryingTransaction } from '../runtime-tx';
-import type { TaskRepository } from '../tasks/task.repository';
-import type { InboxRepository, MessageRow } from './inbox.repository';
+import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
+import { Tasks } from '../tasks/tasks';
 
 /** Size of a JSON value as UTF-8 text: the measure of `INBOX_PAYLOAD_MAX_BYTES`. */
 export function jsonByteLength(value: unknown): number {
@@ -55,7 +64,7 @@ export function reservedKindProblem(kind: string): string | undefined {
 }
 
 /** A message row as a step and the queue tray see it. */
-export const toStepMessage = (row: MessageRow): StepMessage => ({
+export const toStepMessage = (row: RuntimeInboxRow): StepMessage => ({
   messageId: row.messageId,
   seq: row.seq,
   kind: row.kind,
@@ -89,10 +98,11 @@ export interface InsertedMessage {
   recipient: TaskRow;
 }
 
-export interface InboxDeps {
+interface InboxDeps {
   db: Database;
-  repository: InboxRepository;
-  tasks: TaskRepository;
+  repository: RuntimeInboxRepository;
+  tasks: Tasks;
+  taskRows: RuntimeTasksRepository;
   events: EventLog;
   crashPoints: CrashPoints;
   logger: Logger;
@@ -124,11 +134,34 @@ function wakeChange(
 }
 
 /**
- * The task inbox: the only writer of `runtime_inbox` rows, through `InboxRepository`. A message,
+ * The task inbox: the only writer of `runtime_inbox` rows, through `RuntimeInboxRepository`. A message,
  * its event and the recipient's wake-up commit together, under the recipient's lock.
  */
+@Injectable()
 export class Inbox {
-  constructor(protected readonly deps: InboxDeps) {}
+  private readonly deps: InboxDeps;
+
+  constructor(
+    @Inject(DATABASE) db: Database,
+    @Inject(RuntimeInboxRepository) repository: RuntimeInboxRepository,
+    @Inject(Tasks) tasks: Tasks,
+    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
+    @Inject(EventLog) events: EventLog,
+    @Inject(CrashPoints) crashPoints: CrashPoints,
+    @Inject(RUNTIME_LOGGER) logger: Logger,
+    @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
+  ) {
+    this.deps = {
+      db,
+      repository,
+      tasks,
+      taskRows,
+      events,
+      crashPoints,
+      logger: logger.child({ service: 'inbox' }),
+      inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,
+    };
+  }
 
   /**
    * Puts an upper-layer message in the recipient's queue in its own transaction (design-runtime.md,
@@ -186,8 +219,8 @@ export class Inbox {
    * `TASK_NOT_FOUND` for a missing or another owner's recipient.
    */
   async insertMessage(tx: Transaction, message: NewMessage): Promise<InsertedMessage> {
-    const { repository, tasks, events, crashPoints } = this.deps;
-    const locked = await tasks.lockOwned(tx, message.recipientId, message.ownerId);
+    const { repository, taskRows, events, crashPoints } = this.deps;
+    const locked = await taskRows.lockOwned(tx, message.recipientId, message.ownerId);
     if (!locked) {
       throw new RuntimeError(
         'TASK_NOT_FOUND',
@@ -251,7 +284,7 @@ export class Inbox {
   }
 
   /** The task's pending messages by `seq`. */
-  loadPending(tx: Transaction, taskId: string): Promise<MessageRow[]> {
+  loadPending(tx: Transaction, taskId: string): Promise<RuntimeInboxRow[]> {
     return this.deps.repository.listPending(tx, taskId);
   }
 

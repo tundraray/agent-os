@@ -3,8 +3,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   inRootLaunchSet,
   type AgentHistoryEntry,
-  type Agents,
-  type RootSession,
+  ViewOperations,
+  ControlOperations,
+  StartOperations,
 } from '@agent-os/agents';
 import {
   HISTORY_PAGE_SIZE,
@@ -17,12 +18,11 @@ import {
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import { RuntimeError, type Runtime } from '@agent-os/runtime';
-import { AGENTS } from '../agents/agents.tokens';
+import type { RootSession } from '@agent-os/db';
+import { Inbox, RuntimeError, TaskControl } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
-import { RUNTIME } from '../runtime/runtime.tokens';
 import { chatStatus } from './chat-status';
 import { threadNotFound } from './chat.errors';
 import {
@@ -43,7 +43,7 @@ const ROOT_DESCRIPTION_LENGTH = 80;
 /**
  * Conversations over agents (design-chat.md, Flows 1, 2, 6): a conversation is the root session of the
  * library record `chat` (design-runtime.md, KD-7), and its id is the root's. It appears with its first
- * message — `create` only hands out an id. Agents are reached only through `agents.sessions`; a
+ * message — `create` only hands out an id. Agents are reached only through the operations of the agents package; a
  * message's record chip is checked in the library. An id without a live root session of the employee
  * — never used, deleted, or another employee's — is `THREAD_NOT_FOUND` on every route; only a never
  * used id starts a conversation with the first send. A deleted conversation answers as a missing one
@@ -53,15 +53,18 @@ const ROOT_DESCRIPTION_LENGTH = 80;
 export class ConversationsService {
   constructor(
     private readonly titles: TitleService,
-    @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(RUNTIME) private readonly runtime: Runtime,
+    @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(ControlOperations) private readonly control: ControlOperations,
+    @Inject(StartOperations) private readonly starts: StartOperations,
+    @Inject(TaskControl) private readonly tasks: TaskControl,
+    @Inject(Inbox) private readonly inbox: Inbox,
     private readonly library: LibraryService,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
   async list(ownerId: string, cursor?: string): Promise<ThreadListResponse> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
-    const roots = await this.agents.sessions.roots({
+    const roots = await this.views.roots({
       ownerId,
       limit: THREAD_PAGE_SIZE + 1,
       ...(position === undefined
@@ -91,7 +94,7 @@ export class ConversationsService {
 
   async rename(threadId: string, ownerId: string, title: string): Promise<ThreadSummary> {
     const root = isUuid(threadId)
-      ? await this.agents.sessions.renameRoot(threadId, ownerId, title)
+      ? await this.control.renameRoot(threadId, ownerId, title)
       : undefined;
     if (root === undefined) throw threadNotFound();
     return toThreadSummary(root);
@@ -116,7 +119,7 @@ export class ConversationsService {
     if (!isUuid(threadId)) throw threadNotFound();
     const record = recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
     const chip = record === undefined ? {} : { record };
-    const existing = await this.agents.sessions.root(threadId, ownerId);
+    const existing = await this.views.root(threadId, ownerId);
     const created = existing === undefined && (await this.start(threadId, ownerId, text, chip));
     let messageId: string | null = null;
     let untitled = true;
@@ -124,8 +127,8 @@ export class ConversationsService {
       // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
       // task that is not their conversation, another employee's included.
       const root = existing ?? (await this.owned(threadId, ownerId));
-      ({ messageId } = await this.agents.sessions.send({ agentId: threadId, ownerId, text, ...chip }));
-      await this.agents.sessions.touchRoot(threadId, ownerId);
+      ({ messageId } = await this.control.send({ agentId: threadId, ownerId, text, ...chip }));
+      await this.control.touchRoot(threadId, ownerId);
       untitled = root.title === '';
     }
     if (untitled) this.titles.ensure({ threadId, ownerId, ...(created ? { firstText: text } : {}) });
@@ -135,7 +138,7 @@ export class ConversationsService {
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */
   async interrupt(threadId: string, ownerId: string): Promise<InterruptResponse> {
     await this.owned(threadId, ownerId);
-    return { outcome: await this.agents.sessions.interrupt({ agentId: threadId, ownerId }) };
+    return { outcome: await this.control.interrupt({ agentId: threadId, ownerId }) };
   }
 
   /**
@@ -144,7 +147,7 @@ export class ConversationsService {
    */
   async delete(threadId: string, ownerId: string): Promise<void> {
     await this.owned(threadId, ownerId);
-    await this.agents.sessions.deleteRoot(threadId, ownerId);
+    await this.control.deleteRoot(threadId, ownerId);
   }
 
   /**
@@ -155,11 +158,11 @@ export class ConversationsService {
   async view(threadId: string, ownerId: string, afterSeq: number): Promise<ConversationView> {
     const thread = toThreadSummary(await this.owned(threadId, ownerId));
     const [task, views, entries, messages, confirmations, rootHistory] = await Promise.all([
-      this.runtime.tasks.get(threadId, ownerId),
-      this.agents.sessions.list(threadId, ownerId),
-      this.agents.sessions.history({ agentId: threadId, ownerId, afterSeq, limit: HISTORY_PAGE_SIZE }),
-      this.runtime.inbox.listPending(threadId, ownerId),
-      this.agents.sessions.confirmations(threadId, ownerId),
+      this.tasks.get(threadId, ownerId),
+      this.views.list(threadId, ownerId),
+      this.views.history({ agentId: threadId, ownerId, afterSeq, limit: HISTORY_PAGE_SIZE }),
+      this.inbox.listPending(threadId, ownerId),
+      this.views.confirmations(threadId, ownerId),
       this.wholeHistory(threadId, ownerId),
     ]);
     const root = views.find((view) => view.agentId === threadId);
@@ -184,7 +187,7 @@ export class ConversationsService {
   private async wholeHistory(threadId: string, ownerId: string): Promise<AgentHistoryEntry[]> {
     const entries: AgentHistoryEntry[] = [];
     for (;;) {
-      const page = await this.agents.sessions.history({
+      const page = await this.views.history({
         agentId: threadId,
         ownerId,
         afterSeq: entries.at(-1)?.seq ?? 0,
@@ -198,7 +201,7 @@ export class ConversationsService {
   /** The agents of the conversation under its root (AC-24.1). */
   async agentsTree(threadId: string, ownerId: string): Promise<AgentNode[]> {
     await this.owned(threadId, ownerId);
-    return toAgentTree(await this.agents.sessions.list(threadId, ownerId), threadId);
+    return toAgentTree(await this.views.list(threadId, ownerId), threadId);
   }
 
   /**
@@ -212,7 +215,7 @@ export class ConversationsService {
     chip: { readonly record?: ChipRecord },
   ): Promise<boolean> {
     try {
-      await this.agents.sessions.start({
+      await this.starts.start({
         agentId: threadId,
         ownerId,
         prompt: text,
@@ -239,7 +242,7 @@ export class ConversationsService {
 
   /** The owner's conversation; a malformed, missing or foreign id is `THREAD_NOT_FOUND`. */
   private async owned(threadId: string, ownerId: string): Promise<RootSession> {
-    const root = isUuid(threadId) ? await this.agents.sessions.root(threadId, ownerId) : undefined;
+    const root = isUuid(threadId) ? await this.views.root(threadId, ownerId) : undefined;
     if (root === undefined) throw threadNotFound();
     return root;
   }

@@ -1,3 +1,6 @@
+import type { Transaction } from '@agent-os/db';
+import { Injectable } from '@nestjs/common';
+
 
 /** An event as stored, with its insertion order. */
 export interface StoredEvent {
@@ -30,9 +33,11 @@ export interface EventConsumer {
 }
 
 /**
- * Consumers of outbox events, registered before `Runtime.start()`. `EventLog` writes one
- * delivery row per consumer of the event's type in the transaction that writes the event.
+ * Consumers of outbox events, registered in `onModuleInit`, before `RuntimeWorkers.start()`.
+ * `EventLog` writes one delivery row per consumer of the event's type in the transaction that
+ * writes the event.
  */
+@Injectable()
 export class EventConsumerRegistry {
   private readonly consumers = new Map<string, EventConsumer>();
 
@@ -60,5 +65,4 @@ export class EventConsumerRegistry {
   get(name: string): EventConsumer | undefined {
     return this.consumers.get(name);
   }
-}import type { Transaction } from '@agent-os/db';
-
+}

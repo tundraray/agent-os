@@ -1,11 +1,10 @@
-import type { Transaction } from '@agent-os/db';
+import type { AgentSessionTasksRepository, SessionTask, Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { SessionTaskStatusSchema } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import { descriptionLine } from '../../chat-listing';
 import { taskLine } from './task-list-block';
-import { type SessionTask, sessionTasks } from '../../store/session-tasks.repository';
 import type { InCommitAgentTool, ToolCaller, ToolRunResult } from '../tool';
 import {
   decideTaskChange,
@@ -140,26 +139,30 @@ function taskDetails(task: SessionTask, tasks: readonly SessionTask[]): string {
  * session is the caller's own — its id comes from the call's context, never from the arguments. The log names
  * the numbers, statuses and field names only; `loggedArgs` likewise.
  */
-export function createTaskListTools(deps: { readonly logger: Logger }): [
+export function createTaskListTools(deps: {
+  readonly sessionTaskRows: AgentSessionTasksRepository;
+  readonly logger: Logger;
+}): [
   InCommitAgentTool<TaskCreateInput>,
   InCommitAgentTool<TaskUpdateInput>,
   InCommitAgentTool<TaskGetInput>,
   InCommitAgentTool<TaskListInput>,
 ] {
   const logger = deps.logger.child({ service: 'agents.session-tasks' });
+  const { sessionTaskRows } = deps;
 
   async function change(
     call: TaskChangeCall,
     input: { readonly caller: ToolCaller; readonly callId: string; readonly tx: Transaction },
   ): Promise<ToolRunResult> {
     const ids = idsOf(input.caller, input.callId);
-    const state = await sessionTasks.read(input.tx, input.caller.agentId);
+    const state = await sessionTaskRows.read(input.tx, input.caller.agentId);
     const decision = decideTaskChange(state, call);
     if (decision.kind === 'refused') {
       logger.info('task call refused', { ...ids, tool: call.tool, field: decision.field, rule: decision.rule });
       return { kind: 'refused', reason: 'invalid_arguments', text: decision.text };
     }
-    await sessionTasks.write(input.tx, input.caller.agentId, decision);
+    await sessionTaskRows.write(input.tx, input.caller.agentId, decision);
     logger.info(`task ${decision.event.action}`, {
       ...ids,
       ...decision.event,
@@ -199,7 +202,7 @@ export function createTaskListTools(deps: { readonly logger: Logger }): [
     mode: 'in_commit',
     loggedArgs: (args) => ({ taskId: typeof args.taskId === 'number' ? args.taskId : null }),
     async execute({ args, caller, callId, tx }) {
-      const tasks = await sessionTasks.list(tx, caller.agentId);
+      const tasks = await sessionTaskRows.list(tx, caller.agentId);
       const task = tasks.find((candidate) => candidate.number === args.taskId);
       logger.info('task read', { ...idsOf(caller, callId), number: args.taskId, found: task !== undefined });
       if (task === undefined) return { kind: 'done', outcome: 'empty', text: `There is no task ${args.taskId}` };
@@ -214,7 +217,7 @@ export function createTaskListTools(deps: { readonly logger: Logger }): [
     mode: 'in_commit',
     loggedArgs: () => ({}),
     async execute({ caller, callId, tx }) {
-      const tasks = await sessionTasks.list(tx, caller.agentId);
+      const tasks = await sessionTaskRows.list(tx, caller.agentId);
       logger.info('task list read', { ...idsOf(caller, callId), tasks: tasks.length });
       if (tasks.length === 0) return { kind: 'done', outcome: 'empty', text: 'No tasks' };
       const text = tasks.map((task) => taskLine(task, task.subject)).join('\n');

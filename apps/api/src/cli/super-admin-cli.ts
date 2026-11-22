@@ -1,7 +1,13 @@
 import { text } from 'node:stream/consumers';
 import { parseArgs } from 'node:util';
-import { createDatabase } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.repository';
+import {
+  AuditEventsRepository,
+  createDatabase,
+  IdentityRolesRepository,
+  IdentitySessionsRepository,
+  IdentityUsersRepository,
+} from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
 import { createAppLogger } from '../logging/app-logger';
 import { seedSuperAdmin } from '../identity/super-admin';
 
@@ -51,7 +57,12 @@ async function main(): Promise<void> {
   try {
     const { userId, created } = await seedSuperAdmin(
       connection.db,
-      new AuditLog(connection.db),
+      {
+        users: new IdentityUsersRepository(),
+        roles: new IdentityRolesRepository(),
+        sessions: new IdentitySessionsRepository(),
+      },
+      new AuditLog(connection.db, new AuditEventsRepository()),
       {
         login,
         name,

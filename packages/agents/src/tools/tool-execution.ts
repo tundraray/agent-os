@@ -5,7 +5,7 @@ import type { McpAccounts } from '../mcp/mcp-accounts';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client';
 import type { McpFailureReason } from '../mcp/mcp-failure';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome';
-import type { StoredToolResult, ToolResultSettingsRow } from '../store/tool-results.repository';
+import type { StoredToolResult, ToolResultSettingsRow } from '@agent-os/db';
 import { MCP_ARGS_SCHEMA, type McpCall, type ResolvedCall } from './call-check';
 import { cutText, maskValue, wrapperText } from './large-result';
 import { callTarget, loggedArgs } from './tool-registry';

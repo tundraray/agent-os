@@ -1,5 +1,5 @@
 // tool-result-reading / core Integration Tests - work plan: docs/features/tool-result-reading/core/20261120-feature-tool-result-reading-core.md (Phase 3; requirements R-1..R-4 in its Snapshot, no Design Doc)
-// Test type: Integration (in-process `createRuntime` + `createAgents` over real Postgres, real MCP fixture process, scripted model), in the style of `code-execution.int.e2e-spec.ts`.
+// Test type: Integration (in-process `RuntimeModule` + `createAgents` over real Postgres, real MCP fixture process, scripted model), in the style of `code-execution.int.e2e-spec.ts`.
 // Tests are written with their phase and run once, at the end of the part (Phase 5; project rule "Tests only at the end").
 //
 // Environment: the harness of test/support (`agentsHarness.ts`); the model is the scripted double, which records the input of every call (the assertion surface for

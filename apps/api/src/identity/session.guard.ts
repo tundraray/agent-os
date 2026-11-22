@@ -5,18 +5,20 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import type { Request } from 'express';
-import { AuditLog } from '../audit/audit-log.repository';
-import { APP_LOGGER } from '../logging/app-logger';
+import { AuditLog } from '../audit/audit-log';
 import { IS_ADMIN_ONLY } from './admin-only.decorator';
 import type { AuthedRequest, AuthUser } from './auth-user';
 import { identityError } from './identity.errors';
 import { IS_PUBLIC } from './public.decorator';
 import { frontendOrigin, readSessionToken } from './session-cookie';
-import { type FoundSession, SessionStore } from './session.store';
-import { ENDED_BY_BLOCK } from './sessions.repository';
+import {
+  ENDED_BY_BLOCK,
+  type FoundSession,
+  SessionStore,
+} from './session.store';
 
 /**
  * Methods that change state: they must come from the web's origin (DC-3), with or without the cookie —
@@ -38,7 +40,7 @@ export class SessionGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly sessions: SessionStore,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'identity.session-guard' });
   }

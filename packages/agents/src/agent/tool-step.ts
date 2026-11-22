@@ -11,9 +11,8 @@ import { z } from 'zod';
 import { OwnerDisabledError } from '../access-gate';
 import { type CallState, isDelegated, requestedName } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import { type CallEnding, callRecords } from '../store/call-records.repository';
-import type { Session } from '../store/sessions.repository';
-import { toolResults } from '../store/tool-results.repository';
+import type { CallEnding } from '../store/call-records';
+import type { Session } from '../store/sessions';
 import { isInCommit, reportCheck, toolDeniedEntry, toolRefusedEntry } from '../tools/call-check';
 import type { ToolExecution } from '../tools/tool-execution';
 import { callTargetOf, loggedArgsOf } from '../tools/tool-registry';
@@ -109,6 +108,7 @@ async function closeAll(
  * the results of its answer), and `agents.history_appended` with the last `seq`.
  */
 function commitOf(
+  deps: Pick<AgentDeps, 'history' | 'sessions' | 'messageRows'>,
   ctx: StepContext,
   closings: readonly CallClosing[],
   awaited?: CallState,
@@ -118,6 +118,7 @@ function commitOf(
     const results = await closeAll(closings, tx, effects);
     await opening?.(tx, effects);
     await appendWithEvent(
+      deps,
       tx,
       effects,
       ctx.taskId,
@@ -125,7 +126,7 @@ function commitOf(
         ...(awaited === undefined
           ? []
           : [{ kind: 'tool_confirmation' as const, content: { callId: awaited.callId } }]),
-        ...(await entriesOf(tx, ctx.messages)),
+        ...(await entriesOf(deps, tx, ctx.messages)),
       ],
       results,
     );
@@ -169,7 +170,7 @@ function commitOf(
  */
 export async function runToolStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'callerOf' | 'toolDeclaration' | 'closeDelegated' | 'delegates' | 'delegate'>,
+  agent: Pick<BaseAgent, 'caller' | 'declaration' | 'closeDelegated' | 'delegates' | 'delegate'>,
   ctx: StepContext,
   session: Session,
   openCalls: readonly CallState[],
@@ -189,12 +190,12 @@ export async function runToolStep(
     return { outcome: 'continue' };
   };
 
-  const caller = agent.callerOf(ctx);
+  const { caller } = agent;
   // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
   // whose account went away gets `auth_required` (C3, DC-2). The set comes from the snapshot (ADR-0017).
-  const sessionTools = await registry.checkTools(agent.toolDeclaration(caller.snapshot));
+  const sessionTools = await registry.checkTools(agent.declaration);
   const argsOf = (call: CallState): unknown =>
-    loggedArgsOf(sessionTools, registry.toolOf, { name: requestedName(call), args: call.args });
+    loggedArgsOf(sessionTools, (name) => registry.toolOf(name), { name: requestedName(call), args: call.args });
   const decision = decisionOf(ctx);
   const closings: CallClosing[] = [];
   // The repeat rule's past (KD-5): the closed calls of the visible history, then each call of this step it lets through.
@@ -210,7 +211,7 @@ export async function runToolStep(
     return { ...ending, resultText: text === '' ? mark : `${text}\n\n${mark}` };
   };
   const close = (call: CallState, ending: CallEnding): CallClosing =>
-    (tx) => callRecords.close(tx, ctx.taskId, call, marked(call, ending));
+    (tx) => deps.callRecords.close(tx, ctx.taskId, call, marked(call, ending));
   /**
    * Closes a call the runner ran and stores its full result in the same transaction: every successful and
    * empty direct MCP result, as before (code-execution KD-5); only a long one reached the model as the
@@ -225,7 +226,7 @@ export async function runToolStep(
     decided?: CallDecision,
   ): Promise<HistoryEntry | undefined> => {
     const { execution } = run;
-    const closed = await callRecords.close(
+    const closed = await deps.callRecords.close(
       tx,
       ctx.taskId,
       call,
@@ -235,17 +236,18 @@ export async function runToolStep(
         : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
     );
     if (closed !== undefined && execution.kind === 'done' && execution.stored !== undefined) {
-      await toolResults.insert(tx, { taskId: ctx.taskId, callId: call.callId, ...execution.stored });
+      await deps.toolResultRows.insert(tx, { taskId: ctx.taskId, callId: call.callId, ...execution.stored });
     }
     return closed;
   };
   const done = (): StepResult => {
     logStep(ctx, STEP_KIND, stepStartedAt, 'continue', { calls: closings.length });
-    return { outcome: 'continue', commit: commitOf(ctx, closings) };
+    return { outcome: 'continue', commit: commitOf(deps, ctx, closings) };
   };
   /** The agent fails with `owner_disabled`: the calls that ran are closed, the rest never start (KD-5). */
   const ownerDisabled = (): Promise<StepResult> =>
     refusedResult({
+      deps,
       ctx,
       stepKind: STEP_KIND,
       startedAt: stepStartedAt,
@@ -254,7 +256,7 @@ export async function runToolStep(
       audit,
       writeEntries: async (tx, effects) => {
         await closeAll(closings, tx, effects);
-        return entriesOf(tx, ctx.messages);
+        return entriesOf(deps, tx, ctx.messages);
       },
       patch: {},
     });
@@ -305,7 +307,7 @@ export async function runToolStep(
       calls: closings.length,
       delegations: delegation.accepted,
     });
-    return { outcome: 'wait', commit: commitOf(ctx, closings, undefined, delegation.open) };
+    return { outcome: 'wait', commit: commitOf(deps, ctx, closings, undefined, delegation.open) };
   };
 
   const runCalls = async (): Promise<StepResult> => {
@@ -406,7 +408,7 @@ export async function runToolStep(
             outcome: 'await_decision',
             kind: request.kind,
             payload: request.payload,
-            commit: commitOf(ctx, closings, call),
+            commit: commitOf(deps, ctx, closings, call),
           };
         }
 
@@ -421,7 +423,7 @@ export async function runToolStep(
             durationMs: 0,
           });
           closings.push((tx) =>
-            callRecords.close(tx, ctx.taskId, call, marked(call, { outcome: rejected }), {
+            deps.callRecords.close(tx, ctx.taskId, call, marked(call, { outcome: rejected }), {
               approved: false,
             }),
           );

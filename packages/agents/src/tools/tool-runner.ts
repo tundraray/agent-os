@@ -1,11 +1,16 @@
-import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
+import { AgentToolResultsRepository, DATABASE, type Database, type Transaction } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
+import { Inject, Injectable } from '@nestjs/common';
 
 import type { AccessAudit, AccessGate } from '../access-gate';
-import type { Session } from '../store/sessions.repository';
-import { callRecords } from '../store/call-records.repository';
+import { ACCESS_AUDIT, ACCESS_GATE, AGENTS_CONFIG, MASK_SECRETS } from '../agents.tokens';
+import type { AgentsConfig } from '../config';
+import { McpAccounts } from '../mcp/mcp-accounts';
+import { McpClient } from '../mcp/mcp-client';
+import { CallRecords } from '../store/call-records';
+import type { Session } from '../store/sessions';
 import {
   admit,
   type CallCheck,
@@ -23,7 +28,7 @@ import {
   createMcpCalls,
   logCall,
   loggedCall,
-  type McpCallOptions,
+  type McpCalls,
   type NotSent,
   type ToolExecution,
 } from './tool-execution';
@@ -67,29 +72,64 @@ export interface StartChildScope {
   readonly caller: ToolCaller;
 }
 
-export interface ToolRunnerOptions extends McpCallOptions {
-  /**
-   * Asked before every call the runner starts — direct, in-commit, confirmed and from code (design-access.md
-   * KD-1, KD-4): a disabled owner rejects the runner's method with `OwnerDisabledError` and the call does not
-   * start; an MCP pair it does not allow is refused `no_access` before any credentials are read.
-   */
-  readonly access: Pick<AccessGate, 'tools'>;
-  /**
-   * Gets the `access_denied` record of each `no_access` the runner decides, and the `tool_call_refused` record of
-   * each call from code refused for its arguments (KD-6).
-   */
-  readonly audit: AccessAudit;
-  /** Binds `createStartChild` (T3.4) to the commit transaction and the caller; `createAgents` supplies it. */
-  readonly startChildFor: (scope: StartChildScope) => StartChild;
-}
-
 /** The step context the runner needs for an outside call; the tool gets it in its input. */
 export type OutsideContext = Pick<StepContext, 'signal' | 'logger' | 'guard'>;
 
 /** The step context of a confirmed call: the intent goes through `guard`. */
 export type ConfirmContext = Pick<StepContext, 'taskId' | 'signal' | 'logger' | 'guard'>;
 
-export interface ToolRunner {
+/** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
+@Injectable()
+export class ToolRunner {
+  private readonly mcpCalls: McpCalls;
+  private readonly codeCall: (request: CodeCallRequest, scope: CodeCallScope) => Promise<CodeCallExecution>;
+  /** Binds the spawn helper to the commit transaction and the caller; `useStartChild` sets it. */
+  private startChildFor: ((scope: StartChildScope) => StartChild) | undefined;
+
+  constructor(
+    /** Writes the `tool_sent` intent of a confirmed call before it goes out. */
+    @Inject(CallRecords) private readonly callRecords: CallRecords,
+    /** Sends a call to its server with the credentials of the call (KD-3). */
+    @Inject(McpClient) client: Pick<McpClient, 'callTool'>,
+    /** The credentials of the caller's owner, read just before the call (KD-5). */
+    @Inject(McpAccounts) accounts: Pick<McpAccounts, 'credentialsFor'>,
+    /**
+     * Asked before every call the runner starts — direct, in-commit, confirmed and from code (design-access.md
+     * KD-1, KD-4): a disabled owner rejects the runner's method with `OwnerDisabledError` and the call does not
+     * start; an MCP pair it does not allow is refused `no_access` before any credentials are read.
+     */
+    @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,
+    /**
+     * Gets the `access_denied` record of each `no_access` the runner decides, and the `tool_call_refused` record of
+     * each call from code refused for its arguments (KD-6).
+     */
+    @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
+    /** `mcpCallTimeoutMs` bounds one MCP call, the handshake included. */
+    @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs'>,
+    @Inject(DATABASE) database: Database,
+    /** The settings row of large results (tool-result-reading R-5), read on every direct MCP call. */
+    @Inject(AgentToolResultsRepository) toolResultRows: Pick<AgentToolResultsRepository, 'readSettings'>,
+    /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
+    @Inject(MASK_SECRETS) maskSecrets: (text: string) => string,
+  ) {
+    this.mcpCalls = createMcpCalls({
+      client,
+      accounts,
+      callTimeoutMs: config.mcpCallTimeoutMs,
+      resultSettings: () => toolResultRows.readSettings(database),
+      maskSecrets,
+    });
+    this.codeCall = createCodeCall({ access, audit, callMcp: this.mcpCalls.fromCode });
+  }
+
+  /**
+   * Sets what binds the spawn helper of an in-commit call to the commit transaction and the caller. The factory
+   * of agent objects supplies it once it exists: it needs the runner itself.
+   */
+  useStartChild(startChildFor: (scope: StartChildScope) => StartChild): void {
+    this.startChildFor = startChildFor;
+  }
+
   /**
    * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's check set
    * (`ToolRegistry.checkTools`: a disabled, removed or unnamed server's tool is not), the owner may
@@ -106,25 +146,71 @@ export interface ToolRunner {
       readonly caller: ToolCaller;
       readonly allows: PairAllowed;
     },
-  ): CallCheck;
+  ): CallCheck {
+    return checkCall(requested, scope);
+  }
+
   /**
    * A changing MCP tool (not `readOnlyHint`), or a tool with `confirmation` whose `required(args)` is
    * true or not set (KD-4; code-execution KD-4).
    */
-  needsConfirmation(call: ResolvedCall): boolean;
+  needsConfirmation(call: ResolvedCall): boolean {
+    if (isMcp(call.tool)) return !call.tool.mcp.readOnly;
+    const { confirmation } = call.tool.tool;
+    if (confirmation === undefined) return false;
+    return confirmation.required === undefined || confirmation.required(call.args);
+  }
+
   /**
    * The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. A tool with
    * `review` is asked first, outside any transaction: its refusal is the answer and no request is made, its
    * card is the request's content (deep-agents KD-3). Without `review` the content is the tool's
    * `content(args, tools)` — `tools` the session's tool set (code-execution KD-10).
    */
-  confirmationRequest(
+  async confirmationRequest(
     call: ResolvedCall,
     session: Pick<Session, 'description'>,
     tools: readonly SessionTool[],
-  ): Promise<ConfirmationCard>;
+  ): Promise<ConfirmationCard> {
+    const { tool, server } = callTarget(call.tool);
+    const confirmation = isMcp(call.tool) ? undefined : call.tool.tool.confirmation;
+    const review: ToolReview =
+      confirmation?.review === undefined
+        ? {
+            kind: 'card',
+            content:
+              confirmation === undefined
+                ? { toolDescription: call.tool.description }
+                : confirmation.content(call.args, tools),
+          }
+        : await confirmation.review(call.args, call.caller);
+    if (review.kind === 'refused') return review;
+    return {
+      kind: 'request',
+      request: {
+        kind: confirmation?.kind ?? AGENTS_TOOL_CONFIRMATION,
+        payload: {
+          agentId: call.caller.agentId,
+          description: session.description,
+          callId: call.callId,
+          tool,
+          server,
+          args: call.args,
+          content: review.content,
+        },
+      },
+    };
+  }
+
   /** Runs an MCP tool or an `outside` tool, outside any transaction, under the step's signal. */
-  runOutside(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution>;
+  async runOutside(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution> {
+    const startedAt = Date.now();
+    const execution =
+      (await admit(this.access, this.audit, call, ctx.logger)) ?? (await this.execute(call, ctx));
+    logCall(ctx.logger, loggedCall(call), execution, startedAt);
+    return execution;
+  }
+
   /**
    * Checks and runs a script's call (code-execution «Проверка вызова из кода»; KD-2, KD-8, DC-5, DC-6):
    * a built-in or registered tool or `run_code` — `not_callable_from_code`; a `write` run and a name
@@ -134,38 +220,87 @@ export interface ToolRunner {
    * An allowed call goes to its server on behalf of the caller's owner; a value is not cut, a server's error
    * text is not returned.
    */
-  callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution>;
+  callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution> {
+    return this.codeCall(request, scope);
+  }
+
   /**
    * The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper. The gate is asked and
    * the tool's `prepare` runs first, outside the transaction.
    */
-  planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
+  async planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan> {
+    const refusal = await admit(this.access, this.audit, call, logger);
+    const prepared = refusal === undefined ? await prepareInCommit(call) : undefined;
+    return async (tx, effects) => {
+      const startedAt = Date.now();
+      const execution = refusal ?? (await this.runInCommit(call, prepared, tx, effects));
+      logCall(logger, loggedCall(call), execution, startedAt);
+      return execution;
+    };
+  }
+
   /**
    * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
    * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3).
    */
-  sendConfirmed(
+  async sendConfirmed(
     call: ResolvedCall,
     ctx: ConfirmContext,
     editedArgs?: unknown,
     confirmed?: unknown,
-  ): Promise<ConfirmedSend>;
-}
+  ): Promise<ConfirmedSend> {
+    const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
+    const refusal = await admit(this.access, this.audit, call, ctx.logger);
+    if (refusal !== undefined) {
+      // The right went away while the confirmation waited: no intent and no request (INT-1 steps 5–6).
+      logCall(ctx.logger, loggedCall(sent), refusal, Date.now());
+      return { kind: 'sent', execution: refusal };
+    }
+    const key = {
+      taskId: ctx.taskId,
+      callId: call.callId,
+      ...(editedArgs === undefined ? {} : { args: editedArgs }),
+    };
+    if (isInCommit(call)) {
+      const inCommit = { ...call, args: sent.args };
+      const prepared = await prepareInCommit(inCommit);
+      return {
+        kind: 'in_commit',
+        commit: async (tx, effects) => {
+          const startedAt = Date.now();
+          const execution: ToolExecution | NotSent = (await this.callRecords.markSent(tx, key))
+            ? await this.runInCommit(inCommit, prepared, tx, effects, confirmed)
+            : { kind: 'not_sent', reason: 'not_awaiting' };
+          logCall(ctx.logger, loggedCall(sent), execution, startedAt);
+          return execution;
+        },
+      };
+    }
+    const startedAt = Date.now();
+    // Committed before the request leaves: a step lost from here on finds the intent and never resends.
+    const intent = await ctx.guard((tx) => this.callRecords.markSent(tx, key));
+    if (intent.outcome === 'fenced' || !intent.value) {
+      const notSent: NotSent = {
+        kind: 'not_sent',
+        reason: intent.outcome === 'fenced' ? 'fenced' : 'not_awaiting',
+      };
+      logCall(ctx.logger, loggedCall(sent), notSent, startedAt);
+      return notSent;
+    }
+    const execution = await this.execute(sent, ctx, confirmed);
+    logCall(ctx.logger, loggedCall(sent), execution, startedAt);
+    return { kind: 'sent', execution };
+  }
 
-/** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
-export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
-  const { access, audit } = options;
-  const mcpCalls = createMcpCalls(options);
-
-  async function execute(
+  private async execute(
     call: ResolvedCall,
     ctx: OutsideContext,
     confirmed?: unknown,
   ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
-    if (isMcp(tool)) return mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger);
+    if (isMcp(tool)) return this.mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger);
     if (tool.tool.mode !== 'outside') {
       throw new Error(`Tool ${tool.name} runs in the commit transaction, not outside it`);
     }
@@ -182,133 +317,30 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     return ctx.signal.aborted ? { kind: 'aborted' } : result;
   }
 
-  /** The tool's `prepare`, run before the commit transaction opens. */
-  function prepareInCommit(call: InCommitCall): Promise<unknown> {
-    return call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ?? Promise.resolve(undefined);
-  }
-
-  function runInCommit(
+  private runInCommit(
     call: InCommitCall,
     prepared: unknown,
     tx: Transaction,
     effects: StepEffects,
     confirmed?: unknown,
   ): Promise<ToolExecution> {
+    if (this.startChildFor === undefined) {
+      throw new Error('The tool runner runs an in-commit tool before useStartChild() was called');
+    }
     return call.tool.tool.execute({
       callId: call.callId,
       args: call.args,
       caller: call.caller,
       tx,
       effects,
-      startChild: options.startChildFor({ tx, effects, caller: call.caller }),
+      startChild: this.startChildFor({ tx, effects, caller: call.caller }),
       prepared,
       ...(confirmed === undefined ? {} : { confirmed }),
     });
   }
+}
 
-  return {
-    check: checkCall,
-
-    needsConfirmation(call) {
-      if (isMcp(call.tool)) return !call.tool.mcp.readOnly;
-      const { confirmation } = call.tool.tool;
-      if (confirmation === undefined) return false;
-      return confirmation.required === undefined || confirmation.required(call.args);
-    },
-
-    async confirmationRequest(call, session, tools) {
-      const { tool, server } = callTarget(call.tool);
-      const confirmation = isMcp(call.tool) ? undefined : call.tool.tool.confirmation;
-      const review: ToolReview =
-        confirmation?.review === undefined
-          ? {
-              kind: 'card',
-              content:
-                confirmation === undefined
-                  ? { toolDescription: call.tool.description }
-                  : confirmation.content(call.args, tools),
-            }
-          : await confirmation.review(call.args, call.caller);
-      if (review.kind === 'refused') return review;
-      return {
-        kind: 'request',
-        request: {
-          kind: confirmation?.kind ?? AGENTS_TOOL_CONFIRMATION,
-          payload: {
-            agentId: call.caller.agentId,
-            description: session.description,
-            callId: call.callId,
-            tool,
-            server,
-            args: call.args,
-            content: review.content,
-          },
-        },
-      };
-    },
-
-    async runOutside(call, ctx) {
-      const startedAt = Date.now();
-      const execution = (await admit(access, audit, call, ctx.logger)) ?? (await execute(call, ctx));
-      logCall(ctx.logger, loggedCall(call), execution, startedAt);
-      return execution;
-    },
-
-    callFromCode: createCodeCall({ access, audit, callMcp: mcpCalls.fromCode }),
-
-    async planInCommit(call, logger) {
-      const refusal = await admit(access, audit, call, logger);
-      const prepared = refusal === undefined ? await prepareInCommit(call) : undefined;
-      return async (tx, effects) => {
-        const startedAt = Date.now();
-        const execution = refusal ?? (await runInCommit(call, prepared, tx, effects));
-        logCall(logger, loggedCall(call), execution, startedAt);
-        return execution;
-      };
-    },
-
-    async sendConfirmed(call, ctx, editedArgs, confirmed) {
-      const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
-      const refusal = await admit(access, audit, call, ctx.logger);
-      if (refusal !== undefined) {
-        // The right went away while the confirmation waited: no intent and no request (INT-1 steps 5–6).
-        logCall(ctx.logger, loggedCall(sent), refusal, Date.now());
-        return { kind: 'sent', execution: refusal };
-      }
-      const key = {
-        taskId: ctx.taskId,
-        callId: call.callId,
-        ...(editedArgs === undefined ? {} : { args: editedArgs }),
-      };
-      if (isInCommit(call)) {
-        const inCommit = { ...call, args: sent.args };
-        const prepared = await prepareInCommit(inCommit);
-        return {
-          kind: 'in_commit',
-          commit: async (tx, effects) => {
-            const startedAt = Date.now();
-            const execution: ToolExecution | NotSent = (await callRecords.markSent(tx, key))
-              ? await runInCommit(inCommit, prepared, tx, effects, confirmed)
-              : { kind: 'not_sent', reason: 'not_awaiting' };
-            logCall(ctx.logger, loggedCall(sent), execution, startedAt);
-            return execution;
-          },
-        };
-      }
-      const startedAt = Date.now();
-      // Committed before the request leaves: a step lost from here on finds the intent and never resends.
-      const intent = await ctx.guard((tx) => callRecords.markSent(tx, key));
-      if (intent.outcome === 'fenced' || !intent.value) {
-        const notSent: NotSent = {
-          kind: 'not_sent',
-          reason: intent.outcome === 'fenced' ? 'fenced' : 'not_awaiting',
-        };
-        logCall(ctx.logger, loggedCall(sent), notSent, startedAt);
-        return notSent;
-      }
-      const execution = await execute(sent, ctx, confirmed);
-      logCall(ctx.logger, loggedCall(sent), execution, startedAt);
-      return { kind: 'sent', execution };
-    },
-  };
+/** The tool's `prepare`, run before the commit transaction opens. */
+function prepareInCommit(call: InCommitCall): Promise<unknown> {
+  return call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ?? Promise.resolve(undefined);
 }
