@@ -28,4 +28,3 @@
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — `EventLog`, `OutboxRelay`, `events`, `eventConsumers`
 - [design-agents.md](../../features/agent-platform/design-agents.md) — событие `agents.history_appended`
 - [design-core.md](../../features/self-learning/design-core.md) — `agents.knowledge-trigger` создаёт задачу `knowledge.extract` в транзакции доставки (KD-3)
-- [design-tasks.md](../../features/deep-agents/design-tasks.md) — потребитель концов задач пишет итог в строку списка и создаёт задачи сабагентов, которые её ждали, в транзакции доставки (KD-1)

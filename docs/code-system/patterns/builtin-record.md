@@ -28,4 +28,3 @@
 ## Used In
 
 - [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — встроенный глубокий ресерч становится глубоким агентом, а встроенный `chat` получает новый промпт; оба приходят в пересозданную базу (KD-7)
-- [design-flows.md](../../features/deep-agents/design-flows.md) — глубокий ресерч как флоу и новый «Утренний бриф» (KD-6)

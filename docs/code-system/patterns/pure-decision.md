@@ -32,4 +32,4 @@
 - [design-core.md](../../features/self-learning/design-core.md) — отбор знаний `selectKnowledge` и проверка операций `checkOperations` (KD-4, KD-6)
 - [design-core.md](../../features/agent-harness/design-core.md) — обрезанный ответ в `endOfTurn` и правило повтора одинаковых вызовов (KD-3, KD-5)
 - [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — открытые пункты плана в `endOfTurn`, путь в отказе `decideSave`, команда в `gateStart` (KD-4, KD-5)
-- [design-tasks.md](../../features/deep-agents/design-tasks.md) — решения о добавлении и готовности задач, старт финальной в `endOfTurn`; ветка команды в `gateStart` удаляется (KD-2, KD-3)
+- [design-task.md](../../features/deep-agents/design-task.md) — проверка вызова `task` и таблица ответов; поля ответа и финальный сабагент из `task` в `endOfTurn`; ветка команды в `gateStart` удаляется (KD-5, KD-6, KD-7)
