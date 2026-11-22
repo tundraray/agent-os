@@ -37,7 +37,7 @@
 | Boundary | Owns | Exposed through | Crossed by |
 |---|---|---|---|
 | `runtime` | таблицы `runtime_*`: задачи, сообщения, запросы решений, трекеры, события, журнал токенов | функция сборки `createRuntime` и порт обработчика шага | верхние пакеты и `apps/api`; чужой код не читает и не пишет таблицы `runtime_*` |
-| `agents` | свои таблицы с префиксом `agent_`, в том числе список задач запуска `agent_run_tasks` | функция сборки `createAgents` | `apps/api` |
+| `agents` | свои таблицы с префиксом `agent_`, в том числе список задач сессии `agent_session_tasks` | функция сборки `createAgents` | `apps/api` |
 | `db` | модель схемы `app` всех пакетов и историю миграций | пул, клиент, тип транзакции, функции миграций | все пакеты с таблицами |
 | `common` | логгер и память секретов процесса | `createLogger`, приёмники, `createSecretMasker` — маскировка секретов логгера для текста вне лога — и `rememberSecret`, которым код добавляет секрет, прочитанный из базы или принятый от администратора | все |
 | `identity` в `apps/api` | таблицы `identity_*`: сотрудники и их пароли, роли, провайдеры входа, запросы входа, сеансы, настройки входа; таблица `audit_events` модуля аудита | `SessionGuard` и `req.user` ([auth-boundary.md](./patterns/auth-boundary.md)), `IdentityDirectory` (`isActive`, `rolesOf`, `existing` — какие из названных ролей и сотрудников есть), `AuditLog`; репозитории `identity` вне модуля никто не импортирует | модули `apps/api`; пакеты получают только строку владельца ([design-identity.md](../features/enterprise-access/design-identity.md)) |

@@ -27,4 +27,4 @@
 
 ## Used In
 
-- [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — встроенный глубокий ресерч становится глубоким агентом, а встроенный `chat` получает новый промпт; оба приходят в пересозданную базу (KD-7)
+- [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — встроенный глубокий ресерч — глубокий агент, а промпт встроенного `chat` называет `start_deep_agent` и инструменты записей (KD-2)
