@@ -30,3 +30,4 @@
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — таблицы `identity_*` и `audit_events` в `apps/api`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — таблицы `agent_mcp_*`; внешний вызов вне транзакции (KD-1)
 - [design-library.md](../../features/custom-agents/design-library.md) — таблицы `library_*` и событие аудита в транзакции изменения
+- [design-task-list.md](../../features/deep-agents/design-task-list.md) — таблица `agent_session_tasks` и счётчик сессии в транзакции коммита шага (KD-1, KD-3)

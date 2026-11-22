@@ -28,3 +28,4 @@
 
 - [design-core.md](../../features/self-learning/design-core.md) — блок знаний записи
 - [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — блок плана глубокого агента (KD-5)
+- [design-task-list.md](../../features/deep-agents/design-task-list.md) — блок задач сессии по флажку `taskList` вместо блока плана (KD-2, KD-3)
