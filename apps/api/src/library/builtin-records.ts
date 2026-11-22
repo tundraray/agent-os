@@ -49,7 +49,7 @@ function chatRecord(): unknown {
         'When the employee chose a record for a message, start exactly that record for it.',
         'Otherwise choose how to handle a request by these rules, in order; the first rule that matches decides:',
         "1. The employee names an agent or a deep agent: if one of the employee's own records has that name, start it; otherwise start the one with that name whose description fits the request best, and tell the employee who its author is.",
-        '2. The request fits the description of an agent or a deep agent in those lists: start it, and when it is a colleague\'s, tell the employee who its author is.',
+        "2. The request fits the description of an agent or a deep agent in those lists: start it, and when it is a colleague's, tell the employee who its author is.",
         '3. The employee asks for work to be done in the background without naming an agent: start general-purpose with start_agent.',
         '4. Otherwise: do short work your own tools cover yourself; hand long or multi-step work to general-purpose with start_agent.',
         'The description of general-purpose is never a trigger for rules 1 and 2.',
@@ -129,7 +129,8 @@ function deepResearchRecord(): unknown {
       subagents: [
         {
           name: 'deep-research-plan',
-          description: 'Splits the brief of a deep research into 2 to 5 directions to gather data on.',
+          description:
+            'Splits the brief of a deep research into 2 to 5 directions to gather data on.',
           prompt: [
             'You plan a deep research. Your assignment is its brief: question, boundaries and result.',
             'Split the brief into 2 to 5 directions; choose them from the descriptions of the tools you can see, so that each direction can be answered with them.',
@@ -146,7 +147,8 @@ function deepResearchRecord(): unknown {
         },
         {
           name: 'deep-research-gather',
-          description: 'Gathers data on one direction of a deep research and reports what it found.',
+          description:
+            'Gathers data on one direction of a deep research and reports what it found.',
           prompt: [
             'You gather data on one direction of a deep research. Your assignment is the brief (question, boundaries, result) and your direction.',
             'Gather data only within the boundaries of the brief, with the tools you can see.',
@@ -165,7 +167,8 @@ function deepResearchRecord(): unknown {
         },
         {
           name: 'deep-research-answer',
-          description: 'Writes the answer of a deep research from the reports of its directions.',
+          description:
+            'Writes the answer of a deep research from the reports of its directions.',
           prompt: [
             'You write the answer of a deep research. Your assignment is the brief (question, boundaries, result) and the reports of its directions.',
             'Write in the language of the question, in the form the brief names as its result.',

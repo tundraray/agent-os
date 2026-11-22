@@ -39,8 +39,20 @@ describe('ConnectRequests', () => {
       now: at(TEN_MINUTES_MS + 1000),
       taken: false,
     },
-    { name: 'another employee', state: 'own', ownerId: BORIS, now: at(1000), taken: false },
-    { name: 'an unknown state', state: 'unknown', ownerId: ANNA, now: at(1000), taken: false },
+    {
+      name: 'another employee',
+      state: 'own',
+      ownerId: BORIS,
+      now: at(1000),
+      taken: false,
+    },
+    {
+      name: 'an unknown state',
+      state: 'unknown',
+      ownerId: ANNA,
+      now: at(1000),
+      taken: false,
+    },
   ])(
     'a connection request is taken once, within 10 minutes and only by the employee who began it: $name',
     ({ state, ownerId, now, taken }) => {

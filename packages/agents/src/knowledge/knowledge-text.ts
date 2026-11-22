@@ -52,7 +52,10 @@ export function knowledgeText(chosen: readonly GraphItem[]): string | null {
   return `${KNOWLEDGE_RULE}\n${envelope('knowledge', KNOWLEDGE_AUTHOR, chosen.map(knowledgeLine).join('\n'))}`;
 }
 
-function toolOf(item: { readonly server: string; readonly tool: string }): string {
+function toolOf(item: {
+  readonly server: string;
+  readonly tool: string;
+}): string {
   return `${item.server}.${item.tool}`;
 }
 

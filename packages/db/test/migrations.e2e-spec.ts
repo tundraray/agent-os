@@ -266,17 +266,31 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         identity_users_language_check: sorted(LanguageSchema.options),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
         agent_mcp_servers_mode_check: sorted(McpServerModeSchema.options),
-        agent_model_providers_kind_check: sorted(ModelProviderKindSchema.options),
+        agent_model_providers_kind_check: sorted(
+          ModelProviderKindSchema.options,
+        ),
         access_models_purpose_check: sorted(ModelPurposeSchema.options),
         access_grants_effect_check: sorted(GrantEffectSchema.options),
         access_grants_target_kind_check: sorted(GrantTargetKindSchema.options),
         library_records_kind_check: sorted(RecordKindSchema.options),
-        agent_session_tasks_status_check: sorted(SessionTaskStatusSchema.options),
-        agent_knowledge_relations_kind_check: sorted(KnowledgeItemKindSchema.options),
-        agent_knowledge_runs_last_status_check: sorted(LastExtractionStatusSchema.options),
-        agent_knowledge_runs_last_reason_check: sorted(LastExtractionReasonSchema.options),
-        agent_knowledge_embedding_last_reason_check: sorted(EmbeddingFailureReasonSchema.options),
-        agent_knowledge_vectors_key_kind_check: sorted(KnowledgeItemTypeSchema.options),
+        agent_session_tasks_status_check: sorted(
+          SessionTaskStatusSchema.options,
+        ),
+        agent_knowledge_relations_kind_check: sorted(
+          KnowledgeItemKindSchema.options,
+        ),
+        agent_knowledge_runs_last_status_check: sorted(
+          LastExtractionStatusSchema.options,
+        ),
+        agent_knowledge_runs_last_reason_check: sorted(
+          LastExtractionReasonSchema.options,
+        ),
+        agent_knowledge_embedding_last_reason_check: sorted(
+          EmbeddingFailureReasonSchema.options,
+        ),
+        agent_knowledge_vectors_key_kind_check: sorted(
+          KnowledgeItemTypeSchema.options,
+        ),
       });
     });
   });

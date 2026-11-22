@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { BridgeRequest, CodeRunner, FailReason, RequestAnswer, RunOutcome } from '@agent-os/code-runner';
+import type {
+  BridgeRequest,
+  CodeRunner,
+  FailReason,
+  RequestAnswer,
+  RunOutcome,
+} from '@agent-os/code-runner';
 import type { Logger } from '@agent-os/common';
 import {
   AGENTS_TOOL_CONFIRMATION,
@@ -9,7 +15,10 @@ import {
   RunCodeConfirmationContentSchema,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import { AgentCodeCallsRepository, AgentToolResultsRepository } from '@agent-os/db';
+import {
+  AgentCodeCallsRepository,
+  AgentToolResultsRepository,
+} from '@agent-os/db';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import { OwnerDisabledError } from '../../access-gate';
@@ -18,7 +27,12 @@ import type { AgentsConfig, CodeRunConfig } from '../../config';
 import { CallRecords, interruptedRunOutcome } from '../../store/call-records';
 import type { CodeCallScope } from '../code-call';
 import { RESULT_NOT_FOUND } from '../large-result';
-import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool';
+import type {
+  OutsideAgentTool,
+  OutsideToolInput,
+  ToolCaller,
+  ToolRunResult,
+} from '../tool';
 import { callTargetOf, ToolRegistry } from '../tool-registry';
 import { ToolRunner } from '../tool-runner';
 import { canCallOf } from './can-call';
@@ -35,7 +49,8 @@ export interface RunTexts {
 }
 
 /** The text of a `write` run whose decided request has no readable list (DC-16). */
-const NO_CONFIRMED_LIST = 'the decided request has no list of tools the script may call';
+const NO_CONFIRMED_LIST =
+  'the decided request has no list of tools the script may call';
 
 export function runTexts(settings: RunTextSettings): RunTexts {
   return {
@@ -66,9 +81,15 @@ function failure(text: string): DoneResult {
 }
 
 /** Reasons whose run carries the script's own message, which the model needs to fix the script. */
-const DETAILED_REASONS: ReadonlySet<FailReason> = new Set(['syntax', 'exception']);
+const DETAILED_REASONS: ReadonlySet<FailReason> = new Set([
+  'syntax',
+  'exception',
+]);
 
-function failureText(outcome: Extract<RunOutcome, { status: 'failed' }>, texts: RunTexts): string {
+function failureText(
+  outcome: Extract<RunOutcome, { status: 'failed' }>,
+  texts: RunTexts,
+): string {
   const message = DETAILED_REASONS.has(outcome.reason) ? outcome.text : null;
   const detail = message === null || message === '' ? '' : `: ${message}`;
   const line = outcome.line === null ? '' : `; line ${outcome.line}`;
@@ -87,7 +108,11 @@ function parseResult(json: string): unknown {
 
 function isEmptyContainer(value: unknown): boolean {
   if (Array.isArray(value)) return value.length === 0;
-  return typeof value === 'object' && value !== null && Object.keys(value).length === 0;
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.keys(value).length === 0
+  );
 }
 
 /**
@@ -99,13 +124,17 @@ function isEmptyContainer(value: unknown): boolean {
 export function outcomeOfRun(outcome: RunOutcome, texts: RunTexts): DoneResult {
   if (outcome.status === 'failed') return failure(failureText(outcome, texts));
   const { output } = outcome;
-  if (outcome.value === null) return { kind: 'done', outcome: 'empty', text: '', output };
+  if (outcome.value === null)
+    return { kind: 'done', outcome: 'empty', text: '', output };
   const value = parseResult(outcome.value);
   // The executor is not trusted: a result that is not JSON is a broken protocol.
   if (value === NOT_JSON) return failure(texts.failures.protocol);
-  if (value === null || value === '') return { kind: 'done', outcome: 'empty', text: '', output };
-  if (typeof value === 'string') return { kind: 'done', outcome: 'success', text: value, output };
-  if (isEmptyContainer(value)) return { kind: 'done', outcome: 'empty', text: outcome.value, output };
+  if (value === null || value === '')
+    return { kind: 'done', outcome: 'empty', text: '', output };
+  if (typeof value === 'string')
+    return { kind: 'done', outcome: 'success', text: value, output };
+  if (isEmptyContainer(value))
+    return { kind: 'done', outcome: 'empty', text: outcome.value, output };
   return { kind: 'done', outcome: 'success', text: outcome.value, output };
 }
 
@@ -229,16 +258,27 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     runSignal: AbortSignal,
   ): Promise<RequestAnswer | 'fenced'> {
     if (seq > deps.codeRun.maxToolCalls) {
-      run.logger.warn('code run reached its tool-call limit', { seq, maxToolCalls: deps.codeRun.maxToolCalls });
+      run.logger.warn('code run reached its tool-call limit', {
+        seq,
+        maxToolCalls: deps.codeRun.maxToolCalls,
+      });
       return { kind: 'finish', reason: 'call_limit' };
     }
     const target = callTargetOf(run.codeScope.snapshot, request.name);
-    const key = { taskId: run.caller.agentId, runCallId: run.callId, attempt: run.attempt, seq };
+    const key = {
+      taskId: run.caller.agentId,
+      runCallId: run.callId,
+      attempt: run.attempt,
+      seq,
+    };
     const opened = await run.guard(() =>
       deps.codeCallRows.open({ ...key, ...target, args: request.args }),
     );
     if (opened.outcome === 'fenced') {
-      run.logger.warn('code call not sent: its audit row was fenced', { seq, ...target });
+      run.logger.warn('code call not sent: its audit row was fenced', {
+        seq,
+        ...target,
+      });
       return 'fenced';
     }
 
@@ -246,7 +286,11 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     const execution = await deps.runner
       .callFromCode(
         { name: request.name, args: request.args },
-        { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
+        {
+          ...run.codeScope,
+          signal,
+          logger: run.logger.child({ attempt: run.attempt, seq }),
+        },
       )
       .catch(async (error: unknown) => {
         // The gate refused a disabled owner before the call started (KD-4): `interrupted` even in a `write`
@@ -275,16 +319,27 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       });
       return {
         kind: 'error',
-        error: { outcome: 'refused', reason: execution.reason, text: execution.text },
+        error: {
+          outcome: 'refused',
+          reason: execution.reason,
+          text: execution.text,
+        },
       };
     }
-    await deps.codeCallRows.close(key, { outcome: execution.outcome, finishedAt: new Date() });
+    await deps.codeCallRows.close(key, {
+      outcome: execution.outcome,
+      finishedAt: new Date(),
+    });
     if (execution.outcome === 'success' || execution.outcome === 'empty') {
       return { kind: 'value', value: execution.fullResult?.value ?? null };
     }
     return {
       kind: 'error',
-      error: { outcome: execution.outcome, reason: execution.failureReason ?? null, text: execution.text },
+      error: {
+        outcome: execution.outcome,
+        reason: execution.failureReason ?? null,
+        text: execution.text,
+      },
     };
   }
 
@@ -298,14 +353,27 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       taskId: run.caller.agentId,
       ownerId: run.caller.ownerId,
     });
-    run.logger.debug('code run read a full result', { resultId: request.resultId, found: found !== undefined });
+    run.logger.debug('code run read a full result', {
+      resultId: request.resultId,
+      found: found !== undefined,
+    });
     return found === undefined
-      ? { kind: 'error', error: { outcome: 'not_found', reason: null, text: texts.resultNotFound } }
+      ? {
+          kind: 'error',
+          error: {
+            outcome: 'not_found',
+            reason: null,
+            text: texts.resultNotFound,
+          },
+        }
       : { kind: 'value', value: found.value };
   }
 
   /** Starts the run and turns its end into the tool's result. */
-  async function runScript(run: RunScope, input: OutsideToolInput<RunCodeArgs>): Promise<ToolRunResult> {
+  async function runScript(
+    run: RunScope,
+    input: OutsideToolInput<RunCodeArgs>,
+  ): Promise<ToolRunResult> {
     const startedAt = Date.now();
     let calls = 0;
     let fenced = false;
@@ -335,8 +403,13 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       logger: run.logger,
     });
 
-    const result = maskResult(fenced ? interrupted(texts) : outcomeOfRun(outcome, texts));
-    if (outcome.output !== '') run.logger.info('code run output', { output: deps.maskSecrets(outcome.output) });
+    const result = maskResult(
+      fenced ? interrupted(texts) : outcomeOfRun(outcome, texts),
+    );
+    if (outcome.output !== '')
+      run.logger.info('code run output', {
+        output: deps.maskSecrets(outcome.output),
+      });
     run.logger.info('code run ended', {
       status: outcome.status,
       outcome: result.outcome,
@@ -349,10 +422,16 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
   }
 
   /** The attempt of a run: 1 for `write` (it has no `run_attempt` record); for `read`, recorded through `guard` (KD-7). */
-  async function attemptOf(input: OutsideToolInput<RunCodeArgs>, logger: Logger): Promise<number | DoneResult> {
+  async function attemptOf(
+    input: OutsideToolInput<RunCodeArgs>,
+    logger: Logger,
+  ): Promise<number | DoneResult> {
     if (input.args.class === 'write') return 1;
     const bumped = await input.guard(() =>
-      deps.callRecords.startAttempt({ taskId: input.caller.agentId, callId: input.callId }, input.args),
+      deps.callRecords.startAttempt(
+        { taskId: input.caller.agentId, callId: input.callId },
+        input.args,
+      ),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');
@@ -362,7 +441,10 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       logger.warn('code run not started: it was lost to a restart twice');
       return failure(texts.twiceInterrupted);
     }
-    if (bumped.value > 1) logger.warn('code run re-executed after a lost step', { attempt: bumped.value });
+    if (bumped.value > 1)
+      logger.warn('code run re-executed after a lost step', {
+        attempt: bumped.value,
+      });
     return bumped.value;
   }
 
@@ -386,7 +468,9 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       if (args.class === 'write') {
         const confirmed = confirmedNamesOf(input.confirmed);
         if (!confirmed.ok) {
-          logger.warn('code run not started: the decided request has no readable list');
+          logger.warn(
+            'code run not started: the decided request has no readable list',
+          );
           return failure(confirmed.text);
         }
         confirmedNames = confirmed.names;
@@ -442,12 +526,16 @@ export class RunCodeTool implements OnModuleInit {
   constructor(
     @Inject(CODE_RUNNER) private readonly codeRunner: CodeRunner,
     @Inject(CallRecords) private readonly callRecords: CallRecords,
-    @Inject(AgentCodeCallsRepository) private readonly codeCallRows: AgentCodeCallsRepository,
-    @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(AgentCodeCallsRepository)
+    private readonly codeCallRows: AgentCodeCallsRepository,
+    @Inject(AgentToolResultsRepository)
+    private readonly toolResultRows: AgentToolResultsRepository,
     @Inject(ToolRegistry) private readonly registry: ToolRegistry,
     @Inject(ToolRunner) private readonly runner: ToolRunner,
-    @Inject(AGENTS_CONFIG) private readonly config: Pick<AgentsConfig, 'codeRun'>,
-    @Inject(MASK_SECRETS) private readonly maskSecrets: (text: string) => string,
+    @Inject(AGENTS_CONFIG)
+    private readonly config: Pick<AgentsConfig, 'codeRun'>,
+    @Inject(MASK_SECRETS)
+    private readonly maskSecrets: (text: string) => string,
   ) {}
 
   onModuleInit(): void {

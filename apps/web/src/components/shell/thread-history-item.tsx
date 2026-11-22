@@ -10,8 +10,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from '@/components/ui/sidebar';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { focusShellTarget, isFinePointer } from '@/lib/focus';
 import { threadPath } from '@/lib/shell-route';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
@@ -49,7 +58,13 @@ export type ThreadHistoryItemProps = {
  * title for the SB-08 field at once, and focus returns to the link once the field closes (UXRD 7.4);
  * «Удалить» asks the list for DLG-01.
  */
-export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onRequestDelete }: ThreadHistoryItemProps) {
+export function ThreadHistoryItem({
+  entry,
+  isActive,
+  titlePending,
+  onRename,
+  onRequestDelete,
+}: ThreadHistoryItemProps) {
   const t = useTranslations('shell.thread');
   const { isMobile, setOpenMobile } = useSidebar();
   const rowRef = useRef<HTMLLIElement>(null);
@@ -65,7 +80,9 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
   useEffect(() => {
     if (editing || !focusLinkAfterEdit.current) return;
     focusLinkAfterEdit.current = false;
-    rowRef.current?.querySelector<HTMLElement>(`[${THREAD_LINK_ATTRIBUTE}]`)?.focus();
+    rowRef.current
+      ?.querySelector<HTMLElement>(`[${THREAD_LINK_ATTRIBUTE}]`)
+      ?.focus();
   }, [editing]);
 
   const closeField = (): void => {
@@ -120,7 +137,10 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
 
   return (
     <SidebarMenuItem ref={rowRef} {...rowProps}>
-      <Tooltip open={tooltipOpen} onOpenChange={(open) => setTooltipOpen(open && isTruncated())}>
+      <Tooltip
+        open={tooltipOpen}
+        onOpenChange={(open) => setTooltipOpen(open && isTruncated())}
+      >
         <SidebarMenuButton
           isActive={isActive}
           className={cn(
@@ -131,7 +151,10 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
           )}
           render={<TooltipTrigger delay={TOOLTIP_DELAY_MS} render={target} />}
         >
-          <ShimmerLabel ref={labelRef} active={entry.title === undefined && titlePending}>
+          <ShimmerLabel
+            ref={labelRef}
+            active={entry.title === undefined && titlePending}
+          >
             {label}
           </ShimmerLabel>
         </SidebarMenuButton>

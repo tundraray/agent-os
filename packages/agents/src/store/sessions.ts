@@ -1,4 +1,8 @@
-import { ChipRecordSchema, RecordKindSchema, type RunOrigin } from '@agent-os/contracts';
+import {
+  ChipRecordSchema,
+  RecordKindSchema,
+  type RunOrigin,
+} from '@agent-os/contracts';
 import {
   type AgentSessionRow,
   AgentSessionsRepository,
@@ -12,8 +16,18 @@ import { snapshotDefinition } from '../start/snapshot-definition';
 
 /** A field of the answer a `task` call asks its subagent for (deep-agents/design-task.md KD-7). */
 export const AnswerFieldSchema = z.strictObject({
-  name: z.string().trim().min(1).max(64).describe('The key of the field in the JSON answer'),
-  description: z.string().trim().min(1).max(500).describe('What the field holds'),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .describe('The key of the field in the JSON answer'),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .describe('What the field holds'),
 });
 
 /**
@@ -27,7 +41,10 @@ export const AgentTaskInputSchema = z.object({
   prompt: z.string(),
   description: z.string(),
   forkedFrom: z
-    .object({ agentId: z.string().min(1), throughSeq: z.number().int().nonnegative() })
+    .object({
+      agentId: z.string().min(1),
+      throughSeq: z.number().int().nonnegative(),
+    })
     .optional(),
   record: ChipRecordSchema.optional(),
   answerFields: z.array(AnswerFieldSchema).optional(),
@@ -102,7 +119,9 @@ function originOf(row: AgentSessionRow): RunOrigin {
     version: row.recordVersion,
     name: row.recordName,
     author:
-      row.authorId === null ? null : { id: row.authorId, name: z.string().parse(row.authorName) },
+      row.authorId === null
+        ? null
+        : { id: row.authorId, name: z.string().parse(row.authorName) },
     builtinKey: row.builtinKey,
     subagent: row.subagent,
   };
@@ -137,7 +156,10 @@ function toSession(row: AgentSessionRow): Session {
  */
 @Injectable()
 export class Sessions {
-  constructor(@Inject(AgentSessionsRepository) private readonly rows: AgentSessionsRepository) {}
+  constructor(
+    @Inject(AgentSessionsRepository)
+    private readonly rows: AgentSessionsRepository,
+  ) {}
 
   /**
    * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11):
@@ -147,11 +169,16 @@ export class Sessions {
    * starts with an empty title and its list time. `true` — this call created the session: the caller
    * (`BaseAgent.createSession`) then runs the agent's `sessionCreated` in the same transaction.
    */
-  async ensureSession(task: SessionTask, input: SessionInput): Promise<boolean> {
+  async ensureSession(
+    task: SessionTask,
+    input: SessionInput,
+  ): Promise<boolean> {
     const { taskId, ownerId } = task;
     const root = task.parentId === null;
     const { origin } = input.snapshot;
-    const firstRun = root ? false : !(await this.rows.ranBefore(ownerId, origin.recordId, taskId));
+    const firstRun = root
+      ? false
+      : !(await this.rows.ranBefore(ownerId, origin.recordId, taskId));
     return this.rows.create(
       {
         taskId,

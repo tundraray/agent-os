@@ -1,5 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
+import {
+  OAuthError,
+  OAuthErrorCode,
+  type AuthInfo,
+  type OAuthTokenVerifier,
+} from '@modelcontextprotocol/server';
 import { waitForFile } from '../fixture-server';
 
 /** Access token lifetime until a test changes it (`/_control/token-lifetime`). */
@@ -81,16 +86,24 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
   }
 
   /** The answer of an authorization server route, or undefined when `path` is not one. */
-  async handle(request: Request, path: string, issuer: string): Promise<Response | undefined> {
+  async handle(
+    request: Request,
+    path: string,
+    issuer: string,
+  ): Promise<Response | undefined> {
     switch (path) {
       case '/.well-known/oauth-authorization-server':
         return Response.json(this.metadata(issuer));
       case '/register':
-        return request.method === 'POST' ? this.register(request) : methodNotAllowed();
+        return request.method === 'POST'
+          ? this.register(request)
+          : methodNotAllowed();
       case '/authorize':
         return this.authorize(new URL(request.url), issuer);
       case '/token':
-        return request.method === 'POST' ? this.token(await request.formData()) : methodNotAllowed();
+        return request.method === 'POST'
+          ? this.token(await request.formData())
+          : methodNotAllowed();
       default:
         return undefined;
     }
@@ -100,7 +113,12 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
   verifyAccessToken(token: string): Promise<AuthInfo> {
     const access = this.accessTokens.get(token);
     if (access === undefined || access.revoked) {
-      return Promise.reject(new OAuthError(OAuthErrorCode.InvalidToken, 'unknown or revoked access token'));
+      return Promise.reject(
+        new OAuthError(
+          OAuthErrorCode.InvalidToken,
+          'unknown or revoked access token',
+        ),
+      );
     }
     const owner: TokenOwner = { account: access.account, tokenId: access.id };
     return Promise.resolve({
@@ -157,7 +175,10 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
       redirectUris.length === 0 ||
       !redirectUris.every((uri) => typeof uri === 'string')
     ) {
-      return oauthError('invalid_redirect_uri', 'redirect_uris must be a non-empty list of addresses');
+      return oauthError(
+        'invalid_redirect_uri',
+        'redirect_uris must be a non-empty list of addresses',
+      );
     }
     const clientId = `fixture-client-${randomBytes(8).toString('hex')}`;
     this.clients.set(clientId, redirectUris);
@@ -182,10 +203,20 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
     const redirectUri = params.get('redirect_uri') ?? '';
     const codeChallenge = params.get('code_challenge') ?? '';
     if (!(this.clients.get(clientId)?.includes(redirectUri) ?? false)) {
-      return oauthError('invalid_request', 'unknown client_id or unregistered redirect_uri');
+      return oauthError(
+        'invalid_request',
+        'unknown client_id or unregistered redirect_uri',
+      );
     }
-    if (params.get('response_type') !== 'code' || params.get('code_challenge_method') !== 'S256' || !codeChallenge) {
-      return oauthError('invalid_request', 'response_type=code with an S256 code_challenge is required');
+    if (
+      params.get('response_type') !== 'code' ||
+      params.get('code_challenge_method') !== 'S256' ||
+      !codeChallenge
+    ) {
+      return oauthError(
+        'invalid_request',
+        'response_type=code with an S256 code_challenge is required',
+      );
     }
     const account = params.get('fixture_account') || DEFAULT_ACCOUNT;
     this.statsOf(account).authorizations += 1;
@@ -200,7 +231,10 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
       this.codes.set(code, { clientId, redirectUri, codeChallenge, account });
       target.searchParams.set('code', code);
     }
-    return new Response(null, { status: 302, headers: { location: target.href } });
+    return new Response(null, {
+      status: 302,
+      headers: { location: target.href },
+    });
   }
 
   private async token(form: FormData): Promise<Response> {
@@ -210,7 +244,10 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
       case 'refresh_token':
         return this.refresh(form);
       default:
-        return oauthError('unsupported_grant_type', 'grant_type must be authorization_code or refresh_token');
+        return oauthError(
+          'unsupported_grant_type',
+          'grant_type must be authorization_code or refresh_token',
+        );
     }
   }
 
@@ -226,9 +263,13 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
     if (
       form.get('client_id') !== pending.clientId ||
       form.get('redirect_uri') !== pending.redirectUri ||
-      createHash('sha256').update(verifier).digest('base64url') !== pending.codeChallenge
+      createHash('sha256').update(verifier).digest('base64url') !==
+        pending.codeChallenge
     ) {
-      return oauthError('invalid_grant', 'client_id, redirect_uri or code_verifier does not match the code');
+      return oauthError(
+        'invalid_grant',
+        'client_id, redirect_uri or code_verifier does not match the code',
+      );
     }
     return Response.json(this.issueTokens(pending.account, pending.clientId));
   }
@@ -242,18 +283,28 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
     this.statsOf(stored.account).refreshes += 1;
     const holdPath = this.refreshHolds.get(stored.account);
     if (holdPath !== undefined && !(await waitForFile(holdPath))) {
-      return oauthError('server_error', `refresh hold ${holdPath} was not released`, 500);
+      return oauthError(
+        'server_error',
+        `refresh hold ${holdPath} was not released`,
+        500,
+      );
     }
     if (stored.revoked || form.get('client_id') !== stored.clientId) {
       // A replayed refresh token: the whole chain of the account is revoked.
       this.revoke(stored.account, 'all');
-      return oauthError('invalid_grant', 'refresh token was rotated or revoked');
+      return oauthError(
+        'invalid_grant',
+        'refresh token was rotated or revoked',
+      );
     }
     stored.revoked = true;
     return Response.json(this.issueTokens(stored.account, stored.clientId));
   }
 
-  private issueTokens(account: string, clientId: string): Record<string, unknown> {
+  private issueTokens(
+    account: string,
+    clientId: string,
+  ): Record<string, unknown> {
     const accessToken = randomBytes(24).toString('base64url');
     const refreshToken = randomBytes(24).toString('base64url');
     this.lastTokenId += 1;
@@ -289,7 +340,11 @@ function textField(form: FormData, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function oauthError(error: string, description: string, status = 400): Response {
+function oauthError(
+  error: string,
+  description: string,
+  status = 400,
+): Response {
   return Response.json({ error, error_description: description }, { status });
 }
 

@@ -3,7 +3,11 @@ import type { Database } from './database';
 
 /** A database whose `transaction` hands the callback a distinct handle, nested ones included. */
 function fakeDatabase(name: string): Database {
-  const handle = { name, transaction: (cb: (tx: unknown) => unknown) => cb(fakeDatabase(`${name}>tx`)) };
+  const handle = {
+    name,
+    transaction: (cb: (tx: unknown) => unknown) =>
+      cb(fakeDatabase(`${name}>tx`)),
+  };
   return handle as unknown as Database;
 }
 
@@ -20,7 +24,9 @@ describe('Db', () => {
       expect(captured()).toBe('db>tx');
       // A nested transaction joins the open one, a savepoint nests in it.
       await db.transaction(async () => expect(nameOf(db.client)).toBe('db>tx'));
-      await db.savepoint(async () => expect(nameOf(db.client)).toBe('db>tx>tx'));
+      await db.savepoint(async () =>
+        expect(nameOf(db.client)).toBe('db>tx>tx'),
+      );
       expect(nameOf(db.client)).toBe('db>tx');
     });
 

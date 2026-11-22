@@ -31,14 +31,23 @@ const GetTraceResultSchema = z.strictObject({
 export const getTraceTool = defineTool({
   name: 'get_trace',
   title: 'Показать трассу',
-  description: 'Get every log record of one trace (traceId: 32 lowercase hex characters) in time order.',
+  description:
+    'Get every log record of one trace (traceId: 32 lowercase hex characters) in time order.',
   readOnly: true,
   argsSchema: GetTraceArgsSchema,
   resultSchema: GetTraceResultSchema,
   run(args, dataset) {
     const records = dataset
       .traceRecords(args.traceId)
-      .sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts) || left.spanSeq - right.spanSeq);
-    return { snapshot: dataset.snapshot, records, totalMatched: records.length };
+      .sort(
+        (left, right) =>
+          Date.parse(left.ts) - Date.parse(right.ts) ||
+          left.spanSeq - right.spanSeq,
+      );
+    return {
+      snapshot: dataset.snapshot,
+      records,
+      totalMatched: records.length,
+    };
   },
 });

@@ -91,8 +91,12 @@ export class AgentKnowledgeRepository {
 
   /** Adds one entity; its id answers the `ref` of the operations that point at it. */
   async insertEntity(entity: NewKnowledgeEntity): Promise<KnowledgeEntityRow> {
-    const [row] = await this.db.client.insert(entities).values(entity).returning();
-    if (row === undefined) throw new Error('knowledge entity insert returned no row');
+    const [row] = await this.db.client
+      .insert(entities)
+      .values(entity)
+      .returning();
+    if (row === undefined)
+      throw new Error('knowledge entity insert returned no row');
     return row;
   }
 
@@ -107,7 +111,12 @@ export class AgentKnowledgeRepository {
     recordId: string,
     { item, confirmations, at, runId }: KnowledgeConfirmation,
   ): Promise<void> {
-    const set = { confirmations, confirmedAt: at, confirmedByRunId: runId, outdated: false };
+    const set = {
+      confirmations,
+      confirmedAt: at,
+      confirmedByRunId: runId,
+      outdated: false,
+    };
     if (item.type === 'entity') {
       await this.db.client
         .update(entities)
@@ -140,14 +149,20 @@ export class AgentKnowledgeRepository {
    * Deletes the entity of this deep agent; its fact relations go by cascade (AC-09.2). Counted before the
    * delete.
    */
-  async deleteEntity(recordId: string, entityId: number): Promise<EntityDeletion> {
+  async deleteEntity(
+    recordId: string,
+    entityId: number,
+  ): Promise<EntityDeletion> {
     const [ends] = await this.db.client
       .select({ relations: count() })
       .from(relations)
       .where(
         and(
           eq(relations.recordId, recordId),
-          or(eq(relations.fromEntityId, entityId), eq(relations.toEntityId, entityId)),
+          or(
+            eq(relations.fromEntityId, entityId),
+            eq(relations.toEntityId, entityId),
+          ),
         ),
       );
     const deleted = await this.db.client
@@ -162,24 +177,33 @@ export class AgentKnowledgeRepository {
   async deleteRelation(recordId: string, relationId: number): Promise<boolean> {
     const deleted = await this.db.client
       .delete(relations)
-      .where(and(eq(relations.recordId, recordId), eq(relations.id, relationId)))
+      .where(
+        and(eq(relations.recordId, recordId), eq(relations.id, relationId)),
+      )
       .returning({ id: relations.id });
     return deleted.length > 0;
   }
 
   /** The settings row, read anew on every use (settings-row.md); the migration creates it. */
   async readSettings(): Promise<KnowledgeSettingsRow> {
-    const [row] = await this.db.client.select(settingsColumns).from(agentKnowledgeSettings);
-    if (row === undefined) throw new Error('agent_knowledge_settings row is missing');
+    const [row] = await this.db.client
+      .select(settingsColumns)
+      .from(agentKnowledgeSettings);
+    if (row === undefined)
+      throw new Error('agent_knowledge_settings row is missing');
     return row;
   }
 
   /** Writes the administrator's change with its time (KD-7). */
-  async writeSettings(
-    change: { readonly limitTokens: number; readonly lessonsEnabled: boolean },
-  ): Promise<KnowledgeSettingsChange> {
-    const [before] = await this.db.client.select(settingsColumns).from(agentKnowledgeSettings);
-    if (before === undefined) throw new Error('agent_knowledge_settings row is missing');
+  async writeSettings(change: {
+    readonly limitTokens: number;
+    readonly lessonsEnabled: boolean;
+  }): Promise<KnowledgeSettingsChange> {
+    const [before] = await this.db.client
+      .select(settingsColumns)
+      .from(agentKnowledgeSettings);
+    if (before === undefined)
+      throw new Error('agent_knowledge_settings row is missing');
     const [after] = await this.db.client
       .update(agentKnowledgeSettings)
       .set({
@@ -188,7 +212,8 @@ export class AgentKnowledgeRepository {
         updatedAt: new Date(),
       })
       .returning(settingsColumns);
-    if (after === undefined) throw new Error('agent_knowledge_settings row is missing');
+    if (after === undefined)
+      throw new Error('agent_knowledge_settings row is missing');
     return { before, after };
   }
 }

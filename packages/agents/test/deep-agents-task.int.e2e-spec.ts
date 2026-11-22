@@ -48,7 +48,10 @@ const SCOUT_B = 'scout-b';
 
 /** A scripted `task_create` call. */
 function taskCreate(subject: string) {
-  return { tool: 'task_create', args: { subject, description: `Описание: ${subject}` } };
+  return {
+    tool: 'task_create',
+    args: { subject, description: `Описание: ${subject}` },
+  };
 }
 
 /** A scripted `task_update` call. */
@@ -57,7 +60,9 @@ function taskUpdate(taskId: number, status: string) {
 }
 
 /** A harness whose root starts the deep agent `DEEP_AGENT` with two subagents, each given at most one single task. */
-async function delegatingHarness(model: ScriptedModel): Promise<{ harness: AgentsHarness; recordId: string }> {
+async function delegatingHarness(
+  model: ScriptedModel,
+): Promise<{ harness: AgentsHarness; recordId: string }> {
   const library = createLibraryDouble();
   const recordId = library.add(
     testDeepAgent(DEEP_AGENT, {
@@ -72,7 +77,13 @@ async function delegatingHarness(model: ScriptedModel): Promise<{ harness: Agent
       selfLearning: false,
     }),
   );
-  const harness = await createAgentsHarness({ model, library, access: {}, root: testRecord('root'), deepAgentStarter: true });
+  const harness = await createAgentsHarness({
+    model,
+    library,
+    access: {},
+    root: testRecord('root'),
+    deepAgentStarter: true,
+  });
   return { harness, recordId };
 }
 
@@ -80,39 +91,78 @@ async function delegatingHarness(model: ScriptedModel): Promise<{ harness: Agent
 async function startDeepAgent(
   harness: AgentsHarness,
   model: ScriptedModel,
-  input: { readonly ownerId: string; readonly recordId: string; readonly task: string },
+  input: {
+    readonly ownerId: string;
+    readonly recordId: string;
+    readonly task: string;
+  },
 ): Promise<{ rootId: string; deepAgentId: string }> {
   const rootTask = `Start the deep agent: ${input.task}`;
   model.script(
     { task: rootTask },
-    [{ calls: [{ tool: START_TEST_DEEP_AGENT, args: { deepAgent: input.recordId, prompt: input.task, description: 'deep agent' } }] }],
+    [
+      {
+        calls: [
+          {
+            tool: START_TEST_DEEP_AGENT,
+            args: {
+              deepAgent: input.recordId,
+              prompt: input.task,
+              description: 'deep agent',
+            },
+          },
+        ],
+      },
+    ],
     { thereafter: { text: 'noted' } },
   );
-  const { agentId: rootId } = await harness.sessions.start({ ownerId: input.ownerId, prompt: rootTask, description: 'root' });
+  const { agentId: rootId } = await harness.sessions.start({
+    ownerId: input.ownerId,
+    prompt: rootTask,
+    description: 'root',
+  });
   const rows = await waitFor(
     () => toolCallRowsOf(harness.db, rootId),
     (calls) => calls.some((call) => call.childTaskId !== null),
     `the deep agent of root ${rootId}`,
   );
-  const deepAgentId = rows.find((call) => call.childTaskId !== null)?.childTaskId;
-  if (deepAgentId === undefined || deepAgentId === null) throw new Error(`root ${rootId} started no deep agent`);
+  const deepAgentId = rows.find(
+    (call) => call.childTaskId !== null,
+  )?.childTaskId;
+  if (deepAgentId === undefined || deepAgentId === null)
+    throw new Error(`root ${rootId} started no deep agent`);
   return { rootId, deepAgentId };
 }
 
 /** The `task` results of the deep agent: subagent, outcome and text, in call order. */
-async function taskResultsOf(harness: AgentsHarness, deepAgentId: string, ownerId: string) {
+async function taskResultsOf(
+  harness: AgentsHarness,
+  deepAgentId: string,
+  ownerId: string,
+) {
   return (await historyOf(harness, deepAgentId, ownerId)).flatMap((entry) =>
     entry.kind === 'tool_result' && entry.content.tool === 'task'
-      ? [{ subagent: (entry.content.args as { subagentType: string }).subagentType, outcome: entry.content.outcome, text: entry.content.text }]
+      ? [
+          {
+            subagent: (entry.content.args as { subagentType: string })
+              .subagentType,
+            outcome: entry.content.outcome,
+            text: entry.content.text,
+          },
+        ]
       : [],
   );
 }
 
 /** The callId of the deep agent's own `task` call in a recorded input. */
-const taskCallId: (messages: Parameters<ReplyFromInput>[0]) => string = (messages) => {
+const taskCallId: (messages: Parameters<ReplyFromInput>[0]) => string = (
+  messages,
+) => {
   for (const message of messages) {
     if (message.role !== 'assistant') continue;
-    const call = message.toolCalls.find((candidate) => candidate.toolName === 'task');
+    const call = message.toolCalls.find(
+      (candidate) => candidate.toolName === 'task',
+    );
     if (call !== undefined) return call.toolCallId;
   }
   throw new Error('the deep agent made no task call');
@@ -146,7 +196,11 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
         { calls: [taskCreate('Найти причину')] },
         {
           calls: [
-            taskCall({ subagentType: SCOUT_A, description: assignmentA, taskId: 1 }),
+            taskCall({
+              subagentType: SCOUT_A,
+              description: assignmentA,
+              taskId: 1,
+            }),
             taskCall({ subagentType: SCOUT_B, description: assignmentB }),
           ],
         },
@@ -165,41 +219,75 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       );
       try {
         // When: the root starts the deep agent and both subagents end
-        const { deepAgentId } = await startDeepAgent(harness, model, { ownerId, recordId, task: `Investigate (${row})` });
+        const { deepAgentId } = await startDeepAgent(harness, model, {
+          ownerId,
+          recordId,
+          task: `Investigate (${row})`,
+        });
         await waitForTaskStatus(harness, deepAgentId, ownerId, 'completed');
 
         // Then: one wake for both calls - the third model call holds both results; the failed one is an error with its reason
         const woken = deepAgent.calls[2]?.messages.at(-1);
-        expect(woken?.role === 'tool' ? woken.results.map((result) => result.toolName) : []).toEqual(['task', 'task']);
+        expect(
+          woken?.role === 'tool'
+            ? woken.results.map((result) => result.toolName)
+            : [],
+        ).toEqual(['task', 'task']);
         const results = await taskResultsOf(harness, deepAgentId, ownerId);
         const failedText = 'The subagent failed: provider_unavailable.';
         expect(results).toEqual(
           failing === 'b'
             ? [
-                { subagent: SCOUT_A, outcome: 'success', text: 'The cause is a bad deploy.\n\nTask 1 completed' },
+                {
+                  subagent: SCOUT_A,
+                  outcome: 'success',
+                  text: 'The cause is a bad deploy.\n\nTask 1 completed',
+                },
                 { subagent: SCOUT_B, outcome: 'tool_error', text: failedText },
               ]
             : [
-                { subagent: SCOUT_A, outcome: 'tool_error', text: `${failedText}\n\nTask 1 is still in_progress` },
-                { subagent: SCOUT_B, outcome: 'success', text: 'The logs agree.' },
+                {
+                  subagent: SCOUT_A,
+                  outcome: 'tool_error',
+                  text: `${failedText}\n\nTask 1 is still in_progress`,
+                },
+                {
+                  subagent: SCOUT_B,
+                  outcome: 'success',
+                  text: 'The logs agree.',
+                },
               ],
         );
 
         // Then: each subagent's history holds its assignment once
-        const subagents = (await toolCallRowsOf(harness.db, deepAgentId)).flatMap((call) =>
+        const subagents = (
+          await toolCallRowsOf(harness.db, deepAgentId)
+        ).flatMap((call) =>
           call.childTaskId === null ? [] : [call.childTaskId],
         );
         expect(subagents).toHaveLength(2);
         for (const [index, subagentId] of subagents.entries()) {
-          const lines = historyLines(await historyOf(harness, subagentId, ownerId));
-          expect(lines.filter((line) => line.startsWith('task: '))).toEqual([`task: ${index === 0 ? assignmentA : assignmentB}`]);
+          const lines = historyLines(
+            await historyOf(harness, subagentId, ownerId),
+          );
+          expect(lines.filter((line) => line.startsWith('task: '))).toEqual([
+            `task: ${index === 0 ? assignmentA : assignmentB}`,
+          ]);
         }
 
         // Then: task 1 carries scout-a as its owner and is completed - by the answer, or by the deep agent after the failure
         const [task] = await harness.db
-          .select({ status: agentSessionTasks.status, owner: agentSessionTasks.owner })
+          .select({
+            status: agentSessionTasks.status,
+            owner: agentSessionTasks.owner,
+          })
           .from(agentSessionTasks)
-          .where(and(eq(agentSessionTasks.taskId, deepAgentId), eq(agentSessionTasks.number, 1)));
+          .where(
+            and(
+              eq(agentSessionTasks.taskId, deepAgentId),
+              eq(agentSessionTasks.number, 1),
+            ),
+          );
         expect(task).toEqual({ status: 'completed', owner: SCOUT_A });
         expect(deepAgent.calls).toHaveLength(failing === 'a' ? 4 : 3);
       } finally {
@@ -225,14 +313,18 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       const { harness, recordId } = await delegatingHarness(model);
       const instruction = 'Collect the facts of the city';
       const items = ['Москва', 'Казань', 'Тверь', 'Пермь', 'Омск'];
-      const answerOf = (item: string) => `Answer for ${item}: ${'факт '.repeat(1_500)}end of ${item}`;
+      const answerOf = (item: string) =>
+        `Answer for ${item}: ${'факт '.repeat(1_500)}end of ${item}`;
       for (const [index, item] of items.entries()) {
         const task = `${instruction}\n\nItem: ${item}`;
-        if (index === 2) model.script({ task }, [], { thereafter: modelError() });
+        if (index === 2)
+          model.script({ task }, [], { thereafter: modelError() });
         else model.script({ task }, [{ text: answerOf(item) }]);
       }
       const readStored: ReplyFromInput = (messages) => ({
-        calls: [{ tool: 'read_tool_result', args: { callId: taskCallId(messages) } }],
+        calls: [
+          { tool: 'read_tool_result', args: { callId: taskCallId(messages) } },
+        ],
       });
       const deepAgent = model.script({ task: 'Collect five cities' }, [
         { calls: [taskCall({ subagentType: SCOUT_A, instruction, items })] },
@@ -241,19 +333,34 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       ]);
       try {
         // When: the deep agent gives the list, then reads the stored table
-        const { rootId, deepAgentId } = await startDeepAgent(harness, model, { ownerId, recordId, task: 'Collect five cities' });
+        const { rootId, deepAgentId } = await startDeepAgent(harness, model, {
+          ownerId,
+          recordId,
+          task: 'Collect five cities',
+        });
         await waitForTaskStatus(harness, deepAgentId, ownerId, 'completed');
 
         // Then: five subagents, one per item, under the deep agent
-        const children = (await harness.sessions.list(rootId, ownerId)).filter((view) => view.parentId === deepAgentId);
-        expect(children.map(({ description, status }) => ({ description, status }))).toEqual(
-          items.map((item, index) => ({ description: item, status: index === 2 ? 'failed' : 'completed' })),
+        const children = (await harness.sessions.list(rootId, ownerId)).filter(
+          (view) => view.parentId === deepAgentId,
+        );
+        expect(
+          children.map(({ description, status }) => ({ description, status })),
+        ).toEqual(
+          items.map((item, index) => ({
+            description: item,
+            status: index === 2 ? 'failed' : 'completed',
+          })),
         );
 
         // Then: the table has five rows in item order, the failed one with its reason, and is cut with the line naming the call
         const [result] = await taskResultsOf(harness, deepAgentId, ownerId);
         const lines = (result?.text ?? '').split('\n');
-        expect(lines.slice(2, 7).map((line) => line.split(' | ').slice(0, 3).join(' | '))).toEqual([
+        expect(
+          lines
+            .slice(2, 7)
+            .map((line) => line.split(' | ').slice(0, 3).join(' | ')),
+        ).toEqual([
           '| 1 | Москва | completed',
           '| 2 | Казань | completed',
           '| 3 | Тверь | failed',
@@ -268,15 +375,26 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
         const [stored] = await harness.db
           .select({ text: agentToolResults.text })
           .from(agentToolResults)
-          .where(and(eq(agentToolResults.taskId, deepAgentId), eq(agentToolResults.callId, callId)));
+          .where(
+            and(
+              eq(agentToolResults.taskId, deepAgentId),
+              eq(agentToolResults.callId, callId),
+            ),
+          );
         for (const [index, item] of items.entries()) {
           if (index !== 2) expect(stored?.text).toContain(answerOf(item));
         }
         const read = (await historyOf(harness, deepAgentId, ownerId)).find(
-          (entry) => entry.kind === 'tool_result' && entry.content.tool === 'read_tool_result',
+          (entry) =>
+            entry.kind === 'tool_result' &&
+            entry.content.tool === 'read_tool_result',
         );
-        expect(read?.kind === 'tool_result' ? read.content.outcome : null).toBe('success');
-        expect(read?.kind === 'tool_result' ? read.content.text : '').toContain('| 1 | Москва | completed | Answer for Москва:');
+        expect(read?.kind === 'tool_result' ? read.content.outcome : null).toBe(
+          'success',
+        );
+        expect(read?.kind === 'tool_result' ? read.content.text : '').toContain(
+          '| 1 | Москва | completed | Answer for Москва:',
+        );
       } finally {
         await harness.close();
       }

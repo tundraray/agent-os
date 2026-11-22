@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { FixtureSourceSchema, type FixtureServer, type FixtureSource } from '../fixture-server';
+import {
+  FixtureSourceSchema,
+  type FixtureServer,
+  type FixtureSource,
+} from '../fixture-server';
 import { defineTool } from '../tools/fixture-tool';
 import type { FixtureAuthorizationServer } from './authorization-server';
 
@@ -11,19 +15,34 @@ export interface ControlTargets {
 }
 
 const TokenLifetimeSchema = z.strictObject({ seconds: z.int().min(1) });
-const RevokeSchema = z.strictObject({ account: z.string().min(1), which: z.enum(['access', 'refresh', 'all']) });
+const RevokeSchema = z.strictObject({
+  account: z.string().min(1),
+  which: z.enum(['access', 'refresh', 'all']),
+});
 const RevokeSharedSchema = z.strictObject({ source: FixtureSourceSchema });
-const AddToolSchema = z.strictObject({ source: FixtureSourceSchema, name: z.string().min(1) });
-const HoldRefreshSchema = z.strictObject({ account: z.string().min(1), path: z.string().min(1).optional() });
+const AddToolSchema = z.strictObject({
+  source: FixtureSourceSchema,
+  name: z.string().min(1),
+});
+const HoldRefreshSchema = z.strictObject({
+  account: z.string().min(1),
+  path: z.string().min(1).optional(),
+});
 
 /**
  * Test controls under `/_control/<name>` (the HTTP server hides them under `NODE_ENV=production`).
  * `stats` answers `GET` (`?account=` for one account); the others take a JSON body and answer 204.
  */
-export async function handleControl(request: Request, name: string, targets: ControlTargets): Promise<Response> {
+export async function handleControl(
+  request: Request,
+  name: string,
+  targets: ControlTargets,
+): Promise<Response> {
   if (name === 'stats') {
     const account = new URL(request.url).searchParams.get('account');
-    return Response.json(account === null ? targets.auth.stats() : targets.auth.stats(account));
+    return Response.json(
+      account === null ? targets.auth.stats() : targets.auth.stats(account),
+    );
   }
   const body: unknown = await request.json().catch(() => undefined);
   try {
@@ -54,7 +73,9 @@ export async function handleControl(request: Request, name: string, targets: Con
     }
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return new Response(`invalid ${name} body: ${z.prettifyError(error)}`, { status: 400 });
+      return new Response(`invalid ${name} body: ${z.prettifyError(error)}`, {
+        status: 400,
+      });
     }
     throw error;
   }

@@ -36,19 +36,30 @@ export interface DeepAgentRun {
 }
 
 /** The operations of agents the run view reads through. */
-export type DeepAgentRunSessions = Pick<ViewOperations, 'get' | 'list' | 'history' | 'snapshot'>;
+export type DeepAgentRunSessions = Pick<
+  ViewOperations,
+  'get' | 'list' | 'history' | 'snapshot'
+>;
 
 /** The `subagentType` of a `task` call: the subagent's name in a refusal the view lists. */
 const DelegatedSubagentSchema = z.object({ subagentType: z.string() });
 const HISTORY_PAGE = 500;
 
 function runNotFound(agentId: string, cause?: unknown): AgentsError {
-  return new AgentsError('RUN_NOT_FOUND', `Deep agent run ${agentId} is not found`, { cause });
+  return new AgentsError(
+    'RUN_NOT_FOUND',
+    `Deep agent run ${agentId} is not found`,
+    { cause },
+  );
 }
 
 function teamOf(snapshot: DeepAgentSnapshot): DeepAgentTeamMember[] {
   const { subagents, finalSubagent } = snapshot.content;
-  return subagents.map(({ name, maxRuns }) => ({ name, maxRuns, final: name === finalSubagent }));
+  return subagents.map(({ name, maxRuns }) => ({
+    name,
+    maxRuns,
+    final: name === finalSubagent,
+  }));
 }
 
 /** A missing or another owner's agent is a missing run. */
@@ -56,7 +67,8 @@ async function asRun<T>(agentId: string, work: Promise<T>): Promise<T> {
   try {
     return await work;
   } catch (error) {
-    if (error instanceof AgentsError && error.code === 'AGENT_NOT_FOUND') throw runNotFound(agentId, error);
+    if (error instanceof AgentsError && error.code === 'AGENT_NOT_FOUND')
+      throw runNotFound(agentId, error);
     throw error;
   }
 }
@@ -68,17 +80,24 @@ async function briefOf(
 ): Promise<DeepAgentBrief> {
   const [first] = await sessions.history({ agentId, ownerId, limit: 1 });
   if (first?.kind !== 'task') {
-    throw new Error(`Deep agent run ${agentId} has no task entry first in its history`);
+    throw new Error(
+      `Deep agent run ${agentId} has no task entry first in its history`,
+    );
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(first.content.text);
   } catch (error) {
-    throw new Error(`Deep agent run ${agentId} has a task that is not a JSON brief`, { cause: error });
+    throw new Error(
+      `Deep agent run ${agentId} has a task that is not a JSON brief`,
+      { cause: error },
+    );
   }
   const brief = DeepAgentBriefSchema.safeParse(parsed);
   if (!brief.success) {
-    throw new Error(`Deep agent run ${agentId} has a task that is not a brief: ${brief.error.message}`);
+    throw new Error(
+      `Deep agent run ${agentId} has a task that is not a brief: ${brief.error.message}`,
+    );
   }
   return brief.data;
 }
@@ -92,7 +111,12 @@ async function historyOf(
   const entries: AgentHistoryEntry[] = [];
   for (;;) {
     const afterSeq = entries.at(-1)?.seq ?? 0;
-    const page = await sessions.history({ agentId, ownerId, afterSeq, limit: HISTORY_PAGE });
+    const page = await sessions.history({
+      agentId,
+      ownerId,
+      afterSeq,
+      limit: HISTORY_PAGE,
+    });
     entries.push(...page);
     if (page.length < HISTORY_PAGE) return entries;
   }
@@ -111,7 +135,9 @@ async function limitRefusalsOf(
     if (tool !== TASK_TOOL || refusalReason !== 'run_limit') continue;
     const parsed = DelegatedSubagentSchema.safeParse(args);
     if (!parsed.success) {
-      throw new Error(`Deep agent run ${agentId} has a run_limit refusal without a subagent name`);
+      throw new Error(
+        `Deep agent run ${agentId} has a run_limit refusal without a subagent name`,
+      );
     }
     refusals.push({ subagent: parsed.data.subagentType, at: entry.createdAt });
   }

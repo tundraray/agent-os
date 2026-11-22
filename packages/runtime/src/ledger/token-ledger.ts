@@ -102,8 +102,14 @@ export class TokenLedger {
    * Spend of the owner over the month `YYYY-MM` split by model, in the window of
    * {@link monthSpend}: model -> USD. A model with no call in the month is absent.
    */
-  async monthSpendByModel(ownerId: string, month: string): Promise<ReadonlyMap<string, number>> {
-    const spent = await this.deps.rows.sumOwnedByModel(ownerId, monthWindowUtc(month));
+  async monthSpendByModel(
+    ownerId: string,
+    month: string,
+  ): Promise<ReadonlyMap<string, number>> {
+    const spent = await this.deps.rows.sumOwnedByModel(
+      ownerId,
+      monthWindowUtc(month),
+    );
     return new Map(spent.map((row) => [row.model, Number(row.costUsd)]));
   }
 }

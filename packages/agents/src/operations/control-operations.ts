@@ -1,7 +1,16 @@
 import type { Logger } from '@agent-os/common';
-import { AgentMessageKindSchema, TaskStatusSchema, WaitReasonSchema } from '@agent-os/contracts';
+import {
+  AgentMessageKindSchema,
+  TaskStatusSchema,
+  WaitReasonSchema,
+} from '@agent-os/contracts';
 import { AgentSessionsRepository, Db } from '@agent-os/db';
-import { Decisions, Inbox, type ResolveOutcome, TaskControl } from '@agent-os/runtime';
+import {
+  Decisions,
+  Inbox,
+  type ResolveOutcome,
+  TaskControl,
+} from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
@@ -10,8 +19,18 @@ import { AgentsError } from '../errors';
 import { messagePayload } from '../resume';
 import { type RootSession, toRootSession } from '../store/sessions';
 import { ToolRegistry } from '../tools/tool-registry';
-import type { AgentRef, ResolveConfirmationRequest, SendRequest } from './agent-sessions';
-import { agentTask, asAgent, ConfirmationPayloadSchema, createLogged, parentOf } from './operation-support';
+import type {
+  AgentRef,
+  ResolveConfirmationRequest,
+  SendRequest,
+} from './agent-sessions';
+import {
+  agentTask,
+  asAgent,
+  ConfirmationPayloadSchema,
+  createLogged,
+  parentOf,
+} from './operation-support';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
@@ -27,18 +46,30 @@ export class ControlOperations {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
-    @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'get' | 'interrupt' | 'stop' | 'deleteTree'>,
+    @Inject(AgentSessionsRepository)
+    private readonly sessionRows: AgentSessionsRepository,
+    @Inject(TaskControl)
+    private readonly tasks: Pick<
+      TaskControl,
+      'get' | 'interrupt' | 'stop' | 'deleteTree'
+    >,
     @Inject(Inbox) private readonly inbox: Pick<Inbox, 'enqueue'>,
-    @Inject(Decisions) private readonly decisions: Pick<Decisions, 'get' | 'resolve'>,
-    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'toolOf'>,
+    @Inject(Decisions)
+    private readonly decisions: Pick<Decisions, 'get' | 'resolve'>,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, 'toolOf'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
   }
 
-  send({ agentId, ownerId, text, record }: SendRequest): Promise<{ messageId: string }> {
+  send({
+    agentId,
+    ownerId,
+    text,
+    record,
+  }: SendRequest): Promise<{ messageId: string }> {
     return this.logged(
       'send',
       { agentId, ownerId, recordId: record?.id ?? null },
@@ -46,7 +77,10 @@ export class ControlOperations {
         const target = await agentTask(this.tasks, agentId, ownerId);
         // Notes 5: a message to a stopped agent carries the `resume` mark; the window between this
         // read and the write is a known low risk.
-        const parent = target.status === stopped ? await parentOf(this.tasks, target, ownerId) : null;
+        const parent =
+          target.status === stopped
+            ? await parentOf(this.tasks, target, ownerId)
+            : null;
         const { messageId } = await asAgent(
           this.inbox.enqueue({
             recipientId: agentId,
@@ -67,14 +101,21 @@ export class ControlOperations {
   }
 
   /** Marks the agent «прерван»: it closes its open calls and waits for a message (KD-3). */
-  interrupt({ agentId, ownerId }: AgentRef): Promise<'interrupted' | 'not_active'> {
+  interrupt({
+    agentId,
+    ownerId,
+  }: AgentRef): Promise<'interrupted' | 'not_active'> {
     return this.logged(
       'interrupt',
       { agentId, ownerId },
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
         // A free agent (waiting for messages) has no work to cut off: `not_active`, nothing changes (Flow 4).
-        if (task.status === waiting && task.waitReason === WaitReasonSchema.enum.messages) return 'not_active';
+        if (
+          task.status === waiting &&
+          task.waitReason === WaitReasonSchema.enum.messages
+        )
+          return 'not_active';
         // KD-3: the `interrupt` message makes the agent's next step close its calls and wait.
         return asAgent(
           this.tasks.interrupt(agentId, ownerId, {
@@ -102,7 +143,12 @@ export class ControlOperations {
     );
   }
 
-  resolveConfirmation({ decisionId, ownerId, approve, args }: ResolveConfirmationRequest): Promise<ResolveOutcome> {
+  resolveConfirmation({
+    decisionId,
+    ownerId,
+    approve,
+    args,
+  }: ResolveConfirmationRequest): Promise<ResolveOutcome> {
     return this.logged(
       'resolveConfirmation',
       { decisionId, ownerId, approve, withArgs: args !== undefined },
@@ -110,13 +156,24 @@ export class ControlOperations {
         // The edit is checked only against an open request of this owner. For any other one
         // `decisions.resolve` answers `already_resolved` (resolved or cancelled) or
         // `DECISION_NOT_FOUND` (missing or another owner's) and writes nothing.
-        const decision = args === undefined ? undefined : await this.decisions.get(decisionId, ownerId);
+        const decision =
+          args === undefined
+            ? undefined
+            : await this.decisions.get(decisionId, ownerId);
         const edited =
           decision?.status === 'open'
-            ? { args: this.editedArgs(ConfirmationPayloadSchema.parse(decision.payload), args) }
+            ? {
+                args: this.editedArgs(
+                  ConfirmationPayloadSchema.parse(decision.payload),
+                  args,
+                ),
+              }
             : {};
         // The tool step reads `{ approve, args? }` and the call id from the request's payload.
-        return this.decisions.resolve(decisionId, ownerId, { approve, ...edited });
+        return this.decisions.resolve(decisionId, ownerId, {
+          approve,
+          ...edited,
+        });
       },
       (outcome) => ({ outcome }),
     );
@@ -130,7 +187,11 @@ export class ControlOperations {
   }
 
   /** Sets the title and moves the root session up; `undefined` as in `root`. */
-  renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined> {
+  renameRoot(
+    rootId: string,
+    ownerId: string,
+    title: string,
+  ): Promise<RootSession | undefined> {
     return this.logged(
       'renameRoot',
       { rootId, ownerId },
@@ -143,7 +204,11 @@ export class ControlOperations {
   }
 
   /** Writes a generated title only into an empty one; `true` when it was written. */
-  titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean> {
+  titleRootIfEmpty(
+    rootId: string,
+    ownerId: string,
+    title: string,
+  ): Promise<boolean> {
     return this.logged(
       'titleRootIfEmpty',
       { rootId, ownerId },
@@ -169,17 +234,28 @@ export class ControlOperations {
   }
 
   /** The edited arguments parsed by the tool's schema; `INVALID_ARGUMENTS` unless the tool allows the edit. */
-  private editedArgs(payload: z.infer<typeof ConfirmationPayloadSchema>, args: unknown): unknown {
+  private editedArgs(
+    payload: z.infer<typeof ConfirmationPayloadSchema>,
+    args: unknown,
+  ): unknown {
     // An MCP tool never allows an edit; nor does any tool of this part.
-    const tool = payload.server === null ? this.registry.toolOf(payload.tool) : undefined;
+    const tool =
+      payload.server === null ? this.registry.toolOf(payload.tool) : undefined;
     if (tool?.confirmation?.editableArgs !== true) {
-      throw new AgentsError('INVALID_ARGUMENTS', `Tool ${payload.tool} does not allow editing its arguments`);
+      throw new AgentsError(
+        'INVALID_ARGUMENTS',
+        `Tool ${payload.tool} does not allow editing its arguments`,
+      );
     }
     const parsed = tool.argsSchema.safeParse(args);
     if (!parsed.success) {
-      throw new AgentsError('INVALID_ARGUMENTS', `Arguments of ${payload.tool} rejected by its schema`, {
-        cause: parsed.error,
-      });
+      throw new AgentsError(
+        'INVALID_ARGUMENTS',
+        `Arguments of ${payload.tool} rejected by its schema`,
+        {
+          cause: parsed.error,
+        },
+      );
     }
     return parsed.data;
   }

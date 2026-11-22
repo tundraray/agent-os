@@ -45,14 +45,18 @@ export const BUILTIN_NAMES = {
   [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
 } as const satisfies Record<string, Record<Language, string>>;
 
-const isBuiltinNameKey = (key: string): key is keyof typeof BUILTIN_NAMES => Object.hasOwn(BUILTIN_NAMES, key);
+const isBuiltinNameKey = (key: string): key is keyof typeof BUILTIN_NAMES =>
+  Object.hasOwn(BUILTIN_NAMES, key);
 
 /**
  * The name of a library record, or of a role, in `language` (KD-6): a built-in one still under its seeded
  * name (`ru`) is named in `language`; any other name, an administrator's among them, stays as it is. A role
  * has no `builtinKey` and passes `BUILTIN_ROLE_KEY`: it is known by its name alone.
  */
-export function builtinNameIn(named: { builtinKey: string | null; name: string }, language: Language): string {
+export function builtinNameIn(
+  named: { builtinKey: string | null; name: string },
+  language: Language,
+): string {
   const { builtinKey, name } = named;
   if (builtinKey === null || !isBuiltinNameKey(builtinKey)) return name;
   const names = BUILTIN_NAMES[builtinKey];
@@ -71,7 +75,8 @@ export const LibraryErrorCode = {
   /** 403: the deep agent is visible, but its knowledge graph is not open to the employee. */
   KNOWLEDGE_FORBIDDEN: 'KNOWLEDGE_FORBIDDEN',
 } as const;
-export type LibraryErrorCode = (typeof LibraryErrorCode)[keyof typeof LibraryErrorCode];
+export type LibraryErrorCode =
+  (typeof LibraryErrorCode)[keyof typeof LibraryErrorCode];
 
 /** `reason` of a 422 RECORD_REJECTED. */
 export const LibraryRejectReasonSchema = z.enum([
@@ -95,7 +100,12 @@ export const RecordKindSchema = z.enum(['agent', 'deep_agent']);
 export type RecordKind = z.infer<typeof RecordKindSchema>;
 
 /** Platform tools an agent record may hold. `run_code` and `start_deep_agent` are never stored in a record. */
-export const RecordToolSchema = z.enum(['start_agent', 'message_agent', 'list_agents', 'stop_agent']);
+export const RecordToolSchema = z.enum([
+  'start_agent',
+  'message_agent',
+  'list_agents',
+  'stop_agent',
+]);
 export type RecordTool = z.infer<typeof RecordToolSchema>;
 
 /** The names of the two start tools, as the API registers them and the web recognises them in a feed. */
@@ -147,8 +157,14 @@ function listWithoutRepeats<T extends z.ZodType<string>>(item: T) {
 // ---------- Content ----------
 
 const PromptSchema = z.string().min(1).max(RECORD_PROMPT_MAX_LENGTH);
-const MaxTurnsSchema = z.number().int().min(RECORD_MAX_TURNS_MIN).max(RECORD_MAX_TURNS_MAX);
-const ServersSchema = listWithoutRepeats(z.union([McpServerNameSchema, z.literal(ALL_SERVERS)]));
+const MaxTurnsSchema = z
+  .number()
+  .int()
+  .min(RECORD_MAX_TURNS_MIN)
+  .max(RECORD_MAX_TURNS_MAX);
+const ServersSchema = listWithoutRepeats(
+  z.union([McpServerNameSchema, z.literal(ALL_SERVERS)]),
+);
 const ToolsSchema = listWithoutRepeats(RecordToolSchema);
 /** `null` — the default chat model at the start of a run. */
 const RecordModelSchema = ModelIdSchema.nullable();
@@ -180,7 +196,11 @@ const SubagentSchema = z.object({
   model: RecordModelSchema,
   maxTurns: MaxTurnsSchema,
   /** Runs of the subagent within one run of its deep agent. */
-  maxRuns: z.number().int().min(SUBAGENT_MAX_RUNS_MIN).max(SUBAGENT_MAX_RUNS_MAX),
+  maxRuns: z
+    .number()
+    .int()
+    .min(SUBAGENT_MAX_RUNS_MIN)
+    .max(SUBAGENT_MAX_RUNS_MAX),
   taskList: taskListSchema(false),
 });
 export type Subagent = z.infer<typeof SubagentSchema>;
@@ -191,7 +211,10 @@ export const DeepAgentContentSchema = z
     servers: ServersSchema,
     model: RecordModelSchema,
     maxTurns: MaxTurnsSchema,
-    subagents: z.array(SubagentSchema).min(DEEP_AGENT_SUBAGENTS_MIN).max(DEEP_AGENT_SUBAGENTS_MAX),
+    subagents: z
+      .array(SubagentSchema)
+      .min(DEEP_AGENT_SUBAGENTS_MIN)
+      .max(DEEP_AGENT_SUBAGENTS_MAX),
     /** Subagent whose report becomes the answer; `null` — the deep agent writes it. */
     finalSubagent: z.string().nullable(),
     taskList: taskListSchema(true),
@@ -203,9 +226,15 @@ export const DeepAgentContentSchema = z
   .superRefine((content, ctx) => {
     const names = content.subagents.map((subagent) => subagent.name);
     if (!hasNoRepeats(names.map((name) => name.toLowerCase()))) {
-      ctx.addIssue({ code: 'custom', path: ['subagents'], message: 'subagent names repeat' });
+      ctx.addIssue({
+        code: 'custom',
+        path: ['subagents'],
+        message: 'subagent names repeat',
+      });
     }
-    const reserved = names.findIndex((name) => name.toLowerCase() === GENERAL_PURPOSE_SUBAGENT);
+    const reserved = names.findIndex(
+      (name) => name.toLowerCase() === GENERAL_PURPOSE_SUBAGENT,
+    );
     if (reserved !== -1) {
       ctx.addIssue({
         code: 'custom',
@@ -213,8 +242,15 @@ export const DeepAgentContentSchema = z
         message: `${GENERAL_PURPOSE_SUBAGENT} is the name of the built-in subagent`,
       });
     }
-    if (content.finalSubagent !== null && !names.includes(content.finalSubagent)) {
-      ctx.addIssue({ code: 'custom', path: ['finalSubagent'], message: 'no such subagent' });
+    if (
+      content.finalSubagent !== null &&
+      !names.includes(content.finalSubagent)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['finalSubagent'],
+        message: 'no such subagent',
+      });
     }
   });
 export type DeepAgentContent = z.infer<typeof DeepAgentContentSchema>;
@@ -256,7 +292,10 @@ export type CreateRecordBody = z.infer<typeof CreateRecordBodySchema>;
  * Body of PUT /api/library/:id and PUT /api/admin/library/:id: `version` is the one the edit
  * started from. The kind never changes.
  */
-export const UpdateRecordBodySchema = withContentByKind({ ...recordTextFields, version: VersionSchema });
+export const UpdateRecordBodySchema = withContentByKind({
+  ...recordTextFields,
+  version: VersionSchema,
+});
 export type UpdateRecordBody = z.infer<typeof UpdateRecordBodySchema>;
 
 /** Body of PUT /api/library/:id/audience: roles of the owner; no roles — a personal record. */
@@ -277,12 +316,18 @@ export const SystemRecordAudienceBodySchema = z.object({
   userIds: listWithoutRepeats(IdSchema),
   offerInChat: z.boolean(),
 });
-export type SystemRecordAudienceBody = z.infer<typeof SystemRecordAudienceBodySchema>;
+export type SystemRecordAudienceBody = z.infer<
+  typeof SystemRecordAudienceBodySchema
+>;
 
 // ---------- Responses ----------
 
 /** Owner of an employee record; `disabled` — the account is disabled. */
-const RecordAuthorSchema = z.object({ id: IdSchema, name: z.string(), disabled: z.boolean() });
+const RecordAuthorSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  disabled: z.boolean(),
+});
 export type RecordAuthor = z.infer<typeof RecordAuthorSchema>;
 
 /**
@@ -291,7 +336,9 @@ export type RecordAuthor = z.infer<typeof RecordAuthorSchema>;
  */
 const RecordAudienceSchema = z.object({
   everyone: z.boolean().optional(),
-  roles: z.array(z.object({ id: IdSchema, name: z.string(), member: z.boolean() })),
+  roles: z.array(
+    z.object({ id: IdSchema, name: z.string(), member: z.boolean() }),
+  ),
   users: z.array(z.object({ id: IdSchema, name: z.string() })).optional(),
 });
 export type RecordAudience = z.infer<typeof RecordAudienceSchema>;
@@ -328,7 +375,10 @@ const recordViewFields = {
 };
 
 /** Row of GET /api/library and of the panel lists `system` and `shared`. */
-export const RecordSummarySchema = z.object({ ...recordViewFields, kind: RecordKindSchema });
+export const RecordSummarySchema = z.object({
+  ...recordViewFields,
+  kind: RecordKindSchema,
+});
 export type RecordSummary = z.infer<typeof RecordSummarySchema>;
 
 /** Response of GET /api/library/:id and of every write that returns the record. */
@@ -339,10 +389,17 @@ export type RecordDetail = z.infer<typeof RecordDetailSchema>;
 export const CopyResultSchema = z.object({
   record: RecordDetailSchema,
   removedServers: z.array(
-    z.object({ subagent: z.string().nullable(), servers: z.array(McpServerNameSchema) }),
+    z.object({
+      subagent: z.string().nullable(),
+      servers: z.array(McpServerNameSchema),
+    }),
   ),
   replacedModels: z.array(
-    z.object({ subagent: z.string().nullable(), from: ModelIdSchema, to: ModelIdSchema }),
+    z.object({
+      subagent: z.string().nullable(),
+      from: ModelIdSchema,
+      to: ModelIdSchema,
+    }),
   ),
   /** Agents the copy may not start: the copier does not see them. */
   removedAgents: z.array(IdSchema),
@@ -371,8 +428,12 @@ export const LibraryChoicesSchema = z.object({
 export type LibraryChoices = z.infer<typeof LibraryChoicesSchema>;
 
 /** Body of PUT /api/admin/library/settings. */
-export const UpdateLibrarySettingsBodySchema = z.object({ defaultMaxTurns: MaxTurnsSchema });
-export type UpdateLibrarySettingsBody = z.infer<typeof UpdateLibrarySettingsBodySchema>;
+export const UpdateLibrarySettingsBodySchema = z.object({
+  defaultMaxTurns: MaxTurnsSchema,
+});
+export type UpdateLibrarySettingsBody = z.infer<
+  typeof UpdateLibrarySettingsBodySchema
+>;
 
 /** Response of GET/PUT /api/admin/library/settings. `updatedAt: null` while the default stands. */
 export const LibrarySettingsSchema = UpdateLibrarySettingsBodySchema.extend({
@@ -381,7 +442,9 @@ export const LibrarySettingsSchema = UpdateLibrarySettingsBodySchema.extend({
 export type LibrarySettings = z.infer<typeof LibrarySettingsSchema>;
 
 /** Response of GET /api/auth/me/roles: the viewer's roles by name. */
-export const MyRoleListSchema = z.array(z.object({ id: IdSchema, name: z.string() }));
+export const MyRoleListSchema = z.array(
+  z.object({ id: IdSchema, name: z.string() }),
+);
 export type MyRoleList = z.infer<typeof MyRoleListSchema>;
 
 // ---------- Port for the runtime part ----------

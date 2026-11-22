@@ -16,18 +16,28 @@ export const KnowledgeItemTypeSchema = z.enum(['entity', 'relation']);
 export type KnowledgeItemType = z.infer<typeof KnowledgeItemTypeSchema>;
 
 /** An entity is always a `fact`. */
-export const KnowledgeItemKindSchema = z.enum(['fact', 'lesson', 'searched_nothing']);
+export const KnowledgeItemKindSchema = z.enum([
+  'fact',
+  'lesson',
+  'searched_nothing',
+]);
 export type KnowledgeItemKind = z.infer<typeof KnowledgeItemKindSchema>;
 
 /**
  * `outdated` — marked by the model or its tool is gone from the deep agent; `lessons_off` — a lesson
  * while lessons are off. An outdated lesson stays `outdated` whatever the lessons setting.
  */
-export const KnowledgeItemStateSchema = z.enum(['active', 'outdated', 'lessons_off']);
+export const KnowledgeItemStateSchema = z.enum([
+  'active',
+  'outdated',
+  'lessons_off',
+]);
 export type KnowledgeItemState = z.infer<typeof KnowledgeItemStateSchema>;
 
 /** Whether an `active` record reaches runs; `null` off `active`, without self-learning or when all fit. */
-export const KnowledgePlacementSchema = z.enum(['always', 'by_topic', 'does_not_fit']).nullable();
+export const KnowledgePlacementSchema = z
+  .enum(['always', 'by_topic', 'does_not_fit'])
+  .nullable();
 export type KnowledgePlacement = z.infer<typeof KnowledgePlacementSchema>;
 
 export const LastExtractionStatusSchema = z.enum(['done', 'skipped', 'failed']);
@@ -59,16 +69,29 @@ export const EmbeddingFailureReasonSchema = z.enum([
   'provider_error',
   'dimension_mismatch',
 ]);
-export type EmbeddingFailureReason = z.infer<typeof EmbeddingFailureReasonSchema>;
+export type EmbeddingFailureReason = z.infer<
+  typeof EmbeddingFailureReasonSchema
+>;
 
 /** State of selection by meaning: the first state that applies, top to bottom. */
 export const KnowledgeSelectionSchema = z.discriminatedUnion('state', [
   z.discriminatedUnion('reason', [
-    z.object({ state: z.literal('off'), reason: z.literal('model_not_selected'), model: z.null() }),
-    z.object({ state: z.literal('off'), reason: z.literal('provider_failed'), model: ModelIdSchema }),
+    z.object({
+      state: z.literal('off'),
+      reason: z.literal('model_not_selected'),
+      model: z.null(),
+    }),
+    z.object({
+      state: z.literal('off'),
+      reason: z.literal('provider_failed'),
+      model: ModelIdSchema,
+    }),
   ]),
   /** `pending` — `active` records without a vector of the current model. */
-  z.object({ state: z.literal('preparing'), pending: z.number().int().positive() }),
+  z.object({
+    state: z.literal('preparing'),
+    pending: z.number().int().positive(),
+  }),
   z.object({ state: z.literal('on') }),
 ]);
 export type KnowledgeSelection = z.infer<typeof KnowledgeSelectionSchema>;
@@ -85,9 +108,16 @@ const itemFields = {
   placement: KnowledgePlacementSchema,
 };
 
-const relationFields = { ...itemFields, type: z.literal(KnowledgeItemTypeSchema.enum.relation) };
+const relationFields = {
+  ...itemFields,
+  type: z.literal(KnowledgeItemTypeSchema.enum.relation),
+};
 
-const toolFields = { server: McpServerNameSchema, tool: z.string(), question: z.string() };
+const toolFields = {
+  server: McpServerNameSchema,
+  tool: z.string(),
+  question: z.string(),
+};
 
 const EntityEndSchema = z.object({ id: ItemIdSchema, name: z.string() });
 
@@ -169,8 +199,12 @@ const knowledgeSettingsFields = {
 };
 
 /** Body of PUT /api/admin/knowledge/settings. */
-export const UpdateKnowledgeSettingsBodySchema = z.strictObject(knowledgeSettingsFields);
-export type UpdateKnowledgeSettingsBody = z.infer<typeof UpdateKnowledgeSettingsBodySchema>;
+export const UpdateKnowledgeSettingsBodySchema = z.strictObject(
+  knowledgeSettingsFields,
+);
+export type UpdateKnowledgeSettingsBody = z.infer<
+  typeof UpdateKnowledgeSettingsBodySchema
+>;
 
 /** Response of GET/PUT /api/admin/knowledge/settings. `updatedAt: null` while the defaults stand. */
 export const KnowledgeSettingsSchema = z.object({

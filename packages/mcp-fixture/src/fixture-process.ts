@@ -5,7 +5,9 @@ import type { AccountStats, RevokeWhich } from './http/authorization-server';
 import type { FixtureFiles } from './test-support';
 
 /** The HTTP process entry next to this module. */
-const fixtureMainPath: string = fileURLToPath(new URL('./main.ts', import.meta.url));
+const fixtureMainPath: string = fileURLToPath(
+  new URL('./main.ts', import.meta.url),
+);
 const LISTENING_LINE = /^fixture listening (\d+)$/m;
 const START_TIMEOUT_MS = 10_000;
 
@@ -40,12 +42,22 @@ export interface FixtureProcess {
  * Starts `node --import tsx src/main.ts --port 0` logging into the test's call log under its fault rules, and
  * resolves once it listens. Throws when the process does not start.
  */
-export async function startFixtureProcess(files: FixtureFiles): Promise<FixtureProcess> {
+export async function startFixtureProcess(
+  files: FixtureFiles,
+): Promise<FixtureProcess> {
   // Node runs the TypeScript source through the `tsx` loader, a dependency of this package.
-  const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), fixtureMainPath, '--port', '0'], {
-    env: { ...process.env, FIXTURE_CALL_LOG: files.callLog, FIXTURE_FAULTS: files.faults },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const child = spawn(
+    process.execPath,
+    ['--import', import.meta.resolve('tsx'), fixtureMainPath, '--port', '0'],
+    {
+      env: {
+        ...process.env,
+        FIXTURE_CALL_LOG: files.callLog,
+        FIXTURE_FAULTS: files.faults,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   const port = await listeningPort(child);
   const baseUrl = `http://127.0.0.1:${port}`;
   return {
@@ -64,9 +76,16 @@ function listeningPort(child: ChildProcess): Promise<number> {
     const fail = (reason: string) => {
       clearTimeout(timer);
       child.kill();
-      reject(new Error(`MCP fixture process did not start: ${reason}${stderr ? `\n${stderr}` : ''}`));
+      reject(
+        new Error(
+          `MCP fixture process did not start: ${reason}${stderr ? `\n${stderr}` : ''}`,
+        ),
+      );
     };
-    const timer = setTimeout(() => fail(`no listening line within ${START_TIMEOUT_MS} ms`), START_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => fail(`no listening line within ${START_TIMEOUT_MS} ms`),
+      START_TIMEOUT_MS,
+    );
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
@@ -101,7 +120,9 @@ function fixtureControl(baseUrl: string): FixtureControl {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(`fixture control ${name} failed: ${response.status} ${await response.text()}`);
+      throw new Error(
+        `fixture control ${name} failed: ${response.status} ${await response.text()}`,
+      );
     }
   };
   return {
@@ -111,9 +132,13 @@ function fixtureControl(baseUrl: string): FixtureControl {
     addTool: (input) => post('add-tool', input),
     holdRefresh: (input) => post('hold-refresh', input),
     stats: async (account) => {
-      const response = await fetch(`${baseUrl}/_control/stats?account=${encodeURIComponent(account)}`);
+      const response = await fetch(
+        `${baseUrl}/_control/stats?account=${encodeURIComponent(account)}`,
+      );
       if (!response.ok) {
-        throw new Error(`fixture control stats failed: ${response.status} ${await response.text()}`);
+        throw new Error(
+          `fixture control stats failed: ${response.status} ${await response.text()}`,
+        );
       }
       return (await response.json()) as AccountStats;
     },

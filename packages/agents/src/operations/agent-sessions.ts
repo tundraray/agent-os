@@ -1,4 +1,8 @@
-import type { ChipRecord, DecisionStatus, ToolCallState } from '@agent-os/contracts';
+import type {
+  ChipRecord,
+  DecisionStatus,
+  ToolCallState,
+} from '@agent-os/contracts';
 import type { RootPosition } from '@agent-os/db';
 
 import type { PageEntry } from '../store/history';
@@ -84,7 +88,10 @@ export type AgentHistoryEntry =
       readonly seq: number;
       readonly kind: 'model_answer';
       readonly createdAt: Date;
-      readonly content: { readonly text: string; readonly toolCalls: readonly AnswerToolCall[] };
+      readonly content: {
+        readonly text: string;
+        readonly toolCalls: readonly AnswerToolCall[];
+      };
     };
 
 /** A confirmation request of a tree in any status (design-chat.md, Confirmation; KD-6). */
@@ -103,7 +110,10 @@ export interface AgentConfirmation extends ToolDisplay {
   readonly content: unknown;
   readonly status: DecisionStatus;
   /** Set when `resolved`: the decision and the arguments the call ran with (edited or requested). */
-  readonly resolution: { readonly approve: boolean; readonly args: unknown } | null;
+  readonly resolution: {
+    readonly approve: boolean;
+    readonly args: unknown;
+  } | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;
 }

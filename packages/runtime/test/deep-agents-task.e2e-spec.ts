@@ -25,7 +25,10 @@ import {
   type TrackerOwnerView,
 } from './support/runtimeChildHandlers';
 import { closeRuntimeDb, handlerRowsOf, inboxOf } from './support/runtimeDb';
-import { createRuntimeHarness, type RuntimeHarness } from './support/runtimeHarness';
+import {
+  createRuntimeHarness,
+  type RuntimeHarness,
+} from './support/runtimeHarness';
 import { TRACKER_OPENED_NOTE, uniqueType } from './support/testHandlers';
 
 const RESUME_TARGET_MS = 60_000;
@@ -50,8 +53,12 @@ const ownerWithParkedTasks = (types: Types): ChildTypes => ({
 
 /** The test process's runtime: workers off, the types registered only so `tasks.create` accepts them. */
 async function testRuntime(types: Types): Promise<RuntimeHarness> {
-  const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
-  for (const handler of handlersFor(types, control.runtimeDb)) control.handlers.register(handler);
+  const control = await createRuntimeHarness({
+    handlers: [],
+    config: { workers: false },
+  });
+  for (const handler of handlersFor(types, control.runtimeDb))
+    control.handlers.register(handler);
   return control;
 }
 
@@ -60,7 +67,10 @@ interface Owner {
   taskId: string;
 }
 
-async function createOwner(control: RuntimeHarness, types: Types): Promise<Owner> {
+async function createOwner(
+  control: RuntimeHarness,
+  types: Types,
+): Promise<Owner> {
   const ownerId = newUser();
   const taskId = await control.tasks.create({
     type: types.trackerOwner,
@@ -77,7 +87,10 @@ async function tasksOf(control: RuntimeHarness, owner: Owner) {
 }
 
 /** The owner waits for its tasks: its tracker is committed. */
-async function ownerWaitsForTasks(control: RuntimeHarness, owner: Owner): Promise<boolean> {
+async function ownerWaitsForTasks(
+  control: RuntimeHarness,
+  owner: Owner,
+): Promise<boolean> {
   const task = await control.tasks.get(owner.taskId, owner.ownerId);
   return task.status === 'waiting' && task.waitReason === 'tasks';
 }
@@ -89,7 +102,9 @@ async function openTrackerAndWrite(
   types: Types,
   owner: Owner,
 ): Promise<void> {
-  const ownerOnly = await children.start({ types: ownerWithParkedTasks(types) });
+  const ownerOnly = await children.start({
+    types: ownerWithParkedTasks(types),
+  });
   await ownerOnly.until(() => ownerWaitsForTasks(control, owner), {
     what: 'the owner to wait for its tasks',
     timeoutMs: RESUME_TARGET_MS,
@@ -115,23 +130,38 @@ async function finish(
 ): Promise<void> {
   const fresh: RuntimeChild = await children.start({ types });
   await fresh.until(
-    async () => (await control.tasks.get(owner.taskId, owner.ownerId)).status === 'completed',
+    async () =>
+      (await control.tasks.get(owner.taskId, owner.ownerId)).status ===
+      'completed',
     { what: 'the owner to complete', timeoutMs: RESUME_TARGET_MS },
   );
   await fresh.stop();
 }
 
 /** The end state every row must reach, as in a run without a crash. */
-async function expectEndState(control: RuntimeHarness, owner: Owner): Promise<void> {
+async function expectEndState(
+  control: RuntimeHarness,
+  owner: Owner,
+): Promise<void> {
   const tasks = await tasksOf(control, owner);
-  expect(tasks.map((task) => task.status)).toEqual(['completed', 'completed', 'completed']);
-  expect(tasks.map((task) => task.result)).toEqual([{ item: 0 }, { item: 1 }, { item: 2 }]);
+  expect(tasks.map((task) => task.status)).toEqual([
+    'completed',
+    'completed',
+    'completed',
+  ]);
+  expect(tasks.map((task) => task.result)).toEqual([
+    { item: 0 },
+    { item: 1 },
+    { item: 2 },
+  ]);
 
   // One run per task: one committed step row each, at step 0.
   const rows = await handlerRowsOf(tasks.map((task) => task.taskId));
   expect(
     tasks.map((task) =>
-      rows.filter((row) => row.taskId === task.taskId && row.note === STEP_DONE).map((row) => row.stepNo),
+      rows
+        .filter((row) => row.taskId === task.taskId && row.note === STEP_DONE)
+        .map((row) => row.stepNo),
     ),
   ).toEqual([[0], [0], [0]]);
 
@@ -139,19 +169,28 @@ async function expectEndState(control: RuntimeHarness, owner: Owner): Promise<vo
   const trackers = await control.trackers.list(owner.taskId, owner.ownerId);
   expect(trackers).toHaveLength(1);
   expect(trackers[0].status).toBe('finished');
-  expect(trackers[0].tasks.map((task) => task.taskId)).toEqual(tasks.map((task) => task.taskId));
+  expect(trackers[0].tasks.map((task) => task.taskId)).toEqual(
+    tasks.map((task) => task.taskId),
+  );
 
   // Exactly one `tasks_finished`, no `child_finished`, and the note delivered to the same step.
   const inbox = await inboxOf(owner.taskId);
-  const finished = inbox.filter((message) => message.kind === TASKS_FINISHED_KIND);
+  const finished = inbox.filter(
+    (message) => message.kind === TASKS_FINISHED_KIND,
+  );
   expect(finished).toHaveLength(1);
-  expect(inbox.filter((message) => message.kind === 'child_finished')).toEqual([]);
+  expect(inbox.filter((message) => message.kind === 'child_finished')).toEqual(
+    [],
+  );
   expect(finished[0]).toMatchObject({
     revive: false,
     status: 'delivered',
     payload: {
       trackerId: trackers[0].trackerId,
-      tasks: tasks.map((task) => ({ taskId: task.taskId, status: 'completed' })),
+      tasks: tasks.map((task) => ({
+        taskId: task.taskId,
+        status: 'completed',
+      })),
     },
   });
   const note = inbox.filter((message) => message.kind === 'note');
@@ -178,7 +217,11 @@ async function expectAllOrNothing(
     (row) => row.note === TRACKER_OPENED_NOTE,
   );
   if (committed) {
-    expect(tasks.map((task) => task.status)).toEqual(['queued', 'queued', 'queued']);
+    expect(tasks.map((task) => task.status)).toEqual([
+      'queued',
+      'queued',
+      'queued',
+    ]);
     expect(trackers.map((tracker) => tracker.status)).toEqual(['open']);
     expect(opened).toHaveLength(1);
     expect(await ownerWaitsForTasks(control, owner)).toBe(true);
@@ -196,8 +239,16 @@ describe('deep-agents / task - E2E (real Postgres, child processes)', () => {
   // сабагент"; AC-22.2: a lost step of a task is redone by the sweeper, its late result refused, no second run; DC-4: the
   // note that waited comes with the one `tasks_finished`.
   it.each([
-    { name: 'inside the commit that opens the tracker', crashAt: 'step.inside-commit', committed: false },
-    { name: 'right after the commit that opens the tracker', crashAt: 'step.after-commit', committed: true },
+    {
+      name: 'inside the commit that opens the tracker',
+      crashAt: 'step.inside-commit',
+      committed: false,
+    },
+    {
+      name: 'right after the commit that opens the tracker',
+      crashAt: 'step.after-commit',
+      committed: true,
+    },
   ])(
     'UC-3 kill $name: the tracker and its three tasks exist all or none, and the run ends with one tasks_finished',
     async (row) => {
@@ -227,7 +278,7 @@ describe('deep-agents / task - E2E (real Postgres, child processes)', () => {
   );
 
   it(
-    'UC-3 kill in a task\'s step: the lost step is redone once, and the run ends with one tasks_finished',
+    "UC-3 kill in a task's step: the lost step is redone once, and the run ends with one tasks_finished",
     async () => {
       const types = trackerTypes();
       const control = await testRuntime(types);
@@ -243,10 +294,12 @@ describe('deep-agents / task - E2E (real Postgres, child processes)', () => {
           crashAt: 'step.inside-commit',
         });
         await dying.crashed();
-        expect((await tasksOf(control, owner)).map((task) => task.status)).not.toContain(
-          'completed',
-        );
-        expect((await control.trackers.list(owner.taskId, owner.ownerId))[0].status).toBe('open');
+        expect(
+          (await tasksOf(control, owner)).map((task) => task.status),
+        ).not.toContain('completed');
+        expect(
+          (await control.trackers.list(owner.taskId, owner.ownerId))[0].status,
+        ).toBe('open');
 
         await finish(children, control, types, owner);
 

@@ -110,8 +110,7 @@ export interface Refused {
 }
 
 export type SaveResult =
-  | { readonly outcome: 'saved'; readonly record: LibraryRecord }
-  | Refused;
+  { readonly outcome: 'saved'; readonly record: LibraryRecord } | Refused;
 
 /** What the checks before the write decided: the stored record an edit changes, or the refusal. */
 export type SaveCheck =
@@ -170,8 +169,7 @@ export interface ChatRefusal {
 
 /** The answer of the check before the card: the refusal, or the card's content. */
 export type ChatReview =
-  | ChatRefusal
-  | { readonly outcome: 'card'; readonly card: LibraryRecordCard };
+  ChatRefusal | { readonly outcome: 'card'; readonly card: LibraryRecordCard };
 
 /** The answer of the save of an approved card; `version` `null` — the record was deleted. */
 export type ChatSaveResult =

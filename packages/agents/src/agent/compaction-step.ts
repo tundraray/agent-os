@@ -37,8 +37,14 @@ const COMPACTION_REQUEST =
  * Whether the next step compacts the history (KD-7, «Как шаг выбирает работу» d2): the input tokens
  * of the last model call reached `AGENT_COMPACT_AT_TOKENS`.
  */
-export function compactionDue(session: Pick<Session, 'lastInputTokens'>, compactAtTokens: number): boolean {
-  return session.lastInputTokens !== null && session.lastInputTokens >= compactAtTokens;
+export function compactionDue(
+  session: Pick<Session, 'lastInputTokens'>,
+  compactAtTokens: number,
+): boolean {
+  return (
+    session.lastInputTokens !== null &&
+    session.lastInputTokens >= compactAtTokens
+  );
 }
 
 /**
@@ -53,14 +59,18 @@ export function compactionDue(session: Pick<Session, 'lastInputTokens'>, compact
  */
 export async function runCompactionStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery'>,
+  agent: Pick<
+    BaseAgent,
+    'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery'
+  >,
   ctx: StepContext,
   session: Session,
   /** The history the model sees, as the agent holds it. */
   view: SessionHistory,
   prelude?: StepPrelude,
 ): Promise<StepResult> {
-  const { registry, modelClient, audit, history, messageRows, sessionRows } = deps;
+  const { registry, modelClient, audit, history, messageRows, sessionRows } =
+    deps;
   const startedAt = Date.now();
   const { snapshot } = agent.input;
   const { definition } = agent;
@@ -69,9 +79,15 @@ export async function runCompactionStep(
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
   // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
   // the summary would be written without the task list (design-task-list.md KD-2).
-  const knowledge = await knowledgeBlock(deps, { snapshot, taskId: ctx.taskId, logger: ctx.logger });
+  const knowledge = await knowledgeBlock(deps, {
+    snapshot,
+    taskId: ctx.taskId,
+    logger: ctx.logger,
+  });
   const declaration = await agent.offeredDeclaration(ctx);
-  const tasks = taskBlock(await tasksOf(deps, ctx.taskId, declaration.taskList));
+  const tasks = taskBlock(
+    await tasksOf(deps, ctx.taskId, declaration.taskList),
+  );
   // History holds tool calls, and the provider takes them only with the tools defined.
   const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
 
@@ -83,7 +99,10 @@ export async function runCompactionStep(
       agentName: definition.name,
       model: session.model,
       instructions: withStepBlocks(definition.prompt, { knowledge, tasks }),
-      messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
+      messages: [
+        ...providerMessagesOf(view, shown),
+        { role: 'user', content: COMPACTION_REQUEST },
+      ],
       tools: sessionTools,
       // The summary is not an answer the employee reads: its parts do not go to the hook.
       streamsText: false,
@@ -94,7 +113,10 @@ export async function runCompactionStep(
   if (result === undefined) return { outcome: 'continue' };
 
   // The compaction call is not a turn (DC-1).
-  const turns = agent.turnsAfterDelivery(prelude?.patch.turns ?? session.turns, ctx.messages);
+  const turns = agent.turnsAfterDelivery(
+    prelude?.patch.turns ?? session.turns,
+    ctx.messages,
+  );
   const writePrelude = async (): Promise<readonly NewHistoryEntry[]> =>
     prelude === undefined ? [] : prelude.write();
 
@@ -132,7 +154,11 @@ export async function runCompactionStep(
     });
   }
 
-  const patch: SessionPatch = { ...prelude?.patch, turns, lastInputTokens: null };
+  const patch: SessionPatch = {
+    ...prelude?.patch,
+    turns,
+    lastInputTokens: null,
+  };
   const summary = result.text.trim();
   if (summary === '') {
     // agent-harness KD-7: an empty summary would hide the whole history, so nothing is compacted; the
@@ -142,11 +168,19 @@ export async function runCompactionStep(
       stepNo: ctx.stepNo,
       model: session.model,
     });
-    logStep(ctx, STEP_KIND, startedAt, 'continue', { emptySummary: true, turns });
+    logStep(ctx, STEP_KIND, startedAt, 'continue', {
+      emptySummary: true,
+      turns,
+    });
     return {
       outcome: 'continue',
       commit: async (effects) => {
-        await appendWithEvent(deps, effects, ctx.taskId, await writeOwedEntries());
+        await appendWithEvent(
+          deps,
+          effects,
+          ctx.taskId,
+          await writeOwedEntries(),
+        );
         await sessionRows.update(ctx.taskId, patch);
       },
     };
@@ -171,7 +205,10 @@ export async function runCompactionStep(
       const throughSeq = await messageRows.lastSeq(ctx.taskId);
       await appendWithEvent(deps, effects, ctx.taskId, [
         { kind: 'compaction', content: { summary, throughSeq } },
-        { kind: 'event', content: { event: HistoryEventSchema.enum.compacted, reason: null } },
+        {
+          kind: 'event',
+          content: { event: HistoryEventSchema.enum.compacted, reason: null },
+        },
         ...delivered,
       ]);
       await sessionRows.update(ctx.taskId, patch);

@@ -1,20 +1,55 @@
-import { AgentMessageKindSchema, ToolCallStateSchema } from '@agent-os/contracts';
-import type { LiveTask, LiveTaskIdentity, StepContext, StepMessage, StepResult } from '@agent-os/runtime';
+import {
+  AgentMessageKindSchema,
+  ToolCallStateSchema,
+} from '@agent-os/contracts';
+import type {
+  LiveTask,
+  LiveTaskIdentity,
+  StepContext,
+  StepMessage,
+  StepResult,
+} from '@agent-os/runtime';
 
 import { type CallState, isDelegated } from '../history/call-state';
 import { embedQuestion } from '../knowledge/question-vector';
-import { type RunDefinition, snapshotDefinition } from '../start/snapshot-definition';
+import {
+  type RunDefinition,
+  snapshotDefinition,
+} from '../start/snapshot-definition';
 import type { Session, SessionInput } from '../store/sessions';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { ToolCaller, ToolDeclaration } from '../tools/tool';
 import type { SessionTool } from '../tools/tool-registry';
 import type { AgentDeps } from './agent-deps';
-import { absorbState, type AgentRun, type AgentState, loadState, type SessionHistory } from './agent-state';
+import {
+  absorbState,
+  type AgentRun,
+  type AgentState,
+  loadState,
+  type SessionHistory,
+} from './agent-state';
 import { compactionDue, runCompactionStep } from './compaction-step';
 import { continuationOf } from './continuation';
-import type { CallClosing, Delegation, DelegationInput, FinalAnswer } from './delegation';
-import { childrenInFlight, runModelStep, type TurnAnswer, type TurnEnd } from './model-step';
-import { abandoned, closesOpen, interruptWait, preludeOf, type StepPlan, withPrelude } from './prelude';
+import type {
+  CallClosing,
+  Delegation,
+  DelegationInput,
+  FinalAnswer,
+} from './delegation';
+import {
+  childrenInFlight,
+  runModelStep,
+  type TurnAnswer,
+  type TurnEnd,
+} from './model-step';
+import {
+  abandoned,
+  closesOpen,
+  interruptWait,
+  preludeOf,
+  type StepPlan,
+  withPrelude,
+} from './prelude';
 import type { StepPrelude } from './step-common';
 import { runToolStep } from './tool-step';
 import { endOfTurn } from './turn-rules';
@@ -145,7 +180,12 @@ export abstract class BaseAgent implements LiveTask {
     const toRun = closesOpen(plan) ? plan.open.filter(isDelegated) : plan.open;
     if (toRun.length > 0) {
       // The tool step does not know the prelude: its commit is wrapped so the prelude goes first.
-      return withPrelude(this.deps, ctx, await this.toolStep(ctx, session, toRun, calls), prelude);
+      return withPrelude(
+        this.deps,
+        ctx,
+        await this.toolStep(ctx, session, toRun, calls),
+        prelude,
+      );
     }
     // A compaction is written only here, with no call left open: the state from the last compaction on relies on it.
     if (compactionDue(session, this.deps.compactAtTokens)) {
@@ -158,7 +198,10 @@ export abstract class BaseAgent implements LiveTask {
   async committed(ctx: StepContext): Promise<void> {
     const startedAt = Date.now();
     await this.absorb();
-    ctx.logger.debug('agent state absorbed', { ...this.held(), durationMs: Date.now() - startedAt });
+    ctx.logger.debug('agent state absorbed', {
+      ...this.held(),
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   /** What the object holds, for the log: ids and sizes, never content. */
@@ -194,7 +237,10 @@ export abstract class BaseAgent implements LiveTask {
    * this call created the row.
    */
   async createSession(): Promise<void> {
-    const created = await this.deps.sessions.ensureSession(this.task, this.input);
+    const created = await this.deps.sessions.ensureSession(
+      this.task,
+      this.input,
+    );
     if (created) await this.sessionCreated();
   }
 
@@ -207,11 +253,14 @@ export abstract class BaseAgent implements LiveTask {
    * The state of an agent whose task was created without its session: the session is made from the task input
    * and read; `undefined` when the attempt is fenced. The object keeps it only after the step's commit.
    */
-  private async startedState(ctx: StepContext): Promise<AgentState | undefined> {
+  private async startedState(
+    ctx: StepContext,
+  ): Promise<AgentState | undefined> {
     const made = await ctx.guard(() => this.createSession());
     if (made.outcome === 'fenced') return undefined;
     const state = await loadState(this.deps, ctx.taskId);
-    if (state === undefined) throw new Error(`Session of agent ${ctx.taskId} was not created`);
+    if (state === undefined)
+      throw new Error(`Session of agent ${ctx.taskId} was not created`);
     return state;
   }
 
@@ -219,8 +268,17 @@ export abstract class BaseAgent implements LiveTask {
    * The question vector of a session that learns; `false` — the step was cancelled or its write fenced.
    * Overridden by `ChatAgent`.
    */
-  protected embedQuestion(ctx: StepContext, session: Session): Promise<boolean> {
-    return embedQuestion(this.deps, ctx, session, this.input.snapshot, this.embedsEmployeeMessages);
+  protected embedQuestion(
+    ctx: StepContext,
+    session: Session,
+  ): Promise<boolean> {
+    return embedQuestion(
+      this.deps,
+      ctx,
+      session,
+      this.input.snapshot,
+      this.embedsEmployeeMessages,
+    );
   }
 
   /**
@@ -295,7 +353,10 @@ export abstract class BaseAgent implements LiveTask {
    * The closings of the sent delegated calls this step delivers the outcomes of, asked by the tool step first.
    * Overridden by `DeepAgent`.
    */
-  async closeDelegated(_ctx: StepContext, _calls: readonly CallState[]): Promise<CallClosing[]> {
+  async closeDelegated(
+    _ctx: StepContext,
+    _calls: readonly CallState[],
+  ): Promise<CallClosing[]> {
     return [];
   }
 
@@ -309,7 +370,9 @@ export abstract class BaseAgent implements LiveTask {
 
   /** Checks the delegated calls of one answer together, outside any transaction. Overridden by `DeepAgent`. */
   async delegate(input: DelegationInput): Promise<Delegation> {
-    throw new Error(`Agent ${input.caller.agentId} has ${input.calls.length} delegated calls, but its kind delegates none`);
+    throw new Error(
+      `Agent ${input.caller.agentId} has ${input.calls.length} delegated calls, but its kind delegates none`,
+    );
   }
 
   /**

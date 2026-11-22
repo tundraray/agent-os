@@ -1,4 +1,8 @@
-import { AGENT_TASK_TYPE, CHAT_TASK_TYPE, DEEP_AGENT_TASK_TYPE } from '@agent-os/contracts';
+import {
+  AGENT_TASK_TYPE,
+  CHAT_TASK_TYPE,
+  DEEP_AGENT_TASK_TYPE,
+} from '@agent-os/contracts';
 import type { Logger } from '@agent-os/common';
 import { type LiveTaskIdentity, Trackers } from '@agent-os/runtime';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
@@ -19,7 +23,9 @@ import { ChatAgent, type ChatAgentDeps } from './chat-agent';
 
 /** The task type a run under a parent is created with: a deep agent's snapshot runs as `DeepAgent`, any other as `Agent`. */
 export function childTypeOf(snapshot: RunSnapshot): string {
-  return snapshot.kind === 'deep_agent' ? DEEP_AGENT_TASK_TYPE : AGENT_TASK_TYPE;
+  return snapshot.kind === 'deep_agent'
+    ? DEEP_AGENT_TASK_TYPE
+    : AGENT_TASK_TYPE;
 }
 
 /**
@@ -39,8 +45,10 @@ export class AgentFactory implements OnModuleInit {
     @Inject(AgentDeps) private readonly agent: AgentDeps,
     @Inject(RECORD_LIBRARY) library: Pick<RecordLibrary, 'listVisible'>,
     @Inject(Trackers) trackers: Pick<Trackers, 'list'>,
-    @Inject(ToolRunner) private readonly runner: Pick<ToolRunner, 'useStartChild'>,
-    @Inject(AGENTS_CONFIG) private readonly config: Pick<AgentsConfig, 'maxDepth'>,
+    @Inject(ToolRunner)
+    private readonly runner: Pick<ToolRunner, 'useStartChild'>,
+    @Inject(AGENTS_CONFIG)
+    private readonly config: Pick<AgentsConfig, 'maxDepth'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.factory' });
@@ -81,7 +89,10 @@ export class AgentFactory implements OnModuleInit {
     const agent = this.build({ task: { ...task, type, input }, input });
     await agent.createSession();
     await agent.absorb();
-    this.logger.info('agent object created', { ...agent.held(), durationMs: Date.now() - startedAt });
+    this.logger.info('agent object created', {
+      ...agent.held(),
+      durationMs: Date.now() - startedAt,
+    });
     return agent;
   }
 
@@ -93,7 +104,10 @@ export class AgentFactory implements OnModuleInit {
     const startedAt = Date.now();
     const agent = this.build({ task, input: sessionInputOf(task.input) });
     await agent.absorb();
-    this.logger.info('agent object restored', { ...agent.held(), durationMs: Date.now() - startedAt });
+    this.logger.info('agent object restored', {
+      ...agent.held(),
+      durationMs: Date.now() - startedAt,
+    });
     return agent;
   }
 
@@ -106,7 +120,9 @@ export class AgentFactory implements OnModuleInit {
       case DEEP_AGENT_TASK_TYPE:
         return new DeepAgent(this.deep, run);
       default:
-        throw new Error(`Task ${run.task.taskId} of type "${run.task.type}" is not an agent's`);
+        throw new Error(
+          `Task ${run.task.taskId} of type "${run.task.type}" is not an agent's`,
+        );
     }
   }
 }

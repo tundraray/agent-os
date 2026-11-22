@@ -21,8 +21,12 @@ export interface StopChildrenOnFailureDeps {
  * `tasks.stop` as Flow 7. The owner comes from the agent's session (plan Notes 4): the runtime event
  * does not carry it; a task without a session is not an agent and is skipped.
  */
-export function createStopChildrenOnFailure(deps: StopChildrenOnFailureDeps): EventConsumer {
-  const logger = deps.logger.child({ consumer: 'agents.stop-children-on-failure' });
+export function createStopChildrenOnFailure(
+  deps: StopChildrenOnFailureDeps,
+): EventConsumer {
+  const logger = deps.logger.child({
+    consumer: 'agents.stop-children-on-failure',
+  });
 
   return {
     name: 'agents.stop-children-on-failure',

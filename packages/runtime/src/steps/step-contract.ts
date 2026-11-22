@@ -6,10 +6,7 @@ import type { z } from 'zod';
  * the same task may already run (design-runtime.md, Invariant 1).
  */
 export type StepSignalReason =
-  | 'interrupted'
-  | 'stopped'
-  | 'shutdown'
-  | 'step_timeout';
+  'interrupted' | 'stopped' | 'shutdown' | 'step_timeout';
 
 /** A message that waited in the task's inbox when the step began. */
 export interface StepMessage {
@@ -35,8 +32,7 @@ export interface StepDecision {
 
 /** Result of `StepContext.guard`: `work` committed, or the attempt is not current and nothing was written. */
 export type GuardResult<T> =
-  | { outcome: 'committed'; value: T }
-  | { outcome: 'fenced' };
+  { outcome: 'committed'; value: T } | { outcome: 'fenced' };
 
 /** What the handler knows about the step (design-runtime.md, StepContext). */
 export interface StepContext {

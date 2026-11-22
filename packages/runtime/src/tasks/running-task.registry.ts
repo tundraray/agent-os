@@ -59,7 +59,9 @@ export class RunningTaskRegistry {
 
   /** Whether this process executes the step the attempt claimed. */
   isRunning(taskId: string, attempt: number): boolean {
-    return [...(this.running.get(taskId) ?? [])].some((step) => step.attempt === attempt);
+    return [...(this.running.get(taskId) ?? [])].some(
+      (step) => step.attempt === attempt,
+    );
   }
 
   /**
@@ -92,7 +94,10 @@ async function abortAndWait(
   await Promise.all(steps.map((step) => step.released));
 }
 
-function abortWith(controller: AbortController, reason: StepSignalReason): void {
+function abortWith(
+  controller: AbortController,
+  reason: StepSignalReason,
+): void {
   if (controller.signal.aborted) return;
   controller.abort(reason);
 }

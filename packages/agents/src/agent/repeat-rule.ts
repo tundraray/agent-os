@@ -36,7 +36,9 @@ export type RepeatDecision =
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, inner: unknown) =>
     inner !== null && typeof inner === 'object' && !Array.isArray(inner)
-      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a.localeCompare(b)))
+      ? Object.fromEntries(
+          Object.entries(inner).sort(([a], [b]) => a.localeCompare(b)),
+        )
       : inner,
   );
 }

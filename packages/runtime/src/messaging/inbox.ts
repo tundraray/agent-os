@@ -39,7 +39,10 @@ export function jsonByteLength(value: unknown): number {
  * the runtime's own `child_finished` is bounded by the result it carries, `tasks_finished` by
  * `TRACKER_MAX_TASKS`.
  */
-export function payloadTooLarge(payload: unknown, maxBytes: number): RuntimeError | undefined {
+export function payloadTooLarge(
+  payload: unknown,
+  maxBytes: number,
+): RuntimeError | undefined {
   const bytes = jsonByteLength(payload);
   if (bytes <= maxBytes) return undefined;
   return new RuntimeError(
@@ -49,7 +52,10 @@ export function payloadTooLarge(payload: unknown, maxBytes: number): RuntimeErro
 }
 
 /** Message kinds only the runtime writes. */
-const RESERVED_KINDS: readonly string[] = [CHILD_FINISHED_KIND, TASKS_FINISHED_KIND];
+const RESERVED_KINDS: readonly string[] = [
+  CHILD_FINISHED_KIND,
+  TASKS_FINISHED_KIND,
+];
 
 /**
  * Why an upper-layer message may not have this kind, or `undefined`. Every writer of an
@@ -122,11 +128,16 @@ function wakeChange(
     const wakes =
       recipient.waitReason === messages ||
       recipient.waitReason === interrupted ||
-      (recipient.waitReason === tasksReason && message.kind === TASKS_FINISHED_KIND);
+      (recipient.waitReason === tasksReason &&
+        message.kind === TASKS_FINISHED_KIND);
     return wakes ? { kind: 'set', status: queued } : undefined;
   }
   if (isFinished(recipient.status) && message.revive) {
-    return { kind: 'set', status: queued, fields: { result: null, failure: null } };
+    return {
+      kind: 'set',
+      status: queued,
+      fields: { result: null, failure: null },
+    };
   }
   return undefined;
 }
@@ -221,8 +232,14 @@ export class Inbox {
   async insertMessage(message: NewMessage): Promise<InsertedMessage> {
     const { repository, tasks, taskRows, events, crashPoints } = this.deps;
     const notFound = () =>
-      new RuntimeError('TASK_NOT_FOUND', `Task ${message.recipientId} not found`);
-    const found = await taskRows.findOwned(message.recipientId, message.ownerId);
+      new RuntimeError(
+        'TASK_NOT_FOUND',
+        `Task ${message.recipientId} not found`,
+      );
+    const found = await taskRows.findOwned(
+      message.recipientId,
+      message.ownerId,
+    );
     if (!found) throw notFound();
     const recipient = await tasks.takeMessageSeq(found.taskId);
     // Deleted while this message waited for the deletion: it must not revive the root.
@@ -243,7 +260,13 @@ export class Inbox {
     await events.append({
       type: EVENT['inbox.enqueued'],
       task: recipient,
-      payload: { messageId, seq, kind: message.kind, sender: message.sender, revive },
+      payload: {
+        messageId,
+        seq,
+        kind: message.kind,
+        sender: message.sender,
+        revive,
+      },
     });
     crashPoints.hit('inbox.before-wake');
 
@@ -268,7 +291,11 @@ export class Inbox {
     stepNo: number,
   ): Promise<void> {
     if (messageIds.length === 0) return;
-    const rows = await this.deps.repository.markDelivered(task.taskId, messageIds, stepNo);
+    const rows = await this.deps.repository.markDelivered(
+      task.taskId,
+      messageIds,
+      stepNo,
+    );
     if (rows.length === 0) return;
     rows.sort((left, right) => left.seq - right.seq);
     await this.deps.events.append({

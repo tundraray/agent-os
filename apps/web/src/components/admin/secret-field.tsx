@@ -1,13 +1,18 @@
-"use client";
+'use client';
 
-import { useEffect, useRef } from "react";
-import { useTranslations } from "next-intl";
-import { cn } from "cn";
-import { NO_PASSWORD_MANAGER, RevealInput } from "@/components/password-field";
-import { StateBadge } from "@/components/state-badge";
-import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
-import { CAPTION, CONTROL_SIZE } from "./admin-form";
+import { useEffect, useRef } from 'react';
+import { useTranslations } from 'next-intl';
+import { cn } from 'cn';
+import { NO_PASSWORD_MANAGER, RevealInput } from '@/components/password-field';
+import { StateBadge } from '@/components/state-badge';
+import { Button } from '@/components/ui/button';
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@/components/ui/field';
+import { CAPTION, CONTROL_SIZE } from './admin-form';
 
 export type SecretFieldProps = {
   id: string;
@@ -24,25 +29,43 @@ export type SecretFieldProps = {
   hint?: string;
 };
 
-type FocusTarget = "input" | "replace";
+type FocusTarget = 'input' | 'replace';
 
 /**
  * design-system secret-field: a secret can only be set or replaced. A held secret shows «Задан» and
  * «Заменить»; the replacement exists only in the form's state until it is sent (Invariant 3).
  */
-export function SecretField({ id, label, isSet, value, onChange, error, lastFour, hint }: SecretFieldProps) {
-  const t = useTranslations("admin.secret");
+export function SecretField({
+  id,
+  label,
+  isSet,
+  value,
+  onChange,
+  error,
+  lastFour,
+  hint,
+}: SecretFieldProps) {
+  const t = useTranslations('admin.secret');
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
   // Never more than four characters, whatever the caller passes.
-  const tail = lastFour === undefined || lastFour === null || lastFour === "" ? null : lastFour.slice(-4);
-  const describedBy = [hint !== undefined ? hintId : null, error !== undefined ? errorId : null]
+  const tail =
+    lastFour === undefined || lastFour === null || lastFour === ''
+      ? null
+      : lastFour.slice(-4);
+  const describedBy = [
+    hint !== undefined ? hintId : null,
+    error !== undefined ? errorId : null,
+  ]
     .filter((part) => part !== null)
-    .join(" ");
+    .join(' ');
   const hintText =
     hint === undefined ? null : (
-      <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+      <FieldDescription
+        id={hintId}
+        className={cn(CAPTION, 'text-muted-foreground')}
+      >
         {hint}
       </FieldDescription>
     );
@@ -53,13 +76,13 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
   const replacing = value !== undefined;
 
   useEffect(() => {
-    if (pendingFocus.current === "input") inputRef.current?.focus();
-    if (pendingFocus.current === "replace") replaceRef.current?.focus();
+    if (pendingFocus.current === 'input') inputRef.current?.focus();
+    if (pendingFocus.current === 'replace') replaceRef.current?.focus();
     pendingFocus.current = null;
   });
 
   if (isSet && !replacing) {
-    const badge = <StateBadge state="neutral">{t("set")}</StateBadge>;
+    const badge = <StateBadge state="neutral">{t('set')}</StateBadge>;
     return (
       <Field
         role="group"
@@ -76,10 +99,13 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
           ) : (
             <span className="flex items-center gap-2">
               {badge}
-              <span aria-hidden className="font-mono text-mono-compact text-muted-foreground">
+              <span
+                aria-hidden
+                className="font-mono text-mono-compact text-muted-foreground"
+              >
                 …{tail}
               </span>
-              <span className="sr-only">{t("endsWith", { tail })}</span>
+              <span className="sr-only">{t('endsWith', { tail })}</span>
             </span>
           )}
           <Button
@@ -88,13 +114,13 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
             variant="outline"
             size="sm"
             className={CONTROL_SIZE}
-            aria-label={t("replaceLabel", { label })}
+            aria-label={t('replaceLabel', { label })}
             onClick={() => {
-              pendingFocus.current = "input";
-              onChange("");
+              pendingFocus.current = 'input';
+              onChange('');
             }}
           >
-            {t("replace")}
+            {t('replace')}
           </Button>
         </div>
         {hintText}
@@ -104,7 +130,10 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
 
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
-      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
+      <FieldLabel
+        htmlFor={id}
+        className="text-data font-medium text-foreground"
+      >
         {label}
       </FieldLabel>
       <div className="flex items-center gap-2">
@@ -117,13 +146,13 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
             name={id}
             autoComplete="new-password"
             spellCheck={false}
-            placeholder={t("placeholder")}
+            placeholder={t('placeholder')}
             compact
             className="font-mono text-mono-compact"
-            showLabel={t("show")}
-            value={value ?? ""}
+            showLabel={t('show')}
+            value={value ?? ''}
             aria-invalid={error !== undefined}
-            aria-describedby={describedBy === "" ? undefined : describedBy}
+            aria-describedby={describedBy === '' ? undefined : describedBy}
             onChange={(event) => onChange(event.target.value)}
           />
         </div>
@@ -134,11 +163,11 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
             size="sm"
             className={CONTROL_SIZE}
             onClick={() => {
-              pendingFocus.current = "replace";
+              pendingFocus.current = 'replace';
               onChange(undefined);
             }}
           >
-            {t("cancelReplace")}
+            {t('cancelReplace')}
           </Button>
         )}
       </div>

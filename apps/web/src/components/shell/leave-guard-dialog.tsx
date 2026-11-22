@@ -42,13 +42,20 @@ export function LeaveGuardDialog() {
       <AlertDialogContent initialFocus={stayRef}>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('title')}</AlertDialogTitle>
-          <AlertDialogDescription>{name === '' ? t('bodyNew') : t('body', { name })}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {name === '' ? t('bodyNew') : t('body', { name })}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel ref={stayRef} size="sm" className={CONTROL_SIZE}>
             {t('stay')}
           </AlertDialogCancel>
-          <Button variant="destructive" size="sm" className={CONTROL_SIZE} onClick={() => leaveGuard.answer(true)}>
+          <Button
+            variant="destructive"
+            size="sm"
+            className={CONTROL_SIZE}
+            onClick={() => leaveGuard.answer(true)}
+          >
             {t('leave')}
           </Button>
         </AlertDialogFooter>

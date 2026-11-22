@@ -62,7 +62,11 @@
 // - AC-07.1: INT-1 row C (+ INT-3 for the `cutOff` field); AC-07.2: INT-1 row C
 // - NFR-01 (no values in the new records): INT-1 row C
 
-import { createLibraryDouble, createScriptedModel, inputLines } from '@agent-os/agents/testing';
+import {
+  createLibraryDouble,
+  createScriptedModel,
+  inputLines,
+} from '@agent-os/agents/testing';
 import { agentSessions, agentToolResults } from '@agent-os/db';
 import { createFixtureFiles, fixtureCallsOf } from '@agent-os/mcp-fixture';
 import { eq } from 'drizzle-orm';
@@ -155,146 +159,187 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   // @category: core-functionality
   // @dependency: ToolRunner.check (MCP schema validator), repeat rule, tool step (ToolStep with the history calls), AccessAudit port, toolResultOf, model step journal, McpRegistry stored tool list, Postgres, MCP fixture (logs), ScriptedModel
   // @complexity: high
-  it('INT-1: invalid MCP arguments and a third identical call are refused before the server, once each in the audit, the model reads the reason and the second identical call carries the repeat mark, and the journal holds names and numbers only', async () => {
-    // Given: an agent on the `logs` server whose script makes two invalid calls, then the same valid call three times
-    const ownerId = newUser();
-    const fixture = createFixtureFiles();
-    const model = createScriptedModel();
-    const looper = model.script({ task: 'Read the trace until it changes' }, [
-      {
-        calls: [
-          { tool: GET_TRACE, args: {} },
-          { tool: GET_TRACE, args: { traceId: { token: SECRET_MARK } } },
-        ],
-      },
-      { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
-      { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
-      { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
-      { text: 'the trace does not change' },
-    ]);
-    const harness = await createAgentsHarness({
-      model,
-      fixture,
-      access: { [ownerId]: [LOGS_SERVER] },
-      root: testRecord('looper', { servers: [LOGS_SERVER] }),
-    });
-    try {
-      // When: the agent works to its report
-      const { agentId } = await harness.sessions.start({
-        ownerId,
-        prompt: 'Read the trace until it changes',
-        description: 'looper',
+  it(
+    'INT-1: invalid MCP arguments and a third identical call are refused before the server, once each in the audit, the model reads the reason and the second identical call carries the repeat mark, and the journal holds names and numbers only',
+    async () => {
+      // Given: an agent on the `logs` server whose script makes two invalid calls, then the same valid call three times
+      const ownerId = newUser();
+      const fixture = createFixtureFiles();
+      const model = createScriptedModel();
+      const looper = model.script({ task: 'Read the trace until it changes' }, [
+        {
+          calls: [
+            { tool: GET_TRACE, args: {} },
+            { tool: GET_TRACE, args: { traceId: { token: SECRET_MARK } } },
+          ],
+        },
+        { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
+        { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
+        { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
+        { text: 'the trace does not change' },
+      ]);
+      const harness = await createAgentsHarness({
+        model,
+        fixture,
+        access: { [ownerId]: [LOGS_SERVER] },
+        root: testRecord('looper', { servers: [LOGS_SERVER] }),
       });
-      await looper.called(5);
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
+      try {
+        // When: the agent works to its report
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt: 'Read the trace until it changes',
+          description: 'looper',
+        });
+        await looper.called(5);
+        await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
 
-      const [missingId, wrongTypeId] = looper.calls[0]?.toolCallIds ?? [];
-      const [firstId] = looper.calls[1]?.toolCallIds ?? [];
-      const [secondId] = looper.calls[2]?.toolCallIds ?? [];
-      const [thirdId] = looper.calls[3]?.toolCallIds ?? [];
-      if (firstId === undefined || secondId === undefined || thirdId === undefined) {
-        throw new Error('the looper made fewer calls than scripted');
+        const [missingId, wrongTypeId] = looper.calls[0]?.toolCallIds ?? [];
+        const [firstId] = looper.calls[1]?.toolCallIds ?? [];
+        const [secondId] = looper.calls[2]?.toolCallIds ?? [];
+        const [thirdId] = looper.calls[3]?.toolCallIds ?? [];
+        if (
+          firstId === undefined ||
+          secondId === undefined ||
+          thirdId === undefined
+        ) {
+          throw new Error('the looper made fewer calls than scripted');
+        }
+
+        // Then (A, B): only the first two valid calls reached the server; the history shows each refusal
+        expect(
+          fixtureCallsOf(fixture.callLog, { tool: 'get_trace' }),
+        ).toHaveLength(2);
+        expect(
+          fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A }),
+        ).toHaveLength(2);
+        expect(
+          historyLines(await historyOf(harness, agentId, ownerId)),
+        ).toEqual([
+          'task: Read the trace until it changes',
+          `model_answer:  [${LOGS_SERVER}/get_trace, ${LOGS_SERVER}/get_trace]`,
+          'tool_result: get_trace refused invalid_arguments',
+          'tool_result: get_trace refused invalid_arguments',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
+          'tool_result: get_trace success',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
+          'tool_result: get_trace success',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
+          'tool_result: get_trace refused repeated_call',
+          'model_answer: the trace does not change []',
+        ]);
+
+        // Then (A, B): one `tool_call_refused` audit record per refusal, none for the calls that ran
+        const refusedEntry = (reason: string) => ({
+          kind: 'tool_call_refused',
+          actor: ownerId,
+          objectType: 'tool',
+          objectId: `${LOGS_SERVER}/get_trace`,
+          outcome: 'rejected',
+          reason,
+        });
+        expect(harness.auditEntries).toEqual([
+          refusedEntry('invalid_arguments'),
+          refusedEntry('invalid_arguments'),
+          refusedEntry('repeated_call'),
+        ]);
+
+        // Then (A): the model reads which argument is wrong and what was expected
+        const afterInvalid = looper.calls[1]?.messages ?? [];
+        expect(toolOutputOf(afterInvalid, missingId)).toContain(
+          "[refused: invalid_arguments]\ndata must have required property 'traceId'",
+        );
+        expect(toolOutputOf(afterInvalid, wrongTypeId)).toContain(
+          '[refused: invalid_arguments]\ndata/traceId must be string',
+        );
+
+        // Then (B): the first valid call has no mark (refused calls are not counted), the second carries the mark
+        // with the first call's id, the third reads the hint with both ids
+        const mark = `[repeat] You already made this call with the same arguments: ${firstId}.`;
+        expect(
+          toolOutputOf(looper.calls[2]?.messages ?? [], firstId),
+        ).not.toContain('[repeat]');
+        expect(
+          toolOutputOf(looper.calls[3]?.messages ?? [], secondId),
+        ).toContain(`\n\n${mark}`);
+        expect(
+          toolOutputOf(looper.calls[4]?.messages ?? [], thirdId),
+        ).toContain(
+          `[refused: repeated_call]\nThis call was already made with the same arguments: ${firstId}, ${secondId}. ` +
+            'Change the arguments or finish your work.',
+        );
+
+        // Then (B): the mark is in the second call's history text only, never in its stored result
+        const calls = new Map(
+          (await toolCallRowsOf(harness.db, agentId)).map((call) => [
+            call.callId,
+            call,
+          ]),
+        );
+        const firstText = calls.get(firstId)?.resultText;
+        if (typeof firstText !== 'string')
+          throw new Error('the first valid call has no result text');
+        expect(calls.get(secondId)?.resultText).toBe(`${firstText}\n\n${mark}`);
+        const stored = await harness.db
+          .select({
+            callId: agentToolResults.callId,
+            text: agentToolResults.text,
+          })
+          .from(agentToolResults)
+          .where(eq(agentToolResults.taskId, agentId));
+        expect(stored.map((row) => row.callId).sort()).toEqual(
+          [firstId, secondId].sort(),
+        );
+        expect(
+          stored.find((row) => row.callId === secondId)?.text,
+        ).not.toContain('[repeat]');
+
+        // Then (C): the first model step's journal names what the model saw and chose
+        const [firstStep] = harness.logs.filter(
+          (record) =>
+            record.message === 'agent step finished' &&
+            record.fields.agentId === agentId &&
+            record.fields.stepKind === 'model',
+        );
+        const shown = looper.calls[0]?.toolNames ?? [];
+        expect(firstStep?.fields).toMatchObject({
+          toolsShown: shown.length,
+          toolNamesShown: shown,
+          toolsChosen: [GET_TRACE, GET_TRACE],
+          directCalls: 2,
+          runCodeCalls: 0,
+          cutOff: false,
+        });
+
+        // Then (C): the result size of the first valid call is the length of the text the model read
+        const finished = harness.logs.find(
+          (record) =>
+            record.message === 'tool call finished' &&
+            record.fields.callId === firstId,
+        );
+        expect(finished?.fields.resultChars).toBe(firstText.length);
+
+        // Then (C): no record of this part carries the secret-looking argument value (NFR-01)
+        const journal = harness.logs.filter((record) =>
+          [
+            'agent step finished',
+            'tool call finished',
+            'tool arguments not checked',
+            'compaction returned an empty summary',
+          ].includes(record.message),
+        );
+        expect(journal.length).toBeGreaterThan(0);
+        expect(
+          journal.filter((record) =>
+            JSON.stringify(record).includes(SECRET_MARK),
+          ),
+        ).toEqual([]);
+      } finally {
+        await harness.close();
       }
-
-      // Then (A, B): only the first two valid calls reached the server; the history shows each refusal
-      expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace' })).toHaveLength(2);
-      expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A })).toHaveLength(2);
-      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
-        'task: Read the trace until it changes',
-        `model_answer:  [${LOGS_SERVER}/get_trace, ${LOGS_SERVER}/get_trace]`,
-        'tool_result: get_trace refused invalid_arguments',
-        'tool_result: get_trace refused invalid_arguments',
-        `model_answer:  [${LOGS_SERVER}/get_trace]`,
-        'tool_result: get_trace success',
-        `model_answer:  [${LOGS_SERVER}/get_trace]`,
-        'tool_result: get_trace success',
-        `model_answer:  [${LOGS_SERVER}/get_trace]`,
-        'tool_result: get_trace refused repeated_call',
-        'model_answer: the trace does not change []',
-      ]);
-
-      // Then (A, B): one `tool_call_refused` audit record per refusal, none for the calls that ran
-      const refusedEntry = (reason: string) => ({
-        kind: 'tool_call_refused',
-        actor: ownerId,
-        objectType: 'tool',
-        objectId: `${LOGS_SERVER}/get_trace`,
-        outcome: 'rejected',
-        reason,
-      });
-      expect(harness.auditEntries).toEqual([
-        refusedEntry('invalid_arguments'),
-        refusedEntry('invalid_arguments'),
-        refusedEntry('repeated_call'),
-      ]);
-
-      // Then (A): the model reads which argument is wrong and what was expected
-      const afterInvalid = looper.calls[1]?.messages ?? [];
-      expect(toolOutputOf(afterInvalid, missingId)).toContain(
-        "[refused: invalid_arguments]\ndata must have required property 'traceId'",
-      );
-      expect(toolOutputOf(afterInvalid, wrongTypeId)).toContain('[refused: invalid_arguments]\ndata/traceId must be string');
-
-      // Then (B): the first valid call has no mark (refused calls are not counted), the second carries the mark
-      // with the first call's id, the third reads the hint with both ids
-      const mark = `[repeat] You already made this call with the same arguments: ${firstId}.`;
-      expect(toolOutputOf(looper.calls[2]?.messages ?? [], firstId)).not.toContain('[repeat]');
-      expect(toolOutputOf(looper.calls[3]?.messages ?? [], secondId)).toContain(`\n\n${mark}`);
-      expect(toolOutputOf(looper.calls[4]?.messages ?? [], thirdId)).toContain(
-        `[refused: repeated_call]\nThis call was already made with the same arguments: ${firstId}, ${secondId}. ` +
-          'Change the arguments or finish your work.',
-      );
-
-      // Then (B): the mark is in the second call's history text only, never in its stored result
-      const calls = new Map((await toolCallRowsOf(harness.db, agentId)).map((call) => [call.callId, call]));
-      const firstText = calls.get(firstId)?.resultText;
-      if (typeof firstText !== 'string') throw new Error('the first valid call has no result text');
-      expect(calls.get(secondId)?.resultText).toBe(`${firstText}\n\n${mark}`);
-      const stored = await harness.db
-        .select({ callId: agentToolResults.callId, text: agentToolResults.text })
-        .from(agentToolResults)
-        .where(eq(agentToolResults.taskId, agentId));
-      expect(stored.map((row) => row.callId).sort()).toEqual([firstId, secondId].sort());
-      expect(stored.find((row) => row.callId === secondId)?.text).not.toContain('[repeat]');
-
-      // Then (C): the first model step's journal names what the model saw and chose
-      const [firstStep] = harness.logs.filter(
-        (record) =>
-          record.message === 'agent step finished' &&
-          record.fields.agentId === agentId &&
-          record.fields.stepKind === 'model',
-      );
-      const shown = looper.calls[0]?.toolNames ?? [];
-      expect(firstStep?.fields).toMatchObject({
-        toolsShown: shown.length,
-        toolNamesShown: shown,
-        toolsChosen: [GET_TRACE, GET_TRACE],
-        directCalls: 2,
-        runCodeCalls: 0,
-        cutOff: false,
-      });
-
-      // Then (C): the result size of the first valid call is the length of the text the model read
-      const finished = harness.logs.find(
-        (record) => record.message === 'tool call finished' && record.fields.callId === firstId,
-      );
-      expect(finished?.fields.resultChars).toBe(firstText.length);
-
-      // Then (C): no record of this part carries the secret-looking argument value (NFR-01)
-      const journal = harness.logs.filter((record) =>
-        [
-          'agent step finished',
-          'tool call finished',
-          'tool arguments not checked',
-          'compaction returned an empty summary',
-        ].includes(record.message),
-      );
-      expect(journal.length).toBeGreaterThan(0);
-      expect(journal.filter((record) => JSON.stringify(record).includes(SECRET_MARK))).toEqual([]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2: a mutating call with no answer is `unknown`, and the model reads its text
@@ -316,69 +361,99 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   // @category: core-functionality
   // @dependency: McpClient (real timeout), toOutcome, tool runner, tool step commit, confirmation request, toolResultOf, McpRegistry stored tool list (readOnlyHint), Postgres, MCP fixture (backoffice, fault schedule), ScriptedModel
   // @complexity: medium
-  it('INT-2: a confirmed create_incident_note that times out ends unknown, and the model reads its text', async () => {
-    // Given: a writer whose one answer writes a note, on a server that never answers a call
-    const ownerId = newUser();
-    const fixture = createFixtureFiles();
-    fixture.setFaults([{ tool: 'create_incident_note', argsHash: '*', occurrences: 'all', mode: 'hang' }]);
-    const model = createScriptedModel();
-    const writer = model.script({ task: 'Write the note to a silent server' }, [
-      { calls: [{ tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE }] },
-      { text: 'report after the timeout' },
-    ]);
-    const harness = await createAgentsHarness({
-      model,
-      fixture,
-      access: { [ownerId]: [BACKOFFICE_SERVER] },
-      variables: { MCP_CALL_TIMEOUT_MS: String(MCP_CALL_TIMEOUT_MS) },
-      root: testRecord('writer', { servers: [BACKOFFICE_SERVER] }),
-    });
-    try {
-      // When: the employee approves the note, and the note times out
-      const { agentId } = await harness.sessions.start({
-        ownerId,
-        prompt: 'Write the note to a silent server',
-        description: 'writer',
-      });
-      await waitFor(
-        () => harness.sessions.get(agentId, ownerId),
-        (view) => view.status === 'awaiting_confirmation',
-        'the confirmation request of the writer',
-      );
-      const [request] = (await harness.sessions.confirmations(agentId, ownerId)).filter((c) => c.status === 'open');
-      if (request === undefined) throw new Error('the writer has no confirmation request');
-      expect(await harness.sessions.resolveConfirmation({ decisionId: request.decisionId, ownerId, approve: true })).toBe(
-        'resolved',
-      );
-      await writer.called(2);
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
-
-      // Then: the request reached its server once and got no answer
-      expect(
-        fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note', args: INCIDENT_NOTE }).map((entry) => entry.mode),
-      ).toEqual(['hang']);
-
-      // Then (A): the changing call is `unknown` in the call record and the history
-      expect(
-        (await toolCallRowsOf(harness.db, agentId)).map((call) => `${call.tool} ${call.state} ${call.outcome ?? '-'}`),
-      ).toEqual(['create_incident_note done unknown']);
-      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
-        'task: Write the note to a silent server',
-        `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note]`,
-        'tool_result: create_incident_note unknown',
-        'model_answer: report after the timeout []',
+  it(
+    'INT-2: a confirmed create_incident_note that times out ends unknown, and the model reads its text',
+    async () => {
+      // Given: a writer whose one answer writes a note, on a server that never answers a call
+      const ownerId = newUser();
+      const fixture = createFixtureFiles();
+      fixture.setFaults([
+        {
+          tool: 'create_incident_note',
+          argsHash: '*',
+          occurrences: 'all',
+          mode: 'hang',
+        },
       ]);
-
-      // Then (A): the model's next input holds the platform's text of the outcome
-      const [noteCallId] = writer.calls[0]?.toolCallIds ?? [];
-      expect(toolOutputOf(writer.calls[1]?.messages ?? [], noteCallId)).toContain(
-        `[unknown]\nThe call to ${BACKOFFICE_SERVER} got no answer: the server did not answer in time (timeout). ` +
-          'The action may have been carried out. Do not repeat it before checking whether it was.',
+      const model = createScriptedModel();
+      const writer = model.script(
+        { task: 'Write the note to a silent server' },
+        [
+          { calls: [{ tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE }] },
+          { text: 'report after the timeout' },
+        ],
       );
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+      const harness = await createAgentsHarness({
+        model,
+        fixture,
+        access: { [ownerId]: [BACKOFFICE_SERVER] },
+        variables: { MCP_CALL_TIMEOUT_MS: String(MCP_CALL_TIMEOUT_MS) },
+        root: testRecord('writer', { servers: [BACKOFFICE_SERVER] }),
+      });
+      try {
+        // When: the employee approves the note, and the note times out
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt: 'Write the note to a silent server',
+          description: 'writer',
+        });
+        await waitFor(
+          () => harness.sessions.get(agentId, ownerId),
+          (view) => view.status === 'awaiting_confirmation',
+          'the confirmation request of the writer',
+        );
+        const [request] = (
+          await harness.sessions.confirmations(agentId, ownerId)
+        ).filter((c) => c.status === 'open');
+        if (request === undefined)
+          throw new Error('the writer has no confirmation request');
+        expect(
+          await harness.sessions.resolveConfirmation({
+            decisionId: request.decisionId,
+            ownerId,
+            approve: true,
+          }),
+        ).toBe('resolved');
+        await writer.called(2);
+        await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
+
+        // Then: the request reached its server once and got no answer
+        expect(
+          fixtureCallsOf(fixture.callLog, {
+            tool: 'create_incident_note',
+            args: INCIDENT_NOTE,
+          }).map((entry) => entry.mode),
+        ).toEqual(['hang']);
+
+        // Then (A): the changing call is `unknown` in the call record and the history
+        expect(
+          (await toolCallRowsOf(harness.db, agentId)).map(
+            (call) => `${call.tool} ${call.state} ${call.outcome ?? '-'}`,
+          ),
+        ).toEqual(['create_incident_note done unknown']);
+        expect(
+          historyLines(await historyOf(harness, agentId, ownerId)),
+        ).toEqual([
+          'task: Write the note to a silent server',
+          `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note]`,
+          'tool_result: create_incident_note unknown',
+          'model_answer: report after the timeout []',
+        ]);
+
+        // Then (A): the model's next input holds the platform's text of the outcome
+        const [noteCallId] = writer.calls[0]?.toolCallIds ?? [];
+        expect(
+          toolOutputOf(writer.calls[1]?.messages ?? [], noteCallId),
+        ).toContain(
+          `[unknown]\nThe call to ${BACKOFFICE_SERVER} got no answer: the server did not answer in time (timeout). ` +
+            'The action may have been carried out. Do not repeat it before checking whether it was.',
+        );
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3: a cut-off report of a child agent is not the report: the child gets a notice and writes it again, its parent receives the second text
@@ -401,82 +476,119 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   // @category: core-functionality
   // @dependency: ModelClient.call (cutOff), endOfTurn, model step, start_agent, child report delivery, runtime ledger, Postgres, ScriptedModel (cutOff answer)
   // @complexity: medium
-  it('INT-3: a child agent whose answer is cut off at the length limit gets a notice and finishes only with its next, complete answer, which is the report its parent receives', async () => {
-    // Given: a root that starts the child agent `scout`, whose first answer is cut off at the length limit
-    const ownerId = newUser();
-    const library = createLibraryDouble();
-    const scoutId = library.add(testRecord('scout'));
-    const model = createScriptedModel();
-    const root = model.script(
-      { task: 'Coordinate the scout' },
-      [{ calls: [{ tool: 'start_agent', args: { agent: scoutId, description: 'scout', prompt: 'Scout task' } }] }],
-      { thereafter: { text: 'noted' } },
-    );
-    const scout = model.script({ task: 'Scout task' }, [
-      { text: 'The report starts and brea', cutOff: true },
-      { text: 'The full report' },
-    ]);
-    const harness = await createAgentsHarness({
-      model,
-      access: {},
-      library,
-      root: testRecord('coordinator', { tools: ['start_agent'] }),
-    });
-    try {
-      // When: the root starts the scout, the scout answers twice, the root reads the report
-      const { agentId: rootId } = await harness.sessions.start({
-        ownerId,
-        prompt: 'Coordinate the scout',
-        description: 'coordinator',
+  it(
+    'INT-3: a child agent whose answer is cut off at the length limit gets a notice and finishes only with its next, complete answer, which is the report its parent receives',
+    async () => {
+      // Given: a root that starts the child agent `scout`, whose first answer is cut off at the length limit
+      const ownerId = newUser();
+      const library = createLibraryDouble();
+      const scoutId = library.add(testRecord('scout'));
+      const model = createScriptedModel();
+      const root = model.script(
+        { task: 'Coordinate the scout' },
+        [
+          {
+            calls: [
+              {
+                tool: 'start_agent',
+                args: {
+                  agent: scoutId,
+                  description: 'scout',
+                  prompt: 'Scout task',
+                },
+              },
+            ],
+          },
+        ],
+        { thereafter: { text: 'noted' } },
+      );
+      const scout = model.script({ task: 'Scout task' }, [
+        { text: 'The report starts and brea', cutOff: true },
+        { text: 'The full report' },
+      ]);
+      const harness = await createAgentsHarness({
+        model,
+        access: {},
+        library,
+        root: testRecord('coordinator', { tools: ['start_agent'] }),
       });
-      const rootCalls = await waitFor(
-        () => toolCallRowsOf(harness.db, rootId),
-        (calls) => calls.some((call) => call.childTaskId !== null),
-        'the scout started by the root',
-      );
-      const agentId = rootCalls.find((call) => call.childTaskId !== null)?.childTaskId;
-      if (agentId === undefined || agentId === null) throw new Error('the root started no scout');
-      await waitForTaskStatus(harness, agentId, ownerId, 'completed');
-      await root.called(3);
-      await waitForTaskStatus(harness, rootId, ownerId, 'waiting');
+      try {
+        // When: the root starts the scout, the scout answers twice, the root reads the report
+        const { agentId: rootId } = await harness.sessions.start({
+          ownerId,
+          prompt: 'Coordinate the scout',
+          description: 'coordinator',
+        });
+        const rootCalls = await waitFor(
+          () => toolCallRowsOf(harness.db, rootId),
+          (calls) => calls.some((call) => call.childTaskId !== null),
+          'the scout started by the root',
+        );
+        const agentId = rootCalls.find(
+          (call) => call.childTaskId !== null,
+        )?.childTaskId;
+        if (agentId === undefined || agentId === null)
+          throw new Error('the root started no scout');
+        await waitForTaskStatus(harness, agentId, ownerId, 'completed');
+        await root.called(3);
+        await waitForTaskStatus(harness, rootId, ownerId, 'waiting');
 
-      // Then (A): the cut answer is followed by the notice, and only the full answer finished the scout
-      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
-        'task: Scout task',
-        'model_answer: The report starts and brea []',
-        `notice: ${CUT_OFF_NOTICE}`,
-        'model_answer: The full report []',
-      ]);
-      const rootReports = (await historyOf(harness, rootId, ownerId)).flatMap((entry) =>
-        entry.kind === 'child_report' ? [entry.content.text] : [],
-      );
-      expect(rootReports).toEqual(['The full report']);
+        // Then (A): the cut answer is followed by the notice, and only the full answer finished the scout
+        expect(
+          historyLines(await historyOf(harness, agentId, ownerId)),
+        ).toEqual([
+          'task: Scout task',
+          'model_answer: The report starts and brea []',
+          `notice: ${CUT_OFF_NOTICE}`,
+          'model_answer: The full report []',
+        ]);
+        const rootReports = (await historyOf(harness, rootId, ownerId)).flatMap(
+          (entry) =>
+            entry.kind === 'child_report' ? [entry.content.text] : [],
+        );
+        expect(rootReports).toEqual(['The full report']);
 
-      // Then (B): the second input holds the notice after the cut answer; the root was told once, with the
-      // full text; both scout calls are ledger rows
-      expect(inputLines(scout.calls[1]?.messages ?? [])).toEqual([
-        'user: Scout task',
-        'assistant: The report starts and brea []',
-        `user: [notice] ${CUT_OFF_NOTICE}`,
-      ]);
-      const notices = await childNoticesOf(harness.db, rootId, agentId);
-      expect(notices.map(({ payload }) => [payload.status, payload.result?.report])).toEqual([
-        ['completed', 'The full report'],
-      ]);
-      expect(await ledgerRowsOf(harness.db, ownerId, agentId)).toHaveLength(2);
+        // Then (B): the second input holds the notice after the cut answer; the root was told once, with the
+        // full text; both scout calls are ledger rows
+        expect(inputLines(scout.calls[1]?.messages ?? [])).toEqual([
+          'user: Scout task',
+          'assistant: The report starts and brea []',
+          `user: [notice] ${CUT_OFF_NOTICE}`,
+        ]);
+        const notices = await childNoticesOf(harness.db, rootId, agentId);
+        expect(
+          notices.map(({ payload }) => [
+            payload.status,
+            payload.result?.report,
+          ]),
+        ).toEqual([['completed', 'The full report']]);
+        expect(await ledgerRowsOf(harness.db, ownerId, agentId)).toHaveLength(
+          2,
+        );
 
-      // Then (C): the journal of the scout's two model steps
-      const steps = harness.logs
-        .filter((record) => record.message === 'agent step finished' && record.fields.agentId === agentId)
-        .map(({ fields }) => [fields.cutOff, fields.toolsChosen, fields.directCalls, fields.runCodeCalls]);
-      expect(steps).toEqual([
-        [true, [], 0, 0],
-        [false, [], 0, 0],
-      ]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then (C): the journal of the scout's two model steps
+        const steps = harness.logs
+          .filter(
+            (record) =>
+              record.message === 'agent step finished' &&
+              record.fields.agentId === agentId,
+          )
+          .map(({ fields }) => [
+            fields.cutOff,
+            fields.toolsChosen,
+            fields.directCalls,
+            fields.runCodeCalls,
+          ]);
+        expect(steps).toEqual([
+          [true, [], 0, 0],
+          [false, [], 0, 0],
+        ]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-4: an empty compaction summary does not fail the task, writes no compaction, and the next step is the model over the whole history
@@ -497,67 +609,89 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   // @category: edge-case
   // @dependency: compaction step (step-handler commit), step handler order, runtime ledger, logger, Postgres, ScriptedModel
   // @complexity: medium
-  it('INT-4: a compaction that returns an empty summary keeps the task running with its whole history, writes no compaction entry, and the next step is a model call, not a second compaction', async () => {
-    // Given: a root whose first answer reports input tokens at AGENT_COMPACT_AT_TOKENS and whose compaction
-    // call returns an empty summary
-    const ownerId = newUser();
-    const model = createScriptedModel();
-    const compactor = model.script({ agent: 'empty-compactor' }, [
-      { text: 'first answer', usage: { inputTokens: COMPACT_AT_TOKENS } },
-      { text: '' },
-      { text: 'answer after the empty summary' },
-    ]);
-    const harness = await createAgentsHarness({
-      model,
-      access: {},
-      variables: { AGENT_COMPACT_AT_TOKENS: String(COMPACT_AT_TOKENS) },
-      root: testRecord('empty-compactor'),
-    });
-    try {
-      // When: the root answers at the threshold, then gets a message
-      const { agentId } = await harness.sessions.start({ ownerId, prompt: 'Compact me', description: 'compactor' });
-      await compactor.called(1);
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
-      await harness.sessions.send({ agentId, ownerId, text: 'next question' });
-      await compactor.called(3);
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
+  it(
+    'INT-4: a compaction that returns an empty summary keeps the task running with its whole history, writes no compaction entry, and the next step is a model call, not a second compaction',
+    async () => {
+      // Given: a root whose first answer reports input tokens at AGENT_COMPACT_AT_TOKENS and whose compaction
+      // call returns an empty summary
+      const ownerId = newUser();
+      const model = createScriptedModel();
+      const compactor = model.script({ agent: 'empty-compactor' }, [
+        { text: 'first answer', usage: { inputTokens: COMPACT_AT_TOKENS } },
+        { text: '' },
+        { text: 'answer after the empty summary' },
+      ]);
+      const harness = await createAgentsHarness({
+        model,
+        access: {},
+        variables: { AGENT_COMPACT_AT_TOKENS: String(COMPACT_AT_TOKENS) },
+        root: testRecord('empty-compactor'),
+      });
+      try {
+        // When: the root answers at the threshold, then gets a message
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt: 'Compact me',
+          description: 'compactor',
+        });
+        await compactor.called(1);
+        await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
+        await harness.sessions.send({
+          agentId,
+          ownerId,
+          text: 'next question',
+        });
+        await compactor.called(3);
+        await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
 
-      // Then (A): the task did not fail; the history keeps the delivered message and has no compaction
-      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
-        'task: Compact me',
-        'model_answer: first answer []',
-        'user_message: next question',
-        'model_answer: answer after the empty summary []',
-      ]);
+        // Then (A): the task did not fail; the history keeps the delivered message and has no compaction
+        expect(
+          historyLines(await historyOf(harness, agentId, ownerId)),
+        ).toEqual([
+          'task: Compact me',
+          'model_answer: first answer []',
+          'user_message: next question',
+          'model_answer: answer after the empty summary []',
+        ]);
 
-      // Then (B): the second call was the compaction, the third a model call over the whole history
-      expect(compactor.calls).toHaveLength(3);
-      expect(inputLines(compactor.calls[1]?.messages ?? [])).toEqual([
-        'user: Compact me',
-        'assistant: first answer []',
-        `user: ${COMPACTION_REQUEST}`,
-      ]);
-      expect(inputLines(compactor.calls[2]?.messages ?? [])).toEqual([
-        'user: Compact me',
-        'assistant: first answer []',
-        'user: next question',
-      ]);
+        // Then (B): the second call was the compaction, the third a model call over the whole history
+        expect(compactor.calls).toHaveLength(3);
+        expect(inputLines(compactor.calls[1]?.messages ?? [])).toEqual([
+          'user: Compact me',
+          'assistant: first answer []',
+          `user: ${COMPACTION_REQUEST}`,
+        ]);
+        expect(inputLines(compactor.calls[2]?.messages ?? [])).toEqual([
+          'user: Compact me',
+          'assistant: first answer []',
+          'user: next question',
+        ]);
 
-      // Then (C): one warn with the agent, the step and the model; the compaction call is a ledger row but
-      // not a turn (the message reset the root's counter, the last model call made it 1)
-      const warns = harness.logs.filter((record) => record.message === 'compaction returned an empty summary');
-      expect(warns.map(({ level, fields }) => [level, fields.agentId, fields.model])).toEqual([
-        ['warn', agentId, TEST_MODEL_DEFAULT],
-      ]);
-      expect(typeof warns[0]?.fields.stepNo).toBe('number');
-      expect(await ledgerRowsOf(harness.db, ownerId, agentId)).toHaveLength(3);
-      const [session] = await harness.db
-        .select({ turns: agentSessions.turns })
-        .from(agentSessions)
-        .where(eq(agentSessions.taskId, agentId));
-      expect(session?.turns).toBe(1);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then (C): one warn with the agent, the step and the model; the compaction call is a ledger row but
+        // not a turn (the message reset the root's counter, the last model call made it 1)
+        const warns = harness.logs.filter(
+          (record) => record.message === 'compaction returned an empty summary',
+        );
+        expect(
+          warns.map(({ level, fields }) => [
+            level,
+            fields.agentId,
+            fields.model,
+          ]),
+        ).toEqual([['warn', agentId, TEST_MODEL_DEFAULT]]);
+        expect(typeof warns[0]?.fields.stepNo).toBe('number');
+        expect(await ledgerRowsOf(harness.db, ownerId, agentId)).toHaveLength(
+          3,
+        );
+        const [session] = await harness.db
+          .select({ turns: agentSessions.turns })
+          .from(agentSessions)
+          .where(eq(agentSessions.taskId, agentId));
+        expect(session?.turns).toBe(1);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

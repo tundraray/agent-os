@@ -113,12 +113,16 @@ export class RecoverySweeper {
     if (types.length === 0) return false;
     const claimed = await taskRows.listRunning(types);
     for (const task of claimed) {
-      if (!running.isRunning(task.taskId, task.attempt)) await this.recover(task);
+      if (!running.isRunning(task.taskId, task.attempt))
+        await this.recover(task);
     }
     return false;
   }
 
-  private async recover(lost: { taskId: string; attempt: number }): Promise<void> {
+  private async recover(lost: {
+    taskId: string;
+    attempt: number;
+  }): Promise<void> {
     const { db, logger, crashPoints, config } = this.deps;
     const startedAt = Date.now();
     const recovery = await db.transaction(() => this.recoverIn(lost));
@@ -135,15 +139,18 @@ export class RecoverySweeper {
         });
         return;
       case 'requeued':
-        logger.warn('lost step requeued: no step of this process runs the task', {
-          ...fields,
-          rootId: recovery.row.rootId,
-          ownerId: recovery.row.ownerId,
-          type: recovery.row.type,
-          stepNo: recovery.row.stepNo,
-          recoveries: recovery.row.recoveries,
-          outcome: 'requeued',
-        });
+        logger.warn(
+          'lost step requeued: no step of this process runs the task',
+          {
+            ...fields,
+            rootId: recovery.row.rootId,
+            ownerId: recovery.row.ownerId,
+            type: recovery.row.type,
+            stepNo: recovery.row.stepNo,
+            recoveries: recovery.row.recoveries,
+            outcome: 'requeued',
+          },
+        );
         crashPoints.hit('sweeper.after-requeue');
         return;
       case 'exhausted':
@@ -161,9 +168,16 @@ export class RecoverySweeper {
     }
   }
 
-  private async recoverIn(lost: { taskId: string; attempt: number }): Promise<Recovery> {
+  private async recoverIn(lost: {
+    taskId: string;
+    attempt: number;
+  }): Promise<Recovery> {
     const { tasks, events, config } = this.deps;
-    const task = await tasks.hold({ taskId: lost.taskId, from: [running], attempt: lost.attempt });
+    const task = await tasks.hold({
+      taskId: lost.taskId,
+      from: [running],
+      attempt: lost.attempt,
+    });
     if (!task) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {

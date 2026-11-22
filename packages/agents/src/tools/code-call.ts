@@ -1,8 +1,19 @@
 import type { Logger } from '@agent-os/common';
-import { RUN_CODE_TOOL, type RunCodeArgs, type ToolOutcome, type ToolRefusalReason } from '@agent-os/contracts';
+import {
+  RUN_CODE_TOOL,
+  type RunCodeArgs,
+  type ToolOutcome,
+  type ToolRefusalReason,
+} from '@agent-os/contracts';
 
 import type { AccessAudit, AccessGate } from '../access-gate';
-import { checkCall, type McpCall, pairsOf, refuseNoAccess, reportCheck } from './call-check';
+import {
+  checkCall,
+  type McpCall,
+  pairsOf,
+  refuseNoAccess,
+  reportCheck,
+} from './call-check';
 import type { ToolCaller } from './tool';
 import {
   type AbortedExecution,
@@ -49,9 +60,7 @@ export interface CodeCallRefusal {
  * is only in the run log); an `unknown` keeps the platform's text that the action may have run.
  */
 export type CodeCallExecution =
-  | Extract<ToolExecution, { kind: 'done' }>
-  | CodeCallRefusal
-  | AbortedExecution;
+  Extract<ToolExecution, { kind: 'done' }> | CodeCallRefusal | AbortedExecution;
 
 /**
  * The text of a refused call from code: it names the tool, the reason and the run class
@@ -77,7 +86,10 @@ function codeRefusalText(
  * Outcomes whose text a script does not get: a server's text, or the platform's failure text when the reason
  * is enough; `unknown` and `auth_required` keep the platform's own text.
  */
-const HIDDEN_TEXT_OUTCOMES: ReadonlySet<ToolOutcome> = new Set(['tool_error', 'transport_failure']);
+const HIDDEN_TEXT_OUTCOMES: ReadonlySet<ToolOutcome> = new Set([
+  'tool_error',
+  'transport_failure',
+]);
 
 /**
  * A call from code the server did not answer with a value: the script gets the outcome and reason
@@ -89,17 +101,23 @@ function withoutServerText(
   call: LoggedCall,
   logger: Logger,
 ): CodeCallExecution {
-  if (execution.kind !== 'done' || !HIDDEN_TEXT_OUTCOMES.has(execution.outcome)) {
+  if (
+    execution.kind !== 'done' ||
+    !HIDDEN_TEXT_OUTCOMES.has(execution.outcome)
+  ) {
     return execution;
   }
-  logger.warn('tool call from code failed; its response is hidden from the script', {
-    callId: call.callId,
-    tool: call.tool,
-    server: call.server,
-    outcome: execution.outcome,
-    reason: execution.failureReason ?? null,
-    response: execution.text,
-  });
+  logger.warn(
+    'tool call from code failed; its response is hidden from the script',
+    {
+      callId: call.callId,
+      tool: call.tool,
+      server: call.server,
+      outcome: execution.outcome,
+      reason: execution.failureReason ?? null,
+      response: execution.text,
+    },
+  );
   return { ...execution, text: '' };
 }
 
@@ -108,7 +126,10 @@ export function createCodeCall(options: {
   readonly access: Pick<AccessGate, 'tools'>;
   readonly audit: AccessAudit;
   readonly callMcp: McpCalls['fromCode'];
-}): (request: CodeCallRequest, scope: CodeCallScope) => Promise<CodeCallExecution> {
+}): (
+  request: CodeCallRequest,
+  scope: CodeCallScope,
+) => Promise<CodeCallExecution> {
   const { access, audit, callMcp } = options;
 
   /** The filters of «Проверка вызова из кода» in their order, then the MCP call itself. */
@@ -117,19 +138,34 @@ export function createCodeCall(options: {
     scope: CodeCallScope,
   ): Promise<CodeCallExecution> {
     const { name } = request;
-    const refuse = (reason: ToolRefusalReason, detail?: string): CodeCallRefusal => {
+    const refuse = (
+      reason: ToolRefusalReason,
+      detail?: string,
+    ): CodeCallRefusal => {
       const text = codeRefusalText(name, reason, scope.runClass);
       // DC-2: a refusal for the arguments carries the same error a direct call's refusal does.
-      return { kind: 'refused', reason, text: detail === undefined ? text : `${text}: ${detail}` };
+      return {
+        kind: 'refused',
+        reason,
+        text: detail === undefined ? text : `${text}: ${detail}`,
+      };
     };
     if (name === RUN_CODE_TOOL || scope.agentToolNames.includes(name)) {
       return refuse('not_callable_from_code');
     }
-    if (scope.runClass === 'write' && !(scope.confirmedNames ?? []).includes(name)) {
+    if (
+      scope.runClass === 'write' &&
+      !(scope.confirmedNames ?? []).includes(name)
+    ) {
       return refuse('not_in_confirmed_script');
     }
     // One answer of the gate for this call: `checkCall` decides with it, and nothing is asked again before the send.
-    const allows = await pairsOf(access, scope.callId, scope.caller, scope.logger);
+    const allows = await pairsOf(
+      access,
+      scope.callId,
+      scope.caller,
+      scope.logger,
+    );
     const checked = checkCall(
       { callId: scope.callId, toolName: name, args: request.args },
       { sessionTools: scope.snapshot, caller: scope.caller, allows },
@@ -142,7 +178,12 @@ export function createCodeCall(options: {
     );
     if (checked.kind === 'refused') {
       if (checked.reason === 'no_access' && target.server !== null) {
-        await refuseNoAccess(audit, scope, { server: target.server, tool: target.tool }, scope.logger);
+        await refuseNoAccess(
+          audit,
+          scope,
+          { server: target.server, tool: target.tool },
+          scope.logger,
+        );
       }
       return refuse(checked.reason, checked.text);
     }

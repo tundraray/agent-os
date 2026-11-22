@@ -92,7 +92,11 @@ export class ConversationsService {
     return toThreadSummary(await this.owned(threadId, ownerId));
   }
 
-  async rename(threadId: string, ownerId: string, title: string): Promise<ThreadSummary> {
+  async rename(
+    threadId: string,
+    ownerId: string,
+    title: string,
+  ): Promise<ThreadSummary> {
     const root = isUuid(threadId)
       ? await this.control.renameRoot(threadId, ownerId, title)
       : undefined;
@@ -117,28 +121,46 @@ export class ConversationsService {
     recordId?: string,
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
-    const record = recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
+    const record =
+      recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
     const chip = record === undefined ? {} : { record };
     const existing = await this.views.root(threadId, ownerId);
-    const created = existing === undefined && (await this.start(threadId, ownerId, text, chip));
+    const created =
+      existing === undefined &&
+      (await this.start(threadId, ownerId, text, chip));
     let messageId: string | null = null;
     let untitled = true;
     if (!created) {
       // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
       // task that is not their conversation, another employee's included.
       const root = existing ?? (await this.owned(threadId, ownerId));
-      ({ messageId } = await this.control.send({ agentId: threadId, ownerId, text, ...chip }));
+      ({ messageId } = await this.control.send({
+        agentId: threadId,
+        ownerId,
+        text,
+        ...chip,
+      }));
       await this.control.touchRoot(threadId, ownerId);
       untitled = root.title === '';
     }
-    if (untitled) this.titles.ensure({ threadId, ownerId, ...(created ? { firstText: text } : {}) });
+    if (untitled)
+      this.titles.ensure({
+        threadId,
+        ownerId,
+        ...(created ? { firstText: text } : {}),
+      });
     return { messageId };
   }
 
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */
-  async interrupt(threadId: string, ownerId: string): Promise<InterruptResponse> {
+  async interrupt(
+    threadId: string,
+    ownerId: string,
+  ): Promise<InterruptResponse> {
     await this.owned(threadId, ownerId);
-    return { outcome: await this.control.interrupt({ agentId: threadId, ownerId }) };
+    return {
+      outcome: await this.control.interrupt({ agentId: threadId, ownerId }),
+    };
   }
 
   /**
@@ -155,22 +177,39 @@ export class ConversationsService {
    * the root's history after `afterSeq`, its queue, the decisions of the whole tree in every status, the
    * agents under the root and the record in focus (deep-agents KD-6), read from the root's whole history.
    */
-  async view(threadId: string, ownerId: string, afterSeq: number): Promise<ConversationView> {
+  async view(
+    threadId: string,
+    ownerId: string,
+    afterSeq: number,
+  ): Promise<ConversationView> {
     const thread = toThreadSummary(await this.owned(threadId, ownerId));
-    const [task, views, entries, messages, confirmations, rootHistory] = await Promise.all([
-      this.tasks.get(threadId, ownerId),
-      this.views.list(threadId, ownerId),
-      this.views.history({ agentId: threadId, ownerId, afterSeq, limit: HISTORY_PAGE_SIZE }),
-      this.inbox.listPending(threadId, ownerId),
-      this.views.confirmations(threadId, ownerId),
-      this.wholeHistory(threadId, ownerId),
-    ]);
+    const [task, views, entries, messages, confirmations, rootHistory] =
+      await Promise.all([
+        this.tasks.get(threadId, ownerId),
+        this.views.list(threadId, ownerId),
+        this.views.history({
+          agentId: threadId,
+          ownerId,
+          afterSeq,
+          limit: HISTORY_PAGE_SIZE,
+        }),
+        this.inbox.listPending(threadId, ownerId),
+        this.views.confirmations(threadId, ownerId),
+        this.wholeHistory(threadId, ownerId),
+      ]);
     const root = views.find((view) => view.agentId === threadId);
-    if (root === undefined) throw new Error(`Conversation ${threadId} has no view of its root`);
-    const decisions = confirmations.map((confirmation) => toConfirmation(confirmation, views));
+    if (root === undefined)
+      throw new Error(`Conversation ${threadId} has no view of its root`);
+    const decisions = confirmations.map((confirmation) =>
+      toConfirmation(confirmation, views),
+    );
     return {
       thread,
-      chat: { ...chatStatus({ root, task }), rootAgentId: threadId, model: root.model },
+      chat: {
+        ...chatStatus({ root, task }),
+        rootAgentId: threadId,
+        model: root.model,
+      },
       entries: entries.map(toHistoryEntry),
       nextAfterSeq: nextAfterSeqOf(entries),
       pending: toPending(messages, views),
@@ -184,7 +223,10 @@ export class ConversationsService {
   }
 
   /** The root's history from its first entry, page by page. */
-  private async wholeHistory(threadId: string, ownerId: string): Promise<AgentHistoryEntry[]> {
+  private async wholeHistory(
+    threadId: string,
+    ownerId: string,
+  ): Promise<AgentHistoryEntry[]> {
     const entries: AgentHistoryEntry[] = [];
     for (;;) {
       const page = await this.views.history({
@@ -219,12 +261,15 @@ export class ConversationsService {
         agentId: threadId,
         ownerId,
         prompt: text,
-        description: Array.from(text).slice(0, ROOT_DESCRIPTION_LENGTH).join(''),
+        description: Array.from(text)
+          .slice(0, ROOT_DESCRIPTION_LENGTH)
+          .join(''),
         ...chip,
       });
       return true;
     } catch (error) {
-      if (error instanceof RuntimeError && error.code === 'TASK_EXISTS') return false;
+      if (error instanceof RuntimeError && error.code === 'TASK_EXISTS')
+        return false;
       throw error;
     }
   }
@@ -236,13 +281,16 @@ export class ConversationsService {
    */
   private async chipOf(ownerId: string, recordId: string): Promise<ChipRecord> {
     const resolved = await this.library.resolve(ownerId, recordId);
-    if (resolved === null || !inRootLaunchSet(resolved)) throw libraryError('RECORD_NOT_FOUND');
+    if (resolved === null || !inRootLaunchSet(resolved))
+      throw libraryError('RECORD_NOT_FOUND');
     return { id: resolved.id, kind: resolved.kind, name: resolved.name };
   }
 
   /** The owner's conversation; a malformed, missing or foreign id is `THREAD_NOT_FOUND`. */
   private async owned(threadId: string, ownerId: string): Promise<RootSession> {
-    const root = isUuid(threadId) ? await this.views.root(threadId, ownerId) : undefined;
+    const root = isUuid(threadId)
+      ? await this.views.root(threadId, ownerId)
+      : undefined;
     if (root === undefined) throw threadNotFound();
     return root;
   }

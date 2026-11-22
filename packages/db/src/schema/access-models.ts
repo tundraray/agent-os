@@ -9,7 +9,8 @@ import { app } from './app';
 import { createdAt, isOneOf, isWithin, literal } from './helpers';
 
 /** Price in USD per million tokens. */
-const usdPerMTok = (name: string) => numeric(name, { precision: 18, scale: 9, mode: 'number' });
+const usdPerMTok = (name: string) =>
+  numeric(name, { precision: 18, scale: 9, mode: 'number' });
 
 /** Model catalogue: a model is callable only when it is here. */
 export const accessModels = app.table(
@@ -26,8 +27,12 @@ export const accessModels = app.table(
     longContextAboveInputTokens: integer('long_context_above_input_tokens'),
     longContextInputUsdPerMTok: usdPerMTok('long_context_input_usd_per_mtok'),
     longContextOutputUsdPerMTok: usdPerMTok('long_context_output_usd_per_mtok'),
-    longContextCacheWriteUsdPerMTok: usdPerMTok('long_context_cache_write_usd_per_mtok'),
-    longContextCacheReadUsdPerMTok: usdPerMTok('long_context_cache_read_usd_per_mtok'),
+    longContextCacheWriteUsdPerMTok: usdPerMTok(
+      'long_context_cache_write_usd_per_mtok',
+    ),
+    longContextCacheReadUsdPerMTok: usdPerMTok(
+      'long_context_cache_read_usd_per_mtok',
+    ),
     /** Never changes after the model is added. */
     purpose: text('purpose').notNull().default(ModelPurposeSchema.enum.chat),
     /** Vector length of an embedding model; null for a chat model. */
@@ -60,7 +65,10 @@ export const accessModels = app.table(
           ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
           ${t.longContextCacheReadUsdPerMTok}) = 5`,
     ),
-    check('access_models_purpose_check', isOneOf(t.purpose, ModelPurposeSchema.options)),
+    check(
+      'access_models_purpose_check',
+      isOneOf(t.purpose, ModelPurposeSchema.options),
+    ),
     /**
      * An embedding model has dimensions and no long-context prices; a chat model has no dimensions.
      * `is not null` keeps a null from passing: `null between …` is not false.

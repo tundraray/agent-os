@@ -11,13 +11,17 @@ const ReadToolResultArgsSchema = z.object({
     .int()
     .min(1)
     .default(1)
-    .describe('The first line to read: a whole number, 1 = the first line. A page names the offset of the next one.'),
+    .describe(
+      'The first line to read: a whole number, 1 = the first line. A page names the offset of the next one.',
+    ),
   limit: z
     .number()
     .int()
     .min(1)
     .optional()
-    .describe('At most this many lines: a whole number from 1. Without it, as many lines as one page holds.'),
+    .describe(
+      'At most this many lines: a whole number from 1. Without it, as many lines as one page holds.',
+    ),
 });
 type ReadToolResultArgs = z.infer<typeof ReadToolResultArgsSchema>;
 
@@ -30,7 +34,9 @@ const SearchToolResultArgsSchema = z.object({
     .string()
     .min(1)
     .max(PATTERN_MAX_CHARS)
-    .describe(`The text to find: 1 to ${PATTERN_MAX_CHARS} characters, case-insensitive, not a regular expression.`),
+    .describe(
+      `The text to find: 1 to ${PATTERN_MAX_CHARS} characters, case-insensitive, not a regular expression.`,
+    ),
 });
 type SearchToolResultArgs = z.infer<typeof SearchToolResultArgsSchema>;
 
@@ -61,7 +67,10 @@ export interface ToolResultToolsDeps {
  */
 export function createToolResultTools(
   deps: ToolResultToolsDeps,
-): [OutsideAgentTool<ReadToolResultArgs>, OutsideAgentTool<SearchToolResultArgs>] {
+): [
+  OutsideAgentTool<ReadToolResultArgs>,
+  OutsideAgentTool<SearchToolResultArgs>,
+] {
   const { toolResultRows } = deps;
 
   /** The stored text of the caller's own call, and the settings, read now. */
@@ -71,7 +80,9 @@ export function createToolResultTools(
       taskId: caller.agentId,
       ownerId: caller.ownerId,
     });
-    return found === undefined ? undefined : { text: found.text, settings: await toolResultRows.readSettings() };
+    return found === undefined
+      ? undefined
+      : { text: found.text, settings: await toolResultRows.readSettings() };
   }
 
   const read: OutsideAgentTool<ReadToolResultArgs> = {
@@ -131,7 +142,9 @@ export function createToolResultTools(
       const found =
         stored === undefined
           ? undefined
-          : searchOf(stored.text, args.pattern, { maxTokens: stored.settings.readMaxTokens });
+          : searchOf(stored.text, args.pattern, {
+              maxTokens: stored.settings.readMaxTokens,
+            });
       logger.info('stored result searched', {
         callId: args.callId,
         readerCallId: callId,
@@ -143,7 +156,11 @@ export function createToolResultTools(
       if (found === undefined) return notFound();
       return found.kind === 'found'
         ? { kind: 'done', outcome: 'success', text: found.text }
-        : { kind: 'done', outcome: 'empty', text: `no line matches "${args.pattern}"` };
+        : {
+            kind: 'done',
+            outcome: 'empty',
+            text: `no line matches "${args.pattern}"`,
+          };
     },
   };
 

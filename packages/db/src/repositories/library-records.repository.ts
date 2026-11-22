@@ -25,7 +25,10 @@ export type LibraryShareRow = Pick<
 >;
 
 /** A record under a sharing ban: no description, no content (AC-09.4). */
-export type LibraryBanRow = Pick<LibraryRecordRow, 'id' | 'kind' | 'name' | 'closedAt' | 'ownerId'>;
+export type LibraryBanRow = Pick<
+  LibraryRecordRow,
+  'id' | 'kind' | 'name' | 'closedAt' | 'ownerId'
+>;
 
 /** Who looks: the employee, whether they are enabled, and the roles they are in now. */
 export interface LibraryViewer {
@@ -35,10 +38,12 @@ export interface LibraryViewer {
 }
 
 /** One record by id or by the key of a built-in record; none — every record the condition finds. */
-export type LibraryRecordKey = { readonly id: string } | { readonly builtinKey: string };
+export type LibraryRecordKey =
+  { readonly id: string } | { readonly builtinKey: string };
 
 /** One panel record by id, or a panel list: the system records or the shared employee records. */
-export type LibraryPanelQuery = { readonly id: string } | { readonly list: 'system' | 'shared' };
+export type LibraryPanelQuery =
+  { readonly id: string } | { readonly list: 'system' | 'shared' };
 
 export interface NewLibraryRecordRow {
   /** Chosen before the save when a card named it (deep-agents KD-3); absent — the database's. */
@@ -56,7 +61,10 @@ export type LibraryInsertOutcome =
   | { readonly outcome: 'inserted'; readonly id: string }
   | { readonly outcome: 'name_taken' };
 
-export interface NewBuiltinLibraryRecordRow extends Omit<NewLibraryRecordRow, 'ownerId'> {
+export interface NewBuiltinLibraryRecordRow extends Omit<
+  NewLibraryRecordRow,
+  'ownerId'
+> {
   /** Set by the caller, so built-in records can name each other. */
   readonly id: string;
   readonly builtinKey: string;
@@ -91,12 +99,18 @@ export interface LibraryHolderIds {
 
 /** SQLSTATE unique_violation. */
 const UNIQUE_VIOLATION = '23505';
-const NAME_INDEXES = new Set(['library_records_owner_name_idx', 'library_records_system_name_idx']);
+const NAME_INDEXES = new Set([
+  'library_records_owner_name_idx',
+  'library_records_system_name_idx',
+]);
 
 /** A unique violation of one of the two name indexes; any other unique violation stays an error. */
 function isNameCollision(error: unknown): boolean {
   for (let current = error; current instanceof Error; current = current.cause) {
-    const { code, constraint } = current as { code?: unknown; constraint?: unknown };
+    const { code, constraint } = current as {
+      code?: unknown;
+      constraint?: unknown;
+    };
     if (code === UNIQUE_VIOLATION && typeof constraint === 'string')
       return NAME_INDEXES.has(constraint);
   }
@@ -124,7 +138,9 @@ function holderExists(db: Db, holder: SQL): SQL {
 function visibleTo(db: Db, viewer: LibraryViewer): SQL {
   if (!viewer.active) return sql`false`;
   const hasRoles = viewer.roleIds.length > 0;
-  const viewerRole = hasRoles ? inArray(libraryShares.roleId, [...viewer.roleIds]) : sql`false`;
+  const viewerRole = hasRoles
+    ? inArray(libraryShares.roleId, [...viewer.roleIds])
+    : sql`false`;
   const systemHolder =
     or(
       eq(libraryShares.userId, viewer.id),
@@ -162,10 +178,14 @@ function keyCondition(key: LibraryRecordKey | undefined): SQL | undefined {
     : eq(libraryRecords.builtinKey, key.builtinKey);
 }
 
-function panelQueryCondition(query: LibraryPanelQuery | undefined): SQL | undefined {
+function panelQueryCondition(
+  query: LibraryPanelQuery | undefined,
+): SQL | undefined {
   if (query === undefined) return undefined;
   if ('id' in query) return eq(libraryRecords.id, query.id);
-  return query.list === 'system' ? isNull(libraryRecords.ownerId) : isNotNull(libraryRecords.ownerId);
+  return query.list === 'system'
+    ? isNull(libraryRecords.ownerId)
+    : isNotNull(libraryRecords.ownerId);
 }
 
 /**
@@ -188,12 +208,16 @@ export class LibraryRecordsRepository {
     viewer: LibraryViewer,
     key?: LibraryRecordKey,
   ): Promise<LibraryRecordRow[]> {
-    return this.where(and(visibleTo(this.db, viewer), keyCondition(key)) ?? sql`false`);
+    return this.where(
+      and(visibleTo(this.db, viewer), keyCondition(key)) ?? sql`false`,
+    );
   }
 
   /** The records of the admin panel, in the same order: all of them, one list, or one by id when the panel shows it. */
   findInPanel(query?: LibraryPanelQuery): Promise<LibraryRecordRow[]> {
-    return this.where(and(inPanel(this.db), panelQueryCondition(query)) ?? sql`false`);
+    return this.where(
+      and(inPanel(this.db), panelQueryCondition(query)) ?? sql`false`,
+    );
   }
 
   /** The holder rows of the records, by the id of the holder row. */
@@ -230,7 +254,11 @@ export class LibraryRecordsRepository {
     const rows = await this.db.client
       .select({ id: libraryRecords.id, name: libraryRecords.name })
       .from(libraryRecords)
-      .where(ownerId === null ? isNull(libraryRecords.ownerId) : eq(libraryRecords.ownerId, ownerId));
+      .where(
+        ownerId === null
+          ? isNull(libraryRecords.ownerId)
+          : eq(libraryRecords.ownerId, ownerId),
+      );
     return rows.filter((row) => row.id !== exceptId).map((row) => row.name);
   }
 
@@ -261,7 +289,8 @@ export class LibraryRecordsRepository {
           content: record.content,
         })
         .returning({ id: libraryRecords.id });
-      if (row === undefined) throw new Error('library_records insert returned no row');
+      if (row === undefined)
+        throw new Error('library_records insert returned no row');
       return { outcome: 'inserted', id: row.id };
     } catch (error) {
       if (isNameCollision(error)) return { outcome: 'name_taken' };
@@ -290,12 +319,16 @@ export class LibraryRecordsRepository {
       .returning({ id: libraryRecords.id });
     if (row === undefined) return false;
     if (record.everyone)
-      await this.db.client.insert(libraryShares).values({ recordId: row.id, everyone: true });
+      await this.db.client
+        .insert(libraryShares)
+        .values({ recordId: row.id, everyone: true });
     return true;
   }
 
   /** Saves name, description and content only while the record is in `version`, and raises it by one (KD-5). */
-  async updateContent(change: LibraryContentChange): Promise<LibraryUpdateOutcome> {
+  async updateContent(
+    change: LibraryContentChange,
+  ): Promise<LibraryUpdateOutcome> {
     try {
       const [row] = await this.db.client
         .update(libraryRecords)
@@ -306,9 +339,16 @@ export class LibraryRecordsRepository {
           version: sql`${libraryRecords.version} + 1`,
           updatedAt: sql`now()`,
         })
-        .where(and(eq(libraryRecords.id, change.id), eq(libraryRecords.version, change.version)))
+        .where(
+          and(
+            eq(libraryRecords.id, change.id),
+            eq(libraryRecords.version, change.version),
+          ),
+        )
         .returning({ version: libraryRecords.version });
-      return row === undefined ? { outcome: 'stale' } : { outcome: 'updated', version: row.version };
+      return row === undefined
+        ? { outcome: 'stale' }
+        : { outcome: 'updated', version: row.version };
     } catch (error) {
       if (isNameCollision(error)) return { outcome: 'name_taken' };
       throw error;
@@ -320,23 +360,31 @@ export class LibraryRecordsRepository {
     recordId: string,
     holders: LibraryHolderIds,
   ): Promise<void> {
-    await this.db.client.delete(libraryShares).where(eq(libraryShares.recordId, recordId));
+    await this.db.client
+      .delete(libraryShares)
+      .where(eq(libraryShares.recordId, recordId));
     const rows = [
       ...(holders.everyone ? [{ recordId, everyone: true }] : []),
       ...holders.roleIds.map((roleId) => ({ recordId, roleId })),
       ...holders.userIds.map((userId) => ({ recordId, userId })),
     ];
-    if (rows.length > 0) await this.db.client.insert(libraryShares).values(rows);
+    if (rows.length > 0)
+      await this.db.client.insert(libraryShares).values(rows);
   }
 
   /** Sets «предлагать в главном чате»; the version stays (DC-11). */
   async setOfferInChat(id: string, offerInChat: boolean): Promise<void> {
-    await this.db.client.update(libraryRecords).set({ offerInChat }).where(eq(libraryRecords.id, id));
+    await this.db.client
+      .update(libraryRecords)
+      .set({ offerInChat })
+      .where(eq(libraryRecords.id, id));
   }
 
   /** Closes sharing (Flow 4): every holder removed and the ban date set, which it returns; the version stays. */
   async closeSharing(id: string): Promise<Date> {
-    await this.db.client.delete(libraryShares).where(eq(libraryShares.recordId, id));
+    await this.db.client
+      .delete(libraryShares)
+      .where(eq(libraryShares.recordId, id));
     const [row] = await this.db.client
       .update(libraryRecords)
       .set({ closedAt: sql`now()` })
@@ -359,7 +407,9 @@ export class LibraryRecordsRepository {
 
   /** Deletes the record; its holders go by cascade. */
   async delete(id: string): Promise<void> {
-    await this.db.client.delete(libraryRecords).where(eq(libraryRecords.id, id));
+    await this.db.client
+      .delete(libraryRecords)
+      .where(eq(libraryRecords.id, id));
   }
 
   /** Records meeting the condition, by name without regard to case, then id. */

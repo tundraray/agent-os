@@ -11,17 +11,25 @@ const ANTHROPIC_VERSION = '2023-06-01';
  */
 export const anthropicAdapter: ProviderAdapter = {
   languageModel(connection, modelName) {
-    return createAnthropic({ baseURL: connection.baseUrl, apiKey: connection.apiKey ?? undefined })(modelName);
+    return createAnthropic({
+      baseURL: connection.baseUrl,
+      apiKey: connection.apiKey ?? undefined,
+    })(modelName);
   },
   cacheMark: { anthropic: { cacheControl: { type: 'ephemeral' } } },
   embeddings: null,
   toolsRejected(statusCode, body) {
-    return rejectionText(statusCode, body)?.message.startsWith('tools.') ?? false;
+    return (
+      rejectionText(statusCode, body)?.message.startsWith('tools.') ?? false
+    );
   },
   checkRequest(connection) {
     return {
       url: `${connection.baseUrl}/models`,
-      headers: { 'anthropic-version': ANTHROPIC_VERSION, ...keyHeader('x-api-key', connection.apiKey) },
+      headers: {
+        'anthropic-version': ANTHROPIC_VERSION,
+        ...keyHeader('x-api-key', connection.apiKey),
+      },
     };
   },
 };

@@ -23,7 +23,10 @@ const DATABASE_OPTIONS = Symbol('DATABASE_OPTIONS');
 
 /** Where the composition root gets the settings of the pool from. */
 type DbModuleOptions = Pick<ModuleMetadata, 'imports'> &
-  Pick<FactoryProvider<DatabaseOptions | Promise<DatabaseOptions>>, 'inject' | 'useFactory'>;
+  Pick<
+    FactoryProvider<DatabaseOptions | Promise<DatabaseOptions>>,
+    'inject' | 'useFactory'
+  >;
 
 /**
  * The database of the process: one pool, its Drizzle client and the repositories, available to
@@ -47,7 +50,10 @@ export class DbModule implements OnApplicationShutdown {
         {
           provide: DATABASE_CONNECTION,
           inject: [DATABASE_OPTIONS, LOGGER],
-          useFactory: (settings: DatabaseOptions, logger: Logger): DatabaseConnection => {
+          useFactory: (
+            settings: DatabaseOptions,
+            logger: Logger,
+          ): DatabaseConnection => {
             const connection = createDatabase(settings);
             logClientErrors(connection.pool, logger.child({ component: 'db' }));
             return connection;
@@ -65,7 +71,10 @@ export class DbModule implements OnApplicationShutdown {
     };
   }
 
-  constructor(@Inject(DATABASE_CONNECTION) private readonly connection: DatabaseConnection) {}
+  constructor(
+    @Inject(DATABASE_CONNECTION)
+    private readonly connection: DatabaseConnection,
+  ) {}
 
   async onApplicationShutdown(): Promise<void> {
     await this.connection.close();

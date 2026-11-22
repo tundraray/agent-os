@@ -108,12 +108,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import {
-  type ChatApi,
-  chatApi,
-  expectBody,
-  expectError,
-} from './support/api';
+import { type ChatApi, chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
@@ -812,7 +807,11 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const creates = await builtinCreates();
       // The developer's database keeps the audit of earlier seeds of the same numbers (a wiped library is seeded again),
       // so the count is not fixed here; the boots below add none.
-      expect(creates.map((actors) => [...new Set(actors)])).toEqual([['system'], ['system'], ['system']]);
+      expect(creates.map((actors) => [...new Set(actors)])).toEqual([
+        ['system'],
+        ['system'],
+        ['system'],
+      ]);
 
       // When: the app boots a second time over the same database
       await reboot();
@@ -969,11 +968,11 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         (node) => node.origin?.recordId === deepResearch.id,
       );
       const run = await api(boris).run(deepAgent.agentId);
-      expect([run.origin.recordId, run.origin.kind, run.brief.question]).toEqual([
-        deepResearch.id,
-        'deep_agent',
-        question,
-      ]);
+      expect([
+        run.origin.recordId,
+        run.origin.kind,
+        run.brief.question,
+      ]).toEqual([deepResearch.id, 'deep_agent', question]);
       expect(run.team.map((member) => member.name)).toEqual(SEED_TEAM);
     },
     TEST_TIMEOUT_MS,

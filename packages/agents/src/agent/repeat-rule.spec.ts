@@ -1,11 +1,28 @@
-import { type PastCall, type RepeatCall, type RepeatDecision, repeatOf } from './repeat-rule';
+import {
+  type PastCall,
+  type RepeatCall,
+  type RepeatDecision,
+  repeatOf,
+} from './repeat-rule';
 
 // UC-7 (KD-5, AC-06.3, DC-7, DC-8, DC-9): the second same call runs with the mark, the third is refused.
-const SEARCH: RepeatCall = { tool: 'search', server: 'logs', args: { query: 'timeout', limit: 5 } };
+const SEARCH: RepeatCall = {
+  tool: 'search',
+  server: 'logs',
+  args: { query: 'timeout', limit: 5 },
+};
 const LIST_AGENTS: RepeatCall = { tool: 'list_agents', server: null, args: {} };
-const START_SCOUT: RepeatCall = { tool: 'start_agent', server: null, args: { name: 'scout' } };
+const START_SCOUT: RepeatCall = {
+  tool: 'start_agent',
+  server: null,
+  args: { name: 'scout' },
+};
 
-function past(callId: string, call: RepeatCall, outcome?: PastCall['outcome']): PastCall {
+function past(
+  callId: string,
+  call: RepeatCall,
+  outcome?: PastCall['outcome'],
+): PastCall {
   return { callId, ...call, ...(outcome === undefined ? {} : { outcome }) };
 }
 
@@ -15,7 +32,11 @@ describe('the repeat rule counts the past same calls', () => {
       'no same call: run',
       SEARCH,
       [
-        past('c1', { ...SEARCH, args: { query: 'other', limit: 5 } }, 'success'),
+        past(
+          'c1',
+          { ...SEARCH, args: { query: 'other', limit: 5 } },
+          'success',
+        ),
         past('c2', { ...SEARCH, server: 'tickets' }, 'success'),
         past('c3', { ...SEARCH, tool: 'get' }, 'success'),
       ],
@@ -36,7 +57,13 @@ describe('the repeat rule counts the past same calls', () => {
     [
       'the same arguments in another key order: the mark',
       SEARCH,
-      [past('c1', { ...SEARCH, args: { limit: 5, query: 'timeout' } }, 'success')],
+      [
+        past(
+          'c1',
+          { ...SEARCH, args: { limit: 5, query: 'timeout' } },
+          'success',
+        ),
+      ],
       { kind: 'mark', callIds: ['c1'] },
     ],
     [

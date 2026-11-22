@@ -3,7 +3,10 @@ import type { ModelPrice } from '@agent-os/runtime';
 /** The employee's tool rights; the pair check needs no database once the grants are read. */
 export type ToolAccess =
   | { readonly kind: 'owner_disabled' }
-  | { readonly kind: 'allowed'; readonly allows: (server: string, tool: string) => boolean };
+  | {
+      readonly kind: 'allowed';
+      readonly allows: (server: string, tool: string) => boolean;
+    };
 
 /** Why a model call is refused (design-access.md, «Как AccessGate решает о вызове модели»). */
 export type ModelRefusalReason =
@@ -36,7 +39,10 @@ export type EmbeddingVerdict =
       readonly inputUsdPerMTok: number;
       readonly dimensions: number;
     }
-  | { readonly kind: 'refused'; readonly reason: 'owner_disabled' | 'model_not_configured' };
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'owner_disabled' | 'model_not_configured';
+    };
 
 /**
  * Rights, quotas, the model catalogue and the default models as the agents see them (design-access.md,

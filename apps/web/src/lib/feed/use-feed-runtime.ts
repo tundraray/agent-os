@@ -6,7 +6,7 @@ import {
   type AppendMessage,
   type AssistantRuntime,
   type ThreadMessageLike,
-} from "@assistant-ui/react";
+} from '@assistant-ui/react';
 // The thread hook runs inside assistant-ui's tap resources, where every thread of the list shares one
 // React component: plain React hooks there would change that component's hook count as threads come
 // and go. The shim runs them as tap hooks inside a resource and as React hooks in a component.
@@ -17,17 +17,21 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-} from "@assistant-ui/tap/react-shim";
+} from '@assistant-ui/tap/react-shim';
 
-import { LibraryErrorCode, type ChipRecord } from "@agent-os/contracts";
+import { LibraryErrorCode, type ChipRecord } from '@agent-os/contracts';
 
-import { logger } from "@/lib/logger";
-import { NEW_THREAD_TARGET, type ComposerSeed, type SeedTarget } from "@/lib/threads/composer-seed";
-import type { ShellServices } from "@/lib/threads/shell-services";
-import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
+import { logger } from '@/lib/logger';
+import {
+  NEW_THREAD_TARGET,
+  type ComposerSeed,
+  type SeedTarget,
+} from '@/lib/threads/composer-seed';
+import type { ShellServices } from '@/lib/threads/shell-services';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 
-import type { FeedState, FeedStore } from "./feed-store";
-import { toFeed } from "./to-feed";
+import type { FeedState, FeedStore } from './feed-store';
+import { toFeed } from './to-feed';
 
 const NO_MESSAGES: ThreadMessageLike[] = [];
 const noSubscription = (): (() => void) => () => {};
@@ -35,14 +39,21 @@ const noSubscription = (): (() => void) => () => {};
 /** The text of a composer message; attachments are hidden (D-04), so only text parts count. */
 function textOf(message: AppendMessage): string {
   return message.content
-    .map((part) => (part.type === "text" ? part.text : ""))
-    .join("");
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('');
 }
 
 /** The chip a composer shows, with where it stands: the message carries exactly this record (Invariant 4). */
-type ComposerChip = { record: ChipRecord; composerSeed: ComposerSeed; target: SeedTarget };
+type ComposerChip = {
+  record: ChipRecord;
+  composerSeed: ComposerSeed;
+  target: SeedTarget;
+};
 
-function chipOf(composerSeed: ComposerSeed, target: SeedTarget): ComposerChip | undefined {
+function chipOf(
+  composerSeed: ComposerSeed,
+  target: SeedTarget,
+): ComposerChip | undefined {
   const record = composerSeed.getState().chips.get(target);
   return record === undefined ? undefined : { record, composerSeed, target };
 }
@@ -57,12 +68,17 @@ const isRecordNotFound = (error: unknown): boolean =>
  * The chip leaves the field once the message is accepted, or when the server cannot start its record
  * (404 `RECORD_NOT_FOUND`, DC-10); any other failure keeps it for the next try (KD-5).
  */
-async function sendToFeed(feed: FeedStore, text: string, chip?: ComposerChip): Promise<void> {
+async function sendToFeed(
+  feed: FeedStore,
+  text: string,
+  chip?: ComposerChip,
+): Promise<void> {
   try {
     await feed.send(text, chip?.record);
   } catch (error) {
     // Handled by the store: logged once in its command wrapper and recorded as `sendFailure`.
-    if (chip !== undefined && isRecordNotFound(error)) chip.composerSeed.clear(chip.target, chip.record);
+    if (chip !== undefined && isRecordNotFound(error))
+      chip.composerSeed.clear(chip.target, chip.record);
     return;
   }
   chip?.composerSeed.clear(chip.target, chip.record);
@@ -113,24 +129,32 @@ export function useFeedRuntime(
  * Every message carries the chip of its own composer target (custom-agents KD-5): the conversation's
  * id, or `NEW_THREAD_TARGET` for the first message of a new one.
  */
-export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime {
+export function useThreadFeedRuntime(
+  services: ShellServices,
+): AssistantRuntime {
   const aui = useAui();
   const itemId = useAuiState((s) => s.threadListItem.id);
   const itemRemoteId = useAuiState((s) => s.threadListItem.remoteId);
-  const titled = useAuiState((s) => (s.threadListItem.title ?? "").trim() !== "");
+  const titled = useAuiState(
+    (s) => (s.threadListItem.title ?? '').trim() !== '',
+  );
   // `initialize()` resolves before the item's state carries the remoteId (spike S-1, a).
   const [createdId, setCreatedId] = useState<string | undefined>(undefined);
   const remoteId = itemRemoteId ?? createdId;
 
   const feed = useMemo(
-    () => (remoteId === undefined ? null : services.feeds.forThread(remoteId, itemId)),
+    () =>
+      remoteId === undefined
+        ? null
+        : services.feeds.forThread(remoteId, itemId),
     [services, remoteId, itemId],
   );
 
   const send = useCallback(
     async (text: string): Promise<void> => {
       const { composerSeed } = services;
-      if (feed !== null && remoteId !== undefined) return sendToFeed(feed, text, chipOf(composerSeed, remoteId));
+      if (feed !== null && remoteId !== undefined)
+        return sendToFeed(feed, text, chipOf(composerSeed, remoteId));
       // The seam of the spike «Чип в новой беседе» (custom-agents KD-5): the new conversation's chip is read
       // before `initialize()`, which gives the item its remoteId and so moves the composer to another target.
       const chip = chipOf(composerSeed, NEW_THREAD_TARGET);
@@ -140,7 +164,10 @@ export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime 
       try {
         ({ remoteId: created } = await aui.threadListItem.initialize());
       } catch (error) {
-        logger.error("[web-shell] thread create failed", describeApiError(error));
+        logger.error(
+          '[web-shell] thread create failed',
+          describeApiError(error),
+        );
         // The library returns the text to the composer for this error only; the chip stays at `new`.
         throw new MessageNotSentError();
       }
@@ -149,7 +176,11 @@ export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime 
       if (chip !== undefined) composerSeed.move(NEW_THREAD_TARGET, created);
       await services.live.watch(`thread:${created}`);
       const createdFeed = services.feeds.forThread(created, itemId);
-      await sendToFeed(createdFeed, text, chip === undefined ? undefined : { ...chip, target: created });
+      await sendToFeed(
+        createdFeed,
+        text,
+        chip === undefined ? undefined : { ...chip, target: created },
+      );
       const failure = createdFeed.getState().sendFailure;
       if (failure === null) return;
       // The first message was not accepted, so the conversation is empty: it is removed, and its failure
@@ -166,7 +197,10 @@ export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime 
 
   const hasModelAnswer = useSyncExternalStore(
     feed === null ? noSubscription : feed.subscribe,
-    () => feed?.getState().view?.entries.some((entry) => entry.kind === "model_answer") ?? false,
+    () =>
+      feed
+        ?.getState()
+        .view?.entries.some((entry) => entry.kind === 'model_answer') ?? false,
     () => false,
   );
   const titleRequestedRef = useRef(false);

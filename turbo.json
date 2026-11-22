@@ -1,8 +1,15 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["tsconfig.base.json", ".oxlintrc.json", "vitest.shared.mts"],
+  "globalDependencies": [
+    "tsconfig.base.json",
+    ".oxlintrc.json",
+    "vitest.shared.mts"
+  ],
   "tasks": {
-    "build": { "outputs": ["dist/**", ".next/**", "!.next/cache/**"], "env": ["API_INTERNAL_URL"] },
+    "build": {
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": ["API_INTERNAL_URL"]
+    },
     "dev": { "cache": false, "persistent": true },
     "lint": {},
     "typecheck": {},

@@ -41,11 +41,16 @@ export function readFixtureLog(callLogPath: string): FixtureLogEntry[] {
 /** What reached the servers for one tool, with these arguments when given. */
 export function fixtureCallsOf(
   callLogPath: string,
-  filter: { readonly tool: string; readonly args?: Readonly<Record<string, unknown>> },
+  filter: {
+    readonly tool: string;
+    readonly args?: Readonly<Record<string, unknown>>;
+  },
 ): FixtureLogEntry[] {
   const hash = filter.args === undefined ? undefined : argsHash(filter.args);
   return readFixtureLog(callLogPath).filter(
-    (entry) => entry.tool === filter.tool && (hash === undefined || entry.argsHash === hash),
+    (entry) =>
+      entry.tool === filter.tool &&
+      (hash === undefined || entry.argsHash === hash),
   );
 }
 
@@ -82,7 +87,13 @@ export function holdCall(
   latch: FileLatch,
   occurrences: readonly number[] = [1],
 ): FixtureFaultRule {
-  return { tool, argsHash: argsHash(args), occurrences, mode: 'wait_for_file', path: latch.path };
+  return {
+    tool,
+    argsHash: argsHash(args),
+    occurrences,
+    mode: 'wait_for_file',
+    path: latch.path,
+  };
 }
 
 /**

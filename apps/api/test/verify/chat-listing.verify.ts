@@ -106,7 +106,9 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
       try {
         const task = 'UC-N1: hello';
         harness.model.completeText({ text: 'UC-N1' });
-        harness.model.script({ task }, [], { thereafter: { text: 'Принято.' } });
+        harness.model.script({ task }, [], {
+          thereafter: { text: 'Принято.' },
+        });
         const admin = await seedSuperAdmin(
           harness.app,
           `verify-admin-${randomUUID()}`,
@@ -185,7 +187,9 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
           )}
 `,
         );
-        expect(first?.visible ?? 0).toBeGreaterThanOrEqual(AGENTS + DEEP_AGENTS);
+        expect(first?.visible ?? 0).toBeGreaterThanOrEqual(
+          AGENTS + DEEP_AGENTS,
+        );
         expect(first?.described ?? 0).toBeLessThan(AGENTS + DEEP_AGENTS);
         expect(p95Ms, 'listing p95, ms').toBeLessThanOrEqual(
           LISTING_P95_BUDGET_MS,

@@ -13,13 +13,20 @@ import { logger } from '@/lib/logger';
  */
 export async function LocaleRoot({ children }: { children: ReactNode }) {
   const [cookieStore, headerList] = await Promise.all([cookies(), headers()]);
-  const { locale, source } = pickLocale(cookieStore.get(LOCALE_COOKIE)?.value, headerList.get('accept-language'));
+  const { locale, source } = pickLocale(
+    cookieStore.get(LOCALE_COOKIE)?.value,
+    headerList.get('accept-language'),
+  );
   // The logger stamps the current time, which a runtime prefetch prerender refuses during render.
   after(() => logger.debug('i18n: locale picked', { locale, source }));
   return (
     <>
       {/* `locale` is from the closed set `en` | `ru`, never request text: the static `lang="en"` is fixed before paint. */}
-      <script dangerouslySetInnerHTML={{ __html: `document.documentElement.lang=${JSON.stringify(locale)};` }} />
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `document.documentElement.lang=${JSON.stringify(locale)};`,
+        }}
+      />
       <IntlProvider locale={locale} messages={catalogOf(locale)}>
         {children}
       </IntlProvider>

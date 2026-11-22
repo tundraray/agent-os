@@ -1,8 +1,15 @@
 import type { Logger } from '@agent-os/common';
-import { AGENTS_BRIEF_CONFIRMATION, START_DEEP_AGENT_TOOL } from '@agent-os/contracts';
+import {
+  AGENTS_BRIEF_CONFIRMATION,
+  START_DEEP_AGENT_TOOL,
+} from '@agent-os/contracts';
 import { z } from 'zod';
 
-import type { StartRefusal, StartRequest, StartResolution } from '../start/resolve-start';
+import type {
+  StartRefusal,
+  StartRequest,
+  StartResolution,
+} from '../start/resolve-start';
 import type { InCommitAgentTool } from '../tools/tool';
 import { WAITING_RULE } from '../tools/system/start-agent';
 import { logStart } from '../tools/system/start-child';
@@ -10,7 +17,11 @@ import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
 
 /** Arguments of `start_deep_agent`: the deep agent record and the brief. */
 const StartDeepAgentArgsSchema = DeepAgentBriefSchema.extend({
-  deepAgent: z.uuid().describe('The id of the deep agent record to start, as the list below gives it'),
+  deepAgent: z
+    .uuid()
+    .describe(
+      'The id of the deep agent record to start, as the list below gives it',
+    ),
 });
 export type StartDeepAgentArgs = z.infer<typeof StartDeepAgentArgsSchema>;
 
@@ -44,7 +55,10 @@ const DESCRIPTION = [
 
 /** The description of `start_deep_agent` with the chat's listing: the tool's own text, then the deep agents the chat offers. */
 function describeStartDeepAgent(deepAgents: readonly string[]): string {
-  const lines = deepAgents.length === 0 ? ['(none)'] : deepAgents.map((line) => `- ${line}`);
+  const lines =
+    deepAgents.length === 0
+      ? ['(none)']
+      : deepAgents.map((line) => `- ${line}`);
   return [DESCRIPTION, 'Deep agents you may start:', ...lines].join('\n');
 }
 
@@ -76,7 +90,8 @@ export function createStartDeepAgentTool(
     rootOnly: true,
     // Without a listing (the call check) the tool keeps its own text.
     describe: ({ deepAgents }) => ({
-      description: deepAgents === null ? DESCRIPTION : describeStartDeepAgent(deepAgents),
+      description:
+        deepAgents === null ? DESCRIPTION : describeStartDeepAgent(deepAgents),
     }),
     // The brief stays out of the log.
     loggedArgs: ({ deepAgent }) => ({ deepAgent }),
@@ -97,7 +112,11 @@ export function createStartDeepAgentTool(
       const [resolution, inLaunchSet] = await Promise.all([
         deps.resolveStart({
           ownerId: caller.ownerId,
-          source: { kind: 'record', recordId: args.deepAgent, expected: 'deep_agent' },
+          source: {
+            kind: 'record',
+            recordId: args.deepAgent,
+            expected: 'deep_agent',
+          },
         }),
         deps.rootMayStart(caller.ownerId, args.deepAgent),
       ]);
@@ -105,7 +124,9 @@ export function createStartDeepAgentTool(
     },
     async execute({ args, caller, startChild, prepared }) {
       if (prepared === undefined) {
-        throw new Error(`start_deep_agent of agent ${caller.agentId} runs without its prepare`);
+        throw new Error(
+          `start_deep_agent of agent ${caller.agentId} runs without its prepare`,
+        );
       }
       const { resolution, inLaunchSet } = prepared;
       // Logged as `start_agent` logs a start; the brief stays out.
@@ -126,7 +147,10 @@ export function createStartDeepAgentTool(
           refusalDetail: model === null ? null : { model },
         };
       };
-      if (resolution.kind === 'refused' && resolution.reason === 'record_unavailable') {
+      if (
+        resolution.kind === 'refused' &&
+        resolution.reason === 'record_unavailable'
+      ) {
         return refuse(resolution.reason, null);
       }
       if (!inLaunchSet) return refuse('not_allowed', null);
@@ -137,7 +161,11 @@ export function createStartDeepAgentTool(
 
       const { snapshot } = resolution;
       const brief = briefJson(args);
-      const { agentId } = await startChild({ snapshot, prompt: brief, description: args.question });
+      const { agentId } = await startChild({
+        snapshot,
+        prompt: brief,
+        description: args.question,
+      });
       logStart(logger, { ...entry, agentId, refusal: null });
       return {
         kind: 'done',

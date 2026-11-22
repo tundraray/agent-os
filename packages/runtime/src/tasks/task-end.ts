@@ -129,7 +129,10 @@ async function reportToTracker(
     ended.push({ taskId: task.taskId, status: status.data });
   }
   await deps.trackers.finish(tracker.trackerId);
-  const payload: TasksFinishedPayload = { trackerId: tracker.trackerId, tasks: ended };
+  const payload: TasksFinishedPayload = {
+    trackerId: tracker.trackerId,
+    tasks: ended,
+  };
   await deps.inbox.insertMessage({
     recipientId: tracker.taskId,
     ownerId: child.ownerId,
@@ -172,7 +175,8 @@ export async function endTask(
       ...(end.failure && { failure: eventFailure(end.failure) }),
     },
   });
-  const revives = end.status !== stopped && (await deps.inbox.hasPendingRevive(ended.taskId));
+  const revives =
+    end.status !== stopped && (await deps.inbox.hasPendingRevive(ended.taskId));
   if (!(await reportToTracker(deps, ended, revives))) {
     await notifyParent(deps.inbox, ended);
   }

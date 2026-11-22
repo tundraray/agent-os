@@ -257,8 +257,17 @@ export class Dispatcher {
    * lost one.
    */
   private async claimNext(): Promise<ClaimedTask | undefined> {
-    const { db, handlers, tasks, taskRows, events, inbox, decisions, running, crashPoints } =
-      this.deps;
+    const {
+      db,
+      handlers,
+      tasks,
+      taskRows,
+      events,
+      inbox,
+      decisions,
+      running,
+      crashPoints,
+    } = this.deps;
     const types = handlers.types();
     if (types.length === 0) return undefined;
     const entered: { handle?: RunningStepHandle } = {};
@@ -267,7 +276,10 @@ export class Dispatcher {
         const taskId = await taskRows.findReady(types);
         if (!taskId) return undefined;
         // The guard re-checks `queued`.
-        const task = await tasks.transition({ taskId, from: [queued] }, { kind: 'claim' });
+        const task = await tasks.transition(
+          { taskId, from: [queued] },
+          { kind: 'claim' },
+        );
         if (!task) return undefined;
         const handle = running.register(task);
         entered.handle = handle;
@@ -357,7 +369,9 @@ export class Dispatcher {
         resolve({ kind: 'timed_out' });
       });
     });
-    const shutdown = this.shutdownSignal.promise.then(() => 'shutdown' as const);
+    const shutdown = this.shutdownSignal.promise.then(
+      () => 'shutdown' as const,
+    );
     try {
       const first = await Promise.race([run, timedOut, shutdown]);
       if (first !== 'shutdown') return first;
@@ -404,7 +418,12 @@ export class Dispatcher {
           });
           return undefined;
         }
-        await this.failStep(step, FAILURE.handler_error, execution.error, startedAt);
+        await this.failStep(
+          step,
+          FAILURE.handler_error,
+          execution.error,
+          startedAt,
+        );
         return undefined;
       case 'timed_out':
         await this.failStep(
@@ -432,7 +451,11 @@ export class Dispatcher {
   ): Promise<void> {
     const { db, tasks } = this.deps;
     const ended = await db.transaction(async () => {
-      const task = await tasks.hold({ taskId: step.taskId, from: [running], attempt: step.attempt });
+      const task = await tasks.hold({
+        taskId: step.taskId,
+        from: [running],
+        attempt: step.attempt,
+      });
       if (!task) return undefined;
       return endTask(this.deps, task, {
         status: failed,
@@ -443,17 +466,26 @@ export class Dispatcher {
     });
     const fields = { reason, durationMs: Date.now() - startedAt, error };
     if (!ended) {
-      step.logger.warn('step failure rejected: the attempt is no longer current', {
-        ...fields,
-        outcome: 'rejected',
-      });
+      step.logger.warn(
+        'step failure rejected: the attempt is no longer current',
+        {
+          ...fields,
+          outcome: 'rejected',
+        },
+      );
       return;
     }
-    step.logger.error('step failed: task failed', { ...fields, outcome: ended.status });
+    step.logger.error('step failed: task failed', {
+      ...fields,
+      outcome: ended.status,
+    });
   }
 
   /** Shutdown: the task goes back to `queued` without counting a loss; `attempt + 1`. */
-  private async requeue(step: TaskStepContext, startedAt: number): Promise<void> {
+  private async requeue(
+    step: TaskStepContext,
+    startedAt: number,
+  ): Promise<void> {
     const { db, tasks, events } = this.deps;
     const row = await db.transaction(async () => {
       const requeued = await tasks.transition(
@@ -470,13 +502,19 @@ export class Dispatcher {
     });
     const durationMs = Date.now() - startedAt;
     if (!row) {
-      step.logger.warn('shutdown requeue rejected: the attempt is no longer current', {
-        durationMs,
-        outcome: 'rejected',
-      });
+      step.logger.warn(
+        'shutdown requeue rejected: the attempt is no longer current',
+        {
+          durationMs,
+          outcome: 'rejected',
+        },
+      );
       return;
     }
-    step.logger.warn('step requeued on shutdown', { durationMs, outcome: 'queued' });
+    step.logger.warn('step requeued on shutdown', {
+      durationMs,
+      outcome: 'queued',
+    });
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -495,7 +533,9 @@ export class Dispatcher {
       client = await pool.connect();
       client.on('notification', () => this.wake());
       client.on('error', (error) => {
-        logger.warn('listen connection lost, polling until it is back', { error });
+        logger.warn('listen connection lost, polling until it is back', {
+          error,
+        });
         this.dropListener(error);
       });
       await client.query(`LISTEN "${RUNTIME_EVENTS_CHANNEL}"`);

@@ -7,7 +7,10 @@ import type { InCommitAgentTool } from '../tool';
 import type { BuiltinTasks } from './list-agents';
 
 const MessageAgentArgsSchema = z.object({
-  agentId: z.string().min(1).describe('Id of an agent you started, or of one it started'),
+  agentId: z
+    .string()
+    .min(1)
+    .describe('Id of an agent you started, or of one it started'),
   message: z.string().min(1).describe('The text of the message'),
 });
 type MessageAgentArgs = z.infer<typeof MessageAgentArgsSchema>;
@@ -28,17 +31,28 @@ export function createMessageAgentTool(deps: {
     mode: 'in_commit',
     async execute({ args, caller, effects }) {
       const tree = await deps.tasks.listTree(caller.rootId, caller.ownerId);
-      const target = descendantsOf(tree, caller.agentId).find((task) => task.taskId === args.agentId);
-      if (target === undefined) return { kind: 'refused', reason: 'unknown_agent' };
-      const targetParent = tree.find((task) => task.taskId === target.parentId) ?? null;
+      const target = descendantsOf(tree, caller.agentId).find(
+        (task) => task.taskId === args.agentId,
+      );
+      if (target === undefined)
+        return { kind: 'refused', reason: 'unknown_agent' };
+      const targetParent =
+        tree.find((task) => task.taskId === target.parentId) ?? null;
       await effects.enqueue({
         recipientId: target.taskId,
         kind: AgentMessageKindSchema.enum.agent_message,
         sender: caller.agentId,
-        payload: { ...messagePayload(args.message, target, targetParent), fromAgentId: caller.agentId },
+        payload: {
+          ...messagePayload(args.message, target, targetParent),
+          fromAgentId: caller.agentId,
+        },
         revive: true,
       });
-      return { kind: 'done', outcome: 'success', text: `Message delivered to agent ${target.taskId}.` };
+      return {
+        kind: 'done',
+        outcome: 'success',
+        text: `Message delivered to agent ${target.taskId}.`,
+      };
     },
   };
 }

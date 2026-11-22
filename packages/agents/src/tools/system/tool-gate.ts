@@ -1,4 +1,8 @@
-import type { RecordHeader, RecordKind, ToolRefusalReason } from '@agent-os/contracts';
+import type {
+  RecordHeader,
+  RecordKind,
+  ToolRefusalReason,
+} from '@agent-os/contracts';
 
 import { inRootLaunchSet } from '../../chat-listing';
 
@@ -28,7 +32,11 @@ export type LaunchSet =
 export type StartTarget =
   | { readonly kind: 'fork' }
   /** A record by its id; `recordKind` — its kind as the caller's starter sees it, `null` — unknown. */
-  | { readonly kind: 'record'; readonly recordId: string; readonly recordKind: RecordKind | null };
+  | {
+      readonly kind: 'record';
+      readonly recordId: string;
+      readonly recordKind: RecordKind | null;
+    };
 
 export interface StartGateInput {
   readonly launchSet: LaunchSet;
@@ -39,7 +47,8 @@ export interface StartGateInput {
   readonly maxDepth: number;
 }
 
-export type StartGate = { readonly kind: 'allowed' } | Refused<'not_allowed' | 'depth_limit'>;
+export type StartGate =
+  { readonly kind: 'allowed' } | Refused<'not_allowed' | 'depth_limit'>;
 
 const ALLOWED: StartGate = { kind: 'allowed' };
 const NOT_ALLOWED: StartGate = { kind: 'refused', reason: 'not_allowed' };
@@ -57,7 +66,12 @@ const DEEP_AGENT_REFUSAL: StartGate = {
  * never — and the child is not deeper than `maxDepth`. A record the starter may not see is refused before
  * this, as `record_unavailable`; the model is checked after it (plan Notes 2).
  */
-export function gateStart({ launchSet, target, depth, maxDepth }: StartGateInput): StartGate {
+export function gateStart({
+  launchSet,
+  target,
+  depth,
+  maxDepth,
+}: StartGateInput): StartGate {
   const inSet = inLaunchSet(launchSet, target);
   if (inSet.kind === 'refused') return inSet;
   if (depth + 1 > maxDepth) return { kind: 'refused', reason: 'depth_limit' };
@@ -85,7 +99,9 @@ export function rootMayStartRecord(
   recordId: string,
 ): boolean {
   const header = headers.find((candidate) => candidate.id === recordId);
-  return header !== undefined && header.kind === tool && inRootLaunchSet(header);
+  return (
+    header !== undefined && header.kind === tool && inRootLaunchSet(header)
+  );
 }
 
 function recordAllowed(launchSet: LaunchSet, recordId: string): boolean {

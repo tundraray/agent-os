@@ -56,7 +56,9 @@ export class RuntimeDecisionsRepository {
   }
 
   /** The task's resolved request that no committed step has received yet. */
-  async findUndelivered(taskId: string): Promise<RuntimeDecisionRow | undefined> {
+  async findUndelivered(
+    taskId: string,
+  ): Promise<RuntimeDecisionRow | undefined> {
     const [row] = await this.db.client
       .select()
       .from(runtimeDecisions)
@@ -94,7 +96,10 @@ export class RuntimeDecisionsRepository {
       .select(VIEW_COLUMNS)
       .from(runtimeDecisions)
       .where(
-        and(eq(runtimeDecisions.decisionId, decisionId), eq(runtimeDecisions.ownerId, ownerId)),
+        and(
+          eq(runtimeDecisions.decisionId, decisionId),
+          eq(runtimeDecisions.ownerId, ownerId),
+        ),
       );
     return row;
   }
@@ -104,8 +109,16 @@ export class RuntimeDecisionsRepository {
     return this.db.client
       .select(VIEW_COLUMNS)
       .from(runtimeDecisions)
-      .where(and(eq(runtimeDecisions.rootId, rootId), eq(runtimeDecisions.ownerId, ownerId)))
-      .orderBy(asc(runtimeDecisions.createdAt), asc(runtimeDecisions.decisionId));
+      .where(
+        and(
+          eq(runtimeDecisions.rootId, rootId),
+          eq(runtimeDecisions.ownerId, ownerId),
+        ),
+      )
+      .orderBy(
+        asc(runtimeDecisions.createdAt),
+        asc(runtimeDecisions.decisionId),
+      );
   }
 
   /** The task and the owner of a request. */
@@ -113,7 +126,10 @@ export class RuntimeDecisionsRepository {
     decisionId: string,
   ): Promise<{ taskId: string; ownerId: string } | undefined> {
     const [row] = await this.db.client
-      .select({ taskId: runtimeDecisions.taskId, ownerId: runtimeDecisions.ownerId })
+      .select({
+        taskId: runtimeDecisions.taskId,
+        ownerId: runtimeDecisions.ownerId,
+      })
       .from(runtimeDecisions)
       .where(eq(runtimeDecisions.decisionId, decisionId));
     return row;
@@ -131,8 +147,17 @@ export class RuntimeDecisionsRepository {
   async resolve(decisionId: string, resolution: unknown): Promise<boolean> {
     const rows = await this.db.client
       .update(runtimeDecisions)
-      .set({ status: resolved, resolution: resolution ?? null, resolvedAt: sql`now()` })
-      .where(and(eq(runtimeDecisions.decisionId, decisionId), eq(runtimeDecisions.status, open)))
+      .set({
+        status: resolved,
+        resolution: resolution ?? null,
+        resolvedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(runtimeDecisions.decisionId, decisionId),
+          eq(runtimeDecisions.status, open),
+        ),
+      )
       .returning({ decisionId: runtimeDecisions.decisionId });
     return rows.length > 0;
   }
@@ -143,7 +168,10 @@ export class RuntimeDecisionsRepository {
       .update(runtimeDecisions)
       .set({ status: cancelled })
       .where(
-        and(inArray(runtimeDecisions.taskId, [...taskIds]), eq(runtimeDecisions.status, open)),
+        and(
+          inArray(runtimeDecisions.taskId, [...taskIds]),
+          eq(runtimeDecisions.status, open),
+        ),
       );
   }
 }

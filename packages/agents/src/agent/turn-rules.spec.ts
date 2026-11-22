@@ -1,5 +1,10 @@
 import type { SessionTask } from '@agent-os/db';
-import { type EndOfTurn, type EndOfTurnInput, endOfTurn, noticeContent } from './turn-rules';
+import {
+  type EndOfTurn,
+  type EndOfTurnInput,
+  endOfTurn,
+  noticeContent,
+} from './turn-rules';
 
 // KD-2, «Конец хода», DC-3, DC-4 (final subagent, design-runtime.md KD-5), Invariant 4, Notes 6: an
 // answer without tool calls waits, is refused with a notice, or completes with a report.
@@ -16,28 +21,60 @@ const CHILD: EndOfTurnInput = {
 
 describe('the end of a turn waits, refuses or completes', () => {
   it.each<[string, EndOfTurnInput, EndOfTurn['kind'], string | null]>([
-    ['a child with an unfinished child waits', { ...CHILD, unfinishedChildren: 1 }, 'wait', null],
-    ['a child with an undelivered child notice waits', { ...CHILD, pendingChildNotices: 1 }, 'wait', null],
-    ['the final subagent has no report yet: notice', { ...CHILD, finalSubagent: 'answer' }, 'notice', null],
+    [
+      'a child with an unfinished child waits',
+      { ...CHILD, unfinishedChildren: 1 },
+      'wait',
+      null,
+    ],
+    [
+      'a child with an undelivered child notice waits',
+      { ...CHILD, pendingChildNotices: 1 },
+      'wait',
+      null,
+    ],
+    [
+      'the final subagent has no report yet: notice',
+      { ...CHILD, finalSubagent: 'answer' },
+      'notice',
+      null,
+    ],
     [
       "the final subagent's completed report becomes the session's report",
-      { ...CHILD, finalSubagent: 'answer', finalSubagentReport: { status: 'completed', text: 'final report' } },
+      {
+        ...CHILD,
+        finalSubagent: 'answer',
+        finalSubagentReport: { status: 'completed', text: 'final report' },
+      },
       'complete',
       'final report',
     ],
     [
       "the final subagent's failed report does not end the session",
-      { ...CHILD, finalSubagent: 'answer', finalSubagentReport: { status: 'failed', text: null } },
+      {
+        ...CHILD,
+        finalSubagent: 'answer',
+        finalSubagentReport: { status: 'failed', text: null },
+      },
       'notice',
       null,
     ],
     [
       "the final subagent's stopped report does not end the session",
-      { ...CHILD, finalSubagent: 'answer', finalSubagentReport: { status: 'stopped', text: null } },
+      {
+        ...CHILD,
+        finalSubagent: 'answer',
+        finalSubagentReport: { status: 'stopped', text: null },
+      },
       'notice',
       null,
     ],
-    ['otherwise the answer text is the report', CHILD, 'complete', 'my own answer'],
+    [
+      'otherwise the answer text is the report',
+      CHILD,
+      'complete',
+      'my own answer',
+    ],
   ])('%s', (_, input, kind, report) => {
     const outcome = endOfTurn(input);
     expect(outcome.kind).toBe(kind);
@@ -61,10 +98,18 @@ describe('a cut-off answer is not a report', () => {
           'Write the report again, shorter, so that it fits in one answer.',
       },
     ],
-    ['an agent with an unfinished child waits', { ...CUT, unfinishedChildren: 1 }, { kind: 'wait' }],
+    [
+      'an agent with an unfinished child waits',
+      { ...CUT, unfinishedChildren: 1 },
+      { kind: 'wait' },
+    ],
     [
       "a deep agent ends with its answer subagent's completed report",
-      { ...CUT, finalSubagent: 'answer', finalSubagentReport: { status: 'completed', text: 'final report' } },
+      {
+        ...CUT,
+        finalSubagent: 'answer',
+        finalSubagentReport: { status: 'completed', text: 'final report' },
+      },
       { kind: 'complete', report: 'final report' },
     ],
   ])('%s', (_, input, outcome) => {
@@ -95,7 +140,10 @@ describe('an agent with open tasks does not finish its turn', () => {
     blockedBy: [1],
   };
   /** The notice naming the open tasks, line by line, and their numbers. */
-  const openNotice = (lines: readonly string[], numbers: readonly number[]): EndOfTurn => ({
+  const openNotice = (
+    lines: readonly string[],
+    numbers: readonly number[],
+  ): EndOfTurn => ({
     kind: 'notice',
     text: [
       'You cannot finish yet: these tasks of your list are still open:',
@@ -113,7 +161,10 @@ describe('an agent with open tasks does not finish its turn', () => {
     [
       'a pending task: notice naming it with its blockers and label',
       { ...CHILD, openTasks: [CHECK] },
-      openNotice(['2. [pending] Сверить с заказами; blocked by 1; owner gather'], [2]),
+      openNotice(
+        ['2. [pending] Сверить с заказами; blocked by 1; owner gather'],
+        [2],
+      ),
     ],
     [
       'no open task: the answer is the report',
@@ -128,7 +179,13 @@ describe('an agent with open tasks does not finish its turn', () => {
         finalSubagent: 'answer',
         finalSubagentReport: { status: 'completed', text: 'final report' },
       },
-      openNotice(['1. [in_progress] Собираю логи', '2. [pending] Сверить с заказами; blocked by 1; owner gather'], [1, 2]),
+      openNotice(
+        [
+          '1. [in_progress] Собираю логи',
+          '2. [pending] Сверить с заказами; blocked by 1; owner gather',
+        ],
+        [1, 2],
+      ),
     ],
     [
       'an unfinished child still comes first: wait',
@@ -140,18 +197,36 @@ describe('an agent with open tasks does not finish its turn', () => {
   });
 
   // uxrd.md MC-15: the history entry carries what the feed line names, and only when it is the notice's reason.
-  it.each<[string, EndOfTurnInput, { openTasks?: number[]; missingReport?: string }]>([
-    ['open tasks: the notice entry carries their numbers', { ...CHILD, openTasks: [COLLECT, CHECK] }, { openTasks: [1, 2] }],
+  it.each<
+    [string, EndOfTurnInput, { openTasks?: number[]; missingReport?: string }]
+  >([
+    [
+      'open tasks: the notice entry carries their numbers',
+      { ...CHILD, openTasks: [COLLECT, CHECK] },
+      { openTasks: [1, 2] },
+    ],
     [
       'no completed report of the final subagent: the notice entry names it',
-      { ...CHILD, finalSubagent: 'answer', finalSubagentReport: { status: 'failed', text: null } },
+      {
+        ...CHILD,
+        finalSubagent: 'answer',
+        finalSubagentReport: { status: 'failed', text: null },
+      },
       { missingReport: 'answer' },
     ],
-    ['a cut-off answer: the notice entry carries nothing more', { ...CHILD, cutOff: true }, {}],
+    [
+      'a cut-off answer: the notice entry carries nothing more',
+      { ...CHILD, cutOff: true },
+      {},
+    ],
   ])('%s', (_, input, fields) => {
     const outcome = endOfTurn(input);
-    if (outcome.kind !== 'notice') throw new Error(`expected a notice, got ${outcome.kind}`);
-    expect(noticeContent(outcome)).toStrictEqual({ text: outcome.text, ...fields });
+    if (outcome.kind !== 'notice')
+      throw new Error(`expected a notice, got ${outcome.kind}`);
+    expect(noticeContent(outcome)).toStrictEqual({
+      text: outcome.text,
+      ...fields,
+    });
   });
 });
 
@@ -166,19 +241,29 @@ describe('a subagent asked for answer fields', () => {
     [
       'finishes with both fields',
       { ...FIELDS, text: '{"вывод":"рост ошибок","источники":"логи оплат"}' },
-      { kind: 'complete', report: '{"вывод":"рост ошибок","источники":"логи оплат"}' },
+      {
+        kind: 'complete',
+        report: '{"вывод":"рост ошибок","источники":"логи оплат"}',
+      },
     ],
     [
       'gets a notice naming the missing field and the extra one',
       { ...FIELDS, text: '{"вывод":"рост ошибок","комментарий":"нет"}' },
-      { kind: 'notice', text: `${RULE} Missing or empty: источники. Not asked for: комментарий.` },
+      {
+        kind: 'notice',
+        text: `${RULE} Missing or empty: источники. Not asked for: комментарий.`,
+      },
     ],
     [
       'gets a notice for an empty field',
       { ...FIELDS, text: '{"вывод":"рост ошибок","источники":" "}' },
       { kind: 'notice', text: `${RULE} Missing or empty: источники.` },
     ],
-    ['gets a notice for free text', { ...FIELDS, text: 'рост ошибок' }, { kind: 'notice', text: `${RULE} Your answer is not JSON.` }],
+    [
+      'gets a notice for free text',
+      { ...FIELDS, text: 'рост ошибок' },
+      { kind: 'notice', text: `${RULE} Your answer is not JSON.` },
+    ],
   ])('%s', (_, input, outcome) => {
     expect(endOfTurn(input)).toStrictEqual(outcome);
   });

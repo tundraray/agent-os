@@ -13,7 +13,10 @@ export interface ContentPart {
 }
 
 /** The path of a field of a part, as a refusal names it (deep-agents KD-4): `servers`, `subagents.1.model`. */
-export function fieldPath(part: ContentPart, field: 'servers' | 'model'): string {
+export function fieldPath(
+  part: ContentPart,
+  field: 'servers' | 'model',
+): string {
   return part.path === '' ? field : `${part.path}.${field}`;
 }
 

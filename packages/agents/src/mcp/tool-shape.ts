@@ -18,7 +18,13 @@ const TRUNCATED_TEXT_LIMIT = TEXT_LIMIT - 1 - SHAPE_TRUNCATED.length;
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 const LOCAL_DEFINITION = /^#\/(?:\$defs|definitions)\/([^/]+)$/;
-const TYPE_NAMES: ReadonlySet<string> = new Set(['string', 'number', 'integer', 'boolean', 'null']);
+const TYPE_NAMES: ReadonlySet<string> = new Set([
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'null',
+]);
 const COMBINATIONS = [
   ['anyOf', ' | '],
   ['oneOf', ' | '],
@@ -61,19 +67,31 @@ function isSchema(value: unknown): value is Schema {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function membersOf(schema: Schema, key: string): readonly unknown[] | undefined {
+function membersOf(
+  schema: Schema,
+  key: string,
+): readonly unknown[] | undefined {
   const members = schema[key];
   return Array.isArray(members) && members.length > 0 ? members : undefined;
 }
 
 /** How a schema's text combines its parts, so an array or an intersection knows to parenthesize it. */
 function compoundOf(schema: unknown): 'union' | 'intersection' | null {
-  if (!isSchema(schema) || typeof schema['$ref'] === 'string' || 'const' in schema) return null;
+  if (
+    !isSchema(schema) ||
+    typeof schema['$ref'] === 'string' ||
+    'const' in schema
+  )
+    return null;
   const several = (key: string) => (membersOf(schema, key)?.length ?? 0) > 1;
-  if (membersOf(schema, 'enum') !== undefined) return several('enum') ? 'union' : null;
-  if (membersOf(schema, 'anyOf') !== undefined) return several('anyOf') ? 'union' : null;
-  if (membersOf(schema, 'oneOf') !== undefined) return several('oneOf') ? 'union' : null;
-  if (membersOf(schema, 'allOf') !== undefined) return several('allOf') ? 'intersection' : null;
+  if (membersOf(schema, 'enum') !== undefined)
+    return several('enum') ? 'union' : null;
+  if (membersOf(schema, 'anyOf') !== undefined)
+    return several('anyOf') ? 'union' : null;
+  if (membersOf(schema, 'oneOf') !== undefined)
+    return several('oneOf') ? 'union' : null;
+  if (membersOf(schema, 'allOf') !== undefined)
+    return several('allOf') ? 'intersection' : null;
   return several('type') ? 'union' : null;
 }
 
@@ -85,11 +103,16 @@ class ShapeText {
   ) {}
 
   schema(node: unknown, depth: number): void {
-    if (!isSchema(node) || depth > MAX_SCHEMA_DEPTH) return this.writer.write('unknown');
+    if (!isSchema(node) || depth > MAX_SCHEMA_DEPTH)
+      return this.writer.write('unknown');
     if (typeof node['$ref'] === 'string') return this.ref(node['$ref']);
-    if ('const' in node) return this.writer.write(JSON.stringify(node['const']) ?? 'unknown');
+    if ('const' in node)
+      return this.writer.write(JSON.stringify(node['const']) ?? 'unknown');
     const values = membersOf(node, 'enum');
-    if (values !== undefined) return this.writer.write(values.map((value) => JSON.stringify(value)).join(' | '));
+    if (values !== undefined)
+      return this.writer.write(
+        values.map((value) => JSON.stringify(value)).join(' | '),
+      );
     for (const [key, separator] of COMBINATIONS) {
       const members = membersOf(node, key);
       if (members !== undefined) return this.joined(members, separator, depth);
@@ -114,15 +137,23 @@ class ShapeText {
   }
 
   private typed(schema: Schema, type: unknown, depth: number): void {
-    if (type === 'object' || (type === undefined && isSchema(schema['properties']))) {
+    if (
+      type === 'object' ||
+      (type === undefined && isSchema(schema['properties']))
+    ) {
       return this.object(schema, depth);
     }
-    if (type === 'array' || (type === undefined && 'items' in schema)) return this.array(schema, depth);
-    this.writer.write(typeof type === 'string' && TYPE_NAMES.has(type) ? type : 'unknown');
+    if (type === 'array' || (type === undefined && 'items' in schema))
+      return this.array(schema, depth);
+    this.writer.write(
+      typeof type === 'string' && TYPE_NAMES.has(type) ? type : 'unknown',
+    );
   }
 
   private object(schema: Schema, depth: number): void {
-    const properties = isSchema(schema['properties']) ? Object.entries(schema['properties']) : [];
+    const properties = isSchema(schema['properties'])
+      ? Object.entries(schema['properties'])
+      : [];
     if (properties.length === 0) {
       const additional = schema['additionalProperties'];
       if (!isSchema(additional)) return this.writer.write('object');
@@ -130,7 +161,11 @@ class ShapeText {
       this.schema(additional, depth + 1);
       return this.writer.write('>');
     }
-    const required = new Set((membersOf(schema, 'required') ?? []).filter((key) => typeof key === 'string'));
+    const required = new Set(
+      (membersOf(schema, 'required') ?? []).filter(
+        (key) => typeof key === 'string',
+      ),
+    );
     this.writer.write('{ ');
     properties.forEach(([name, property], index) => {
       if (index > 0) this.writer.write(', ');
@@ -151,10 +186,15 @@ class ShapeText {
     this.writer.write(parenthesized ? ')[]' : '[]');
   }
 
-  private joined(members: readonly unknown[], separator: ' | ' | ' & ', depth: number): void {
+  private joined(
+    members: readonly unknown[],
+    separator: ' | ' | ' & ',
+    depth: number,
+  ): void {
     members.forEach((member, index) => {
       if (index > 0) this.writer.write(separator);
-      const parenthesized = separator === ' & ' && compoundOf(member) === 'union';
+      const parenthesized =
+        separator === ' & ' && compoundOf(member) === 'union';
       if (parenthesized) this.writer.write('(');
       this.schema(member, depth + 1);
       if (parenthesized) this.writer.write(')');
@@ -166,7 +206,10 @@ class ShapeText {
     const local = LOCAL_DEFINITION.exec(address);
     if (local !== null) {
       const name = local[1] ?? '';
-      if (this.definitionOf(name) !== undefined && !this.definitions.referenced.includes(name)) {
+      if (
+        this.definitionOf(name) !== undefined &&
+        !this.definitions.referenced.includes(name)
+      ) {
         this.definitions.referenced.push(name);
       }
       return this.writer.write(name);
@@ -186,7 +229,9 @@ function definitionsOf(root: Schema): Definitions {
     const definitions = root[container];
     return isSchema(definitions) ? Object.entries(definitions) : [];
   });
-  const byName = Object.fromEntries(entries.filter((entry): entry is [string, Schema] => isSchema(entry[1])));
+  const byName = Object.fromEntries(
+    entries.filter((entry): entry is [string, Schema] => isSchema(entry[1])),
+  );
   return { byName, referenced: [] };
 }
 
@@ -195,7 +240,9 @@ function definitionsOf(root: Schema): Definitions {
  * формы»): the header, the TypeScript-style text and, when the text reached the limit, the mark. The text stops
  * being read at the limit and is cut at the end of the last whole field (DC-3).
  */
-export function shapeBlockOf(outputSchema: Readonly<Record<string, unknown>>): ShapeBlock {
+export function shapeBlockOf(
+  outputSchema: Readonly<Record<string, unknown>>,
+): ShapeBlock {
   const writer = new ShapeWriter();
   const text = new ShapeText(writer, definitionsOf(outputSchema));
   try {
@@ -205,8 +252,12 @@ export function shapeBlockOf(outputSchema: Readonly<Record<string, unknown>>): S
     return { block: `${SHAPE_HEADER}\n${writer.text}`, truncated: false };
   } catch (error) {
     if (error !== OVERFLOW) throw error;
-    const cut = writer.fieldEnds.filter((end) => end <= TRUNCATED_TEXT_LIMIT).at(-1) ?? 0;
-    return { block: `${SHAPE_HEADER}\n${writer.text.slice(0, cut)}\n${SHAPE_TRUNCATED}`, truncated: true };
+    const cut =
+      writer.fieldEnds.filter((end) => end <= TRUNCATED_TEXT_LIMIT).at(-1) ?? 0;
+    return {
+      block: `${SHAPE_HEADER}\n${writer.text.slice(0, cut)}\n${SHAPE_TRUNCATED}`,
+      truncated: true,
+    };
   }
 }
 

@@ -16,10 +16,19 @@ import {
   type Database,
   Db,
 } from '@agent-os/db';
-import { type ModelPrice, type StepContext, type StepResult, systemClock } from '@agent-os/runtime';
+import {
+  type ModelPrice,
+  type StepContext,
+  type StepResult,
+  systemClock,
+} from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessDeniedEntry, AuditRecord, ModelVerdict } from './access-gate';
+import type {
+  AccessDeniedEntry,
+  AuditRecord,
+  ModelVerdict,
+} from './access-gate';
 import type { CallState } from './history/call-state';
 import { ChatAgent } from './agent/chat-agent';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
@@ -65,7 +74,9 @@ function loggerDouble(): Logger {
 function emptyDatabase(): Database {
   const query: object = new Proxy(() => {}, {
     get: (_target, property) =>
-      property === 'then' ? (resolve: (rows: unknown[]) => void) => resolve([]) : query,
+      property === 'then'
+        ? (resolve: (rows: unknown[]) => void) => resolve([])
+        : query,
     apply: () => query,
   });
   return query as Database;
@@ -86,11 +97,23 @@ const SNAPSHOT: AgentSnapshot = {
     builtinKey: null,
     subagent: null,
   },
-  content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP], taskList: false },
+  content: {
+    prompt: 'Help.',
+    servers: [],
+    model: MODEL,
+    maxTurns: 10,
+    agents: [],
+    tools: [LOOKUP],
+    taskList: false,
+  },
   agents: [],
 };
 
-const INPUT: SessionInput = { snapshot: SNAPSHOT, prompt: 'Look it up', description: 'Look up' };
+const INPUT: SessionInput = {
+  snapshot: SNAPSHOT,
+  prompt: 'Look it up',
+  description: 'Look up',
+};
 
 const SESSION: Session = {
   taskId: AGENT,
@@ -154,7 +177,9 @@ function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
   const db = new Db(emptyDatabase());
   const model = createScriptedModel();
-  model.script({ agent: SNAPSHOT.name }, [], { thereafter: { text: 'answer' } });
+  model.script({ agent: SNAPSHOT.name }, [], {
+    thereafter: { text: 'answer' },
+  });
   const audits: AuditRecord[] = [];
   let toolRuns = 0;
   const lookup: AgentTool = {
@@ -191,9 +216,15 @@ function refusedAgent(refusal: Refusal) {
     knowledgeRunRows: new AgentKnowledgeRunsRepository(db),
     mcpServerRows: new AgentMcpServersRepository(db),
   };
-  const registry = new ToolRegistry(stores.mcpServerRows, new AgentMcpAccountsRepository(db), access);
+  const registry = new ToolRegistry(
+    stores.mcpServerRows,
+    new AgentMcpAccountsRepository(db),
+    access,
+  );
   registry.useRunCode({ ...lookup, name: 'run_code' });
-  [lookup, ...createTaskListTools({ ...stores, logger })].forEach((tool) => registry.register(tool));
+  [lookup, ...createTaskListTools({ ...stores, logger })].forEach((tool) =>
+    registry.register(tool),
+  );
   const runner = new ToolRunner(
     stores.callRecords,
     {
@@ -229,7 +260,9 @@ function refusedAgent(refusal: Refusal) {
   );
   // The agent's snapshot does not learn: the knowledge block never reaches the store.
   const notCalled = async (): Promise<never> => {
-    throw new Error('the vector store is not called for a session that does not learn');
+    throw new Error(
+      'the vector store is not called for a session that does not learn',
+    );
   };
   const vectorStore: KnowledgeVectorStore = {
     upsert: notCalled,
@@ -269,21 +302,52 @@ function refusedAgent(refusal: Refusal) {
 
 type RefusedAgent = ReturnType<typeof refusedAgent>;
 
-const QUOTA: Refusal = { kind: 'refused', reason: 'quota_exhausted', spentUsd: 20, quotaUsd: 20, month: '2026-11' };
+const QUOTA: Refusal = {
+  kind: 'refused',
+  reason: 'quota_exhausted',
+  spentUsd: 20,
+  quotaUsd: 20,
+  month: '2026-11',
+};
 
 function deniedModel(reason: string): AccessDeniedEntry {
-  return { kind: 'access_denied', actor: OWNER, objectType: 'model', objectId: MODEL, outcome: 'rejected', reason };
+  return {
+    kind: 'access_denied',
+    actor: OWNER,
+    objectType: 'model',
+    objectId: MODEL,
+    outcome: 'rejected',
+    reason,
+  };
 }
 
 /** The history of a session with no entry yet. */
 const NO_HISTORY = { entries: [], lastSeq: 0 };
 
-const modelStep = ({ agent, ctx }: RefusedAgent) => agent.modelStep(ctx, SESSION, NO_HISTORY);
+const modelStep = ({ agent, ctx }: RefusedAgent) =>
+  agent.modelStep(ctx, SESSION, NO_HISTORY);
 
 describe("an agent whose model or tool call is refused by the gate ends `failed` with the verdict's reason; the audit hook runs once, never for `owner_disabled`", () => {
-  it.each<[string, Refusal, (agent: RefusedAgent) => Promise<StepResult>, readonly AccessDeniedEntry[]]>([
-    ['the model step of a disabled owner', { kind: 'refused', reason: 'owner_disabled' }, modelStep, []],
-    ['the model step on a spent quota', QUOTA, modelStep, [deniedModel('quota_exhausted')]],
+  it.each<
+    [
+      string,
+      Refusal,
+      (agent: RefusedAgent) => Promise<StepResult>,
+      readonly AccessDeniedEntry[],
+    ]
+  >([
+    [
+      'the model step of a disabled owner',
+      { kind: 'refused', reason: 'owner_disabled' },
+      modelStep,
+      [],
+    ],
+    [
+      'the model step on a spent quota',
+      QUOTA,
+      modelStep,
+      [deniedModel('quota_exhausted')],
+    ],
     [
       'the compaction step on a spent quota',
       QUOTA,
@@ -293,7 +357,8 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the tool step of a disabled owner',
       { kind: 'refused', reason: 'owner_disabled' },
-      ({ agent, ctx }) => agent.toolStep(ctx, SESSION, [OPEN_CALL], [OPEN_CALL]),
+      ({ agent, ctx }) =>
+        agent.toolStep(ctx, SESSION, [OPEN_CALL], [OPEN_CALL]),
       [],
     ],
   ])('%s', async (_, refusal, act, audits) => {
@@ -301,7 +366,11 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
 
     const result = await act(agent);
 
-    expect(result.outcome === 'fail' ? { outcome: result.outcome, reason: result.reason } : result).toEqual({
+    expect(
+      result.outcome === 'fail'
+        ? { outcome: result.outcome, reason: result.reason }
+        : result,
+    ).toEqual({
       outcome: 'fail',
       reason: refusal.reason,
     });

@@ -167,10 +167,15 @@ const TEST_TIMEOUT_MS = 180_000;
 const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
 
 /** A quarter of an hour of the fixture's logs, one record a page: the call's result stays small. */
-const LOG_QUERY = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:00.000Z', pageSize: 1 } as const;
+const LOG_QUERY = {
+  from: '2026-09-15T10:00:00.000Z',
+  to: '2026-09-15T10:15:00.000Z',
+  pageSize: 1,
+} as const;
 
 /** The subagent of every test deep agent: it searches the logs server, up to three times per run. */
-const SCOUT_PROMPT = 'You search the payment logs for what the deep agent asks.';
+const SCOUT_PROMPT =
+  'You search the payment logs for what the deep agent asks.';
 const SCOUT: Subagent = {
   name: 'scout',
   description: 'Searches the payment logs',
@@ -183,7 +188,8 @@ const SCOUT: Subagent = {
 };
 
 /** The envelope of the knowledge block in a step's system text (`knowledge-text.ts`). */
-const KNOWLEDGE_ENVELOPE = '<data source="knowledge" author="earlier runs of this deep agent">';
+const KNOWLEDGE_ENVELOPE =
+  '<data source="knowledge" author="earlier runs of this deep agent">';
 
 /** The answer of the first round of INT-1: c1 is the scout's `success` call, c2 the `empty` one. */
 const LEARNED: readonly unknown[] = [
@@ -194,8 +200,21 @@ const LEARNED: readonly unknown[] = [
     description: 'the payment service of the shop',
     evidence: ['c1'],
   },
-  { op: 'add_entity', ref: 'books', name: 'ledger', description: 'the books of the shop', evidence: ['c1'] },
-  { op: 'add_relation', kind: 'fact', from: 'pay', to: 'books', label: 'writes payments to', evidence: ['c1'] },
+  {
+    op: 'add_entity',
+    ref: 'books',
+    name: 'ledger',
+    description: 'the books of the shop',
+    evidence: ['c1'],
+  },
+  {
+    op: 'add_relation',
+    kind: 'fact',
+    from: 'pay',
+    to: 'books',
+    label: 'writes payments to',
+    evidence: ['c1'],
+  },
   {
     op: 'add_relation',
     kind: 'lesson',
@@ -259,10 +278,15 @@ function scoutScript(
   services: readonly string[],
   latch?: Latch,
 ): Script {
-  const report: ScriptedAnswer = { text: reportOf(assignment), ...(latch === undefined ? {} : { latch }) };
+  const report: ScriptedAnswer = {
+    text: reportOf(assignment),
+    ...(latch === undefined ? {} : { latch }),
+  };
   return model.script(
     { task: assignment },
-    services.length === 0 ? [report] : [{ calls: services.map(searchLogs) }, report],
+    services.length === 0
+      ? [report]
+      : [{ calls: services.map(searchLogs) }, report],
   );
 }
 
@@ -276,7 +300,9 @@ interface DeepAgentTurn {
 }
 
 function descriptionOf(args: unknown): unknown {
-  return typeof args === 'object' && args !== null && 'description' in args ? args.description : undefined;
+  return typeof args === 'object' && args !== null && 'description' in args
+    ? args.description
+    : undefined;
 }
 
 /**
@@ -286,30 +312,44 @@ function descriptionOf(args: unknown): unknown {
  */
 function deepAgentReplies(turns: readonly DeepAgentTurn[]): ReplyFromInput {
   return (messages) => {
-    const said = messages.flatMap((message) => (message.role === 'user' ? [message.content] : []));
-    const turn = [...turns].reverse().find((candidate) => said.includes(candidate.text));
-    if (turn === undefined) throw new Error('The deep agent got none of its turns');
+    const said = messages.flatMap((message) =>
+      message.role === 'user' ? [message.content] : [],
+    );
+    const turn = [...turns]
+      .reverse()
+      .find((candidate) => said.includes(candidate.text));
+    if (turn === undefined)
+      throw new Error('The deep agent got none of its turns');
     const answer = turn.answer ?? { text: `Answer to: ${turn.text}` };
     const { scout } = turn;
     if (scout === null) return answer;
     const delegated = messages.some(
       (message) =>
         message.role === 'assistant' &&
-        message.toolCalls.some((call) => call.toolName === 'task' && descriptionOf(call.args) === scout),
+        message.toolCalls.some(
+          (call) =>
+            call.toolName === 'task' && descriptionOf(call.args) === scout,
+        ),
     );
-    return delegated ? answer : { calls: [taskCall({ subagentType: SCOUT.name, description: scout })] };
+    return delegated
+      ? answer
+      : { calls: [taskCall({ subagentType: SCOUT.name, description: scout })] };
   };
 }
 
 /** The first child an agent started (`childTaskId` of a `start_test_deep_agent` or a single `task` result), once it exists. */
-async function startedChild(harness: AgentsHarness, agentId: string): Promise<string> {
+async function startedChild(
+  harness: AgentsHarness,
+  agentId: string,
+): Promise<string> {
   const rows = await waitFor(
     () => toolCallRowsOf(harness.db, agentId),
     (calls) => calls.some((call) => call.childTaskId !== null),
     `a child of agent ${agentId}`,
   );
   const child = rows.find((call) => call.childTaskId !== null)?.childTaskId;
-  if (child === undefined || child === null) throw new Error(`Agent ${agentId} started no child`);
+  if (child === undefined || child === null)
+    throw new Error(`Agent ${agentId} started no child`);
   return child;
 }
 
@@ -326,17 +366,29 @@ interface LearningRun {
 async function startLearningRun(
   harness: AgentsHarness,
   model: ScriptedModel,
-  run: { readonly ownerId: string; readonly recordId: string; readonly turns: readonly DeepAgentTurn[] },
+  run: {
+    readonly ownerId: string;
+    readonly recordId: string;
+    readonly turns: readonly DeepAgentTurn[];
+  },
 ): Promise<LearningRun> {
   const [first] = run.turns;
   if (first === undefined) throw new Error('A run needs its first turn');
   const rootTask = `Start the deep agent: ${first.text}`;
   const startDeepAgent: ScriptedToolCall = {
     tool: START_TEST_DEEP_AGENT,
-    args: { deepAgent: run.recordId, prompt: first.text, description: first.text },
+    args: {
+      deepAgent: run.recordId,
+      prompt: first.text,
+      description: first.text,
+    },
   };
-  model.script({ task: rootTask }, [{ calls: [startDeepAgent] }], { thereafter: { text: 'noted' } });
-  const deepAgent = model.script({ task: first.text }, [], { thereafter: deepAgentReplies(run.turns) });
+  model.script({ task: rootTask }, [{ calls: [startDeepAgent] }], {
+    thereafter: { text: 'noted' },
+  });
+  const deepAgent = model.script({ task: first.text }, [], {
+    thereafter: deepAgentReplies(run.turns),
+  });
   const { agentId: rootId } = await harness.sessions.start({
     ownerId: run.ownerId,
     prompt: rootTask,
@@ -371,7 +423,8 @@ function learningHarness(
 /** The content of {@link learningDeepAgent} with the scout team, to edit the record from. */
 function learningContent(recordId: string): DeepAgentContent {
   const record = learningDeepAgent(recordId, [SCOUT]);
-  if (record.kind !== 'deep_agent') throw new Error('learningDeepAgent made no deep agent');
+  if (record.kind !== 'deep_agent')
+    throw new Error('learningDeepAgent made no deep agent');
   return record.content;
 }
 
@@ -381,7 +434,11 @@ function learningContent(recordId: string): DeepAgentContent {
  * call is `empty`, and a «searched — found nothing» record needs one (DC-11). The session must be finished:
  * no step reads it again.
  */
-async function writeEmptyCall(db: Database, taskId: string, service: string): Promise<void> {
+async function writeEmptyCall(
+  db: Database,
+  taskId: string,
+  service: string,
+): Promise<void> {
   const at = new Date();
   const callId = `empty-${randomUUID()}`;
   const [last] = await db
@@ -420,7 +477,9 @@ function unescapeData(text: string): string {
 
 function serviceOf(args: string): string {
   const parsed: unknown = JSON.parse(args);
-  return typeof parsed === 'object' && parsed !== null && 'service' in parsed ? String(parsed.service) : '-';
+  return typeof parsed === 'object' && parsed !== null && 'service' in parsed
+    ? String(parsed.service)
+    : '-';
 }
 
 /** Orders values by their text, for comparing sets whose order the run does not fix. */
@@ -439,7 +498,8 @@ function roundCallsOf(call: RecordedModelCall | undefined): string[] {
     /^c\d+ server=(\S+) tool=(\S+) outcome=(\S+)\nargs: (.*)$/gm,
   );
   return [...heads].map(
-    ([, server, tool, outcome, args]) => `${server ?? ''}/${tool ?? ''} ${outcome ?? ''} ${serviceOf(args ?? '{}')}`,
+    ([, server, tool, outcome, args]) =>
+      `${server ?? ''}/${tool ?? ''} ${outcome ?? ''} ${serviceOf(args ?? '{}')}`,
   );
 }
 
@@ -447,7 +507,9 @@ function roundCallsOf(call: RecordedModelCall | undefined): string[] {
  * The record lines of the knowledge block in a call's system text, sorted; `null` — no block. The block is the
  * rule line and, right under it, the data envelope (`knowledgeText`).
  */
-function knowledgeLinesOf(call: RecordedModelCall | undefined): string[] | null {
+function knowledgeLinesOf(
+  call: RecordedModelCall | undefined,
+): string[] | null {
   const instructions = call?.instructions ?? '';
   const head = `${KNOWLEDGE_RULE}\n${KNOWLEDGE_ENVELOPE}\n`;
   const start = instructions.indexOf(head);
@@ -460,18 +522,30 @@ function knowledgeLinesOf(call: RecordedModelCall | undefined): string[] | null 
  * The run's extraction tasks once each is `completed`: the step's own commit sets the status after the round's
  * guarded transaction that `waitForRound` sees.
  */
-function completedExtractsOf(db: Database, runId: string): Promise<KnowledgeTask[]> {
+function completedExtractsOf(
+  db: Database,
+  runId: string,
+): Promise<KnowledgeTask[]> {
   return waitFor(
     () => knowledgeTasksOf(db, { runId }),
-    (tasks) => tasks.length > 0 && tasks.every((task) => task.status === 'completed'),
+    (tasks) =>
+      tasks.length > 0 && tasks.every((task) => task.status === 'completed'),
     `the extraction tasks of run ${runId} to complete`,
   );
 }
 
 /** The fields of the first log record `message` about task `taskId`, once it is there. */
-async function logFieldsOf(harness: AgentsHarness, message: string, taskId: string): Promise<LogFields> {
+async function logFieldsOf(
+  harness: AgentsHarness,
+  message: string,
+  taskId: string,
+): Promise<LogFields> {
   const found = await waitFor(
-    () => harness.logs.find((record) => record.message === message && record.fields.taskId === taskId),
+    () =>
+      harness.logs.find(
+        (record) =>
+          record.message === message && record.fields.taskId === taskId,
+      ),
     (record) => record !== undefined,
     `the log "${message}" of task ${taskId}`,
   );
@@ -479,7 +553,10 @@ async function logFieldsOf(harness: AgentsHarness, message: string, taskId: stri
 }
 
 /** The fields of the trigger's first decision on an end event of `taskId` (`knowledge trigger decided`). */
-function triggerDecisionOf(harness: AgentsHarness, taskId: string): Promise<LogFields> {
+function triggerDecisionOf(
+  harness: AgentsHarness,
+  taskId: string,
+): Promise<LogFields> {
   return logFieldsOf(harness, 'knowledge trigger decided', taskId);
 }
 
@@ -502,10 +579,18 @@ function outcomeOf(round: KnowledgeRun): unknown[] {
  */
 async function roundAfterTurn(
   harness: AgentsHarness,
-  turn: { readonly ownerId: string; readonly runId: string; readonly text: string },
+  turn: {
+    readonly ownerId: string;
+    readonly runId: string;
+    readonly text: string;
+  },
   after: KnowledgeRun,
 ): Promise<KnowledgeRun> {
-  await harness.sessions.send({ agentId: turn.runId, ownerId: turn.ownerId, text: turn.text });
+  await harness.sessions.send({
+    agentId: turn.runId,
+    ownerId: turn.ownerId,
+    text: turn.text,
+  });
   return waitForRound(harness.db, turn.runId, after.lastAt);
 }
 
@@ -525,7 +610,12 @@ async function knowledgeLeftOf(db: Database, recordId: string) {
   };
 }
 
-const NOTHING_LEFT = { entities: 0, relations: 0, vectors: [], embeddingRow: undefined };
+const NOTHING_LEFT = {
+  entities: 0,
+  relations: 0,
+  vectors: [],
+  embeddingRow: undefined,
+};
 
 /**
  * What would show a broken step or a broken delivery of the round's task: an error record of the task, its guarded
@@ -535,9 +625,12 @@ function troublesOf(harness: AgentsHarness, taskId: string): string[] {
   return harness.logs
     .filter(
       (record) =>
-        (record.fields.taskId === taskId && (record.level === 'error' || record.message === 'guard rolled back')) ||
+        (record.fields.taskId === taskId &&
+          (record.level === 'error' ||
+            record.message === 'guard rolled back')) ||
         (record.fields.consumer === KNOWLEDGE_TRIGGER &&
-          (record.message === 'delivery failed' || record.message === 'delivery needs attention')),
+          (record.message === 'delivery failed' ||
+            record.message === 'delivery needs attention')),
     )
     .map((record) => `${record.level} ${record.message}`);
 }
@@ -562,7 +655,8 @@ const UNKNOWN_ENTITY_ID = 'e2147483647';
 
 /** The catalogue id of an embedding model of the harness. */
 function embeddingModelOf(verdict: EmbeddingVerdict): string {
-  if (verdict.kind !== 'allowed') throw new Error('Not an allowed embedding model');
+  if (verdict.kind !== 'allowed')
+    throw new Error('Not an allowed embedding model');
   return verdict.model;
 }
 
@@ -589,9 +683,13 @@ function compactingScoutScript(
   assignment: string,
   holds: { readonly compaction?: Latch; readonly report?: Latch } = {},
 ): Script {
-  const held = (latch: Latch | undefined) => (latch === undefined ? {} : { latch });
+  const held = (latch: Latch | undefined) =>
+    latch === undefined ? {} : { latch };
   return model.script({ agent: SCOUT.name }, [
-    { calls: [searchLogs('billing-api')], usage: { inputTokens: COMPACT_AT_TOKENS } },
+    {
+      calls: [searchLogs('billing-api')],
+      usage: { inputTokens: COMPACT_AT_TOKENS },
+    },
     { text: `Summary of: ${assignment}`, ...held(holds.compaction) },
     { text: reportOf(assignment), ...held(holds.report) },
   ]);
@@ -605,10 +703,16 @@ function lastUserText(call: RecordedModelCall | undefined): string | null {
 
 /** An entity whose step line `name: description` is `tokens` tokens long: four ASCII bytes a token, dots pad the description. */
 function entityOfTokens(name: string, about: string, tokens: number) {
-  return { name, description: about.padEnd(tokens * 4 - `${name}: `.length, '.') } as const;
+  return {
+    name,
+    description: about.padEnd(tokens * 4 - `${name}: `.length, '.'),
+  } as const;
 }
 
-function lineOf(entity: { readonly name: string; readonly description: string }): string {
+function lineOf(entity: {
+  readonly name: string;
+  readonly description: string;
+}): string {
   return `${entity.name}: ${entity.description}`;
 }
 
@@ -619,22 +723,43 @@ function lineOf(entity: { readonly name: string; readonly description: string })
  * record does not fit, and the rest of the limit takes two archives; refunds alone takes 300, the next record does not fit.
  */
 function archiveOf(n: number) {
-  return entityOfTokens(`archive-${n}`, `the archive ${n} of old payment records`, 250);
+  return entityOfTokens(
+    `archive-${n}`,
+    `the archive ${n} of old payment records`,
+    250,
+  );
 }
 const ARCHIVE_1 = archiveOf(1);
 const ARCHIVE_2 = archiveOf(2);
 const ARCHIVES = [ARCHIVE_1, ARCHIVE_2, archiveOf(3), archiveOf(4)];
-const BILLING = entityOfTokens('billing-api', 'the billing service of the shop', 300);
-const REFUNDS = entityOfTokens('refunds-api', 'the refunds service of the shop', 300);
+const BILLING = entityOfTokens(
+  'billing-api',
+  'the billing service of the shop',
+  300,
+);
+const REFUNDS = entityOfTokens(
+  'refunds-api',
+  'the refunds service of the shop',
+  300,
+);
 const FACT_LABEL = 'posts invoices to';
 const FACT_LINE = `${BILLING.name} — ${FACT_LABEL} — ${ARCHIVE_1.name}`;
 
 /** The block of a step without closeness pairs: the common order over the whole limit. */
 const COMMON_BLOCK = ARCHIVES.map(lineOf).sort();
 /** The block of a step whose question is about billing. */
-const BILLING_BLOCK = [lineOf(ARCHIVE_1), lineOf(ARCHIVE_2), lineOf(BILLING), FACT_LINE].sort();
+const BILLING_BLOCK = [
+  lineOf(ARCHIVE_1),
+  lineOf(ARCHIVE_2),
+  lineOf(BILLING),
+  FACT_LINE,
+].sort();
 /** The block of a step whose question is about refunds. */
-const REFUNDS_BLOCK = [lineOf(ARCHIVE_1), lineOf(ARCHIVE_2), lineOf(REFUNDS)].sort();
+const REFUNDS_BLOCK = [
+  lineOf(ARCHIVE_1),
+  lineOf(ARCHIVE_2),
+  lineOf(REFUNDS),
+].sort();
 
 /** The records of the graph over the cap that may be seeded with a vector of model A. */
 type OverLimitRecord = 'archives' | 'billing' | 'fact' | 'refunds';
@@ -643,12 +768,13 @@ type OverLimitRecord = 'archives' | 'billing' | 'fact' | 'refunds';
  * Model A's vectors (3 dimensions, unit length): billing and refunds orthogonal, the archives apart from both, the
  * fact near billing and away from refunds.
  */
-const OVER_LIMIT_VECTORS: Readonly<Record<OverLimitRecord, readonly number[]>> = {
-  archives: [0, 0, 1],
-  billing: [1, 0, 0],
-  fact: [0.6, -0.8, 0],
-  refunds: [0, 1, 0],
-};
+const OVER_LIMIT_VECTORS: Readonly<Record<OverLimitRecord, readonly number[]>> =
+  {
+    archives: [0, 0, 1],
+    billing: [1, 0, 0],
+    fact: [0.6, -0.8, 0],
+    refunds: [0, 1, 0],
+  };
 
 const topicsOfModelA = vectorsByTopic(
   [
@@ -684,22 +810,34 @@ async function seedOverLimit(
   withVectors: readonly OverLimitRecord[],
 ): Promise<OverLimitGraph> {
   const vectorOf = (record: OverLimitRecord) =>
-    withVectors.includes(record) ? { vector: { model: MODEL_A, values: OVER_LIMIT_VECTORS[record] } } : {};
-  const archives = ARCHIVES.map(
-    (archive, index): SeedItem => ({
-      kind: 'entity',
-      ref: archive.name,
-      ...archive,
-      confirmations: 3,
-      // Newer first in the common order: archive-1 is the newest.
-      confirmedAt: new Date(Date.UTC(2026, 9, 4 - index)),
-      ...vectorOf('archives'),
-    }),
-  );
+    withVectors.includes(record)
+      ? { vector: { model: MODEL_A, values: OVER_LIMIT_VECTORS[record] } }
+      : {};
+  const archives = ARCHIVES.map((archive, index): SeedItem => ({
+    kind: 'entity',
+    ref: archive.name,
+    ...archive,
+    confirmations: 3,
+    // Newer first in the common order: archive-1 is the newest.
+    confirmedAt: new Date(Date.UTC(2026, 9, 4 - index)),
+    ...vectorOf('archives'),
+  }));
   const seeded = await seedGraph(db, recordId, [
     ...archives,
-    { kind: 'entity', ref: 'billing', ...BILLING, confirmedAt: new Date('2026-09-02T00:00:00.000Z'), ...vectorOf('billing') },
-    { kind: 'entity', ref: 'refunds', ...REFUNDS, confirmedAt: new Date('2026-09-01T00:00:00.000Z'), ...vectorOf('refunds') },
+    {
+      kind: 'entity',
+      ref: 'billing',
+      ...BILLING,
+      confirmedAt: new Date('2026-09-02T00:00:00.000Z'),
+      ...vectorOf('billing'),
+    },
+    {
+      kind: 'entity',
+      ref: 'refunds',
+      ...REFUNDS,
+      confirmedAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...vectorOf('refunds'),
+    },
     {
       kind: 'fact',
       from: 'billing',
@@ -710,12 +848,15 @@ async function seedOverLimit(
     },
   ]);
   const [billing, refunds, fact] = seeded.slice(archives.length);
-  if (billing === undefined || refunds === undefined || fact === undefined) throw new Error('The graph was not seeded');
+  if (billing === undefined || refunds === undefined || fact === undefined)
+    throw new Error('The graph was not seeded');
   return { archives: seeded.slice(0, archives.length), billing, fact, refunds };
 }
 
 /** The distinct knowledge blocks of the calls (`knowledgeLinesOf`), in the order first seen. */
-function distinctBlocks(calls: readonly RecordedModelCall[]): (string[] | null)[] {
+function distinctBlocks(
+  calls: readonly RecordedModelCall[],
+): (string[] | null)[] {
   const blocks = new Map<string, string[] | null>();
   for (const call of calls) {
     const lines = knowledgeLinesOf(call);
@@ -735,14 +876,23 @@ function withoutKnowledge(instructions: string): string {
 /** The store keys of a graph's records. */
 function graphKeysOf(graph: KnowledgeGraph): string[] {
   return [
-    ...graph.entities.map((entity) => knowledgeKey({ type: 'entity', id: entity.id })),
-    ...graph.relations.map((relation) => knowledgeKey({ type: 'relation', id: relation.id })),
+    ...graph.entities.map((entity) =>
+      knowledgeKey({ type: 'entity', id: entity.id }),
+    ),
+    ...graph.relations.map((relation) =>
+      knowledgeKey({ type: 'relation', id: relation.id }),
+    ),
   ];
 }
 
 /** The store's entries of the deep agent's collection as `<key> <model>`, sorted. */
-async function vectorLinesOf(db: Database, recordId: string): Promise<string[]> {
-  return (await createPgvectorStore(db).list(recordId)).map((entry) => `${entry.key} ${entry.model}`).sort();
+async function vectorLinesOf(
+  db: Database,
+  recordId: string,
+): Promise<string[]> {
+  return (await createPgvectorStore(db).list(recordId))
+    .map((entry) => `${entry.key} ${entry.model}`)
+    .sort();
 }
 
 /** `<key> <model>` of each record of the graph on one model, sorted: what `vectorLinesOf` gives after a full pass. */
@@ -754,16 +904,27 @@ function everyKeyOn(graph: KnowledgeGraph, model: string): string[] {
 
 /** The `placement` of each record of the view as `<key> <placement>`, sorted. */
 function placementsOf(view: KnowledgeView): string[] {
-  return view.items.map((item) => `${knowledgeKey(item)} ${String(item.placement)}`).sort();
+  return view.items
+    .map((item) => `${knowledgeKey(item)} ${String(item.placement)}`)
+    .sort();
 }
 
 /** The embeddings double's provider requests of one input type, in order of arrival. */
-function embeddingRequestsOf(harness: AgentsHarness, inputType: 'query' | 'document') {
-  return harness.embeddings.calls.filter((call) => call.inputType === inputType);
+function embeddingRequestsOf(
+  harness: AgentsHarness,
+  inputType: 'query' | 'document',
+) {
+  return harness.embeddings.calls.filter(
+    (call) => call.inputType === inputType,
+  );
 }
 
 /** The ledger rows of the embedding models of an owner's task as `<model> <input tokens>`. */
-async function embeddingSpendOf(db: Database, ownerId: string, taskId: string): Promise<string[]> {
+async function embeddingSpendOf(
+  db: Database,
+  ownerId: string,
+  taskId: string,
+): Promise<string[]> {
   return (await ledgerRowsOf(db, ownerId, taskId))
     .filter((row) => row.model === MODEL_A || row.model === MODEL_B)
     .map((row) => `${row.model} ${row.inputTokens}`);
@@ -812,158 +973,267 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: knowledge-trigger, runtime tasks, ModelClient, token ledger, step prompt (modelStep), Postgres
   // @complexity: high
-  it('INT-1: a finished or failed learning run is extracted on the model of its start, billed to the starter, and the next run gets the items in the data envelope', async () => {
-    // Given: a learning deep agent with the scout team (row 1) and a second one whose run will fail (row 2)
-    const recordId = randomUUID();
-    const failingId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    library.add(learningDeepAgent(failingId, [SCOUT]));
-    const starter = newUser();
-    const failingStarter = newUser();
-    const endHeld = createLatch();
-    const roundHeld = createLatch();
-    const model = createScriptedModel();
-    const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge(LEARNED)], latch: roundHeld },
-      { calls: [recordKnowledge([lessonOf('ledger')])] },
-    ]);
-    scoutScript(model, 'Scout learning run 1', ['payment-api']);
-    const nextScout = scoutScript(model, 'Scout learning run 2', []);
-    scoutScript(model, 'Scout failing run', ['ledger']);
+  it(
+    'INT-1: a finished or failed learning run is extracted on the model of its start, billed to the starter, and the next run gets the items in the data envelope',
+    async () => {
+      // Given: a learning deep agent with the scout team (row 1) and a second one whose run will fail (row 2)
+      const recordId = randomUUID();
+      const failingId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      library.add(learningDeepAgent(failingId, [SCOUT]));
+      const starter = newUser();
+      const failingStarter = newUser();
+      const endHeld = createLatch();
+      const roundHeld = createLatch();
+      const model = createScriptedModel();
+      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        { calls: [recordKnowledge(LEARNED)], latch: roundHeld },
+        { calls: [recordKnowledge([lessonOf('ledger')])] },
+      ]);
+      scoutScript(model, 'Scout learning run 1', ['payment-api']);
+      const nextScout = scoutScript(model, 'Scout learning run 2', []);
+      scoutScript(model, 'Scout failing run', ['ledger']);
 
-    await withLibraryRow(database.db, recordId, () =>
-      withLibraryRow(database.db, failingId, async () => {
-        const harness = await learningHarness(model, library);
-        try {
-          // When (row 1): the run's scout searches the logs; the deep agent's answer is held
-          const run = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [
-              {
-                text: 'Coordinate learning run 1',
-                scout: 'Scout learning run 1',
-                answer: { text: 'Answer of learning run 1', latch: endHeld },
+      await withLibraryRow(database.db, recordId, () =>
+        withLibraryRow(database.db, failingId, async () => {
+          const harness = await learningHarness(model, library);
+          try {
+            // When (row 1): the run's scout searches the logs; the deep agent's answer is held
+            const run = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId,
+              turns: [
+                {
+                  text: 'Coordinate learning run 1',
+                  scout: 'Scout learning run 1',
+                  answer: { text: 'Answer of learning run 1', latch: endHeld },
+                },
+              ],
+            });
+            const scoutId = await startedChild(harness, run.deepAgentId);
+            await endHeld.reached();
+            // When: the author switches the deep agent to model B mid-run; the finished scout gets its `empty` call
+            const content = learningContent(recordId);
+            const switched = { ...content, model: TEST_MODEL_CHOSEN };
+            library.edit(recordId, {
+              body: { kind: 'deep_agent', content: switched },
+            });
+            await writeEmptyCall(database.db, scoutId, 'checkout-web');
+            endHeld.open();
+
+            // Then (NFR-01): when the round's model call arrives, the run has ended with its answer, and its one
+            // extraction task, the starter's, was created at or after the end
+            await roundHeld.reached();
+            const ended = await harness.runtime.tasks.get(
+              run.deepAgentId,
+              starter,
+            );
+            const historyAtRound = historyLines(
+              await historyOf(harness, run.deepAgentId, starter),
+            );
+            const [extract, ...moreExtracts] = await knowledgeTasksOf(
+              database.db,
+              { runId: run.deepAgentId },
+            );
+            if (extract === undefined || ended.finishedAt === null)
+              throw new Error('no extraction task or no end');
+            expect(ended.status).toBe('completed');
+            expect(historyAtRound).toContain(
+              'model_answer: Answer of learning run 1 []',
+            );
+            expect(moreExtracts).toEqual([]);
+            expect(extract.ownerId).toBe(starter);
+            expect(extract.createdAt.getTime()).toBeGreaterThanOrEqual(
+              ended.finishedAt.getTime(),
+            );
+
+            roundHeld.open();
+            const round = await waitForRound(database.db, run.deepAgentId);
+
+            // Then: the round read the run's two calls and ran once, on model A of the start
+            expect(roundCallsOf(extraction.calls[0])).toEqual([
+              `${LOGS_SERVER}/search_logs success payment-api`,
+              `${LOGS_SERVER}/search_logs empty checkout-web`,
+            ]);
+            expect(extraction.calls.map((call) => call.model)).toEqual([
+              TEST_MODEL_DEFAULT,
+            ]);
+            expect([
+              round.lastStatus,
+              round.lastReason,
+              round.lastAdded,
+              round.lastConfirmed,
+              round.lastOutdated,
+              round.lastModel,
+              round.lastExtractTaskId,
+            ]).toEqual([
+              'done',
+              null,
+              5,
+              0,
+              0,
+              TEST_MODEL_DEFAULT,
+              extract.taskId,
+            ]);
+            // Then (AC-08.1, AC-08.3): billed to the starter on model A: 1 000 input and 100 output tokens at 1 and 5 USD per million
+            const billed = await ledgerRowsOf(
+              database.db,
+              starter,
+              extract.taskId,
+            );
+            expect(
+              billed.map(
+                (row) => `${row.model} ${row.inputTokens} ${row.costUsd}`,
+              ),
+            ).toEqual([`${TEST_MODEL_DEFAULT} 1000 0.0015`]);
+            expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
+            expect(
+              await ledgerRowsOf(
+                database.db,
+                PLATFORM_OWNER_ID,
+                extract.taskId,
+              ),
+            ).toEqual([]);
+            // Then: the run's final state and its history are as the end left them; its one task completed
+            expect(
+              (await harness.runtime.tasks.get(run.deepAgentId, starter))
+                .status,
+            ).toBe('completed');
+            expect(
+              historyLines(await historyOf(harness, run.deepAgentId, starter)),
+            ).toEqual(historyAtRound);
+            expect(
+              (await completedExtractsOf(database.db, run.deepAgentId)).map(
+                (task) => task.taskId,
+              ),
+            ).toEqual([extract.taskId]);
+
+            // When: the starter runs the deep agent again
+            const next = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId,
+              turns: [
+                {
+                  text: 'Coordinate learning run 2',
+                  scout: 'Scout learning run 2',
+                },
+              ],
+            });
+            await nextScout.called(1);
+            await waitForTaskStatus(
+              harness,
+              next.deepAgentId,
+              starter,
+              'completed',
+            );
+
+            // Then (AC-01.1, AC-15.1, AC-15.2, AC-07.3): the deep agent, now on model B, and the scout carry the five items
+            // inside the data envelope, the rule right above it; the scout's prompt comes first
+            expect(next.deepAgent.calls[0]?.model).toBe(TEST_MODEL_CHOSEN);
+            expect(knowledgeLinesOf(next.deepAgent.calls[0])).toEqual(
+              LEARNED_LINES,
+            );
+            expect(knowledgeLinesOf(nextScout.calls[0])).toEqual(LEARNED_LINES);
+            expect(
+              nextScout.calls[0]?.instructions.startsWith(
+                `${SCOUT_PROMPT}\n\n${KNOWLEDGE_RULE}\n${KNOWLEDGE_ENVELOPE}\n`,
+              ),
+            ).toBe(true);
+
+            // When: the author switches the flag off and the starter runs the deep agent once more
+            library.edit(recordId, {
+              body: {
+                kind: 'deep_agent',
+                content: { ...switched, selfLearning: false },
               },
-            ],
-          });
-          const scoutId = await startedChild(harness, run.deepAgentId);
-          await endHeld.reached();
-          // When: the author switches the deep agent to model B mid-run; the finished scout gets its `empty` call
-          const content = learningContent(recordId);
-          const switched = { ...content, model: TEST_MODEL_CHOSEN };
-          library.edit(recordId, { body: { kind: 'deep_agent', content: switched } });
-          await writeEmptyCall(database.db, scoutId, 'checkout-web');
-          endHeld.open();
+            });
+            const unlearned = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId,
+              turns: [{ text: 'Coordinate learning run 3', scout: null }],
+            });
+            await waitForTaskStatus(
+              harness,
+              unlearned.deepAgentId,
+              starter,
+              'completed',
+            );
 
-          // Then (NFR-01): when the round's model call arrives, the run has ended with its answer, and its one
-          // extraction task, the starter's, was created at or after the end
-          await roundHeld.reached();
-          const ended = await harness.runtime.tasks.get(run.deepAgentId, starter);
-          const historyAtRound = historyLines(await historyOf(harness, run.deepAgentId, starter));
-          const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
-          if (extract === undefined || ended.finishedAt === null) throw new Error('no extraction task or no end');
-          expect(ended.status).toBe('completed');
-          expect(historyAtRound).toContain('model_answer: Answer of learning run 1 []');
-          expect(moreExtracts).toEqual([]);
-          expect(extract.ownerId).toBe(starter);
-          expect(extract.createdAt.getTime()).toBeGreaterThanOrEqual(ended.finishedAt.getTime());
+            // Then: the run has no row, its end creates no task, and its steps get no block although the graph is there
+            const decided = await triggerDecisionOf(
+              harness,
+              unlearned.deepAgentId,
+            );
+            expect([decided.decision, decided.reason]).toEqual([
+              'ignore',
+              'not_learning',
+            ]);
+            expect(
+              await findRunById(database.db, unlearned.deepAgentId),
+            ).toBeUndefined();
+            expect(
+              await knowledgeTasksOf(database.db, {
+                runId: unlearned.deepAgentId,
+              }),
+            ).toEqual([]);
+            expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(
+              KNOWLEDGE_RULE,
+            );
 
-          roundHeld.open();
-          const round = await waitForRound(database.db, run.deepAgentId);
+            // When (row 2): a run of the second deep agent fails at its deep agent's last call
+            const failing = await startLearningRun(harness, model, {
+              ownerId: failingStarter,
+              recordId: failingId,
+              turns: [
+                {
+                  text: 'Coordinate failing run',
+                  scout: 'Scout failing run',
+                  answer: modelError(400),
+                },
+              ],
+            });
+            const failedRound = await waitForRound(
+              database.db,
+              failing.deepAgentId,
+            );
 
-          // Then: the round read the run's two calls and ran once, on model A of the start
-          expect(roundCallsOf(extraction.calls[0])).toEqual([
-            `${LOGS_SERVER}/search_logs success payment-api`,
-            `${LOGS_SERVER}/search_logs empty checkout-web`,
-          ]);
-          expect(extraction.calls.map((call) => call.model)).toEqual([TEST_MODEL_DEFAULT]);
-          expect([
-            round.lastStatus,
-            round.lastReason,
-            round.lastAdded,
-            round.lastConfirmed,
-            round.lastOutdated,
-            round.lastModel,
-            round.lastExtractTaskId,
-          ]).toEqual(['done', null, 5, 0, 0, TEST_MODEL_DEFAULT, extract.taskId]);
-          // Then (AC-08.1, AC-08.3): billed to the starter on model A: 1 000 input and 100 output tokens at 1 and 5 USD per million
-          const billed = await ledgerRowsOf(database.db, starter, extract.taskId);
-          expect(billed.map((row) => `${row.model} ${row.inputTokens} ${row.costUsd}`)).toEqual([
-            `${TEST_MODEL_DEFAULT} 1000 0.0015`,
-          ]);
-          expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
-          expect(await ledgerRowsOf(database.db, PLATFORM_OWNER_ID, extract.taskId)).toEqual([]);
-          // Then: the run's final state and its history are as the end left them; its one task completed
-          expect((await harness.runtime.tasks.get(run.deepAgentId, starter)).status).toBe('completed');
-          expect(historyLines(await historyOf(harness, run.deepAgentId, starter))).toEqual(historyAtRound);
-          expect((await completedExtractsOf(database.db, run.deepAgentId)).map((task) => task.taskId)).toEqual([
-            extract.taskId,
-          ]);
-
-          // When: the starter runs the deep agent again
-          const next = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [{ text: 'Coordinate learning run 2', scout: 'Scout learning run 2' }],
-          });
-          await nextScout.called(1);
-          await waitForTaskStatus(harness, next.deepAgentId, starter, 'completed');
-
-          // Then (AC-01.1, AC-15.1, AC-15.2, AC-07.3): the deep agent, now on model B, and the scout carry the five items
-          // inside the data envelope, the rule right above it; the scout's prompt comes first
-          expect(next.deepAgent.calls[0]?.model).toBe(TEST_MODEL_CHOSEN);
-          expect(knowledgeLinesOf(next.deepAgent.calls[0])).toEqual(LEARNED_LINES);
-          expect(knowledgeLinesOf(nextScout.calls[0])).toEqual(LEARNED_LINES);
-          expect(
-            nextScout.calls[0]?.instructions.startsWith(`${SCOUT_PROMPT}\n\n${KNOWLEDGE_RULE}\n${KNOWLEDGE_ENVELOPE}\n`),
-          ).toBe(true);
-
-          // When: the author switches the flag off and the starter runs the deep agent once more
-          library.edit(recordId, { body: { kind: 'deep_agent', content: { ...switched, selfLearning: false } } });
-          const unlearned = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [{ text: 'Coordinate learning run 3', scout: null }],
-          });
-          await waitForTaskStatus(harness, unlearned.deepAgentId, starter, 'completed');
-
-          // Then: the run has no row, its end creates no task, and its steps get no block although the graph is there
-          const decided = await triggerDecisionOf(harness, unlearned.deepAgentId);
-          expect([decided.decision, decided.reason]).toEqual(['ignore', 'not_learning']);
-          expect(await findRunById(database.db, unlearned.deepAgentId)).toBeUndefined();
-          expect(await knowledgeTasksOf(database.db, { runId: unlearned.deepAgentId })).toEqual([]);
-          expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
-
-          // When (row 2): a run of the second deep agent fails at its deep agent's last call
-          const failing = await startLearningRun(harness, model, {
-            ownerId: failingStarter,
-            recordId: failingId,
-            turns: [{ text: 'Coordinate failing run', scout: 'Scout failing run', answer: modelError(400) }],
-          });
-          const failedRound = await waitForRound(database.db, failing.deepAgentId);
-
-          // Then (AC-03.1): the failed run is extracted on model A, its lesson is in its graph, and it stays failed
-          expect(roundCallsOf(extraction.calls[1])).toEqual([`${LOGS_SERVER}/search_logs success ledger`]);
-          expect(extraction.calls.map((call) => call.model)).toEqual([TEST_MODEL_DEFAULT, TEST_MODEL_DEFAULT]);
-          expect([failedRound.lastStatus, failedRound.lastAdded, failedRound.lastModel]).toEqual([
-            'done',
-            1,
-            TEST_MODEL_DEFAULT,
-          ]);
-          expect((await readGraph(database.db, failingId)).relations.map((row) => `${row.kind} ${row.question}`)).toEqual([
-            'lesson errors of ledger',
-          ]);
-          expect((await harness.runtime.tasks.get(failing.deepAgentId, failingStarter)).status).toBe('failed');
-        } finally {
-          endHeld.open();
-          roundHeld.open();
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+            // Then (AC-03.1): the failed run is extracted on model A, its lesson is in its graph, and it stays failed
+            expect(roundCallsOf(extraction.calls[1])).toEqual([
+              `${LOGS_SERVER}/search_logs success ledger`,
+            ]);
+            expect(extraction.calls.map((call) => call.model)).toEqual([
+              TEST_MODEL_DEFAULT,
+              TEST_MODEL_DEFAULT,
+            ]);
+            expect([
+              failedRound.lastStatus,
+              failedRound.lastAdded,
+              failedRound.lastModel,
+            ]).toEqual(['done', 1, TEST_MODEL_DEFAULT]);
+            expect(
+              (await readGraph(database.db, failingId)).relations.map(
+                (row) => `${row.kind} ${row.question}`,
+              ),
+            ).toEqual(['lesson errors of ledger']);
+            expect(
+              (
+                await harness.runtime.tasks.get(
+                  failing.deepAgentId,
+                  failingStarter,
+                )
+              ).status,
+            ).toBe('failed');
+          } finally {
+            endHeld.open();
+            roundHeld.open();
+            await closeAll([harness]);
+          }
+        }),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2: a user stop is never extracted, not even after the run is continued
@@ -987,120 +1257,197 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: edge-case
   // @dependency: knowledge-trigger, knowledge-runs row, runtime tasks, ModelClient (scripted), Postgres
   // @complexity: high
-  it('INT-2: a stopped run produces no extraction, and calls of the stopped segment are never extracted after the run is continued', async () => {
-    // Given: two learning deep agents, one per row, run by the same employee
-    const idleId = randomUUID();
-    const inFlightId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(idleId, [SCOUT]));
-    library.add(learningDeepAgent(inFlightId, [SCOUT]));
-    const starter = newUser();
-    const scoutHeld = createLatch();
-    const roundHeld = createLatch();
-    const continuedScoutHeld = createLatch();
-    const model = createScriptedModel();
-    const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge([lessonOf('fraud-check')])] },
-      { calls: [recordKnowledge([lessonOf('payment-api')])], latch: roundHeld },
-    ]);
-    scoutScript(model, 'Scout before the stop', ['ledger'], scoutHeld);
-    scoutScript(model, 'Scout after the stop', ['fraud-check']);
-    scoutScript(model, 'Scout of the round in flight', ['payment-api']);
-    scoutScript(model, 'Scout stopped during the round', ['provider-adapter'], continuedScoutHeld);
+  it(
+    'INT-2: a stopped run produces no extraction, and calls of the stopped segment are never extracted after the run is continued',
+    async () => {
+      // Given: two learning deep agents, one per row, run by the same employee
+      const idleId = randomUUID();
+      const inFlightId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(idleId, [SCOUT]));
+      library.add(learningDeepAgent(inFlightId, [SCOUT]));
+      const starter = newUser();
+      const scoutHeld = createLatch();
+      const roundHeld = createLatch();
+      const continuedScoutHeld = createLatch();
+      const model = createScriptedModel();
+      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        { calls: [recordKnowledge([lessonOf('fraud-check')])] },
+        {
+          calls: [recordKnowledge([lessonOf('payment-api')])],
+          latch: roundHeld,
+        },
+      ]);
+      scoutScript(model, 'Scout before the stop', ['ledger'], scoutHeld);
+      scoutScript(model, 'Scout after the stop', ['fraud-check']);
+      scoutScript(model, 'Scout of the round in flight', ['payment-api']);
+      scoutScript(
+        model,
+        'Scout stopped during the round',
+        ['provider-adapter'],
+        continuedScoutHeld,
+      );
 
-    await withLibraryRow(database.db, idleId, () =>
-      withLibraryRow(database.db, inFlightId, async () => {
-        const harness = await learningHarness(model, library);
-        try {
-          // When (row A): the scout has searched `ledger` and is held; the employee stops the run
-          const idle = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId: idleId,
-            turns: [
-              { text: 'Coordinate the run stopped while idle', scout: 'Scout before the stop' },
-              { text: 'Carry on after the stop', scout: 'Scout after the stop' },
-            ],
-          });
-          await scoutHeld.reached();
-          await harness.sessions.stop({ agentId: idle.deepAgentId, ownerId: starter });
-          const stopped = await waitForRound(database.db, idle.deepAgentId);
+      await withLibraryRow(database.db, idleId, () =>
+        withLibraryRow(database.db, inFlightId, async () => {
+          const harness = await learningHarness(model, library);
+          try {
+            // When (row A): the scout has searched `ledger` and is held; the employee stops the run
+            const idle = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId: idleId,
+              turns: [
+                {
+                  text: 'Coordinate the run stopped while idle',
+                  scout: 'Scout before the stop',
+                },
+                {
+                  text: 'Carry on after the stop',
+                  scout: 'Scout after the stop',
+                },
+              ],
+            });
+            await scoutHeld.reached();
+            await harness.sessions.stop({
+              agentId: idle.deepAgentId,
+              ownerId: starter,
+            });
+            const stopped = await waitForRound(database.db, idle.deepAgentId);
 
-          // Then: the stop is written as skipped / `stopped` with the mark at the stop; no task, no model call, no graph
-          expect((await triggerDecisionOf(harness, idle.deepAgentId)).decision).toBe('stopped');
-          expect([stopped.lastStatus, stopped.lastReason, stopped.extractTaskId]).toEqual(['skipped', 'stopped', null]);
-          expect(stopped.extractedUpTo).not.toBeNull();
-          expect(await knowledgeTasksOf(database.db, { runId: idle.deepAgentId })).toEqual([]);
-          expect(extraction.calls).toHaveLength(0);
-          const graphAfterStop = await readGraph(database.db, idleId);
-          expect([graphAfterStop.entities.length, graphAfterStop.relations.length]).toEqual([0, 0]);
+            // Then: the stop is written as skipped / `stopped` with the mark at the stop; no task, no model call, no graph
+            expect(
+              (await triggerDecisionOf(harness, idle.deepAgentId)).decision,
+            ).toBe('stopped');
+            expect([
+              stopped.lastStatus,
+              stopped.lastReason,
+              stopped.extractTaskId,
+            ]).toEqual(['skipped', 'stopped', null]);
+            expect(stopped.extractedUpTo).not.toBeNull();
+            expect(
+              await knowledgeTasksOf(database.db, { runId: idle.deepAgentId }),
+            ).toEqual([]);
+            expect(extraction.calls).toHaveLength(0);
+            const graphAfterStop = await readGraph(database.db, idleId);
+            expect([
+              graphAfterStop.entities.length,
+              graphAfterStop.relations.length,
+            ]).toEqual([0, 0]);
 
-          // When: the employee continues the run; a new scout searches `fraud-check` and the run finishes
-          await harness.sessions.send({ agentId: idle.deepAgentId, ownerId: starter, text: 'Carry on after the stop' });
-          const resumed = await waitForRound(database.db, idle.deepAgentId, stopped.lastAt);
+            // When: the employee continues the run; a new scout searches `fraud-check` and the run finishes
+            await harness.sessions.send({
+              agentId: idle.deepAgentId,
+              ownerId: starter,
+              text: 'Carry on after the stop',
+            });
+            const resumed = await waitForRound(
+              database.db,
+              idle.deepAgentId,
+              stopped.lastAt,
+            );
 
-          // Then (AC-03.2, DC-3): the round's input holds the new call only, never the stopped stretch's `ledger` call
-          expect(roundCallsOf(extraction.calls[0])).toEqual([`${LOGS_SERVER}/search_logs success fraud-check`]);
-          expect([resumed.lastStatus, resumed.lastAdded]).toEqual(['done', 1]);
-          expect(resumed.extractedUpTo?.getTime()).toBeGreaterThan(stopped.extractedUpTo?.getTime() ?? Infinity);
-          expect(await knowledgeTasksOf(database.db, { runId: idle.deepAgentId })).toHaveLength(1);
+            // Then (AC-03.2, DC-3): the round's input holds the new call only, never the stopped stretch's `ledger` call
+            expect(roundCallsOf(extraction.calls[0])).toEqual([
+              `${LOGS_SERVER}/search_logs success fraud-check`,
+            ]);
+            expect([resumed.lastStatus, resumed.lastAdded]).toEqual([
+              'done',
+              1,
+            ]);
+            expect(resumed.extractedUpTo?.getTime()).toBeGreaterThan(
+              stopped.extractedUpTo?.getTime() ?? Infinity,
+            );
+            expect(
+              await knowledgeTasksOf(database.db, { runId: idle.deepAgentId }),
+            ).toHaveLength(1);
 
-          // When (row B): a run ends after a `payment-api` search and its round's model call is held; the employee
-          // continues it, its new scout searches `provider-adapter` and is held; the employee stops the run
-          const inFlight = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId: inFlightId,
-            turns: [
-              { text: 'Coordinate the run stopped during its round', scout: 'Scout of the round in flight' },
-              { text: 'Carry on while the round runs', scout: 'Scout stopped during the round' },
-            ],
-          });
-          await roundHeld.reached();
-          const [roundTask] = await knowledgeTasksOf(database.db, { runId: inFlight.deepAgentId });
-          if (roundTask === undefined) throw new Error('the run of row B has no extraction task');
-          await harness.sessions.send({
-            agentId: inFlight.deepAgentId,
-            ownerId: starter,
-            text: 'Carry on while the round runs',
-          });
-          await continuedScoutHeld.reached();
-          await harness.sessions.stop({ agentId: inFlight.deepAgentId, ownerId: starter });
-          const stoppedMidRound = await waitFor(
-            () => findRunById(database.db, inFlight.deepAgentId),
-            (row) => row?.lastReason === 'stopped',
-            'the stop of the run of row B to be written',
-          );
-          if (stoppedMidRound === undefined) throw new Error('the run row of row B is gone');
+            // When (row B): a run ends after a `payment-api` search and its round's model call is held; the employee
+            // continues it, its new scout searches `provider-adapter` and is held; the employee stops the run
+            const inFlight = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId: inFlightId,
+              turns: [
+                {
+                  text: 'Coordinate the run stopped during its round',
+                  scout: 'Scout of the round in flight',
+                },
+                {
+                  text: 'Carry on while the round runs',
+                  scout: 'Scout stopped during the round',
+                },
+              ],
+            });
+            await roundHeld.reached();
+            const [roundTask] = await knowledgeTasksOf(database.db, {
+              runId: inFlight.deepAgentId,
+            });
+            if (roundTask === undefined)
+              throw new Error('the run of row B has no extraction task');
+            await harness.sessions.send({
+              agentId: inFlight.deepAgentId,
+              ownerId: starter,
+              text: 'Carry on while the round runs',
+            });
+            await continuedScoutHeld.reached();
+            await harness.sessions.stop({
+              agentId: inFlight.deepAgentId,
+              ownerId: starter,
+            });
+            const stoppedMidRound = await waitFor(
+              () => findRunById(database.db, inFlight.deepAgentId),
+              (row) => row?.lastReason === 'stopped',
+              'the stop of the run of row B to be written',
+            );
+            if (stoppedMidRound === undefined)
+              throw new Error('the run row of row B is gone');
 
-          // Then: the stop keeps the round's task on the row and creates none
-          expect([stoppedMidRound.lastStatus, stoppedMidRound.extractTaskId]).toEqual(['skipped', roundTask.taskId]);
+            // Then: the stop keeps the round's task on the row and creates none
+            expect([
+              stoppedMidRound.lastStatus,
+              stoppedMidRound.extractTaskId,
+            ]).toEqual(['skipped', roundTask.taskId]);
 
-          // When: the round's model answers
-          roundHeld.open();
-          const late = await waitForRound(database.db, inFlight.deepAgentId, stoppedMidRound.lastAt);
+            // When: the round's model answers
+            roundHeld.open();
+            const late = await waitForRound(
+              database.db,
+              inFlight.deepAgentId,
+              stoppedMidRound.lastAt,
+            );
 
-          // Then (Invariant 2): the round writes its own outcome over the stop, the mark stays at the stop, and the
-          // stopped stretch's `provider-adapter` call was never in a round
-          expect([late.lastStatus, late.lastReason, late.lastAdded, late.lastExtractTaskId]).toEqual([
-            'done',
-            null,
-            1,
-            roundTask.taskId,
-          ]);
-          expect(late.extractedUpTo?.getTime()).toBe(stoppedMidRound.extractedUpTo?.getTime());
-          expect(roundCallsOf(extraction.calls[1])).toEqual([`${LOGS_SERVER}/search_logs success payment-api`]);
-          expect(extraction.calls).toHaveLength(2);
-          expect((await knowledgeTasksOf(database.db, { runId: inFlight.deepAgentId })).map((task) => task.taskId)).toEqual([
-            roundTask.taskId,
-          ]);
-        } finally {
-          scoutHeld.open();
-          roundHeld.open();
-          continuedScoutHeld.open();
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+            // Then (Invariant 2): the round writes its own outcome over the stop, the mark stays at the stop, and the
+            // stopped stretch's `provider-adapter` call was never in a round
+            expect([
+              late.lastStatus,
+              late.lastReason,
+              late.lastAdded,
+              late.lastExtractTaskId,
+            ]).toEqual(['done', null, 1, roundTask.taskId]);
+            expect(late.extractedUpTo?.getTime()).toBe(
+              stoppedMidRound.extractedUpTo?.getTime(),
+            );
+            expect(roundCallsOf(extraction.calls[1])).toEqual([
+              `${LOGS_SERVER}/search_logs success payment-api`,
+            ]);
+            expect(extraction.calls).toHaveLength(2);
+            expect(
+              (
+                await knowledgeTasksOf(database.db, {
+                  runId: inFlight.deepAgentId,
+                })
+              ).map((task) => task.taskId),
+            ).toEqual([roundTask.taskId]);
+          } finally {
+            scoutHeld.open();
+            roundHeld.open();
+            continuedScoutHeld.open();
+            await closeAll([harness]);
+          }
+        }),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3: a revived run that ends again - one task at a time, only new calls, nothing extracted twice
@@ -1121,101 +1468,148 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: knowledge-trigger, knowledge.extract handler, runtime tasks, ModelClient (scripted, latch), Postgres
   // @complexity: high
-  it('INT-3: a run revived and ended again gets one extraction task at a time and each round reads only the calls after the previous round', async () => {
-    // Given: a learning deep agent; the first round's model call will be held
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const starter = newUser();
-    const firstHeld = createLatch();
-    const model = createScriptedModel();
-    const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge([lessonOf('checkout-web')])], latch: firstHeld },
-      { calls: [recordKnowledge([lessonOf('fraud-check')])] },
-    ]);
-    scoutScript(model, 'Scout three services', ['checkout-web', 'payment-api', 'ledger']);
-    scoutScript(model, 'Scout two more services', ['fraud-check', 'provider-adapter']);
+  it(
+    'INT-3: a run revived and ended again gets one extraction task at a time and each round reads only the calls after the previous round',
+    async () => {
+      // Given: a learning deep agent; the first round's model call will be held
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const starter = newUser();
+      const firstHeld = createLatch();
+      const model = createScriptedModel();
+      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        {
+          calls: [recordKnowledge([lessonOf('checkout-web')])],
+          latch: firstHeld,
+        },
+        { calls: [recordKnowledge([lessonOf('fraud-check')])] },
+      ]);
+      scoutScript(model, 'Scout three services', [
+        'checkout-web',
+        'payment-api',
+        'ledger',
+      ]);
+      scoutScript(model, 'Scout two more services', [
+        'fraud-check',
+        'provider-adapter',
+      ]);
 
-    await withLibraryRow(database.db, recordId, async () => {
-      const harness = await learningHarness(model, library);
-      try {
-        // When (row A): the run ends after three searches and its round's model call is held
-        const run = await startLearningRun(harness, model, {
-          ownerId: starter,
-          recordId,
-          turns: [
-            { text: 'Coordinate the revived run', scout: 'Scout three services' },
-            { text: 'Look at two more services', scout: 'Scout two more services' },
-            { text: 'Wrap up without new searches', scout: null },
-          ],
-        });
-        await firstHeld.reached();
-        const [task] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
-        if (task === undefined) throw new Error('the run has no extraction task');
+      await withLibraryRow(database.db, recordId, async () => {
+        const harness = await learningHarness(model, library);
+        try {
+          // When (row A): the run ends after three searches and its round's model call is held
+          const run = await startLearningRun(harness, model, {
+            ownerId: starter,
+            recordId,
+            turns: [
+              {
+                text: 'Coordinate the revived run',
+                scout: 'Scout three services',
+              },
+              {
+                text: 'Look at two more services',
+                scout: 'Scout two more services',
+              },
+              { text: 'Wrap up without new searches', scout: null },
+            ],
+          });
+          await firstHeld.reached();
+          const [task] = await knowledgeTasksOf(database.db, {
+            runId: run.deepAgentId,
+          });
+          if (task === undefined)
+            throw new Error('the run has no extraction task');
 
-        // When: the employee continues the run, a new scout searches two more services, and the run ends again
-        await harness.sessions.send({ agentId: run.deepAgentId, ownerId: starter, text: 'Look at two more services' });
-        const marked = await waitFor(
-          () => findRunById(database.db, run.deepAgentId),
-          (row) => row?.needsRound === true,
-          'the second end to ask for another round',
-        );
+          // When: the employee continues the run, a new scout searches two more services, and the run ends again
+          await harness.sessions.send({
+            agentId: run.deepAgentId,
+            ownerId: starter,
+            text: 'Look at two more services',
+          });
+          const marked = await waitFor(
+            () => findRunById(database.db, run.deepAgentId),
+            (row) => row?.needsRound === true,
+            'the second end to ask for another round',
+          );
 
-        // Then: the second end only marked the row of the task in flight; the run still has that one task
-        expect(marked?.extractTaskId).toBe(task.taskId);
-        expect((await knowledgeTasksOf(database.db, { runId: run.deepAgentId })).map((row) => row.taskId)).toEqual([
-          task.taskId,
-        ]);
+          // Then: the second end only marked the row of the task in flight; the run still has that one task
+          expect(marked?.extractTaskId).toBe(task.taskId);
+          expect(
+            (
+              await knowledgeTasksOf(database.db, { runId: run.deepAgentId })
+            ).map((row) => row.taskId),
+          ).toEqual([task.taskId]);
 
-        // When: the first round's model answers
-        firstHeld.open();
-        const second = await waitForRound(database.db, run.deepAgentId);
+          // When: the first round's model answers
+          firstHeld.open();
+          const second = await waitForRound(database.db, run.deepAgentId);
 
-        // Then (AC-03.3, DC-4): the same task ran two rounds; the first read the three first calls, the second only the two new ones
-        expect(extraction.calls).toHaveLength(2);
-        expect(roundCallsOf(extraction.calls[0]).sort()).toEqual([
-          `${LOGS_SERVER}/search_logs success checkout-web`,
-          `${LOGS_SERVER}/search_logs success ledger`,
-          `${LOGS_SERVER}/search_logs success payment-api`,
-        ]);
-        expect(roundCallsOf(extraction.calls[1]).sort()).toEqual([
-          `${LOGS_SERVER}/search_logs success fraud-check`,
-          `${LOGS_SERVER}/search_logs success provider-adapter`,
-        ]);
-        expect([second.lastStatus, second.lastAdded, second.lastExtractTaskId]).toEqual(['done', 1, task.taskId]);
-        expect((await completedExtractsOf(database.db, run.deepAgentId)).map((row) => row.taskId)).toEqual([
-          task.taskId,
-        ]);
-        expect((await readGraph(database.db, recordId)).relations.map((row) => row.question).sort(byText)).toEqual([
-          'errors of checkout-web',
-          'errors of fraud-check',
-        ]);
+          // Then (AC-03.3, DC-4): the same task ran two rounds; the first read the three first calls, the second only the two new ones
+          expect(extraction.calls).toHaveLength(2);
+          expect(roundCallsOf(extraction.calls[0]).sort()).toEqual([
+            `${LOGS_SERVER}/search_logs success checkout-web`,
+            `${LOGS_SERVER}/search_logs success ledger`,
+            `${LOGS_SERVER}/search_logs success payment-api`,
+          ]);
+          expect(roundCallsOf(extraction.calls[1]).sort()).toEqual([
+            `${LOGS_SERVER}/search_logs success fraud-check`,
+            `${LOGS_SERVER}/search_logs success provider-adapter`,
+          ]);
+          expect([
+            second.lastStatus,
+            second.lastAdded,
+            second.lastExtractTaskId,
+          ]).toEqual(['done', 1, task.taskId]);
+          expect(
+            (await completedExtractsOf(database.db, run.deepAgentId)).map(
+              (row) => row.taskId,
+            ),
+          ).toEqual([task.taskId]);
+          expect(
+            (await readGraph(database.db, recordId)).relations
+              .map((row) => row.question)
+              .sort(byText),
+          ).toEqual(['errors of checkout-web', 'errors of fraud-check']);
 
-        // When (row B): the employee continues the run and it ends with no new call
-        await harness.sessions.send({ agentId: run.deepAgentId, ownerId: starter, text: 'Wrap up without new searches' });
-        const third = await waitForRound(database.db, run.deepAgentId, second.lastAt);
+          // When (row B): the employee continues the run and it ends with no new call
+          await harness.sessions.send({
+            agentId: run.deepAgentId,
+            ownerId: starter,
+            text: 'Wrap up without new searches',
+          });
+          const third = await waitForRound(
+            database.db,
+            run.deepAgentId,
+            second.lastAt,
+          );
 
-        // Then (DC-5): a new task wrote done with zeros without calling the model or billing anyone
-        const tasks = await completedExtractsOf(database.db, run.deepAgentId);
-        const [, emptyTask, ...more] = tasks;
-        if (emptyTask === undefined) throw new Error('the third end created no extraction task');
-        expect([tasks[0]?.taskId, more]).toEqual([task.taskId, []]);
-        expect([
-          third.lastStatus,
-          third.lastReason,
-          third.lastAdded,
-          third.lastConfirmed,
-          third.lastOutdated,
-          third.lastExtractTaskId,
-        ]).toEqual(['done', null, 0, 0, 0, emptyTask.taskId]);
-        expect(extraction.calls).toHaveLength(2);
-        expect(await ledgerRowsOf(database.db, starter, emptyTask.taskId)).toEqual([]);
-      } finally {
-        firstHeld.open();
-        await closeAll([harness]);
-      }
-    });
-  }, TEST_TIMEOUT_MS);
+          // Then (DC-5): a new task wrote done with zeros without calling the model or billing anyone
+          const tasks = await completedExtractsOf(database.db, run.deepAgentId);
+          const [, emptyTask, ...more] = tasks;
+          if (emptyTask === undefined)
+            throw new Error('the third end created no extraction task');
+          expect([tasks[0]?.taskId, more]).toEqual([task.taskId, []]);
+          expect([
+            third.lastStatus,
+            third.lastReason,
+            third.lastAdded,
+            third.lastConfirmed,
+            third.lastOutdated,
+            third.lastExtractTaskId,
+          ]).toEqual(['done', null, 0, 0, 0, emptyTask.taskId]);
+          expect(extraction.calls).toHaveLength(2);
+          expect(
+            await ledgerRowsOf(database.db, starter, emptyTask.taskId),
+          ).toEqual([]);
+        } finally {
+          firstHeld.open();
+          await closeAll([harness]);
+        }
+      });
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-4: the graph write is exactly-once - two concurrent extractions, and a restart mid-round
@@ -1239,142 +1633,231 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: knowledge.extract handler, graph repository, checkOperations, runtime recovery (`ZOMBIE_RUNTIME`, a second instance), Postgres
   // @complexity: high
-  it('INT-4: two concurrent extractions of one deep agent lose nothing and duplicate nothing, and a restart mid-round applies no operation twice', async () => {
-    // Given (row A): a learning deep agent two employees run at once; both rounds name the same entity and their model calls are held together
-    const recordId = randomUUID();
-    const restartId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    library.add(learningDeepAgent(restartId, [SCOUT]));
-    const [first, second, restartStarter] = [newUser(), newUser(), newUser()];
-    const bothHeld = createLatch();
-    const model = createScriptedModel();
-    const ledger = { op: 'add_entity', ref: 'books', name: 'ledger', description: 'the books of the shop', evidence: ['c1'] };
-    const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge([ledger, lessonOf('payment-api')])], latch: bothHeld },
-      { calls: [recordKnowledge([ledger, lessonOf('fraud-check')])], latch: bothHeld },
-    ]);
-    scoutScript(model, 'Scout concurrent run 1', ['payment-api']);
-    scoutScript(model, 'Scout concurrent run 2', ['fraud-check']);
-    // Given (row B): a second deep agent whose round runs on a zombie instance, its model call held; the re-run answers the same
-    const restartHeld = createLatch();
-    const restartModel = createScriptedModel();
-    const restartOperations: readonly unknown[] = [
-      { op: 'add_entity', ref: 'pay', name: 'payment-api', description: 'the payment service of the shop', evidence: ['c1'] },
-      lessonOf('checkout-web'),
-    ];
-    const restartExtraction = restartModel.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge(restartOperations)], latch: restartHeld },
-      { calls: [recordKnowledge(restartOperations)] },
-    ]);
-    scoutScript(restartModel, 'Scout the restarted run', ['checkout-web']);
+  it(
+    'INT-4: two concurrent extractions of one deep agent lose nothing and duplicate nothing, and a restart mid-round applies no operation twice',
+    async () => {
+      // Given (row A): a learning deep agent two employees run at once; both rounds name the same entity and their model calls are held together
+      const recordId = randomUUID();
+      const restartId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      library.add(learningDeepAgent(restartId, [SCOUT]));
+      const [first, second, restartStarter] = [newUser(), newUser(), newUser()];
+      const bothHeld = createLatch();
+      const model = createScriptedModel();
+      const ledger = {
+        op: 'add_entity',
+        ref: 'books',
+        name: 'ledger',
+        description: 'the books of the shop',
+        evidence: ['c1'],
+      };
+      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        {
+          calls: [recordKnowledge([ledger, lessonOf('payment-api')])],
+          latch: bothHeld,
+        },
+        {
+          calls: [recordKnowledge([ledger, lessonOf('fraud-check')])],
+          latch: bothHeld,
+        },
+      ]);
+      scoutScript(model, 'Scout concurrent run 1', ['payment-api']);
+      scoutScript(model, 'Scout concurrent run 2', ['fraud-check']);
+      // Given (row B): a second deep agent whose round runs on a zombie instance, its model call held; the re-run answers the same
+      const restartHeld = createLatch();
+      const restartModel = createScriptedModel();
+      const restartOperations: readonly unknown[] = [
+        {
+          op: 'add_entity',
+          ref: 'pay',
+          name: 'payment-api',
+          description: 'the payment service of the shop',
+          evidence: ['c1'],
+        },
+        lessonOf('checkout-web'),
+      ];
+      const restartExtraction = restartModel.script(
+        { agent: KNOWLEDGE_EXTRACT_AGENT },
+        [
+          { calls: [recordKnowledge(restartOperations)], latch: restartHeld },
+          { calls: [recordKnowledge(restartOperations)] },
+        ],
+      );
+      scoutScript(restartModel, 'Scout the restarted run', ['checkout-web']);
 
-    await withLibraryRow(database.db, recordId, async () => {
-      const harness = await learningHarness(model, library);
-      try {
-        // When (row A): both runs end; both rounds' model calls arrive, then answer together
-        const runs = await Promise.all([
-          startLearningRun(harness, model, {
-            ownerId: first,
-            recordId,
-            turns: [{ text: 'Coordinate concurrent run 1', scout: 'Scout concurrent run 1' }],
-          }),
-          startLearningRun(harness, model, {
-            ownerId: second,
-            recordId,
-            turns: [{ text: 'Coordinate concurrent run 2', scout: 'Scout concurrent run 2' }],
-          }),
-        ]);
-        await bothHeld.reached(2);
-        bothHeld.open();
-        const rounds = await Promise.all(runs.map((run) => waitForRound(database.db, run.deepAgentId)));
+      await withLibraryRow(database.db, recordId, async () => {
+        const harness = await learningHarness(model, library);
+        try {
+          // When (row A): both runs end; both rounds' model calls arrive, then answer together
+          const runs = await Promise.all([
+            startLearningRun(harness, model, {
+              ownerId: first,
+              recordId,
+              turns: [
+                {
+                  text: 'Coordinate concurrent run 1',
+                  scout: 'Scout concurrent run 1',
+                },
+              ],
+            }),
+            startLearningRun(harness, model, {
+              ownerId: second,
+              recordId,
+              turns: [
+                {
+                  text: 'Coordinate concurrent run 2',
+                  scout: 'Scout concurrent run 2',
+                },
+              ],
+            }),
+          ]);
+          await bothHeld.reached(2);
+          bothHeld.open();
+          const rounds = await Promise.all(
+            runs.map((run) => waitForRound(database.db, run.deepAgentId)),
+          );
 
-        // Then (AC-04.4, Invariant 5): each round read its own run's call; one wrote the entity and its lesson, the
-        // other confirmed the entity it found under the lock and wrote its lesson
-        expect(extraction.calls.map((call) => roundCallsOf(call)).sort(byText)).toEqual([
-          [`${LOGS_SERVER}/search_logs success fraud-check`],
-          [`${LOGS_SERVER}/search_logs success payment-api`],
-        ]);
-        expect(rounds.map((round) => [round.lastStatus, round.lastAdded, round.lastConfirmed]).sort(byText)).toEqual([
-          ['done', 1, 1],
-          ['done', 2, 0],
-        ]);
-        const graph = await readGraph(database.db, recordId);
-        expect(graph.entities.map((entity) => `${entity.name} ${entity.confirmations}`)).toEqual(['ledger 2']);
-        expect(
-          graph.entities.flatMap((entity) => [entity.sourceRunId, entity.confirmedByRunId]).sort(),
-        ).toEqual(runs.map((run) => run.deepAgentId).sort());
-        expect(graph.relations.map((relation) => relation.question).sort(byText)).toEqual([
-          'errors of fraud-check',
-          'errors of payment-api',
-        ]);
-        for (const run of runs) {
-          expect(await completedExtractsOf(database.db, run.deepAgentId)).toHaveLength(1);
+          // Then (AC-04.4, Invariant 5): each round read its own run's call; one wrote the entity and its lesson, the
+          // other confirmed the entity it found under the lock and wrote its lesson
+          expect(
+            extraction.calls.map((call) => roundCallsOf(call)).sort(byText),
+          ).toEqual([
+            [`${LOGS_SERVER}/search_logs success fraud-check`],
+            [`${LOGS_SERVER}/search_logs success payment-api`],
+          ]);
+          expect(
+            rounds
+              .map((round) => [
+                round.lastStatus,
+                round.lastAdded,
+                round.lastConfirmed,
+              ])
+              .sort(byText),
+          ).toEqual([
+            ['done', 1, 1],
+            ['done', 2, 0],
+          ]);
+          const graph = await readGraph(database.db, recordId);
+          expect(
+            graph.entities.map(
+              (entity) => `${entity.name} ${entity.confirmations}`,
+            ),
+          ).toEqual(['ledger 2']);
+          expect(
+            graph.entities
+              .flatMap((entity) => [
+                entity.sourceRunId,
+                entity.confirmedByRunId,
+              ])
+              .sort(),
+          ).toEqual(runs.map((run) => run.deepAgentId).sort());
+          expect(
+            graph.relations.map((relation) => relation.question).sort(byText),
+          ).toEqual(['errors of fraud-check', 'errors of payment-api']);
+          for (const run of runs) {
+            expect(
+              await completedExtractsOf(database.db, run.deepAgentId),
+            ).toHaveLength(1);
+          }
+        } finally {
+          bothHeld.open();
+          await closeAll([harness]);
         }
-      } finally {
-        bothHeld.open();
-        await closeAll([harness]);
-      }
-    });
+      });
 
-    await withLibraryRow(database.db, restartId, async () => {
-      const harnesses: AgentsHarness[] = [];
-      try {
-        // When (row B): the zombie instance (one slot, a sweeper that never passes again) runs the run and holds its round's model call
-        const zombie = await learningHarness(restartModel, library, { runtimeConfig: ZOMBIE_RUNTIME });
-        harnesses.push(zombie);
-        const run = await startLearningRun(zombie, restartModel, {
-          ownerId: restartStarter,
-          recordId: restartId,
-          turns: [{ text: 'Coordinate the restarted run', scout: 'Scout the restarted run' }],
-        });
-        await restartHeld.reached();
-        const [extract, ...moreExtracts] = await knowledgeTasksOf(database.db, { runId: run.deepAgentId });
-        if (extract === undefined) throw new Error('the restarted run has no extraction task');
+      await withLibraryRow(database.db, restartId, async () => {
+        const harnesses: AgentsHarness[] = [];
+        try {
+          // When (row B): the zombie instance (one slot, a sweeper that never passes again) runs the run and holds its round's model call
+          const zombie = await learningHarness(restartModel, library, {
+            runtimeConfig: ZOMBIE_RUNTIME,
+          });
+          harnesses.push(zombie);
+          const run = await startLearningRun(zombie, restartModel, {
+            ownerId: restartStarter,
+            recordId: restartId,
+            turns: [
+              {
+                text: 'Coordinate the restarted run',
+                scout: 'Scout the restarted run',
+              },
+            ],
+          });
+          await restartHeld.reached();
+          const [extract, ...moreExtracts] = await knowledgeTasksOf(
+            database.db,
+            { runId: run.deepAgentId },
+          );
+          if (extract === undefined)
+            throw new Error('the restarted run has no extraction task');
 
-        // When: a second instance starts, requeues the zombie's step as a lost one and takes the round over
-        const restarted = await learningHarness(restartModel, library, { fixture: zombie.fixture });
-        harnesses.push(restarted);
-        const round = await waitForRound(database.db, run.deepAgentId);
+          // When: a second instance starts, requeues the zombie's step as a lost one and takes the round over
+          const restarted = await learningHarness(restartModel, library, {
+            fixture: zombie.fixture,
+          });
+          harnesses.push(restarted);
+          const round = await waitForRound(database.db, run.deepAgentId);
 
-        // When: the zombie's held model call answers; its commit finds its attempt gone
-        restartHeld.open();
-        expect((await logFieldsOf(zombie, 'knowledge round abandoned without writes', extract.taskId)).outcome).toBe(
-          'fenced',
-        );
+          // When: the zombie's held model call answers; its commit finds its attempt gone
+          restartHeld.open();
+          expect(
+            (
+              await logFieldsOf(
+                zombie,
+                'knowledge round abandoned without writes',
+                extract.taskId,
+              )
+            ).outcome,
+          ).toBe('fenced');
 
-        // Then (NFR-02): both attempts read the same calls; the re-run's commit is the only one: the items once, its task named
-        expect(restartExtraction.calls.map((call) => roundCallsOf(call))).toEqual([
-          [`${LOGS_SERVER}/search_logs success checkout-web`],
-          [`${LOGS_SERVER}/search_logs success checkout-web`],
-        ]);
-        expect([round.lastStatus, round.lastAdded, round.lastConfirmed, round.lastExtractTaskId]).toEqual([
-          'done',
-          2,
-          0,
-          extract.taskId,
-        ]);
-        const graph = await readGraph(database.db, restartId);
-        expect(graph.entities.map((entity) => `${entity.name} ${entity.confirmations}`)).toEqual(['payment-api 1']);
-        expect(graph.relations.map((relation) => `${relation.question} ${relation.confirmations}`)).toEqual([
-          'errors of checkout-web 1',
-        ]);
-        // Then: both model calls are billed to the starter on the round's task; the run has that one task, completed
-        expect(
-          (await ledgerRowsOf(database.db, restartStarter, extract.taskId)).map(
-            (row) => `${row.model} ${row.inputTokens}`,
-          ),
-        ).toEqual([`${TEST_MODEL_DEFAULT} 1000`, `${TEST_MODEL_DEFAULT} 1000`]);
-        expect(moreExtracts).toEqual([]);
-        expect((await completedExtractsOf(database.db, run.deepAgentId)).map((task) => task.taskId)).toEqual([
-          extract.taskId,
-        ]);
-      } finally {
-        restartHeld.open();
-        await closeAll(harnesses);
-      }
-    });
-  }, TEST_TIMEOUT_MS);
+          // Then (NFR-02): both attempts read the same calls; the re-run's commit is the only one: the items once, its task named
+          expect(
+            restartExtraction.calls.map((call) => roundCallsOf(call)),
+          ).toEqual([
+            [`${LOGS_SERVER}/search_logs success checkout-web`],
+            [`${LOGS_SERVER}/search_logs success checkout-web`],
+          ]);
+          expect([
+            round.lastStatus,
+            round.lastAdded,
+            round.lastConfirmed,
+            round.lastExtractTaskId,
+          ]).toEqual(['done', 2, 0, extract.taskId]);
+          const graph = await readGraph(database.db, restartId);
+          expect(
+            graph.entities.map(
+              (entity) => `${entity.name} ${entity.confirmations}`,
+            ),
+          ).toEqual(['payment-api 1']);
+          expect(
+            graph.relations.map(
+              (relation) => `${relation.question} ${relation.confirmations}`,
+            ),
+          ).toEqual(['errors of checkout-web 1']);
+          // Then: both model calls are billed to the starter on the round's task; the run has that one task, completed
+          expect(
+            (
+              await ledgerRowsOf(database.db, restartStarter, extract.taskId)
+            ).map((row) => `${row.model} ${row.inputTokens}`),
+          ).toEqual([
+            `${TEST_MODEL_DEFAULT} 1000`,
+            `${TEST_MODEL_DEFAULT} 1000`,
+          ]);
+          expect(moreExtracts).toEqual([]);
+          expect(
+            (await completedExtractsOf(database.db, run.deepAgentId)).map(
+              (task) => task.taskId,
+            ),
+          ).toEqual([extract.taskId]);
+        } finally {
+          restartHeld.open();
+          await closeAll(harnesses);
+        }
+      });
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-5: the deep agent record is deleted while its round waits for the model, or after it - graph and vectors go with it
@@ -1397,97 +1880,155 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: edge-case
   // @dependency: knowledge.extract handler, graph repository, KnowledgeVectorStore (real pgvector), app.library_records (real row), runtime tasks, Postgres
   // @complexity: medium
-  it('INT-5: a deep agent deleted during the round leaves no graph rows, no step error and a completed extraction task; deleted after it, no graph rows and no vectors', async () => {
-    // Given: two learning deep agents, one per row; the first round's model call will be held; embeddings on model A
-    const midRoundId = randomUUID();
-    const afterRoundId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(midRoundId, [SCOUT]));
-    library.add(learningDeepAgent(afterRoundId, [SCOUT]));
-    const starter = newUser();
-    const roundHeld = createLatch();
-    const model = createScriptedModel();
-    const learned: readonly unknown[] = [
-      { op: 'add_entity', ref: 'pay', name: 'payment-api', description: 'the payment service of the shop', evidence: ['c1'] },
-      lessonOf('payment-api'),
-    ];
-    model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge(learned)], latch: roundHeld },
-      { calls: [recordKnowledge(learned)] },
-    ]);
-    scoutScript(model, 'Scout the run deleted mid-round', ['payment-api']);
-    scoutScript(model, 'Scout the run deleted after its round', ['payment-api']);
-    const embeddingModel = TEST_EMBEDDING_MODEL_A;
-    if (embeddingModel.kind !== 'allowed') throw new Error('model A is not an allowed embedding model');
+  it(
+    'INT-5: a deep agent deleted during the round leaves no graph rows, no step error and a completed extraction task; deleted after it, no graph rows and no vectors',
+    async () => {
+      // Given: two learning deep agents, one per row; the first round's model call will be held; embeddings on model A
+      const midRoundId = randomUUID();
+      const afterRoundId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(midRoundId, [SCOUT]));
+      library.add(learningDeepAgent(afterRoundId, [SCOUT]));
+      const starter = newUser();
+      const roundHeld = createLatch();
+      const model = createScriptedModel();
+      const learned: readonly unknown[] = [
+        {
+          op: 'add_entity',
+          ref: 'pay',
+          name: 'payment-api',
+          description: 'the payment service of the shop',
+          evidence: ['c1'],
+        },
+        lessonOf('payment-api'),
+      ];
+      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        { calls: [recordKnowledge(learned)], latch: roundHeld },
+        { calls: [recordKnowledge(learned)] },
+      ]);
+      scoutScript(model, 'Scout the run deleted mid-round', ['payment-api']);
+      scoutScript(model, 'Scout the run deleted after its round', [
+        'payment-api',
+      ]);
+      const embeddingModel = TEST_EMBEDDING_MODEL_A;
+      if (embeddingModel.kind !== 'allowed')
+        throw new Error('model A is not an allowed embedding model');
 
-    await withLibraryRow(database.db, midRoundId, () =>
-      withLibraryRow(database.db, afterRoundId, async () => {
-        const harness = await learningHarness(model, library);
-        harness.embeddingVerdict = embeddingModel;
-        try {
-          // When (row A): the run ends, its round's model call is held, the author deletes the deep agent, the model answers
-          const midRound = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId: midRoundId,
-            turns: [{ text: 'Coordinate the run deleted mid-round', scout: 'Scout the run deleted mid-round' }],
-          });
-          await roundHeld.reached();
-          await deleteLibraryRow(database.db, midRoundId);
-          roundHeld.open();
-          const dropped = await waitForRound(database.db, midRound.deepAgentId);
-          const [extract, ...moreExtracts] = await completedExtractsOf(database.db, midRound.deepAgentId);
-          if (extract === undefined) throw new Error('the run of row A has no extraction task');
+      await withLibraryRow(database.db, midRoundId, () =>
+        withLibraryRow(database.db, afterRoundId, async () => {
+          const harness = await learningHarness(model, library);
+          harness.embeddingVerdict = embeddingModel;
+          try {
+            // When (row A): the run ends, its round's model call is held, the author deletes the deep agent, the model answers
+            const midRound = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId: midRoundId,
+              turns: [
+                {
+                  text: 'Coordinate the run deleted mid-round',
+                  scout: 'Scout the run deleted mid-round',
+                },
+              ],
+            });
+            await roundHeld.reached();
+            await deleteLibraryRow(database.db, midRoundId);
+            roundHeld.open();
+            const dropped = await waitForRound(
+              database.db,
+              midRound.deepAgentId,
+            );
+            const [extract, ...moreExtracts] = await completedExtractsOf(
+              database.db,
+              midRound.deepAgentId,
+            );
+            if (extract === undefined)
+              throw new Error('the run of row A has no extraction task');
 
-          // Then (AC-04.2, DC-8): the round's writes were undone at their save point and the round still ended `done`; the
-          // task completed, nothing failed or was parked, and the extraction's end queued no vector pass
-          expect(moreExtracts).toEqual([]);
-          expect([
-            dropped.lastStatus,
-            dropped.lastReason,
-            dropped.lastAdded,
-            dropped.lastConfirmed,
-            dropped.lastOutdated,
-            dropped.lastExtractTaskId,
-          ]).toEqual(['done', null, 0, 0, 0, extract.taskId]);
-          expect(
-            (await logFieldsOf(harness, 'knowledge graph writes dropped: deep agent deleted', extract.taskId)).reason,
-          ).toBe('record_deleted');
-          const decided = await triggerDecisionOf(harness, extract.taskId);
-          expect([decided.decision, decided.reason]).toEqual(['ignore', 'record_deleted']);
-          expect(await knowledgeLeftOf(database.db, midRoundId)).toEqual(NOTHING_LEFT);
-          expect(await knowledgeTasksOf(database.db, { recordId: midRoundId })).toEqual([]);
-          expect(troublesOf(harness, extract.taskId)).toEqual([]);
+            // Then (AC-04.2, DC-8): the round's writes were undone at their save point and the round still ended `done`; the
+            // task completed, nothing failed or was parked, and the extraction's end queued no vector pass
+            expect(moreExtracts).toEqual([]);
+            expect([
+              dropped.lastStatus,
+              dropped.lastReason,
+              dropped.lastAdded,
+              dropped.lastConfirmed,
+              dropped.lastOutdated,
+              dropped.lastExtractTaskId,
+            ]).toEqual(['done', null, 0, 0, 0, extract.taskId]);
+            expect(
+              (
+                await logFieldsOf(
+                  harness,
+                  'knowledge graph writes dropped: deep agent deleted',
+                  extract.taskId,
+                )
+              ).reason,
+            ).toBe('record_deleted');
+            const decided = await triggerDecisionOf(harness, extract.taskId);
+            expect([decided.decision, decided.reason]).toEqual([
+              'ignore',
+              'record_deleted',
+            ]);
+            expect(await knowledgeLeftOf(database.db, midRoundId)).toEqual(
+              NOTHING_LEFT,
+            );
+            expect(
+              await knowledgeTasksOf(database.db, { recordId: midRoundId }),
+            ).toEqual([]);
+            expect(troublesOf(harness, extract.taskId)).toEqual([]);
 
-          // When (row B): a run of the second deep agent ends, its round writes, the vector pass embeds its items on model A
-          const finished = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId: afterRoundId,
-            turns: [{ text: 'Coordinate the run deleted after its round', scout: 'Scout the run deleted after its round' }],
-          });
-          const round = await waitForRound(database.db, finished.deepAgentId);
-          const pass = await waitForEmbedPass(database.db, afterRoundId, round.lastAt ?? new Date(0));
-          const graph = await readGraph(database.db, afterRoundId);
-          const keys = [
-            ...graph.entities.map((entity) => `e${entity.id}`),
-            ...graph.relations.map((relation) => `r${relation.id}`),
-          ];
-          expect([round.lastStatus, round.lastAdded, pass.lastReason, keys.length]).toEqual(['done', 2, null, 2]);
-          expect(
-            (await createPgvectorStore(database.db).list(afterRoundId)).map((entry) => `${entry.key} ${entry.model}`).sort(),
-          ).toEqual(keys.map((key) => `${key} ${embeddingModel.model}`).sort());
+            // When (row B): a run of the second deep agent ends, its round writes, the vector pass embeds its items on model A
+            const finished = await startLearningRun(harness, model, {
+              ownerId: starter,
+              recordId: afterRoundId,
+              turns: [
+                {
+                  text: 'Coordinate the run deleted after its round',
+                  scout: 'Scout the run deleted after its round',
+                },
+              ],
+            });
+            const round = await waitForRound(database.db, finished.deepAgentId);
+            const pass = await waitForEmbedPass(
+              database.db,
+              afterRoundId,
+              round.lastAt ?? new Date(0),
+            );
+            const graph = await readGraph(database.db, afterRoundId);
+            const keys = [
+              ...graph.entities.map((entity) => `e${entity.id}`),
+              ...graph.relations.map((relation) => `r${relation.id}`),
+            ];
+            expect([
+              round.lastStatus,
+              round.lastAdded,
+              pass.lastReason,
+              keys.length,
+            ]).toEqual(['done', 2, null, 2]);
+            expect(
+              (await createPgvectorStore(database.db).list(afterRoundId))
+                .map((entry) => `${entry.key} ${entry.model}`)
+                .sort(),
+            ).toEqual(
+              keys.map((key) => `${key} ${embeddingModel.model}`).sort(),
+            );
 
-          // When: the author deletes the deep agent
-          await deleteLibraryRow(database.db, afterRoundId);
+            // When: the author deletes the deep agent
+            await deleteLibraryRow(database.db, afterRoundId);
 
-          // Then (AC-02.3, AC-19.1, DC-16): its graph, its vectors and its vector row went with the record
-          expect(await knowledgeLeftOf(database.db, afterRoundId)).toEqual(NOTHING_LEFT);
-        } finally {
-          roundHeld.open();
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+            // Then (AC-02.3, AC-19.1, DC-16): its graph, its vectors and its vector row went with the record
+            expect(await knowledgeLeftOf(database.db, afterRoundId)).toEqual(
+              NOTHING_LEFT,
+            );
+          } finally {
+            roundHeld.open();
+            await closeAll([harness]);
+          }
+        }),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-6: the model cannot be used - the round ends with a named state and the graph and the run stay as they were
@@ -1515,170 +2056,294 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: edge-case
   // @dependency: ModelClient, AccessGate (double), knowledge.extract handler, knowledge-runs row, Postgres
   // @complexity: medium
-  it('INT-6: a refused, failed or unparsable round writes its named state (provider reasons as `model_error`), calls the model at most twice, and changes neither graph nor run', async () => {
-    // Given: a learning deep agent that runs on model B; three employees, one per row
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const content = learningContent(recordId);
-    library.edit(recordId, {
-      body: { kind: 'deep_agent', content: { ...content, model: TEST_MODEL_CHOSEN } },
-    });
-    const [refused, failing, unparsable] = [newUser(), newUser(), newUser()];
-    const refusals: Record<string, Record<string, typeof QUOTA_SPENT>> = {};
-    const endHeld = createLatch();
-    const model = createScriptedModel();
-    // The extraction calls in the order the rows make them
-    const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-      { calls: [recordKnowledge([lessonOf('payment-api')])] }, // 0: row A, its later round
-      modelError(503), // 1-3: row B, the call and the client's two retries
-      modelError(503),
-      modelError(503),
-      { calls: [recordKnowledge([lessonOf('ledger')])] }, // 4: row B, its later round
-      { text: 'Nothing worth keeping.' }, // 5-6: row C, two answers without record_knowledge
-      { text: 'Still nothing worth keeping.' },
-      { calls: [recordKnowledge([lessonOf('fraud-check')])] }, // 7: row C, its later round
-    ]);
-    scoutScript(model, 'Scout the refused run', ['payment-api']);
-    scoutScript(model, 'Scout the failing run', ['ledger']);
-    scoutScript(model, 'Scout the unparsable run', ['fraud-check']);
+  it(
+    'INT-6: a refused, failed or unparsable round writes its named state (provider reasons as `model_error`), calls the model at most twice, and changes neither graph nor run',
+    async () => {
+      // Given: a learning deep agent that runs on model B; three employees, one per row
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const content = learningContent(recordId);
+      library.edit(recordId, {
+        body: {
+          kind: 'deep_agent',
+          content: { ...content, model: TEST_MODEL_CHOSEN },
+        },
+      });
+      const [refused, failing, unparsable] = [newUser(), newUser(), newUser()];
+      const refusals: Record<string, Record<string, typeof QUOTA_SPENT>> = {};
+      const endHeld = createLatch();
+      const model = createScriptedModel();
+      // The extraction calls in the order the rows make them
+      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        { calls: [recordKnowledge([lessonOf('payment-api')])] }, // 0: row A, its later round
+        modelError(503), // 1-3: row B, the call and the client's two retries
+        modelError(503),
+        modelError(503),
+        { calls: [recordKnowledge([lessonOf('ledger')])] }, // 4: row B, its later round
+        { text: 'Nothing worth keeping.' }, // 5-6: row C, two answers without record_knowledge
+        { text: 'Still nothing worth keeping.' },
+        { calls: [recordKnowledge([lessonOf('fraud-check')])] }, // 7: row C, its later round
+      ]);
+      scoutScript(model, 'Scout the refused run', ['payment-api']);
+      scoutScript(model, 'Scout the failing run', ['ledger']);
+      scoutScript(model, 'Scout the unparsable run', ['fraud-check']);
 
-    await withLibraryRow(database.db, recordId, async () => {
-      const harness = await learningHarness(model, library, { ownerModelRefusals: refusals });
-      try {
-        // When (row A): the starter's quota of model B runs out while the deep agent's last answer is held
-        const refusedRun = await startLearningRun(harness, model, {
-          ownerId: refused,
-          recordId,
-          turns: [
+      await withLibraryRow(database.db, recordId, async () => {
+        const harness = await learningHarness(model, library, {
+          ownerModelRefusals: refusals,
+        });
+        try {
+          // When (row A): the starter's quota of model B runs out while the deep agent's last answer is held
+          const refusedRun = await startLearningRun(harness, model, {
+            ownerId: refused,
+            recordId,
+            turns: [
+              {
+                text: 'Coordinate the refused run',
+                scout: 'Scout the refused run',
+                answer: { text: 'Answer of the refused run', latch: endHeld },
+              },
+              { text: 'Coordinate the refused run again', scout: null },
+            ],
+          });
+          await endHeld.reached();
+          refusals[refused] = { [TEST_MODEL_CHOSEN]: QUOTA_SPENT };
+          endHeld.open();
+          const skipped = await waitForRound(
+            database.db,
+            refusedRun.deepAgentId,
+          );
+          const [refusedTask] = await completedExtractsOf(
+            database.db,
+            refusedRun.deepAgentId,
+          );
+          if (refusedTask === undefined)
+            throw new Error('the run of row A has no extraction task');
+
+          // Then (AC-08.2): skipped with the gate's reason, no model call, no ledger row, no graph, the mark not moved, the run as it ended
+          expect(outcomeOf(skipped)).toEqual([
+            'skipped',
+            'quota_exhausted',
+            0,
+            0,
+            0,
+            TEST_MODEL_CHOSEN,
+            null,
+          ]);
+          expect(extraction.calls).toHaveLength(0);
+          expect(
+            await ledgerRowsOf(database.db, refused, refusedTask.taskId),
+          ).toEqual([]);
+          expect(await readGraph(database.db, recordId)).toEqual({
+            entities: [],
+            relations: [],
+          });
+          expect(
+            (await harness.runtime.tasks.get(refusedRun.deepAgentId, refused))
+              .status,
+          ).toBe('completed');
+          expect(
+            historyLines(
+              await historyOf(harness, refusedRun.deepAgentId, refused),
+            ),
+          ).toContain('model_answer: Answer of the refused run []');
+
+          // When: the quota is back and the run is continued; its next round reads the same call
+          refusals[refused] = {};
+          const refusedRetry = await roundAfterTurn(
+            harness,
             {
-              text: 'Coordinate the refused run',
-              scout: 'Scout the refused run',
-              answer: { text: 'Answer of the refused run', latch: endHeld },
+              ownerId: refused,
+              runId: refusedRun.deepAgentId,
+              text: 'Coordinate the refused run again',
             },
-            { text: 'Coordinate the refused run again', scout: null },
-          ],
-        });
-        await endHeld.reached();
-        refusals[refused] = { [TEST_MODEL_CHOSEN]: QUOTA_SPENT };
-        endHeld.open();
-        const skipped = await waitForRound(database.db, refusedRun.deepAgentId);
-        const [refusedTask] = await completedExtractsOf(database.db, refusedRun.deepAgentId);
-        if (refusedTask === undefined) throw new Error('the run of row A has no extraction task');
+            skipped,
+          );
+          expect(roundCallsOf(extraction.calls[0])).toEqual([
+            `${LOGS_SERVER}/search_logs success payment-api`,
+          ]);
+          expect([
+            refusedRetry.lastStatus,
+            refusedRetry.lastAdded,
+            refusedRetry.extractedUpTo,
+          ]).toEqual(['done', 1, expect.any(Date)]);
 
-        // Then (AC-08.2): skipped with the gate's reason, no model call, no ledger row, no graph, the mark not moved, the run as it ended
-        expect(outcomeOf(skipped)).toEqual(['skipped', 'quota_exhausted', 0, 0, 0, TEST_MODEL_CHOSEN, null]);
-        expect(extraction.calls).toHaveLength(0);
-        expect(await ledgerRowsOf(database.db, refused, refusedTask.taskId)).toEqual([]);
-        expect(await readGraph(database.db, recordId)).toEqual({ entities: [], relations: [] });
-        expect((await harness.runtime.tasks.get(refusedRun.deepAgentId, refused)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, refusedRun.deepAgentId, refused))).toContain(
-          'model_answer: Answer of the refused run []',
-        );
+          // When (row B): the provider answers 503 to the round's call and to both retries of the client
+          const graphBeforeFailure = await readGraph(database.db, recordId);
+          const failingRun = await startLearningRun(harness, model, {
+            ownerId: failing,
+            recordId,
+            turns: [
+              {
+                text: 'Coordinate the failing run',
+                scout: 'Scout the failing run',
+              },
+              { text: 'Coordinate the failing run again', scout: null },
+            ],
+          });
+          const failed = await waitForRound(
+            database.db,
+            failingRun.deepAgentId,
+          );
+          const [failingTask] = await completedExtractsOf(
+            database.db,
+            failingRun.deepAgentId,
+          );
+          if (failingTask === undefined)
+            throw new Error('the run of row B has no extraction task');
 
-        // When: the quota is back and the run is continued; its next round reads the same call
-        refusals[refused] = {};
-        const refusedRetry = await roundAfterTurn(
-          harness,
-          { ownerId: refused, runId: refusedRun.deepAgentId, text: 'Coordinate the refused run again' },
-          skipped,
-        );
-        expect(roundCallsOf(extraction.calls[0])).toEqual([`${LOGS_SERVER}/search_logs success payment-api`]);
-        expect([refusedRetry.lastStatus, refusedRetry.lastAdded, refusedRetry.extractedUpTo]).toEqual([
-          'done',
-          1,
-          expect.any(Date),
-        ]);
+          // Then (AC-03.4, DC-13): `model_error` in the contract's list, the provider's reason only in the log; nothing billed,
+          // the graph and the mark unchanged, the run as it ended
+          expect(outcomeOf(failed)).toEqual([
+            'failed',
+            'model_error',
+            0,
+            0,
+            0,
+            TEST_MODEL_CHOSEN,
+            null,
+          ]);
+          const failure = await logFieldsOf(
+            harness,
+            'knowledge round failed: model error',
+            failingTask.taskId,
+          );
+          expect([failure.reason, failure.statusCode]).toEqual([
+            'provider_unavailable',
+            503,
+          ]);
+          expect(extraction.calls).toHaveLength(4);
+          expect(
+            await ledgerRowsOf(database.db, failing, failingTask.taskId),
+          ).toEqual([]);
+          expect(await readGraph(database.db, recordId)).toEqual(
+            graphBeforeFailure,
+          );
+          expect(
+            (await harness.runtime.tasks.get(failingRun.deepAgentId, failing))
+              .status,
+          ).toBe('completed');
+          expect(
+            historyLines(
+              await historyOf(harness, failingRun.deepAgentId, failing),
+            ),
+          ).toContain('model_answer: Answer to: Coordinate the failing run []');
 
-        // When (row B): the provider answers 503 to the round's call and to both retries of the client
-        const graphBeforeFailure = await readGraph(database.db, recordId);
-        const failingRun = await startLearningRun(harness, model, {
-          ownerId: failing,
-          recordId,
-          turns: [
-            { text: 'Coordinate the failing run', scout: 'Scout the failing run' },
-            { text: 'Coordinate the failing run again', scout: null },
-          ],
-        });
-        const failed = await waitForRound(database.db, failingRun.deepAgentId);
-        const [failingTask] = await completedExtractsOf(database.db, failingRun.deepAgentId);
-        if (failingTask === undefined) throw new Error('the run of row B has no extraction task');
+          // When: the run is continued; its next round reads the same call
+          const failingRetry = await roundAfterTurn(
+            harness,
+            {
+              ownerId: failing,
+              runId: failingRun.deepAgentId,
+              text: 'Coordinate the failing run again',
+            },
+            failed,
+          );
+          expect(roundCallsOf(extraction.calls[4])).toEqual(
+            roundCallsOf(extraction.calls[1]),
+          );
+          expect(roundCallsOf(extraction.calls[4])).toEqual([
+            `${LOGS_SERVER}/search_logs success ledger`,
+          ]);
+          expect([
+            failingRetry.lastStatus,
+            failingRetry.lastAdded,
+            failingRetry.extractedUpTo,
+          ]).toEqual(['done', 1, expect.any(Date)]);
 
-        // Then (AC-03.4, DC-13): `model_error` in the contract's list, the provider's reason only in the log; nothing billed,
-        // the graph and the mark unchanged, the run as it ended
-        expect(outcomeOf(failed)).toEqual(['failed', 'model_error', 0, 0, 0, TEST_MODEL_CHOSEN, null]);
-        const failure = await logFieldsOf(harness, 'knowledge round failed: model error', failingTask.taskId);
-        expect([failure.reason, failure.statusCode]).toEqual(['provider_unavailable', 503]);
-        expect(extraction.calls).toHaveLength(4);
-        expect(await ledgerRowsOf(database.db, failing, failingTask.taskId)).toEqual([]);
-        expect(await readGraph(database.db, recordId)).toEqual(graphBeforeFailure);
-        expect((await harness.runtime.tasks.get(failingRun.deepAgentId, failing)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, failingRun.deepAgentId, failing))).toContain(
-          'model_answer: Answer to: Coordinate the failing run []',
-        );
+          // When (row C): the model answers twice with text and no record_knowledge
+          const graphBeforeInvalid = await readGraph(database.db, recordId);
+          const unparsableRun = await startLearningRun(harness, model, {
+            ownerId: unparsable,
+            recordId,
+            turns: [
+              {
+                text: 'Coordinate the unparsable run',
+                scout: 'Scout the unparsable run',
+              },
+              { text: 'Coordinate the unparsable run again', scout: null },
+            ],
+          });
+          const invalid = await waitForRound(
+            database.db,
+            unparsableRun.deepAgentId,
+          );
+          const [unparsableTask] = await completedExtractsOf(
+            database.db,
+            unparsableRun.deepAgentId,
+          );
+          if (unparsableTask === undefined)
+            throw new Error('the run of row C has no extraction task');
 
-        // When: the run is continued; its next round reads the same call
-        const failingRetry = await roundAfterTurn(
-          harness,
-          { ownerId: failing, runId: failingRun.deepAgentId, text: 'Coordinate the failing run again' },
-          failed,
-        );
-        expect(roundCallsOf(extraction.calls[4])).toEqual(roundCallsOf(extraction.calls[1]));
-        expect(roundCallsOf(extraction.calls[4])).toEqual([`${LOGS_SERVER}/search_logs success ledger`]);
-        expect([failingRetry.lastStatus, failingRetry.lastAdded, failingRetry.extractedUpTo]).toEqual([
-          'done',
-          1,
-          expect.any(Date),
-        ]);
+          // Then (DC-7, KD-4): exactly two calls, the second told what was wrong, no third; both billed; graph and mark unchanged
+          expect(outcomeOf(invalid)).toEqual([
+            'failed',
+            'invalid_answer',
+            0,
+            0,
+            0,
+            TEST_MODEL_CHOSEN,
+            null,
+          ]);
+          expect(extraction.calls).toHaveLength(7);
+          const told = extraction.calls[6]?.messages.at(-1);
+          expect(told?.role === 'user' ? told.content : null).toContain(
+            'You did not call record_knowledge',
+          );
+          expect(
+            (
+              await ledgerRowsOf(database.db, unparsable, unparsableTask.taskId)
+            ).map((row) => row.model),
+          ).toEqual([TEST_MODEL_CHOSEN, TEST_MODEL_CHOSEN]);
+          expect(await readGraph(database.db, recordId)).toEqual(
+            graphBeforeInvalid,
+          );
+          expect(
+            (
+              await harness.runtime.tasks.get(
+                unparsableRun.deepAgentId,
+                unparsable,
+              )
+            ).status,
+          ).toBe('completed');
+          expect(
+            historyLines(
+              await historyOf(harness, unparsableRun.deepAgentId, unparsable),
+            ),
+          ).toContain(
+            'model_answer: Answer to: Coordinate the unparsable run []',
+          );
 
-        // When (row C): the model answers twice with text and no record_knowledge
-        const graphBeforeInvalid = await readGraph(database.db, recordId);
-        const unparsableRun = await startLearningRun(harness, model, {
-          ownerId: unparsable,
-          recordId,
-          turns: [
-            { text: 'Coordinate the unparsable run', scout: 'Scout the unparsable run' },
-            { text: 'Coordinate the unparsable run again', scout: null },
-          ],
-        });
-        const invalid = await waitForRound(database.db, unparsableRun.deepAgentId);
-        const [unparsableTask] = await completedExtractsOf(database.db, unparsableRun.deepAgentId);
-        if (unparsableTask === undefined) throw new Error('the run of row C has no extraction task');
-
-        // Then (DC-7, KD-4): exactly two calls, the second told what was wrong, no third; both billed; graph and mark unchanged
-        expect(outcomeOf(invalid)).toEqual(['failed', 'invalid_answer', 0, 0, 0, TEST_MODEL_CHOSEN, null]);
-        expect(extraction.calls).toHaveLength(7);
-        const told = extraction.calls[6]?.messages.at(-1);
-        expect(told?.role === 'user' ? told.content : null).toContain('You did not call record_knowledge');
-        expect((await ledgerRowsOf(database.db, unparsable, unparsableTask.taskId)).map((row) => row.model)).toEqual([
-          TEST_MODEL_CHOSEN,
-          TEST_MODEL_CHOSEN,
-        ]);
-        expect(await readGraph(database.db, recordId)).toEqual(graphBeforeInvalid);
-        expect((await harness.runtime.tasks.get(unparsableRun.deepAgentId, unparsable)).status).toBe('completed');
-        expect(historyLines(await historyOf(harness, unparsableRun.deepAgentId, unparsable))).toContain(
-          'model_answer: Answer to: Coordinate the unparsable run []',
-        );
-
-        // When: the run is continued; its next round reads the same call
-        const unparsableRetry = await roundAfterTurn(
-          harness,
-          { ownerId: unparsable, runId: unparsableRun.deepAgentId, text: 'Coordinate the unparsable run again' },
-          invalid,
-        );
-        expect(roundCallsOf(extraction.calls[7])).toEqual(roundCallsOf(extraction.calls[5]));
-        expect(roundCallsOf(extraction.calls[7])).toEqual([`${LOGS_SERVER}/search_logs success fraud-check`]);
-        expect([unparsableRetry.lastStatus, unparsableRetry.lastAdded, unparsableRetry.extractedUpTo]).toEqual([
-          'done',
-          1,
-          expect.any(Date),
-        ]);
-      } finally {
-        endHeld.open();
-        await closeAll([harness]);
-      }
-    });
-  }, TEST_TIMEOUT_MS);
+          // When: the run is continued; its next round reads the same call
+          const unparsableRetry = await roundAfterTurn(
+            harness,
+            {
+              ownerId: unparsable,
+              runId: unparsableRun.deepAgentId,
+              text: 'Coordinate the unparsable run again',
+            },
+            invalid,
+          );
+          expect(roundCallsOf(extraction.calls[7])).toEqual(
+            roundCallsOf(extraction.calls[5]),
+          );
+          expect(roundCallsOf(extraction.calls[7])).toEqual([
+            `${LOGS_SERVER}/search_logs success fraud-check`,
+          ]);
+          expect([
+            unparsableRetry.lastStatus,
+            unparsableRetry.lastAdded,
+            unparsableRetry.extractedUpTo,
+          ]).toEqual(['done', 1, expect.any(Date)]);
+        } finally {
+          endHeld.open();
+          await closeAll([harness]);
+        }
+      });
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-7: operations from the model - invalid ones are rejected, valid ones in the same answer apply
@@ -1701,103 +2366,132 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: integration
   // @dependency: knowledge.extract handler, checkOperations, createSecretMasker (reads the process secret memory, `rememberSecret`), Postgres
   // @complexity: medium
-  it('INT-7: a round applies the valid operations of an answer, rejects the unknown-id and uncited ones, and stores no secret value', async () => {
-    // Given: the process remembers a secret; a learning deep agent whose graph holds a lesson about `get_trace`, confirmed twice
-    rememberSecret(FAKE_SECRET);
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const starter = newUser();
-    const model = createScriptedModel();
-    scoutScript(model, 'Scout the payment service', ['payment-api']);
+  it(
+    'INT-7: a round applies the valid operations of an answer, rejects the unknown-id and uncited ones, and stores no secret value',
+    async () => {
+      // Given: the process remembers a secret; a learning deep agent whose graph holds a lesson about `get_trace`, confirmed twice
+      rememberSecret(FAKE_SECRET);
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const starter = newUser();
+      const model = createScriptedModel();
+      scoutScript(model, 'Scout the payment service', ['payment-api']);
 
-    await withLibraryRow(database.db, recordId, async () => {
-      const [replayed] = await seedGraph(database.db, recordId, [
-        {
-          kind: 'lesson',
-          server: LOGS_SERVER,
-          tool: 'get_trace',
-          question: 'traces of a payment',
-          hint: 'Ask by the trace id',
-          outcome: 'trace found',
-          confirmations: 2,
-          confirmedAt: new Date('2026-10-01T00:00:00.000Z'),
-        },
-      ]);
-      if (replayed === undefined) throw new Error('the lesson was not seeded');
-      const seeded = await readGraph(database.db, recordId);
-      // Given: the answer of the round - one valid operation and three that must be rejected
-      const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-        {
-          calls: [
-            recordKnowledge([
+      await withLibraryRow(database.db, recordId, async () => {
+        const [replayed] = await seedGraph(database.db, recordId, [
+          {
+            kind: 'lesson',
+            server: LOGS_SERVER,
+            tool: 'get_trace',
+            question: 'traces of a payment',
+            hint: 'Ask by the trace id',
+            outcome: 'trace found',
+            confirmations: 2,
+            confirmedAt: new Date('2026-10-01T00:00:00.000Z'),
+          },
+        ]);
+        if (replayed === undefined)
+          throw new Error('the lesson was not seeded');
+        const seeded = await readGraph(database.db, recordId);
+        // Given: the answer of the round - one valid operation and three that must be rejected
+        const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+          {
+            calls: [
+              recordKnowledge([
+                {
+                  op: 'add_entity',
+                  ref: 'pay',
+                  name: 'payment-api',
+                  description: `the payment service, signed with ${FAKE_SECRET}`,
+                  evidence: ['c1'],
+                },
+                { op: 'confirm', id: UNKNOWN_ENTITY_ID, evidence: ['c1'] },
+                {
+                  op: 'add_relation',
+                  kind: 'lesson',
+                  server: LOGS_SERVER,
+                  tool: 'search_logs',
+                  question: 'errors of ledger',
+                  hint: 'Filter by the service ledger',
+                  outcome: 'records found',
+                  evidence: ['c9'],
+                },
+                { op: 'confirm', id: replayed.key, evidence: ['c1'] },
+              ]),
+            ],
+          },
+        ]);
+        const harness = await learningHarness(model, library);
+        try {
+          // When: a run searches the logs once and ends; its round applies the answer
+          const run = await startLearningRun(harness, model, {
+            ownerId: starter,
+            recordId,
+            turns: [
               {
-                op: 'add_entity',
-                ref: 'pay',
-                name: 'payment-api',
-                description: `the payment service, signed with ${FAKE_SECRET}`,
-                evidence: ['c1'],
+                text: 'Coordinate the run with a secret',
+                scout: 'Scout the payment service',
               },
-              { op: 'confirm', id: UNKNOWN_ENTITY_ID, evidence: ['c1'] },
-              {
-                op: 'add_relation',
-                kind: 'lesson',
-                server: LOGS_SERVER,
-                tool: 'search_logs',
-                question: 'errors of ledger',
-                hint: 'Filter by the service ledger',
-                outcome: 'records found',
-                evidence: ['c9'],
-              },
-              { op: 'confirm', id: replayed.key, evidence: ['c1'] },
-            ]),
-          ],
-        },
-      ]);
-      const harness = await learningHarness(model, library);
-      try {
-        // When: a run searches the logs once and ends; its round applies the answer
-        const run = await startLearningRun(harness, model, {
-          ownerId: starter,
-          recordId,
-          turns: [{ text: 'Coordinate the run with a secret', scout: 'Scout the payment service' }],
-        });
-        const round = await waitForRound(database.db, run.deepAgentId);
-        const [extract] = await completedExtractsOf(database.db, run.deepAgentId);
-        if (extract === undefined) throw new Error('the run has no extraction task');
+            ],
+          });
+          const round = await waitForRound(database.db, run.deepAgentId);
+          const [extract] = await completedExtractsOf(
+            database.db,
+            run.deepAgentId,
+          );
+          if (extract === undefined)
+            throw new Error('the run has no extraction task');
 
-        // Then (AC-04.2, DC-6): the valid entity is written with the secret redacted; the rest changed nothing
-        expect(extraction.calls).toHaveLength(1);
-        expect(roundCallsOf(extraction.calls[0])).toEqual([`${LOGS_SERVER}/search_logs success payment-api`]);
-        expect([round.lastStatus, round.lastReason, round.lastAdded, round.lastConfirmed, round.lastOutdated]).toEqual([
-          'done',
-          null,
-          1,
-          0,
-          0,
-        ]);
-        const graph = await readGraph(database.db, recordId);
-        expect(graph.entities.map((entity) => `${entity.name}: ${entity.description}`)).toEqual([
-          'payment-api: the payment service, signed with [redacted]',
-        ]);
-        // Then (AC-16.2): the replayed lesson kept its two confirmations, its date and its run
-        expect(graph.relations).toEqual(seeded.relations);
-        const checked = await logFieldsOf(harness, 'knowledge operations checked', extract.taskId);
-        expect([checked.added, checked.confirmed, checked.outdated, checked.rejected]).toEqual([
-          1,
-          0,
-          0,
-          { unknown_item: 1, unknown_call: 1, evidence_mismatch: 1 },
-        ]);
+          // Then (AC-04.2, DC-6): the valid entity is written with the secret redacted; the rest changed nothing
+          expect(extraction.calls).toHaveLength(1);
+          expect(roundCallsOf(extraction.calls[0])).toEqual([
+            `${LOGS_SERVER}/search_logs success payment-api`,
+          ]);
+          expect([
+            round.lastStatus,
+            round.lastReason,
+            round.lastAdded,
+            round.lastConfirmed,
+            round.lastOutdated,
+          ]).toEqual(['done', null, 1, 0, 0]);
+          const graph = await readGraph(database.db, recordId);
+          expect(
+            graph.entities.map(
+              (entity) => `${entity.name}: ${entity.description}`,
+            ),
+          ).toEqual([
+            'payment-api: the payment service, signed with [redacted]',
+          ]);
+          // Then (AC-16.2): the replayed lesson kept its two confirmations, its date and its run
+          expect(graph.relations).toEqual(seeded.relations);
+          const checked = await logFieldsOf(
+            harness,
+            'knowledge operations checked',
+            extract.taskId,
+          );
+          expect([
+            checked.added,
+            checked.confirmed,
+            checked.outdated,
+            checked.rejected,
+          ]).toEqual([
+            1,
+            0,
+            0,
+            { unknown_item: 1, unknown_call: 1, evidence_mismatch: 1 },
+          ]);
 
-        // Then (AC-05.1): the secret's value is nowhere in the graph tables nor in the log
-        expect(JSON.stringify(graph)).not.toContain(FAKE_SECRET);
-        expect(JSON.stringify(harness.logs)).not.toContain(FAKE_SECRET);
-      } finally {
-        await closeAll([harness]);
-      }
-    });
-  }, TEST_TIMEOUT_MS);
+          // Then (AC-05.1): the secret's value is nowhere in the graph tables nor in the log
+          expect(JSON.stringify(graph)).not.toContain(FAKE_SECRET);
+          expect(JSON.stringify(harness.logs)).not.toContain(FAKE_SECRET);
+        } finally {
+          await closeAll([harness]);
+        }
+      });
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-8: the step prompt - the block chosen by the two-pass selection in the model step and the compaction step, read fresh, off when the flag is off
@@ -1841,104 +2535,191 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: modelStep, compactionStep, knowledgeBlock, selectKnowledge, KnowledgeVectorStore (real pgvector), question row, envelope, ensureSession, EmbeddingClient (double), ModelClient (scripted), Postgres
   // @complexity: high
-  it('INT-8: both the model step and the compaction step carry the two-pass block read fresh at each step, a deleted item is not found by its vector, and a non-learning deep agent gets none', async () => {
-    // Given: a learning deep agent whose graph is over the cap; embeddings on model A; the scout's compaction and report will be held
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const flagged = (selfLearning: boolean) =>
-      library.edit(recordId, { body: { kind: 'deep_agent', content: { ...learningContent(recordId), selfLearning } } });
-    const starter = newUser();
-    const compactionHeld = createLatch();
-    const reportHeld = createLatch();
-    const model = createScriptedModel();
-    model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], { thereafter: RECORDS_NOTHING });
-    const scout = compactingScoutScript(model, 'Scout the billing question', {
-      compaction: compactionHeld,
-      report: reportHeld,
-    });
-    const unlearnedScout = scoutScript(model, 'Scout the run without learning', []);
+  it(
+    'INT-8: both the model step and the compaction step carry the two-pass block read fresh at each step, a deleted item is not found by its vector, and a non-learning deep agent gets none',
+    async () => {
+      // Given: a learning deep agent whose graph is over the cap; embeddings on model A; the scout's compaction and report will be held
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const flagged = (selfLearning: boolean) =>
+        library.edit(recordId, {
+          body: {
+            kind: 'deep_agent',
+            content: { ...learningContent(recordId), selfLearning },
+          },
+        });
+      const starter = newUser();
+      const compactionHeld = createLatch();
+      const reportHeld = createLatch();
+      const model = createScriptedModel();
+      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], {
+        thereafter: RECORDS_NOTHING,
+      });
+      const scout = compactingScoutScript(model, 'Scout the billing question', {
+        compaction: compactionHeld,
+        report: reportHeld,
+      });
+      const unlearnedScout = scoutScript(
+        model,
+        'Scout the run without learning',
+        [],
+      );
 
-    await withLibraryRow(database.db, recordId, () =>
-      withKnowledgeLimit(database.db, KNOWLEDGE_LIMIT_TOKENS_MIN, async () => {
-        const seeded = await seedOverLimit(database.db, recordId, ['billing', 'fact']);
-        const harness = await learningHarness(model, library, { variables: COMPACTING });
-        harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
-        harness.embeddings.vectorOf = topicVector;
-        try {
-          // When (rows 1, 4): a run about billing; its scout searches at the compaction threshold, then compacts (held)
-          const run = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [{ text: 'Coordinate the billing question', scout: 'Scout the billing question' }],
-          });
-          await compactionHeld.reached();
-          const [modelCall, compactionCall] = scout.calls;
+      await withLibraryRow(database.db, recordId, () =>
+        withKnowledgeLimit(
+          database.db,
+          KNOWLEDGE_LIMIT_TOKENS_MIN,
+          async () => {
+            const seeded = await seedOverLimit(database.db, recordId, [
+              'billing',
+              'fact',
+            ]);
+            const harness = await learningHarness(model, library, {
+              variables: COMPACTING,
+            });
+            harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
+            harness.embeddings.vectorOf = topicVector;
+            try {
+              // When (rows 1, 4): a run about billing; its scout searches at the compaction threshold, then compacts (held)
+              const run = await startLearningRun(harness, model, {
+                ownerId: starter,
+                recordId,
+                turns: [
+                  {
+                    text: 'Coordinate the billing question',
+                    scout: 'Scout the billing question',
+                  },
+                ],
+              });
+              await compactionHeld.reached();
+              const [modelCall, compactionCall] = scout.calls;
 
-          // Then (AC-18.1, KD-6): the model step's block holds billing and its fact by closeness, which the common order leaves
-          // out, inside the envelope; the compaction call's system text is the same, byte for byte
-          expect(lastUserText(compactionCall)).toContain(COMPACTION_REQUEST_START);
-          expect(knowledgeLinesOf(modelCall)).toEqual(BILLING_BLOCK);
-          expect(compactionCall?.instructions).toBe(modelCall?.instructions);
+              // Then (AC-18.1, KD-6): the model step's block holds billing and its fact by closeness, which the common order leaves
+              // out, inside the envelope; the compaction call's system text is the same, byte for byte
+              expect(lastUserText(compactionCall)).toContain(
+                COMPACTION_REQUEST_START,
+              );
+              expect(knowledgeLinesOf(modelCall)).toEqual(BILLING_BLOCK);
+              expect(compactionCall?.instructions).toBe(
+                modelCall?.instructions,
+              );
 
-          // When (row 3): the author switches the flag off mid-run. (Rows 1, 4): the author deletes the billing entity; the
-          // deletion's pass runs; the two records' vectors are written back as a pass that embedded them just before leaves them
-          flagged(false);
-          const beforeDelete = new Date();
-          const deletion = await harness.agents.knowledge.deleteEntity({ recordId, entityId: seeded.billing.id });
-          const cleanup = await waitForEmbedPass(database.db, recordId, beforeDelete);
-          const afterDelete = await readGraph(database.db, recordId);
-          expect([deletion, cleanup.lastReason]).toEqual([{ deleted: true, relations: 1 }, null]);
-          expect(graphKeysOf(afterDelete)).not.toContain(seeded.fact.key);
-          // Then (AC-19.1, Invariant 10): the deletion's pass left no vector of the entity or its fact
-          expect(await vectorLinesOf(database.db, recordId)).toEqual(everyKeyOn(afterDelete, MODEL_A));
-          await createPgvectorStore(database.db).upsert(recordId, [
-            { key: seeded.billing.key, kind: 'entity', model: MODEL_A, vector: OVER_LIMIT_VECTORS.billing },
-            { key: seeded.fact.key, kind: 'relation', model: MODEL_A, vector: OVER_LIMIT_VECTORS.fact },
-          ]);
-          const leftover = [...everyKeyOn(afterDelete, MODEL_A), `${seeded.billing.key} ${MODEL_A}`, `${seeded.fact.key} ${MODEL_A}`];
-          compactionHeld.open();
-          await reportHeld.reached();
+              // When (row 3): the author switches the flag off mid-run. (Rows 1, 4): the author deletes the billing entity; the
+              // deletion's pass runs; the two records' vectors are written back as a pass that embedded them just before leaves them
+              flagged(false);
+              const beforeDelete = new Date();
+              const deletion = await harness.agents.knowledge.deleteEntity({
+                recordId,
+                entityId: seeded.billing.id,
+              });
+              const cleanup = await waitForEmbedPass(
+                database.db,
+                recordId,
+                beforeDelete,
+              );
+              const afterDelete = await readGraph(database.db, recordId);
+              expect([deletion, cleanup.lastReason]).toEqual([
+                { deleted: true, relations: 1 },
+                null,
+              ]);
+              expect(graphKeysOf(afterDelete)).not.toContain(seeded.fact.key);
+              // Then (AC-19.1, Invariant 10): the deletion's pass left no vector of the entity or its fact
+              expect(await vectorLinesOf(database.db, recordId)).toEqual(
+                everyKeyOn(afterDelete, MODEL_A),
+              );
+              await createPgvectorStore(database.db).upsert(recordId, [
+                {
+                  key: seeded.billing.key,
+                  kind: 'entity',
+                  model: MODEL_A,
+                  vector: OVER_LIMIT_VECTORS.billing,
+                },
+                {
+                  key: seeded.fact.key,
+                  kind: 'relation',
+                  model: MODEL_A,
+                  vector: OVER_LIMIT_VECTORS.fact,
+                },
+              ]);
+              const leftover = [
+                ...everyKeyOn(afterDelete, MODEL_A),
+                `${seeded.billing.key} ${MODEL_A}`,
+                `${seeded.fact.key} ${MODEL_A}`,
+              ];
+              compactionHeld.open();
+              await reportHeld.reached();
 
-          // Then (AC-07.1, AC-09.2, AC-19.1): the next step of the same run reads the graph fresh - neither the entity nor its fact,
-          // although their vectors, the closest to the question, are in the store; (AC-01.2) the flag of the start still gives a block
-          expect(knowledgeLinesOf(scout.calls[2])).toEqual(COMMON_BLOCK);
-          expect(await vectorLinesOf(database.db, recordId)).toEqual(leftover.sort());
+              // Then (AC-07.1, AC-09.2, AC-19.1): the next step of the same run reads the graph fresh - neither the entity nor its fact,
+              // although their vectors, the closest to the question, are in the store; (AC-01.2) the flag of the start still gives a block
+              expect(knowledgeLinesOf(scout.calls[2])).toEqual(COMMON_BLOCK);
+              expect(await vectorLinesOf(database.db, recordId)).toEqual(
+                leftover.sort(),
+              );
 
-          // When: the scout reports and the run ends
-          reportHeld.open();
-          const round = await waitForRound(database.db, run.deepAgentId);
-          const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
+              // When: the scout reports and the run ends
+              reportHeld.open();
+              const round = await waitForRound(database.db, run.deepAgentId);
+              const pass = await waitForEmbedPass(
+                database.db,
+                recordId,
+                round.lastAt ?? new Date(0),
+              );
 
-          // Then (row 3): the run whose flag went off mid-run is still extracted; (row 4) the pass removed the leftover vectors
-          expect([round.lastStatus, round.lastReason, pass.lastReason]).toEqual(['done', null, null]);
-          const graph = await readGraph(database.db, recordId);
-          expect(await vectorLinesOf(database.db, recordId)).toEqual(everyKeyOn(graph, MODEL_A));
+              // Then (row 3): the run whose flag went off mid-run is still extracted; (row 4) the pass removed the leftover vectors
+              expect([
+                round.lastStatus,
+                round.lastReason,
+                pass.lastReason,
+              ]).toEqual(['done', null, null]);
+              const graph = await readGraph(database.db, recordId);
+              expect(await vectorLinesOf(database.db, recordId)).toEqual(
+                everyKeyOn(graph, MODEL_A),
+              );
 
-          // When (rows 2, 3): the starter runs the deep agent with the flag off
-          const unlearned = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [{ text: 'Coordinate the run without learning', scout: 'Scout the run without learning' }],
-          });
-          await waitForTaskStatus(harness, unlearned.deepAgentId, starter, 'completed');
+              // When (rows 2, 3): the starter runs the deep agent with the flag off
+              const unlearned = await startLearningRun(harness, model, {
+                ownerId: starter,
+                recordId,
+                turns: [
+                  {
+                    text: 'Coordinate the run without learning',
+                    scout: 'Scout the run without learning',
+                  },
+                ],
+              });
+              await waitForTaskStatus(
+                harness,
+                unlearned.deepAgentId,
+                starter,
+                'completed',
+              );
 
-          // Then: no run row, no block for the deep agent, and the subagent's system text is the learning one without its block
-          expect(await findRunById(database.db, unlearned.deepAgentId)).toBeUndefined();
-          expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(KNOWLEDGE_RULE);
-          expect(unlearnedScout.calls[0]?.instructions).toBe(withoutKnowledge(modelCall?.instructions ?? ''));
+              // Then: no run row, no block for the deep agent, and the subagent's system text is the learning one without its block
+              expect(
+                await findRunById(database.db, unlearned.deepAgentId),
+              ).toBeUndefined();
+              expect(unlearned.deepAgent.calls[0]?.instructions).not.toContain(
+                KNOWLEDGE_RULE,
+              );
+              expect(unlearnedScout.calls[0]?.instructions).toBe(
+                withoutKnowledge(modelCall?.instructions ?? ''),
+              );
 
-          // When (row 3): the author switches the flag on again. Then (AC-02.2): the graph is the one that was there
-          flagged(true);
-          expect(await readGraph(database.db, recordId)).toEqual(graph);
-        } finally {
-          compactionHeld.open();
-          reportHeld.open();
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+              // When (row 3): the author switches the flag on again. Then (AC-02.2): the graph is the one that was there
+              flagged(true);
+              expect(await readGraph(database.db, recordId)).toEqual(graph);
+            } finally {
+              compactionHeld.open();
+              reportHeld.open();
+              await closeAll([harness]);
+            }
+          },
+        ),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-10: embeddings unavailable - the run is never failed, selection falls back to the common order and says why  (NEW, v1.2)
@@ -1965,92 +2746,176 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: edge-case
   // @dependency: AgentStepHandler (question row), knowledgeBlock, selectKnowledge, EmbeddingClient (double: not selected / 5xx), Agents.knowledge.view, ModelClient (scripted), Postgres
   // @complexity: medium
-  it('INT-10: with no embedding model or a failing provider the run completes, steps get the common order over the whole limit, one failed call per session, and the view says off with the reason', async () => {
-    // Given: two learning deep agents over the cap, one per row, no vectors anywhere
-    const unselectedId = randomUUID();
-    const failingId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(unselectedId, [SCOUT]));
-    library.add(learningDeepAgent(failingId, [SCOUT]));
-    const starter = newUser();
-    const model = createScriptedModel();
-    model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], { thereafter: RECORDS_NOTHING });
-    const unselectedScout = scoutScript(model, 'Scout with no embedding model', ['payment-api']);
-    const failingScout = scoutScript(model, 'Scout with failing embeddings', ['payment-api']);
+  it(
+    'INT-10: with no embedding model or a failing provider the run completes, steps get the common order over the whole limit, one failed call per session, and the view says off with the reason',
+    async () => {
+      // Given: two learning deep agents over the cap, one per row, no vectors anywhere
+      const unselectedId = randomUUID();
+      const failingId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(unselectedId, [SCOUT]));
+      library.add(learningDeepAgent(failingId, [SCOUT]));
+      const starter = newUser();
+      const model = createScriptedModel();
+      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], {
+        thereafter: RECORDS_NOTHING,
+      });
+      const unselectedScout = scoutScript(
+        model,
+        'Scout with no embedding model',
+        ['payment-api'],
+      );
+      const failingScout = scoutScript(model, 'Scout with failing embeddings', [
+        'payment-api',
+      ]);
 
-    await withLibraryRow(database.db, unselectedId, () =>
-      withLibraryRow(database.db, failingId, () =>
-        withKnowledgeLimit(database.db, KNOWLEDGE_LIMIT_TOKENS_MIN, async () => {
-          const unselectedGraph = await seedOverLimit(database.db, unselectedId, []);
-          const failingGraph = await seedOverLimit(database.db, failingId, []);
-          // With selection off the whole limit goes to the common order: the archives always, the rest never
-          const offPlacements = (graph: OverLimitGraph) =>
-            [
-              ...graph.archives.map((item) => `${item.key} always`),
-              ...[graph.billing, graph.fact, graph.refunds].map((item) => `${item.key} does_not_fit`),
-            ].sort();
-          const harness = await learningHarness(model, library);
-          /** Runs the deep agent to the end of the vector pass its extraction queues. */
-          const runToItsPass = async (recordId: string, text: string, scout: string) => {
-            const run = await startLearningRun(harness, model, { ownerId: starter, recordId, turns: [{ text, scout }] });
-            const round = await waitForRound(database.db, run.deepAgentId);
-            const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
-            const ended = await harness.runtime.tasks.get(run.deepAgentId, starter);
-            const history = historyLines(await historyOf(harness, run.deepAgentId, starter));
-            return { run, pass, status: ended.status, history };
-          };
-          try {
-            // When (row A): no embedding model is selected; a run makes several steps and ends
-            const unselected = await runToItsPass(
-              unselectedId,
-              'Coordinate with no embedding model',
-              'Scout with no embedding model',
-            );
+      await withLibraryRow(database.db, unselectedId, () =>
+        withLibraryRow(database.db, failingId, () =>
+          withKnowledgeLimit(
+            database.db,
+            KNOWLEDGE_LIMIT_TOKENS_MIN,
+            async () => {
+              const unselectedGraph = await seedOverLimit(
+                database.db,
+                unselectedId,
+                [],
+              );
+              const failingGraph = await seedOverLimit(
+                database.db,
+                failingId,
+                [],
+              );
+              // With selection off the whole limit goes to the common order: the archives always, the rest never
+              const offPlacements = (graph: OverLimitGraph) =>
+                [
+                  ...graph.archives.map((item) => `${item.key} always`),
+                  ...[graph.billing, graph.fact, graph.refunds].map(
+                    (item) => `${item.key} does_not_fit`,
+                  ),
+                ].sort();
+              const harness = await learningHarness(model, library);
+              /** Runs the deep agent to the end of the vector pass its extraction queues. */
+              const runToItsPass = async (
+                recordId: string,
+                text: string,
+                scout: string,
+              ) => {
+                const run = await startLearningRun(harness, model, {
+                  ownerId: starter,
+                  recordId,
+                  turns: [{ text, scout }],
+                });
+                const round = await waitForRound(database.db, run.deepAgentId);
+                const pass = await waitForEmbedPass(
+                  database.db,
+                  recordId,
+                  round.lastAt ?? new Date(0),
+                );
+                const ended = await harness.runtime.tasks.get(
+                  run.deepAgentId,
+                  starter,
+                );
+                const history = historyLines(
+                  await historyOf(harness, run.deepAgentId, starter),
+                );
+                return { run, pass, status: ended.status, history };
+              };
+              try {
+                // When (row A): no embedding model is selected; a run makes several steps and ends
+                const unselected = await runToItsPass(
+                  unselectedId,
+                  'Coordinate with no embedding model',
+                  'Scout with no embedding model',
+                );
 
-            // Then (AC-18.3): the run completed with its reply; every step got the common order over the whole limit; no
-            // provider request at all, and the view says why selection is off
-            expect([unselected.status, unselected.pass.lastReason]).toEqual(['completed', 'model_not_configured']);
-            expect(unselected.history).toContain('model_answer: Answer to: Coordinate with no embedding model []');
-            expect(unselectedScout.calls).toHaveLength(2);
-            expect(distinctBlocks([...unselected.run.deepAgent.calls, ...unselectedScout.calls])).toEqual([
-              COMMON_BLOCK,
-            ]);
-            expect(harness.embeddings.calls).toEqual([]);
-            const unselectedView = await knowledgeView(harness, unselectedId, [LOGS_SERVER]);
-            expect(unselectedView.selection).toEqual({ state: 'off', reason: 'model_not_selected', model: null });
-            expect(placementsOf(unselectedView)).toEqual(offPlacements(unselectedGraph));
+                // Then (AC-18.3): the run completed with its reply; every step got the common order over the whole limit; no
+                // provider request at all, and the view says why selection is off
+                expect([unselected.status, unselected.pass.lastReason]).toEqual(
+                  ['completed', 'model_not_configured'],
+                );
+                expect(unselected.history).toContain(
+                  'model_answer: Answer to: Coordinate with no embedding model []',
+                );
+                expect(unselectedScout.calls).toHaveLength(2);
+                expect(
+                  distinctBlocks([
+                    ...unselected.run.deepAgent.calls,
+                    ...unselectedScout.calls,
+                  ]),
+                ).toEqual([COMMON_BLOCK]);
+                expect(harness.embeddings.calls).toEqual([]);
+                const unselectedView = await knowledgeView(
+                  harness,
+                  unselectedId,
+                  [LOGS_SERVER],
+                );
+                expect(unselectedView.selection).toEqual({
+                  state: 'off',
+                  reason: 'model_not_selected',
+                  model: null,
+                });
+                expect(placementsOf(unselectedView)).toEqual(
+                  offPlacements(unselectedGraph),
+                );
 
-            // When (row B): model A is selected and its provider answers 503 to every request
-            harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
-            harness.embeddings.failure = { statusCode: 503 };
-            const failing = await runToItsPass(failingId, 'Coordinate with failing embeddings', 'Scout with failing embeddings');
+                // When (row B): model A is selected and its provider answers 503 to every request
+                harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
+                harness.embeddings.failure = { statusCode: 503 };
+                const failing = await runToItsPass(
+                  failingId,
+                  'Coordinate with failing embeddings',
+                  'Scout with failing embeddings',
+                );
 
-            // Then (AC-18.3): the same run, the same blocks; one failed `embed` per session (three requests: the call and two
-            // retries), none from a later step; the view names the provider failure and the model
-            expect([failing.status, failing.pass.lastReason]).toEqual(['completed', 'provider_unavailable']);
-            expect(failing.history).toContain('model_answer: Answer to: Coordinate with failing embeddings []');
-            expect(failingScout.calls).toHaveLength(2);
-            expect(distinctBlocks([...failing.run.deepAgent.calls, ...failingScout.calls])).toEqual([COMMON_BLOCK]);
-            expect(
-              embeddingRequestsOf(harness, 'query').map((call) => `${call.model} ${call.texts.join(' | ')}`),
-            ).toEqual([
-              `${MODEL_A} Coordinate with failing embeddings`,
-              `${MODEL_A} Coordinate with failing embeddings`,
-              `${MODEL_A} Coordinate with failing embeddings`,
-              `${MODEL_A} Scout with failing embeddings`,
-              `${MODEL_A} Scout with failing embeddings`,
-              `${MODEL_A} Scout with failing embeddings`,
-            ]);
-            const failingView = await knowledgeView(harness, failingId, [LOGS_SERVER]);
-            expect(failingView.selection).toEqual({ state: 'off', reason: 'provider_failed', model: MODEL_A });
-            expect(placementsOf(failingView)).toEqual(offPlacements(failingGraph));
-          } finally {
-            await closeAll([harness]);
-          }
-        }),
-      ),
-    );
-  }, TEST_TIMEOUT_MS);
+                // Then (AC-18.3): the same run, the same blocks; one failed `embed` per session (three requests: the call and two
+                // retries), none from a later step; the view names the provider failure and the model
+                expect([failing.status, failing.pass.lastReason]).toEqual([
+                  'completed',
+                  'provider_unavailable',
+                ]);
+                expect(failing.history).toContain(
+                  'model_answer: Answer to: Coordinate with failing embeddings []',
+                );
+                expect(failingScout.calls).toHaveLength(2);
+                expect(
+                  distinctBlocks([
+                    ...failing.run.deepAgent.calls,
+                    ...failingScout.calls,
+                  ]),
+                ).toEqual([COMMON_BLOCK]);
+                expect(
+                  embeddingRequestsOf(harness, 'query').map(
+                    (call) => `${call.model} ${call.texts.join(' | ')}`,
+                  ),
+                ).toEqual([
+                  `${MODEL_A} Coordinate with failing embeddings`,
+                  `${MODEL_A} Coordinate with failing embeddings`,
+                  `${MODEL_A} Coordinate with failing embeddings`,
+                  `${MODEL_A} Scout with failing embeddings`,
+                  `${MODEL_A} Scout with failing embeddings`,
+                  `${MODEL_A} Scout with failing embeddings`,
+                ]);
+                const failingView = await knowledgeView(harness, failingId, [
+                  LOGS_SERVER,
+                ]);
+                expect(failingView.selection).toEqual({
+                  state: 'off',
+                  reason: 'provider_failed',
+                  model: MODEL_A,
+                });
+                expect(placementsOf(failingView)).toEqual(
+                  offPlacements(failingGraph),
+                );
+              } finally {
+                await closeAll([harness]);
+              }
+            },
+          ),
+        ),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-11: the embedding model changes - old vectors are not used, selection says preparing, the pass recomputes  (NEW, v1.2)
@@ -2080,81 +2945,145 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: edge-case
   // @dependency: AgentStepHandler (question row), knowledgeBlock, knowledge.embed handler, KnowledgeVectorStore (real pgvector), EmbeddingClient (double: model A -> B), token ledger, Agents.knowledge.view, Postgres
   // @complexity: high
-  it('INT-11: after the embedding model changes, steps use the common order and the view says preparing until the pass re-embeds every item on the new model, billed to the platform', async () => {
-    // Given: a learning deep agent over the cap, every record with a vector of model A; the administrator selected model B
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const starter = newUser();
-    const endHeld = createLatch();
-    const model = createScriptedModel();
-    model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [{ calls: [recordKnowledge([lessonOf('billing-api')])] }]);
-    const scout = scoutScript(model, 'Scout the billing logs', ['payment-api']);
+  it(
+    'INT-11: after the embedding model changes, steps use the common order and the view says preparing until the pass re-embeds every item on the new model, billed to the platform',
+    async () => {
+      // Given: a learning deep agent over the cap, every record with a vector of model A; the administrator selected model B
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const starter = newUser();
+      const endHeld = createLatch();
+      const model = createScriptedModel();
+      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
+        { calls: [recordKnowledge([lessonOf('billing-api')])] },
+      ]);
+      const scout = scoutScript(model, 'Scout the billing logs', [
+        'payment-api',
+      ]);
 
-    await withLibraryRow(database.db, recordId, () =>
-      withKnowledgeLimit(database.db, KNOWLEDGE_LIMIT_TOKENS_MIN, async () => {
-        await seedOverLimit(database.db, recordId, ['archives', 'billing', 'fact', 'refunds']);
-        const harness = await learningHarness(model, library);
-        harness.embeddingVerdict = TEST_EMBEDDING_MODEL_B;
-        harness.embeddings.vectorOf = topicVector;
-        try {
-          // When: a run about billing; its deep agent's last answer is held
-          const run = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [
-              {
-                text: 'Coordinate the billing question',
-                scout: 'Scout the billing logs',
-                answer: { text: 'Answer of the billing run', latch: endHeld },
-              },
-            ],
-          });
-          await endHeld.reached();
+      await withLibraryRow(database.db, recordId, () =>
+        withKnowledgeLimit(
+          database.db,
+          KNOWLEDGE_LIMIT_TOKENS_MIN,
+          async () => {
+            await seedOverLimit(database.db, recordId, [
+              'archives',
+              'billing',
+              'fact',
+              'refunds',
+            ]);
+            const harness = await learningHarness(model, library);
+            harness.embeddingVerdict = TEST_EMBEDDING_MODEL_B;
+            harness.embeddings.vectorOf = topicVector;
+            try {
+              // When: a run about billing; its deep agent's last answer is held
+              const run = await startLearningRun(harness, model, {
+                ownerId: starter,
+                recordId,
+                turns: [
+                  {
+                    text: 'Coordinate the billing question',
+                    scout: 'Scout the billing logs',
+                    answer: {
+                      text: 'Answer of the billing run',
+                      latch: endHeld,
+                    },
+                  },
+                ],
+              });
+              await endHeld.reached();
 
-          // Then (AC-18.4, Invariant 11): the question vector is of model B and meets no vector of B - every step got the common
-          // order, billing's vector of A never compared (no failed store query); the view says preparing, all seven records pending
-          expect((await readQuestion(database.db, run.deepAgentId))?.model).toBe(MODEL_B);
-          expect(distinctBlocks([...run.deepAgent.calls, ...scout.calls])).toEqual([COMMON_BLOCK]);
-          expect(
-            harness.logs.filter((record) => record.message === 'knowledge store query failed; selection without closeness'),
-          ).toEqual([]);
-          expect((await knowledgeView(harness, recordId, [LOGS_SERVER])).selection).toEqual({
-            state: 'preparing',
-            pending: 7,
-          });
+              // Then (AC-18.4, Invariant 11): the question vector is of model B and meets no vector of B - every step got the common
+              // order, billing's vector of A never compared (no failed store query); the view says preparing, all seven records pending
+              expect(
+                (await readQuestion(database.db, run.deepAgentId))?.model,
+              ).toBe(MODEL_B);
+              expect(
+                distinctBlocks([...run.deepAgent.calls, ...scout.calls]),
+              ).toEqual([COMMON_BLOCK]);
+              expect(
+                harness.logs.filter(
+                  (record) =>
+                    record.message ===
+                    'knowledge store query failed; selection without closeness',
+                ),
+              ).toEqual([]);
+              expect(
+                (await knowledgeView(harness, recordId, [LOGS_SERVER]))
+                  .selection,
+              ).toEqual({
+                state: 'preparing',
+                pending: 7,
+              });
 
-          // When: the run ends, the round adds a lesson, the pass runs
-          endHeld.open();
-          const round = await waitForRound(database.db, run.deepAgentId);
-          const pass = await waitForEmbedPass(database.db, recordId, round.lastAt ?? new Date(0));
-          expect([round.lastStatus, round.lastAdded, pass.lastReason, pass.lastModel]).toEqual(['done', 1, null, MODEL_B]);
-          expect((await harness.runtime.tasks.get(run.deepAgentId, starter)).status).toBe('completed');
+              // When: the run ends, the round adds a lesson, the pass runs
+              endHeld.open();
+              const round = await waitForRound(database.db, run.deepAgentId);
+              const pass = await waitForEmbedPass(
+                database.db,
+                recordId,
+                round.lastAt ?? new Date(0),
+              );
+              expect([
+                round.lastStatus,
+                round.lastAdded,
+                pass.lastReason,
+                pass.lastModel,
+              ]).toEqual(['done', 1, null, MODEL_B]);
+              expect(
+                (await harness.runtime.tasks.get(run.deepAgentId, starter))
+                  .status,
+              ).toBe('completed');
 
-          // Then: one vector per key, every one of model B; selection is on
-          expect(await vectorLinesOf(database.db, recordId)).toEqual(
-            everyKeyOn(await readGraph(database.db, recordId), MODEL_B),
-          );
-          expect((await knowledgeView(harness, recordId, [LOGS_SERVER])).selection).toEqual({ state: 'on' });
+              // Then: one vector per key, every one of model B; selection is on
+              expect(await vectorLinesOf(database.db, recordId)).toEqual(
+                everyKeyOn(await readGraph(database.db, recordId), MODEL_B),
+              );
+              expect(
+                (await knowledgeView(harness, recordId, [LOGS_SERVER]))
+                  .selection,
+              ).toEqual({ state: 'on' });
 
-          // Then (AC-08.1, KD-8): the pass is the platform's task; the new lesson is the starter's, the seven recomputed records
-          // the platform's, nobody else pays
-          const [passTask, ...morePasses] = await knowledgeTasksOf(database.db, { recordId });
-          if (passTask === undefined) throw new Error('no vector pass');
-          expect([passTask.ownerId, morePasses]).toEqual([PLATFORM_OWNER_ID, []]);
-          expect(
-            embeddingRequestsOf(harness, 'document').map((call) => `${call.model} ${call.texts.length}`),
-          ).toEqual([`${MODEL_B} 1`, `${MODEL_B} 7`]);
-          expect(await embeddingSpendOf(database.db, starter, passTask.taskId)).toEqual([`${MODEL_B} 10`]);
-          expect(await embeddingSpendOf(database.db, PLATFORM_OWNER_ID, passTask.taskId)).toEqual([`${MODEL_B} 70`]);
-          expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
-        } finally {
-          endHeld.open();
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+              // Then (AC-08.1, KD-8): the pass is the platform's task; the new lesson is the starter's, the seven recomputed records
+              // the platform's, nobody else pays
+              const [passTask, ...morePasses] = await knowledgeTasksOf(
+                database.db,
+                { recordId },
+              );
+              if (passTask === undefined) throw new Error('no vector pass');
+              expect([passTask.ownerId, morePasses]).toEqual([
+                PLATFORM_OWNER_ID,
+                [],
+              ]);
+              expect(
+                embeddingRequestsOf(harness, 'document').map(
+                  (call) => `${call.model} ${call.texts.length}`,
+                ),
+              ).toEqual([`${MODEL_B} 1`, `${MODEL_B} 7`]);
+              expect(
+                await embeddingSpendOf(database.db, starter, passTask.taskId),
+              ).toEqual([`${MODEL_B} 10`]);
+              expect(
+                await embeddingSpendOf(
+                  database.db,
+                  PLATFORM_OWNER_ID,
+                  passTask.taskId,
+                ),
+              ).toEqual([`${MODEL_B} 70`]);
+              expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual(
+                [],
+              );
+            } finally {
+              endHeld.open();
+              await closeAll([harness]);
+            }
+          },
+        ),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-12: the question vector - one per session and one per new employee message, billed to the starter  (NEW, v1.2)
@@ -2183,81 +3112,148 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // @category: core-functionality
   // @dependency: AgentStepHandler (question row, last `user_message`), knowledgeBlock, compactionStep, knowledge.embed handler, EmbeddingClient (double), KnowledgeVectorStore (real pgvector), token ledger, ModelClient (scripted), Postgres
   // @complexity: high
-  it('INT-12: the question vector is computed once per session and once per new deep agent message, steps get the items close to the latest message, and the spend lands on the starter', async () => {
-    // Given: a learning deep agent over the cap with billing and refunds records that have vectors of model A; embeddings on model A
-    const recordId = randomUUID();
-    const library = createLibraryDouble();
-    library.add(learningDeepAgent(recordId, [SCOUT]));
-    const starter = newUser();
-    const refundsMessage = 'Now look into the refunds';
-    const model = createScriptedModel();
-    model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], { thereafter: RECORDS_NOTHING });
-    const scout = compactingScoutScript(model, 'Scout the billing logs');
+  it(
+    'INT-12: the question vector is computed once per session and once per new deep agent message, steps get the items close to the latest message, and the spend lands on the starter',
+    async () => {
+      // Given: a learning deep agent over the cap with billing and refunds records that have vectors of model A; embeddings on model A
+      const recordId = randomUUID();
+      const library = createLibraryDouble();
+      library.add(learningDeepAgent(recordId, [SCOUT]));
+      const starter = newUser();
+      const refundsMessage = 'Now look into the refunds';
+      const model = createScriptedModel();
+      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], {
+        thereafter: RECORDS_NOTHING,
+      });
+      const scout = compactingScoutScript(model, 'Scout the billing logs');
 
-    await withLibraryRow(database.db, recordId, () =>
-      withKnowledgeLimit(database.db, KNOWLEDGE_LIMIT_TOKENS_MIN, async () => {
-        await seedOverLimit(database.db, recordId, ['billing', 'fact', 'refunds']);
-        const harness = await learningHarness(model, library, { variables: COMPACTING });
-        harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
-        harness.embeddings.vectorOf = topicVector;
-        try {
-          // When: a run about billing - the deep agent starts the scout, the scout searches, compacts and reports, the run ends
-          const run = await startLearningRun(harness, model, {
-            ownerId: starter,
-            recordId,
-            turns: [
-              { text: 'Coordinate the billing question', scout: 'Scout the billing logs' },
-              { text: refundsMessage, scout: null },
-            ],
-          });
-          const scoutId = await startedChild(harness, run.deepAgentId);
-          const first = await waitForRound(database.db, run.deepAgentId);
-          await waitForEmbedPass(database.db, recordId, first.lastAt ?? new Date(0));
-          const [passTask, ...morePasses] = await knowledgeTasksOf(database.db, { recordId });
-          if (passTask === undefined) throw new Error('no vector pass');
-          const beforeMessage = run.deepAgent.calls.length;
+      await withLibraryRow(database.db, recordId, () =>
+        withKnowledgeLimit(
+          database.db,
+          KNOWLEDGE_LIMIT_TOKENS_MIN,
+          async () => {
+            await seedOverLimit(database.db, recordId, [
+              'billing',
+              'fact',
+              'refunds',
+            ]);
+            const harness = await learningHarness(model, library, {
+              variables: COMPACTING,
+            });
+            harness.embeddingVerdict = TEST_EMBEDDING_MODEL_A;
+            harness.embeddings.vectorOf = topicVector;
+            try {
+              // When: a run about billing - the deep agent starts the scout, the scout searches, compacts and reports, the run ends
+              const run = await startLearningRun(harness, model, {
+                ownerId: starter,
+                recordId,
+                turns: [
+                  {
+                    text: 'Coordinate the billing question',
+                    scout: 'Scout the billing logs',
+                  },
+                  { text: refundsMessage, scout: null },
+                ],
+              });
+              const scoutId = await startedChild(harness, run.deepAgentId);
+              const first = await waitForRound(database.db, run.deepAgentId);
+              await waitForEmbedPass(
+                database.db,
+                recordId,
+                first.lastAt ?? new Date(0),
+              );
+              const [passTask, ...morePasses] = await knowledgeTasksOf(
+                database.db,
+                { recordId },
+              );
+              if (passTask === undefined) throw new Error('no vector pass');
+              const beforeMessage = run.deepAgent.calls.length;
 
-          // When: the employee writes the deep agent about refunds; the run ends again
-          const second = await roundAfterTurn(
-            harness,
-            { ownerId: starter, runId: run.deepAgentId, text: refundsMessage },
-            first,
-          );
-          await waitForEmbedPass(database.db, recordId, second.lastAt ?? new Date(0));
+              // When: the employee writes the deep agent about refunds; the run ends again
+              const second = await roundAfterTurn(
+                harness,
+                {
+                  ownerId: starter,
+                  runId: run.deepAgentId,
+                  text: refundsMessage,
+                },
+                first,
+              );
+              await waitForEmbedPass(
+                database.db,
+                recordId,
+                second.lastAt ?? new Date(0),
+              );
 
-          // Then (KD-6, Invariant 12): one question vector for each session and one for the message, in that order, however many
-          // model and compaction steps ran
-          expect(morePasses).toEqual([]);
-          expect(scout.calls).toHaveLength(3);
-          expect(lastUserText(scout.calls[1])).toContain(COMPACTION_REQUEST_START);
-          expect(embeddingRequestsOf(harness, 'query').map((call) => `${call.model} ${call.texts.join(' | ')}`)).toEqual([
-            `${MODEL_A} Coordinate the billing question`,
-            `${MODEL_A} Scout the billing logs`,
-            `${MODEL_A} ${refundsMessage}`,
-          ]);
+              // Then (KD-6, Invariant 12): one question vector for each session and one for the message, in that order, however many
+              // model and compaction steps ran
+              expect(morePasses).toEqual([]);
+              expect(scout.calls).toHaveLength(3);
+              expect(lastUserText(scout.calls[1])).toContain(
+                COMPACTION_REQUEST_START,
+              );
+              expect(
+                embeddingRequestsOf(harness, 'query').map(
+                  (call) => `${call.model} ${call.texts.join(' | ')}`,
+                ),
+              ).toEqual([
+                `${MODEL_A} Coordinate the billing question`,
+                `${MODEL_A} Scout the billing logs`,
+                `${MODEL_A} ${refundsMessage}`,
+              ]);
 
-          // Then (AC-18.2): before the message every step of both sessions got the billing records; after it the deep agent's
-          // steps get the refunds record and not the billing ones
-          expect(
-            distinctBlocks([...run.deepAgent.calls.slice(0, beforeMessage), ...scout.calls]),
-          ).toEqual([BILLING_BLOCK]);
-          expect(distinctBlocks(run.deepAgent.calls.slice(beforeMessage))).toEqual([REFUNDS_BLOCK]);
+              // Then (AC-18.2): before the message every step of both sessions got the billing records; after it the deep agent's
+              // steps get the refunds record and not the billing ones
+              expect(
+                distinctBlocks([
+                  ...run.deepAgent.calls.slice(0, beforeMessage),
+                  ...scout.calls,
+                ]),
+              ).toEqual([BILLING_BLOCK]);
+              expect(
+                distinctBlocks(run.deepAgent.calls.slice(beforeMessage)),
+              ).toEqual([REFUNDS_BLOCK]);
 
-          // Then (AC-08.1, DC-14): the session vectors are the starter's under each session's task, the pass's vectors of the
-          // archives the starter's under the pass's task; nothing on the author or the platform; the month on model A is their sum
-          expect(await embeddingSpendOf(database.db, starter, run.deepAgentId)).toEqual([`${MODEL_A} 10`, `${MODEL_A} 10`]);
-          expect(await embeddingSpendOf(database.db, starter, scoutId)).toEqual([`${MODEL_A} 10`]);
-          expect(await embeddingSpendOf(database.db, starter, passTask.taskId)).toEqual([`${MODEL_A} 40`]);
-          for (const taskId of [run.deepAgentId, scoutId, passTask.taskId]) {
-            expect(await embeddingSpendOf(database.db, PLATFORM_OWNER_ID, taskId)).toEqual([]);
-          }
-          expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
-          const month = new Date().toISOString().slice(0, 7);
-          expect((await harness.runtime.ledger.monthSpendByModel(starter, month)).get(MODEL_A)).toBe(0.0000175);
-        } finally {
-          await closeAll([harness]);
-        }
-      }),
-    );
-  }, TEST_TIMEOUT_MS);
+              // Then (AC-08.1, DC-14): the session vectors are the starter's under each session's task, the pass's vectors of the
+              // archives the starter's under the pass's task; nothing on the author or the platform; the month on model A is their sum
+              expect(
+                await embeddingSpendOf(database.db, starter, run.deepAgentId),
+              ).toEqual([`${MODEL_A} 10`, `${MODEL_A} 10`]);
+              expect(
+                await embeddingSpendOf(database.db, starter, scoutId),
+              ).toEqual([`${MODEL_A} 10`]);
+              expect(
+                await embeddingSpendOf(database.db, starter, passTask.taskId),
+              ).toEqual([`${MODEL_A} 40`]);
+              for (const taskId of [
+                run.deepAgentId,
+                scoutId,
+                passTask.taskId,
+              ]) {
+                expect(
+                  await embeddingSpendOf(
+                    database.db,
+                    PLATFORM_OWNER_ID,
+                    taskId,
+                  ),
+                ).toEqual([]);
+              }
+              expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual(
+                [],
+              );
+              const month = new Date().toISOString().slice(0, 7);
+              expect(
+                (
+                  await harness.runtime.ledger.monthSpendByModel(starter, month)
+                ).get(MODEL_A),
+              ).toBe(0.0000175);
+            } finally {
+              await closeAll([harness]);
+            }
+          },
+        ),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

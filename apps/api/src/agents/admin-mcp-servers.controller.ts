@@ -70,9 +70,7 @@ export class AdminMcpServersController {
       await this.settings.publicUrlFor(),
       body.name,
     );
-    const write = await mcpAnswer(
-      this.mcp.register({ ...body, redirectUrl }),
-    );
+    const write = await mcpAnswer(this.mcp.register({ ...body, redirectUrl }));
     await recordServerChange(this.auditLog, {
       actor,
       server: body.name,

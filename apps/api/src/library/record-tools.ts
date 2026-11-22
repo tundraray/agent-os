@@ -32,7 +32,11 @@ import type { ChatChange, ChatContext, ChatRefusal } from './library.types';
 import { recordListText, recordText } from './record-listing';
 
 type ToolReview = Awaited<
-  ReturnType<NonNullable<NonNullable<InCommitAgentTool<unknown>['confirmation']>['review']>>
+  ReturnType<
+    NonNullable<
+      NonNullable<InCommitAgentTool<unknown>['confirmation']>['review']
+    >
+  >
 >;
 
 // ---------- Arguments ----------
@@ -58,7 +62,11 @@ const DeepAgentToolContentSchema = z
     if (checked.success) return;
     for (const issue of checked.error.issues) {
       if (issue.code === 'custom')
-        ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+        ctx.addIssue({
+          code: 'custom',
+          path: issue.path,
+          message: issue.message,
+        });
     }
   });
 
@@ -69,8 +77,12 @@ function toolContentSchema(kind: RecordKind) {
 const [agentBodySchema] = CreateRecordBodySchema.options;
 
 const recordShape = {
-  kind: RecordKindSchema.describe('agent or deep_agent; a record never changes its kind'),
-  name: agentBodySchema.shape.name.describe('The record name, unique among your records'),
+  kind: RecordKindSchema.describe(
+    'agent or deep_agent; a record never changes its kind',
+  ),
+  name: agentBodySchema.shape.name.describe(
+    'The record name, unique among your records',
+  ),
   description: agentBodySchema.shape.description.describe(
     'When to use the record, one or two sentences',
   ),
@@ -106,7 +118,9 @@ const CreateRecordArgsSchema = z
     system: z
       .boolean()
       .default(false)
-      .describe('A system record of the admin panel; only an administrator may set it'),
+      .describe(
+        'A system record of the admin panel; only an administrator may set it',
+      ),
   })
   .superRefine(withContentOfKind);
 const EditRecordArgsSchema = z
@@ -218,14 +232,20 @@ function refusalOf(refusal: ChatRefusal): {
             : 'recordId: a system record; only an administrator changes it',
       };
     case 'builtin':
-      return { reason: 'builtin', text: 'recordId: a built-in record is never deleted' };
+      return {
+        reason: 'builtin',
+        text: 'recordId: a built-in record is never deleted',
+      };
     case 'version_conflict':
       return {
         reason: 'version_conflict',
         text: 'recordId: the record changed after the card was shown; read it again and propose the change anew',
       };
     case 'invalid':
-      return { reason: 'invalid_arguments', text: 'kind: a record never changes its kind' };
+      return {
+        reason: 'invalid_arguments',
+        text: 'kind: a record never changes its kind',
+      };
     case 'name_taken':
       return {
         reason: 'name_taken',
@@ -260,7 +280,9 @@ function refusalOf(refusal: ChatRefusal): {
     case 'sharing_banned':
     case 'holder_not_found':
     case 'audience_fixed':
-      throw new Error(`a chat change was refused by the audience rule ${refusal.refusal}`);
+      throw new Error(
+        `a chat change was refused by the audience rule ${refusal.refusal}`,
+      );
   }
 }
 
@@ -319,7 +341,11 @@ function createRecordTools(options: RecordToolsOptions) {
   }
 
   function logOutcome(
-    call: { readonly ownerId: string; readonly agentId: string; readonly callId: string | null },
+    call: {
+      readonly ownerId: string;
+      readonly agentId: string;
+      readonly callId: string | null;
+    },
     tool: string,
     recordId: string | null,
     result: { readonly outcome: string; readonly reason?: string },
@@ -329,7 +355,8 @@ function createRecordTools(options: RecordToolsOptions) {
       agentId: call.agentId,
       callId: call.callId,
       tool,
-      action: CARD_ACTION[tool] ?? (tool === READ_RECORD_TOOL ? 'read' : 'list'),
+      action:
+        CARD_ACTION[tool] ?? (tool === READ_RECORD_TOOL ? 'read' : 'list'),
       recordId,
       outcome: result.outcome,
       reason: result.reason ?? null,
@@ -366,12 +393,20 @@ function createRecordTools(options: RecordToolsOptions) {
       });
       return answer;
     }
-    logOutcome({ ...caller, callId: null }, tool, recordId, { outcome: 'card' });
+    logOutcome({ ...caller, callId: null }, tool, recordId, {
+      outcome: 'card',
+    });
     return { kind: 'card', content: reviewed.card };
   }
 
   /** The save of the approved card in the step's transaction. */
-  function mutating<Args extends { readonly recordId?: string; readonly kind?: string; readonly name?: string }>(
+  function mutating<
+    Args extends {
+      readonly recordId?: string;
+      readonly kind?: string;
+      readonly name?: string;
+    },
+  >(
     tool: string,
     description: string,
     argsSchema: z.ZodType<Args>,
@@ -396,19 +431,34 @@ function createRecordTools(options: RecordToolsOptions) {
       prepare: ({ caller }) => contextOf(caller.ownerId),
       async execute({ caller, callId, prepared, confirmed }) {
         if (prepared === undefined || confirmed === undefined)
-          throw new Error(`${tool} of agent ${caller.agentId} runs without its approved card`);
+          throw new Error(
+            `${tool} of agent ${caller.agentId} runs without its approved card`,
+          );
         const card = LibraryRecordCardSchema.parse(confirmed);
         if (card.action !== CARD_ACTION[tool])
-          throw new Error(`${tool} of agent ${caller.agentId} got a ${card.action} card`);
+          throw new Error(
+            `${tool} of agent ${caller.agentId} got a ${card.action} card`,
+          );
         const saved = await library.saveChatChange(prepared, card);
-        const call = { ownerId: caller.ownerId, agentId: caller.agentId, callId };
+        const call = {
+          ownerId: caller.ownerId,
+          agentId: caller.agentId,
+          callId,
+        };
         if (saved.outcome === 'refused') {
           const answer = refused(saved);
-          logOutcome(call, tool, card.recordId, { outcome: 'refused', reason: answer.reason });
+          logOutcome(call, tool, card.recordId, {
+            outcome: 'refused',
+            reason: answer.reason,
+          });
           return answer;
         }
         logOutcome(call, tool, saved.recordId, { outcome: 'saved' });
-        return { kind: 'done', outcome: 'success', text: savedText(card.action, card.kind, saved) };
+        return {
+          kind: 'done',
+          outcome: 'success',
+          text: savedText(card.action, card.kind, saved),
+        };
       },
     };
   }
@@ -429,8 +479,12 @@ function createRecordTools(options: RecordToolsOptions) {
     },
     async execute({ caller, callId, prepared }) {
       if (prepared === undefined)
-        throw new Error(`${LIST_RECORDS_TOOL} of agent ${caller.agentId} runs without its prepare`);
-      logOutcome({ ...caller, callId }, LIST_RECORDS_TOOL, null, { outcome: 'success' });
+        throw new Error(
+          `${LIST_RECORDS_TOOL} of agent ${caller.agentId} runs without its prepare`,
+        );
+      logOutcome({ ...caller, callId }, LIST_RECORDS_TOOL, null, {
+        outcome: 'success',
+      });
       return { kind: 'done', outcome: 'success', text: prepared };
     },
   };
@@ -442,19 +496,28 @@ function createRecordTools(options: RecordToolsOptions) {
     mode: 'in_commit',
     rootOnly: true,
     async prepare({ args, caller }) {
-      const record = await library.chatRecord(await contextOf(caller.ownerId), args.recordId);
+      const record = await library.chatRecord(
+        await contextOf(caller.ownerId),
+        args.recordId,
+      );
       return record === null ? null : recordText(record);
     },
     async execute({ args, caller, callId, prepared }) {
       if (prepared === undefined)
-        throw new Error(`${READ_RECORD_TOOL} of agent ${caller.agentId} runs without its prepare`);
+        throw new Error(
+          `${READ_RECORD_TOOL} of agent ${caller.agentId} runs without its prepare`,
+        );
       const call = { ...caller, callId };
       if (prepared === null) {
         logOutcome(call, READ_RECORD_TOOL, args.recordId, {
           outcome: 'refused',
           reason: 'record_unavailable',
         });
-        return { kind: 'refused', reason: 'record_unavailable', text: RECORD_UNAVAILABLE_TEXT };
+        return {
+          kind: 'refused',
+          reason: 'record_unavailable',
+          text: RECORD_UNAVAILABLE_TEXT,
+        };
       }
       logOutcome(call, READ_RECORD_TOOL, args.recordId, { outcome: 'success' });
       return { kind: 'done', outcome: 'success', text: prepared };
@@ -464,20 +527,43 @@ function createRecordTools(options: RecordToolsOptions) {
   return [
     listRecords,
     readRecord,
-    mutating<CreateRecordArgs>(CREATE_RECORD_TOOL, CREATE_DESCRIPTION, CreateRecordArgsSchema, (args) => ({
-      action: 'create',
-      system: args.system,
-      record: { name: args.name, description: args.description, body: bodyOf(args) },
-    })),
-    mutating<EditRecordArgs>(EDIT_RECORD_TOOL, EDIT_DESCRIPTION, EditRecordArgsSchema, (args) => ({
-      action: 'edit',
-      recordId: args.recordId,
-      record: { name: args.name, description: args.description, body: bodyOf(args) },
-    })),
-    mutating<DeleteRecordArgs>(DELETE_RECORD_TOOL, DELETE_DESCRIPTION, DeleteRecordArgsSchema, (args) => ({
-      action: 'delete',
-      recordId: args.recordId,
-    })),
+    mutating<CreateRecordArgs>(
+      CREATE_RECORD_TOOL,
+      CREATE_DESCRIPTION,
+      CreateRecordArgsSchema,
+      (args) => ({
+        action: 'create',
+        system: args.system,
+        record: {
+          name: args.name,
+          description: args.description,
+          body: bodyOf(args),
+        },
+      }),
+    ),
+    mutating<EditRecordArgs>(
+      EDIT_RECORD_TOOL,
+      EDIT_DESCRIPTION,
+      EditRecordArgsSchema,
+      (args) => ({
+        action: 'edit',
+        recordId: args.recordId,
+        record: {
+          name: args.name,
+          description: args.description,
+          body: bodyOf(args),
+        },
+      }),
+    ),
+    mutating<DeleteRecordArgs>(
+      DELETE_RECORD_TOOL,
+      DELETE_DESCRIPTION,
+      DeleteRecordArgsSchema,
+      (args) => ({
+        action: 'delete',
+        recordId: args.recordId,
+      }),
+    ),
   ] as const;
 }
 

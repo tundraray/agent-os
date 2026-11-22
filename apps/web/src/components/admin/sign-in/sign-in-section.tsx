@@ -25,11 +25,15 @@ export function SignInSection({ page }: SignInSectionProps) {
   const titles = useAdminTitles();
   const t = useTranslations('admin.signIn');
   if (page.kind === 'new') return <NewProviderForm />;
-  if (page.kind === 'record') return <ProviderPage key={page.key} id={page.key} />;
+  if (page.kind === 'record')
+    return <ProviderPage key={page.key} id={page.key} />;
   return (
     <>
       <PageHeader area={titles.panel} title={titles.section('sign-in')}>
-        <Link href={adminNewPath('sign-in')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
+        <Link
+          href={adminNewPath('sign-in')}
+          className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}
+        >
           {t('addProvider')}
         </Link>
       </PageHeader>

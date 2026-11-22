@@ -7,7 +7,10 @@ const CODE_RUN_RESULT_MAX_BYTES = 16_384;
 const unsetWhenEmpty = (value: unknown) => (value === '' ? undefined : value);
 
 const positiveInteger = (fallback: number) =>
-  z.preprocess(unsetWhenEmpty, z.coerce.number().int().min(1).default(fallback));
+  z.preprocess(
+    unsetWhenEmpty,
+    z.coerce.number().int().min(1).default(fallback),
+  );
 
 /**
  * Runtime settings of design-agents.md: env names and defaults. Model providers, their keys and the
@@ -64,8 +67,14 @@ export interface CodeRunConfig {
  * invalid value throws naming the variable — the start stops. Rights and model prices are not settings: they
  * come from the access gate (design-access.md KD-1).
  */
-export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>): AgentsConfig {
-  const env = parseOrThrow(AgentsEnvSchema, variables, 'Invalid agents settings');
+export function parseAgentsConfig(
+  variables: Readonly<Record<string, unknown>>,
+): AgentsConfig {
+  const env = parseOrThrow(
+    AgentsEnvSchema,
+    variables,
+    'Invalid agents settings',
+  );
   return {
     maxOutputTokens: env.AGENT_MAX_OUTPUT_TOKENS,
     maxDepth: env.AGENT_MAX_DEPTH,
@@ -83,7 +92,11 @@ export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>):
   };
 }
 
-function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, prefix: string): T {
+function parseOrThrow<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  prefix: string,
+): T {
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   const problems = result.error.issues.map(

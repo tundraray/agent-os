@@ -1,29 +1,54 @@
-"use client";
+'use client';
 
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { CircleX, LoaderCircle, TriangleAlert } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { toast } from "sonner";
-import { cn } from "cn";
-import { Button } from "@/components/ui/button";
-import { DialogClose, DialogFooter } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { describeAdminError, type AdminErrorContext, type AdminErrorText } from "@/lib/admin/admin-errors";
-import { fieldErrorText, type FieldRuleKey } from "@/lib/admin/form-rules";
-import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { focusShellTarget } from "@/lib/focus";
-import { logger } from "@/lib/logger";
-import type { ErrorsTranslator } from "@/i18n/catalog";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
+import { CircleX, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
+import { cn } from 'cn';
+import { Button } from '@/components/ui/button';
+import { DialogClose, DialogFooter } from '@/components/ui/dialog';
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  describeAdminError,
+  type AdminErrorContext,
+  type AdminErrorText,
+} from '@/lib/admin/admin-errors';
+import { fieldErrorText, type FieldRuleKey } from '@/lib/admin/form-rules';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import { focusShellTarget } from '@/lib/focus';
+import { logger } from '@/lib/logger';
+import type { ErrorsTranslator } from '@/i18n/catalog';
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
-export const CONTROL_SIZE = "h-7 pointer-coarse:h-11";
+export const CONTROL_SIZE = 'h-7 pointer-coarse:h-11';
 
 /** Caption 12 / 16 under a field or a switch (foundations, typography). */
-export const CAPTION = "text-xs leading-4";
+export const CAPTION = 'text-xs leading-4';
 
 /**
  * The one handling of a refused change for the panel's forms, confirmations and switches: logged once,
@@ -34,7 +59,8 @@ export function describeRefusal(
   error: unknown,
   { logEvent, context }: { logEvent: string; context?: AdminErrorContext },
 ): AdminErrorText | null {
-  if (isApiRequestError(error)) logger.warn(`${logEvent}: refused`, describeApiError(error));
+  if (isApiRequestError(error))
+    logger.warn(`${logEvent}: refused`, describeApiError(error));
   else logger.error(`${logEvent}: failed`, { error });
   return describeAdminError(t, error, context);
 }
@@ -60,7 +86,10 @@ export function FormError({ children }: { children: ReactNode }) {
       tabIndex={-1}
       className="flex items-start gap-2 rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-data text-foreground outline-none"
     >
-      <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+      <CircleX
+        className="mt-0.5 size-4 shrink-0 text-destructive"
+        aria-hidden
+      />
       <p>{children}</p>
     </div>
   );
@@ -70,7 +99,10 @@ export function FormError({ children }: { children: ReactNode }) {
 export function FormWarning({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-2 rounded-md border border-warning-border bg-warning-subtle px-3 py-2 text-data text-foreground">
-      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+      <TriangleAlert
+        className="mt-0.5 size-4 shrink-0 text-warning"
+        aria-hidden
+      />
       <div>{children}</div>
     </div>
   );
@@ -85,8 +117,8 @@ export type AdminTextFieldProps = {
   hint?: string;
   /** Mono 13 / 20 for technical values: addresses, ids, tokens. */
   mono?: boolean;
-  type?: "text" | "email" | "url";
-  inputMode?: "decimal" | "numeric" | "email" | "url";
+  type?: 'text' | 'email' | 'url';
+  inputMode?: 'decimal' | 'numeric' | 'email' | 'url';
   maxLength?: number;
   /** The unit after the input, e.g. «часов». */
   suffix?: string;
@@ -103,7 +135,7 @@ export function AdminTextField({
   onChange,
   hint,
   mono = false,
-  type = "text",
+  type = 'text',
   inputMode,
   maxLength,
   suffix,
@@ -111,9 +143,12 @@ export function AdminTextField({
 }: AdminTextFieldProps) {
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
-  const describedBy = [hint !== undefined ? hintId : null, error !== undefined ? errorId : null]
+  const describedBy = [
+    hint !== undefined ? hintId : null,
+    error !== undefined ? errorId : null,
+  ]
     .filter((part) => part !== null)
-    .join(" ");
+    .join(' ');
   const input = (
     <Input
       id={id}
@@ -122,16 +157,23 @@ export function AdminTextField({
       inputMode={inputMode}
       maxLength={maxLength}
       autoComplete="off"
-      className={cn(CONTROL_SIZE, mono ? "font-mono text-mono-compact" : "text-data md:text-data", inputClassName)}
+      className={cn(
+        CONTROL_SIZE,
+        mono ? 'font-mono text-mono-compact' : 'text-data md:text-data',
+        inputClassName,
+      )}
       value={value}
       aria-invalid={error !== undefined}
-      aria-describedby={describedBy === "" ? undefined : describedBy}
+      aria-describedby={describedBy === '' ? undefined : describedBy}
       onChange={(event) => onChange(event.target.value)}
     />
   );
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
-      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
+      <FieldLabel
+        htmlFor={id}
+        className="text-data font-medium text-foreground"
+      >
         {label}
       </FieldLabel>
       {suffix === undefined ? (
@@ -143,7 +185,10 @@ export function AdminTextField({
         </div>
       )}
       {hint !== undefined && (
-        <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+        <FieldDescription
+          id={hintId}
+          className={cn(CAPTION, 'text-muted-foreground')}
+        >
           {hint}
         </FieldDescription>
       )}
@@ -169,12 +214,22 @@ export type AdminRadioFieldProps<Value extends string> = {
 };
 
 /** A one-of-several field of a panel form (settings-form, shadcn `radio-group`): legend, radios, a hint per choice. */
-export function AdminRadioField<Value extends string>({ label, value, options, onChange }: AdminRadioFieldProps<Value>) {
+export function AdminRadioField<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: AdminRadioFieldProps<Value>) {
   const id = useId();
-  const hintId = (option: AdminRadioOption<Value>): string => `${id}-${option.value}`;
+  const hintId = (option: AdminRadioOption<Value>): string =>
+    `${id}-${option.value}`;
   return (
     <FieldSet className="gap-1.5">
-      <FieldLegend id={id} variant="label" className="mb-0 text-data font-medium text-foreground">
+      <FieldLegend
+        id={id}
+        variant="label"
+        className="mb-0 text-data font-medium text-foreground"
+      >
         {label}
       </FieldLegend>
       <RadioGroup
@@ -189,11 +244,19 @@ export function AdminRadioField<Value extends string>({ label, value, options, o
         {options.map((option) => (
           <div key={option.value} className="flex flex-col gap-0.5">
             <Label className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
-              <RadioGroupItem value={option.value} aria-describedby={option.hint === undefined ? undefined : hintId(option)} />
+              <RadioGroupItem
+                value={option.value}
+                aria-describedby={
+                  option.hint === undefined ? undefined : hintId(option)
+                }
+              />
               {option.label}
             </Label>
             {option.hint !== undefined && (
-              <FieldDescription id={hintId(option)} className={cn(CAPTION, "pl-6 text-muted-foreground")}>
+              <FieldDescription
+                id={hintId(option)}
+                className={cn(CAPTION, 'pl-6 text-muted-foreground')}
+              >
                 {option.hint}
               </FieldDescription>
             )}
@@ -250,26 +313,32 @@ export function AdminSelectField({
     error !== undefined ? errorId : null,
   ]
     .filter((part) => part !== null)
-    .join(" ");
+    .join(' ');
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
-      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
+      <FieldLabel
+        htmlFor={id}
+        className="text-data font-medium text-foreground"
+      >
         {label}
       </FieldLabel>
       <Select
         value={value}
         disabled={disabled}
         onValueChange={(next) => {
-          if (typeof next === "string") onChange(next);
+          if (typeof next === 'string') onChange(next);
         }}
-        items={options.map((option) => ({ value: option.value, label: option.label }))}
+        items={options.map((option) => ({
+          value: option.value,
+          label: option.label,
+        }))}
       >
         <SelectTrigger
           id={id}
           size="sm"
-          className={cn(CONTROL_SIZE, "w-full text-data")}
+          className={cn(CONTROL_SIZE, 'w-full text-data')}
           aria-invalid={error !== undefined}
-          aria-describedby={describedBy === "" ? undefined : describedBy}
+          aria-describedby={describedBy === '' ? undefined : describedBy}
         >
           <SelectValue placeholder={emptyText} />
         </SelectTrigger>
@@ -287,7 +356,10 @@ export function AdminSelectField({
         </SelectContent>
       </Select>
       {hint !== undefined && (
-        <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+        <FieldDescription
+          id={hintId}
+          className={cn(CAPTION, 'text-muted-foreground')}
+        >
           {hint}
         </FieldDescription>
       )}
@@ -315,7 +387,7 @@ export type AdminFormApi<Values> = {
 };
 
 export type AdminFormProps<Values extends Record<string, unknown>> = {
-  variant: "page" | "dialog";
+  variant: 'page' | 'dialog';
   initialValues: Values;
   /** The form's pure field rule (`form-rules.ts`); an empty object lets the form send. */
   validate: (values: Values) => Partial<Record<string, FieldRuleKey>>;
@@ -346,8 +418,15 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
  */
 type ShownFieldError = { rule: FieldRuleKey } | { text: string };
 
-const shownErrorText = (t: ErrorsTranslator, shown: ShownFieldError | undefined): string | undefined =>
-  shown === undefined ? undefined : "rule" in shown ? fieldErrorText(t, shown.rule) : shown.text;
+const shownErrorText = (
+  t: ErrorsTranslator,
+  shown: ShownFieldError | undefined,
+): string | undefined =>
+  shown === undefined
+    ? undefined
+    : 'rule' in shown
+      ? fieldErrorText(t, shown.rule)
+      : shown.text;
 
 /**
  * KD-5: the panel's form. Checks on submit and sends nothing with field errors (focus on the first one in
@@ -370,13 +449,20 @@ export function AdminForm<Values extends Record<string, unknown>>({
   logEvent,
   children,
 }: AdminFormProps<Values>) {
-  const t = useTranslations("common");
-  const tErrors = useTranslations("errors");
+  const t = useTranslations('common');
+  const tErrors = useTranslations('errors');
   const idPrefix = useId();
   const [values, setValues] = useState(initialValues);
-  const [errors, setErrors] = useState<Partial<Record<string, ShownFieldError>>>({});
+  const [errors, setErrors] = useState<
+    Partial<Record<string, ShownFieldError>>
+  >({});
   const [formError, setFormError] = useState<ReactNode>(null);
-  const toastText = savedText === undefined ? (variant === "page" ? t("saved") : null) : savedText;
+  const toastText =
+    savedText === undefined
+      ? variant === 'page'
+        ? t('saved')
+        : null
+      : savedText;
   const [saving, setSaving] = useState(false);
   /** Grows with every set of field errors shown, so focus moves to the first of them again. */
   const [fieldErrorsShown, setFieldErrorsShown] = useState(0);
@@ -386,20 +472,28 @@ export function AdminForm<Values extends Record<string, unknown>>({
   // Runs after the commit that enables the fields again, so the field can take focus.
   useEffect(() => {
     if (fieldErrorsShown === 0) return;
-    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    formRef.current
+      ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+      ?.focus();
   }, [fieldErrorsShown]);
 
-  const showFieldErrors = (shown: Partial<Record<string, ShownFieldError>>): void => {
+  const showFieldErrors = (
+    shown: Partial<Record<string, ShownFieldError>>,
+  ): void => {
     setErrors(shown);
     setFieldErrorsShown((count) => count + 1);
   };
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<void> {
     event.preventDefault();
     if (savingRef.current || hasChange?.(values) === false) return;
     setFormError(null);
     const checked = validate(values);
-    const shown = Object.entries(checked).flatMap(([field, rule]) => (rule === undefined ? [] : [[field, { rule }]]));
+    const shown = Object.entries(checked).flatMap(([field, rule]) =>
+      rule === undefined ? [] : [[field, { rule }]],
+    );
     if (shown.length > 0) {
       showFieldErrors(Object.fromEntries(shown));
       return;
@@ -411,15 +505,27 @@ export function AdminForm<Values extends Record<string, unknown>>({
       await onSubmit(values);
       logger.info(`${logEvent}: saved`);
       if (secretFields.length > 0) {
-        setValues((current) => secretFields.reduce((next, key) => ({ ...next, [key]: undefined }), current));
+        setValues((current) =>
+          secretFields.reduce(
+            (next, key) => ({ ...next, [key]: undefined }),
+            current,
+          ),
+        );
       }
       if (toastText !== null) toast.success(toastText);
-      if (variant === "page") focusShellTarget("page-title");
+      if (variant === 'page') focusShellTarget('page-title');
       onSaved?.();
     } catch (cause) {
-      const refusal = describeRefusal(tErrors, cause, { logEvent, context: typeof errorContext === "function" ? errorContext(values) : errorContext });
+      const refusal = describeRefusal(tErrors, cause, {
+        logEvent,
+        context:
+          typeof errorContext === 'function'
+            ? errorContext(values)
+            : errorContext,
+      });
       if (refusal === null) return;
-      if (refusal.target !== "form" && refusal.target in values) showFieldErrors({ [refusal.target]: { text: refusal.text } });
+      if (refusal.target !== 'form' && refusal.target in values)
+        showFieldErrors({ [refusal.target]: { text: refusal.text } });
       else setFormError(refusal.text);
     } finally {
       savingRef.current = false;
@@ -434,35 +540,74 @@ export function AdminForm<Values extends Record<string, unknown>>({
       setErrors((shown) => ({ ...shown, [name]: undefined }));
     },
     clearError: (key) => setErrors((shown) => ({ ...shown, [key]: undefined })),
-    field: (key) => ({ id: `${idPrefix}-${key}`, error: shownErrorText(tErrors, errors[key]) }),
+    field: (key) => ({
+      id: `${idPrefix}-${key}`,
+      error: shownErrorText(tErrors, errors[key]),
+    }),
     saving,
   };
 
   const submit = (
-    <Button type="submit" size="sm" className={CONTROL_SIZE} disabled={saving || hasChange?.(values) === false}>
-      {saving && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-      {saving ? ((typeof savingLabel === "function" ? savingLabel(values) : savingLabel) ?? t("saving")) : submitLabel}
+    <Button
+      type="submit"
+      size="sm"
+      className={CONTROL_SIZE}
+      disabled={saving || hasChange?.(values) === false}
+    >
+      {saving && (
+        <LoaderCircle
+          className="animate-spin motion-reduce:animate-none"
+          aria-hidden
+        />
+      )}
+      {saving
+        ? ((typeof savingLabel === 'function'
+            ? savingLabel(values)
+            : savingLabel) ?? t('saving'))
+        : submitLabel}
     </Button>
   );
   const cancel =
-    variant === "dialog" ? (
-      <DialogClose render={<Button type="button" variant="outline" size="sm" className={CONTROL_SIZE} />} disabled={saving}>
-        {t("cancel")}
+    variant === 'dialog' ? (
+      <DialogClose
+        render={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={CONTROL_SIZE}
+          />
+        }
+        disabled={saving}
+      >
+        {t('cancel')}
       </DialogClose>
     ) : onCancel !== undefined ? (
-      <Button type="button" variant="outline" size="sm" className={CONTROL_SIZE} disabled={saving} onClick={onCancel}>
-        {t("cancel")}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={CONTROL_SIZE}
+        disabled={saving}
+        onClick={onCancel}
+      >
+        {t('cancel')}
       </Button>
     ) : null;
 
   return (
-    <form ref={formRef} noValidate onSubmit={handleSubmit} className="flex max-w-160 flex-col gap-4">
+    <form
+      ref={formRef}
+      noValidate
+      onSubmit={handleSubmit}
+      className="flex max-w-160 flex-col gap-4"
+    >
       {/* A disabled fieldset disables every native field and button inside while the request runs. */}
       <fieldset disabled={saving} className="contents">
         <FieldGroup className="gap-4">{children(api)}</FieldGroup>
       </fieldset>
       {formError !== null && <FormError>{formError}</FormError>}
-      {variant === "dialog" ? (
+      {variant === 'dialog' ? (
         <DialogFooter className="sm:justify-start">
           {submit}
           {cancel}

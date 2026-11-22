@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { LOG_LEVELS, LOG_SERVICES, LOG_STATUSES, type LogDataset, type LogRecord } from '../dataset';
+import {
+  LOG_LEVELS,
+  LOG_SERVICES,
+  LOG_STATUSES,
+  type LogDataset,
+  type LogRecord,
+} from '../dataset';
 
 /** Time window and optional record filters shared by `search_logs` and `aggregate_logs`. */
 export const LogQueryShape = {
@@ -27,7 +33,10 @@ export interface LogQuery {
 }
 
 /** Records with `from <= ts < to` that pass every given filter, in dataset (time) order. */
-export function matchingRecords(dataset: LogDataset, query: LogQuery): LogRecord[] {
+export function matchingRecords(
+  dataset: LogDataset,
+  query: LogQuery,
+): LogRecord[] {
   const { start, end } = dataset.indexRange(query.from, query.to);
   const matched: LogRecord[] = [];
   for (let index = start; index < end; index += 1) {

@@ -5,7 +5,12 @@ import {
   isProviderFailureReason,
   PROVIDER_FAILURE_REASONS,
 } from '@/lib/agents/format';
-import { formatMonth, formatQuota, utcMonthOf, type Formatter } from '@/i18n/formats';
+import {
+  formatMonth,
+  formatQuota,
+  utcMonthOf,
+  type Formatter,
+} from '@/i18n/formats';
 import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/i18n/catalog';
 
 /**
@@ -18,11 +23,17 @@ import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/i18n/catalog';
  * MC-10 and MC-22: the refusal line of a tool-call block; `model` is the refused model, absent when the child
  * runs on its definition's or the default model (plan Notes 10). `null` — a reason without a message here.
  */
-export function refusalText(t: ErrorsTranslator, reason: ToolRefusalReason, model: string | null): string | null {
+export function refusalText(
+  t: ErrorsTranslator,
+  reason: ToolRefusalReason,
+  model: string | null,
+): string | null {
   if (model !== null && hasMessage(CATALOGUE.errors.refusalWithModel, reason)) {
     return t(`refusalWithModel.${reason}`, { model: formatModel(model) });
   }
-  return hasMessage(CATALOGUE.errors.refusal, reason) ? t(`refusal.${reason}`) : null;
+  return hasMessage(CATALOGUE.errors.refusal, reason)
+    ? t(`refusal.${reason}`)
+    : null;
 }
 
 /** Failure reasons of the conversation's root that read as the reply error block TH-08. */
@@ -35,7 +46,9 @@ export const CHAT_FAILURE_REASONS = [
 ] as const;
 export type ChatFailureReason = (typeof CHAT_FAILURE_REASONS)[number];
 
-export const isChatFailureReason = (reason: string | null): reason is ChatFailureReason =>
+export const isChatFailureReason = (
+  reason: string | null,
+): reason is ChatFailureReason =>
   CHAT_FAILURE_REASONS.some((known) => known === reason);
 
 /**
@@ -43,12 +56,18 @@ export const isChatFailureReason = (reason: string | null): reason is ChatFailur
  * other error of a reply; `model` is the root's model ID, null only while the conversation has no root.
  * A provider reason names the model by its ID label (model-providers design-web.md, «Отличия от UXRD»).
  */
-export function replyFailureText(t: ErrorsTranslator, reason: string | null, model: string | null): string {
+export function replyFailureText(
+  t: ErrorsTranslator,
+  reason: string | null,
+  model: string | null,
+): string {
   if (reason === 'no_models_allowed') return t('noModelsAllowed');
   if (isProviderFailureReason(reason)) {
     return model === null
       ? t(`replyFailure.provider.unnamed.${reason}`)
-      : t(`replyFailure.provider.named.${reason}`, { model: formatModel(model) });
+      : t(`replyFailure.provider.named.${reason}`, {
+          model: formatModel(model),
+        });
   }
   if (model === null) return t('replyFailed');
   if (reason === 'model_not_allowed' || reason === 'model_not_connected') {
@@ -62,15 +81,28 @@ export function replyFailureText(t: ErrorsTranslator, reason: string | null, mod
  * event's UTC month and the quota is still spent. Otherwise the amounts would not be the ones the agent
  * hit, and the line reads without them.
  */
-export function quotaRowOf(models: MyModels, model: string, at: string): MyModel | null {
+export function quotaRowOf(
+  models: MyModels,
+  model: string,
+  at: string,
+): MyModel | null {
   if (models.month !== utcMonthOf(new Date(at))) return null;
-  return models.models.find((row) => row.model === model && row.exhausted) ?? null;
+  return (
+    models.models.find((row) => row.model === model && row.exhausted) ?? null
+  );
 }
 
 /** QS-01 (MC-14) without the time, which the event line adds; without a row or a quota — «Сбой: квота исчерпана». */
-export function quotaFailureText(t: ErrorsTranslator, format: Formatter, row: MyModel | null, month: string): string {
+export function quotaFailureText(
+  t: ErrorsTranslator,
+  format: Formatter,
+  row: MyModel | null,
+  month: string,
+): string {
   if (row === null || row.quotaUsd === null) {
-    return t('failedEvent', { reason: failureReasonText(t, 'quota_exhausted').text });
+    return t('failedEvent', {
+      reason: failureReasonText(t, 'quota_exhausted').text,
+    });
   }
   return t('quota.failure', {
     model: row.name,
@@ -81,6 +113,11 @@ export function quotaFailureText(t: ErrorsTranslator, format: Formatter, row: My
 }
 
 /** MC-17: the polite announcement of a QS-01 line. */
-export function quotaFailureAnnouncement(t: ErrorsTranslator, row: MyModel | null): string {
-  return row === null ? t('quota.announcement') : t('quota.announcementNamed', { model: row.name });
+export function quotaFailureAnnouncement(
+  t: ErrorsTranslator,
+  row: MyModel | null,
+): string {
+  return row === null
+    ? t('quota.announcement')
+    : t('quota.announcementNamed', { model: row.name });
 }

@@ -37,7 +37,12 @@ function mask(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => {
       if (!isSecretFieldName(key)) return [key, mask(item)];
-      return [key, key.toLowerCase().includes('password') ? PASSWORD_CHANGED : SECRET_CHANGED];
+      return [
+        key,
+        key.toLowerCase().includes('password')
+          ? PASSWORD_CHANGED
+          : SECRET_CHANGED,
+      ];
     }),
   );
 }

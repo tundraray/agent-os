@@ -15,19 +15,28 @@ import type { LibraryTranslator } from '@/i18n/catalog';
  * read. A live record is `undefined` while the library list is not read and `null` when the read list
  * has no such record; every rule below treats both as "no record".
  */
-type LiveRecord<K extends keyof RecordSummary> = Pick<RecordSummary, K> | null | undefined;
+type LiveRecord<K extends keyof RecordSummary> =
+  Pick<RecordSummary, K> | null | undefined;
 
 /** «Использовать в чате» (AC-26.2, RV-01). */
 export function canUseInChat(
-  record: Pick<RecordSummary, 'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'>,
+  record: Pick<
+    RecordSummary,
+    'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
+  >,
 ): boolean {
   if (record.builtinKey === CHAT_BUILTIN_KEY) return false;
   if (!record.mine && !record.offerInChat) return false;
-  return !record.missingRights.some((right) => right.subagent === null && Boolean(right.model));
+  return !record.missingRights.some(
+    (right) => right.subagent === null && Boolean(right.model),
+  );
 }
 
 /** «Изменён после запуска» (AC-28.1): `live` is the record `origin.recordId` in the library list. */
-export function changedAfterRun(origin: Pick<RunOrigin, 'version'>, live: LiveRecord<'version'>): boolean {
+export function changedAfterRun(
+  origin: Pick<RunOrigin, 'version'>,
+  live: LiveRecord<'version'>,
+): boolean {
   return live != null && live.version > origin.version;
 }
 
@@ -42,17 +51,28 @@ export function recipientNote(
   live: LiveRecord<'mine' | 'author' | 'audience'>,
   firstRun = true,
 ): RecipientNote | null {
-  if (!firstRun || live == null || live.mine || live.author === null) return null;
-  return { roles: live.audience.roles.filter((role) => role.member).map((role) => role.name) };
+  if (!firstRun || live == null || live.mine || live.author === null)
+    return null;
+  return {
+    roles: live.audience.roles
+      .filter((role) => role.member)
+      .map((role) => role.name),
+  };
 }
 
 /** Reads a record of the library list by id (`libraryIndex.summaryOf`). */
 export type SummaryLookup = { summaryOf(recordId: string): LiveRecord<'name'> };
 
 /** Title of a deep agent's brief card (MC-22): «Задание · {имя}», or «Задание» while the record is unknown. */
-export function briefTitleName(t: LibraryTranslator, deepAgentId: string | null | undefined, index: SummaryLookup): string {
+export function briefTitleName(
+  t: LibraryTranslator,
+  deepAgentId: string | null | undefined,
+  index: SummaryLookup,
+): string {
   const live = deepAgentId ? index.summaryOf(deepAgentId) : null;
-  return live == null ? t('brief.title') : t('brief.titleNamed', { name: live.name });
+  return live == null
+    ? t('brief.title')
+    : t('brief.titleNamed', { name: live.name });
 }
 
 /**
@@ -71,7 +91,8 @@ export type RecordField =
   | 'finalSubagent';
 
 /** The fields of one subagent of a deep agent. */
-export type SubagentField = 'description' | 'prompt' | 'servers' | 'model' | 'maxTurns' | 'maxRuns';
+export type SubagentField =
+  'description' | 'prompt' | 'servers' | 'model' | 'maxTurns' | 'maxRuns';
 
 /**
  * A changed field; a list field (servers, startable agents) names the entries the change removed. A subagent
@@ -79,7 +100,12 @@ export type SubagentField = 'description' | 'prompt' | 'servers' | 'model' | 'ma
  */
 export type ChangedField =
   | { field: RecordField; removed?: readonly string[] }
-  | { field: 'subagent'; subagent: string; change: 'changed'; fields: readonly SubagentField[] }
+  | {
+      field: 'subagent';
+      subagent: string;
+      change: 'changed';
+      fields: readonly SubagentField[];
+    }
   | { field: 'subagent'; subagent: string; change: 'new' | 'removed' };
 
 const FIELD_LABEL = {
@@ -94,12 +120,20 @@ const FIELD_LABEL = {
 } as const satisfies Record<RecordField, string>;
 
 /** The label a changed field is named by; a subagent by its name. */
-export function changedFieldLabel(t: LibraryTranslator, changed: ChangedField): string {
-  return changed.field === 'subagent' ? changed.subagent : t(FIELD_LABEL[changed.field]);
+export function changedFieldLabel(
+  t: LibraryTranslator,
+  changed: ChangedField,
+): string {
+  return changed.field === 'subagent'
+    ? changed.subagent
+    : t(FIELD_LABEL[changed.field]);
 }
 
 /** A record's definition: the editor's agent, or either kind on a record card. */
-export type RecordDefinition = { readonly name: string; readonly description: string } & RecordBody;
+export type RecordDefinition = {
+  readonly name: string;
+  readonly description: string;
+} & RecordBody;
 
 /** An agent's definition as the editor's form holds it; a deep agent has no form (UXRD KD-1). */
 export type AgentDefinition = {
@@ -113,7 +147,11 @@ export type AgentDefinition = {
 export type AgentRecord = Extract<RecordDetail, { kind: 'agent' }>;
 
 /** Only the definition of a saved agent, as the form holds it. */
-export function definitionOf({ name, description, content }: AgentRecord): AgentDefinition {
+export function definitionOf({
+  name,
+  description,
+  content,
+}: AgentRecord): AgentDefinition {
   return { name, description, kind: 'agent', content };
 }
 
@@ -121,18 +159,26 @@ export function definitionOf({ name, description, content }: AgentRecord): Agent
  * What differs between two definitions of one kind, in definition order; equal definitions give an empty list.
  * Definitions of different kinds never meet: a record never changes its kind.
  */
-export function changedFields(before: RecordDefinition, after: RecordDefinition): ChangedField[] {
+export function changedFields(
+  before: RecordDefinition,
+  after: RecordDefinition,
+): ChangedField[] {
   const changed: ChangedField[] = [];
   if (before.name !== after.name) changed.push({ field: 'name' });
-  if (before.description !== after.description) changed.push({ field: 'description' });
-  if (before.kind === 'agent' && after.kind === 'agent') changed.push(...agentChanges(before.content, after.content));
+  if (before.description !== after.description)
+    changed.push({ field: 'description' });
+  if (before.kind === 'agent' && after.kind === 'agent')
+    changed.push(...agentChanges(before.content, after.content));
   if (before.kind === 'deep_agent' && after.kind === 'deep_agent') {
     changed.push(...deepAgentChanges(before.content, after.content));
   }
   return changed;
 }
 
-function agentChanges(previous: AgentContent, next: AgentContent): ChangedField[] {
+function agentChanges(
+  previous: AgentContent,
+  next: AgentContent,
+): ChangedField[] {
   return [
     ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
     ...listChange('servers', previous.servers, next.servers),
@@ -144,21 +190,41 @@ function agentChanges(previous: AgentContent, next: AgentContent): ChangedField[
   ];
 }
 
-function deepAgentChanges(previous: DeepAgentContent, next: DeepAgentContent): ChangedField[] {
-  const before = new Map(previous.subagents.map((subagent) => [subagent.name, subagent]));
+function deepAgentChanges(
+  previous: DeepAgentContent,
+  next: DeepAgentContent,
+): ChangedField[] {
+  const before = new Map(
+    previous.subagents.map((subagent) => [subagent.name, subagent]),
+  );
   const after = new Set(next.subagents.map((subagent) => subagent.name));
   const subagents: ChangedField[] = [];
   for (const subagent of next.subagents) {
     const old = before.get(subagent.name);
     if (old === undefined) {
-      subagents.push({ field: 'subagent', subagent: subagent.name, change: 'new' });
+      subagents.push({
+        field: 'subagent',
+        subagent: subagent.name,
+        change: 'new',
+      });
       continue;
     }
     const fields = subagentChanges(old, subagent);
-    if (fields.length > 0) subagents.push({ field: 'subagent', subagent: subagent.name, change: 'changed', fields });
+    if (fields.length > 0)
+      subagents.push({
+        field: 'subagent',
+        subagent: subagent.name,
+        change: 'changed',
+        fields,
+      });
   }
   for (const subagent of previous.subagents) {
-    if (!after.has(subagent.name)) subagents.push({ field: 'subagent', subagent: subagent.name, change: 'removed' });
+    if (!after.has(subagent.name))
+      subagents.push({
+        field: 'subagent',
+        subagent: subagent.name,
+        change: 'removed',
+      });
   }
   return [
     ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
@@ -189,7 +255,11 @@ function scalarChanges(checks: [RecordField, boolean][]): ChangedField[] {
 }
 
 /** A list field that differs, with the entries it lost; the order they were ticked in is no change. */
-function listChange(field: RecordField, previous: readonly string[], next: readonly string[]): ChangedField[] {
+function listChange(
+  field: RecordField,
+  previous: readonly string[],
+  next: readonly string[],
+): ChangedField[] {
   if (sameSet(previous, next)) return [];
   const removed = previous.filter((value) => !next.includes(value));
   return [removed.length > 0 ? { field, removed } : { field }];

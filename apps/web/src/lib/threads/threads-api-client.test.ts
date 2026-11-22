@@ -17,7 +17,9 @@ type Case = {
 const cases: Case[] = [
   {
     name: 'getThread: 200 with a body outside ThreadSummarySchema → invalid_response',
-    handler: http.get(`${API}/api/threads/a`, () => HttpResponse.json({ id: 'a', title: 42 })),
+    handler: http.get(`${API}/api/threads/a`, () =>
+      HttpResponse.json({ id: 'a', title: 42 }),
+    ),
     call: () => threadsApiClient.getThread('a'),
     expected: { kind: 'invalid_response', status: 200 },
   },
@@ -29,7 +31,9 @@ const cases: Case[] = [
   },
   {
     name: 'getThread: 404 → not_found',
-    handler: http.get(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 404 })),
+    handler: http.get(`${API}/api/threads/a`, () =>
+      HttpResponse.json({}, { status: 404 }),
+    ),
     call: () => threadsApiClient.getThread('a'),
     expected: { kind: 'not_found', status: 404 },
   },
@@ -37,7 +41,11 @@ const cases: Case[] = [
     name: 'getConversation: 404 THREAD_NOT_FOUND → not_found',
     handler: http.get(`${API}/api/threads/a/history`, () =>
       HttpResponse.json(
-        { statusCode: 404, message: 'Not found', errorCode: 'THREAD_NOT_FOUND' },
+        {
+          statusCode: 404,
+          message: 'Not found',
+          errorCode: 'THREAD_NOT_FOUND',
+        },
         { status: 404 },
       ),
     ),
@@ -46,13 +54,18 @@ const cases: Case[] = [
   },
   {
     name: 'renameThread: 400 (invalid title) stays http',
-    handler: http.patch(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 400 })),
-    call: () => threadsApiClient.renameThread({ threadId: 'a', title: 'Новое' }),
+    handler: http.patch(`${API}/api/threads/a`, () =>
+      HttpResponse.json({}, { status: 400 }),
+    ),
+    call: () =>
+      threadsApiClient.renameThread({ threadId: 'a', title: 'Новое' }),
     expected: { kind: 'http', status: 400 },
   },
   {
     name: 'getConversation: 500 → http',
-    handler: http.get(`${API}/api/threads/a/history`, () => HttpResponse.json({}, { status: 500 })),
+    handler: http.get(`${API}/api/threads/a/history`, () =>
+      HttpResponse.json({}, { status: 500 }),
+    ),
     call: () => threadsApiClient.getConversation('a', 0),
     expected: { kind: 'http', status: 500 },
   },
@@ -64,7 +77,9 @@ const cases: Case[] = [
   },
   {
     name: 'getConversation: 200 with a body outside ConversationViewSchema → invalid_response',
-    handler: http.get(`${API}/api/threads/a/history`, () => HttpResponse.json({ entries: 'none' })),
+    handler: http.get(`${API}/api/threads/a/history`, () =>
+      HttpResponse.json({ entries: 'none' }),
+    ),
     call: () => threadsApiClient.getConversation('a', 0),
     expected: { kind: 'invalid_response', status: 200 },
   },
@@ -90,7 +105,9 @@ describe('threadsApiClient: successful responses', () => {
     server.use(
       http.get(`${API}/api/threads`, ({ request }) => {
         seen.push(new URL(request.url).search);
-        return HttpResponse.json(threadList([threadSummary({ id: 'b' })], null));
+        return HttpResponse.json(
+          threadList([threadSummary({ id: 'b' })], null),
+        );
       }),
     );
 
@@ -111,7 +128,12 @@ describe('threadsApiClient: successful responses', () => {
   });
 
   it('deleteThread resolves on 204', async () => {
-    server.use(http.delete(`${API}/api/threads/a`, () => new HttpResponse(null, { status: 204 })));
+    server.use(
+      http.delete(
+        `${API}/api/threads/a`,
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+    );
 
     await expect(threadsApiClient.deleteThread('a')).resolves.toBeUndefined();
   });

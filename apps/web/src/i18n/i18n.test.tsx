@@ -13,11 +13,19 @@ import {
 import { http, HttpResponse } from 'msw';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { ReasoningRoot, ReasoningTrigger } from '@/components/assistant-ui/elements/reasoning';
+import {
+  ReasoningRoot,
+  ReasoningTrigger,
+} from '@/components/assistant-ui/elements/reasoning';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { ShellServicesContext } from '@/components/shell/shell-actions';
 import { createShellServices } from '@/lib/threads/shell-services';
-import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
@@ -25,7 +33,15 @@ import { server } from '@/test/msw-server';
 const API = 'http://api.test';
 
 /** DD «Локализация» stop-list. */
-const STOP_LIST = ['Send', 'Copy', 'Close', 'Toggle', 'Loading', 'Reasoning', 'tool call'] as const;
+const STOP_LIST = [
+  'Send',
+  'Copy',
+  'Close',
+  'Toggle',
+  'Loading',
+  'Reasoning',
+  'tool call',
+] as const;
 
 /** Further scaffold words the translated files used to render (UXRD 14.4, DD «Локализация»). */
 const SCAFFOLD_WORDS = [
@@ -44,10 +60,18 @@ const SCAFFOLD_WORDS = [
   'attachment',
 ] as const;
 
-const ANNOUNCED_ATTRIBUTES = ['aria-label', 'title', 'placeholder', 'alt', 'aria-valuetext'] as const;
+const ANNOUNCED_ATTRIBUTES = [
+  'aria-label',
+  'title',
+  'placeholder',
+  'alt',
+  'aria-valuetext',
+] as const;
 
 /** Stop-list words found in the rendered document: visible/sr-only text and announced attributes. */
-function englishLeaks(words: readonly string[] = [...STOP_LIST, ...SCAFFOLD_WORDS]): string[] {
+function englishLeaks(
+  words: readonly string[] = [...STOP_LIST, ...SCAFFOLD_WORDS],
+): string[] {
   const texts = [document.body.textContent ?? ''];
   for (const element of document.body.querySelectorAll('*')) {
     for (const attribute of ANNOUNCED_ATTRIBUTES) {
@@ -55,11 +79,14 @@ function englishLeaks(words: readonly string[] = [...STOP_LIST, ...SCAFFOLD_WORD
       if (value) texts.push(value);
     }
   }
-  return words.filter((word) => texts.some((text) => new RegExp(`\\b${word}\\b`).test(text)));
+  return words.filter((word) =>
+    texts.some((text) => new RegExp(`\\b${word}\\b`).test(text)),
+  );
 }
 
 // A one-second silent WAV header is enough for <audio>; jsdom never decodes it.
-const AUDIO_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+const AUDIO_BASE64 =
+  'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
 const PIXEL_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
@@ -71,7 +98,14 @@ const TOOL_CONVERSATION: readonly ThreadMessageLike[] = [
     role: 'assistant',
     content: [
       { type: 'reasoning', text: 'Сначала найду отчёт.' },
-      { type: 'tool-call', toolCallId: 'call-1', toolName: 'search', args: { q: 'отчёт' }, result: { found: 1 }, artifact: { state: 'done', outcome: 'success' } },
+      {
+        type: 'tool-call',
+        toolCallId: 'call-1',
+        toolName: 'search',
+        args: { q: 'отчёт' },
+        result: { found: 1 },
+        artifact: { state: 'done', outcome: 'success' },
+      },
       {
         type: 'tool-call',
         toolCallId: 'call-2',
@@ -95,7 +129,13 @@ function createGate(): Gate {
   return { open: () => resolve(), wait: promise };
 }
 
-function ThreadHarness({ adapter, messages }: { adapter: ChatModelAdapter; messages: readonly ThreadMessageLike[] }) {
+function ThreadHarness({
+  adapter,
+  messages,
+}: {
+  adapter: ChatModelAdapter;
+  messages: readonly ThreadMessageLike[];
+}) {
   const runtime = useLocalRuntime(adapter, { initialMessages: messages });
   const [services] = useState(() => createShellServices());
   return (
@@ -113,23 +153,43 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
   it('new chat and the conversation menus', async () => {
     const user = userEvent.setup();
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'a', title: 'Беседа A' })]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(
+          threadList([threadSummary({ id: 'a', title: 'Беседа A' })]),
+        ),
+      ),
     );
 
     renderWithRuntime({ pathname: '/' });
-    const history = await screen.findByRole('navigation', { name: 'История бесед' });
+    const history = await screen.findByRole('navigation', {
+      name: 'История бесед',
+    });
     await within(history).findByRole('link', { name: /Беседа A/ });
-    expect(screen.getByRole('textbox', { name: 'Сообщение' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+    ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
-    await user.click(within(history).getByRole('button', { name: 'Действия с беседой «Беседа A»' }));
-    expect(await screen.findByRole('menuitem', { name: 'Удалить' })).toBeInTheDocument();
+    await user.click(
+      within(history).getByRole('button', {
+        name: 'Действия с беседой «Беседа A»',
+      }),
+    );
+    expect(
+      await screen.findByRole('menuitem', { name: 'Удалить' }),
+    ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
-    await user.click(await screen.findByRole('button', { name: 'Меню пользователя Аня Смирнова' }));
-    expect(await screen.findByRole('menuitemradio', { name: 'Системная' })).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Меню пользователя Аня Смирнова',
+      }),
+    );
+    expect(
+      await screen.findByRole('menuitemradio', { name: 'Системная' }),
+    ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
   });
 
@@ -145,24 +205,51 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
 
     render(<ThreadHarness adapter={adapter} messages={TOOL_CONVERSATION} />);
 
-    const reply = screen.getByText('Итог — 42.').closest<HTMLElement>('[data-role="assistant"]');
+    const reply = screen
+      .getByText('Итог — 42.')
+      .closest<HTMLElement>('[data-role="assistant"]');
     expect(reply).not.toBeNull();
     if (reply === null) return;
-    expect(within(reply).getByRole('button', { name: /^Рассуждения/ })).toBeInTheDocument();
-    expect(within(reply).getByRole('button', { name: '2 вызова инструментов' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'К последнему сообщению' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Отправить' })).toBeInTheDocument();
-    expect(within(reply).getByRole('button', { name: 'Воспроизвести аудио' })).toBeInTheDocument();
-    expect(within(reply).getByRole('slider', { name: 'Перемотка' })).toBeInTheDocument();
-    expect(within(reply).getByRole('button', { name: 'Увеличить изображение' })).toBeInTheDocument();
+    expect(
+      within(reply).getByRole('button', { name: /^Рассуждения/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(reply).getByRole('button', { name: '2 вызова инструментов' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'К последнему сообщению' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Отправить' }),
+    ).toBeInTheDocument();
+    expect(
+      within(reply).getByRole('button', { name: 'Воспроизвести аудио' }),
+    ).toBeInTheDocument();
+    expect(
+      within(reply).getByRole('slider', { name: 'Перемотка' }),
+    ).toBeInTheDocument();
+    expect(
+      within(reply).getByRole('button', { name: 'Увеличить изображение' }),
+    ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
-    await user.click(within(reply).getByRole('button', { name: '2 вызова инструментов' }));
-    await user.click(await within(reply).findByRole('button', { name: /^sum: ошибка инструмента/ }));
-    expect(await within(reply).findByRole('region', { name: 'Аргументы' })).toBeInTheDocument();
+    await user.click(
+      within(reply).getByRole('button', { name: '2 вызова инструментов' }),
+    );
+    await user.click(
+      await within(reply).findByRole('button', {
+        name: /^sum: ошибка инструмента/,
+      }),
+    );
+    expect(
+      await within(reply).findByRole('region', { name: 'Аргументы' }),
+    ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
-    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Ещё раз{Enter}');
+    await user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Ещё раз{Enter}',
+    );
     expect(await screen.findByText('Ещё раз')).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
@@ -177,7 +264,9 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
       </ReasoningRoot>,
     );
 
-    expect(screen.getByRole('button', { name: 'Рассуждения (4 с)' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Рассуждения (4 с)' }),
+    ).toBeInTheDocument();
   });
 
   it('dialog close controls', () => {

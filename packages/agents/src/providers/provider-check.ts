@@ -22,7 +22,9 @@ interface ProviderCheckOptions {
 
 /** What a provider's non-2xx answer to the check means: the key is refused, or the address does not work. */
 function rejectedCheckResult(status: number): ModelProviderCheck['result'] {
-  return status === UNAUTHORIZED || status === FORBIDDEN ? 'key_rejected' : 'unreachable';
+  return status === UNAUTHORIZED || status === FORBIDDEN
+    ? 'key_rejected'
+    : 'unreachable';
 }
 
 /** The message of a failed check: masked by the secret memory, cut to the contract's bound. */
@@ -38,7 +40,10 @@ function checkMessage(text: string): string {
  */
 export async function checkProvider(
   connection: ProviderConnection,
-  { fetch = globalThis.fetch, timeoutMs = CHECK_TIMEOUT_MS }: ProviderCheckOptions = {},
+  {
+    fetch = globalThis.fetch,
+    timeoutMs = CHECK_TIMEOUT_MS,
+  }: ProviderCheckOptions = {},
 ): Promise<ModelProviderCheck> {
   const request = providerAdapter(connection.kind).checkRequest(connection);
   try {
@@ -49,8 +54,16 @@ export async function checkProvider(
     });
     if (response.ok) return { result: 'works', message: null };
     const body = await response.text();
-    return { result: rejectedCheckResult(response.status), message: checkMessage(`${response.status} ${body}`) };
+    return {
+      result: rejectedCheckResult(response.status),
+      message: checkMessage(`${response.status} ${body}`),
+    };
   } catch (error) {
-    return { result: 'unreachable', message: checkMessage(error instanceof Error ? error.message : String(error)) };
+    return {
+      result: 'unreachable',
+      message: checkMessage(
+        error instanceof Error ? error.message : String(error),
+      ),
+    };
   }
 }

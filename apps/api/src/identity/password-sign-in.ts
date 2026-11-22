@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  type IdentityUserRow,
-  IdentityUsersRepository,
-} from '@agent-os/db';
+import { type IdentityUserRow, IdentityUsersRepository } from '@agent-os/db';
 import { normalizeIdentifier } from './identity-input';
 import { verifyPassword } from './password';
 
@@ -19,14 +16,10 @@ export type PasswordCheck =
  */
 @Injectable()
 export class PasswordSignIn {
-  constructor(
-    private readonly users: IdentityUsersRepository,
-  ) {}
+  constructor(private readonly users: IdentityUsersRepository) {}
 
   async check(login: string, password: string): Promise<PasswordCheck> {
-    const user = await this.users.findByLogin(
-      normalizeIdentifier(login),
-    );
+    const user = await this.users.findByLogin(normalizeIdentifier(login));
     const matches = await verifyPassword(password, user?.passwordHash ?? null);
     if (user === undefined) return { ok: false, reason: 'unknown_login', user };
     if (!matches) return { ok: false, reason: 'wrong_password', user };

@@ -1,6 +1,12 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { useShellActions } from '@/components/shell/shell-actions';
-import { isApplePlatform, isShortcutBlocked, matchShortcut, shortcutLabel, type Shortcut } from '@/lib/keyboard-shortcuts';
+import {
+  isApplePlatform,
+  isShortcutBlocked,
+  matchShortcut,
+  shortcutLabel,
+  type Shortcut,
+} from '@/lib/keyboard-shortcuts';
 
 /**
  * Ctrl/⌘+Shift+O → «Новый чат» from anywhere in the shell, guarded by `isShortcutBlocked`.
@@ -11,7 +17,8 @@ export function useGlobalShortcuts(): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (matchShortcut(event) !== 'new-chat' || isShortcutBlocked(event)) return;
+      if (matchShortcut(event) !== 'new-chat' || isShortcutBlocked(event))
+        return;
       event.preventDefault();
       newChat();
     };
@@ -27,6 +34,10 @@ const getServerApplePlatform = (): boolean => false;
 
 /** Tooltip hint for a shortcut with the platform's modifier symbol: «Ctrl+B» or «⌘+B». */
 export function useShortcutLabel(shortcut: Shortcut): string {
-  const apple = useSyncExternalStore(subscribeNever, getApplePlatform, getServerApplePlatform);
+  const apple = useSyncExternalStore(
+    subscribeNever,
+    getApplePlatform,
+    getServerApplePlatform,
+  );
   return shortcutLabel(shortcut, apple);
 }

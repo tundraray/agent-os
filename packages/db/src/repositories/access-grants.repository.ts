@@ -7,7 +7,10 @@ import { accessGrants, accessModels } from '../schema';
 export type AccessGrantRow = typeof accessGrants.$inferSelect;
 
 /** What a new grant writes; the id and the time are the database's. */
-export type NewAccessGrantRow = Omit<typeof accessGrants.$inferInsert, 'id' | 'createdAt'>;
+export type NewAccessGrantRow = Omit<
+  typeof accessGrants.$inferInsert,
+  'id' | 'createdAt'
+>;
 
 /** A grant with the catalogue name of its model; `null` for another target. */
 export interface AccessGrantWithModelName {
@@ -33,7 +36,10 @@ export class AccessGrantsRepository {
     const holder =
       roleIds.length === 0
         ? eq(accessGrants.userId, userId)
-        : or(inArray(accessGrants.roleId, [...roleIds]), eq(accessGrants.userId, userId));
+        : or(
+            inArray(accessGrants.roleId, [...roleIds]),
+            eq(accessGrants.userId, userId),
+          );
     return this.db.client.select().from(accessGrants).where(holder);
   }
 
@@ -61,7 +67,10 @@ export class AccessGrantsRepository {
   }
 
   async updateQuota(id: string, quotaUsd: number | null): Promise<void> {
-    await this.db.client.update(accessGrants).set({ quotaUsd }).where(eq(accessGrants.id, id));
+    await this.db.client
+      .update(accessGrants)
+      .set({ quotaUsd })
+      .where(eq(accessGrants.id, id));
   }
 
   async delete(id: string): Promise<void> {
@@ -78,7 +87,9 @@ export class AccessGrantsRepository {
   }
 
   /** Grants meeting the condition with the catalogue name of a model target, by creation time, then id. */
-  private withModelName(where: SQL | undefined): Promise<AccessGrantWithModelName[]> {
+  private withModelName(
+    where: SQL | undefined,
+  ): Promise<AccessGrantWithModelName[]> {
     return this.db.client
       .select({ grant: accessGrants, modelName: accessModels.name })
       .from(accessGrants)

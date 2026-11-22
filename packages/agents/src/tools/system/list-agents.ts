@@ -18,7 +18,9 @@ export interface ListAgentsDeps {
 }
 
 /** `list_agents` (design-agents.md, «Инструменты»): the caller's descendants — id, description, name, model, status. */
-export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<ListAgentsArgs> {
+export function createListAgentsTool(
+  deps: ListAgentsDeps,
+): OutsideAgentTool<ListAgentsArgs> {
   return {
     name: 'list_agents',
     description:
@@ -51,7 +53,11 @@ export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<Lis
         ];
       });
       return agents.length === 0
-        ? { kind: 'done', outcome: 'empty', text: 'You have started no agents.' }
+        ? {
+            kind: 'done',
+            outcome: 'empty',
+            text: 'You have started no agents.',
+          }
         : { kind: 'done', outcome: 'success', text: JSON.stringify(agents) };
     },
   };

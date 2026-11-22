@@ -51,9 +51,7 @@ export class AdminModelsController {
     body: CreateCatalogModelBody,
     @Req() req: AuthedRequest,
   ): Promise<CatalogModel> {
-    const providerKind = await this.providers.kindOf(
-      modelProvider(body.id),
-    );
+    const providerKind = await this.providers.kindOf(modelProvider(body.id));
     return this.access.createModel(req.user.id, body, providerKind);
   }
 

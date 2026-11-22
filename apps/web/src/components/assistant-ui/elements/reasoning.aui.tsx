@@ -1,13 +1,13 @@
-"use client";
+'use client';
 
-import { forwardRef, memo, useCallback, useRef } from "react";
+import { forwardRef, memo, useCallback, useRef } from 'react';
 import {
   useScrollLock,
   useAuiState,
   type ReasoningMessagePartComponent,
   type ReasoningGroupComponent,
-} from "@assistant-ui/react";
-import { MarkdownText } from "@/components/markdown-text";
+} from '@assistant-ui/react';
+import { MarkdownText } from '@/components/markdown-text';
 import {
   ANIMATION_DURATION,
   ReasoningRoot as ReasoningRootBase,
@@ -17,14 +17,14 @@ import {
   ReasoningFade,
   reasoningVariants,
   type ReasoningRootProps,
-} from "./reasoning";
+} from './reasoning';
 
-export type { ReasoningRootProps } from "./reasoning";
+export type { ReasoningRootProps } from './reasoning';
 
 /** `ReasoningRoot` with the thread viewport scroll locked during disclosure animations. */
 const ReasoningRoot = forwardRef<
   HTMLDivElement,
-  Omit<ReasoningRootProps, "ref">
+  Omit<ReasoningRootProps, 'ref'>
 >(function ReasoningRoot({ onAnimationStart, ...props }, ref) {
   const collapsibleRef = useRef<HTMLDivElement | null>(null);
   const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
@@ -37,9 +37,9 @@ const ReasoningRoot = forwardRef<
   const composedRef = useCallback(
     (node: HTMLDivElement | null) => {
       collapsibleRef.current = node;
-      if (typeof ref === "function") {
+      if (typeof ref === 'function') {
         const cleanup: unknown = ref(node);
-        if (typeof cleanup === "function") {
+        if (typeof cleanup === 'function') {
           return () => {
             collapsibleRef.current = null;
             (cleanup as () => void)();
@@ -70,9 +70,9 @@ const ReasoningGroupImpl: ReasoningGroupComponent = ({
   endIndex,
 }) => {
   const isReasoningStreaming = useAuiState((s) => {
-    if (s.message.status?.type !== "running") return false;
+    if (s.message.status?.type !== 'running') return false;
     for (let index = startIndex; index <= endIndex; index++) {
-      if (s.message.parts[index]?.status.type === "running") return true;
+      if (s.message.parts[index]?.status.type === 'running') return true;
     }
     return false;
   });
@@ -97,7 +97,7 @@ const Reasoning = memo(
   Fade: typeof ReasoningFade;
 };
 
-Reasoning.displayName = "Reasoning";
+Reasoning.displayName = 'Reasoning';
 Reasoning.Root = ReasoningRoot;
 Reasoning.Trigger = ReasoningTrigger;
 Reasoning.Content = ReasoningContent;
@@ -112,7 +112,7 @@ Reasoning.Fade = ReasoningFade;
  * See `thread.aui.tsx` for an example.
  */
 const ReasoningGroup = memo(ReasoningGroupImpl);
-ReasoningGroup.displayName = "ReasoningGroup";
+ReasoningGroup.displayName = 'ReasoningGroup';
 
 export {
   Reasoning,

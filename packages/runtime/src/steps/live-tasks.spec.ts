@@ -7,7 +7,12 @@ import type { RunningStepHandle } from '../tasks/running-task.registry';
 import { HandlerRegistry } from './handler.registry';
 import { LIVE_TASK_IDLE_MS, LIVE_TASKS_MAX, LiveTasks } from './live-tasks';
 import type { StepCommit } from './step-commit';
-import type { LiveTask, LiveTaskIdentity, StepContext, TaskHandler } from './step-contract';
+import type {
+  LiveTask,
+  LiveTaskIdentity,
+  StepContext,
+  TaskHandler,
+} from './step-contract';
 
 const LIVE = 'live';
 const PLAIN = 'plain';
@@ -23,7 +28,10 @@ const fakeObject = (): FakeObject => ({
   dispose: vi.fn<() => void>(),
 });
 
-const commit = (outcome: StepCommit['outcome'], more: Partial<StepCommit> = {}): StepCommit => ({
+const commit = (
+  outcome: StepCommit['outcome'],
+  more: Partial<StepCommit> = {},
+): StepCommit => ({
   outcome,
   ended: false,
   adopted: [],
@@ -37,9 +45,16 @@ function setup() {
     random: () => 0,
     setTimer: () => () => undefined,
   };
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as unknown as Logger;
   logger.child = () => logger;
-  const restore = vi.fn((_task: LiveTaskIdentity) => Promise.resolve(fakeObject()));
+  const restore = vi.fn((_task: LiveTaskIdentity) =>
+    Promise.resolve(fakeObject()),
+  );
   const plain: TaskHandler = {
     type: PLAIN,
     inputSchema: z.unknown(),
@@ -49,7 +64,9 @@ function setup() {
   handlers.registerLive({ type: LIVE, inputSchema: z.unknown(), restore });
   handlers.register(plain);
   const active: LiveTaskIdentity[] = [];
-  const taskRows = { listActive: () => Promise.resolve(active) } as unknown as RuntimeTasksRepository;
+  const taskRows = {
+    listActive: () => Promise.resolve(active),
+  } as unknown as RuntimeTasksRepository;
   const config = { workers: true } as RuntimeConfig;
   const live = new LiveTasks(handlers, taskRows, clock, config, logger);
 
@@ -70,7 +87,11 @@ function setup() {
       abort: (reason) => controller.abort(reason),
       release: () => undefined,
     };
-    const ctx = { ...task(taskId, type), signal: controller.signal, logger } as StepContext;
+    const ctx = {
+      ...task(taskId, type),
+      signal: controller.signal,
+      logger,
+    } as StepContext;
     return { ctx, handle, obtain: () => live.obtain(ctx, handle) };
   };
   return {
@@ -177,16 +198,21 @@ describe('LiveTasks', () => {
   it('over the cap lets go the objects unused longest, never one in a step', async () => {
     const { live, claim, advance } = setup();
     const inStep = (await claim('busy').obtain()) as FakeObject;
-    const objects = Array.from({ length: LIVE_TASKS_MAX + 1 }, (_unused, index) => {
-      advance(1);
-      const object = fakeObject();
-      live.adopt(`t${index}`, object);
-      return object;
-    });
+    const objects = Array.from(
+      { length: LIVE_TASKS_MAX + 1 },
+      (_unused, index) => {
+        advance(1);
+        const object = fakeObject();
+        live.adopt(`t${index}`, object);
+        return object;
+      },
+    );
 
     live.sweep(advance(1));
     // One in a step + MAX + 1 idle: the two oldest idle ones go.
-    const dropped = objects.filter((object) => object.dispose.mock.calls.length > 0);
+    const dropped = objects.filter(
+      (object) => object.dispose.mock.calls.length > 0,
+    );
     expect(dropped).toEqual(objects.slice(0, 2));
     expect(inStep.dispose).not.toHaveBeenCalled();
   });
@@ -199,7 +225,9 @@ describe('LiveTasks', () => {
     const object = await claim('t1').obtain();
     await warm;
 
-    expect(restore.mock.calls.map(([restored]) => restored.taskId).sort()).toEqual(['t1', 't2']);
+    expect(
+      restore.mock.calls.map(([restored]) => restored.taskId).sort(),
+    ).toEqual(['t1', 't2']);
     live.clear();
     expect((object as FakeObject).dispose).toHaveBeenCalledTimes(1);
   });
@@ -208,17 +236,23 @@ describe('LiveTasks', () => {
     ['committed', true],
     ['rejected', false],
     ['abandoned', false],
-  ])('keeps an adopted object only after a committed step: %s', async (outcome, kept) => {
-    const { live, restore, claim } = setup();
-    const parent = claim('parent');
-    await parent.obtain();
-    const child = fakeObject();
-    await live.settled(parent.ctx, commit(outcome, { adopted: [{ taskId: 'child', object: child }] }));
+  ])(
+    'keeps an adopted object only after a committed step: %s',
+    async (outcome, kept) => {
+      const { live, restore, claim } = setup();
+      const parent = claim('parent');
+      await parent.obtain();
+      const child = fakeObject();
+      await live.settled(
+        parent.ctx,
+        commit(outcome, { adopted: [{ taskId: 'child', object: child }] }),
+      );
 
-    expect((await claim('child').obtain()) === child).toBe(kept);
-    // The parent's own restore, and the child's when its object was not kept.
-    expect(restore).toHaveBeenCalledTimes(kept ? 1 : 2);
-  });
+      expect((await claim('child').obtain()) === child).toBe(kept);
+      // The parent's own restore, and the child's when its object was not kept.
+      expect(restore).toHaveBeenCalledTimes(kept ? 1 : 2);
+    },
+  );
 
   it('never keeps a stateless handler', async () => {
     const { live, restore, plain, claim } = setup();

@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { createShellStatusStore } from './shell-status-store';
-import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
+import {
+  createThreadListAdapter,
+  type OperationNotifier,
+} from './thread-list-adapter';
 import { threadsApiClient } from './threads-api-client';
 import { ApiRequestError } from '@/lib/api/api-request';
 
@@ -17,7 +20,12 @@ function setup() {
     deleted: vi.fn<OperationNotifier['deleted']>(),
     deleteFailed: vi.fn<OperationNotifier['deleteFailed']>(),
   };
-  const adapter = createThreadListAdapter({ api: threadsApiClient, status, notify, feeds: { forget: vi.fn() } });
+  const adapter = createThreadListAdapter({
+    api: threadsApiClient,
+    status,
+    notify,
+    feeds: { forget: vi.fn() },
+  });
   return { adapter, status, notify };
 }
 
@@ -32,7 +40,10 @@ describe('thread list adapter', () => {
       server.use(
         http.get(`${API}/api/threads`, () =>
           HttpResponse.json(
-            threadList([threadSummary({ id: 'a', title: 'Первая' }), threadSummary({ id: 'b', title: null })]),
+            threadList([
+              threadSummary({ id: 'a', title: 'Первая' }),
+              threadSummary({ id: 'b', title: null }),
+            ]),
           ),
         ),
       );
@@ -42,8 +53,18 @@ describe('thread list adapter', () => {
 
       expect(page).toEqual({
         threads: [
-          { status: 'regular', remoteId: 'a', title: 'Первая', lastMessageAt: FIXTURE_DATE },
-          { status: 'regular', remoteId: 'b', title: undefined, lastMessageAt: FIXTURE_DATE },
+          {
+            status: 'regular',
+            remoteId: 'a',
+            title: 'Первая',
+            lastMessageAt: FIXTURE_DATE,
+          },
+          {
+            status: 'regular',
+            remoteId: 'b',
+            title: undefined,
+            lastMessageAt: FIXTURE_DATE,
+          },
         ],
         nextCursor: undefined,
       });
@@ -54,7 +75,9 @@ describe('thread list adapter', () => {
       server.use(
         http.get(`${API}/api/threads`, ({ request }) => {
           searches.push(new URL(request.url).search);
-          return HttpResponse.json(threadList([threadSummary({ id: 'c' })], 'cursor-3'));
+          return HttpResponse.json(
+            threadList([threadSummary({ id: 'c' })], 'cursor-3'),
+          );
         }),
       );
       const { adapter } = setup();
@@ -66,19 +89,34 @@ describe('thread list adapter', () => {
     });
 
     it('a failed next page sets loadMoreFailed; the next successful page clears it', async () => {
-      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json({}, { status: 500 }), { once: true }));
+      server.use(
+        http.get(
+          `${API}/api/threads`,
+          () => HttpResponse.json({}, { status: 500 }),
+          { once: true },
+        ),
+      );
       const { adapter, status } = setup();
 
-      await expect(adapter.list({ after: 'cursor-2' })).rejects.toMatchObject({ kind: 'http', status: 500 });
+      await expect(adapter.list({ after: 'cursor-2' })).rejects.toMatchObject({
+        kind: 'http',
+        status: 500,
+      });
       expect(status.getState().loadMoreFailed).toBe(true);
 
-      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+      server.use(
+        http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+      );
       await adapter.list({ after: 'cursor-2' });
       expect(status.getState().loadMoreFailed).toBe(false);
     });
 
     it('a failed first page rejects without setting loadMoreFailed', async () => {
-      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json({}, { status: 500 })));
+      server.use(
+        http.get(`${API}/api/threads`, () =>
+          HttpResponse.json({}, { status: 500 }),
+        ),
+      );
       const { adapter, status } = setup();
 
       await expect(adapter.list()).rejects.toBeInstanceOf(ApiRequestError);
@@ -87,18 +125,29 @@ describe('thread list adapter', () => {
   });
 
   it("initialize marks the new thread's history ready by the time remoteId is returned", async () => {
-    server.use(http.post(`${API}/api/threads`, () => HttpResponse.json(threadSummary({ id: 'n1', title: null }))));
+    server.use(
+      http.post(`${API}/api/threads`, () =>
+        HttpResponse.json(threadSummary({ id: 'n1', title: null })),
+      ),
+    );
     const { adapter, status } = setup();
 
     const statusAtResolve = await adapter
       .initialize('local-1')
-      .then(({ remoteId }) => ({ remoteId, history: status.getState().history[remoteId] }));
+      .then(({ remoteId }) => ({
+        remoteId,
+        history: status.getState().history[remoteId],
+      }));
 
     expect(statusAtResolve).toEqual({ remoteId: 'n1', history: 'ready' });
   });
 
   it('fetch maps the thread to remote metadata', async () => {
-    server.use(http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Первая' }))));
+    server.use(
+      http.get(`${API}/api/threads/a`, () =>
+        HttpResponse.json(threadSummary({ id: 'a', title: 'Первая' })),
+      ),
+    );
     const { adapter } = setup();
 
     await expect(adapter.fetch('a')).resolves.toEqual({
@@ -111,16 +160,25 @@ describe('thread list adapter', () => {
 
   describe('rename', () => {
     it('PATCH 500 notifies renameFailed and rejects so the runtime rolls back', async () => {
-      server.use(http.patch(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 500 })));
+      server.use(
+        http.patch(`${API}/api/threads/a`, () =>
+          HttpResponse.json({}, { status: 500 }),
+        ),
+      );
       const { adapter, notify } = setup();
 
-      await expect(adapter.rename('a', 'Новое')).rejects.toMatchObject({ kind: 'http', status: 500 });
+      await expect(adapter.rename('a', 'Новое')).rejects.toMatchObject({
+        kind: 'http',
+        status: 500,
+      });
       expect(notify.renameFailed).toHaveBeenCalledOnce();
     });
 
     it('PATCH 200 resolves without a notification', async () => {
       server.use(
-        http.patch(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Новое' }))),
+        http.patch(`${API}/api/threads/a`, () =>
+          HttpResponse.json(threadSummary({ id: 'a', title: 'Новое' })),
+        ),
       );
       const { adapter, notify } = setup();
 
@@ -131,7 +189,11 @@ describe('thread list adapter', () => {
 
   describe('delete', () => {
     it('DELETE 404 counts as success: resolves, notifies deleted, forgets the statuses', async () => {
-      server.use(http.delete(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 404 })));
+      server.use(
+        http.delete(`${API}/api/threads/a`, () =>
+          HttpResponse.json({}, { status: 404 }),
+        ),
+      );
       const { adapter, notify, status } = setup();
       status.getState().setHistory('a', 'ready');
 
@@ -143,11 +205,18 @@ describe('thread list adapter', () => {
     });
 
     it('DELETE 500 notifies deleteFailed, rejects and keeps the statuses', async () => {
-      server.use(http.delete(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 500 })));
+      server.use(
+        http.delete(`${API}/api/threads/a`, () =>
+          HttpResponse.json({}, { status: 500 }),
+        ),
+      );
       const { adapter, notify, status } = setup();
       status.getState().setHistory('a', 'ready');
 
-      await expect(adapter.delete('a')).rejects.toMatchObject({ kind: 'http', status: 500 });
+      await expect(adapter.delete('a')).rejects.toMatchObject({
+        kind: 'http',
+        status: 500,
+      });
 
       expect(notify.deleteFailed).toHaveBeenCalledOnce();
       expect(notify.deleted).not.toHaveBeenCalled();

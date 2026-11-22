@@ -1,4 +1,8 @@
-import { AGENT_TURN_CLIENT, EMBEDDING_CLIENT, parseAgentsConfig } from '@agent-os/agents';
+import {
+  AGENT_TURN_CLIENT,
+  EMBEDDING_CLIENT,
+  parseAgentsConfig,
+} from '@agent-os/agents';
 import {
   createAccessGateDouble,
   createLibraryDouble,
@@ -69,11 +73,19 @@ function scenarioModel(servers: ScenarioServers): ScriptedModel {
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
-  const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
+  const logger = createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'info',
+  });
   const scenario = readScenario();
   const app = await Test.createTestingModule({
     imports: [
-      ...runtimeModules(logger, connectionString, parseRuntimeConfig(process.env)),
+      ...runtimeModules(
+        logger,
+        connectionString,
+        parseRuntimeConfig(process.env),
+      ),
       agentsModule(parseAgentsConfig(scenario.variables), {
         // Every owner of these tests is active; the audit hook is not asserted in the child.
         access: createAccessGateDouble({
@@ -100,7 +112,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'error' }).error('code-run child failed', {
+  createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'error',
+  }).error('code-run child failed', {
     error,
   });
   process.exit(1);

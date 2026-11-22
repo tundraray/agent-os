@@ -9,7 +9,9 @@ export const knowledgeItemFields = () => ({
     .references(() => libraryRecords.id, { onDelete: 'cascade' }),
   confirmations: integer('confirmations').notNull().default(1),
   createdAt: createdAt(),
-  confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull().defaultNow(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   /** Coordinator task of the run that added the record. Kept for incident analysis; no code reads it. */
   sourceRunId: uuid('source_run_id').notNull(),
   /** Coordinator task of the run that confirmed it last. */

@@ -5,11 +5,7 @@ import type {
   IdentitySessionsRepository,
   IdentityUsersRepository,
 } from '@agent-os/db';
-import {
-  PASSWORD_SET,
-  SYSTEM_ACTOR,
-  type AuditLog,
-} from '../audit/audit-log';
+import { PASSWORD_SET, SYSTEM_ACTOR, type AuditLog } from '../audit/audit-log';
 import { identityError } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword } from './password';

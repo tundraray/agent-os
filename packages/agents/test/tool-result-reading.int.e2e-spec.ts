@@ -17,10 +17,21 @@
 
 import { Buffer } from 'node:buffer';
 import type { AgentHistoryEntry, AgentTurnMessage } from '@agent-os/agents';
-import { createScriptedModel, type ScriptedAnswer } from '@agent-os/agents/testing';
+import {
+  createScriptedModel,
+  type ScriptedAnswer,
+} from '@agent-os/agents/testing';
 import { rememberSecret } from '@agent-os/common';
-import { agentToolResultSettings, agentToolResults, createDatabase } from '@agent-os/db';
-import { createFixtureFiles, FIXTURE_SHARED_TOKEN, startFixtureProcess } from '@agent-os/mcp-fixture';
+import {
+  agentToolResultSettings,
+  agentToolResults,
+  createDatabase,
+} from '@agent-os/db';
+import {
+  createFixtureFiles,
+  FIXTURE_SHARED_TOKEN,
+  startFixtureProcess,
+} from '@agent-os/mcp-fixture';
 import { eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { McpClient } from '../src/mcp/mcp-client';
@@ -35,7 +46,13 @@ import {
   waitForTaskStatus,
 } from './support/agentsHarness';
 import { databaseUrl, newUser, waitFor } from '@agent-os/db/testing';
-import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader';
+import {
+  ONE_RECORD,
+  runCode,
+  SEARCH_LOGS,
+  toolCallIdOf,
+  WINDOW,
+} from './support/logs-reader';
 import { LOGS_SERVER } from './support/mcp-servers';
 
 /** Bound of one in-process test; the rows settle far sooner. */
@@ -75,7 +92,11 @@ interface Expected {
 
 /** The text of a data envelope as the model reads it. */
 function escaped(text: string): string {
-  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 /** The tokens of a text by the platform's estimate: UTF-8 bytes / 4, rounded up. */
@@ -84,23 +105,33 @@ function tokensOf(text: string): number {
 }
 
 /** The text and the value the fixture answers `search_logs` with `args`, asked over its shared-token path. */
-async function fixtureAnswer(url: string, args: Readonly<Record<string, unknown>>) {
+async function fixtureAnswer(
+  url: string,
+  args: Readonly<Record<string, unknown>>,
+) {
   const response = await new McpClient().callTool({
     url,
     auth: { mode: 'shared', token: async () => FIXTURE_SHARED_TOKEN },
     timeoutMs: 30_000,
     request: { name: 'search_logs', arguments: args },
   });
-  if (response.kind !== 'result') throw new Error(`The fixture did not answer search_logs: ${response.kind}`);
+  if (response.kind !== 'result')
+    throw new Error(`The fixture did not answer search_logs: ${response.kind}`);
   const [block] = response.result.content;
-  if (block?.type !== 'text') throw new Error('The fixture answered search_logs without a text block');
-  const value = response.result.structuredContent as { records: { traceId: string }[] };
+  if (block?.type !== 'text')
+    throw new Error('The fixture answered search_logs without a text block');
+  const value = response.result.structuredContent as {
+    records: { traceId: string }[];
+  };
   return { text: block.text, value };
 }
 
 /** Reads the settings row and the two answers, remembers the secret and checks what the tests rely on. */
 async function prepare(): Promise<Expected> {
-  const database = createDatabase({ connectionString: databaseUrl(), poolMax: 1 });
+  const database = createDatabase({
+    connectionString: databaseUrl(),
+    poolMax: 1,
+  });
   let settings: Settings | undefined;
   try {
     [settings] = await database.db
@@ -113,9 +144,12 @@ async function prepare(): Promise<Expected> {
   } finally {
     await database.close();
   }
-  if (settings === undefined) throw new Error('agent_tool_result_settings has no row');
+  if (settings === undefined)
+    throw new Error('agent_tool_result_settings has no row');
 
-  const fixture = await startFixtureProcess(createFixtureFiles('tool-result-reading'));
+  const fixture = await startFixtureProcess(
+    createFixtureFiles('tool-result-reading'),
+  );
   try {
     const big = await fixtureAnswer(fixture.sharedUrl('logs'), WINDOW);
     const small = await fixtureAnswer(fixture.sharedUrl('logs'), ONE_RECORD);
@@ -133,9 +167,16 @@ async function prepare(): Promise<Expected> {
     // preview; the small one comes whole and is one line; both are JSON on one line
     expect(expected.bigText.length).toBeGreaterThan(settings.storeFromChars);
     expect(tokensOf(expected.bigText)).toBeGreaterThan(settings.readMaxTokens);
-    expect(expected.bigText.indexOf(REDACTED) + REDACTED.length).toBeLessThanOrEqual(settings.previewChars);
-    expect(expected.smallText.length).toBeLessThanOrEqual(Math.min(settings.storeFromChars, LINE_CHARS));
-    expect([expected.bigText.includes('\n'), expected.smallText.includes('\n')]).toEqual([false, false]);
+    expect(
+      expected.bigText.indexOf(REDACTED) + REDACTED.length,
+    ).toBeLessThanOrEqual(settings.previewChars);
+    expect(expected.smallText.length).toBeLessThanOrEqual(
+      Math.min(settings.storeFromChars, LINE_CHARS),
+    );
+    expect([
+      expected.bigText.includes('\n'),
+      expected.smallText.includes('\n'),
+    ]).toEqual([false, false]);
     return expected;
   } finally {
     await fixture.stop();
@@ -145,7 +186,11 @@ async function prepare(): Promise<Expected> {
 /** The stored rows of an agent's calls, by `callId`. */
 async function storedRowsOf(harness: AgentsHarness, agentId: string) {
   const rows = await harness.db
-    .select({ callId: agentToolResults.callId, text: agentToolResults.text, value: agentToolResults.value })
+    .select({
+      callId: agentToolResults.callId,
+      text: agentToolResults.text,
+      value: agentToolResults.value,
+    })
     .from(agentToolResults)
     .where(eq(agentToolResults.taskId, agentId));
   return new Map(rows.map((row) => [row.callId, row]));
@@ -153,18 +198,29 @@ async function storedRowsOf(harness: AgentsHarness, agentId: string) {
 
 /** The history entry of one tool call's result. */
 function resultOf(history: readonly AgentHistoryEntry[], callId: string) {
-  const entry = history.find((candidate) => candidate.kind === 'tool_result' && candidate.content.callId === callId);
-  if (entry?.kind !== 'tool_result') throw new Error(`The history holds no result of call ${callId}`);
+  const entry = history.find(
+    (candidate) =>
+      candidate.kind === 'tool_result' && candidate.content.callId === callId,
+  );
+  if (entry?.kind !== 'tool_result')
+    throw new Error(`The history holds no result of call ${callId}`);
   return entry.content;
 }
 
 /** The model's own answers in its input, in order. */
 function answersIn(messages: readonly AgentTurnMessage[]) {
-  return messages.flatMap((message) => (message.role === 'assistant' ? [message] : []));
+  return messages.flatMap((message) =>
+    message.role === 'assistant' ? [message] : [],
+  );
 }
 
 /** Waits until the agent's history ends with the model's answer `text` and the agent waits. */
-async function untilAnswered(harness: AgentsHarness, agentId: string, ownerId: string, text: string): Promise<void> {
+async function untilAnswered(
+  harness: AgentsHarness,
+  agentId: string,
+  ownerId: string,
+  text: string,
+): Promise<void> {
   await waitFor(
     () => historyOf(harness, agentId, ownerId),
     (history) => {
@@ -209,212 +265,325 @@ describe('INT-1: a large result - the wrapper, the pages, the search, readResult
   //   short one and the long one page by page from the banners' offsets, searches the long one, reads it in a script, and answers
   // Catches: the body reaching the model input; a short result wrapped or not stored; a line lost or repeated at a page seam; a page past the token bound; search lines with
   //   wrong numbers; `readResult` getting a cut value; a known secret reaching the model, a page, the search, the store or the log; a reading tool's answer stored as a result
-  it('INT-1: R-1 the model gets the wrapper, reads every page, searches and reads the value, and no known secret gets through', async () => {
-    // Given: an employee whose agent reads the payment logs; the scripted model follows the stored result to its end
-    const ownerId = newUser();
-    const prompt = 'Read the large payment log page';
-    const done = 'Прочитано целиком';
-    const model = createScriptedModel();
-    const next = (messages: readonly AgentTurnMessage[]): ScriptedAnswer => {
-      const answers = answersIn(messages);
-      const [first] = answers;
-      if (first === undefined) return { calls: [{ tool: SEARCH_LOGS, args: WINDOW }, { tool: SEARCH_LOGS, args: ONE_RECORD }] };
-      const [big, small] = first.toolCalls.map((call) => call.toolCallId);
-      if (big === undefined || small === undefined) throw new Error('the first answer made no two calls');
-      if (answers.length === 1) return { calls: [readCall(small, 1), readCall(big, 1)] };
-      const last = answers.at(-1)?.toolCalls.at(-1);
-      if (last?.toolName === 'read_tool_result') {
-        const nextPage = /next page at offset (\d+)\./.exec(toolOutputOf(messages, last.toolCallId));
-        return { calls: [nextPage === null ? searchCall(big, PATTERN) : readCall(big, Number(nextPage[1]))] };
-      }
-      if (last?.toolName === 'search_tool_result') return { calls: [runCode('Полный результат', valueScript(big))] };
-      return { text: done };
-    };
-    const script = model.script({ task: prompt }, [], { thereafter: next });
-    const harness = await createAgentsHarness({
-      model,
-      access: { [ownerId]: [LOGS_SERVER] },
-      root: testRecord('reader', { servers: [LOGS_SERVER], maxTurns: 60 }),
-    });
-    try {
-      // When: the agent works to the end of its turn
-      const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'reader' });
-      await untilAnswered(harness, agentId, ownerId, done);
-      const bigId = toolCallIdOf(script, 0, 0);
-      const smallId = toolCallIdOf(script, 0, 1);
-      const { settings, secret, bigText, smallText } = expected;
-
-      // Then: the store holds the whole masked text of both direct calls and nothing else - no reading tool's answer (R-1, R-4)
-      const rows = await storedRowsOf(harness, agentId);
-      expect([...rows.keys()].sort()).toEqual([bigId, smallId].sort());
-      expect(rows.get(bigId)?.text).toBe(bigText);
-      expect(rows.get(smallId)?.text).toBe(smallText);
-
-      // Then: the next model input holds the wrapper of the long answer - its size, its callId, the preview of its start, the
-      // way to read it - and nothing past the preview; the short answer whole (R-1, R-3)
-      const seen = script.calls[1]?.messages ?? [];
-      const wrapper = toolOutputOf(seen, bigId);
-      expect(wrapper.startsWith(
-        `<data source="tool search_logs" author="${LOGS_SERVER}">\n` +
-          `[stored result] Output too large: ${bigText.length} characters. The full output is stored under callId &quot;${bigId}&quot;.\n` +
-          `Preview (first ${settings.previewChars} characters):\n${escaped(bigText.slice(0, settings.previewChars))}\n[end of preview]\n`,
-      )).toBe(true);
-      expect(wrapper).toContain(`read_tool_result (callId &quot;${bigId}&quot;`);
-      expect(wrapper).toContain(`readResult(&quot;${bigId}&quot;)`);
-      expect(wrapper).toContain('read the whole content in sequential parts');
-      expect(wrapper).not.toContain(escaped(bigText.slice(-200)));
-      expect(wrapper).not.toContain('totalMatched');
-      expect(toolOutputOf(seen, smallId)).toBe(`<data source="tool search_logs" author="${LOGS_SERVER}">\n${escaped(smallText)}\n</data>`);
-
-      // Then: the short result reads as one last page (R-2, R-4)
-      const history = await historyOf(harness, agentId, ownerId);
-      const smallRead = toolCallIdOf(script, 1, 0);
-      expect(resultOf(history, smallRead).text).toBe(`[lines 1-1 of 1: end of the stored result.]\n${smallText}`);
-
-      // Then: following the banners, the pages' bodies join into exactly the stored text; each page but the last says
-      // not to answer from it alone, each stays within the token bound (R-2)
-      const lastInput = script.calls.at(-1)?.messages ?? [];
-      const bigReads = answersIn(lastInput)
-        .flatMap((answer) => answer.toolCalls)
-        .filter((call) => call.toolName === 'read_tool_result' && (call.args as { callId?: string }).callId === bigId);
-      const pages = bigReads.map((call) => {
-        const text = resultOf(history, call.toolCallId).text ?? '';
-        const lineBreak = text.indexOf('\n');
-        return { offset: (call.args as { offset: number }).offset, banner: text.slice(0, lineBreak), body: text.slice(lineBreak + 1) };
+  it(
+    'INT-1: R-1 the model gets the wrapper, reads every page, searches and reads the value, and no known secret gets through',
+    async () => {
+      // Given: an employee whose agent reads the payment logs; the scripted model follows the stored result to its end
+      const ownerId = newUser();
+      const prompt = 'Read the large payment log page';
+      const done = 'Прочитано целиком';
+      const model = createScriptedModel();
+      const next = (messages: readonly AgentTurnMessage[]): ScriptedAnswer => {
+        const answers = answersIn(messages);
+        const [first] = answers;
+        if (first === undefined)
+          return {
+            calls: [
+              { tool: SEARCH_LOGS, args: WINDOW },
+              { tool: SEARCH_LOGS, args: ONE_RECORD },
+            ],
+          };
+        const [big, small] = first.toolCalls.map((call) => call.toolCallId);
+        if (big === undefined || small === undefined)
+          throw new Error('the first answer made no two calls');
+        if (answers.length === 1)
+          return { calls: [readCall(small, 1), readCall(big, 1)] };
+        const last = answers.at(-1)?.toolCalls.at(-1);
+        if (last?.toolName === 'read_tool_result') {
+          const nextPage = /next page at offset (\d+)\./.exec(
+            toolOutputOf(messages, last.toolCallId),
+          );
+          return {
+            calls: [
+              nextPage === null
+                ? searchCall(big, PATTERN)
+                : readCall(big, Number(nextPage[1])),
+            ],
+          };
+        }
+        if (last?.toolName === 'search_tool_result')
+          return { calls: [runCode('Полный результат', valueScript(big))] };
+        return { text: done };
+      };
+      const script = model.script({ task: prompt }, [], { thereafter: next });
+      const harness = await createAgentsHarness({
+        model,
+        access: { [ownerId]: [LOGS_SERVER] },
+        root: testRecord('reader', { servers: [LOGS_SERVER], maxTurns: 60 }),
       });
-      const totalLines = Math.ceil(bigText.length / LINE_CHARS);
-      expect(pages.length).toBeGreaterThan(1);
-      expect(pages.map((page) => page.body).join('')).toBe(bigText);
-      pages.forEach((page, index) => {
-        const lastLine = page.offset + Math.ceil(page.body.length / LINE_CHARS) - 1;
-        expect(page.banner).toBe(
-          index === pages.length - 1
-            ? `[lines ${page.offset}-${totalLines} of ${totalLines}: end of the stored result.]`
-            : `[partial view: lines ${page.offset}-${lastLine} of ${totalLines}; next page at offset ${lastLine + 1}. Do not answer from this page alone.]`,
+      try {
+        // When: the agent works to the end of its turn
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt,
+          description: 'reader',
+        });
+        await untilAnswered(harness, agentId, ownerId, done);
+        const bigId = toolCallIdOf(script, 0, 0);
+        const smallId = toolCallIdOf(script, 0, 1);
+        const { settings, secret, bigText, smallText } = expected;
+
+        // Then: the store holds the whole masked text of both direct calls and nothing else - no reading tool's answer (R-1, R-4)
+        const rows = await storedRowsOf(harness, agentId);
+        expect([...rows.keys()].sort()).toEqual([bigId, smallId].sort());
+        expect(rows.get(bigId)?.text).toBe(bigText);
+        expect(rows.get(smallId)?.text).toBe(smallText);
+
+        // Then: the next model input holds the wrapper of the long answer - its size, its callId, the preview of its start, the
+        // way to read it - and nothing past the preview; the short answer whole (R-1, R-3)
+        const seen = script.calls[1]?.messages ?? [];
+        const wrapper = toolOutputOf(seen, bigId);
+        expect(
+          wrapper.startsWith(
+            `<data source="tool search_logs" author="${LOGS_SERVER}">\n` +
+              `[stored result] Output too large: ${bigText.length} characters. The full output is stored under callId &quot;${bigId}&quot;.\n` +
+              `Preview (first ${settings.previewChars} characters):\n${escaped(bigText.slice(0, settings.previewChars))}\n[end of preview]\n`,
+          ),
+        ).toBe(true);
+        expect(wrapper).toContain(
+          `read_tool_result (callId &quot;${bigId}&quot;`,
         );
-        expect(tokensOf(page.body)).toBeLessThanOrEqual(settings.readMaxTokens);
-      });
-      expect(pages[0]?.offset).toBe(1);
+        expect(wrapper).toContain(`readResult(&quot;${bigId}&quot;)`);
+        expect(wrapper).toContain('read the whole content in sequential parts');
+        expect(wrapper).not.toContain(escaped(bigText.slice(-200)));
+        expect(wrapper).not.toContain('totalMatched');
+        expect(toolOutputOf(seen, smallId)).toBe(
+          `<data source="tool search_logs" author="${LOGS_SERVER}">\n${escaped(smallText)}\n</data>`,
+        );
 
-      // Then: the search gives the matching lines with their numbers: each shown line is that line of the stored text and
-      // holds the pattern in any case; the header counts every matching line (R-2)
-      const searchId = toolCallIdOf(script, pages.length + 1);
-      const [header = '', ...found] = (resultOf(history, searchId).text ?? '').split('\n');
-      const lineOf = (number: number) => bigText.slice((number - 1) * LINE_CHARS, number * LINE_CHARS);
-      const matching = Array.from({ length: totalLines }, (_, index) => index + 1).filter((number) =>
-        lineOf(number).toLowerCase().includes(PATTERN.toLowerCase()),
-      );
-      expect(found.length).toBeGreaterThan(0);
-      expect(header).toMatch(new RegExp(`^\\[${found.length} of ${matching.length} matching lines(; refine the pattern to see the rest)?\\]$`));
-      expect(found).toEqual(matching.slice(0, found.length).map((number) => `${number}: ${lineOf(number)}`));
+        // Then: the short result reads as one last page (R-2, R-4)
+        const history = await historyOf(harness, agentId, ownerId);
+        const smallRead = toolCallIdOf(script, 1, 0);
+        expect(resultOf(history, smallRead).text).toBe(
+          `[lines 1-1 of 1: end of the stored result.]\n${smallText}`,
+        );
 
-      // Then: a script reads the whole stored value by the callId: every record, the secret masked in it too (R-4)
-      const runId = toolCallIdOf(script, pages.length + 2);
-      expect(resultOf(history, runId).text).toBe(JSON.stringify({ records: expected.bigRecords, firstTrace: REDACTED }));
-      expect(historyLines(history).at(-1)).toBe(`model_answer: ${done} []`);
+        // Then: following the banners, the pages' bodies join into exactly the stored text; each page but the last says
+        // not to answer from it alone, each stays within the token bound (R-2)
+        const lastInput = script.calls.at(-1)?.messages ?? [];
+        const bigReads = answersIn(lastInput)
+          .flatMap((answer) => answer.toolCalls)
+          .filter(
+            (call) =>
+              call.toolName === 'read_tool_result' &&
+              (call.args as { callId?: string }).callId === bigId,
+          );
+        const pages = bigReads.map((call) => {
+          const text = resultOf(history, call.toolCallId).text ?? '';
+          const lineBreak = text.indexOf('\n');
+          return {
+            offset: (call.args as { offset: number }).offset,
+            banner: text.slice(0, lineBreak),
+            body: text.slice(lineBreak + 1),
+          };
+        });
+        const totalLines = Math.ceil(bigText.length / LINE_CHARS);
+        expect(pages.length).toBeGreaterThan(1);
+        expect(pages.map((page) => page.body).join('')).toBe(bigText);
+        pages.forEach((page, index) => {
+          const lastLine =
+            page.offset + Math.ceil(page.body.length / LINE_CHARS) - 1;
+          expect(page.banner).toBe(
+            index === pages.length - 1
+              ? `[lines ${page.offset}-${totalLines} of ${totalLines}: end of the stored result.]`
+              : `[partial view: lines ${page.offset}-${lastLine} of ${totalLines}; next page at offset ${lastLine + 1}. Do not answer from this page alone.]`,
+          );
+          expect(tokensOf(page.body)).toBeLessThanOrEqual(
+            settings.readMaxTokens,
+          );
+        });
+        expect(pages[0]?.offset).toBe(1);
 
-      // Then: the known secret reached no model input, no page, no search answer, no stored text or value and no log
-      // record; the wrapper's preview and the pages carry the mask in its place
-      expect(wrapper).toContain(REDACTED);
-      expect(pages.some((page) => page.body.includes(REDACTED))).toBe(true);
-      expect(JSON.stringify(model.calls)).not.toContain(secret);
-      expect(JSON.stringify(history)).not.toContain(secret);
-      expect(JSON.stringify([...rows.values()])).not.toContain(secret);
-      expect(JSON.stringify(harness.logs)).not.toContain(secret);
+        // Then: the search gives the matching lines with their numbers: each shown line is that line of the stored text and
+        // holds the pattern in any case; the header counts every matching line (R-2)
+        const searchId = toolCallIdOf(script, pages.length + 1);
+        const [header = '', ...found] = (
+          resultOf(history, searchId).text ?? ''
+        ).split('\n');
+        const lineOf = (number: number) =>
+          bigText.slice((number - 1) * LINE_CHARS, number * LINE_CHARS);
+        const matching = Array.from(
+          { length: totalLines },
+          (_, index) => index + 1,
+        ).filter((number) =>
+          lineOf(number).toLowerCase().includes(PATTERN.toLowerCase()),
+        );
+        expect(found.length).toBeGreaterThan(0);
+        expect(header).toMatch(
+          new RegExp(
+            `^\\[${found.length} of ${matching.length} matching lines(; refine the pattern to see the rest)?\\]$`,
+          ),
+        );
+        expect(found).toEqual(
+          matching
+            .slice(0, found.length)
+            .map((number) => `${number}: ${lineOf(number)}`),
+        );
 
-      // Then: the log has a record of each read and of the search, with counts and no pattern
-      const readLogs = harness.logs.filter((record) => record.message === 'stored result read');
-      expect(readLogs.map((record) => [record.fields.callId, record.fields.found])).toEqual([
-        [smallId, true],
-        ...pages.map(() => [bigId, true]),
-      ]);
-      const searchLogs = harness.logs.filter((record) => record.message === 'stored result searched');
-      expect(searchLogs.map((record) => [record.fields.callId, record.fields.found, record.fields.matches, record.fields.shown])).toEqual([
-        [bigId, true, matching.length, found.length],
-      ]);
-      expect(JSON.stringify(harness.logs)).not.toContain(PATTERN);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then: a script reads the whole stored value by the callId: every record, the secret masked in it too (R-4)
+        const runId = toolCallIdOf(script, pages.length + 2);
+        expect(resultOf(history, runId).text).toBe(
+          JSON.stringify({
+            records: expected.bigRecords,
+            firstTrace: REDACTED,
+          }),
+        );
+        expect(historyLines(history).at(-1)).toBe(`model_answer: ${done} []`);
+
+        // Then: the known secret reached no model input, no page, no search answer, no stored text or value and no log
+        // record; the wrapper's preview and the pages carry the mask in its place
+        expect(wrapper).toContain(REDACTED);
+        expect(pages.some((page) => page.body.includes(REDACTED))).toBe(true);
+        expect(JSON.stringify(model.calls)).not.toContain(secret);
+        expect(JSON.stringify(history)).not.toContain(secret);
+        expect(JSON.stringify([...rows.values()])).not.toContain(secret);
+        expect(JSON.stringify(harness.logs)).not.toContain(secret);
+
+        // Then: the log has a record of each read and of the search, with counts and no pattern
+        const readLogs = harness.logs.filter(
+          (record) => record.message === 'stored result read',
+        );
+        expect(
+          readLogs.map((record) => [record.fields.callId, record.fields.found]),
+        ).toEqual([[smallId, true], ...pages.map(() => [bigId, true])]);
+        const searchLogs = harness.logs.filter(
+          (record) => record.message === 'stored result searched',
+        );
+        expect(
+          searchLogs.map((record) => [
+            record.fields.callId,
+            record.fields.found,
+            record.fields.matches,
+            record.fields.shown,
+          ]),
+        ).toEqual([[bigId, true, matching.length, found.length]]);
+        expect(JSON.stringify(harness.logs)).not.toContain(PATTERN);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 });
 
-describe('INT-2: a callId that is not the caller\'s reads as a missing one', () => {
+describe("INT-2: a callId that is not the caller's reads as a missing one", () => {
   // R-2: "Оба сверяют сессию и владельца, как `findForRun`: чужой результат неотличим от несуществующего."
   // Behavior: employee A's first agent stores a large result; A's second agent and employee B's agent read and search it by its callId and by an invented one
   //   -> all four answers of each agent are the same `tool_error` "результат не найден"
   // Catches: another session's or another employee's stored result readable by its callId; an answer that differs between "foreign" and "missing" and so confirms the id
-  it('INT-2: R-2 read_tool_result and search_tool_result answer a foreign session, a foreign owner and an invented callId alike', async () => {
-    // Given: A's first agent read the window directly, so its large result is stored under its callId
-    const employeeA = newUser();
-    const employeeB = newUser();
-    const model = createScriptedModel();
-    const storing = model.script({ task: 'A stores a large result' }, [
-      { calls: [{ tool: SEARCH_LOGS, args: WINDOW }] },
-      { text: 'A прочитал' },
-    ]);
-    const probe = () => {
-      const foreign = toolCallIdOf(storing, 0);
-      return {
-        calls: [
-          readCall(foreign, 1),
-          searchCall(foreign, 'payment'),
-          readCall('call-invented', 1),
-          searchCall('call-invented', 'payment'),
-        ],
+  it(
+    'INT-2: R-2 read_tool_result and search_tool_result answer a foreign session, a foreign owner and an invented callId alike',
+    async () => {
+      // Given: A's first agent read the window directly, so its large result is stored under its callId
+      const employeeA = newUser();
+      const employeeB = newUser();
+      const model = createScriptedModel();
+      const storing = model.script({ task: 'A stores a large result' }, [
+        { calls: [{ tool: SEARCH_LOGS, args: WINDOW }] },
+        { text: 'A прочитал' },
+      ]);
+      const probe = () => {
+        const foreign = toolCallIdOf(storing, 0);
+        return {
+          calls: [
+            readCall(foreign, 1),
+            searchCall(foreign, 'payment'),
+            readCall('call-invented', 1),
+            searchCall('call-invented', 'payment'),
+          ],
+        };
       };
-    };
-    const probes = {
-      otherSession: model.script({ task: 'A reads from another session' }, [probe, { text: 'другая сессия' }]),
-      otherOwner: model.script({ task: 'B reads what A stored' }, [probe, { text: 'другой сотрудник' }]),
-    };
-    const harness = await createAgentsHarness({
-      model,
-      access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
-      root: testRecord('reader', { servers: [LOGS_SERVER] }),
-    });
-    const start = async (ownerId: string, prompt: string) =>
-      (await harness.sessions.start({ ownerId, prompt, description: 'reader' })).agentId;
-    try {
-      const storingId = await start(employeeA, 'A stores a large result');
-      await untilAnswered(harness, storingId, employeeA, 'A прочитал');
-      const foreign = toolCallIdOf(storing, 0);
-      expect([...(await storedRowsOf(harness, storingId)).keys()]).toEqual([foreign]);
-
-      // When: A's second agent and B's agent read and search by that callId and by an invented one
-      const readers = [
-        { ownerId: employeeA, script: probes.otherSession, agentId: await start(employeeA, 'A reads from another session'), done: 'другая сессия' },
-        { ownerId: employeeB, script: probes.otherOwner, agentId: await start(employeeB, 'B reads what A stored'), done: 'другой сотрудник' },
-      ];
-      for (const reader of readers) await untilAnswered(harness, reader.agentId, reader.ownerId, reader.done);
-
-      // Then: each agent's model got the same answer for the foreign callId as for the invented one: `tool_error`, "результат не найден"
-      const missingRead = `<data source="tool read_tool_result" author="agents">\n[tool_error]\n${NOT_FOUND}\n</data>`;
-      const missingSearch = `<data source="tool search_tool_result" author="agents">\n[tool_error]\n${NOT_FOUND}\n</data>`;
-      for (const reader of readers) {
-        const seen = reader.script.calls[1]?.messages ?? [];
-        expect([0, 1, 2, 3].map((position) => toolOutputOf(seen, toolCallIdOf(reader.script, 0, position)))).toEqual([
-          missingRead,
-          missingSearch,
-          missingRead,
-          missingSearch,
+      const probes = {
+        otherSession: model.script({ task: 'A reads from another session' }, [
+          probe,
+          { text: 'другая сессия' },
+        ]),
+        otherOwner: model.script({ task: 'B reads what A stored' }, [
+          probe,
+          { text: 'другой сотрудник' },
+        ]),
+      };
+      const harness = await createAgentsHarness({
+        model,
+        access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
+        root: testRecord('reader', { servers: [LOGS_SERVER] }),
+      });
+      const start = async (ownerId: string, prompt: string) =>
+        (
+          await harness.sessions.start({
+            ownerId,
+            prompt,
+            description: 'reader',
+          })
+        ).agentId;
+      try {
+        const storingId = await start(employeeA, 'A stores a large result');
+        await untilAnswered(harness, storingId, employeeA, 'A прочитал');
+        const foreign = toolCallIdOf(storing, 0);
+        expect([...(await storedRowsOf(harness, storingId)).keys()]).toEqual([
+          foreign,
         ]);
-        expect(historyLines(await historyOf(harness, reader.agentId, reader.ownerId)).slice(2, 6)).toEqual([
-          'tool_result: read_tool_result tool_error',
-          'tool_result: search_tool_result tool_error',
-          'tool_result: read_tool_result tool_error',
-          'tool_result: search_tool_result tool_error',
-        ]);
+
+        // When: A's second agent and B's agent read and search by that callId and by an invented one
+        const readers = [
+          {
+            ownerId: employeeA,
+            script: probes.otherSession,
+            agentId: await start(employeeA, 'A reads from another session'),
+            done: 'другая сессия',
+          },
+          {
+            ownerId: employeeB,
+            script: probes.otherOwner,
+            agentId: await start(employeeB, 'B reads what A stored'),
+            done: 'другой сотрудник',
+          },
+        ];
+        for (const reader of readers)
+          await untilAnswered(
+            harness,
+            reader.agentId,
+            reader.ownerId,
+            reader.done,
+          );
+
+        // Then: each agent's model got the same answer for the foreign callId as for the invented one: `tool_error`, "результат не найден"
+        const missingRead = `<data source="tool read_tool_result" author="agents">\n[tool_error]\n${NOT_FOUND}\n</data>`;
+        const missingSearch = `<data source="tool search_tool_result" author="agents">\n[tool_error]\n${NOT_FOUND}\n</data>`;
+        for (const reader of readers) {
+          const seen = reader.script.calls[1]?.messages ?? [];
+          expect(
+            [0, 1, 2, 3].map((position) =>
+              toolOutputOf(seen, toolCallIdOf(reader.script, 0, position)),
+            ),
+          ).toEqual([missingRead, missingSearch, missingRead, missingSearch]);
+          expect(
+            historyLines(
+              await historyOf(harness, reader.agentId, reader.ownerId),
+            ).slice(2, 6),
+          ).toEqual([
+            'tool_result: read_tool_result tool_error',
+            'tool_result: search_tool_result tool_error',
+            'tool_result: read_tool_result tool_error',
+            'tool_result: search_tool_result tool_error',
+          ]);
+        }
+
+        // Then: every lookup of the two agents found nothing, and nothing of theirs was stored
+        const lookups = harness.logs.filter(
+          (record) =>
+            record.message === 'stored result read' ||
+            record.message === 'stored result searched',
+        );
+        expect(lookups.map((record) => record.fields.found)).toEqual(
+          Array.from({ length: 8 }, () => false),
+        );
+        for (const reader of readers)
+          expect((await storedRowsOf(harness, reader.agentId)).size).toBe(0);
+      } finally {
+        await harness.close();
       }
-
-      // Then: every lookup of the two agents found nothing, and nothing of theirs was stored
-      const lookups = harness.logs.filter(
-        (record) => record.message === 'stored result read' || record.message === 'stored result searched',
-      );
-      expect(lookups.map((record) => record.fields.found)).toEqual(Array.from({ length: 8 }, () => false));
-      for (const reader of readers) expect((await storedRowsOf(harness, reader.agentId)).size).toBe(0);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

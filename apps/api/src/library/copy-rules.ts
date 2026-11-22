@@ -68,7 +68,8 @@ export function planCopy(input: CopyInput): CopyPlan {
 
   const { body } = input;
   const [own, ...subagentParts] = contentParts(body).map(copyPart);
-  if (own === undefined) throw new Error('a record content without its own part');
+  if (own === undefined)
+    throw new Error('a record content without its own part');
   let copy: RecordBody;
   let removedAgents: string[] = [];
   if (body.kind === 'agent') {
@@ -81,7 +82,8 @@ export function planCopy(input: CopyInput): CopyPlan {
     const { content } = body;
     const subagents = content.subagents.map((subagent, index) => {
       const part = subagentParts[index];
-      if (part === undefined) throw new Error(`subagent ${subagent.name} without its content part`);
+      if (part === undefined)
+        throw new Error(`subagent ${subagent.name} without its content part`);
       return { ...subagent, ...part };
     });
     copy = { kind: 'deep_agent', content: { ...content, ...own, subagents } };

@@ -90,7 +90,13 @@ export class LibraryService {
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
         const record = await this.records.visibleOr404(viewer, id);
-        return this.records.detail(record, viewer, actor.isAdmin, 'employee', facts);
+        return this.records.detail(
+          record,
+          viewer,
+          actor.isAdmin,
+          'employee',
+          facts,
+        );
       },
       recordFields,
     );
@@ -195,7 +201,13 @@ export class LibraryService {
           await this.records.audit(owner.id, 'library_audience', before, after);
           return { record: after, viewer: owner };
         });
-        return this.records.detail(record, viewer, actor.isAdmin, 'employee', facts);
+        return this.records.detail(
+          record,
+          viewer,
+          actor.isAdmin,
+          'employee',
+          facts,
+        );
       },
       recordFields,
     );
@@ -345,7 +357,9 @@ export class LibraryService {
           recordId: record.id,
           selfLearning: record.body.content.selfLearning,
           servers: [
-            ...new Set(contentParts(record.body).flatMap((part) => part.servers)),
+            ...new Set(
+              contentParts(record.body).flatMap((part) => part.servers),
+            ),
           ],
         };
       },
@@ -403,8 +417,16 @@ export class LibraryService {
             offerInChat: true,
           });
           if (!inserted) return false;
-          const record = present(await this.records.panelOne(input.id), input.id);
-          await this.records.audit(SYSTEM_ACTOR, 'library_create', null, record);
+          const record = present(
+            await this.records.panelOne(input.id),
+            input.id,
+          );
+          await this.records.audit(
+            SYSTEM_ACTOR,
+            'library_create',
+            null,
+            record,
+          );
           return true;
         }),
       (created) => ({ created }),

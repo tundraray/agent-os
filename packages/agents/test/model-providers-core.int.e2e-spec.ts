@@ -93,7 +93,11 @@ import { newUser, waitFor } from '@agent-os/db/testing';
 const TEST_TIMEOUT_MS = 120_000;
 
 /** The three kinds, in the order of rows A, B, C. */
-const KINDS: readonly ModelProviderKind[] = ['anthropic', 'gemini', 'openai_compatible'];
+const KINDS: readonly ModelProviderKind[] = [
+  'anthropic',
+  'gemini',
+  'openai_compatible',
+];
 
 /** One provider of the test per kind: its run name (never a real `anthropic` row), model, key and wire facts. */
 interface KindRow {
@@ -166,7 +170,13 @@ const SCHEMA_WITH_REJECTED_KEYWORDS = {
   },
   required: ['traceId'],
 };
-const GEMINI_REJECTED_KEYWORDS = ['$schema', 'additionalProperties', '$ref', '$defs', 'const'];
+const GEMINI_REJECTED_KEYWORDS = [
+  '$schema',
+  'additionalProperties',
+  '$ref',
+  '$defs',
+  'const',
+];
 
 /**
  * A hard-coded `anthropic/` prefix test (AC-05.4, plan Notes 10). With none on the call path, an id `anthropic/…`
@@ -180,11 +190,15 @@ function sourcesTestingAnthropicPrefix(): string[] {
   const root = fileURLToPath(new URL('../src', import.meta.url));
   return readdirSync(root, { recursive: true, encoding: 'utf8' })
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
-    .filter((file) => ANTHROPIC_PREFIX_TEST.test(readFileSync(join(root, file), 'utf8')));
+    .filter((file) =>
+      ANTHROPIC_PREFIX_TEST.test(readFileSync(join(root, file), 'utf8')),
+    );
 }
 
 const ToolsListAnswerSchema = z.looseObject({
-  result: z.looseObject({ tools: z.array(z.looseObject({ name: z.string() })) }),
+  result: z.looseObject({
+    tools: z.array(z.looseObject({ name: z.string() })),
+  }),
 });
 
 /** A `tools/list` answer with `get_trace` listed under {@link SCHEMA_WITH_REJECTED_KEYWORDS}; any other text unchanged. */
@@ -193,13 +207,24 @@ function withRejectedKeywords(text: string): string {
   const answer = ToolsListAnswerSchema.safeParse(JSON.parse(text));
   if (!answer.success) return text;
   const tools = answer.data.result.tools.map((tool) =>
-    tool.name === 'get_trace' ? { ...tool, inputSchema: SCHEMA_WITH_REJECTED_KEYWORDS } : tool,
+    tool.name === 'get_trace'
+      ? { ...tool, inputSchema: SCHEMA_WITH_REJECTED_KEYWORDS }
+      : tool,
   );
-  return JSON.stringify({ ...answer.data, result: { ...answer.data.result, tools } });
+  return JSON.stringify({
+    ...answer.data,
+    result: { ...answer.data.result, tools },
+  });
 }
 
 /** Headers a proxy does not pass on: the connection's own and those of a body it may rewrite. */
-const HOP_HEADERS = new Set(['host', 'connection', 'content-length', 'content-encoding', 'transfer-encoding']);
+const HOP_HEADERS = new Set([
+  'host',
+  'connection',
+  'content-length',
+  'content-encoding',
+  'transfer-encoding',
+]);
 
 interface SchemaProxy {
   /** The MCP address to register: the proxy's origin with the fixture's path. */
@@ -216,12 +241,17 @@ async function startSchemaProxy(target: string): Promise<SchemaProxy> {
   const server = createServer((request, response) => {
     (async () => {
       const body = await readBody(request);
-      const headers = Object.entries(headersOf(request)).filter(([name]) => !HOP_HEADERS.has(name));
-      const answer = await fetch(new URL(request.url ?? '/', targetUrl.origin), {
-        method: request.method ?? 'GET',
-        headers,
-        ...(body === '' ? {} : { body }),
-      });
+      const headers = Object.entries(headersOf(request)).filter(
+        ([name]) => !HOP_HEADERS.has(name),
+      );
+      const answer = await fetch(
+        new URL(request.url ?? '/', targetUrl.origin),
+        {
+          method: request.method ?? 'GET',
+          headers,
+          ...(body === '' ? {} : { body }),
+        },
+      );
       const text = await answer.text();
       answer.headers.forEach((value, name) => {
         if (!HOP_HEADERS.has(name)) response.setHeader(name, value);
@@ -229,7 +259,9 @@ async function startSchemaProxy(target: string): Promise<SchemaProxy> {
       response.writeHead(answer.status);
       response.end(withRejectedKeywords(text));
     })().catch((error: unknown) => {
-      response.destroy(error instanceof Error ? error : new Error(String(error)));
+      response.destroy(
+        error instanceof Error ? error : new Error(String(error)),
+      );
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -238,7 +270,9 @@ async function startSchemaProxy(target: string): Promise<SchemaProxy> {
     url: `http://127.0.0.1:${port}${targetUrl.pathname}`,
     close() {
       server.closeAllConnections();
-      return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      return new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     },
   };
 }
@@ -263,7 +297,9 @@ function keysIn(value: unknown): Set<string> {
 const GeminiRequestSchema = z.looseObject({
   tools: z.array(
     z.looseObject({
-      functionDeclarations: z.array(z.looseObject({ name: z.string(), parametersJsonSchema: z.unknown() })),
+      functionDeclarations: z.array(
+        z.looseObject({ name: z.string(), parametersJsonSchema: z.unknown() }),
+      ),
     }),
   ),
 });
@@ -299,16 +335,27 @@ function answeredCallRow(model: string) {
 
 /** The agent every row runs: the same prompt, the schema server, and the row's model. */
 function readerRecord(kind: ModelProviderKind) {
-  return testRecord('mp-reader', { servers: [SCHEMA_SERVER], model: ROWS[kind].model });
+  return testRecord('mp-reader', {
+    servers: [SCHEMA_SERVER],
+    model: ROWS[kind].model,
+  });
 }
 
 /** A value per kind. */
-function byKind<T>(value: (kind: ModelProviderKind) => T): Record<ModelProviderKind, T> {
-  return { anthropic: value('anthropic'), gemini: value('gemini'), openai_compatible: value('openai_compatible') };
+function byKind<T>(
+  value: (kind: ModelProviderKind) => T,
+): Record<ModelProviderKind, T> {
+  return {
+    anthropic: value('anthropic'),
+    gemini: value('gemini'),
+    openai_compatible: value('openai_compatible'),
+  };
 }
 
 type FakeProviders = Readonly<Record<ModelProviderKind, FakeProvider>>;
-type SentRequests = Readonly<Record<ModelProviderKind, readonly FakeProviderRequest[]>>;
+type SentRequests = Readonly<
+  Record<ModelProviderKind, readonly FakeProviderRequest[]>
+>;
 
 /** Reads, when called, the requests each fake got from now on. */
 function requestsFromNow(fakes: FakeProviders): () => SentRequests {
@@ -317,9 +364,17 @@ function requestsFromNow(fakes: FakeProviders): () => SentRequests {
 }
 
 /** Whether the key shows anywhere in the request but its key header: the address, another header, the body. */
-function keyOutsideItsHeader(request: FakeProviderRequest, keyHeader: string, key: string): boolean {
-  const otherHeaders = Object.entries(request.headers).flatMap(([name, value]) => (name === keyHeader ? [] : [value]));
-  return [request.url, request.bodyText, ...otherHeaders].some((text) => text.includes(key));
+function keyOutsideItsHeader(
+  request: FakeProviderRequest,
+  keyHeader: string,
+  key: string,
+): boolean {
+  const otherHeaders = Object.entries(request.headers).flatMap(
+    ([name, value]) => (name === keyHeader ? [] : [value]),
+  );
+  return [request.url, request.bodyText, ...otherHeaders].some((text) =>
+    text.includes(key),
+  );
 }
 
 describe('model-providers / core - agents integration (real Postgres, provider faked on the wire)', () => {
@@ -327,15 +382,22 @@ describe('model-providers / core - agents integration (real Postgres, provider f
   const cleanups: (() => Promise<void>)[] = [];
   /** Every text part of every agent's answer, in arrival order. */
   const textDeltas: TextDelta[] = [];
-  let suite: { readonly harness: AgentsHarness; readonly fakes: FakeProviders } | undefined;
+  let suite:
+    | { readonly harness: AgentsHarness; readonly fakes: FakeProviders }
+    | undefined;
 
-  function opened(): { readonly harness: AgentsHarness; readonly fakes: FakeProviders } {
+  function opened(): {
+    readonly harness: AgentsHarness;
+    readonly fakes: FakeProviders;
+  } {
     if (suite === undefined) throw new Error('The INT-1 harness did not start');
     return suite;
   }
 
   function textPartsOf(agentId: string): string[] {
-    return textDeltas.filter((delta) => delta.agentId === agentId).map((delta) => delta.text);
+    return textDeltas
+      .filter((delta) => delta.agentId === agentId)
+      .map((delta) => delta.text);
   }
 
   beforeAll(async () => {
@@ -345,17 +407,25 @@ describe('model-providers / core - agents integration (real Postgres, provider f
     cleanups.push(() => gemini.close());
     const openAICompatible = await startFakeProvider('openai_compatible');
     cleanups.push(() => openAICompatible.close());
-    const fakes: FakeProviders = { anthropic, gemini, openai_compatible: openAICompatible };
+    const fakes: FakeProviders = {
+      anthropic,
+      gemini,
+      openai_compatible: openAICompatible,
+    };
 
     const harness = await createAgentsHarness({
       turnClient: 'real',
       access: { '*': [SCHEMA_SERVER] },
       mcpServers: [],
-      prices: Object.fromEntries(KINDS.map((kind) => [ROWS[kind].model, MODEL_PRICE])),
+      prices: Object.fromEntries(
+        KINDS.map((kind) => [ROWS[kind].model, MODEL_PRICE]),
+      ),
       onTextDelta: (delta) => textDeltas.push(delta),
     });
     cleanups.push(() => harness.close());
-    const proxy = await startSchemaProxy(harness.fixtureProcess.sharedUrl('logs'));
+    const proxy = await startSchemaProxy(
+      harness.fixtureProcess.sharedUrl('logs'),
+    );
     cleanups.push(() => proxy.close());
     await registerServer(harness.agents, {
       name: SCHEMA_SERVER,
@@ -367,9 +437,17 @@ describe('model-providers / core - agents integration (real Postgres, provider f
     // Providers named for the run, each at its fake's address: never a real `anthropic` row (plan Notes 10).
     for (const kind of KINDS) {
       const row = ROWS[kind];
-      await harness.agents.providers.create({ name: row.provider, kind, baseUrl: fakes[kind].baseUrl, apiKey: row.key });
+      await harness.agents.providers.create({
+        name: row.provider,
+        kind,
+        baseUrl: fakes[kind].baseUrl,
+        apiKey: row.key,
+      });
       cleanups.push(async () => {
-        await harness.agents.providers.remove({ name: row.provider, catalogModels: 0 });
+        await harness.agents.providers.remove({
+          name: row.provider,
+          catalogModels: 0,
+        });
       });
     }
     suite = { harness, fakes };
@@ -384,7 +462,8 @@ describe('model-providers / core - agents integration (real Postgres, provider f
         failures.push(error);
       }
     }
-    if (failures.length > 0) throw new AggregateError(failures, 'INT-1 cleanup failed');
+    if (failures.length > 0)
+      throw new AggregateError(failures, 'INT-1 cleanup failed');
   }, TEST_TIMEOUT_MS);
 
   /**
@@ -393,22 +472,40 @@ describe('model-providers / core - agents integration (real Postgres, provider f
    * to the agent, one ledger row per call at the catalogue price, every request on this kind's fake only with the
    * stored key in its header and nowhere else, no key in the log — and returns this kind's requests.
    */
-  async function readTraceOn(kind: ModelProviderKind): Promise<readonly FakeProviderRequest[]> {
+  async function readTraceOn(
+    kind: ModelProviderKind,
+  ): Promise<readonly FakeProviderRequest[]> {
     const { harness, fakes } = opened();
     const row = ROWS[kind];
     const fake = fakes[kind];
     const ownerId = newUser();
     const sent = requestsFromNow(fakes);
-    const traceCallsBefore = fixtureCallsOf(harness.fixture.callLog, { tool: 'get_trace', args: TRACE }).length;
-    fake.reply({ kind: 'answer', text: ['Reading ', 'the trace'], toolCall: { name: GET_TRACE, args: TRACE } });
+    const traceCallsBefore = fixtureCallsOf(harness.fixture.callLog, {
+      tool: 'get_trace',
+      args: TRACE,
+    }).length;
+    fake.reply({
+      kind: 'answer',
+      text: ['Reading ', 'the trace'],
+      toolCall: { name: GET_TRACE, args: TRACE },
+    });
     fake.reply({ kind: 'answer', text: ['The trace ', 'is read'] });
     await setRootRecord(harness.library, readerRecord(kind));
 
-    const { agentId } = await harness.sessions.start({ ownerId, prompt: 'Read the trace', description: 'reader' });
+    const { agentId } = await harness.sessions.start({
+      ownerId,
+      prompt: 'Read the trace',
+      description: 'reader',
+    });
     await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
 
     // The answer reached the hook in the parts the provider streamed (AC-03.1)
-    expect(textPartsOf(agentId)).toEqual(['Reading ', 'the trace', 'The trace ', 'is read']);
+    expect(textPartsOf(agentId)).toEqual([
+      'Reading ',
+      'the trace',
+      'The trace ',
+      'is read',
+    ]);
     // The tool call went to the server and its result back to the agent
     expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
       'task: Read the trace',
@@ -416,16 +513,30 @@ describe('model-providers / core - agents integration (real Postgres, provider f
       'tool_result: get_trace success',
       'model_answer: The trace is read []',
     ]);
-    expect(fixtureCallsOf(harness.fixture.callLog, { tool: 'get_trace', args: TRACE })).toHaveLength(traceCallsBefore + 1);
+    expect(
+      fixtureCallsOf(harness.fixture.callLog, {
+        tool: 'get_trace',
+        args: TRACE,
+      }),
+    ).toHaveLength(traceCallsBefore + 1);
     // One ledger row per call on the model's id: 10 000 input of which 8 000 cache read, none charged twice (AC-10.1)
-    expect(await ledgerOf(harness.db, ownerId)).toEqual([answeredCallRow(row.model), answeredCallRow(row.model)]);
+    expect(await ledgerOf(harness.db, ownerId)).toEqual([
+      answeredCallRow(row.model),
+      answeredCallRow(row.model),
+    ]);
     // Both requests went to this kind's fake, at the turn path, with the stored key; no other fake got one (AC-03.3)
     const requests = sent();
     const turn = `${row.turnPath} ${row.sentKey(row.key)}`;
-    expect(byKind((other) => requests[other].map((request) => `${request.url} ${request.key}`))).toEqual(
-      byKind((other) => (other === kind ? [turn, turn] : [])),
-    );
-    expect(requests[kind].filter((request) => keyOutsideItsHeader(request, fake.keyHeader, row.key))).toEqual([]);
+    expect(
+      byKind((other) =>
+        requests[other].map((request) => `${request.url} ${request.key}`),
+      ),
+    ).toEqual(byKind((other) => (other === kind ? [turn, turn] : [])));
+    expect(
+      requests[kind].filter((request) =>
+        keyOutsideItsHeader(request, fake.keyHeader, row.key),
+      ),
+    ).toEqual([]);
     expect(JSON.stringify(harness.logs)).not.toContain(row.key);
     return requests[kind];
   }
@@ -466,116 +577,187 @@ describe('model-providers / core - agents integration (real Postgres, provider f
   // @category: core-functionality
   // @dependency: ModelClient, createMastraTurnClient, provider adapters (anthropic, gemini, openai-compatible), Agents.providers registry, TokenLedger, runtime stop, Postgres, fake provider servers
   // @complexity: high
-  it('INT-1 A: on an `anthropic`-kind provider the reader streams, calls its tool and costs the cache split, the request carries the stored key and the cache mark, and no `anthropic/` prefix test remains', async () => {
-    const [first] = await readTraceOn('anthropic');
+  it(
+    'INT-1 A: on an `anthropic`-kind provider the reader streams, calls its tool and costs the cache split, the request carries the stored key and the cache mark, and no `anthropic/` prefix test remains',
+    async () => {
+      const [first] = await readTraceOn('anthropic');
 
-    expect(first?.body).toMatchObject({
-      system: expect.arrayContaining([expect.objectContaining({ cache_control: { type: 'ephemeral' } })]),
-    });
-    // AC-02.2 / AC-05.4: an `anthropic/…` id resolves like any `<provider>/<name>` (plan Notes 10)
-    expect(sourcesTestingAnthropicPrefix()).toEqual([]);
-  }, TEST_TIMEOUT_MS);
+      expect(first?.body).toMatchObject({
+        system: expect.arrayContaining([
+          expect.objectContaining({ cache_control: { type: 'ephemeral' } }),
+        ]),
+      });
+      // AC-02.2 / AC-05.4: an `anthropic/…` id resolves like any `<provider>/<name>` (plan Notes 10)
+      expect(sourcesTestingAnthropicPrefix()).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  it('INT-1 B: on a `gemini` provider the reader streams, calls its tool and costs the cache split; the tool schemas carry none of the keywords Gemini rejects, `const` goes as `enum`, and no cache mark', async () => {
-    const [first] = await readTraceOn('gemini');
+  it(
+    'INT-1 B: on a `gemini` provider the reader streams, calls its tool and costs the cache split; the tool schemas carry none of the keywords Gemini rejects, `const` goes as `enum`, and no cache mark',
+    async () => {
+      const [first] = await readTraceOn('gemini');
 
-    // DC-4, the request half of AC-04.1
-    const { tools } = GeminiRequestSchema.parse(first?.body);
-    expect(GEMINI_REJECTED_KEYWORDS.filter((keyword) => keysIn(tools).has(keyword))).toEqual([]);
-    const getTrace = tools.flatMap((tool) => tool.functionDeclarations).find((declaration) => declaration.name === GET_TRACE);
-    expect(getTrace?.parametersJsonSchema).toMatchObject({ properties: { view: { enum: ['records'] } } });
-    expect(['cache_control', 'cachedContent'].filter((keyword) => keysIn(first?.body).has(keyword))).toEqual([]);
-  }, TEST_TIMEOUT_MS);
+      // DC-4, the request half of AC-04.1
+      const { tools } = GeminiRequestSchema.parse(first?.body);
+      expect(
+        GEMINI_REJECTED_KEYWORDS.filter((keyword) =>
+          keysIn(tools).has(keyword),
+        ),
+      ).toEqual([]);
+      const getTrace = tools
+        .flatMap((tool) => tool.functionDeclarations)
+        .find((declaration) => declaration.name === GET_TRACE);
+      expect(getTrace?.parametersJsonSchema).toMatchObject({
+        properties: { view: { enum: ['records'] } },
+      });
+      expect(
+        ['cache_control', 'cachedContent'].filter((keyword) =>
+          keysIn(first?.body).has(keyword),
+        ),
+      ).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  it('INT-1 C: on an `openai_compatible` provider with its own `baseUrl` the reader streams, calls its tool and costs the cache split, and every request went to that address only', async () => {
-    // The address row is the shared part of the helper: the fake at the stored `baseUrl` got both turns, the others none
-    const requests = await readTraceOn('openai_compatible');
+  it(
+    'INT-1 C: on an `openai_compatible` provider with its own `baseUrl` the reader streams, calls its tool and costs the cache split, and every request went to that address only',
+    async () => {
+      // The address row is the shared part of the helper: the fake at the stored `baseUrl` got both turns, the others none
+      const requests = await readTraceOn('openai_compatible');
 
-    expect(requests.map((request) => request.url)).toEqual([ROWS.openai_compatible.turnPath, ROWS.openai_compatible.turnPath]);
-  }, TEST_TIMEOUT_MS);
+      expect(requests.map((request) => request.url)).toEqual([
+        ROWS.openai_compatible.turnPath,
+        ROWS.openai_compatible.turnPath,
+      ]);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  it('INT-1 D: a key the administrator replaces between two calls of the same agent goes with the next call, without a restart', async () => {
-    const { harness, fakes } = opened();
-    const row = ROWS.anthropic;
-    const ownerId = newUser();
-    const sent = requestsFromNow(fakes);
-    fakes.anthropic.reply({ kind: 'answer', text: ['First answer'] });
-    fakes.anthropic.reply({ kind: 'answer', text: ['Second answer'] });
-    await setRootRecord(harness.library, readerRecord('anthropic'));
-    try {
-      const { agentId } = await harness.sessions.start({ ownerId, prompt: 'First question', description: 'reader' });
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
+  it(
+    'INT-1 D: a key the administrator replaces between two calls of the same agent goes with the next call, without a restart',
+    async () => {
+      const { harness, fakes } = opened();
+      const row = ROWS.anthropic;
+      const ownerId = newUser();
+      const sent = requestsFromNow(fakes);
+      fakes.anthropic.reply({ kind: 'answer', text: ['First answer'] });
+      fakes.anthropic.reply({ kind: 'answer', text: ['Second answer'] });
+      await setRootRecord(harness.library, readerRecord('anthropic'));
+      try {
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt: 'First question',
+          description: 'reader',
+        });
+        await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
 
-      // When: the administrator stores a new key, and the same agent gets its next message
-      await harness.agents.providers.update(row.provider, { apiKey: REPLACED_KEY });
-      await harness.sessions.send({ agentId, ownerId, text: 'Second question' });
-      const lines = await waitFor(
-        async () => historyLines(await historyOf(harness, agentId, ownerId)),
-        (history) => history.length === 4,
-        'the answer to the second question',
+        // When: the administrator stores a new key, and the same agent gets its next message
+        await harness.agents.providers.update(row.provider, {
+          apiKey: REPLACED_KEY,
+        });
+        await harness.sessions.send({
+          agentId,
+          ownerId,
+          text: 'Second question',
+        });
+        const lines = await waitFor(
+          async () => historyLines(await historyOf(harness, agentId, ownerId)),
+          (history) => history.length === 4,
+          'the answer to the second question',
+        );
+
+        // Then: both calls answered, the first with the first key, the second with the new one, on one instance
+        expect(lines).toEqual([
+          'task: First question',
+          'model_answer: First answer []',
+          'user_message: Second question',
+          'model_answer: Second answer []',
+        ]);
+        expect(sent().anthropic.map((request) => request.key)).toEqual([
+          row.key,
+          REPLACED_KEY,
+        ]);
+        expect(JSON.stringify(harness.logs)).not.toContain(REPLACED_KEY);
+      } finally {
+        await harness.agents.providers.update(row.provider, {
+          apiKey: row.key,
+        });
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it.each(KINDS)(
+    'INT-1 E (%s): a stop while the provider holds the stream aborts the request, the agent ends stopped, and the cut attempt is one estimated ledger row',
+    async (kind) => {
+      const { harness, fakes } = opened();
+      const row = ROWS[kind];
+      const ownerId = newUser();
+      const sent = requestsFromNow(fakes);
+      fakes[kind].reply({ kind: 'hold', text: 'Partial ' });
+      await setRootRecord(harness.library, readerRecord(kind));
+
+      const { agentId } = await harness.sessions.start({
+        ownerId,
+        prompt: 'Answer slowly',
+        description: 'reader',
+      });
+      await waitFor(
+        () => textPartsOf(agentId),
+        (parts) => parts.length === 1,
+        'the first part of the held stream',
       );
 
-      // Then: both calls answered, the first with the first key, the second with the new one, on one instance
-      expect(lines).toEqual([
-        'task: First question',
-        'model_answer: First answer []',
-        'user_message: Second question',
-        'model_answer: Second answer []',
+      // When: the employee stops the run
+      expect(await harness.sessions.stop({ agentId, ownerId })).toEqual([
+        agentId,
       ]);
-      expect(sent().anthropic.map((request) => request.key)).toEqual([row.key, REPLACED_KEY]);
-      expect(JSON.stringify(harness.logs)).not.toContain(REPLACED_KEY);
-    } finally {
-      await harness.agents.providers.update(row.provider, { apiKey: row.key });
-    }
-  }, TEST_TIMEOUT_MS);
 
-  it.each(KINDS)('INT-1 E (%s): a stop while the provider holds the stream aborts the request, the agent ends stopped, and the cut attempt is one estimated ledger row', async (kind) => {
-    const { harness, fakes } = opened();
-    const row = ROWS[kind];
-    const ownerId = newUser();
-    const sent = requestsFromNow(fakes);
-    fakes[kind].reply({ kind: 'hold', text: 'Partial ' });
-    await setRootRecord(harness.library, readerRecord(kind));
-
-    const { agentId } = await harness.sessions.start({ ownerId, prompt: 'Answer slowly', description: 'reader' });
-    await waitFor(() => textPartsOf(agentId), (parts) => parts.length === 1, 'the first part of the held stream');
-
-    // When: the employee stops the run
-    expect(await harness.sessions.stop({ agentId, ownerId })).toEqual([agentId]);
-
-    // Then: the provider saw its one request aborted, and the agent ends stopped as on every kind (AC-03.2)
-    await waitFor(
-      () => sent()[kind],
-      (requests) => requests.length === 1 && requests[0]?.aborted === true,
-      'the held request to be aborted',
-    );
-    expect((await harness.sessions.get(agentId, ownerId)).status).toBe('stopped');
-    expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual(['task: Answer slowly', 'event: stopped']);
-    // Then: the cut attempt is one row, estimated as today (the streamed 8 bytes are 2 output tokens, none from the
-    // cache); the model client logs it right after writing it, and this kind's model has no other cut attempt in the file
-    const [logged, ...moreLogged] = await waitFor(
-      () =>
-        harness.logs.filter(
-          (record) =>
-            record.message === 'unfinished model attempt recorded with estimated usage' && record.fields.model === row.model,
-        ),
-      (records) => records.length > 0,
-      'the estimated ledger row of the cut attempt',
-    );
-    expect(moreLogged).toEqual([]);
-    expect(logged?.fields).toMatchObject({ estimated: true, aborted: true });
-    expect(await ledgerOf(harness.db, ownerId)).toEqual([
-      {
-        callId: logged?.fields.callId,
-        model: row.model,
-        inputTokens: expect.any(Number),
-        outputTokens: 2,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        costUsd: expect.any(Number),
-      },
-    ]);
-    // Then: no retry and no second row after the stop; no other fake got a request
-    expect(byKind((other) => sent()[other].length)).toEqual(byKind((other) => (other === kind ? 1 : 0)));
-  }, TEST_TIMEOUT_MS);
+      // Then: the provider saw its one request aborted, and the agent ends stopped as on every kind (AC-03.2)
+      await waitFor(
+        () => sent()[kind],
+        (requests) => requests.length === 1 && requests[0]?.aborted === true,
+        'the held request to be aborted',
+      );
+      expect((await harness.sessions.get(agentId, ownerId)).status).toBe(
+        'stopped',
+      );
+      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
+        'task: Answer slowly',
+        'event: stopped',
+      ]);
+      // Then: the cut attempt is one row, estimated as today (the streamed 8 bytes are 2 output tokens, none from the
+      // cache); the model client logs it right after writing it, and this kind's model has no other cut attempt in the file
+      const [logged, ...moreLogged] = await waitFor(
+        () =>
+          harness.logs.filter(
+            (record) =>
+              record.message ===
+                'unfinished model attempt recorded with estimated usage' &&
+              record.fields.model === row.model,
+          ),
+        (records) => records.length > 0,
+        'the estimated ledger row of the cut attempt',
+      );
+      expect(moreLogged).toEqual([]);
+      expect(logged?.fields).toMatchObject({ estimated: true, aborted: true });
+      expect(await ledgerOf(harness.db, ownerId)).toEqual([
+        {
+          callId: logged?.fields.callId,
+          model: row.model,
+          inputTokens: expect.any(Number),
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: expect.any(Number),
+        },
+      ]);
+      // Then: no retry and no second row after the stop; no other fake got a request
+      expect(byKind((other) => sent()[other].length)).toEqual(
+        byKind((other) => (other === kind ? 1 : 0)),
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

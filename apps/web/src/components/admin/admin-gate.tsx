@@ -41,7 +41,13 @@ export function AdminGate({ route }: AdminGateProps) {
   // An administrator's screen titles the tab itself (`PageHeader`); until the right is known the tab
   // names the panel only, so a refused employee never sees a section's title.
   // UXRD MC-19: the tab title of AD-02 names neither a section of the panel nor a record.
-  useDocumentTitle(right === 'denied' ? pageTitle(t('title')) : right === 'unknown' ? pageTitle(titles.panel) : undefined);
+  useDocumentTitle(
+    right === 'denied'
+      ? pageTitle(t('title'))
+      : right === 'unknown'
+        ? pageTitle(titles.panel)
+        : undefined,
+  );
 
   if (right === 'denied') return <ThreadNotice variant="no-access" />;
   return (
@@ -50,7 +56,11 @@ export function AdminGate({ route }: AdminGateProps) {
       {right === 'admin' ? (
         <AdminScreen section={route.section} page={route.page} />
       ) : (
-        <DataTable caption={titles.section(route.section)} columns={[]} state={{ status: 'loading' }} />
+        <DataTable
+          caption={titles.section(route.section)}
+          columns={[]}
+          state={{ status: 'loading' }}
+        />
       )}
     </div>
   );

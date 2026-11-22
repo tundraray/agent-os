@@ -2,7 +2,10 @@ import { act, fireEvent, render, renderHook, screen } from '@/test/render';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestError } from '@/lib/api/api-request';
-import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from './use-debounced-value';
+import {
+  EMPLOYEE_SEARCH_DELAY_MS,
+  useDebouncedValue,
+} from './use-debounced-value';
 import { usePagedResource, useResource, type Page } from './use-resource';
 
 const { logError } = vi.hoisted(() => ({ logError: vi.fn() }));
@@ -35,13 +38,21 @@ function controlledReads<T>() {
 type Person = { name: string };
 
 /** The employee screen's search in miniature: debounced text keys a paged read. */
-function SearchProbe({ loadPage }: { loadPage: (query: string, cursor: string | null) => Promise<Page<Person>> }) {
+function SearchProbe({
+  loadPage,
+}: {
+  loadPage: (query: string, cursor: string | null) => Promise<Page<Person>>;
+}) {
   const [text, setText] = useState('');
   const query = useDebouncedValue(text, EMPLOYEE_SEARCH_DELAY_MS);
   const people = usePagedResource((cursor) => loadPage(query, cursor), query);
   return (
     <>
-      <input aria-label="Поиск" value={text} onChange={(event) => setText(event.target.value)} />
+      <input
+        aria-label="Поиск"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
       <ul aria-label="Сотрудники">
         {people.items.map((person) => (
           <li key={person.name}>{person.name}</li>
@@ -51,7 +62,8 @@ function SearchProbe({ loadPage }: { loadPage: (query: string, cursor: string | 
   );
 }
 
-const shownNames = () => screen.queryAllByRole('listitem').map((item) => item.textContent);
+const shownNames = () =>
+  screen.queryAllByRole('listitem').map((item) => item.textContent);
 
 describe('read on open (KD-4, DC-3, Invariant 4)', () => {
   it.each<[string, () => Promise<void>]>([
@@ -59,9 +71,12 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
       'an answer for a previous key is dropped',
       async () => {
         const reads = controlledReads<string>();
-        const { result, rerender } = renderHook(({ key }) => useResource(() => reads.read(key), key), {
-          initialProps: { key: 'roles' },
-        });
+        const { result, rerender } = renderHook(
+          ({ key }) => useResource(() => reads.read(key), key),
+          {
+            initialProps: { key: 'roles' },
+          },
+        );
         rerender({ key: 'users' });
         await reads.answer('users', 'Сотрудники');
         await reads.answer('roles', 'Роли');
@@ -80,7 +95,9 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
           status: 404,
           code: 'ROLE_NOT_FOUND',
         });
-        const { result } = renderHook(() => useResource(() => reads.read('r1'), 'r1'));
+        const { result } = renderHook(() =>
+          useResource(() => reads.read('r1'), 'r1'),
+        );
         await reads.fail('r1', failure);
         expect(result.current.status).toBe('error');
         expect(result.current.error).toBe(failure);
@@ -114,9 +131,18 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
       'a «Показать ещё» error keeps the loaded rows',
       async () => {
         const reads = controlledReads<Page<string>>();
-        const failure = new ApiRequestError({ kind: 'network', method: 'GET', path: '/api/admin/users' });
-        const { result } = renderHook(() => usePagedResource((cursor) => reads.read(cursor ?? 'first'), 'users'));
-        await reads.answer('first', { items: ['Аня', 'Борис'], nextCursor: 'c2' });
+        const failure = new ApiRequestError({
+          kind: 'network',
+          method: 'GET',
+          path: '/api/admin/users',
+        });
+        const { result } = renderHook(() =>
+          usePagedResource((cursor) => reads.read(cursor ?? 'first'), 'users'),
+        );
+        await reads.answer('first', {
+          items: ['Аня', 'Борис'],
+          nextCursor: 'c2',
+        });
         act(() => result.current.loadMore());
         await reads.fail('c2', failure);
         expect(result.current.items).toEqual(['Аня', 'Борис']);
@@ -129,12 +155,20 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
       '«Показать ещё» pressed during a reload sends nothing, so the rows of the reload are shown',
       async () => {
         const reads = controlledReads<Page<string>>();
-        const { result } = renderHook(() => usePagedResource((cursor) => reads.read(cursor ?? 'first'), 'users'));
+        const { result } = renderHook(() =>
+          usePagedResource((cursor) => reads.read(cursor ?? 'first'), 'users'),
+        );
         await reads.answer('first', { items: ['Аня'], nextCursor: 'c2' });
         act(() => result.current.reload());
         act(() => result.current.loadMore());
-        await reads.answer('first', { items: ['Аня', 'Борис'], nextCursor: 'c2' });
-        expect(reads.read.mock.calls.map(([cursor]) => cursor)).toEqual(['first', 'first']);
+        await reads.answer('first', {
+          items: ['Аня', 'Борис'],
+          nextCursor: 'c2',
+        });
+        expect(reads.read.mock.calls.map(([cursor]) => cursor)).toEqual([
+          'first',
+          'first',
+        ]);
         expect(result.current.items).toEqual(['Аня', 'Борис']);
       },
     ],
@@ -153,14 +187,27 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
         act(() => vi.advanceTimersByTime(299));
         expect(reads.read.mock.calls.map(([query]) => query)).toEqual(['']);
         act(() => vi.advanceTimersByTime(1));
-        expect(reads.read.mock.calls.map(([query]) => query)).toEqual(['', 'ан']);
+        expect(reads.read.mock.calls.map(([query]) => query)).toEqual([
+          '',
+          'ан',
+        ]);
 
         fireEvent.change(search, { target: { value: 'аня' } });
         act(() => vi.advanceTimersByTime(300));
-        expect(reads.read.mock.calls.map(([query]) => query)).toEqual(['', 'ан', 'аня']);
+        expect(reads.read.mock.calls.map(([query]) => query)).toEqual([
+          '',
+          'ан',
+          'аня',
+        ]);
 
-        await reads.answer('аня', { items: [{ name: 'Аня Петрова' }], nextCursor: null });
-        await reads.answer('ан', { items: [{ name: 'Антон Смирнов' }, { name: 'Аня Петрова' }], nextCursor: null });
+        await reads.answer('аня', {
+          items: [{ name: 'Аня Петрова' }],
+          nextCursor: null,
+        });
+        await reads.answer('ан', {
+          items: [{ name: 'Антон Смирнов' }, { name: 'Аня Петрова' }],
+          nextCursor: null,
+        });
         expect(shownNames()).toEqual(['Аня Петрова']);
       },
     ],

@@ -19,7 +19,12 @@
 // - the run view and its isolation between owners: INT-2 B
 
 import { randomUUID } from 'node:crypto';
-import { type AgentHistoryEntry, AgentsError, type AgentView, WAITING_RULE } from '@agent-os/agents';
+import {
+  type AgentHistoryEntry,
+  AgentsError,
+  type AgentView,
+  WAITING_RULE,
+} from '@agent-os/agents';
 import {
   createLatch,
   createScriptedModel,
@@ -28,7 +33,12 @@ import {
   type Script,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
-import { createFixtureFiles, type FixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
+import {
+  createFixtureFiles,
+  type FixtureFiles,
+  fixtureCallsOf,
+  holdCall,
+} from '@agent-os/mcp-fixture';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
@@ -54,12 +64,16 @@ const ROOT_NAME = 'deep-agents-root';
 
 /** The root every `sessions.start` runs: no tools of its own, so the root-only `start_deep_agent` is what it calls. */
 const ROOT_RECORD = testRecord(ROOT_NAME, {
-  prompt: 'You are a test conversation. Start a deep agent with start_deep_agent when asked.',
+  prompt:
+    'You are a test conversation. Start a deep agent with start_deep_agent when asked.',
   maxTurns: 40,
 });
 
 /** Runtime + agents with the root above, the run's `logs` server for every owner, on these fixture files. */
-function createDeepAgentsHarness(model: ScriptedModel, fixture?: FixtureFiles): Promise<AgentsHarness> {
+function createDeepAgentsHarness(
+  model: ScriptedModel,
+  fixture?: FixtureFiles,
+): Promise<AgentsHarness> {
   return createAgentsHarness({
     model,
     access: { '*': [LOGS_SERVER] },
@@ -90,14 +104,22 @@ function deepResearchRecord(): TestDeepAgentRecord {
     model: TEST_MODEL_CHOSEN,
     maxTurns: 20,
     subagents: [
-      testSubagent(PLAN_AGENT, { description: 'Splits the brief into directions to gather data on.', maxTurns: 6, maxRuns: 1 }),
+      testSubagent(PLAN_AGENT, {
+        description: 'Splits the brief into directions to gather data on.',
+        maxTurns: 6,
+        maxRuns: 1,
+      }),
       testSubagent(GATHER_AGENT, {
         description: 'Gathers data on one direction and reports what it found.',
         servers: [LOGS_SERVER],
         maxTurns: 16,
         maxRuns: 5,
       }),
-      testSubagent(ANSWER_AGENT, { description: 'Writes the answer from the reports of the directions.', maxTurns: 2, maxRuns: 2 }),
+      testSubagent(ANSWER_AGENT, {
+        description: 'Writes the answer from the reports of the directions.',
+        maxTurns: 2,
+        maxRuns: 2,
+      }),
     ],
     finalSubagent: ANSWER_AGENT,
     taskList: true,
@@ -117,7 +139,13 @@ function limitsRecord(): TestDeepAgentRecord {
     servers: [],
     model: TEST_MODEL_DEFAULT,
     maxTurns: 6,
-    subagents: [testSubagent(LIMITS_ANSWER_AGENT, { description: 'Writes the answer of the limits check.', maxTurns: 2, maxRuns: 2 })],
+    subagents: [
+      testSubagent(LIMITS_ANSWER_AGENT, {
+        description: 'Writes the answer of the limits check.',
+        maxTurns: 2,
+        maxRuns: 2,
+      }),
+    ],
     finalSubagent: LIMITS_ANSWER_AGENT,
     taskList: true,
     listDelegation: true,
@@ -131,7 +159,11 @@ interface BriefConversation {
   readonly firstReply: string;
   readonly followUp: string;
   readonly secondReply: string;
-  readonly brief: { readonly question: string; readonly boundaries: string; readonly result: string };
+  readonly brief: {
+    readonly question: string;
+    readonly boundaries: string;
+    readonly result: string;
+  };
   /** Id of the deep agent record the root asks for. */
   readonly deepAgent: string;
 }
@@ -161,7 +193,10 @@ async function rootWithWaitingBrief(
       {
         text: conversation.secondReply,
         calls: [
-          { tool: 'start_deep_agent', args: { deepAgent: conversation.deepAgent, ...conversation.brief } },
+          {
+            tool: 'start_deep_agent',
+            args: { deepAgent: conversation.deepAgent, ...conversation.brief },
+          },
         ],
       },
     ],
@@ -174,12 +209,24 @@ async function rootWithWaitingBrief(
   });
   await waitFor(
     () => historyOf(harness, rootId, ownerId),
-    (entries) => entries.some((entry) => entry.kind === 'model_answer' && entry.content.text === conversation.firstReply),
+    (entries) =>
+      entries.some(
+        (entry) =>
+          entry.kind === 'model_answer' &&
+          entry.content.text === conversation.firstReply,
+      ),
     `root ${rootId} to answer its task`,
   );
-  await harness.sessions.send({ agentId: rootId, ownerId, text: conversation.followUp });
+  await harness.sessions.send({
+    agentId: rootId,
+    ownerId,
+    text: conversation.followUp,
+  });
   const [request] = await waitFor(
-    async () => (await harness.sessions.confirmations(rootId, ownerId)).filter((c) => c.status === 'open'),
+    async () =>
+      (await harness.sessions.confirmations(rootId, ownerId)).filter(
+        (c) => c.status === 'open',
+      ),
     (open) => open.length === 1,
     `the brief of root ${rootId} to wait for a decision`,
   );
@@ -187,37 +234,69 @@ async function rootWithWaitingBrief(
 }
 
 /** Names of the root's tree, in creation order. */
-async function namesUnder(harness: AgentsHarness, rootId: string, ownerId: string): Promise<string[]> {
-  return (await harness.sessions.list(rootId, ownerId)).map((view) => view.name);
+async function namesUnder(
+  harness: AgentsHarness,
+  rootId: string,
+  ownerId: string,
+): Promise<string[]> {
+  return (await harness.sessions.list(rootId, ownerId)).map(
+    (view) => view.name,
+  );
 }
 
 /** The root's `start_deep_agent` result entries, as `history` stores them. */
 function startDeepAgentResults(entries: readonly AgentHistoryEntry[]) {
   return entries.flatMap((entry) =>
-    entry.kind === 'tool_result' && entry.content.tool === 'start_deep_agent' ? [entry.content] : [],
+    entry.kind === 'tool_result' && entry.content.tool === 'start_deep_agent'
+      ? [entry.content]
+      : [],
   );
 }
 
 /** The output of the last tool message of a recorded model input. */
-function lastToolOutput(script: Script, call: number): { toolName: string; output: unknown }[] {
+function lastToolOutput(
+  script: Script,
+  call: number,
+): { toolName: string; output: unknown }[] {
   const messages = script.calls[call - 1].messages;
   const last = messages[messages.length - 1];
-  if (last.role !== 'tool') throw new Error(`Call ${call} does not end with a tool result: ${inputLines(messages).join(' | ')}`);
-  return last.results.map((result) => ({ toolName: result.toolName, output: result.output }));
+  if (last.role !== 'tool')
+    throw new Error(
+      `Call ${call} does not end with a tool result: ${inputLines(messages).join(' | ')}`,
+    );
+  return last.results.map((result) => ({
+    toolName: result.toolName,
+    output: result.output,
+  }));
 }
 
 /** Each `task` result of an agent's history as [subagent, outcome, refusal reason], in order. */
-function taskResults(entries: readonly AgentHistoryEntry[]): [string, string, string | null][] {
+function taskResults(
+  entries: readonly AgentHistoryEntry[],
+): [string, string, string | null][] {
   return entries.flatMap((entry): [string, string, string | null][] =>
     entry.kind === 'tool_result' && entry.content.tool === 'task'
-      ? [[(entry.content.args as { subagentType: string }).subagentType, entry.content.outcome, entry.content.refusalReason]]
+      ? [
+          [
+            (entry.content.args as { subagentType: string }).subagentType,
+            entry.content.outcome,
+            entry.content.refusalReason,
+          ],
+        ]
       : [],
   );
 }
 
 /** The direct children of an agent, in creation order. */
-async function childrenOf(harness: AgentsHarness, rootId: string, parentId: string, ownerId: string): Promise<AgentView[]> {
-  return (await harness.sessions.list(rootId, ownerId)).filter((view) => view.parentId === parentId);
+async function childrenOf(
+  harness: AgentsHarness,
+  rootId: string,
+  parentId: string,
+  ownerId: string,
+): Promise<AgentView[]> {
+  return (await harness.sessions.list(rootId, ownerId)).filter(
+    (view) => view.parentId === parentId,
+  );
 }
 
 // ----- INT-2: the deep-research run (one per test: each test has its own harness and model) -----
@@ -248,7 +327,8 @@ function assignment(description: string): string {
   ].join('\n\n');
 }
 
-const PLAN_REPORT = '1. authorization errors - logs\n2. gateway timeouts - logs';
+const PLAN_REPORT =
+  '1. authorization errors - logs\n2. gateway timeouts - logs';
 const GATHER_A_REPORT = 'Issuer declines rose at 10:40 UTC (get_trace).';
 /** The answer agent's report: the run's report, literally. */
 const ANSWER_TEXT =
@@ -266,7 +346,11 @@ interface DeepResearchRun {
  * Scripts the run's agents (the second gather agent's model always errors, the first makes one `logs`
  * read), starts the root, confirms its brief unchanged and returns once the coordinator exists.
  */
-async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, ownerId: string): Promise<DeepResearchRun> {
+async function startDeepResearch(
+  harness: AgentsHarness,
+  model: ScriptedModel,
+  ownerId: string,
+): Promise<DeepResearchRun> {
   const deepAgentId = harness.library.add(deepResearchRecord());
   // Each answer of the deep agent wakes it once, with every result of its task calls (deep-agents/design-task.md KD-4):
   // two plans (the second over the limit), both gather subagents at once, the answer, then the closing text.
@@ -279,11 +363,24 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
     },
     {
       calls: [
-        taskCall({ subagentType: GATHER_AGENT, description: GATHER_A_DESCRIPTION }),
-        taskCall({ subagentType: GATHER_AGENT, description: GATHER_B_DESCRIPTION }),
+        taskCall({
+          subagentType: GATHER_AGENT,
+          description: GATHER_A_DESCRIPTION,
+        }),
+        taskCall({
+          subagentType: GATHER_AGENT,
+          description: GATHER_B_DESCRIPTION,
+        }),
       ],
     },
-    { calls: [taskCall({ subagentType: ANSWER_AGENT, description: ANSWER_DESCRIPTION })] },
+    {
+      calls: [
+        taskCall({
+          subagentType: ANSWER_AGENT,
+          description: ANSWER_DESCRIPTION,
+        }),
+      ],
+    },
     { text: 'The answer is ready.' },
   ]);
   model.script({ task: assignment(PLAN_DESCRIPTION) }, [{ text: PLAN_REPORT }]);
@@ -291,8 +388,12 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
     { calls: [{ tool: GET_TRACE, args: TRACE }] },
     { text: GATHER_A_REPORT },
   ]);
-  model.script({ task: assignment(GATHER_B_DESCRIPTION) }, [], { thereafter: modelError() });
-  model.script({ task: assignment(ANSWER_DESCRIPTION) }, [{ text: ANSWER_TEXT }]);
+  model.script({ task: assignment(GATHER_B_DESCRIPTION) }, [], {
+    thereafter: modelError(),
+  });
+  model.script({ task: assignment(ANSWER_DESCRIPTION) }, [
+    { text: ANSWER_TEXT },
+  ]);
   const root = await rootWithWaitingBrief(harness, model, ownerId, {
     task: 'Why did card payments fail yesterday?',
     firstReply: 'Root reply one: which period?',
@@ -302,14 +403,23 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
     deepAgent: deepAgentId,
   });
   expect(
-    await harness.sessions.resolveConfirmation({ decisionId: root.decisionId, ownerId, approve: true }),
+    await harness.sessions.resolveConfirmation({
+      decisionId: root.decisionId,
+      ownerId,
+      approve: true,
+    }),
   ).toBe('resolved');
   const [coordinator] = await waitFor(
     () => deepAgentsUnder(harness, root.rootId, ownerId),
     (found) => found.length > 0,
     'the coordinator of the run',
   );
-  return { deepAgentId, rootId: root.rootId, coordinatorId: coordinator.agentId, coordinatorScript };
+  return {
+    deepAgentId,
+    rootId: root.rootId,
+    coordinatorId: coordinator.agentId,
+    coordinatorScript,
+  };
 }
 
 /**
@@ -317,7 +427,10 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
  * same task texts, and a root still working when its harness stops is requeued, then run by the next test's
  * runtime against that test's scripts.
  */
-async function closeDeepResearch(harness: AgentsHarness, ownerId: string): Promise<void> {
+async function closeDeepResearch(
+  harness: AgentsHarness,
+  ownerId: string,
+): Promise<void> {
   try {
     for (const root of await harness.sessions.roots({ ownerId })) {
       await harness.sessions.stop({ agentId: root.rootId, ownerId });
@@ -389,11 +502,25 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         expect(
           (await harness.sessions.confirmations(a.rootId, ownerA))
             .filter((c) => c.status === 'open')
-            .map(({ kind, tool, server, args, content }) => ({ kind, tool, server, args, content })),
+            .map(({ kind, tool, server, args, content }) => ({
+              kind,
+              tool,
+              server,
+              args,
+              content,
+            })),
         ).toEqual([
-          { kind: 'agents.brief', tool: 'start_deep_agent', server: null, args: askedBrief, content: askedBrief },
+          {
+            kind: 'agents.brief',
+            tool: 'start_deep_agent',
+            server: null,
+            args: askedBrief,
+            content: askedBrief,
+          },
         ]);
-        expect(await namesUnder(harness, a.rootId, ownerA)).toEqual([ROOT_NAME]);
+        expect(await namesUnder(harness, a.rootId, ownerA)).toEqual([
+          ROOT_NAME,
+        ]);
 
         // The employee confirms with the question, boundaries and result edited.
         expect(
@@ -403,7 +530,8 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             approve: true,
             args: {
               deepAgent: deepAgentId,
-              question: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
+              question:
+                'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
               boundaries: 'payments service only, no refunds',
               result: 'causes with the evidence for each',
             },
@@ -417,12 +545,22 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         expect(coordinator).toMatchObject({
           parentId: a.rootId,
           name: 'deep-research',
-          origin: { recordId: deepAgentId, kind: 'deep_agent', version: 1, subagent: null },
-          description: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
+          origin: {
+            recordId: deepAgentId,
+            kind: 'deep_agent',
+            version: 1,
+            subagent: null,
+          },
+          description:
+            'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
         });
 
         // The coordinator's only input is the edited brief: its first history entry and its whole first model input.
-        const coordinatorHistory = await historyOf(harness, coordinator.agentId, ownerA);
+        const coordinatorHistory = await historyOf(
+          harness,
+          coordinator.agentId,
+          ownerA,
+        );
         expect(coordinatorHistory[0]).toMatchObject({
           kind: 'task',
           content: {
@@ -430,14 +568,18 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           },
         });
         expect(JSON.stringify(coordinatorHistory)).not.toContain('Root reply');
-        expect(JSON.stringify(coordinatorHistory)).not.toContain('Why did payments fail yesterday (A)?');
+        expect(JSON.stringify(coordinatorHistory)).not.toContain(
+          'Why did payments fail yesterday (A)?',
+        );
         await coordinatorA.called(1);
         expect(inputLines(coordinatorA.calls[0].messages)).toEqual([
           'user: {"question":"Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?","boundaries":"payments service only, no refunds","result":"causes with the evidence for each"}',
         ]);
 
         // The call result carries the run id and the confirmed brief, and the root's next model input holds it.
-        expect(startDeepAgentResults(await historyOf(harness, a.rootId, ownerA))).toMatchObject([
+        expect(
+          startDeepAgentResults(await historyOf(harness, a.rootId, ownerA)),
+        ).toMatchObject([
           {
             outcome: 'success',
             text: `Deep agent "deep-research" started in the background, run id ${coordinator.agentId}. Confirmed brief: {"question":"Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?","boundaries":"payments service only, no refunds","result":"causes with the evidence for each"}\nIts answer will arrive as a message when it finishes. ${WAITING_RULE}`,
@@ -446,20 +588,30 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         await a.rootScript.called(3);
         const [rootSeesA] = lastToolOutput(a.rootScript, 3);
         expect(rootSeesA.toolName).toBe('start_deep_agent');
-        expect(String(rootSeesA.output)).toContain(`run id ${coordinator.agentId}`);
+        expect(String(rootSeesA.output)).toContain(
+          `run id ${coordinator.agentId}`,
+        );
         expect(String(rootSeesA.output)).toContain(
           'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
         );
 
         // A repeated decision starts nothing more.
         expect(
-          await harness.sessions.resolveConfirmation({ decisionId: a.decisionId, ownerId: ownerA, approve: true }),
+          await harness.sessions.resolveConfirmation({
+            decisionId: a.decisionId,
+            ownerId: ownerA,
+            approve: true,
+          }),
         ).toBe('already_resolved');
-        expect(await deepAgentsUnder(harness, a.rootId, ownerA)).toHaveLength(1);
+        expect(await deepAgentsUnder(harness, a.rootId, ownerA)).toHaveLength(
+          1,
+        );
 
         // Row B "correction with an empty question" (DC-4): refused, the request stays open, nothing starts; a valid approval starts one.
         const coordinatorB = model.script(
-          { task: '{"question":"Which merchants saw declined payments last week (B)?","boundaries":"","result":""}' },
+          {
+            task: '{"question":"Which merchants saw declined payments last week (B)?","boundaries":"","result":""}',
+          },
           [],
           { thereafter: { latch: coordinatorHeld } },
         );
@@ -468,7 +620,11 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           firstReply: 'Root reply one (B): over which period?',
           followUp: 'Last week (B)',
           secondReply: 'Root reply two (B): here is the brief to confirm.',
-          brief: { question: 'Which merchants saw declined payments last week (B)?', boundaries: '', result: '' },
+          brief: {
+            question: 'Which merchants saw declined payments last week (B)?',
+            boundaries: '',
+            result: '',
+          },
           deepAgent: deepAgentId,
         });
         await expect(
@@ -476,16 +632,29 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             decisionId: b.decisionId,
             ownerId: ownerB,
             approve: true,
-            args: { deepAgent: deepAgentId, question: '', boundaries: '', result: '' },
+            args: {
+              deepAgent: deepAgentId,
+              question: '',
+              boundaries: '',
+              result: '',
+            },
           }),
         ).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS' });
         expect(
-          (await harness.sessions.confirmations(b.rootId, ownerB)).filter((c) => c.status === 'open').map((open) => open.decisionId),
+          (await harness.sessions.confirmations(b.rootId, ownerB))
+            .filter((c) => c.status === 'open')
+            .map((open) => open.decisionId),
         ).toEqual([b.decisionId]);
-        expect(await namesUnder(harness, b.rootId, ownerB)).toEqual([ROOT_NAME]);
+        expect(await namesUnder(harness, b.rootId, ownerB)).toEqual([
+          ROOT_NAME,
+        ]);
 
         expect(
-          await harness.sessions.resolveConfirmation({ decisionId: b.decisionId, ownerId: ownerB, approve: true }),
+          await harness.sessions.resolveConfirmation({
+            decisionId: b.decisionId,
+            ownerId: ownerB,
+            approve: true,
+          }),
         ).toBe('resolved');
         const coordinatorsB = await waitFor(
           () => deepAgentsUnder(harness, b.rootId, ownerB),
@@ -493,13 +662,19 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           'the coordinator of row B',
         );
         expect(coordinatorsB).toHaveLength(1);
-        expect((await historyOf(harness, coordinatorsB[0].agentId, ownerB))[0]).toMatchObject({
+        expect(
+          (await historyOf(harness, coordinatorsB[0].agentId, ownerB))[0],
+        ).toMatchObject({
           kind: 'task',
-          content: { text: '{"question":"Which merchants saw declined payments last week (B)?","boundaries":"","result":""}' },
+          content: {
+            text: '{"question":"Which merchants saw declined payments last week (B)?","boundaries":"","result":""}',
+          },
         });
         await coordinatorB.called(1);
         await b.rootScript.called(3);
-        expect(await deepAgentsUnder(harness, b.rootId, ownerB)).toHaveLength(1);
+        expect(await deepAgentsUnder(harness, b.rootId, ownerB)).toHaveLength(
+          1,
+        );
 
         // Row C "decline" (AC-28.3): no coordinator ever, the call closes as rejected and the root's next input holds it.
         const c = await rootWithWaitingBrief(harness, model, ownerC, {
@@ -507,24 +682,39 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           firstReply: 'Root reply one (C): all payment methods?',
           followUp: 'Yes, all of them (C)',
           secondReply: 'Root reply two (C): here is the brief to confirm.',
-          brief: { question: 'How many payments timed out today (C)?', boundaries: 'today only', result: 'one number' },
+          brief: {
+            question: 'How many payments timed out today (C)?',
+            boundaries: 'today only',
+            result: 'one number',
+          },
           deepAgent: deepAgentId,
         });
         expect(
-          await harness.sessions.resolveConfirmation({ decisionId: c.decisionId, ownerId: ownerC, approve: false }),
+          await harness.sessions.resolveConfirmation({
+            decisionId: c.decisionId,
+            ownerId: ownerC,
+            approve: false,
+          }),
         ).toBe('resolved');
         await c.rootScript.called(3);
         expect(lastToolOutput(c.rootScript, 3)).toEqual([
           {
             toolName: 'start_deep_agent',
-            output: '<data source="tool start_deep_agent" author="agents">\n[rejected]\n</data>',
+            output:
+              '<data source="tool start_deep_agent" author="agents">\n[rejected]\n</data>',
           },
         ]);
-        expect(startDeepAgentResults(await historyOf(harness, c.rootId, ownerC))).toMatchObject([
-          { outcome: 'rejected', refusalReason: null },
+        expect(
+          startDeepAgentResults(await historyOf(harness, c.rootId, ownerC)),
+        ).toMatchObject([{ outcome: 'rejected', refusalReason: null }]);
+        expect(
+          (await harness.sessions.confirmations(c.rootId, ownerC)).filter(
+            (request) => request.status === 'open',
+          ),
+        ).toEqual([]);
+        expect(await namesUnder(harness, c.rootId, ownerC)).toEqual([
+          ROOT_NAME,
         ]);
-        expect((await harness.sessions.confirmations(c.rootId, ownerC)).filter((request) => request.status === 'open')).toEqual([]);
-        expect(await namesUnder(harness, c.rootId, ownerC)).toEqual([ROOT_NAME]);
       } finally {
         await harness.close();
       }
@@ -561,34 +751,60 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
 
         // The gather agents run at once: the second fails while the first is still inside its read.
         await waitFor(
-          () => fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE }),
+          () =>
+            fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE }),
           (calls) => calls.length === 1,
           'the first gather agent read on the fixture',
         );
         const whileHeld = await waitFor(
           () => childrenOf(harness, run.rootId, run.coordinatorId, ownerId),
-          (children) => children.some((child) => child.description === GATHER_B_DESCRIPTION && child.status === 'failed'),
+          (children) =>
+            children.some(
+              (child) =>
+                child.description === GATHER_B_DESCRIPTION &&
+                child.status === 'failed',
+            ),
           'the second gather agent to fail',
         );
         expect(
           whileHeld
             .filter((child) => child.name === GATHER_AGENT)
-            .map(({ description, status, failureReason }) => ({ description, status, failureReason }))
-            .sort((left, right) => left.description.localeCompare(right.description)),
+            .map(({ description, status, failureReason }) => ({
+              description,
+              status,
+              failureReason,
+            }))
+            .sort((left, right) =>
+              left.description.localeCompare(right.description),
+            ),
         ).toEqual([
-          { description: 'Сбор · ошибки авторизации', status: 'working', failureReason: null },
-          { description: 'Сбор · таймауты шлюза', status: 'failed', failureReason: 'provider_unavailable' },
+          {
+            description: 'Сбор · ошибки авторизации',
+            status: 'working',
+            failureReason: null,
+          },
+          {
+            description: 'Сбор · таймауты шлюза',
+            status: 'failed',
+            failureReason: 'provider_unavailable',
+          },
         ]);
         gatherRead.release();
 
-        expect(await waitForStatus(harness, run.coordinatorId, ownerId, 'completed')).toMatchObject({
+        expect(
+          await waitForStatus(harness, run.coordinatorId, ownerId, 'completed'),
+        ).toMatchObject({
           name: 'deep-research',
           status: 'completed',
         });
 
         // The record's count of one plan reached the deep agent: the second plan is refused by the limit, no task for it.
         // The refusal closes in the step that sends the first plan, whose result comes with its tracker.
-        const coordinatorHistory = await historyOf(harness, run.coordinatorId, ownerId);
+        const coordinatorHistory = await historyOf(
+          harness,
+          run.coordinatorId,
+          ownerId,
+        );
         expect(taskResults(coordinatorHistory)).toEqual([
           ['deep-research-plan', 'refused', 'run_limit'],
           ['deep-research-plan', 'success', null],
@@ -598,17 +814,46 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         ]);
 
         // One run in the root's tree: the coordinator, with plan, gather (completed), gather (failed) and answer under it.
-        expect((await childrenOf(harness, run.rootId, run.rootId, ownerId)).map((child) => child.agentId)).toEqual([
+        expect(
+          (await childrenOf(harness, run.rootId, run.rootId, ownerId)).map(
+            (child) => child.agentId,
+          ),
+        ).toEqual([run.coordinatorId]);
+        const steps = await childrenOf(
+          harness,
+          run.rootId,
           run.coordinatorId,
-        ]);
-        const steps = await childrenOf(harness, run.rootId, run.coordinatorId, ownerId);
+          ownerId,
+        );
         expect(steps).toHaveLength(4);
-        expect(steps.map(({ name, description, status }) => ({ name, description, status }))).toEqual(
+        expect(
+          steps.map(({ name, description, status }) => ({
+            name,
+            description,
+            status,
+          })),
+        ).toEqual(
           expect.arrayContaining([
-            { name: 'deep-research-plan', description: 'План ресерча', status: 'completed' },
-            { name: 'deep-research-gather', description: 'Сбор · ошибки авторизации', status: 'completed' },
-            { name: 'deep-research-gather', description: 'Сбор · таймауты шлюза', status: 'failed' },
-            { name: 'deep-research-answer', description: 'Ответ ресерча', status: 'completed' },
+            {
+              name: 'deep-research-plan',
+              description: 'План ресерча',
+              status: 'completed',
+            },
+            {
+              name: 'deep-research-gather',
+              description: 'Сбор · ошибки авторизации',
+              status: 'completed',
+            },
+            {
+              name: 'deep-research-gather',
+              description: 'Сбор · таймауты шлюза',
+              status: 'failed',
+            },
+            {
+              name: 'deep-research-answer',
+              description: 'Ответ ресерча',
+              status: 'completed',
+            },
           ]),
         );
 
@@ -617,7 +862,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         const gatherResults = lastToolOutput(run.coordinatorScript, 3);
         expect(gatherResults).toHaveLength(2);
         expect(String(gatherResults[0]?.output)).toContain(GATHER_A_REPORT);
-        expect(String(gatherResults[1]?.output)).toContain('The subagent failed: provider_unavailable.');
+        expect(String(gatherResults[1]?.output)).toContain(
+          'The subagent failed: provider_unavailable.',
+        );
 
         // The root received one notification "completed" whose text is the answer agent's text, literally.
         const rootReports = await waitFor(
@@ -625,7 +872,14 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           (reports) => reports.length > 0,
           'the run report at the root',
         );
-        expect(rootReports.map(({ agentId, status, reason, text }) => ({ agentId, status, reason, text }))).toEqual([
+        expect(
+          rootReports.map(({ agentId, status, reason, text }) => ({
+            agentId,
+            status,
+            reason,
+            text,
+          })),
+        ).toEqual([
           {
             agentId: run.coordinatorId,
             status: 'completed',
@@ -664,7 +918,8 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             subagent: null,
           },
           brief: {
-            question: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC?',
+            question:
+              'Why did card payments fail yesterday between 10:00 and 12:00 UTC?',
             boundaries: 'payments service and its gateway only',
             result: 'causes with the evidence for each',
           },
@@ -682,7 +937,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           ],
         });
         // The run's one task over a limit: the second plan.
-        expect(view.limitRefusals).toEqual([{ subagent: 'deep-research-plan', at: expect.any(Date) }]);
+        expect(view.limitRefusals).toEqual([
+          { subagent: 'deep-research-plan', at: expect.any(Date) },
+        ]);
         // Exactly the deep agent's four children in creation order, each named by its subagent; nothing of the root.
         expect(
           view.steps.map(({ parentId, name, origin, description, status }) => ({
@@ -731,18 +988,36 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             [run.coordinatorId, otherOwner],
             [run.rootId, ownerId],
             [unknownId, ownerId],
-          ].map(([agentId, owner]) => harness.sessions.run(agentId, owner).then(() => undefined, (error: unknown) => error)),
+          ].map(([agentId, owner]) =>
+            harness.sessions.run(agentId, owner).then(
+              () => undefined,
+              (error: unknown) => error,
+            ),
+          ),
         );
-        for (const refusal of refusals) expect(refusal).toBeInstanceOf(AgentsError);
+        for (const refusal of refusals)
+          expect(refusal).toBeInstanceOf(AgentsError);
         expect(
           refusals.map((refusal) => {
             const { name, code, message } = refusal as AgentsError;
             return { name, code, message };
           }),
         ).toEqual([
-          { name: 'AgentsError', code: 'RUN_NOT_FOUND', message: `Deep agent run ${run.coordinatorId} is not found` },
-          { name: 'AgentsError', code: 'RUN_NOT_FOUND', message: `Deep agent run ${run.rootId} is not found` },
-          { name: 'AgentsError', code: 'RUN_NOT_FOUND', message: `Deep agent run ${unknownId} is not found` },
+          {
+            name: 'AgentsError',
+            code: 'RUN_NOT_FOUND',
+            message: `Deep agent run ${run.coordinatorId} is not found`,
+          },
+          {
+            name: 'AgentsError',
+            code: 'RUN_NOT_FOUND',
+            message: `Deep agent run ${run.rootId} is not found`,
+          },
+          {
+            name: 'AgentsError',
+            code: 'RUN_NOT_FOUND',
+            message: `Deep agent run ${unknownId} is not found`,
+          },
         ]);
       } finally {
         await closeDeepResearch(harness, ownerId);
@@ -767,25 +1042,51 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
       try {
         // Two tasks to `answer` (each fails), then texts until the turn limit: 2 task calls, 4 texts, then turn_limit.
         const coordinatorScript = model.script(
-          { task: '{"question":"Does the run fail without its answer (INT-3 B)?","boundaries":"","result":""}' },
+          {
+            task: '{"question":"Does the run fail without its answer (INT-3 B)?","boundaries":"","result":""}',
+          },
           [
-            { calls: [taskCall({ subagentType: LIMITS_ANSWER_AGENT, description: ANSWER_RUN_TASK })] },
-            { calls: [taskCall({ subagentType: LIMITS_ANSWER_AGENT, description: ANSWER_RUN_TASK })] },
+            {
+              calls: [
+                taskCall({
+                  subagentType: LIMITS_ANSWER_AGENT,
+                  description: ANSWER_RUN_TASK,
+                }),
+              ],
+            },
+            {
+              calls: [
+                taskCall({
+                  subagentType: LIMITS_ANSWER_AGENT,
+                  description: ANSWER_RUN_TASK,
+                }),
+              ],
+            },
           ],
           { thereafter: { text: 'I could not get the answer.' } },
         );
         // The answer agent's model fails on every attempt.
-        model.script({ agent: LIMITS_ANSWER_AGENT }, [], { thereafter: modelError() });
+        model.script({ agent: LIMITS_ANSWER_AGENT }, [], {
+          thereafter: modelError(),
+        });
         const root = await rootWithWaitingBrief(harness, model, ownerId, {
           deepAgent: limitsId,
           task: 'Check the final step (INT-3 B)',
           firstReply: 'Root reply one (INT-3 B).',
           followUp: 'Go on (INT-3 B)',
           secondReply: 'Root reply two (INT-3 B): here is the brief.',
-          brief: { question: 'Does the run fail without its answer (INT-3 B)?', boundaries: '', result: '' },
+          brief: {
+            question: 'Does the run fail without its answer (INT-3 B)?',
+            boundaries: '',
+            result: '',
+          },
         });
         expect(
-          await harness.sessions.resolveConfirmation({ decisionId: root.decisionId, ownerId, approve: true }),
+          await harness.sessions.resolveConfirmation({
+            decisionId: root.decisionId,
+            ownerId,
+            approve: true,
+          }),
         ).toBe('resolved');
         const [coordinator] = await waitFor(
           () => deepAgentsUnder(harness, root.rootId, ownerId),
@@ -794,7 +1095,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         );
 
         // The run ends failed by the coordinator's turn limit after exactly six model calls.
-        expect(await waitForStatus(harness, coordinator.agentId, ownerId, 'failed')).toMatchObject({
+        expect(
+          await waitForStatus(harness, coordinator.agentId, ownerId, 'failed'),
+        ).toMatchObject({
           status: 'failed',
           failureReason: 'turn_limit',
         });
@@ -802,24 +1105,44 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
 
         // Both runs of the answer agent failed.
         expect(
-          (await childrenOf(harness, root.rootId, coordinator.agentId, ownerId)).map(({ name, status, failureReason }) => ({
+          (
+            await childrenOf(harness, root.rootId, coordinator.agentId, ownerId)
+          ).map(({ name, status, failureReason }) => ({
             name,
             status,
             failureReason,
           })),
         ).toEqual([
-          { name: 'answer', status: 'failed', failureReason: 'provider_unavailable' },
-          { name: 'answer', status: 'failed', failureReason: 'provider_unavailable' },
+          {
+            name: 'answer',
+            status: 'failed',
+            failureReason: 'provider_unavailable',
+          },
+          {
+            name: 'answer',
+            status: 'failed',
+            failureReason: 'provider_unavailable',
+          },
         ]);
 
         // Every text answer after the second failure is met by a notice, not by the end of the session.
         const history = await historyOf(harness, coordinator.agentId, ownerId);
-        const secondFailure = history.filter((entry) => entry.kind === 'tool_result' && entry.content.tool === 'task')[1];
+        const secondFailure = history.filter(
+          (entry) =>
+            entry.kind === 'tool_result' && entry.content.tool === 'task',
+        )[1];
         expect(secondFailure).toMatchObject({
-          content: { outcome: 'tool_error', text: 'The subagent failed: provider_unavailable.' },
+          content: {
+            outcome: 'tool_error',
+            text: 'The subagent failed: provider_unavailable.',
+          },
         });
         const textsAfter = history.flatMap((entry, index) =>
-          entry.kind === 'model_answer' && entry.seq > secondFailure.seq && entry.content.toolCalls.length === 0 ? [index] : [],
+          entry.kind === 'model_answer' &&
+          entry.seq > secondFailure.seq &&
+          entry.content.toolCalls.length === 0
+            ? [index]
+            : [],
         );
         expect(textsAfter.length).toBeGreaterThanOrEqual(1);
         for (const index of textsAfter) {
@@ -837,8 +1160,18 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           (reports) => reports.length > 0,
           'the run report at the root',
         );
-        expect(rootReports.map(({ agentId, status, reason }) => ({ agentId, status, reason }))).toEqual([
-          { agentId: coordinator.agentId, status: 'failed', reason: 'turn_limit' },
+        expect(
+          rootReports.map(({ agentId, status, reason }) => ({
+            agentId,
+            status,
+            reason,
+          })),
+        ).toEqual([
+          {
+            agentId: coordinator.agentId,
+            status: 'failed',
+            reason: 'turn_limit',
+          },
         ]);
       } finally {
         await harness.close();

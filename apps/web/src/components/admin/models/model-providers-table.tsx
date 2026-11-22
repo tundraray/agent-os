@@ -76,25 +76,41 @@ function checkResultOf(
     case 'key_rejected':
       return {
         state: 'failed',
-        text: message === null ? t('providers.keyRejected') : t('providers.keyRejectedWith', { message }),
+        text:
+          message === null
+            ? t('providers.keyRejected')
+            : t('providers.keyRejectedWith', { message }),
         announcement: t('providers.keyRejectedName', { name }),
       };
     case 'unreachable':
       return {
         state: 'failed',
-        text: message === null ? t('providers.unreachable') : t('providers.unreachableWith', { message }),
+        text:
+          message === null
+            ? t('providers.unreachable')
+            : t('providers.unreachableWith', { message }),
         announcement: t('providers.unreachableName', { name }),
       };
   }
 }
 
 /** MC-6, design-web «Отличия от UXRD»: the check never reached an answer about the provider. */
-function checkRefusalOf(t: ModelsTranslator, name: string, error: unknown): DataTableResult {
+function checkRefusalOf(
+  t: ModelsTranslator,
+  name: string,
+  error: unknown,
+): DataTableResult {
   const network = isApiRequestError(error) && error.kind === 'network';
   const text = network
     ? t('providers.checkNoConnection')
-    : t('providers.checkFailed', { message: error instanceof Error ? error.message : String(error) });
-  return { state: 'failed', text, announcement: t('providers.checkFailedName', { name }) };
+    : t('providers.checkFailed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+  return {
+    state: 'failed',
+    text,
+    announcement: t('providers.checkFailedName', { name }),
+  };
 }
 
 /** MC-3: the consequence of switching off the provider of a default model; empty — no confirmation needed. */
@@ -104,13 +120,21 @@ function offConsequences(
   defaults: ModelDefaults | undefined,
   catalog: readonly CatalogModel[] | undefined,
 ): string[] {
-  const names = { models: (catalog ?? []).map((model) => ({ model: model.id, name: model.name })) };
+  const names = {
+    models: (catalog ?? []).map((model) => ({
+      model: model.id,
+      name: model.name,
+    })),
+  };
   const chat = defaults?.chatModel ?? null;
   const embedding = defaults?.embeddingModel ?? null;
   const phrases: string[] = [];
-  if (chat !== null && modelProvider(chat) === provider.name) phrases.push(t('providers.offChat', { model: formatModel(chat, names) }));
+  if (chat !== null && modelProvider(chat) === provider.name)
+    phrases.push(t('providers.offChat', { model: formatModel(chat, names) }));
   if (embedding !== null && modelProvider(embedding) === provider.name) {
-    phrases.push(t('providers.offEmbedding', { model: formatModel(embedding, names) }));
+    phrases.push(
+      t('providers.offEmbedding', { model: formatModel(embedding, names) }),
+    );
   }
   return phrases;
 }
@@ -157,7 +181,12 @@ type ModelProvidersTableProps = {
  * the «⋯» menu edits, checks the connection and removes. A check's outcome is this table's state for as long as
  * the page is open, and re-reads nothing.
  */
-export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }: ModelProvidersTableProps) {
+export function ModelProvidersTable({
+  providers,
+  defaults,
+  catalog,
+  reloadAll,
+}: ModelProvidersTableProps) {
   const t = useTranslations('admin.models');
   const headingId = useId();
   const format = useFormatter();
@@ -167,7 +196,9 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
   const [turningOff, setTurningOff] = useState<DialogState>(CLOSED);
   const [blocked, setBlocked] = useState<DialogState>(CLOSED);
   const [removing, setRemoving] = useState<DialogState>(CLOSED);
-  const [results, setResults] = useState<Readonly<Record<string, DataTableResult>>>({});
+  const [results, setResults] = useState<
+    Readonly<Record<string, DataTableResult>>
+  >({});
   // The menu item is unavailable while a check runs; this also stops a second start from elsewhere.
   const checking = useRef(new Set<string>());
 
@@ -192,11 +223,22 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
     try {
       const check = await adminApi.modelProviders.check(name);
       // The provider's `message` is a foreign system's text: it is shown, never logged.
-      logger.info(CHECK_EVENT, { provider: name, result: check.result, durationMs: durationMs() });
-      setResult(name, checkResultOf(t, name, check, formatListTime(format, new Date())));
+      logger.info(CHECK_EVENT, {
+        provider: name,
+        result: check.result,
+        durationMs: durationMs(),
+      });
+      setResult(
+        name,
+        checkResultOf(t, name, check, formatListTime(format, new Date())),
+      );
     } catch (error) {
       const where = { provider: name, durationMs: durationMs() };
-      if (isApiRequestError(error)) logger.warn(`${CHECK_EVENT}: refused`, { ...where, ...describeApiError(error) });
+      if (isApiRequestError(error))
+        logger.warn(`${CHECK_EVENT}: refused`, {
+          ...where,
+          ...describeApiError(error),
+        });
       else logger.error(`${CHECK_EVENT}: failed`, { ...where, error });
       if (isNotFound(error)) {
         // The provider is gone: the re-read takes its row away, and the outcome with it.
@@ -213,13 +255,17 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
   /** The notice's «Проверить подключение» (UXRD Accessibility): focus goes to the row's «⋯», then the check runs. */
   const checkFromNotice = (name: string): void => {
     sectionRef.current
-      ?.querySelector<HTMLElement>(`tr[data-row-key="${CSS.escape(name)}"] [aria-haspopup="menu"]`)
+      ?.querySelector<HTMLElement>(
+        `tr[data-row-key="${CSS.escape(name)}"] [aria-haspopup="menu"]`,
+      )
       ?.focus();
     void checkConnection(name);
   };
 
   const saveEnabled = async (name: string, enabled: boolean): Promise<void> => {
-    await rereadOnNotFound(reloadAll)(() => adminApi.modelProviders.update(name, { enabled }));
+    await rereadOnNotFound(reloadAll)(() =>
+      adminApi.modelProviders.update(name, { enabled }),
+    );
     reloadAll();
   };
 
@@ -228,13 +274,19 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
       await adminApi.modelProviders.remove(name);
     } catch (error) {
       // Flow 3: a model added after the read — the dialog keeps the refusal, the section shows the new count.
-      if (isApiRequestError(error) && error.code === ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS) {
+      if (
+        isApiRequestError(error) &&
+        error.code === ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS
+      ) {
         reloadAll();
         throw error;
       }
       // A provider already gone is the outcome asked for; the re-read shows it.
       if (!isNotFound(error)) throw error;
-      logger.warn('admin: model provider remove: already gone', describeApiError(error));
+      logger.warn(
+        'admin: model provider remove: already gone',
+        describeApiError(error),
+      );
     }
     reloadAll();
     toast.success(t('providers.removed'));
@@ -250,7 +302,9 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
   ];
 
   const toRow = (provider: ModelProviderView): DataTableRow => {
-    const consequences = provider.enabled ? offConsequences(t, provider, defaults, catalog) : [];
+    const consequences = provider.enabled
+      ? offConsequences(t, provider, defaults, catalog)
+      : [];
     return {
       key: provider.name,
       name: provider.name,
@@ -260,9 +314,17 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
             {provider.name}
           </span>
           {provider.baseUrl === null ? (
-            <span className={cn(CAPTION, 'truncate text-muted-foreground')}>{t('providers.defaultUrl')}</span>
+            <span className={cn(CAPTION, 'truncate text-muted-foreground')}>
+              {t('providers.defaultUrl')}
+            </span>
           ) : (
-            <span className={cn(CAPTION, 'truncate font-mono text-muted-foreground')} title={provider.baseUrl}>
+            <span
+              className={cn(
+                CAPTION,
+                'truncate font-mono text-muted-foreground',
+              )}
+              title={provider.baseUrl}
+            >
               {provider.baseUrl}
             </span>
           )}
@@ -277,11 +339,18 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
           checked={provider.enabled}
           onSave={(enabled) => saveEnabled(provider.name, enabled)}
           logEvent="admin: model provider enable"
-          confirmOff={consequences.length > 0 ? () => setTurningOff({ open: true, provider }) : undefined}
+          confirmOff={
+            consequences.length > 0
+              ? () => setTurningOff({ open: true, provider })
+              : undefined
+          }
         />,
       ],
       actions: [
-        { label: t('providers.edit'), onSelect: () => setEditing({ open: true, provider }) },
+        {
+          label: t('providers.edit'),
+          onSelect: () => setEditing({ open: true, provider }),
+        },
         {
           label: t('providers.check'),
           onSelect: () => void checkConnection(provider.name),
@@ -290,24 +359,38 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
         {
           label: t('providers.remove'),
           onSelect: () =>
-            provider.catalogModels > 0 ? setBlocked({ open: true, provider }) : setRemoving({ open: true, provider }),
+            provider.catalogModels > 0
+              ? setBlocked({ open: true, provider })
+              : setRemoving({ open: true, provider }),
         },
       ],
       result: results[provider.name],
     };
   };
 
-  const state = resourceTableState(providers, t('providers.loadFailed'), (data) => ({
-    rows: data.map(toRow),
-    empty: { Icon: PlugIcon, title: t('providers.empty'), description: t('providers.emptyDescription') },
-  }));
+  const state = resourceTableState(
+    providers,
+    t('providers.loadFailed'),
+    (data) => ({
+      rows: data.map(toRow),
+      empty: {
+        Icon: PlugIcon,
+        title: t('providers.empty'),
+        description: t('providers.emptyDescription'),
+      },
+    }),
+  );
 
   const offProvider = turningOff.provider;
   const blockedProvider = blocked.provider;
   const removedProvider = removing.provider;
 
   return (
-    <section ref={sectionRef} aria-labelledby={headingId} className="flex flex-col gap-3">
+    <section
+      ref={sectionRef}
+      aria-labelledby={headingId}
+      className="flex flex-col gap-3"
+    >
       {/* Below 768 px the button goes on its own line under the heading. */}
       <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:justify-between">
         <h2 id={headingId} className="text-base leading-6 font-semibold">
@@ -324,7 +407,12 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
           {t('addProvider')}
         </Button>
       </div>
-      <DataTable caption={t('providersTitle')} columns={columns} state={state} actionsAs="menu" />
+      <DataTable
+        caption={t('providersTitle')}
+        columns={columns}
+        state={state}
+        actionsAs="menu"
+      />
       <ModelProviderDialog
         open={editing.open}
         onOpenChange={(open) => setEditing((current) => ({ ...current, open }))}
@@ -335,7 +423,9 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
       {offProvider !== null && (
         <ConfirmDialog
           open={turningOff.open}
-          onOpenChange={(open) => setTurningOff((current) => ({ ...current, open }))}
+          onOpenChange={(open) =>
+            setTurningOff((current) => ({ ...current, open }))
+          }
           title={t('providers.offTitle', { name: offProvider.name })}
           body={offConsequences(t, offProvider, defaults, catalog).join(' ')}
           confirmLabel={t('providers.off')}
@@ -344,16 +434,31 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
         />
       )}
       {blockedProvider !== null && (
-        <AlertDialog open={blocked.open} onOpenChange={(open) => setBlocked((current) => ({ ...current, open }))}>
+        <AlertDialog
+          open={blocked.open}
+          onOpenChange={(open) =>
+            setBlocked((current) => ({ ...current, open }))
+          }
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle className="wrap-break-word">{t('providers.cannotRemoveTitle', { name: blockedProvider.name })}</AlertDialogTitle>
+              <AlertDialogTitle className="wrap-break-word">
+                {t('providers.cannotRemoveTitle', {
+                  name: blockedProvider.name,
+                })}
+              </AlertDialogTitle>
               <AlertDialogDescription className="wrap-break-word">
-                {t('providers.cannotRemoveBody', { count: blockedProvider.catalogModels })}
+                {t('providers.cannotRemoveBody', {
+                  count: blockedProvider.catalogModels,
+                })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel variant="default" size="sm" className={CONTROL_SIZE}>
+              <AlertDialogCancel
+                variant="default"
+                size="sm"
+                className={CONTROL_SIZE}
+              >
                 {t('providers.understood')}
               </AlertDialogCancel>
             </AlertDialogFooter>
@@ -363,7 +468,9 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
       {removedProvider !== null && (
         <ConfirmDialog
           open={removing.open}
-          onOpenChange={(open) => setRemoving((current) => ({ ...current, open }))}
+          onOpenChange={(open) =>
+            setRemoving((current) => ({ ...current, open }))
+          }
           title={t('providers.removeTitle', { name: removedProvider.name })}
           body={t('providers.removeBody')}
           confirmLabel={t('providers.remove')}

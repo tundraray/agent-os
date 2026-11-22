@@ -16,6 +16,7 @@ type ServersSectionProps = {
  */
 export function ServersSection({ page }: ServersSectionProps) {
   if (page.kind === 'new') return <RegisterServerForm />;
-  if (page.kind === 'record') return <ServerPage key={page.key} name={page.key} />;
+  if (page.kind === 'record')
+    return <ServerPage key={page.key} name={page.key} />;
   return <ServerList />;
 }

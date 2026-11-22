@@ -1,9 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
-import {
-  IdentityRolesRepository,
-  IdentityUsersRepository,
-} from '@agent-os/db';
+import { IdentityRolesRepository, IdentityUsersRepository } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 
 /** Role ids and employee ids, read together. */
@@ -77,16 +74,12 @@ export class IdentityDirectory {
    * The names of the roles named, in the database's order of names; a missing role and an id that is
    * not a UUID are left out.
    */
-  roleNames(
-    roleIds: readonly string[],
-  ): Promise<RoleName[]> {
+  roleNames(roleIds: readonly string[]): Promise<RoleName[]> {
     return this.roles.names(uniqueUuids(roleIds));
   }
 
   /** The same for employees, each with whether he is on. */
-  async userNames(
-    userIds: readonly string[],
-  ): Promise<UserName[]> {
+  async userNames(userIds: readonly string[]): Promise<UserName[]> {
     const users = await this.users.names(uniqueUuids(userIds));
     return users.map(({ id, name, status }) => ({
       id,

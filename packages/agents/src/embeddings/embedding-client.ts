@@ -1,4 +1,7 @@
-import { type EmbeddingInputType, providerAdapter } from '../providers/adapters';
+import {
+  type EmbeddingInputType,
+  providerAdapter,
+} from '../providers/adapters';
 import type { ProviderConnection } from '../providers/provider-registry';
 
 /** One provider request takes at most this long (design-core.md, Contract `Agents.embeddings.embed`). */
@@ -37,7 +40,9 @@ export class EmbeddingTimeoutError extends Error {
   override readonly name = 'EmbeddingTimeoutError';
 
   constructor() {
-    super(`The embedding request timed out after ${EMBEDDING_REQUEST_TIMEOUT_MS} ms`);
+    super(
+      `The embedding request timed out after ${EMBEDDING_REQUEST_TIMEOUT_MS} ms`,
+    );
   }
 }
 
@@ -47,9 +52,19 @@ export class EmbeddingTimeoutError extends Error {
  */
 export function createEmbeddingClient(): EmbeddingClient {
   return {
-    async embed({ connection, modelName, texts, inputType, dimensions, signal }) {
+    async embed({
+      connection,
+      modelName,
+      texts,
+      inputType,
+      dimensions,
+      signal,
+    }) {
       const embeddings = providerAdapter(connection.kind).embeddings;
-      if (embeddings === null) throw new Error(`Provider kind ${connection.kind} serves no embedding models`);
+      if (embeddings === null)
+        throw new Error(
+          `Provider kind ${connection.kind} serves no embedding models`,
+        );
       const timeout = AbortSignal.timeout(EMBEDDING_REQUEST_TIMEOUT_MS);
       const providerOptions = embeddings.providerOptions(inputType, dimensions);
       try {
@@ -59,9 +74,13 @@ export function createEmbeddingClient(): EmbeddingClient {
           ...(providerOptions === undefined ? {} : { providerOptions }),
         });
         const tokens = result.usage?.tokens;
-        return { vectors: result.embeddings, inputTokens: tokens !== undefined && tokens > 0 ? tokens : null };
+        return {
+          vectors: result.embeddings,
+          inputTokens: tokens !== undefined && tokens > 0 ? tokens : null,
+        };
       } catch (error) {
-        if (timeout.aborted && !signal.aborted) throw new EmbeddingTimeoutError();
+        if (timeout.aborted && !signal.aborted)
+          throw new EmbeddingTimeoutError();
         throw error;
       }
     },

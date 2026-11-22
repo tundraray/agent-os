@@ -15,7 +15,9 @@ import type { Locale } from '@/i18n/pick-locale';
  */
 
 /** A provider's `state` from `core` decides readiness: the web never repeats which kind needs a key. */
-const REASON_OF_STATE: Readonly<Record<ModelProviderState, ModelUnavailableReason | null>> = {
+const REASON_OF_STATE: Readonly<
+  Record<ModelProviderState, ModelUnavailableReason | null>
+> = {
   ready: null,
   disabled: 'provider_disabled',
   key_missing: 'provider_key_missing',
@@ -28,20 +30,32 @@ export function modelUnavailableReason(
 ): ModelUnavailableReason | null {
   const name = modelProvider(modelId);
   const provider = providers.find((candidate) => candidate.name === name);
-  return provider === undefined ? 'provider_missing' : REASON_OF_STATE[provider.state];
+  return provider === undefined
+    ? 'provider_missing'
+    : REASON_OF_STATE[provider.state];
 }
 
 /** UXRD MC-8: the short reason on the «Выключено» badge of a model that does not work. */
-export const unavailableShortText = (t: ModelsTranslator, reason: ModelUnavailableReason): string =>
-  t(`unavailable.${reason}`);
+export const unavailableShortText = (
+  t: ModelsTranslator,
+  reason: ModelUnavailableReason,
+): string => t(`unavailable.${reason}`);
 
 /** For a screen reader: «{название}, провайдер {провайдер}», and the short reason of a model that does not work. */
 export function modelOptionName(
   t: ModelsTranslator,
-  { name, provider, unavailableReason }: Pick<ModelOption, 'name' | 'provider' | 'unavailableReason'>,
+  {
+    name,
+    provider,
+    unavailableReason,
+  }: Pick<ModelOption, 'name' | 'provider' | 'unavailableReason'>,
 ): string {
   if (unavailableReason === null) return t('optionName', { name, provider });
-  return t('optionNameOff', { name, provider, reason: unavailableShortText(t, unavailableReason) });
+  return t('optionNameOff', {
+    name,
+    provider,
+    reason: unavailableShortText(t, unavailableReason),
+  });
 }
 
 /** A model a choice can offer: a catalogue row, or an employee's model mapped to these fields. */
@@ -66,10 +80,16 @@ export type ModelOption = {
 
 const SEPARATOR = ' · ';
 
-function optionOf(model: ModelOptionSource, unavailableReason: ModelUnavailableReason | null): ModelOption {
+function optionOf(
+  model: ModelOptionSource,
+  unavailableReason: ModelUnavailableReason | null,
+): ModelOption {
   const provider = modelProvider(model.id);
   const dimensions = model.dimensions ?? null;
-  const parts = dimensions === null ? [model.name, provider] : [model.name, provider, String(dimensions)];
+  const parts =
+    dimensions === null
+      ? [model.name, provider]
+      : [model.name, provider, String(dimensions)];
   return {
     value: model.id,
     name: model.name,
@@ -99,7 +119,11 @@ export function modelOptions({
   return models
     .filter((model) => model.purpose === purpose)
     .map((model) => optionOf(model, readinessOf(model.id)))
-    .sort((a, b) => a.provider.localeCompare(b.provider, locale) || a.name.localeCompare(b.name, locale));
+    .sort(
+      (a, b) =>
+        a.provider.localeCompare(b.provider, locale) ||
+        a.name.localeCompare(b.name, locale),
+    );
 }
 
 export type ProviderKindText = {
@@ -114,17 +138,25 @@ export type ProviderKindText = {
 };
 
 /** UXRD KD-1, MC-3, MC-4: the words of a provider type. */
-export function providerKindText(t: ModelsTranslator, kind: ModelProviderKind): ProviderKindText {
+export function providerKindText(
+  t: ModelsTranslator,
+  kind: ModelProviderKind,
+): ProviderKindText {
   return {
     label: t(`kind.${kind}.label`),
     hint: kind === 'anthropic' ? null : t(`kind.${kind}.hint`),
     baseUrlHint: t(`kind.${kind}.baseUrlHint`),
-    apiKeyHint: kind === 'openai_compatible' ? t('kind.openai_compatible.apiKeyHint') : t('kind.keyNeededHint'),
+    apiKeyHint:
+      kind === 'openai_compatible'
+        ? t('kind.openai_compatible.apiKeyHint')
+        : t('kind.keyNeededHint'),
   };
 }
 
 /** MP-04: the name the type puts into «Имя» of a new provider; an OpenAI-compatible one has none. */
-export const DEFAULT_PROVIDER_NAME: Readonly<Record<ModelProviderKind, string | null>> = {
+export const DEFAULT_PROVIDER_NAME: Readonly<
+  Record<ModelProviderKind, string | null>
+> = {
   anthropic: 'anthropic',
   gemini: 'google',
   openai_compatible: null,

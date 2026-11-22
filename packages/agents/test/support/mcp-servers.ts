@@ -48,13 +48,16 @@ export async function connectAccount(
     target: isAdmin ? 'admin' : 'employee',
     redirectUrl: mcpRedirectUrl(server),
   });
-  if (begun.kind !== 'redirect') throw new Error(`Connecting ${ownerId} to ${server} was refused`);
+  if (begun.kind !== 'redirect')
+    throw new Error(`Connecting ${ownerId} to ${server} was refused`);
   const authorizationUrl = new URL(begun.authorizationUrl);
   authorizationUrl.searchParams.set('fixture_account', options.account);
   const response = await fetch(authorizationUrl, { redirect: 'manual' });
   const location = response.headers.get('location');
   if (location === null) {
-    throw new Error(`The authorization address answered ${response.status} without a redirect`);
+    throw new Error(
+      `The authorization address answered ${response.status} without a redirect`,
+    );
   }
   const returned = new URL(location);
   const back = returned.searchParams;
@@ -69,7 +72,10 @@ export async function connectAccount(
   });
 }
 
-function optionalParam<Name extends string>(params: URLSearchParams, name: Name): Partial<Record<Name, string>> {
+function optionalParam<Name extends string>(
+  params: URLSearchParams,
+  name: Name,
+): Partial<Record<Name, string>> {
   const value = params.get(name);
   return value === null ? {} : ({ [name]: value } as Record<Name, string>);
 }

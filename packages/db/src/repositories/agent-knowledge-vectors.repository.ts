@@ -1,4 +1,7 @@
-import { type KnowledgeItemType, KnowledgeItemTypeSchema } from '@agent-os/contracts';
+import {
+  type KnowledgeItemType,
+  KnowledgeItemTypeSchema,
+} from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, cosineDistance, eq, inArray, sql } from 'drizzle-orm';
 import { Db } from '../db';
@@ -24,8 +27,10 @@ export interface NewKnowledgeVectorRow {
 export class AgentKnowledgeVectorsRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
-
-  async upsert(collection: string, items: readonly NewKnowledgeVectorRow[]): Promise<void> {
+  async upsert(
+    collection: string,
+    items: readonly NewKnowledgeVectorRow[],
+  ): Promise<void> {
     if (items.length === 0) return;
     await this.db.client
       .insert(vectors)
@@ -52,7 +57,9 @@ export class AgentKnowledgeVectorsRepository {
     if (keys.length === 0) return;
     await this.db.client
       .delete(vectors)
-      .where(and(eq(vectors.recordId, collection), inArray(vectors.key, [...keys])));
+      .where(
+        and(eq(vectors.recordId, collection), inArray(vectors.key, [...keys])),
+      );
   }
 
   query(
@@ -66,7 +73,10 @@ export class AgentKnowledgeVectorsRepository {
     const distance = cosineDistance(vectors.vector, [...vector]);
     // pgvector cannot compare vectors of different lengths, so the model filter is never optional.
     return this.db.client
-      .select({ key: vectors.key, closeness: sql<number>`1 - (${distance})`.mapWith(Number) })
+      .select({
+        key: vectors.key,
+        closeness: sql<number>`1 - (${distance})`.mapWith(Number),
+      })
       .from(vectors)
       .where(
         and(
@@ -87,6 +97,9 @@ export class AgentKnowledgeVectorsRepository {
       .from(vectors)
       .where(eq(vectors.recordId, collection))
       .orderBy(asc(vectors.key));
-    return rows.map((row) => ({ ...row, kind: KnowledgeItemTypeSchema.parse(row.kind) }));
+    return rows.map((row) => ({
+      ...row,
+      kind: KnowledgeItemTypeSchema.parse(row.kind),
+    }));
   }
 }

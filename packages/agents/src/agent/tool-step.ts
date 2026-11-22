@@ -8,11 +8,20 @@ import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { OwnerDisabledError } from '../access-gate';
-import { type CallState, isDelegated, requestedName } from '../history/call-state';
+import {
+  type CallState,
+  isDelegated,
+  requestedName,
+} from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import type { CallEnding } from '../store/call-records';
 import type { Session } from '../store/sessions';
-import { isInCommit, reportCheck, toolDeniedEntry, toolRefusedEntry } from '../tools/call-check';
+import {
+  isInCommit,
+  reportCheck,
+  toolDeniedEntry,
+  toolRefusedEntry,
+} from '../tools/call-check';
 import type { ToolExecution } from '../tools/tool-execution';
 import { callTargetOf, loggedArgsOf } from '../tools/tool-registry';
 import type { AgentDeps } from './agent-deps';
@@ -20,22 +29,36 @@ import type { BaseAgent } from './base-agent';
 import type { CallClosing, DelegatedCall } from './delegation';
 import { entriesOf } from './deliver';
 import { appendWithEvent, logStep, refusedResult } from './step-common';
-import { type PastCall, repeatMarkText, repeatOf, repeatRefusalText } from './repeat-rule';
+import {
+  type PastCall,
+  repeatMarkText,
+  repeatOf,
+  repeatRefusalText,
+} from './repeat-rule';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';
 
-const { sending, awaiting_confirmation: awaitingConfirmation } = ToolCallStateSchema.enum;
+const { sending, awaiting_confirmation: awaitingConfirmation } =
+  ToolCallStateSchema.enum;
 const { refused, rejected, unknown } = ToolOutcomeSchema.enum;
 const { repeated_call: repeatedCall } = ToolRefusalReasonSchema.enum;
 
 /** A call as the repeat rule counts it. */
 function pastCallOf(call: CallState): PastCall {
-  return { callId: call.callId, tool: call.tool, server: call.server, args: call.args };
+  return {
+    callId: call.callId,
+    tool: call.tool,
+    server: call.server,
+    args: call.args,
+  };
 }
 
 /** The part of a confirmation request the step needs back: which call it is about and what was shown. */
-const ConfirmationPayloadSchema = z.object({ callId: z.string(), content: z.unknown() });
+const ConfirmationPayloadSchema = z.object({
+  callId: z.string(),
+  content: z.unknown(),
+});
 
 /** The resolution `resolveConfirmation` (T4.3) writes; `args` — the employee's edit, if the tool allows one. */
 export const ConfirmationResolutionSchema = z.object({
@@ -54,8 +77,12 @@ interface CallDecision {
 
 function decisionOf(ctx: StepContext): CallDecision | undefined {
   if (ctx.decision === null) return undefined;
-  const { callId, content } = ConfirmationPayloadSchema.parse(ctx.decision.payload);
-  const resolution = ConfirmationResolutionSchema.parse(ctx.decision.resolution);
+  const { callId, content } = ConfirmationPayloadSchema.parse(
+    ctx.decision.payload,
+  );
+  const resolution = ConfirmationResolutionSchema.parse(
+    ctx.decision.resolution,
+  );
   return {
     callId,
     approve: resolution.approve,
@@ -65,7 +92,11 @@ function decisionOf(ctx: StepContext): CallDecision | undefined {
 }
 
 /** How a call the runner ran ends in its `tool_result`. */
-function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): CallEnding {
+function endingOf(
+  execution: ToolExecution,
+  startedAt: Date,
+  finishedAt: Date,
+): CallEnding {
   if (execution.kind === 'refused') {
     return {
       outcome: refused,
@@ -79,8 +110,12 @@ function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): 
   return {
     outcome: execution.outcome,
     resultText: execution.text,
-    ...(typeof execution.output === 'string' ? { output: execution.output } : {}),
-    ...(execution.childAgentId === undefined ? {} : { childTaskId: execution.childAgentId }),
+    ...(typeof execution.output === 'string'
+      ? { output: execution.output }
+      : {}),
+    ...(execution.childAgentId === undefined
+      ? {}
+      : { childTaskId: execution.childAgentId }),
     startedAt,
     finishedAt,
   };
@@ -122,7 +157,12 @@ function commitOf(
       [
         ...(awaited === undefined
           ? []
-          : [{ kind: 'tool_confirmation' as const, content: { callId: awaited.callId } }]),
+          : [
+              {
+                kind: 'tool_confirmation' as const,
+                content: { callId: awaited.callId },
+              },
+            ]),
         ...(await entriesOf(deps, ctx.messages)),
       ],
       results,
@@ -167,7 +207,10 @@ function commitOf(
  */
 export async function runToolStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'caller' | 'declaration' | 'closeDelegated' | 'delegates' | 'delegate'>,
+  agent: Pick<
+    BaseAgent,
+    'caller' | 'declaration' | 'closeDelegated' | 'delegates' | 'delegate'
+  >,
   ctx: StepContext,
   session: Session,
   openCalls: readonly CallState[],
@@ -192,12 +235,17 @@ export async function runToolStep(
   // whose account went away gets `auth_required` (C3, DC-2). The set comes from the snapshot (ADR-0017).
   const sessionTools = await registry.checkTools(agent.declaration);
   const argsOf = (call: CallState): unknown =>
-    loggedArgsOf(sessionTools, (name) => registry.toolOf(name), { name: requestedName(call), args: call.args });
+    loggedArgsOf(sessionTools, (name) => registry.toolOf(name), {
+      name: requestedName(call),
+      args: call.args,
+    });
   const decision = decisionOf(ctx);
   const closings: CallClosing[] = [];
   // The repeat rule's past (KD-5): the closed calls of the visible history, then each call of this step it lets through.
   const past: PastCall[] = calls.flatMap((earlier) =>
-    earlier.result === null ? [] : [{ ...pastCallOf(earlier), outcome: earlier.result.outcome }],
+    earlier.result === null
+      ? []
+      : [{ ...pastCallOf(earlier), outcome: earlier.result.outcome }],
   );
   // The repeat mark of a call, by its id: appended to its result's text however it ends, never to `stored` (KD-1).
   const marks = new Map<string, string>();
@@ -207,8 +255,10 @@ export async function runToolStep(
     const text = ending.resultText ?? '';
     return { ...ending, resultText: text === '' ? mark : `${text}\n\n${mark}` };
   };
-  const close = (call: CallState, ending: CallEnding): CallClosing =>
-    () => deps.callRecords.close(ctx.taskId, call, marked(call, ending));
+  const close =
+    (call: CallState, ending: CallEnding): CallClosing =>
+    () =>
+      deps.callRecords.close(ctx.taskId, call, marked(call, ending));
   /**
    * Closes a call the runner ran and stores its full result in the same transaction: every successful and
    * empty direct MCP result, as before (code-execution KD-5); only a long one reached the model as the
@@ -217,7 +267,11 @@ export async function runToolStep(
    */
   const closeExecuted = async (
     call: CallState,
-    run: { readonly execution: ToolExecution; readonly startedAt: Date; readonly finishedAt: Date },
+    run: {
+      readonly execution: ToolExecution;
+      readonly startedAt: Date;
+      readonly finishedAt: Date;
+    },
     // The employee's decision on a confirmed call, written with the result unless the intent wrote it.
     decided?: CallDecision,
   ): Promise<HistoryEntry | undefined> => {
@@ -228,15 +282,28 @@ export async function runToolStep(
       marked(call, endingOf(execution, run.startedAt, run.finishedAt)),
       decided === undefined
         ? undefined
-        : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
+        : {
+            approved: decided.approve,
+            ...(decided.args === undefined ? {} : { args: decided.args }),
+          },
     );
-    if (closed !== undefined && execution.kind === 'done' && execution.stored !== undefined) {
-      await deps.toolResultRows.insert({ taskId: ctx.taskId, callId: call.callId, ...execution.stored });
+    if (
+      closed !== undefined &&
+      execution.kind === 'done' &&
+      execution.stored !== undefined
+    ) {
+      await deps.toolResultRows.insert({
+        taskId: ctx.taskId,
+        callId: call.callId,
+        ...execution.stored,
+      });
     }
     return closed;
   };
   const done = (): StepResult => {
-    logStep(ctx, STEP_KIND, stepStartedAt, 'continue', { calls: closings.length });
+    logStep(ctx, STEP_KIND, stepStartedAt, 'continue', {
+      calls: closings.length,
+    });
     return { outcome: 'continue', commit: commitOf(deps, ctx, closings) };
   };
   /** The agent fails with `owner_disabled`: the calls that ran are closed, the rest never start (KD-5). */
@@ -258,7 +325,9 @@ export async function runToolStep(
 
   // Sent delegated calls wait for their tracker, and this step delivers its `tasks_finished` (KD-4): they close
   // with the outcomes of their tasks, before the gate, like the calls in `sending` below.
-  closings.push(...(await agent.closeDelegated(ctx, openCalls.filter(isDelegated))));
+  closings.push(
+    ...(await agent.closeDelegated(ctx, openCalls.filter(isDelegated))),
+  );
 
   // Before the gate, so a disabled owner's exit closes them too: a call left in `sending` precedes every
   // other open call of its answer.
@@ -271,7 +340,9 @@ export async function runToolStep(
       server: call.server,
       args: argsOf(call),
       outcome: unknown,
-      reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
+      reason: ctx.resumedAfterLoss
+        ? 'resumed_after_loss'
+        : 'sending_without_loss',
     });
     closings.push(close(call, { outcome: unknown }));
   }
@@ -295,14 +366,23 @@ export async function runToolStep(
    * a refusal is closed with its text; the accepted ones start in the commit, and the step waits for them.
    */
   const delegate = async (): Promise<StepResult> => {
-    const delegation = await agent.delegate({ ctx, caller, calls: delegatedCalls, loggedArgs: argsOf });
-    for (const { call, ending } of delegation.refused) closings.push(close(call, ending));
+    const delegation = await agent.delegate({
+      ctx,
+      caller,
+      calls: delegatedCalls,
+      loggedArgs: argsOf,
+    });
+    for (const { call, ending } of delegation.refused)
+      closings.push(close(call, ending));
     if (delegation.open === null) return done();
     logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
       calls: closings.length,
       delegations: delegation.accepted,
     });
-    return { outcome: 'wait', commit: commitOf(deps, ctx, closings, undefined, delegation.open) };
+    return {
+      outcome: 'wait',
+      commit: commitOf(deps, ctx, closings, undefined, delegation.open),
+    };
   };
 
   const runCalls = async (): Promise<StepResult> => {
@@ -322,7 +402,10 @@ export async function runToolStep(
         { ownerId: session.ownerId, logger: ctx.logger, audit },
       );
       /** Closes the call `refused`; KD-1: the model reads why from the result's text. */
-      const refuse = (reason: ToolRefusalReason, text: string | undefined): void => {
+      const refuse = (
+        reason: ToolRefusalReason,
+        text: string | undefined,
+      ): void => {
         ctx.logger.info('tool call refused', {
           callId: call.callId,
           tool: call.tool,
@@ -343,7 +426,9 @@ export async function runToolStep(
       if (check.kind === 'refused') {
         // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
         if (check.reason === 'no_access' && target.server !== null) {
-          await audit(toolDeniedEntry(session.ownerId, target.server, target.tool));
+          await audit(
+            toolDeniedEntry(session.ownerId, target.server, target.tool),
+          );
         }
         refuse(check.reason, check.text);
         continue;
@@ -354,7 +439,14 @@ export async function runToolStep(
       const repeat = repeatOf({ call, past });
       if (repeat.kind === 'refuse') {
         if (target.server !== null) {
-          await audit(toolRefusedEntry(session.ownerId, target.server, target.tool, repeatedCall));
+          await audit(
+            toolRefusedEntry(
+              session.ownerId,
+              target.server,
+              target.tool,
+              repeatedCall,
+            ),
+          );
         }
         refuse(repeatedCall, repeatRefusalText(repeat.callIds));
         continue;
@@ -376,14 +468,19 @@ export async function runToolStep(
       }
 
       if (runner.needsConfirmation(resolved)) {
-        const callDecision = decision?.callId === call.callId ? decision : undefined;
+        const callDecision =
+          decision?.callId === call.callId ? decision : undefined;
         if (callDecision === undefined) {
           if (call.state === awaitingConfirmation) {
             throw new Error(
               `Call ${call.callId} of agent ${ctx.taskId} awaits confirmation, but the step got no decision for it`,
             );
           }
-          const card = await runner.confirmationRequest(resolved, session, sessionTools);
+          const card = await runner.confirmationRequest(
+            resolved,
+            session,
+            sessionTools,
+          );
           if (card.kind === 'refused') {
             // The tool's check before the card refused it (deep-agents KD-3): no request, the model reads why.
             refuse(card.reason, card.text);
@@ -398,7 +495,9 @@ export async function runToolStep(
             outcome: null,
             reason: 'awaiting_confirmation',
           });
-          logStep(ctx, STEP_KIND, stepStartedAt, 'await_decision', { calls: closings.length });
+          logStep(ctx, STEP_KIND, stepStartedAt, 'await_decision', {
+            calls: closings.length,
+          });
           return {
             outcome: 'await_decision',
             kind: request.kind,
@@ -418,9 +517,14 @@ export async function runToolStep(
             durationMs: 0,
           });
           closings.push(() =>
-            deps.callRecords.close(ctx.taskId, call, marked(call, { outcome: rejected }), {
-              approved: false,
-            }),
+            deps.callRecords.close(
+              ctx.taskId,
+              call,
+              marked(call, { outcome: rejected }),
+              {
+                approved: false,
+              },
+            ),
           );
           continue;
         }
@@ -452,10 +556,15 @@ export async function runToolStep(
           return done();
         }
         const { execution } = send;
-        if (execution.kind === 'aborted') return abandon('signal aborted during the confirmed call');
+        if (execution.kind === 'aborted')
+          return abandon('signal aborted during the confirmed call');
         const finishedAt = new Date();
         closings.push(() =>
-          closeExecuted(call, { execution, startedAt, finishedAt }, callDecision),
+          closeExecuted(
+            call,
+            { execution, startedAt, finishedAt },
+            callDecision,
+          ),
         );
         // The confirmed result is committed before anything else of the answer runs (KD-1).
         return done();
@@ -466,16 +575,23 @@ export async function runToolStep(
         closings.push(async (effects) => {
           const startedAt = new Date();
           const execution = await run(effects);
-          return closeExecuted(call, { execution, startedAt, finishedAt: new Date() });
+          return closeExecuted(call, {
+            execution,
+            startedAt,
+            finishedAt: new Date(),
+          });
         });
         continue;
       }
 
       const startedAt = new Date();
       const execution = await runner.runOutside(resolved, ctx);
-      if (execution.kind === 'aborted') return abandon('signal aborted during the call');
+      if (execution.kind === 'aborted')
+        return abandon('signal aborted during the call');
       const finishedAt = new Date();
-      closings.push(() => closeExecuted(call, { execution, startedAt, finishedAt }));
+      closings.push(() =>
+        closeExecuted(call, { execution, startedAt, finishedAt }),
+      );
     }
 
     return delegatedCalls.length > 0 ? delegate() : done();

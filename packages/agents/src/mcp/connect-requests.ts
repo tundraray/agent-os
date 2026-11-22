@@ -41,11 +41,15 @@ export class ConnectRequests {
    * Stores a new request in place of the owner's earlier one for the server — a pair has at most one;
    * `state` is 32 random bytes in base64url.
    */
-  open(input: ConnectRequestInput): { readonly id: string; readonly state: string } {
+  open(input: ConnectRequestInput): {
+    readonly id: string;
+    readonly state: string;
+  } {
     const createdAt = new Date();
     this.dropExpired(createdAt);
     for (const [state, request] of this.byState) {
-      if (request.ownerId === input.ownerId && request.server === input.server) this.byState.delete(state);
+      if (request.ownerId === input.ownerId && request.server === input.server)
+        this.byState.delete(state);
     }
     const id = randomUUID();
     const state = randomBytes(STATE_BYTES).toString('base64url');

@@ -17,6 +17,9 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
 
 /** Reading cookies() makes the group dynamic; the root layout stays static. */
 async function ChatShellWithSidebarCookie({ children }: ChatLayoutProps) {
-  const defaultSidebarOpen = (await cookies()).get(SIDEBAR_COOKIE)?.value !== 'false';
-  return <ChatShell defaultSidebarOpen={defaultSidebarOpen}>{children}</ChatShell>;
+  const defaultSidebarOpen =
+    (await cookies()).get(SIDEBAR_COOKIE)?.value !== 'false';
+  return (
+    <ChatShell defaultSidebarOpen={defaultSidebarOpen}>{children}</ChatShell>
+  );
 }

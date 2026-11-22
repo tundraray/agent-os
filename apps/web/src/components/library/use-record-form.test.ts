@@ -1,7 +1,11 @@
 import type { RecordSummary } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import type { LibraryErrorText } from '@/lib/library/library-errors';
-import { changedFieldLabel, type AgentDefinition, type AgentRecord } from '@/lib/library/record-rules';
+import {
+  changedFieldLabel,
+  type AgentDefinition,
+  type AgentRecord,
+} from '@/lib/library/record-rules';
 import { agentContent, fixtureId, recordDetail } from '@/test/fixtures';
 import { testTranslator } from '@/test/intl';
 import {
@@ -33,7 +37,10 @@ function agentRecord(overrides: Partial<RecordSummary>): AgentRecord {
 
 /** Version 3 — the edit starts from it; version 4 — saved elsewhere with another description. */
 const startV3 = agentRecord({ version: 3 });
-const theirsV4 = agentRecord({ version: 4, description: 'Разбирает логи и метрики' });
+const theirsV4 = agentRecord({
+  version: 4,
+  description: 'Разбирает логи и метрики',
+});
 const savedV4 = agentRecord({ version: 4, name: 'Разбор логов и метрик' });
 
 const START = agent('Разбор логов');
@@ -47,8 +54,14 @@ const NAME_TAKEN: LibraryErrorText = {
 };
 
 const edited: RecordFormInit = { saved: startV3 };
-const input = (values: AgentDefinition): RecordFormAction => ({ type: 'input', values });
-const conflictWith = (saved: AgentRecord | null): RecordFormAction => ({ type: 'conflict', saved });
+const input = (values: AgentDefinition): RecordFormAction => ({
+  type: 'input',
+  values,
+});
+const conflictWith = (saved: AgentRecord | null): RecordFormAction => ({
+  type: 'conflict',
+  saved,
+});
 
 type Row = {
   name: string;
@@ -64,7 +77,14 @@ type Row = {
 
 // Transitions of the editor's form (design-web.md, «State Transitions and Invariants»; Invariants 1, 2; DC-3, DC-4).
 const rows: Row[] = [
-  { name: 'opens clean on the saved record', init: edited, actions: [], status: 'clean', values: START, version: 3 },
+  {
+    name: 'opens clean on the saved record',
+    init: edited,
+    actions: [],
+    status: 'clean',
+    values: START,
+    version: 3,
+  },
   {
     name: 'typing the saved value back is no change',
     init: edited,
@@ -84,7 +104,11 @@ const rows: Row[] = [
   {
     name: 'typing a new value is a change, and a field error keeps the typed values (Invariant 1)',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, { type: 'failed', error: NAME_TAKEN }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      { type: 'failed', error: NAME_TAKEN },
+    ],
     status: 'changed',
     values: TYPED,
     version: 3,
@@ -111,16 +135,26 @@ const rows: Row[] = [
   {
     name: '«Сохранить мои правки» saves the typed values with the version accepted in the conflict (Invariant 2)',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, conflictWith(theirsV4), { type: 'saveMine' }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      conflictWith(theirsV4),
+      { type: 'saveMine' },
+    ],
     status: 'saving',
     values: TYPED,
     version: 4,
     conflict: null,
   },
   {
-    name: '«Сохранить мои правки» without the saved record sends the edit\'s own version again',
+    name: "«Сохранить мои правки» without the saved record sends the edit's own version again",
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, conflictWith(null), { type: 'saveMine' }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      conflictWith(null),
+      { type: 'saveMine' },
+    ],
     status: 'saving',
     values: TYPED,
     version: 3,
@@ -128,7 +162,12 @@ const rows: Row[] = [
   {
     name: '«Взять сохранённое» puts version 4 into the form (DC-3)',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, conflictWith(theirsV4), { type: 'takeSaved' }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      conflictWith(theirsV4),
+      { type: 'takeSaved' },
+    ],
     status: 'clean',
     values: THEIRS,
     version: 4,
@@ -137,7 +176,13 @@ const rows: Row[] = [
   {
     name: '«Вернуть» puts the typed values back over version 4 (DC-3)',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, conflictWith(theirsV4), { type: 'takeSaved' }, { type: 'restore' }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      conflictWith(theirsV4),
+      { type: 'takeSaved' },
+      { type: 'restore' },
+    ],
     status: 'changed',
     values: TYPED,
     version: 4,
@@ -145,7 +190,11 @@ const rows: Row[] = [
   {
     name: 'a saved answer makes its version the saved one',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, { type: 'saved', record: savedV4 }],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      { type: 'saved', record: savedV4 },
+    ],
     status: 'saved',
     values: TYPED,
     version: 4,
@@ -153,7 +202,12 @@ const rows: Row[] = [
   {
     name: 'typing after «Сохранено» is a change again',
     init: edited,
-    actions: [input(TYPED), { type: 'save' }, { type: 'saved', record: savedV4 }, input(START)],
+    actions: [
+      input(TYPED),
+      { type: 'save' },
+      { type: 'saved', record: savedV4 },
+      input(START),
+    ],
     status: 'changed',
     values: START,
     version: 4,
@@ -177,20 +231,25 @@ const rows: Row[] = [
 ];
 
 describe('recordFormReducer', () => {
-  it.each(rows)('$name', ({ init, actions, status, values, version, conflict, error }) => {
-    const state = actions.reduce(recordFormReducer, initialRecordForm(init));
-    const view = recordFormView(state);
+  it.each(rows)(
+    '$name',
+    ({ init, actions, status, values, version, conflict, error }) => {
+      const state = actions.reduce(recordFormReducer, initialRecordForm(init));
+      const view = recordFormView(state);
 
-    expect(view.status).toBe(status);
-    expect(state.values).toEqual(values);
-    expect(view.version).toBe(version);
-    if (conflict !== undefined) {
-      const shown = view.conflict && {
-        saved: view.conflict.saved?.version ?? null,
-        fields: view.conflict.fields.map((field) => changedFieldLabel(t, field)),
-      };
-      expect(shown).toEqual(conflict);
-    }
-    if (error !== undefined) expect(state.error).toEqual(error);
-  });
+      expect(view.status).toBe(status);
+      expect(state.values).toEqual(values);
+      expect(view.version).toBe(version);
+      if (conflict !== undefined) {
+        const shown = view.conflict && {
+          saved: view.conflict.saved?.version ?? null,
+          fields: view.conflict.fields.map((field) =>
+            changedFieldLabel(t, field),
+          ),
+        };
+        expect(shown).toEqual(conflict);
+      }
+      if (error !== undefined) expect(state.error).toEqual(error);
+    },
+  );
 });

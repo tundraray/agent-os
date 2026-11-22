@@ -4,7 +4,10 @@
   "ignoreIssues": {
     "apps/web/src/components/ui/**": ["exports", "types"],
     "apps/web/src/components/assistant-ui/**": ["exports", "types"],
-    "apps/web/src/components/{file,image,media-player,surfaces}.tsx": ["exports", "types"]
+    "apps/web/src/components/{file,image,media-player,surfaces}.tsx": [
+      "exports",
+      "types"
+    ]
   },
   "workspaces": {
     ".": {

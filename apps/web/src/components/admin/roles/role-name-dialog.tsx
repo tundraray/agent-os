@@ -4,7 +4,12 @@ import { useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { ROLE_NAME_MAX_LENGTH } from '@agent-os/contracts';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { roleNameRules } from '@/lib/admin/form-rules';
 import { adminRecordPath } from '@/lib/shell-route';
@@ -28,7 +33,12 @@ type RoleNameDialogProps = {
  * opens its own page (plan Notes 6), so the dialog closes by the navigation and focus goes to the new page's
  * `h1`; a renamed role closes the dialog and focus returns to the control that opened it.
  */
-export function RoleNameDialog({ open, onOpenChange, role, onRenamed }: RoleNameDialogProps) {
+export function RoleNameDialog({
+  open,
+  onOpenChange,
+  role,
+  onRenamed,
+}: RoleNameDialogProps) {
   const t = useTranslations('admin.roles');
   const router = useRouter();
   const createdId = useRef<string | null>(null);
@@ -68,7 +78,9 @@ export function RoleNameDialog({ open, onOpenChange, role, onRenamed }: RoleName
           onSubmit={submit}
           submitLabel={role === undefined ? t('create') : t('save')}
           onSaved={saved}
-          logEvent={role === undefined ? 'admin: role create' : 'admin: role rename'}
+          logEvent={
+            role === undefined ? 'admin: role create' : 'admin: role rename'
+          }
         >
           {(form) => (
             <AdminTextField

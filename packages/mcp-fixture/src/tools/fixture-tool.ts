@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { LogDataset } from '../dataset';
 
 /** Outcome of one tool call: a JSON result, or a rejection the server turns into an `isError` result. */
-export type ToolCallOutcome = { ok: true; result: Record<string, unknown> } | { ok: false; error: string };
+export type ToolCallOutcome =
+  { ok: true; result: Record<string, unknown> } | { ok: false; error: string };
 
 /** A fixture tool as the server lists and calls it. */
 export interface FixtureTool {
@@ -28,14 +29,19 @@ interface ToolDefinition<Schema extends z.ZodType> {
   /** Strict schema of what `run` returns: listed as the tool's `outputSchema` and checked on every result (KD-6). */
   resultSchema?: z.ZodObject;
   /** Returns an error string for a rejection that depends on the data (an invalid cursor). */
-  run(args: z.output<Schema>, dataset: LogDataset): Record<string, unknown> | string;
+  run(
+    args: z.output<Schema>,
+    dataset: LogDataset,
+  ): Record<string, unknown> | string;
 }
 
 /**
  * Binds a zod argument schema to its handler; arguments outside the schema are rejected before the handler runs.
  * A result outside `resultSchema` is a fixture defect, so the call throws instead of answering.
  */
-export function defineTool<Schema extends z.ZodObject>(definition: ToolDefinition<Schema>): FixtureTool {
+export function defineTool<Schema extends z.ZodObject>(
+  definition: ToolDefinition<Schema>,
+): FixtureTool {
   const { resultSchema } = definition;
   return {
     name: definition.name,
@@ -43,14 +49,25 @@ export function defineTool<Schema extends z.ZodObject>(definition: ToolDefinitio
     description: definition.description,
     readOnly: definition.readOnly,
     // `argsSchema` and `resultSchema` are zod objects, so each JSON Schema root is an object.
-    inputSchema: { ...z.toJSONSchema(definition.argsSchema, { io: 'input' }), type: 'object' },
+    inputSchema: {
+      ...z.toJSONSchema(definition.argsSchema, { io: 'input' }),
+      type: 'object',
+    },
     ...(resultSchema === undefined
       ? {}
-      : { outputSchema: { ...z.toJSONSchema(resultSchema, { io: 'output' }), type: 'object' as const } }),
+      : {
+          outputSchema: {
+            ...z.toJSONSchema(resultSchema, { io: 'output' }),
+            type: 'object' as const,
+          },
+        }),
     call(args, dataset) {
       const parsed = definition.argsSchema.safeParse(args ?? {});
       if (!parsed.success) {
-        return { ok: false, error: `invalid arguments for ${definition.name}: ${z.prettifyError(parsed.error)}` };
+        return {
+          ok: false,
+          error: `invalid arguments for ${definition.name}: ${z.prettifyError(parsed.error)}`,
+        };
       }
       const result = definition.run(parsed.data, dataset);
       if (typeof result === 'string') {

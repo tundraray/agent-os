@@ -1,6 +1,16 @@
-import type { KnowledgeCounts, KnowledgeItemState, KnowledgePlacement, KnowledgeSelection } from '@agent-os/contracts';
+import type {
+  KnowledgeCounts,
+  KnowledgeItemState,
+  KnowledgePlacement,
+  KnowledgeSelection,
+} from '@agent-os/contracts';
 import { utf8Bytes } from '../model/token-estimate';
-import { KNOWLEDGE_RULE, knowledgeKey, knowledgeLine, knowledgeText } from './knowledge-text';
+import {
+  KNOWLEDGE_RULE,
+  knowledgeKey,
+  knowledgeLine,
+  knowledgeText,
+} from './knowledge-text';
 import {
   type EmbeddingState,
   type GraphItem,
@@ -26,7 +36,8 @@ function day(n: number): string {
 
 /** Appends `pad` to the record's last free text. */
 function withPad(item: GraphItem, pad: string): GraphItem {
-  if (item.type === 'entity') return { ...item, description: item.description + pad };
+  if (item.type === 'entity')
+    return { ...item, description: item.description + pad };
   if (item.kind === 'fact') return { ...item, label: item.label + pad };
   if (item.kind === 'lesson') return { ...item, hint: item.hint + pad };
   return { ...item, question: item.question + pad };
@@ -38,7 +49,12 @@ function padded(item: GraphItem): GraphItem {
   return withPad(item, 'x'.repeat(RECORD_BYTES - oneX + 1));
 }
 
-function entity(id: number, name: string, confirmations: number, date: number): GraphItem {
+function entity(
+  id: number,
+  name: string,
+  confirmations: number,
+  date: number,
+): GraphItem {
   return padded({
     type: 'entity',
     kind: 'fact',
@@ -109,7 +125,8 @@ const GRAPH: readonly GraphItem[] = [
 ];
 
 /** `legacy.grep` is gone from the registry; `logs.search` is there. */
-const REGISTRY: ToolAlive = (server, tool) => server === 'logs' && tool === 'search';
+const REGISTRY: ToolAlive = (server, tool) =>
+  server === 'logs' && tool === 'search';
 const ALL_TOOLS: ToolAlive = () => true;
 
 const MODEL = 'voyage/voyage-3';
@@ -167,7 +184,9 @@ const OFF_PLACEMENTS: Record<string, KnowledgePlacement> = {
   r9: null,
 };
 
-const NO_PLACEMENTS: Record<string, KnowledgePlacement> = Object.fromEntries(ALL_ORDER.map((key) => [key, null]));
+const NO_PLACEMENTS: Record<string, KnowledgePlacement> = Object.fromEntries(
+  ALL_ORDER.map((key) => [key, null]),
+);
 
 const ROWS: readonly Row[] = [
   {
@@ -222,7 +241,12 @@ const ROWS: readonly Row[] = [
     lessonsEnabled: false,
     chosen: ['e1', 'e2', 'e3', 'e4', 'e5', 'e6'],
     order: ALL_ORDER,
-    states: { r8: 'lessons_off', r9: 'outdated', r10: 'active', r7: 'outdated' },
+    states: {
+      r8: 'lessons_off',
+      r9: 'outdated',
+      r10: 'active',
+      r7: 'outdated',
+    },
     placements: { ...ON_PLACEMENTS, e3: 'always', r8: null },
     counts: { active: 7, always: 3, beyond: 4, outdated: 1, percent: 117 },
   },
@@ -239,7 +263,9 @@ const ROWS: readonly Row[] = [
     embedding: {
       ...ON,
       vectors: [
-        ...ACTIVE_KEYS.filter((key) => key !== 'e1' && key !== 'e2').map((key) => ({ key, model: MODEL })),
+        ...ACTIVE_KEYS.filter((key) => key !== 'e1' && key !== 'e2').map(
+          (key) => ({ key, model: MODEL }),
+        ),
         { key: 'e2', model: 'voyage/voyage-2' },
         { key: 'r9', model: MODEL },
       ],
@@ -258,14 +284,20 @@ const ROWS: readonly Row[] = [
   {
     name: 'off, the last attempt failed at the provider',
     limitTokens: 1_000,
-    embedding: { ...ON, lastFailure: { reason: 'provider_unavailable', model: MODEL } },
+    embedding: {
+      ...ON,
+      lastFailure: { reason: 'provider_unavailable', model: MODEL },
+    },
     placements: OFF_PLACEMENTS,
     selection: { state: 'off', reason: 'provider_failed', model: MODEL },
   },
   {
     name: "one employee's owner_disabled does not turn selection off",
     limitTokens: 1_000,
-    embedding: { ...ON, lastFailure: { reason: 'owner_disabled', model: MODEL } },
+    embedding: {
+      ...ON,
+      lastFailure: { reason: 'owner_disabled', model: MODEL },
+    },
     selection: { state: 'on' },
   },
   {
@@ -284,9 +316,17 @@ const ROWS: readonly Row[] = [
 
 describe('selectKnowledge and knowledgeViewParts (UC-5)', () => {
   it.each(ROWS)('$name', (row) => {
-    const settings = { limitTokens: row.limitTokens, lessonsEnabled: row.lessonsEnabled ?? true };
+    const settings = {
+      limitTokens: row.limitTokens,
+      lessonsEnabled: row.lessonsEnabled ?? true,
+    };
     const toolAlive = row.toolAlive ?? REGISTRY;
-    const choice = selectKnowledge({ items: GRAPH, settings, toolAlive, closeness: row.closeness ?? [] });
+    const choice = selectKnowledge({
+      items: GRAPH,
+      settings,
+      toolAlive,
+      closeness: row.closeness ?? [],
+    });
     const text = knowledgeText(choice.chosen);
 
     if (row.chosen !== undefined) {
@@ -294,12 +334,21 @@ describe('selectKnowledge and knowledgeViewParts (UC-5)', () => {
       if (row.chosen.length === 0) {
         expect(text).toBeNull();
       } else {
-        expect(text?.startsWith(`${KNOWLEDGE_RULE}\n<data source="knowledge"`)).toBe(true);
-        expect(text?.split('\n').slice(2, -1)).toEqual(choice.chosen.map(knowledgeLine));
+        expect(
+          text?.startsWith(`${KNOWLEDGE_RULE}\n<data source="knowledge"`),
+        ).toBe(true);
+        expect(text?.split('\n').slice(2, -1)).toEqual(
+          choice.chosen.map(knowledgeLine),
+        );
       }
     }
     if (row.sameTextWith !== undefined) {
-      const other = selectKnowledge({ items: [...GRAPH].reverse(), settings, toolAlive, closeness: row.sameTextWith });
+      const other = selectKnowledge({
+        items: [...GRAPH].reverse(),
+        settings,
+        toolAlive,
+        closeness: row.sameTextWith,
+      });
       expect(knowledgeText(other.chosen)).toBe(text);
     }
 
@@ -311,14 +360,19 @@ describe('selectKnowledge and knowledgeViewParts (UC-5)', () => {
       embedding: row.embedding ?? ON,
     });
     const byKey = new Map(view.items.map((item) => [knowledgeKey(item), item]));
-    if (row.order !== undefined) expect(view.items.map(knowledgeKey)).toEqual(row.order);
-    for (const [key, state] of Object.entries(row.states ?? {})) expect(byKey.get(key)?.state).toBe(state);
+    if (row.order !== undefined)
+      expect(view.items.map(knowledgeKey)).toEqual(row.order);
+    for (const [key, state] of Object.entries(row.states ?? {}))
+      expect(byKey.get(key)?.state).toBe(state);
     if (row.placements !== undefined) {
-      expect(Object.fromEntries(view.items.map((item) => [knowledgeKey(item), item.placement]))).toEqual(
-        row.placements,
-      );
+      expect(
+        Object.fromEntries(
+          view.items.map((item) => [knowledgeKey(item), item.placement]),
+        ),
+      ).toEqual(row.placements);
     }
     if (row.counts !== undefined) expect(view.counts).toEqual(row.counts);
-    if (row.selection !== undefined) expect(view.selection).toEqual(row.selection);
+    if (row.selection !== undefined)
+      expect(view.selection).toEqual(row.selection);
   });
 });

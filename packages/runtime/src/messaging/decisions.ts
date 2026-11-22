@@ -89,7 +89,10 @@ export class Decisions {
    * Opens the request of an `await_decision` step with `decision.requested`, in the step's commit
    * transaction. The caller puts the task in `waiting` (`decision`).
    */
-  async open(task: TaskRow, request: DecisionRequest): Promise<RuntimeDecisionRow> {
+  async open(
+    task: TaskRow,
+    request: DecisionRequest,
+  ): Promise<RuntimeDecisionRow> {
     const row = await this.deps.repository.insert({
       decisionId: randomUUID(),
       taskId: task.taskId,
@@ -153,7 +156,10 @@ export class Decisions {
   }
 
   /** The owner's request in any status; `undefined` for a missing or another owner's one. */
-  async get(decisionId: string, ownerId: string): Promise<TreeDecision | undefined> {
+  async get(
+    decisionId: string,
+    ownerId: string,
+  ): Promise<TreeDecision | undefined> {
     const row = await this.deps.repository.findOwned(decisionId, ownerId);
     return row === undefined ? undefined : toTreeDecision(row);
   }
@@ -175,16 +181,26 @@ export class Decisions {
     const { repository, tasks, taskRows, events } = this.deps;
     const found = await repository.findTaskAndOwner(decisionId);
     if (found?.ownerId !== ownerId) {
-      throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
+      throw new RuntimeError(
+        'DECISION_NOT_FOUND',
+        `Decision ${decisionId} not found`,
+      );
     }
     const task = await taskRows.find(found.taskId);
     const request = await repository.find(decisionId);
     // A request of a deleted tree answers as a missing one: the stop cancelled it, and
     // `already_resolved` would tell the deleted tree apart.
     if (!task || task.deletedAt !== null || !request) {
-      throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
+      throw new RuntimeError(
+        'DECISION_NOT_FOUND',
+        `Decision ${decisionId} not found`,
+      );
     }
-    const answered = { outcome: 'already_resolved', taskId: task.taskId, rootId: task.rootId } as const;
+    const answered = {
+      outcome: 'already_resolved',
+      taskId: task.taskId,
+      rootId: task.rootId,
+    } as const;
     if (request.status !== open) return answered;
 
     // The task row first, as a stop writes them. A stop or another resolve that came first has
@@ -194,7 +210,8 @@ export class Decisions {
       from: [waiting],
       waitReason: WaitReasonSchema.enum.decision,
     });
-    if (!held || !(await repository.resolve(decisionId, resolution))) return answered;
+    if (!held || !(await repository.resolve(decisionId, resolution)))
+      return answered;
     const woken = await writeHeld(tasks, held, { kind: 'set', status: queued });
     await events.append({
       type: EVENT['decision.resolved'],

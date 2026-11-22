@@ -8,17 +8,27 @@ describe('ShellError', () => {
   });
 
   it('shows a fixed message and logs only the digest, never the error text', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const error = Object.assign(new Error('secret render failure'), { digest: 'digest-123' });
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    const error = Object.assign(new Error('secret render failure'), {
+      digest: 'digest-123',
+    });
 
     render(<ShellError error={error} retry={() => {}} />);
 
-    expect(screen.getByRole('heading', { name: 'Что-то пошло не так' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Обновить страницу' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Что-то пошло не так' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Обновить страницу' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/secret render failure/)).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledOnce();
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringContaining('"level":"error","message":"chat shell: render failed","fields":{"digest":"digest-123"}}'),
+      expect.stringContaining(
+        '"level":"error","message":"chat shell: render failed","fields":{"digest":"digest-123"}}',
+      ),
     );
   });
 });

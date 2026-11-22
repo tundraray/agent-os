@@ -1,24 +1,46 @@
 {
-  "start_agent": { "title": "Start agent", "args": { "description": "Title", "agent": "Agent", "prompt": "Task" } },
-  "message_agent": { "title": "Message agent", "args": { "agentId": "Agent", "message": "Message" } },
+  "start_agent": {
+    "title": "Start agent",
+    "args": { "description": "Title", "agent": "Agent", "prompt": "Task" }
+  },
+  "message_agent": {
+    "title": "Message agent",
+    "args": { "agentId": "Agent", "message": "Message" }
+  },
   "list_agents": { "title": "List agents", "args": {} },
   "stop_agent": { "title": "Stop agent", "args": { "agentId": "Agent" } },
   "run_code": {
     "title": "Run code",
-    "args": { "description": "Description", "class": "Run type", "script": "Script" }
+    "args": {
+      "description": "Description",
+      "class": "Run type",
+      "script": "Script"
+    }
   },
   "read_tool_result": {
     "title": "Read saved result",
     "args": { "callId": "Call", "offset": "From line", "limit": "Lines" }
   },
-  "search_tool_result": { "title": "Search saved result", "args": { "callId": "Call", "pattern": "Search for" } },
+  "search_tool_result": {
+    "title": "Search saved result",
+    "args": { "callId": "Call", "pattern": "Search for" }
+  },
   "start_deep_agent": {
     "title": "Start deep agent",
-    "args": { "deepAgent": "Deep agent", "question": "Question", "boundaries": "Scope", "result": "Result" }
+    "args": {
+      "deepAgent": "Deep agent",
+      "question": "Question",
+      "boundaries": "Scope",
+      "result": "Result"
+    }
   },
   "task_create": {
     "title": "New task",
-    "args": { "subject": "Subject", "description": "Description", "activeForm": "In-progress text" }
+    "args": {
+      "subject": "Subject",
+      "description": "Description",
+      "activeForm": "In-progress text"
+    }
   },
   "task_update": {
     "title": "Update task",
@@ -50,11 +72,27 @@
   "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
   "create_record": {
     "title": "Create record",
-    "args": { "kind": "Kind", "name": "Name", "description": "Description", "content": "Content", "system": "System" }
+    "args": {
+      "kind": "Kind",
+      "name": "Name",
+      "description": "Description",
+      "content": "Content",
+      "system": "System"
+    }
   },
   "edit_record": {
     "title": "Edit record",
-    "args": { "recordId": "Record", "kind": "Kind", "name": "Name", "description": "Description", "content": "Content", "system": "System" }
+    "args": {
+      "recordId": "Record",
+      "kind": "Kind",
+      "name": "Name",
+      "description": "Description",
+      "content": "Content",
+      "system": "System"
+    }
   },
-  "delete_record": { "title": "Delete record", "args": { "recordId": "Record" } }
+  "delete_record": {
+    "title": "Delete record",
+    "args": { "recordId": "Record" }
+  }
 }

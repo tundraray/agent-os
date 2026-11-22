@@ -32,12 +32,18 @@ export const openAICompatibleAdapter: ProviderAdapter = {
   },
   toolsRejected(statusCode, body) {
     const error = rejectionText(statusCode, body);
-    return error !== null && (error.message.includes('tools') || error.param.startsWith('tools'));
+    return (
+      error !== null &&
+      (error.message.includes('tools') || error.param.startsWith('tools'))
+    );
   },
   checkRequest(connection) {
     return {
       url: `${connection.baseUrl}/models`,
-      headers: keyHeader('authorization', connection.apiKey === null ? null : `Bearer ${connection.apiKey}`),
+      headers: keyHeader(
+        'authorization',
+        connection.apiKey === null ? null : `Bearer ${connection.apiKey}`,
+      ),
     };
   },
 };

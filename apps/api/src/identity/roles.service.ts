@@ -106,12 +106,7 @@ export class RolesService {
     await this.db
       .transaction(async () => {
         await this.roles.update(role.id, after);
-        await this.recordRoleChange(
-          actorId,
-          role.id,
-          roleState(role),
-          after,
-        );
+        await this.recordRoleChange(actorId, role.id, roleState(role), after);
       })
       .catch(roleNameTaken);
     this.logger.info('role updated', {

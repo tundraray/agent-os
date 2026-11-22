@@ -27,16 +27,27 @@ const longText = z.string().trim().min(1).max(KNOWLEDGE_LONG_TEXT_MAX);
 const EntityIdSchema = z.string().regex(ENTITY_ID_PATTERN);
 const ItemIdSchema = z
   .string()
-  .regex(new RegExp(`${ENTITY_ID_PATTERN.source}|${RELATION_ID_PATTERN.source}`))
-  .describe('The id of a record of the graph: e… for an entity, r… for a relation');
+  .regex(
+    new RegExp(`${ENTITY_ID_PATTERN.source}|${RELATION_ID_PATTERN.source}`),
+  )
+  .describe(
+    'The id of a record of the graph: e… for an entity, r… for a relation',
+  );
 
 /** A label of a new entity for references within the same answer; it may not look like an entity id. */
 const RefSchema = shortText
-  .refine((ref) => !ENTITY_ID_PATTERN.test(ref), 'a ref may not look like an entity id')
-  .describe('Your label of the new entity, used by from / to of relations later in this answer');
+  .refine(
+    (ref) => !ENTITY_ID_PATTERN.test(ref),
+    'a ref may not look like an entity id',
+  )
+  .describe(
+    'Your label of the new entity, used by from / to of relations later in this answer',
+  );
 
 /** An end of a fact: an entity id `e…` or the `ref` of an entity added earlier in the answer. */
-const EndSchema = shortText.describe('An entity id e… or the ref of an entity added earlier in this answer');
+const EndSchema = shortText.describe(
+  'An entity id e… or the ref of an entity added earlier in this answer',
+);
 
 const EvidenceSchema = z
   .array(z.string().regex(CALL_ID_PATTERN))
@@ -81,7 +92,11 @@ export const KnowledgeOperationSchema = z.discriminatedUnion('op', [
       evidence: EvidenceSchema,
     }),
   ]),
-  z.object({ op: z.literal('confirm'), id: ItemIdSchema, evidence: EvidenceSchema }),
+  z.object({
+    op: z.literal('confirm'),
+    id: ItemIdSchema,
+    evidence: EvidenceSchema,
+  }),
   z.object({ op: z.literal('mark_outdated'), id: ItemIdSchema }),
 ]);
 export type KnowledgeOperation = z.infer<typeof KnowledgeOperationSchema>;
@@ -94,18 +109,24 @@ export type KnowledgeOperation = z.infer<typeof KnowledgeOperationSchema>;
 export const RecordKnowledgeArgsSchema = z.object({
   operations: z
     .array(KnowledgeOperationSchema)
-    .describe(`Up to ${KNOWLEDGE_OPERATIONS_MAX} operations on the knowledge graph`),
+    .describe(
+      `Up to ${KNOWLEDGE_OPERATIONS_MAX} operations on the knowledge graph`,
+    ),
 });
 
 /** How a `record_knowledge` call is parsed: the operations as they are. */
-export const RecordKnowledgeAnswerSchema = z.object({ operations: z.array(z.unknown()) });
+export const RecordKnowledgeAnswerSchema = z.object({
+  operations: z.array(z.unknown()),
+});
 
 /** Arguments of `choose_entities`: for each new entity, a candidate's id or `null` to keep it new. */
 export const ChooseEntitiesArgsSchema = z.object({
   choices: z.array(
     z.object({
       ref: z.string(),
-      id: EntityIdSchema.nullable().describe('The id e… of the chosen candidate, or null to keep the entity new'),
+      id: EntityIdSchema.nullable().describe(
+        'The id e… of the chosen candidate, or null to keep the entity new',
+      ),
     }),
   ),
 });

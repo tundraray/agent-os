@@ -64,7 +64,8 @@ interface StepCommitDeps extends TaskEndDeps {
  * `invalid_step_result`; `abandoned` — the transaction failed every retry, the step is left to the
  * recovery sweeper.
  */
-export type StepCommitOutcome = 'committed' | 'rejected' | 'invalid' | 'abandoned';
+export type StepCommitOutcome =
+  'committed' | 'rejected' | 'invalid' | 'abandoned';
 
 /** An object handed over with `effects.adopt` for a task the commit spawned. */
 export interface AdoptedTask {
@@ -110,7 +111,13 @@ interface CommittedStep {
 /** The attempt is no longer current when the commit takes the task row. */
 const REJECTED = Symbol('rejected');
 
-const OUTCOMES = new Set(['continue', 'wait', 'await_decision', 'complete', 'fail']);
+const OUTCOMES = new Set([
+  'continue',
+  'wait',
+  'await_decision',
+  'complete',
+  'fail',
+]);
 
 /** The outcome a handler returned, read defensively: the result comes from upper-layer code. */
 const outcomeOf = (result: unknown): unknown =>
@@ -155,10 +162,13 @@ export class StepCommitter {
         const outcome = await this.commitOnce(step, result);
         const durationMs = Date.now() - startedAt;
         if (outcome === REJECTED) {
-          logger.warn('step result rejected: the attempt is no longer current', {
-            outcome: outcomeOf(result),
-            durationMs,
-          });
+          logger.warn(
+            'step result rejected: the attempt is no longer current',
+            {
+              outcome: outcomeOf(result),
+              durationMs,
+            },
+          );
           return notCommitted('rejected');
         }
         crashPoints.hit('step.after-commit');
@@ -181,8 +191,13 @@ export class StepCommitter {
           adopted: outcome.adopted,
         };
       } catch (error) {
-        if (error instanceof InvalidStepResultError || error instanceof RuntimeError) {
-          return notCommitted(await this.failInvalid(step, error, Date.now() - startedAt));
+        if (
+          error instanceof InvalidStepResultError ||
+          error instanceof RuntimeError
+        ) {
+          return notCommitted(
+            await this.failInvalid(step, error, Date.now() - startedAt),
+          );
         }
         logger.warn('step commit transaction failed', {
           outcome: outcomeOf(result),
@@ -207,7 +222,11 @@ export class StepCommitter {
     return db.transaction(async () => {
       // The step's first write is of its own row: a stop, an interrupt or a message of this task
       // comes entirely before this commit or entirely after it.
-      const task = await tasks.hold({ taskId: step.taskId, from: [running], attempt: step.attempt });
+      const task = await tasks.hold({
+        taskId: step.taskId,
+        from: [running],
+        attempt: step.attempt,
+      });
       if (!task) return REJECTED;
       this.checkOutcome(result);
 
@@ -332,28 +351,44 @@ export class StepCommitter {
     switch (result.outcome) {
       case 'await_decision': {
         if (typeof result.kind !== 'string' || result.kind.length === 0) {
-          throw new InvalidStepResultError('await_decision needs a non-empty string kind');
+          throw new InvalidStepResultError(
+            'await_decision needs a non-empty string kind',
+          );
         }
         const bytes = jsonByteLength(result.payload ?? null);
         if (bytes > max) {
-          throw new InvalidStepResultError(`decision payload is ${bytes} bytes, over ${max}`);
+          throw new InvalidStepResultError(
+            `decision payload is ${bytes} bytes, over ${max}`,
+          );
         }
         return;
       }
       case 'complete': {
         const bytes = jsonByteLength(result.result ?? null);
         if (bytes > max) {
-          throw new InvalidStepResultError(`result is ${bytes} bytes, over ${max}`);
+          throw new InvalidStepResultError(
+            `result is ${bytes} bytes, over ${max}`,
+          );
         }
         return;
       }
       case 'fail': {
-        if (typeof result.reason !== 'string' || typeof result.message !== 'string') {
-          throw new InvalidStepResultError('fail needs a string reason and message');
+        if (
+          typeof result.reason !== 'string' ||
+          typeof result.message !== 'string'
+        ) {
+          throw new InvalidStepResultError(
+            'fail needs a string reason and message',
+          );
         }
-        const bytes = jsonByteLength({ reason: result.reason, message: result.message });
+        const bytes = jsonByteLength({
+          reason: result.reason,
+          message: result.message,
+        });
         if (bytes > max) {
-          throw new InvalidStepResultError(`failure is ${bytes} bytes, over ${max}`);
+          throw new InvalidStepResultError(
+            `failure is ${bytes} bytes, over ${max}`,
+          );
         }
         return;
       }
@@ -370,8 +405,13 @@ export class StepCommitter {
     task: TaskRow,
     outcome: StepResult['outcome'],
   ): { api: StepEffects; state: EffectsState } {
-    const { handlers, tasks, trackers, events, inbox, inboxPayloadMaxBytes } = this.deps;
-    const state: EffectsState = { problem: undefined, tracker: undefined, adopted: [] };
+    const { handlers, tasks, trackers, events, inbox, inboxPayloadMaxBytes } =
+      this.deps;
+    const state: EffectsState = {
+      problem: undefined,
+      tracker: undefined,
+      adopted: [],
+    };
     /** Tasks this commit created, with their types. */
     const spawned = new Map<string, string>();
     const invalid = (problem: string): never => {
@@ -391,7 +431,10 @@ export class StepCommitter {
       }
       return { type, input: parsed.data };
     };
-    const insertChild = async (child: ChildTask, trackerId: string | null): Promise<string> => {
+    const insertChild = async (
+      child: ChildTask,
+      trackerId: string | null,
+    ): Promise<string> => {
       const row = await tasks.insert({
         taskId: randomUUID(),
         type: child.type,
@@ -405,7 +448,12 @@ export class StepCommitter {
       await events.append({
         type: EVENT['task.created'],
         task: row,
-        payload: { type: child.type, parentId: task.taskId, depth: row.depth, trackerId },
+        payload: {
+          type: child.type,
+          parentId: task.taskId,
+          depth: row.depth,
+          trackerId,
+        },
       });
       spawned.set(row.taskId, child.type);
       return row.taskId;
@@ -413,21 +461,29 @@ export class StepCommitter {
     const api: StepEffects = {
       spawn: (child) => insertChild(checkChild(child), null),
       openTracker: async (children) => {
-        if (outcome !== 'wait') return invalid(`openTracker needs the outcome wait, not ${outcome}`);
+        if (outcome !== 'wait')
+          return invalid(`openTracker needs the outcome wait, not ${outcome}`);
         if (state.tracker) return invalid('a step opens at most one tracker');
         if (!Array.isArray(children) || children.length === 0) {
           return invalid('openTracker needs at least one task');
         }
         if (children.length > TRACKER_MAX_TASKS) {
-          return invalid(`openTracker got ${children.length} tasks, over ${TRACKER_MAX_TASKS}`);
+          return invalid(
+            `openTracker got ${children.length} tasks, over ${TRACKER_MAX_TASKS}`,
+          );
         }
         const checked = children.map(checkChild);
         const trackerId = randomUUID();
         // Marked before the writes, so a second call in this commit is refused even meanwhile.
         state.tracker = { trackerId, taskIds: [] };
-        await trackers.insert({ trackerId, taskId: task.taskId, ownerId: task.ownerId });
+        await trackers.insert({
+          trackerId,
+          taskId: task.taskId,
+          ownerId: task.ownerId,
+        });
         const taskIds: string[] = [];
-        for (const child of checked) taskIds.push(await insertChild(child, trackerId));
+        for (const child of checked)
+          taskIds.push(await insertChild(child, trackerId));
         state.tracker = { trackerId, taskIds };
         return state.tracker;
       },
@@ -456,8 +512,10 @@ export class StepCommitter {
       },
       adopt: (taskId, object) => {
         const type = spawned.get(taskId);
-        if (type === undefined) return invalid(`adopt of task ${taskId}, not spawned in this commit`);
-        if (!handlers.live(type)) return invalid(`adopt of task ${taskId} of stateless type "${type}"`);
+        if (type === undefined)
+          return invalid(`adopt of task ${taskId}, not spawned in this commit`);
+        if (!handlers.live(type))
+          return invalid(`adopt of task ${taskId} of stateless type "${type}"`);
         state.adopted.push({ taskId, object });
       },
     };
@@ -496,19 +554,25 @@ export class StepCommitter {
         return true;
       });
     } catch (failError) {
-      logger.error('failing an invalid step result failed; left to the recovery sweeper', {
-        reason: failure.reason,
-        durationMs,
-        error: failError,
-        cause: error,
-      });
+      logger.error(
+        'failing an invalid step result failed; left to the recovery sweeper',
+        {
+          reason: failure.reason,
+          durationMs,
+          error: failError,
+          cause: error,
+        },
+      );
       return 'abandoned';
     }
     if (!ended) {
-      logger.warn('invalid step result rejected: the attempt is no longer current', {
-        durationMs,
-        error,
-      });
+      logger.warn(
+        'invalid step result rejected: the attempt is no longer current',
+        {
+          durationMs,
+          error,
+        },
+      );
       return 'rejected';
     }
     logger.error('step result invalid: task failed', {

@@ -1,4 +1,8 @@
-import { Inject, Injectable, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  type OnApplicationBootstrap,
+} from '@nestjs/common';
 import { LOGGER, type Logger } from '@agent-os/common';
 import { builtinRecords } from './builtin-records';
 import { LibraryService } from './library.service';

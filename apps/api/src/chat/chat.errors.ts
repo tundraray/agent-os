@@ -104,7 +104,11 @@ function codeOf(
  */
 function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   if (error instanceof HttpException) return error;
-  if (error instanceof AgentsError && error.code === 'START_REFUSED' && error.refusal !== null) {
+  if (
+    error instanceof AgentsError &&
+    error.code === 'START_REFUSED' &&
+    error.refusal !== null
+  ) {
     return startRefused(error.refusal);
   }
   const code = codeOf(error, notFound);
@@ -130,7 +134,9 @@ export type Command<T> = RouteCall<T> & { readonly fields: CommandFields };
  * How the chat's routes log and answer (design-chat.md, Constraints): one `api command …` record per
  * command, and every error leaves as the `HttpException` of {@link toHttpError}.
  */
-export function chatRoute(notFound: NotFoundCode = 'AGENT_NOT_FOUND'): RouteStyle {
+export function chatRoute(
+  notFound: NotFoundCode = 'AGENT_NOT_FOUND',
+): RouteStyle {
   return {
     subject: 'api command',
     toHttpError: (error) => toHttpError(error, notFound),

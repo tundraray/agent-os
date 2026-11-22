@@ -52,7 +52,8 @@ export type EndOfTurn =
  * or misses or adds a field of the answer the `task` call named (KD-7): then a notice asks for it again.
  */
 export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
-  if (input.unfinishedChildren > 0 || input.pendingChildNotices > 0) return { kind: 'wait' };
+  if (input.unfinishedChildren > 0 || input.pendingChildNotices > 0)
+    return { kind: 'wait' };
   if (input.openTasks.length > 0) {
     return {
       kind: 'notice',
@@ -63,10 +64,13 @@ export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
   if (input.finalSubagent === null) {
     if (input.cutOff) return { kind: 'notice', text: CUT_OFF_NOTICE };
     const fieldsNotice = answerFieldsNotice(input.text, input.answerFields);
-    return fieldsNotice === null ? { kind: 'complete', report: input.text } : { kind: 'notice', text: fieldsNotice };
+    return fieldsNotice === null
+      ? { kind: 'complete', report: input.text }
+      : { kind: 'notice', text: fieldsNotice };
   }
   const report = input.finalSubagentReport;
-  if (report?.status === 'completed') return { kind: 'complete', report: report.text ?? '' };
+  if (report?.status === 'completed')
+    return { kind: 'complete', report: report.text ?? '' };
   return {
     kind: 'notice',
     text: finishRefusal(input.finalSubagent, report),
@@ -84,7 +88,8 @@ type NoticeEnding = Extract<EndOfTurn, { kind: 'notice' }>;
 export function noticeContent(ending: NoticeEnding): HistoryContent<'notice'> {
   const content: HistoryContent<'notice'> = { text: ending.text };
   if (ending.openTasks !== undefined) content.openTasks = [...ending.openTasks];
-  if (ending.missingReport !== undefined) content.missingReport = ending.missingReport;
+  if (ending.missingReport !== undefined)
+    content.missingReport = ending.missingReport;
   return content;
 }
 
@@ -102,7 +107,10 @@ function openTasksNotice(tasks: readonly SessionTask[]): string {
   ].join('\n');
 }
 
-function finishRefusal(finalSubagent: string, report: FinalSubagentReport | null): string {
+function finishRefusal(
+  finalSubagent: string,
+  report: FinalSubagentReport | null,
+): string {
   const why =
     report === null
       ? `there is no answer of subagent "${finalSubagent}" yet`
@@ -114,7 +122,10 @@ function finishRefusal(finalSubagent: string, report: FinalSubagentReport | null
  * The notice of an answer that is not one JSON object with a non-empty string in each named field and no other
  * (KD-7); `null` — the answer fits, or no fields are named.
  */
-function answerFieldsNotice(text: string, fields: readonly string[]): string | null {
+function answerFieldsNotice(
+  text: string,
+  fields: readonly string[],
+): string | null {
   if (fields.length === 0) return null;
   const rule = `Your answer must be one JSON object and nothing else, with a non-empty string in each of these fields: ${fields.join(', ')}.`;
   let parsed: unknown;
@@ -127,12 +138,18 @@ function answerFieldsNotice(text: string, fields: readonly string[]): string | n
     return `${rule} Your answer is not a JSON object.`;
   }
   const values = parsed as Record<string, unknown>;
-  const missing = fields.filter((field) => typeof values[field] !== 'string' || (values[field] as string).trim() === '');
+  const missing = fields.filter(
+    (field) =>
+      typeof values[field] !== 'string' ||
+      (values[field] as string).trim() === '',
+  );
   const extra = Object.keys(values).filter((key) => !fields.includes(key));
   if (missing.length === 0 && extra.length === 0) return null;
   return [
     rule,
-    ...(missing.length === 0 ? [] : [`Missing or empty: ${missing.join(', ')}.`]),
+    ...(missing.length === 0
+      ? []
+      : [`Missing or empty: ${missing.join(', ')}.`]),
     ...(extra.length === 0 ? [] : [`Not asked for: ${extra.join(', ')}.`]),
   ].join(' ');
 }

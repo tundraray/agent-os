@@ -40,7 +40,11 @@
 // - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
 
 import { randomUUID } from 'node:crypto';
-import { runtimeDecisions, runtimeModelCalls, runtimeTasks } from '@agent-os/db';
+import {
+  runtimeDecisions,
+  runtimeModelCalls,
+  runtimeTasks,
+} from '@agent-os/db';
 import {
   type GuardResult,
   type NewMessage,
@@ -103,7 +107,11 @@ async function childFinishedOf(parentId: string) {
 }
 
 /** An employee's message of kind `note` to the owner's task, without `revive`. */
-function note(recipientId: string, ownerId: string, payload: unknown): NewMessage {
+function note(
+  recipientId: string,
+  ownerId: string,
+  payload: unknown,
+): NewMessage {
   return { recipientId, ownerId, kind: 'note', sender: ownerId, payload };
 }
 
@@ -183,7 +191,11 @@ function cutOffHandler(options: {
         probe.later.push({
           stepNo: ctx.stepNo,
           resumedAfterLoss: ctx.resumedAfterLoss,
-          messages: ctx.messages.map(({ kind, sender, payload }) => ({ kind, sender, payload })),
+          messages: ctx.messages.map(({ kind, sender, payload }) => ({
+            kind,
+            sender,
+            payload,
+          })),
         });
         await next.pass(ctx.signal);
         return { outcome: 'wait', commit: writeHandlerRow(ctx, 'commit') };
@@ -193,7 +205,10 @@ function cutOffHandler(options: {
       probe.signal = ctx.signal;
       await held.pass(DEAF_SIGNAL);
       probe.lateGuard = await ctx.guard(writeHandlerRow(ctx, 'late-guard'));
-      return { outcome: 'continue', commit: writeHandlerRow(ctx, 'late-commit') };
+      return {
+        outcome: 'continue',
+        commit: writeHandlerRow(ctx, 'late-commit'),
+      };
     },
   };
 }
@@ -224,127 +239,150 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   with `stepNo` 3 and the result stored; the parent's inbox holds exactly one `child_finished` with status `completed`, the child's `taskId`, the result, the step count and a duration; `task.step_committed` appears three times for the child.
   // - Row B "handler throws": the handler throws an error with a `cause` on its first step. Then: the child `failed` with reason `handler_error`; no row of that step in the handler's table; exactly one `child_finished` with status `failed` and the failure in the
   //   parent's inbox; the error is in the in-memory log with its stack and cause (the log side of DC-11 is the unit table, this row only checks that the failure is logged at all).
-  it('INT-1 A: a three-step task writes one row per step, ends completed, and its parent holds exactly one child_finished with the result', async () => {
-    // Given: a child of three steps under a parent that waits for messages
-    const ownerId = newUser();
-    const parentType = uniqueType('int1a-parent');
-    const childType = uniqueType('int1a-child');
-    const harness = await createRuntimeHarness({
-      handlers: [
-        waitingParent(parentType),
-        scriptedHandler({ type: childType, steps: THREE_STEPS }),
-      ],
-    });
-    try {
-      const parentId = await harness.tasks.create({ type: parentType, ownerId, input: {} });
-      const childId = await harness.tasks.create({
-        type: childType,
-        ownerId,
-        input: {},
-        parentId,
+  it(
+    'INT-1 A: a three-step task writes one row per step, ends completed, and its parent holds exactly one child_finished with the result',
+    async () => {
+      // Given: a child of three steps under a parent that waits for messages
+      const ownerId = newUser();
+      const parentType = uniqueType('int1a-parent');
+      const childType = uniqueType('int1a-child');
+      const harness = await createRuntimeHarness({
+        handlers: [
+          waitingParent(parentType),
+          scriptedHandler({ type: childType, steps: THREE_STEPS }),
+        ],
       });
+      try {
+        const parentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const childId = await harness.tasks.create({
+          type: childType,
+          ownerId,
+          input: {},
+          parentId,
+        });
 
-      // When: the workers run the child to its end
-      await waitFor(
-        () => statusesOf([childId]),
-        (statuses) => statuses.get(childId) === 'completed',
-        'the child to complete',
-      );
+        // When: the workers run the child to its end
+        await waitFor(
+          () => statusesOf([childId]),
+          (statuses) => statuses.get(childId) === 'completed',
+          'the child to complete',
+        );
 
-      // Then: one handler row per step, the result stored, one notice to the parent
-      const rows = await handlerRowsOf([childId]);
-      expect(rows.map((row) => row.stepNo)).toEqual([0, 1, 2]);
-      expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
-        status: 'completed',
-        stepNo: 3,
-        result: { answer: 42 },
-        failure: null,
-      });
-      const notices = await childFinishedOf(parentId);
-      expect(notices).toHaveLength(1);
-      expect(notices[0]).toMatchObject({ sender: childId, revive: false });
-      expect(notices[0].payload).toEqual({
-        taskId: childId,
-        status: 'completed',
-        result: { answer: 42 },
-        steps: 3,
-        durationMs: expect.any(Number),
-      });
-      const committed = (await eventsOf(childId)).filter(
-        (event) => event.type === 'task.step_committed',
-      );
-      expect(committed.map((event) => event.payload.stepNo)).toEqual([0, 1, 2]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then: one handler row per step, the result stored, one notice to the parent
+        const rows = await handlerRowsOf([childId]);
+        expect(rows.map((row) => row.stepNo)).toEqual([0, 1, 2]);
+        expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
+          status: 'completed',
+          stepNo: 3,
+          result: { answer: 42 },
+          failure: null,
+        });
+        const notices = await childFinishedOf(parentId);
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toMatchObject({ sender: childId, revive: false });
+        expect(notices[0].payload).toEqual({
+          taskId: childId,
+          status: 'completed',
+          result: { answer: 42 },
+          steps: 3,
+          durationMs: expect.any(Number),
+        });
+        const committed = (await eventsOf(childId)).filter(
+          (event) => event.type === 'task.step_committed',
+        );
+        expect(committed.map((event) => event.payload.stepNo)).toEqual([
+          0, 1, 2,
+        ]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  it('INT-1 B: a throwing handler fails the task with handler_error, applies none of that step\'s rows, and notifies the parent once', async () => {
-    // Given: a child whose first step throws an error with a cause
-    const ownerId = newUser();
-    const parentType = uniqueType('int1b-parent');
-    const childType = uniqueType('int1b-child');
-    const error = new Error('step exploded', { cause: new Error('disk on fire') });
-    const harness = await createRuntimeHarness({
-      handlers: [
-        waitingParent(parentType),
-        scriptedHandler({ type: childType, steps: [{ outcome: 'throw', error }] }),
-      ],
-    });
-    try {
-      const parentId = await harness.tasks.create({ type: parentType, ownerId, input: {} });
-      const childId = await harness.tasks.create({
-        type: childType,
-        ownerId,
-        input: {},
-        parentId,
+  it(
+    "INT-1 B: a throwing handler fails the task with handler_error, applies none of that step's rows, and notifies the parent once",
+    async () => {
+      // Given: a child whose first step throws an error with a cause
+      const ownerId = newUser();
+      const parentType = uniqueType('int1b-parent');
+      const childType = uniqueType('int1b-child');
+      const error = new Error('step exploded', {
+        cause: new Error('disk on fire'),
       });
+      const harness = await createRuntimeHarness({
+        handlers: [
+          waitingParent(parentType),
+          scriptedHandler({
+            type: childType,
+            steps: [{ outcome: 'throw', error }],
+          }),
+        ],
+      });
+      try {
+        const parentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const childId = await harness.tasks.create({
+          type: childType,
+          ownerId,
+          input: {},
+          parentId,
+        });
 
-      // When: the workers run the step
-      await waitFor(
-        () => statusesOf([childId]),
-        (statuses) => statuses.get(childId) === 'failed',
-        'the child to fail',
-      );
+        // When: the workers run the step
+        await waitFor(
+          () => statusesOf([childId]),
+          (statuses) => statuses.get(childId) === 'failed',
+          'the child to fail',
+        );
 
-      // Then: failed with handler_error, no row of the step, one notice, the error logged
-      expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
-        status: 'failed',
-        stepNo: 0,
-        failure: { reason: 'handler_error', message: 'step exploded' },
-      });
-      expect(await handlerRowsOf([childId])).toEqual([]);
-      const notices = await childFinishedOf(parentId);
-      expect(notices).toHaveLength(1);
-      expect(notices[0]).toMatchObject({ sender: childId, revive: false });
-      expect(notices[0].payload).toEqual({
-        taskId: childId,
-        status: 'failed',
-        failure: { reason: 'handler_error', message: 'step exploded' },
-        steps: 0,
-        durationMs: expect.any(Number),
-      });
-      // The log line follows the failing transaction's commit, so it is awaited too.
-      const logged = await waitFor(
-        async () =>
-          harness.logs.find(
-            (record) =>
-              record.level === 'error' &&
-              record.fields.taskId === childId &&
-              record.fields.reason === 'handler_error',
-          ),
-        (record) => record !== undefined,
-        'the step failure in the log',
-      );
-      expect(logged?.fields.error).toMatchObject({
-        message: 'step exploded',
-        stack: expect.stringContaining('step exploded'),
-        cause: { message: 'disk on fire' },
-      });
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then: failed with handler_error, no row of the step, one notice, the error logged
+        expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
+          status: 'failed',
+          stepNo: 0,
+          failure: { reason: 'handler_error', message: 'step exploded' },
+        });
+        expect(await handlerRowsOf([childId])).toEqual([]);
+        const notices = await childFinishedOf(parentId);
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toMatchObject({ sender: childId, revive: false });
+        expect(notices[0].payload).toEqual({
+          taskId: childId,
+          status: 'failed',
+          failure: { reason: 'handler_error', message: 'step exploded' },
+          steps: 0,
+          durationMs: expect.any(Number),
+        });
+        // The log line follows the failing transaction's commit, so it is awaited too.
+        const logged = await waitFor(
+          async () =>
+            harness.logs.find(
+              (record) =>
+                record.level === 'error' &&
+                record.fields.taskId === childId &&
+                record.fields.reason === 'handler_error',
+            ),
+          (record) => record !== undefined,
+          'the step failure in the log',
+        );
+        expect(logged?.fields.error).toMatchObject({
+          message: 'step exploded',
+          stack: expect.stringContaining('step exploded'),
+          cause: { message: 'disk on fire' },
+        });
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2  The inbox: order, one delivery, wake-up, revive - and the race with the end of a step
@@ -374,536 +412,682 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // - Row E "race": the step's handler returns `wait`; messages are enqueued in parallel with the commit of that step and with an `interrupt` of the task; the scenario is repeated
   //   100 times with a fresh task each. After every iteration: no task is `waiting` with reason `messages` while a message is pending (Invariant 2); every message is `delivered` exactly once and the delivery order equals the number order (Invariant 4); the
   //   number sequence of one recipient has no gaps and no repeats under 8 concurrent senders.
-// - Row F "revive during the last step" (UC-E10, Invariant 9, design v1.2): a child's step is held on a gate and will return `complete`. Enqueue a message without `revive`, then one with `revive`;
-//   open the gate. Then: the parent's inbox holds exactly one `child_finished` with status `completed`; the child reads `queued` with the same `taskId` (no new task) and its result cleared; its next step's
-//   context lists both messages in number order. Catches: the commit leaving the task `completed` over a pending `revive` message (a lost revive), or reviving without notifying the parent first.
+  // - Row F "revive during the last step" (UC-E10, Invariant 9, design v1.2): a child's step is held on a gate and will return `complete`. Enqueue a message without `revive`, then one with `revive`;
+  //   open the gate. Then: the parent's inbox holds exactly one `child_finished` with status `completed`; the child reads `queued` with the same `taskId` (no new task) and its result cleared; its next step's
+  //   context lists both messages in number order. Catches: the commit leaving the task `completed` over a pending `revive` message (a lost revive), or reviving without notifying the parent first.
   // - Row B, decision half (task T4.4 proof obligation, DC-4 "задача, которая ждёт решения, получает его после решения"): a task waiting for a decision gets a message and stays
   //   `waiting` (`decision`); `resolve` twice answers `resolved`, then `already_resolved`; the next step alone gets the decision and the message; the decision reads `resolved`
   //   with `delivered_step` of that step.
-  it('INT-2 A: a message sent during a step is invisible to it, comes in the next step in the order sent, and is not delivered again', async () => {
-    // Given: a task whose first step holds on a gate and continues; then it continues once and waits
-    const ownerId = newUser();
-    const type = uniqueType('int2a');
-    const gate = createGate();
-    const seen: StepView[] = [];
-    const harness = await createRuntimeHarness({
-      handlers: [
-        scriptedHandler({
-          type,
-          seen,
-          steps: [{ outcome: 'continue', gate }, { outcome: 'continue' }, { outcome: 'wait' }],
-        }),
-      ],
-    });
-    try {
-      const taskId = await harness.tasks.create({ type, ownerId, input: {} });
-      await gate.reached;
-
-      // When: three messages are sent while the step is held, then the step is let go
-      const sent: number[] = [];
-      for (const n of [1, 2, 3]) {
-        sent.push((await harness.inbox.enqueue(note(taskId, ownerId, { n }))).seq);
-      }
-      gate.open();
-      await waitFor(
-        () => statusesOf([taskId]),
-        (statuses) => statuses.get(taskId) === 'waiting',
-        'the task to wait for messages',
-      );
-
-      // Then: the held step saw none; the next step all three in the order sent; the one after none
-      expect(sent).toEqual([0, 1, 2]);
-      expect(seen.map((view) => view.stepNo)).toEqual([0, 1, 2]);
-      expect(seen[0].messages).toEqual([]);
-      expect(seen[1].messages.map((message) => [message.seq, message.payload])).toEqual([
-        [0, { n: 1 }],
-        [1, { n: 2 }],
-        [2, { n: 3 }],
-      ]);
-      expect(seen[2].messages).toEqual([]);
-      expect(
-        (await inboxOf(taskId)).map((message) => [
-          message.seq,
-          message.status,
-          message.deliveredStep,
-        ]),
-      ).toEqual([
-        [0, 'delivered', 1],
-        [1, 'delivered', 1],
-        [2, 'delivered', 1],
-      ]);
-      expect(await harness.inbox.listPending(taskId, ownerId)).toEqual([]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-2 B: a message to a task waiting for messages makes it queued in the same transaction, and its next step receives it', async () => {
-    // Given: a task that waits for messages, and (the decision half) a task that asks for a decision
-    const ownerId = newUser();
-    const messagesType = uniqueType('int2b-messages');
-    const decisionType = uniqueType('int2b-decision');
-    const seenByMessages: StepView[] = [];
-    const seenByDecision: StepView[] = [];
-    const harness = await createRuntimeHarness({
-      handlers: [
-        scriptedHandler({
-          type: messagesType,
-          seen: seenByMessages,
-          steps: [{ outcome: 'wait' }],
-        }),
-        scriptedHandler({
-          type: decisionType,
-          seen: seenByDecision,
-          steps: [
-            { outcome: 'await_decision', kind: 'approve', payload: { question: 'go?' } },
-            { outcome: 'continue' },
-            { outcome: 'wait' },
-          ],
-        }),
-      ],
-    });
-    try {
-      const taskId = await harness.tasks.create({ type: messagesType, ownerId, input: {} });
-      await waitFor(
-        () => harness.tasks.get(taskId, ownerId),
-        (task) => task.status === 'waiting' && task.waitReason === 'messages',
-        'the task to wait for messages',
-      );
-
-      // When: with the workers paused, one message is sent
-      await harness.stop();
-      await harness.inbox.enqueue(note(taskId, ownerId, { n: 1 }));
-
-      // Then: the send itself made the task queued - no worker could have run
-      expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
-        status: 'queued',
-        waitReason: null,
-        stepNo: 1,
-      });
-
-      // And: with the workers on, the next step receives the message, once
-      harness.start();
-      await waitFor(
-        () => statusesOf([taskId]),
-        (statuses) => statuses.get(taskId) === 'waiting' && seenByMessages.length === 2,
-        'the second step to commit',
-      );
-      expect(
-        seenByMessages.map((view) => view.messages.map((message) => message.payload)),
-      ).toEqual([[], [{ n: 1 }]]);
-      expect(
-        (await inboxOf(taskId)).map((message) => [message.status, message.deliveredStep]),
-      ).toEqual([['delivered', 1]]);
-
-      // Given (decision half): a task waiting for a decision gets a message and keeps waiting
-      const decidingId = await harness.tasks.create({ type: decisionType, ownerId, input: {} });
-      await waitFor(
-        () => harness.tasks.get(decidingId, ownerId),
-        (task) => task.status === 'waiting' && task.waitReason === 'decision',
-        'the task to wait for a decision',
-      );
-      await harness.inbox.enqueue(note(decidingId, ownerId, { n: 1 }));
-      expect(await harness.tasks.get(decidingId, ownerId)).toMatchObject({
-        status: 'waiting',
-        waitReason: 'decision',
-      });
-      const [request] = (await harness.decisions.listTree(decidingId, ownerId)).filter(
-        (d) => d.status === 'open',
-      );
-
-      // When: the decision is resolved twice
-      const first = await harness.decisions.resolve(request.decisionId, ownerId, {
-        approved: true,
-      });
-      const second = await harness.decisions.resolve(request.decisionId, ownerId, {
-        approved: false,
-      });
-
-      // Then: resolved once; only the next step gets the decision, together with the message
-      expect([first, second]).toEqual(['resolved', 'already_resolved']);
-      await waitFor(
-        () => statusesOf([decidingId]),
-        (statuses) => statuses.get(decidingId) === 'waiting' && seenByDecision.length === 3,
-        'the steps after the decision to commit',
-      );
-      expect(seenByDecision[0].decision).toBeNull();
-      expect(seenByDecision[1]).toMatchObject({
-        stepNo: 1,
-        decision: {
-          decisionId: request.decisionId,
-          kind: 'approve',
-          payload: { question: 'go?' },
-          resolution: { approved: true },
-        },
-      });
-      expect(seenByDecision[1].messages.map((message) => message.payload)).toEqual([{ n: 1 }]);
-      expect(seenByDecision[2]).toMatchObject({ stepNo: 2, decision: null, messages: [] });
-      expect(await decisionOf(harness, request.decisionId)).toEqual({
-        status: 'resolved',
-        resolution: { approved: true },
-        deliveredStep: 1,
-      });
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-2 C: a finished task stays finished for a message without revive and comes back, with both messages in order, for one with revive', async () => {
-    // Given: a task that completes in its first step and waits in the next; workers paused after it
-    const ownerId = newUser();
-    const type = uniqueType('int2c');
-    const seen: StepView[] = [];
-    const harness = await createRuntimeHarness({
-      handlers: [
-        scriptedHandler({
-          type,
-          seen,
-          steps: [{ outcome: 'complete', result: { done: true } }, { outcome: 'wait' }],
-        }),
-      ],
-    });
-    try {
-      const taskId = await harness.tasks.create({ type, ownerId, input: {} });
-      await waitFor(
-        () => statusesOf([taskId]),
-        (statuses) => statuses.get(taskId) === 'completed',
-        'the task to complete',
-      );
-      await harness.stop();
-
-      // When: a message without revive is sent
-      await harness.inbox.enqueue(note(taskId, ownerId, { n: 1 }));
-
-      // Then: the task stays completed and the message waits
-      expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
-        status: 'completed',
-        result: { done: true },
-      });
-      expect(
-        (await harness.inbox.listPending(taskId, ownerId)).map((message) => message.payload),
-      ).toEqual([{ n: 1 }]);
-
-      // When: a message with revive is sent
-      await harness.inbox.enqueue({ ...note(taskId, ownerId, { n: 2 }), revive: true });
-
-      // Then: the same task is queued with its result cleared; its next step gets both in order
-      expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
-        status: 'queued',
-        stepNo: 1,
-        result: null,
-      });
-      harness.start();
-      await waitFor(
-        () => statusesOf([taskId]),
-        (statuses) => statuses.get(taskId) === 'waiting' && seen.length === 2,
-        'the revived step to commit',
-      );
-      expect(
-        seen[1].messages.map((message) => [message.seq, message.payload, message.revive]),
-      ).toEqual([
-        [0, { n: 1 }, false],
-        [1, { n: 2 }, true],
-      ]);
-      expect(
-        (await inboxOf(taskId)).map((message) => [message.status, message.deliveredStep]),
-      ).toEqual([
-        ['delivered', 1],
-        ['delivered', 1],
-      ]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-2 D: a child\'s finish notification does not revive a stopped or completed parent', async () => {
-    // Given: a parent whose child holds its step; a parent that completes while its child still runs
-    const ownerId = newUser();
-    const parentType = uniqueType('int2d-parent');
-    const heldChildType = uniqueType('int2d-held-child');
-    const finishingType = uniqueType('int2d-finishing');
-    const lateChildType = uniqueType('int2d-late-child');
-    const heldChild = createGate();
-    const parentLastStep = createGate();
-    const childLastStep = createGate();
-    const harness = await createRuntimeHarness({
-      handlers: [
-        waitingParent(parentType),
-        scriptedHandler({ type: heldChildType, steps: [{ outcome: 'continue', gate: heldChild }] }),
-        scriptedHandler({
-          type: finishingType,
-          steps: [{ outcome: 'complete', result: { parent: 'done' }, gate: parentLastStep }],
-        }),
-        scriptedHandler({
-          type: lateChildType,
-          steps: [{ outcome: 'complete', result: { child: 'done' }, gate: childLastStep }],
-        }),
-      ],
-      config: { concurrency: 4 },
-    });
-    try {
-      const stoppedParentId = await harness.tasks.create({ type: parentType, ownerId, input: {} });
-      const stoppedChildId = await harness.tasks.create({
-        type: heldChildType,
-        ownerId,
-        input: {},
-        parentId: stoppedParentId,
-      });
-      await heldChild.reached;
-
-      // When: the parent is stopped - its child ends after it, in the same stop
-      const stoppedIds = await harness.tasks.stop(stoppedParentId, ownerId);
-
-      // Then: the parent stays stopped and the child's notice waits in its queue
-      expect(stoppedIds).toEqual([stoppedParentId, stoppedChildId]);
-      expect(await harness.tasks.get(stoppedParentId, ownerId)).toMatchObject({
-        status: 'stopped',
-        waitReason: null,
-      });
-      expect(
-        (await harness.inbox.listPending(stoppedParentId, ownerId)).map((message) => [
-          message.kind,
-          message.sender,
-          message.revive,
-          message.payload,
-        ]),
-      ).toEqual([
-        [
-          'child_finished',
-          stoppedChildId,
-          false,
-          { taskId: stoppedChildId, status: 'stopped', steps: 0, durationMs: expect.any(Number) },
+  it(
+    'INT-2 A: a message sent during a step is invisible to it, comes in the next step in the order sent, and is not delivered again',
+    async () => {
+      // Given: a task whose first step holds on a gate and continues; then it continues once and waits
+      const ownerId = newUser();
+      const type = uniqueType('int2a');
+      const gate = createGate();
+      const seen: StepView[] = [];
+      const harness = await createRuntimeHarness({
+        handlers: [
+          scriptedHandler({
+            type,
+            seen,
+            steps: [
+              { outcome: 'continue', gate },
+              { outcome: 'continue' },
+              { outcome: 'wait' },
+            ],
+          }),
         ],
-      ]);
-
-      // Given: a parent that completes while its child holds its last step
-      const completedParentId = await harness.tasks.create({
-        type: finishingType,
-        ownerId,
-        input: {},
       });
-      await parentLastStep.reached;
-      const lateChildId = await harness.tasks.create({
-        type: lateChildType,
-        ownerId,
-        input: {},
-        parentId: completedParentId,
-      });
-      await childLastStep.reached;
-      parentLastStep.open();
-      await waitFor(
-        () => statusesOf([completedParentId]),
-        (statuses) => statuses.get(completedParentId) === 'completed',
-        'the parent to complete',
-      );
-
-      // When: the child completes after its parent
-      childLastStep.open();
-      await waitFor(
-        () => statusesOf([lateChildId]),
-        (statuses) => statuses.get(lateChildId) === 'completed',
-        'the child to complete',
-      );
-
-      // Then: the parent stays completed with its result, and the notice waits
-      expect(await harness.tasks.get(completedParentId, ownerId)).toMatchObject({
-        status: 'completed',
-        result: { parent: 'done' },
-      });
-      expect(
-        (await harness.inbox.listPending(completedParentId, ownerId)).map((message) => [
-          message.kind,
-          message.sender,
-          message.revive,
-          message.payload,
-        ]),
-      ).toEqual([
-        [
-          'child_finished',
-          lateChildId,
-          false,
-          {
-            taskId: lateChildId,
-            status: 'completed',
-            result: { child: 'done' },
-            steps: 1,
-            durationMs: expect.any(Number),
-          },
-        ],
-      ]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-2 E: messages racing the end of a step and an interrupt, 100 times, never leave a waiting task over a pending message and never deliver twice or out of order', async () => {
-    // Given: a task type whose first step holds on its task's gate and every step returns `wait`
-    const ownerId = newUser();
-    const type = uniqueType('int2e');
-    const senders = 8;
-    const messagesPerSender = 3;
-    const firstSteps = createGateBook();
-    const racingWaiter: TaskHandler = {
-      type,
-      inputSchema: anyInput,
-      async step(ctx) {
-        if (ctx.stepNo === 0) await firstSteps.of(ctx.taskId).pass(ctx.signal);
-        return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
-      },
-    };
-    const harness = await createRuntimeHarness({ handlers: [racingWaiter] });
-    try {
-      for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
-        const at = `iteration ${iteration}`;
+      try {
         const taskId = await harness.tasks.create({ type, ownerId, input: {} });
-        const gate = firstSteps.of(taskId);
         await gate.reached;
 
-        // When: step 0 is let go while 8 senders and an interrupt hit the task
-        gate.open();
-        const interrupting = harness.tasks.interrupt(taskId, ownerId, {
-          kind: 'note',
-          sender: ownerId,
-          payload: { interrupt: true },
-        });
-        await Promise.all(
-          Array.from({ length: senders }, async (_, sender) => {
-            for (let n = 0; n < messagesPerSender; n += 1) {
-              await harness.inbox.enqueue(note(taskId, ownerId, { sender, n }));
-            }
-          }),
-        );
-        expect(await interrupting, at).toBe('interrupted');
-
-        // Then: the task settles waiting for messages with none pending (Invariant 2)
-        const settled = await waitFor(
-          () => harness.tasks.get(taskId, ownerId),
-          (task) => task.status === 'waiting',
-          `the task to wait again (${at})`,
-        );
-        expect(settled.waitReason, at).toBe('messages');
-        expect(await harness.inbox.listPending(taskId, ownerId), at).toEqual([]);
-
-        // And: numbers without gaps or repeats, each message delivered, in number order (Invariant 4)
-        const messages = await inboxOf(taskId);
-        const total = senders * messagesPerSender + 1;
-        expect(
-          messages.map((message) => message.seq),
-          at,
-        ).toEqual(Array.from({ length: total }, (_, seq) => seq));
-        expect(
-          messages.filter((message) => message.status !== 'delivered'),
-          at,
-        ).toEqual([]);
-        const deliveredSteps = messages.map((message) => message.deliveredStep ?? -1);
-        expect(deliveredSteps, at).toEqual([...deliveredSteps].sort((left, right) => left - right));
-        for (let sender = 0; sender < senders; sender += 1) {
-          expect(
-            messages
-              .map((message) => message.payload as { sender?: number; n?: number })
-              .filter((payload) => payload.sender === sender)
-              .map((payload) => payload.n),
-            `${at}, sender ${sender}`,
-          ).toEqual([0, 1, 2]);
+        // When: three messages are sent while the step is held, then the step is let go
+        const sent: number[] = [];
+        for (const n of [1, 2, 3]) {
+          sent.push(
+            (await harness.inbox.enqueue(note(taskId, ownerId, { n }))).seq,
+          );
         }
-        // each message is named by exactly one committed delivery
-        const deliveredIds = (await eventsOf(taskId))
-          .filter((event) => event.type === 'inbox.delivered')
-          .flatMap((event) => event.payload.messageIds as string[]);
-        expect([...deliveredIds].sort(), at).toEqual(
-          messages.map((message) => message.messageId).sort(),
+        gate.open();
+        await waitFor(
+          () => statusesOf([taskId]),
+          (statuses) => statuses.get(taskId) === 'waiting',
+          'the task to wait for messages',
         );
-        // each step number was committed once: the cut-off attempt's late commit was refused
-        const rows = await handlerRowsOf([taskId]);
+
+        // Then: the held step saw none; the next step all three in the order sent; the one after none
+        expect(sent).toEqual([0, 1, 2]);
+        expect(seen.map((view) => view.stepNo)).toEqual([0, 1, 2]);
+        expect(seen[0].messages).toEqual([]);
         expect(
-          rows.map((row) => row.stepNo),
-          at,
-        ).toEqual(rows.map((_, stepNo) => stepNo));
+          seen[1].messages.map((message) => [message.seq, message.payload]),
+        ).toEqual([
+          [0, { n: 1 }],
+          [1, { n: 2 }],
+          [2, { n: 3 }],
+        ]);
+        expect(seen[2].messages).toEqual([]);
+        expect(
+          (await inboxOf(taskId)).map((message) => [
+            message.seq,
+            message.status,
+            message.deliveredStep,
+          ]),
+        ).toEqual([
+          [0, 'delivered', 1],
+          [1, 'delivered', 1],
+          [2, 'delivered', 1],
+        ]);
+        expect(await harness.inbox.listPending(taskId, ownerId)).toEqual([]);
+      } finally {
+        await harness.close();
       }
-    } finally {
-      await harness.close();
-    }
-  }, RACE_TIMEOUT_MS);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  it('INT-2 F: a revive message that arrives during the step that completes the task notifies the parent once and queues the same task again with both messages in order', async () => {
-    // Given: a child whose first step holds on a gate and completes; its next step holds, then waits
-    const ownerId = newUser();
-    const parentType = uniqueType('int2f-parent');
-    const childType = uniqueType('int2f-child');
-    const lastStep = createGate();
-    const nextStep = createGate();
-    const seen: StepView[] = [];
-    const harness = await createRuntimeHarness({
-      handlers: [
-        waitingParent(parentType),
-        scriptedHandler({
-          type: childType,
-          seen,
-          steps: [
-            { outcome: 'complete', result: { answer: 1 }, gate: lastStep },
-            { outcome: 'wait', gate: nextStep },
+  it(
+    'INT-2 B: a message to a task waiting for messages makes it queued in the same transaction, and its next step receives it',
+    async () => {
+      // Given: a task that waits for messages, and (the decision half) a task that asks for a decision
+      const ownerId = newUser();
+      const messagesType = uniqueType('int2b-messages');
+      const decisionType = uniqueType('int2b-decision');
+      const seenByMessages: StepView[] = [];
+      const seenByDecision: StepView[] = [];
+      const harness = await createRuntimeHarness({
+        handlers: [
+          scriptedHandler({
+            type: messagesType,
+            seen: seenByMessages,
+            steps: [{ outcome: 'wait' }],
+          }),
+          scriptedHandler({
+            type: decisionType,
+            seen: seenByDecision,
+            steps: [
+              {
+                outcome: 'await_decision',
+                kind: 'approve',
+                payload: { question: 'go?' },
+              },
+              { outcome: 'continue' },
+              { outcome: 'wait' },
+            ],
+          }),
+        ],
+      });
+      try {
+        const taskId = await harness.tasks.create({
+          type: messagesType,
+          ownerId,
+          input: {},
+        });
+        await waitFor(
+          () => harness.tasks.get(taskId, ownerId),
+          (task) => task.status === 'waiting' && task.waitReason === 'messages',
+          'the task to wait for messages',
+        );
+
+        // When: with the workers paused, one message is sent
+        await harness.stop();
+        await harness.inbox.enqueue(note(taskId, ownerId, { n: 1 }));
+
+        // Then: the send itself made the task queued - no worker could have run
+        expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
+          status: 'queued',
+          waitReason: null,
+          stepNo: 1,
+        });
+
+        // And: with the workers on, the next step receives the message, once
+        harness.start();
+        await waitFor(
+          () => statusesOf([taskId]),
+          (statuses) =>
+            statuses.get(taskId) === 'waiting' && seenByMessages.length === 2,
+          'the second step to commit',
+        );
+        expect(
+          seenByMessages.map((view) =>
+            view.messages.map((message) => message.payload),
+          ),
+        ).toEqual([[], [{ n: 1 }]]);
+        expect(
+          (await inboxOf(taskId)).map((message) => [
+            message.status,
+            message.deliveredStep,
+          ]),
+        ).toEqual([['delivered', 1]]);
+
+        // Given (decision half): a task waiting for a decision gets a message and keeps waiting
+        const decidingId = await harness.tasks.create({
+          type: decisionType,
+          ownerId,
+          input: {},
+        });
+        await waitFor(
+          () => harness.tasks.get(decidingId, ownerId),
+          (task) => task.status === 'waiting' && task.waitReason === 'decision',
+          'the task to wait for a decision',
+        );
+        await harness.inbox.enqueue(note(decidingId, ownerId, { n: 1 }));
+        expect(await harness.tasks.get(decidingId, ownerId)).toMatchObject({
+          status: 'waiting',
+          waitReason: 'decision',
+        });
+        const [request] = (
+          await harness.decisions.listTree(decidingId, ownerId)
+        ).filter((d) => d.status === 'open');
+
+        // When: the decision is resolved twice
+        const first = await harness.decisions.resolve(
+          request.decisionId,
+          ownerId,
+          {
+            approved: true,
+          },
+        );
+        const second = await harness.decisions.resolve(
+          request.decisionId,
+          ownerId,
+          {
+            approved: false,
+          },
+        );
+
+        // Then: resolved once; only the next step gets the decision, together with the message
+        expect([first, second]).toEqual(['resolved', 'already_resolved']);
+        await waitFor(
+          () => statusesOf([decidingId]),
+          (statuses) =>
+            statuses.get(decidingId) === 'waiting' &&
+            seenByDecision.length === 3,
+          'the steps after the decision to commit',
+        );
+        expect(seenByDecision[0].decision).toBeNull();
+        expect(seenByDecision[1]).toMatchObject({
+          stepNo: 1,
+          decision: {
+            decisionId: request.decisionId,
+            kind: 'approve',
+            payload: { question: 'go?' },
+            resolution: { approved: true },
+          },
+        });
+        expect(
+          seenByDecision[1].messages.map((message) => message.payload),
+        ).toEqual([{ n: 1 }]);
+        expect(seenByDecision[2]).toMatchObject({
+          stepNo: 2,
+          decision: null,
+          messages: [],
+        });
+        expect(await decisionOf(harness, request.decisionId)).toEqual({
+          status: 'resolved',
+          resolution: { approved: true },
+          deliveredStep: 1,
+        });
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-2 C: a finished task stays finished for a message without revive and comes back, with both messages in order, for one with revive',
+    async () => {
+      // Given: a task that completes in its first step and waits in the next; workers paused after it
+      const ownerId = newUser();
+      const type = uniqueType('int2c');
+      const seen: StepView[] = [];
+      const harness = await createRuntimeHarness({
+        handlers: [
+          scriptedHandler({
+            type,
+            seen,
+            steps: [
+              { outcome: 'complete', result: { done: true } },
+              { outcome: 'wait' },
+            ],
+          }),
+        ],
+      });
+      try {
+        const taskId = await harness.tasks.create({ type, ownerId, input: {} });
+        await waitFor(
+          () => statusesOf([taskId]),
+          (statuses) => statuses.get(taskId) === 'completed',
+          'the task to complete',
+        );
+        await harness.stop();
+
+        // When: a message without revive is sent
+        await harness.inbox.enqueue(note(taskId, ownerId, { n: 1 }));
+
+        // Then: the task stays completed and the message waits
+        expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
+          status: 'completed',
+          result: { done: true },
+        });
+        expect(
+          (await harness.inbox.listPending(taskId, ownerId)).map(
+            (message) => message.payload,
+          ),
+        ).toEqual([{ n: 1 }]);
+
+        // When: a message with revive is sent
+        await harness.inbox.enqueue({
+          ...note(taskId, ownerId, { n: 2 }),
+          revive: true,
+        });
+
+        // Then: the same task is queued with its result cleared; its next step gets both in order
+        expect(await harness.tasks.get(taskId, ownerId)).toMatchObject({
+          status: 'queued',
+          stepNo: 1,
+          result: null,
+        });
+        harness.start();
+        await waitFor(
+          () => statusesOf([taskId]),
+          (statuses) => statuses.get(taskId) === 'waiting' && seen.length === 2,
+          'the revived step to commit',
+        );
+        expect(
+          seen[1].messages.map((message) => [
+            message.seq,
+            message.payload,
+            message.revive,
+          ]),
+        ).toEqual([
+          [0, { n: 1 }, false],
+          [1, { n: 2 }, true],
+        ]);
+        expect(
+          (await inboxOf(taskId)).map((message) => [
+            message.status,
+            message.deliveredStep,
+          ]),
+        ).toEqual([
+          ['delivered', 1],
+          ['delivered', 1],
+        ]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "INT-2 D: a child's finish notification does not revive a stopped or completed parent",
+    async () => {
+      // Given: a parent whose child holds its step; a parent that completes while its child still runs
+      const ownerId = newUser();
+      const parentType = uniqueType('int2d-parent');
+      const heldChildType = uniqueType('int2d-held-child');
+      const finishingType = uniqueType('int2d-finishing');
+      const lateChildType = uniqueType('int2d-late-child');
+      const heldChild = createGate();
+      const parentLastStep = createGate();
+      const childLastStep = createGate();
+      const harness = await createRuntimeHarness({
+        handlers: [
+          waitingParent(parentType),
+          scriptedHandler({
+            type: heldChildType,
+            steps: [{ outcome: 'continue', gate: heldChild }],
+          }),
+          scriptedHandler({
+            type: finishingType,
+            steps: [
+              {
+                outcome: 'complete',
+                result: { parent: 'done' },
+                gate: parentLastStep,
+              },
+            ],
+          }),
+          scriptedHandler({
+            type: lateChildType,
+            steps: [
+              {
+                outcome: 'complete',
+                result: { child: 'done' },
+                gate: childLastStep,
+              },
+            ],
+          }),
+        ],
+        config: { concurrency: 4 },
+      });
+      try {
+        const stoppedParentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const stoppedChildId = await harness.tasks.create({
+          type: heldChildType,
+          ownerId,
+          input: {},
+          parentId: stoppedParentId,
+        });
+        await heldChild.reached;
+
+        // When: the parent is stopped - its child ends after it, in the same stop
+        const stoppedIds = await harness.tasks.stop(stoppedParentId, ownerId);
+
+        // Then: the parent stays stopped and the child's notice waits in its queue
+        expect(stoppedIds).toEqual([stoppedParentId, stoppedChildId]);
+        expect(await harness.tasks.get(stoppedParentId, ownerId)).toMatchObject(
+          {
+            status: 'stopped',
+            waitReason: null,
+          },
+        );
+        expect(
+          (await harness.inbox.listPending(stoppedParentId, ownerId)).map(
+            (message) => [
+              message.kind,
+              message.sender,
+              message.revive,
+              message.payload,
+            ],
+          ),
+        ).toEqual([
+          [
+            'child_finished',
+            stoppedChildId,
+            false,
+            {
+              taskId: stoppedChildId,
+              status: 'stopped',
+              steps: 0,
+              durationMs: expect.any(Number),
+            },
           ],
-        }),
-      ],
-    });
-    try {
-      const parentId = await harness.tasks.create({ type: parentType, ownerId, input: {} });
-      const childId = await harness.tasks.create({
-        type: childType,
-        ownerId,
-        input: {},
-        parentId,
-      });
-      await lastStep.reached;
+        ]);
 
-      // When: a message without revive and one with revive arrive during the last step
-      await harness.inbox.enqueue(note(childId, ownerId, { n: 1 }));
-      await harness.inbox.enqueue({ ...note(childId, ownerId, { n: 2 }), revive: true });
-      lastStep.open();
-      await nextStep.reached;
+        // Given: a parent that completes while its child holds its last step
+        const completedParentId = await harness.tasks.create({
+          type: finishingType,
+          ownerId,
+          input: {},
+        });
+        await parentLastStep.reached;
+        const lateChildId = await harness.tasks.create({
+          type: lateChildType,
+          ownerId,
+          input: {},
+          parentId: completedParentId,
+        });
+        await childLastStep.reached;
+        parentLastStep.open();
+        await waitFor(
+          () => statusesOf([completedParentId]),
+          (statuses) => statuses.get(completedParentId) === 'completed',
+          'the parent to complete',
+        );
 
-      // Then: the commit that completed the child queued it again - same task, result cleared
-      const events = await eventsOf(childId);
-      const completedAt = events.findIndex((event) => event.type === 'task.completed');
-      expect(completedAt).toBeGreaterThan(-1);
-      expect(
-        events.slice(completedAt + 1).find((event) => event.type === 'task.queued')?.payload,
-      ).toMatchObject({ cause: 'revive', from: 'completed' });
-      expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
-        taskId: childId,
-        status: 'running',
-        stepNo: 1,
-        result: null,
-      });
-      expect((await harness.tasks.listTree(parentId, ownerId)).map((task) => task.taskId)).toEqual(
-        [parentId, childId],
-      );
+        // When: the child completes after its parent
+        childLastStep.open();
+        await waitFor(
+          () => statusesOf([lateChildId]),
+          (statuses) => statuses.get(lateChildId) === 'completed',
+          'the child to complete',
+        );
 
-      // And: its next step gets both messages in order; the parent was told exactly once
-      nextStep.open();
-      await waitFor(
-        () => statusesOf([childId]),
-        (statuses) => statuses.get(childId) === 'waiting',
-        'the revived step to commit',
-      );
-      expect(
-        seen[1].messages.map((message) => [message.seq, message.payload, message.revive]),
-      ).toEqual([
-        [0, { n: 1 }, false],
-        [1, { n: 2 }, true],
-      ]);
-      const notices = await childFinishedOf(parentId);
-      expect(notices).toHaveLength(1);
-      expect(notices[0].payload).toMatchObject({
-        taskId: childId,
-        status: 'completed',
-        result: { answer: 1 },
-        steps: 1,
+        // Then: the parent stays completed with its result, and the notice waits
+        expect(
+          await harness.tasks.get(completedParentId, ownerId),
+        ).toMatchObject({
+          status: 'completed',
+          result: { parent: 'done' },
+        });
+        expect(
+          (await harness.inbox.listPending(completedParentId, ownerId)).map(
+            (message) => [
+              message.kind,
+              message.sender,
+              message.revive,
+              message.payload,
+            ],
+          ),
+        ).toEqual([
+          [
+            'child_finished',
+            lateChildId,
+            false,
+            {
+              taskId: lateChildId,
+              status: 'completed',
+              result: { child: 'done' },
+              steps: 1,
+              durationMs: expect.any(Number),
+            },
+          ],
+        ]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-2 E: messages racing the end of a step and an interrupt, 100 times, never leave a waiting task over a pending message and never deliver twice or out of order',
+    async () => {
+      // Given: a task type whose first step holds on its task's gate and every step returns `wait`
+      const ownerId = newUser();
+      const type = uniqueType('int2e');
+      const senders = 8;
+      const messagesPerSender = 3;
+      const firstSteps = createGateBook();
+      const racingWaiter: TaskHandler = {
+        type,
+        inputSchema: anyInput,
+        async step(ctx) {
+          if (ctx.stepNo === 0)
+            await firstSteps.of(ctx.taskId).pass(ctx.signal);
+          return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
+        },
+      };
+      const harness = await createRuntimeHarness({ handlers: [racingWaiter] });
+      try {
+        for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
+          const at = `iteration ${iteration}`;
+          const taskId = await harness.tasks.create({
+            type,
+            ownerId,
+            input: {},
+          });
+          const gate = firstSteps.of(taskId);
+          await gate.reached;
+
+          // When: step 0 is let go while 8 senders and an interrupt hit the task
+          gate.open();
+          const interrupting = harness.tasks.interrupt(taskId, ownerId, {
+            kind: 'note',
+            sender: ownerId,
+            payload: { interrupt: true },
+          });
+          await Promise.all(
+            Array.from({ length: senders }, async (_, sender) => {
+              for (let n = 0; n < messagesPerSender; n += 1) {
+                await harness.inbox.enqueue(
+                  note(taskId, ownerId, { sender, n }),
+                );
+              }
+            }),
+          );
+          expect(await interrupting, at).toBe('interrupted');
+
+          // Then: the task settles waiting for messages with none pending (Invariant 2)
+          const settled = await waitFor(
+            () => harness.tasks.get(taskId, ownerId),
+            (task) => task.status === 'waiting',
+            `the task to wait again (${at})`,
+          );
+          expect(settled.waitReason, at).toBe('messages');
+          expect(await harness.inbox.listPending(taskId, ownerId), at).toEqual(
+            [],
+          );
+
+          // And: numbers without gaps or repeats, each message delivered, in number order (Invariant 4)
+          const messages = await inboxOf(taskId);
+          const total = senders * messagesPerSender + 1;
+          expect(
+            messages.map((message) => message.seq),
+            at,
+          ).toEqual(Array.from({ length: total }, (_, seq) => seq));
+          expect(
+            messages.filter((message) => message.status !== 'delivered'),
+            at,
+          ).toEqual([]);
+          const deliveredSteps = messages.map(
+            (message) => message.deliveredStep ?? -1,
+          );
+          expect(deliveredSteps, at).toEqual(
+            [...deliveredSteps].sort((left, right) => left - right),
+          );
+          for (let sender = 0; sender < senders; sender += 1) {
+            expect(
+              messages
+                .map(
+                  (message) =>
+                    message.payload as { sender?: number; n?: number },
+                )
+                .filter((payload) => payload.sender === sender)
+                .map((payload) => payload.n),
+              `${at}, sender ${sender}`,
+            ).toEqual([0, 1, 2]);
+          }
+          // each message is named by exactly one committed delivery
+          const deliveredIds = (await eventsOf(taskId))
+            .filter((event) => event.type === 'inbox.delivered')
+            .flatMap((event) => event.payload.messageIds as string[]);
+          expect([...deliveredIds].sort(), at).toEqual(
+            messages.map((message) => message.messageId).sort(),
+          );
+          // each step number was committed once: the cut-off attempt's late commit was refused
+          const rows = await handlerRowsOf([taskId]);
+          expect(
+            rows.map((row) => row.stepNo),
+            at,
+          ).toEqual(rows.map((_, stepNo) => stepNo));
+        }
+      } finally {
+        await harness.close();
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-2 F: a revive message that arrives during the step that completes the task notifies the parent once and queues the same task again with both messages in order',
+    async () => {
+      // Given: a child whose first step holds on a gate and completes; its next step holds, then waits
+      const ownerId = newUser();
+      const parentType = uniqueType('int2f-parent');
+      const childType = uniqueType('int2f-child');
+      const lastStep = createGate();
+      const nextStep = createGate();
+      const seen: StepView[] = [];
+      const harness = await createRuntimeHarness({
+        handlers: [
+          waitingParent(parentType),
+          scriptedHandler({
+            type: childType,
+            seen,
+            steps: [
+              { outcome: 'complete', result: { answer: 1 }, gate: lastStep },
+              { outcome: 'wait', gate: nextStep },
+            ],
+          }),
+        ],
       });
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+      try {
+        const parentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const childId = await harness.tasks.create({
+          type: childType,
+          ownerId,
+          input: {},
+          parentId,
+        });
+        await lastStep.reached;
+
+        // When: a message without revive and one with revive arrive during the last step
+        await harness.inbox.enqueue(note(childId, ownerId, { n: 1 }));
+        await harness.inbox.enqueue({
+          ...note(childId, ownerId, { n: 2 }),
+          revive: true,
+        });
+        lastStep.open();
+        await nextStep.reached;
+
+        // Then: the commit that completed the child queued it again - same task, result cleared
+        const events = await eventsOf(childId);
+        const completedAt = events.findIndex(
+          (event) => event.type === 'task.completed',
+        );
+        expect(completedAt).toBeGreaterThan(-1);
+        expect(
+          events
+            .slice(completedAt + 1)
+            .find((event) => event.type === 'task.queued')?.payload,
+        ).toMatchObject({ cause: 'revive', from: 'completed' });
+        expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
+          taskId: childId,
+          status: 'running',
+          stepNo: 1,
+          result: null,
+        });
+        expect(
+          (await harness.tasks.listTree(parentId, ownerId)).map(
+            (task) => task.taskId,
+          ),
+        ).toEqual([parentId, childId]);
+
+        // And: its next step gets both messages in order; the parent was told exactly once
+        nextStep.open();
+        await waitFor(
+          () => statusesOf([childId]),
+          (statuses) => statuses.get(childId) === 'waiting',
+          'the revived step to commit',
+        );
+        expect(
+          seen[1].messages.map((message) => [
+            message.seq,
+            message.payload,
+            message.revive,
+          ]),
+        ).toEqual([
+          [0, { n: 1 }, false],
+          [1, { n: 2 }, true],
+        ]);
+        const notices = await childFinishedOf(parentId);
+        expect(notices).toHaveLength(1);
+        expect(notices[0].payload).toMatchObject({
+          taskId: childId,
+          status: 'completed',
+          result: { answer: 1 },
+          steps: 1,
+        });
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3  Interrupt and stop: the status changes in the command, the step in flight is cut off, the tree is closed
@@ -932,328 +1116,450 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   `child_finished` for C with status `stopped`; the late result of C's held step is refused; no step of C or G is claimed afterwards; P is not touched - it reads `queued` or `running`, and its next step receives the notification.
   // - Row C "stop against spawn, repeated": a step spawns a child through `effects.spawn` in its commit while `stop` is called on the parent, and `create({ parentId })` is called against the same parent in parallel; 100 iterations with a fresh
   //   tree each. After each: the tree has no unfinished task; every `create` that lost the race answered `PARENT_FINISHED` and wrote no task; no task exists under a `stopped` parent in a non-final status.
-  it('INT-3 A: interrupting a running step with a message changes the status in the command, refuses the late result, keeps intent and ledger rows, and the next step gets the message with the loss flag', async () => {
-    // Given: the runtime runs one step at a time, so the held step keeps its only slot. The step
-    // wrote an intent row through `guard` and recorded a model call.
-    const ownerId = newUser();
-    const type = uniqueType('int3a');
-    const held = createGate();
-    const next = createGate();
-    const probe: CutOffProbe = { later: [] };
-    let harness: RuntimeHarness | undefined;
-    const handler = cutOffHandler({
-      type,
-      held,
-      next,
-      probe,
-      // 1000 input + 200 output tokens on model one: 0.002 USD (by hand)
-      recordCall: async (taskId) =>
-        harness?.ledger.record({
-          ownerId,
-          taskId,
-          model: TEST_MODEL_ONE,
-          price: TEST_MODEL_ONE_PRICE,
-          usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
-        }),
-    });
-    const message = { kind: 'note', sender: ownerId, payload: { text: 'change course' } };
-    try {
-      harness = await createRuntimeHarness({ handlers: [handler], config: { concurrency: 1 } });
-      const runtime = harness;
-      const taskId = await runtime.tasks.create({ type, ownerId, input: {} });
-      await held.reached;
-
-      // When: the task is interrupted with a message
-      const answer = await runtime.tasks.interrupt(taskId, ownerId, message);
-
-      // Then: before the held handler answers, the status changed and the message waits
-      expect(answer).toBe('interrupted');
-      expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
-        status: 'queued',
-        waitReason: null,
-        stepNo: 0,
+  it(
+    'INT-3 A: interrupting a running step with a message changes the status in the command, refuses the late result, keeps intent and ledger rows, and the next step gets the message with the loss flag',
+    async () => {
+      // Given: the runtime runs one step at a time, so the held step keeps its only slot. The step
+      // wrote an intent row through `guard` and recorded a model call.
+      const ownerId = newUser();
+      const type = uniqueType('int3a');
+      const held = createGate();
+      const next = createGate();
+      const probe: CutOffProbe = { later: [] };
+      let harness: RuntimeHarness | undefined;
+      const handler = cutOffHandler({
+        type,
+        held,
+        next,
+        probe,
+        // 1000 input + 200 output tokens on model one: 0.002 USD (by hand)
+        recordCall: async (taskId) =>
+          harness?.ledger.record({
+            ownerId,
+            taskId,
+            model: TEST_MODEL_ONE,
+            price: TEST_MODEL_ONE_PRICE,
+            usage: {
+              inputTokens: 1000,
+              outputTokens: 200,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+          }),
       });
-      expect(
-        (await runtime.inbox.listPending(taskId, ownerId)).map((pending) => pending.payload),
-      ).toEqual([{ text: 'change course' }]);
-      const signalReason = await waitFor(
-        async (): Promise<unknown> =>
-          probe.signal?.aborted === true ? probe.signal.reason : undefined,
-        (reason) => reason !== undefined,
-        'the held step to get its signal',
-      );
-      expect(signalReason).toBe('interrupted');
-
-      // When: the cut-off handler answers late, and the next step is claimed
-      held.open();
-      await next.reached;
-
-      // Then: the late result and the late guard wrote nothing; the intent and ledger rows stay
-      expect(probe.intent).toMatchObject({ outcome: 'committed' });
-      expect(probe.lateGuard).toEqual({ outcome: 'fenced' });
-      const intentRow = {
-        taskId,
-        stepNo: 0,
-        attempt: 1,
-        resumedAfterLoss: false,
-        note: 'intent',
+      const message = {
+        kind: 'note',
+        sender: ownerId,
+        payload: { text: 'change course' },
       };
-      expect(await handlerRowsOf([taskId])).toEqual([intentRow]);
-      expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
-        status: 'running',
-        stepNo: 0,
-      });
-      expect(
-        (await inboxOf(taskId)).map((stored) => [stored.seq, stored.status, stored.deliveredStep]),
-      ).toEqual([[0, 'pending', null]]);
-      expect(
-        (await ledgerRowsOf(runtime, ownerId)).map((row) => [row.taskId, row.model, row.costUsd]),
-      ).toEqual([[taskId, TEST_MODEL_ONE, 0.002]]);
-      // the next step carries the message and the loss flag
-      expect(probe.later).toEqual([
-        {
+      try {
+        harness = await createRuntimeHarness({
+          handlers: [handler],
+          config: { concurrency: 1 },
+        });
+        const runtime = harness;
+        const taskId = await runtime.tasks.create({ type, ownerId, input: {} });
+        await held.reached;
+
+        // When: the task is interrupted with a message
+        const answer = await runtime.tasks.interrupt(taskId, ownerId, message);
+
+        // Then: before the held handler answers, the status changed and the message waits
+        expect(answer).toBe('interrupted');
+        expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
+          status: 'queued',
+          waitReason: null,
           stepNo: 0,
-          resumedAfterLoss: true,
-          messages: [{ kind: 'note', sender: ownerId, payload: { text: 'change course' } }],
-        },
-      ]);
-
-      // And: the next step commits step 0 with the message
-      next.open();
-      await waitFor(
-        () => statusesOf([taskId]),
-        (statuses) => statuses.get(taskId) === 'waiting',
-        'the next step to commit',
-      );
-      expect(await handlerRowsOf([taskId])).toEqual([
-        intentRow,
-        { taskId, stepNo: 0, attempt: 3, resumedAfterLoss: true, note: 'commit' },
-      ]);
-      expect(
-        (await inboxOf(taskId)).map((stored) => [stored.seq, stored.status, stored.deliveredStep]),
-      ).toEqual([[0, 'delivered', 0]]);
-    } finally {
-      held.open();
-      next.open();
-      await harness?.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-3 B: stopping a child closes it and its grandchild, cancels its decision, tells the parent once, and leaves the parent running', async () => {
-    // Given: parent P waits for messages; child C waits for a decision; grandchild G holds a step
-    // deaf to its signal
-    const ownerId = newUser();
-    const parentType = uniqueType('int3b-parent');
-    const childType = uniqueType('int3b-child');
-    const grandchildType = uniqueType('int3b-grandchild');
-    const parentNext = createGate();
-    const grandchildHeld = createGate();
-    const seenByParent: StepView[] = [];
-    const handlers = [
-      scriptedHandler({
-        type: parentType,
-        seen: seenByParent,
-        steps: [{ outcome: 'wait' }, { outcome: 'wait', gate: parentNext }],
-      }),
-      scriptedHandler({
-        type: childType,
-        steps: [{ outcome: 'await_decision', kind: 'approve', payload: { question: 'go on?' } }],
-      }),
-      scriptedHandler({
-        type: grandchildType,
-        steps: [{ outcome: 'continue', gate: grandchildHeld, deaf: true }],
-      }),
-    ];
-    const first = await createRuntimeHarness({ handlers });
-    try {
-      const parentId = await first.tasks.create({ type: parentType, ownerId, input: {} });
-      const childId = await first.tasks.create({ type: childType, ownerId, input: {}, parentId });
-      await waitFor(
-        () => first.tasks.listTree(parentId, ownerId),
-        (tree) =>
-          tree.map((task) => task.waitReason).join() === ['messages', 'decision'].join(),
-        'the parent to wait for messages and the child for a decision',
-      );
-      const grandchildId = await first.tasks.create({
-        type: grandchildType,
-        ownerId,
-        input: {},
-        parentId: childId,
-      });
-      await grandchildHeld.reached;
-      const [request] = (await first.decisions.listTree(parentId, ownerId)).filter(
-        (d) => d.status === 'open',
-      );
-      expect(request.taskId).toBe(childId);
-
-      // When: the child is stopped
-      const stoppedIds = await first.tasks.stop(childId, ownerId);
-
-      // Then: child and grandchild stopped, the decision cancelled, the parent told once and woken
-      expect(stoppedIds).toEqual([childId, grandchildId]);
-      const statuses = await statusesOf([parentId, childId, grandchildId]);
-      expect([statuses.get(childId), statuses.get(grandchildId)]).toEqual(['stopped', 'stopped']);
-      expect(['queued', 'running']).toContain(statuses.get(parentId));
-      expect(await decisionOf(first, request.decisionId)).toEqual({
-        status: 'cancelled',
-        resolution: null,
-        deliveredStep: null,
-      });
-      const stoppedNotice = {
-        taskId: childId,
-        status: 'stopped',
-        steps: 1,
-        durationMs: expect.any(Number),
-      };
-      expect(
-        (await childFinishedOf(parentId)).map((notice) => [notice.sender, notice.payload]),
-      ).toEqual([[childId, stoppedNotice]]);
-
-      // When: the grandchild's held step answers late
-      grandchildHeld.open();
-      await waitFor(
-        async () =>
-          first.logs.find(
-            (record) =>
-              record.fields.taskId === grandchildId &&
-              record.message === 'step result rejected: the attempt is no longer current',
+        });
+        expect(
+          (await runtime.inbox.listPending(taskId, ownerId)).map(
+            (pending) => pending.payload,
           ),
-        (record) => record !== undefined,
-        'the late result of the grandchild to be refused',
-      );
+        ).toEqual([{ text: 'change course' }]);
+        const signalReason = await waitFor(
+          async (): Promise<unknown> =>
+            probe.signal?.aborted === true ? probe.signal.reason : undefined,
+          (reason) => reason !== undefined,
+          'the held step to get its signal',
+        );
+        expect(signalReason).toBe('interrupted');
 
-      // Then: refused - no row of it, the grandchild still stopped
-      expect(await handlerRowsOf([grandchildId])).toEqual([]);
-      expect((await statusesOf([grandchildId])).get(grandchildId)).toBe('stopped');
+        // When: the cut-off handler answers late, and the next step is claimed
+        held.open();
+        await next.reached;
 
-      // And: the parent's next step receives the notice and no stopped task is claimed again
-      parentNext.open();
-      await waitFor(
-        () => statusesOf([parentId]),
-        (current) => current.get(parentId) === 'waiting' && seenByParent.length === 2,
-        'the parent\'s next step to commit',
-      );
-      expect(
-        seenByParent[1].messages.map((seen) => [seen.kind, seen.sender, seen.payload]),
-      ).toEqual([['child_finished', childId, stoppedNotice]]);
-      const claimsOf = async (taskId: string) =>
-        (await eventsOf(taskId)).filter((event) => event.type === 'task.step_started').length;
-      expect([await claimsOf(childId), await claimsOf(grandchildId)]).toEqual([1, 1]);
-      const after = await statusesOf([childId, grandchildId]);
-      expect([after.get(childId), after.get(grandchildId)]).toEqual(['stopped', 'stopped']);
-    } finally {
-      parentNext.open();
-      grandchildHeld.open();
-      await first.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-3 C: stop racing a spawn and a create never leaves an unfinished task in the tree and answers PARENT_FINISHED to the loser', async () => {
-    // Given: a parent type whose step holds on its task's gate and spawns a child in its commit
-    const ownerId = newUser();
-    const parentType = uniqueType('int3c-parent');
-    const childType = uniqueType('int3c-child');
-    const spawnSteps = createGateBook();
-    const spawningParent: TaskHandler = {
-      type: parentType,
-      inputSchema: anyInput,
-      async step(ctx) {
-        await spawnSteps.of(ctx.taskId).pass(ctx.signal);
-        return {
-          outcome: 'wait',
-          commit: async (effects) => {
-            await effects.spawn({ type: childType, input: {} });
-            await writeHandlerRow(ctx, 'spawned')();
-          },
+        // Then: the late result and the late guard wrote nothing; the intent and ledger rows stay
+        expect(probe.intent).toMatchObject({ outcome: 'committed' });
+        expect(probe.lateGuard).toEqual({ outcome: 'fenced' });
+        const intentRow = {
+          taskId,
+          stepNo: 0,
+          attempt: 1,
+          resumedAfterLoss: false,
+          note: 'intent',
         };
-      },
-    };
-    const handlers = [spawningParent, scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] })];
-    const first = await createRuntimeHarness({ handlers });
-    try {
-      for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
-        const at = `iteration ${iteration}`;
-        const parentId = await first.tasks.create({ type: parentType, ownerId, input: {} });
-        const gate = spawnSteps.of(parentId);
-        await gate.reached;
-
-        // When: the spawning step is let go while the parent is stopped and a child is created under it
-        gate.open();
-        const [stoppedIds, created] = await Promise.all([
-          first.tasks.stop(parentId, ownerId),
-          answerOf(() =>
-            first.tasks.create({ type: childType, ownerId, input: {}, parentId }),
-          ),
+        expect(await handlerRowsOf([taskId])).toEqual([intentRow]);
+        expect(await runtime.tasks.get(taskId, ownerId)).toMatchObject({
+          status: 'running',
+          stepNo: 0,
+        });
+        expect(
+          (await inboxOf(taskId)).map((stored) => [
+            stored.seq,
+            stored.status,
+            stored.deliveredStep,
+          ]),
+        ).toEqual([[0, 'pending', null]]);
+        expect(
+          (await ledgerRowsOf(runtime, ownerId)).map((row) => [
+            row.taskId,
+            row.model,
+            row.costUsd,
+          ]),
+        ).toEqual([[taskId, TEST_MODEL_ONE, 0.002]]);
+        // the next step carries the message and the loss flag
+        expect(probe.later).toEqual([
+          {
+            stepNo: 0,
+            resumedAfterLoss: true,
+            messages: [
+              {
+                kind: 'note',
+                sender: ownerId,
+                payload: { text: 'change course' },
+              },
+            ],
+          },
         ]);
 
-        // Then: every task of the tree is stopped, and by this stop
-        const tree = await first.tasks.listTree(parentId, ownerId);
+        // And: the next step commits step 0 with the message
+        next.open();
+        await waitFor(
+          () => statusesOf([taskId]),
+          (statuses) => statuses.get(taskId) === 'waiting',
+          'the next step to commit',
+        );
+        expect(await handlerRowsOf([taskId])).toEqual([
+          intentRow,
+          {
+            taskId,
+            stepNo: 0,
+            attempt: 3,
+            resumedAfterLoss: true,
+            note: 'commit',
+          },
+        ]);
         expect(
-          tree.filter((task) => task.status !== 'stopped').map((task) => task.taskId),
-          at,
-        ).toEqual([]);
-        expect(stoppedIds[0], at).toBe(parentId);
-        expect([...stoppedIds].sort(), at).toEqual(tree.map((task) => task.taskId).sort());
-        // the create either won and its child is in the tree, or lost and wrote nothing
-        const spawned = (await handlerRowsOf([parentId])).length;
-        const createdId = 'value' in created ? created.value : undefined;
-        if (createdId === undefined) {
-          expect(created, at).toEqual({ code: 'PARENT_FINISHED' });
-        } else {
-          expect(tree.map((task) => task.taskId), at).toContain(createdId);
-        }
-        expect(tree, at).toHaveLength(1 + spawned + (createdId === undefined ? 0 : 1));
+          (await inboxOf(taskId)).map((stored) => [
+            stored.seq,
+            stored.status,
+            stored.deliveredStep,
+          ]),
+        ).toEqual([[0, 'delivered', 0]]);
+      } finally {
+        held.open();
+        next.open();
+        await harness?.close();
       }
-    } finally {
-      await first.close();
-    }
-  }, RACE_TIMEOUT_MS);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-3 B: stopping a child closes it and its grandchild, cancels its decision, tells the parent once, and leaves the parent running',
+    async () => {
+      // Given: parent P waits for messages; child C waits for a decision; grandchild G holds a step
+      // deaf to its signal
+      const ownerId = newUser();
+      const parentType = uniqueType('int3b-parent');
+      const childType = uniqueType('int3b-child');
+      const grandchildType = uniqueType('int3b-grandchild');
+      const parentNext = createGate();
+      const grandchildHeld = createGate();
+      const seenByParent: StepView[] = [];
+      const handlers = [
+        scriptedHandler({
+          type: parentType,
+          seen: seenByParent,
+          steps: [{ outcome: 'wait' }, { outcome: 'wait', gate: parentNext }],
+        }),
+        scriptedHandler({
+          type: childType,
+          steps: [
+            {
+              outcome: 'await_decision',
+              kind: 'approve',
+              payload: { question: 'go on?' },
+            },
+          ],
+        }),
+        scriptedHandler({
+          type: grandchildType,
+          steps: [{ outcome: 'continue', gate: grandchildHeld, deaf: true }],
+        }),
+      ];
+      const first = await createRuntimeHarness({ handlers });
+      try {
+        const parentId = await first.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const childId = await first.tasks.create({
+          type: childType,
+          ownerId,
+          input: {},
+          parentId,
+        });
+        await waitFor(
+          () => first.tasks.listTree(parentId, ownerId),
+          (tree) =>
+            tree.map((task) => task.waitReason).join() ===
+            ['messages', 'decision'].join(),
+          'the parent to wait for messages and the child for a decision',
+        );
+        const grandchildId = await first.tasks.create({
+          type: grandchildType,
+          ownerId,
+          input: {},
+          parentId: childId,
+        });
+        await grandchildHeld.reached;
+        const [request] = (
+          await first.decisions.listTree(parentId, ownerId)
+        ).filter((d) => d.status === 'open');
+        expect(request.taskId).toBe(childId);
+
+        // When: the child is stopped
+        const stoppedIds = await first.tasks.stop(childId, ownerId);
+
+        // Then: child and grandchild stopped, the decision cancelled, the parent told once and woken
+        expect(stoppedIds).toEqual([childId, grandchildId]);
+        const statuses = await statusesOf([parentId, childId, grandchildId]);
+        expect([statuses.get(childId), statuses.get(grandchildId)]).toEqual([
+          'stopped',
+          'stopped',
+        ]);
+        expect(['queued', 'running']).toContain(statuses.get(parentId));
+        expect(await decisionOf(first, request.decisionId)).toEqual({
+          status: 'cancelled',
+          resolution: null,
+          deliveredStep: null,
+        });
+        const stoppedNotice = {
+          taskId: childId,
+          status: 'stopped',
+          steps: 1,
+          durationMs: expect.any(Number),
+        };
+        expect(
+          (await childFinishedOf(parentId)).map((notice) => [
+            notice.sender,
+            notice.payload,
+          ]),
+        ).toEqual([[childId, stoppedNotice]]);
+
+        // When: the grandchild's held step answers late
+        grandchildHeld.open();
+        await waitFor(
+          async () =>
+            first.logs.find(
+              (record) =>
+                record.fields.taskId === grandchildId &&
+                record.message ===
+                  'step result rejected: the attempt is no longer current',
+            ),
+          (record) => record !== undefined,
+          'the late result of the grandchild to be refused',
+        );
+
+        // Then: refused - no row of it, the grandchild still stopped
+        expect(await handlerRowsOf([grandchildId])).toEqual([]);
+        expect((await statusesOf([grandchildId])).get(grandchildId)).toBe(
+          'stopped',
+        );
+
+        // And: the parent's next step receives the notice and no stopped task is claimed again
+        parentNext.open();
+        await waitFor(
+          () => statusesOf([parentId]),
+          (current) =>
+            current.get(parentId) === 'waiting' && seenByParent.length === 2,
+          "the parent's next step to commit",
+        );
+        expect(
+          seenByParent[1].messages.map((seen) => [
+            seen.kind,
+            seen.sender,
+            seen.payload,
+          ]),
+        ).toEqual([['child_finished', childId, stoppedNotice]]);
+        const claimsOf = async (taskId: string) =>
+          (await eventsOf(taskId)).filter(
+            (event) => event.type === 'task.step_started',
+          ).length;
+        expect([await claimsOf(childId), await claimsOf(grandchildId)]).toEqual(
+          [1, 1],
+        );
+        const after = await statusesOf([childId, grandchildId]);
+        expect([after.get(childId), after.get(grandchildId)]).toEqual([
+          'stopped',
+          'stopped',
+        ]);
+      } finally {
+        parentNext.open();
+        grandchildHeld.open();
+        await first.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-3 C: stop racing a spawn and a create never leaves an unfinished task in the tree and answers PARENT_FINISHED to the loser',
+    async () => {
+      // Given: a parent type whose step holds on its task's gate and spawns a child in its commit
+      const ownerId = newUser();
+      const parentType = uniqueType('int3c-parent');
+      const childType = uniqueType('int3c-child');
+      const spawnSteps = createGateBook();
+      const spawningParent: TaskHandler = {
+        type: parentType,
+        inputSchema: anyInput,
+        async step(ctx) {
+          await spawnSteps.of(ctx.taskId).pass(ctx.signal);
+          return {
+            outcome: 'wait',
+            commit: async (effects) => {
+              await effects.spawn({ type: childType, input: {} });
+              await writeHandlerRow(ctx, 'spawned')();
+            },
+          };
+        },
+      };
+      const handlers = [
+        spawningParent,
+        scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
+      ];
+      const first = await createRuntimeHarness({ handlers });
+      try {
+        for (let iteration = 0; iteration < RACE_ITERATIONS; iteration += 1) {
+          const at = `iteration ${iteration}`;
+          const parentId = await first.tasks.create({
+            type: parentType,
+            ownerId,
+            input: {},
+          });
+          const gate = spawnSteps.of(parentId);
+          await gate.reached;
+
+          // When: the spawning step is let go while the parent is stopped and a child is created under it
+          gate.open();
+          const [stoppedIds, created] = await Promise.all([
+            first.tasks.stop(parentId, ownerId),
+            answerOf(() =>
+              first.tasks.create({
+                type: childType,
+                ownerId,
+                input: {},
+                parentId,
+              }),
+            ),
+          ]);
+
+          // Then: every task of the tree is stopped, and by this stop
+          const tree = await first.tasks.listTree(parentId, ownerId);
+          expect(
+            tree
+              .filter((task) => task.status !== 'stopped')
+              .map((task) => task.taskId),
+            at,
+          ).toEqual([]);
+          expect(stoppedIds[0], at).toBe(parentId);
+          expect([...stoppedIds].sort(), at).toEqual(
+            tree.map((task) => task.taskId).sort(),
+          );
+          // the create either won and its child is in the tree, or lost and wrote nothing
+          const spawned = (await handlerRowsOf([parentId])).length;
+          const createdId = 'value' in created ? created.value : undefined;
+          if (createdId === undefined) {
+            expect(created, at).toEqual({ code: 'PARENT_FINISHED' });
+          } else {
+            expect(
+              tree.map((task) => task.taskId),
+              at,
+            ).toContain(createdId);
+          }
+          expect(tree, at).toHaveLength(
+            1 + spawned + (createdId === undefined ? 0 : 1),
+          );
+        }
+      } finally {
+        await first.close();
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
 
   // Row D "siblings of one commit": a step spawns five children in one commit, so they share `created_at`.
   // Catches: the tree read ordering siblings of one transaction by the random `task_id` instead of the order they were created in.
-  it('INT-3 D: children spawned in one commit come back from listTree in the order they were spawned', async () => {
-    // Given: a parent whose first step spawns five children in its commit
-    const ownerId = newUser();
-    const parentType = uniqueType('int3d-parent');
-    const childType = uniqueType('int3d-child');
-    const spawnedIds: string[] = [];
-    const spawningParent: TaskHandler = {
-      type: parentType,
-      inputSchema: anyInput,
-      async step() {
-        return {
-          outcome: 'wait',
-          commit: async (effects) => {
-            spawnedIds.length = 0; // a retried commit spawns again
-            for (let index = 0; index < 5; index += 1) {
-              spawnedIds.push(await effects.spawn({ type: childType, input: { index } }));
-            }
-          },
-        };
-      },
-    };
-    const harness = await createRuntimeHarness({
-      handlers: [spawningParent, scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] })],
-    });
-    try {
-      // When: the parent's step commits
-      const parentId = await harness.tasks.create({ type: parentType, ownerId, input: {} });
-      await waitFor(
-        () => statusesOf([parentId]),
-        (statuses) => statuses.get(parentId) === 'waiting',
-        'the spawning step to commit',
-      );
+  it(
+    'INT-3 D: children spawned in one commit come back from listTree in the order they were spawned',
+    async () => {
+      // Given: a parent whose first step spawns five children in its commit
+      const ownerId = newUser();
+      const parentType = uniqueType('int3d-parent');
+      const childType = uniqueType('int3d-child');
+      const spawnedIds: string[] = [];
+      const spawningParent: TaskHandler = {
+        type: parentType,
+        inputSchema: anyInput,
+        async step() {
+          return {
+            outcome: 'wait',
+            commit: async (effects) => {
+              spawnedIds.length = 0; // a retried commit spawns again
+              for (let index = 0; index < 5; index += 1) {
+                spawnedIds.push(
+                  await effects.spawn({ type: childType, input: { index } }),
+                );
+              }
+            },
+          };
+        },
+      };
+      const harness = await createRuntimeHarness({
+        handlers: [
+          spawningParent,
+          scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
+        ],
+      });
+      try {
+        // When: the parent's step commits
+        const parentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        await waitFor(
+          () => statusesOf([parentId]),
+          (statuses) => statuses.get(parentId) === 'waiting',
+          'the spawning step to commit',
+        );
 
-      // Then: the tree lists the parent, then the children in spawn order
-      expect(spawnedIds).toHaveLength(5);
-      expect((await harness.tasks.listTree(parentId, ownerId)).map((task) => task.taskId)).toEqual([
-        parentId,
-        ...spawnedIds,
-      ]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // Then: the tree lists the parent, then the children in spawn order
+        expect(spawnedIds).toHaveLength(5);
+        expect(
+          (await harness.tasks.listTree(parentId, ownerId)).map(
+            (task) => task.taskId,
+          ),
+        ).toEqual([parentId, ...spawnedIds]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-4  Isolation: every operation answers a foreign owner as for a missing object
@@ -1276,111 +1582,185 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // - Rows: `tasks.get`, `tasks.listTree`, `tasks.create` with A's task as `parentId`, `tasks.interrupt`, `tasks.stop`, `tasks.deleteTree`, `inbox.enqueue`, `inbox.listPending`, `decisions.resolve`, `decisions.listTree`, `events.listAfter`.
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`TASK_NOT_FOUND` / `DECISION_NOT_FOUND`), or the same empty list for the list operations; no timing or message difference is asserted.
   // - After all rows: a row-version snapshot of A's tasks, messages, decisions and events equals the snapshot before; A's decision is still `open` and can be resolved by A (`resolved`), and A's tree can still be read in full by A.
-  it('INT-4: every runtime operation called as another owner answers exactly as for a missing object and changes none of the owner\'s rows', async () => {
-    // Given: owner A's tree - a root waiting for its open decision with a pending message, a child
-    // waiting for messages, their events - with the workers paused so that only the calls act
-    const ownerA = newUser();
-    const ownerB = newUser();
-    const rootType = uniqueType('int4-root');
-    const childType = uniqueType('int4-child');
-    const harness = await createRuntimeHarness({
-      handlers: [
-        scriptedHandler({
-          type: rootType,
-          steps: [{ outcome: 'await_decision', kind: 'approve', payload: { question: 'go?' } }],
-        }),
-        scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
-      ],
-    });
-    try {
-      const rootId = await harness.tasks.create({ type: rootType, ownerId: ownerA, input: {} });
-      await waitFor(
-        () => harness.tasks.get(rootId, ownerA),
-        (task) => task.waitReason === 'decision',
-        'the root to wait for a decision',
-      );
-      const childId = await harness.tasks.create({
-        type: childType,
-        ownerId: ownerA,
-        input: {},
-        parentId: rootId,
+  it(
+    "INT-4: every runtime operation called as another owner answers exactly as for a missing object and changes none of the owner's rows",
+    async () => {
+      // Given: owner A's tree - a root waiting for its open decision with a pending message, a child
+      // waiting for messages, their events - with the workers paused so that only the calls act
+      const ownerA = newUser();
+      const ownerB = newUser();
+      const rootType = uniqueType('int4-root');
+      const childType = uniqueType('int4-child');
+      const harness = await createRuntimeHarness({
+        handlers: [
+          scriptedHandler({
+            type: rootType,
+            steps: [
+              {
+                outcome: 'await_decision',
+                kind: 'approve',
+                payload: { question: 'go?' },
+              },
+            ],
+          }),
+          scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
+        ],
       });
-      await waitFor(
-        () => harness.tasks.get(childId, ownerA),
-        (task) => task.waitReason === 'messages',
-        'the child to wait for messages',
-      );
-      await harness.inbox.enqueue(note(rootId, ownerA, { n: 1 }));
-      await harness.stop();
-      const [request] = (await harness.decisions.listTree(rootId, ownerA)).filter(
-        (d) => d.status === 'open',
-      );
-      expect(request.taskId).toBe(rootId);
-      expect(await harness.inbox.listPending(rootId, ownerA)).toHaveLength(1);
-      expect(await harness.events.listAfter(rootId, ownerA, 0, 500)).not.toEqual([]);
-      const before = await rowVersionsOf(rootId);
-      expect(new Set(before.map((row) => row.table))).toEqual(
-        new Set(['tasks', 'inbox', 'decisions', 'events']),
-      );
-      const missingId = randomUUID();
-      const notFound = { code: 'TASK_NOT_FOUND' };
-      const none = { value: [] };
-
-      // When: owner B calls every operation on A's objects, and on an id that exists for nobody
-      const operations: [string, string, (id: string) => Promise<unknown>, Answer][] = [
-        ['tasks.get', childId, (id) => harness.tasks.get(id, ownerB), notFound],
-        ['tasks.listTree', rootId, (id) => harness.tasks.listTree(id, ownerB), none],
-        [
-          'tasks.create under the task',
-          rootId,
-          (id) => harness.tasks.create({ type: childType, ownerId: ownerB, input: {}, parentId: id }),
-          notFound,
-        ],
-        [
-          'tasks.interrupt',
-          childId,
-          (id) =>
-            harness.tasks.interrupt(id, ownerB, { kind: 'note', sender: ownerB, payload: {} }),
-          notFound,
-        ],
-        ['tasks.stop', childId, (id) => harness.tasks.stop(id, ownerB), notFound],
-        ['tasks.deleteTree', rootId, (id) => harness.tasks.deleteTree(id, ownerB), notFound],
-        ['inbox.enqueue', rootId, (id) => harness.inbox.enqueue(note(id, ownerB, { n: 2 })), notFound],
-        ['inbox.listPending', rootId, (id) => harness.inbox.listPending(id, ownerB), none],
-        [
-          'decisions.resolve',
-          request.decisionId,
-          (id) => harness.decisions.resolve(id, ownerB, { approved: false }),
-          { code: 'DECISION_NOT_FOUND' },
-        ],
-        ['decisions.listTree', rootId, (id) => harness.decisions.listTree(id, ownerB), none],
-        ['events.listAfter', rootId, (id) => harness.events.listAfter(id, ownerB, 0, 500), none],
-      ];
-
-      // Then: each answer for A's object equals the answer for the missing one
-      for (const [operation, ownedId, call, expected] of operations) {
-        const foreign = await answerOf(() => call(ownedId));
-        const missing = await answerOf(() => call(missingId));
-        expect({ operation, foreign, missing }).toEqual({
-          operation,
-          foreign: expected,
-          missing: expected,
+      try {
+        const rootId = await harness.tasks.create({
+          type: rootType,
+          ownerId: ownerA,
+          input: {},
         });
-      }
+        await waitFor(
+          () => harness.tasks.get(rootId, ownerA),
+          (task) => task.waitReason === 'decision',
+          'the root to wait for a decision',
+        );
+        const childId = await harness.tasks.create({
+          type: childType,
+          ownerId: ownerA,
+          input: {},
+          parentId: rootId,
+        });
+        await waitFor(
+          () => harness.tasks.get(childId, ownerA),
+          (task) => task.waitReason === 'messages',
+          'the child to wait for messages',
+        );
+        await harness.inbox.enqueue(note(rootId, ownerA, { n: 1 }));
+        await harness.stop();
+        const [request] = (
+          await harness.decisions.listTree(rootId, ownerA)
+        ).filter((d) => d.status === 'open');
+        expect(request.taskId).toBe(rootId);
+        expect(await harness.inbox.listPending(rootId, ownerA)).toHaveLength(1);
+        expect(
+          await harness.events.listAfter(rootId, ownerA, 0, 500),
+        ).not.toEqual([]);
+        const before = await rowVersionsOf(rootId);
+        expect(new Set(before.map((row) => row.table))).toEqual(
+          new Set(['tasks', 'inbox', 'decisions', 'events']),
+        );
+        const missingId = randomUUID();
+        const notFound = { code: 'TASK_NOT_FOUND' };
+        const none = { value: [] };
 
-      // And: no row of A's tree changed; A still reads the whole tree and resolves the decision
-      expect(await rowVersionsOf(rootId)).toEqual(before);
-      expect((await harness.tasks.listTree(rootId, ownerA)).map((task) => task.taskId)).toEqual([
-        rootId,
-        childId,
-      ]);
-      expect(await harness.decisions.resolve(request.decisionId, ownerA, { approved: true })).toBe(
-        'resolved',
-      );
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+        // When: owner B calls every operation on A's objects, and on an id that exists for nobody
+        const operations: [
+          string,
+          string,
+          (id: string) => Promise<unknown>,
+          Answer,
+        ][] = [
+          [
+            'tasks.get',
+            childId,
+            (id) => harness.tasks.get(id, ownerB),
+            notFound,
+          ],
+          [
+            'tasks.listTree',
+            rootId,
+            (id) => harness.tasks.listTree(id, ownerB),
+            none,
+          ],
+          [
+            'tasks.create under the task',
+            rootId,
+            (id) =>
+              harness.tasks.create({
+                type: childType,
+                ownerId: ownerB,
+                input: {},
+                parentId: id,
+              }),
+            notFound,
+          ],
+          [
+            'tasks.interrupt',
+            childId,
+            (id) =>
+              harness.tasks.interrupt(id, ownerB, {
+                kind: 'note',
+                sender: ownerB,
+                payload: {},
+              }),
+            notFound,
+          ],
+          [
+            'tasks.stop',
+            childId,
+            (id) => harness.tasks.stop(id, ownerB),
+            notFound,
+          ],
+          [
+            'tasks.deleteTree',
+            rootId,
+            (id) => harness.tasks.deleteTree(id, ownerB),
+            notFound,
+          ],
+          [
+            'inbox.enqueue',
+            rootId,
+            (id) => harness.inbox.enqueue(note(id, ownerB, { n: 2 })),
+            notFound,
+          ],
+          [
+            'inbox.listPending',
+            rootId,
+            (id) => harness.inbox.listPending(id, ownerB),
+            none,
+          ],
+          [
+            'decisions.resolve',
+            request.decisionId,
+            (id) => harness.decisions.resolve(id, ownerB, { approved: false }),
+            { code: 'DECISION_NOT_FOUND' },
+          ],
+          [
+            'decisions.listTree',
+            rootId,
+            (id) => harness.decisions.listTree(id, ownerB),
+            none,
+          ],
+          [
+            'events.listAfter',
+            rootId,
+            (id) => harness.events.listAfter(id, ownerB, 0, 500),
+            none,
+          ],
+        ];
+
+        // Then: each answer for A's object equals the answer for the missing one
+        for (const [operation, ownedId, call, expected] of operations) {
+          const foreign = await answerOf(() => call(ownedId));
+          const missing = await answerOf(() => call(missingId));
+          expect({ operation, foreign, missing }).toEqual({
+            operation,
+            foreign: expected,
+            missing: expected,
+          });
+        }
+
+        // And: no row of A's tree changed; A still reads the whole tree and resolves the decision
+        expect(await rowVersionsOf(rootId)).toEqual(before);
+        expect(
+          (await harness.tasks.listTree(rootId, ownerA)).map(
+            (task) => task.taskId,
+          ),
+        ).toEqual([rootId, childId]);
+        expect(
+          await harness.decisions.resolve(request.decisionId, ownerA, {
+            approved: true,
+          }),
+        ).toBe('resolved');
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-5  The token ledger: cost by the model's price, the owner's month in UTC, rows that outlive the tree
@@ -1410,293 +1790,387 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   `monthSpendByModel(A, '2026-11')` holds each model's literal sum (AC-21.4, DC-9 of design-access.md), `'2026-09'` is empty, B's rows are not in A's map.
   // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: both task rows stay, `stopped`, each with `deleted_at` set; the messages and events stay and the request is `cancelled`. Table by operation, as
   //   in INT-4: each of A's own operations on the deleted tree answers exactly as for a random missing id (`TASK_NOT_FOUND`, `DECISION_NOT_FOUND`, `[]`), and no row of the tree changed. The ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
-  it('INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model\'s price', async () => {
-    // Given: a task of owner A and a clock in November 2026
-    const ownerId = newUser();
-    const type = uniqueType('int5a');
-    const calledAt = new Date('2026-11-14T10:00:00Z');
-    const harness = await createRuntimeHarness({
-      handlers: [scriptedHandler({ type, steps: [{ outcome: 'wait' }] })],
-      clock: settableClock(calledAt),
-      startWorkers: false,
-    });
-    try {
-      const taskId = await harness.tasks.create({ type, ownerId, input: {} });
-      const usage = {
-        inputTokens: 1200,
-        outputTokens: 200,
-        cacheReadTokens: 100,
-        cacheWriteTokens: 100,
-      };
+  it(
+    "INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model's price",
+    async () => {
+      // Given: a task of owner A and a clock in November 2026
+      const ownerId = newUser();
+      const type = uniqueType('int5a');
+      const calledAt = new Date('2026-11-14T10:00:00Z');
+      const harness = await createRuntimeHarness({
+        handlers: [scriptedHandler({ type, steps: [{ outcome: 'wait' }] })],
+        clock: settableClock(calledAt),
+        startWorkers: false,
+      });
+      try {
+        const taskId = await harness.tasks.create({ type, ownerId, input: {} });
+        const usage = {
+          inputTokens: 1200,
+          outputTokens: 200,
+          cacheReadTokens: 100,
+          cacheWriteTokens: 100,
+        };
 
-      // When: one call is recorded on each model
-      const one = await harness.ledger.record({
-        ownerId,
-        taskId,
-        model: TEST_MODEL_ONE,
-        price: TEST_MODEL_ONE_PRICE,
-        usage,
-      });
-      const two = await harness.ledger.record({
-        ownerId,
-        taskId,
-        model: TEST_MODEL_TWO,
-        price: TEST_MODEL_TWO_PRICE,
-        usage,
-      });
-
-      // Then: each cost is the price the call carried (by hand: 1000*1 + 100*1.25 + 100*0.125 +
-      // 200*5 = 2137.5 micro-USD; 1000*3 + 100*3.75 + 100*0.375 + 200*15 = 6412.5 micro-USD)
-      expect(one.costUsd).toBe(0.0021375);
-      expect(two.costUsd).toBe(0.0064125);
-      expect(one.callId).not.toBe(two.callId);
-      const rows = await ledgerRowsOf(harness, ownerId);
-      expect(rows).toEqual(
-        expect.arrayContaining([
-          {
-            callId: one.callId,
-            ownerId,
-            taskId,
-            model: TEST_MODEL_ONE,
-            inputTokens: 1200,
-            outputTokens: 200,
-            cacheReadTokens: 100,
-            cacheWriteTokens: 100,
-            costUsd: 0.0021375,
-            calledAt,
-          },
-          {
-            callId: two.callId,
-            ownerId,
-            taskId,
-            model: TEST_MODEL_TWO,
-            inputTokens: 1200,
-            outputTokens: 200,
-            cacheReadTokens: 100,
-            cacheWriteTokens: 100,
-            costUsd: 0.0064125,
-            calledAt,
-          },
-        ]),
-      );
-      expect(rows).toHaveLength(2);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-5 B: the month spend is the owner\'s own sum for the UTC month, excluding the boundary seconds on either side and other owners', async () => {
-    // Given: owner A's calls on both sides of November's edges, owner B's call in November
-    const ownerA = newUser();
-    const ownerB = newUser();
-    const clock = settableClock(new Date('2026-11-01T00:00:00Z'));
-    const harness = await createRuntimeHarness({ handlers: [], clock, startWorkers: false });
-    // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
-    const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    const one = { model: TEST_MODEL_ONE, price: TEST_MODEL_ONE_PRICE };
-    const two = { model: TEST_MODEL_TWO, price: TEST_MODEL_TWO_PRICE };
-    const calls = [
-      { ownerId: ownerA, ...one, at: '2026-10-31T23:59:59Z' },
-      { ownerId: ownerA, ...one, at: '2026-11-01T00:00:00Z' },
-      { ownerId: ownerA, ...two, at: '2026-11-30T23:59:59Z' },
-      { ownerId: ownerA, ...two, at: '2026-12-01T00:00:00Z' },
-      { ownerId: ownerB, ...two, at: '2026-11-15T12:00:00Z' },
-    ];
-    try {
-      for (const { at, ...call } of calls) {
-        clock.set(new Date(at));
-        await harness.ledger.record({ ...call, usage });
-      }
-
-      // When / Then: each month holds exactly the owner's calls inside it, by UTC
-      expect(await harness.ledger.monthSpend(ownerA, '2026-11')).toEqual({
-        costUsd: 0.008,
-        calls: 2,
-      });
-      expect(await harness.ledger.monthSpend(ownerA, '2026-10')).toEqual({
-        costUsd: 0.002,
-        calls: 1,
-      });
-      expect(await harness.ledger.monthSpend(ownerA, '2026-12')).toEqual({
-        costUsd: 0.006,
-        calls: 1,
-      });
-      expect(await harness.ledger.monthSpend(ownerB, '2026-11')).toEqual({
-        costUsd: 0.006,
-        calls: 1,
-      });
-      expect(await harness.ledger.monthSpend(ownerA, '2026-09')).toEqual({
-        costUsd: 0,
-        calls: 0,
-      });
-
-      // And: the month spend split by model holds each model's own sum, by the same window
-      expect(await harness.ledger.monthSpendByModel(ownerA, '2026-11')).toEqual(
-        new Map([
-          [TEST_MODEL_ONE, 0.002],
-          [TEST_MODEL_TWO, 0.006],
-        ]),
-      );
-      expect(await harness.ledger.monthSpendByModel(ownerA, '2026-09')).toEqual(new Map());
-      expect(await harness.ledger.monthSpendByModel(ownerB, '2026-11')).toEqual(
-        new Map([[TEST_MODEL_TWO, 0.006]]),
-      );
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-5 D: deleting the task tree keeps its rows marked deleted, answers as missing to its own owner, and leaves the ledger and the month spend unchanged', async () => {
-    // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
-    // call recorded for each task in November 2026
-    const ownerId = newUser();
-    const rootType = uniqueType('int5d-root');
-    const childType = uniqueType('int5d-child');
-    const harness = await createRuntimeHarness({
-      handlers: [
-        scriptedHandler({
-          type: rootType,
-          steps: [{ outcome: 'await_decision', kind: 'approve', payload: { question: 'go?' } }],
-        }),
-        scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
-      ],
-      clock: settableClock(new Date('2026-11-14T10:00:00Z')),
-    });
-    try {
-      const rootId = await harness.tasks.create({ type: rootType, ownerId, input: {} });
-      await waitFor(
-        () => harness.tasks.get(rootId, ownerId),
-        (task) => task.waitReason === 'decision',
-        'the root to wait for a decision',
-      );
-      const childId = await harness.tasks.create({
-        type: childType,
-        ownerId,
-        input: {},
-        parentId: rootId,
-      });
-      await waitFor(
-        () => harness.tasks.get(childId, ownerId),
-        (task) => task.waitReason === 'messages',
-        'the child to wait for messages',
-      );
-      await harness.inbox.enqueue(note(rootId, ownerId, { n: 1 }));
-      const [request] = (await harness.decisions.listTree(rootId, ownerId)).filter(
-        (d) => d.status === 'open',
-      );
-      // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
-      const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 };
-      await harness.ledger.record({
-        ownerId,
-        taskId: rootId,
-        model: TEST_MODEL_ONE,
-        price: TEST_MODEL_ONE_PRICE,
-        usage,
-      });
-      await harness.ledger.record({
-        ownerId,
-        taskId: childId,
-        model: TEST_MODEL_TWO,
-        price: TEST_MODEL_TWO_PRICE,
-        usage,
-      });
-      expect(await harness.ledger.monthSpend(ownerId, '2026-11')).toEqual({
-        costUsd: 0.008,
-        calls: 2,
-      });
-
-      // When: the tree is deleted
-      const answer = await harness.tasks.deleteTree(rootId, ownerId);
-
-      // Then: both tasks stay, stopped and marked deleted; the messages, events and the cancelled
-      // request stay with them
-      expect(answer).toBe('deleted');
-      expect(
-        await harness.db
-          .select({
-            taskId: runtimeTasks.taskId,
-            status: runtimeTasks.status,
-            deletedAt: runtimeTasks.deletedAt,
-          })
-          .from(runtimeTasks)
-          .where(eq(runtimeTasks.rootId, rootId))
-          .orderBy(asc(runtimeTasks.createdSeq)),
-      ).toEqual([
-        { taskId: rootId, status: 'stopped', deletedAt: expect.any(Date) },
-        { taskId: childId, status: 'stopped', deletedAt: expect.any(Date) },
-      ]);
-      expect((await inboxOf(rootId)).map((message) => [message.kind, message.status])).toEqual([
-        ['note', 'pending'],
-        ['child_finished', 'pending'],
-      ]);
-      expect((await eventsOf(rootId)).map((event) => event.type)).toEqual(
-        expect.arrayContaining(['task.created', 'task.stopped']),
-      );
-      expect((await eventsOf(childId)).map((event) => event.type)).toEqual(
-        expect.arrayContaining(['task.created', 'task.stopped']),
-      );
-      expect(await decisionOf(harness, request.decisionId)).toMatchObject({ status: 'cancelled' });
-
-      // When: the owner calls every operation on the deleted tree, and on an id that exists for nobody
-      const before = await rowVersionsOf(rootId);
-      const missingId = randomUUID();
-      const notFound = { code: 'TASK_NOT_FOUND' };
-      const operations: [string, string, (id: string) => Promise<unknown>, Answer][] = [
-        ['tasks.get of the root', rootId, (id) => harness.tasks.get(id, ownerId), notFound],
-        ['tasks.get of the child', childId, (id) => harness.tasks.get(id, ownerId), notFound],
-        ['tasks.listTree', rootId, (id) => harness.tasks.listTree(id, ownerId), { value: [] }],
-        ['tasks.interrupt', childId, (id) => harness.tasks.interrupt(id, ownerId), notFound],
-        ['tasks.stop', rootId, (id) => harness.tasks.stop(id, ownerId), notFound],
-        ['tasks.deleteTree', rootId, (id) => harness.tasks.deleteTree(id, ownerId), notFound],
-        [
-          'inbox.enqueue with revive',
-          rootId,
-          (id) => harness.inbox.enqueue({ ...note(id, ownerId, { n: 2 }), revive: true }),
-          notFound,
-        ],
-        [
-          'tasks.create under the root',
-          rootId,
-          (id) => harness.tasks.create({ type: childType, ownerId, input: {}, parentId: id }),
-          notFound,
-        ],
-        [
-          'decisions.resolve',
-          request.decisionId,
-          (id) => harness.decisions.resolve(id, ownerId, { approved: true }),
-          { code: 'DECISION_NOT_FOUND' },
-        ],
-      ];
-
-      // Then: each answer for the deleted tree equals the answer for the missing id, and no row of
-      // the tree changed: the root is still stopped and its queue got no new message
-      for (const [operation, deletedId, call, expected] of operations) {
-        const deleted = await answerOf(() => call(deletedId));
-        const missing = await answerOf(() => call(missingId));
-        expect({ operation, deleted, missing }).toEqual({
-          operation,
-          deleted: expected,
-          missing: expected,
+        // When: one call is recorded on each model
+        const one = await harness.ledger.record({
+          ownerId,
+          taskId,
+          model: TEST_MODEL_ONE,
+          price: TEST_MODEL_ONE_PRICE,
+          usage,
         });
-      }
-      expect(await rowVersionsOf(rootId)).toEqual(before);
-      expect(await statusesOf([rootId])).toEqual(new Map([[rootId, 'stopped']]));
+        const two = await harness.ledger.record({
+          ownerId,
+          taskId,
+          model: TEST_MODEL_TWO,
+          price: TEST_MODEL_TWO_PRICE,
+          usage,
+        });
 
-      // And: the ledger rows stay with their task ids, and the month spend is unchanged
-      const rows = await ledgerRowsOf(harness, ownerId);
-      expect(rows.map((row) => [row.taskId, row.model, row.costUsd])).toEqual(
-        expect.arrayContaining([
-          [rootId, TEST_MODEL_ONE, 0.002],
-          [childId, TEST_MODEL_TWO, 0.006],
-        ]),
-      );
-      expect(rows).toHaveLength(2);
-      expect(await harness.ledger.monthSpend(ownerId, '2026-11')).toEqual({
-        costUsd: 0.008,
-        calls: 2,
+        // Then: each cost is the price the call carried (by hand: 1000*1 + 100*1.25 + 100*0.125 +
+        // 200*5 = 2137.5 micro-USD; 1000*3 + 100*3.75 + 100*0.375 + 200*15 = 6412.5 micro-USD)
+        expect(one.costUsd).toBe(0.0021375);
+        expect(two.costUsd).toBe(0.0064125);
+        expect(one.callId).not.toBe(two.callId);
+        const rows = await ledgerRowsOf(harness, ownerId);
+        expect(rows).toEqual(
+          expect.arrayContaining([
+            {
+              callId: one.callId,
+              ownerId,
+              taskId,
+              model: TEST_MODEL_ONE,
+              inputTokens: 1200,
+              outputTokens: 200,
+              cacheReadTokens: 100,
+              cacheWriteTokens: 100,
+              costUsd: 0.0021375,
+              calledAt,
+            },
+            {
+              callId: two.callId,
+              ownerId,
+              taskId,
+              model: TEST_MODEL_TWO,
+              inputTokens: 1200,
+              outputTokens: 200,
+              cacheReadTokens: 100,
+              cacheWriteTokens: 100,
+              costUsd: 0.0064125,
+              calledAt,
+            },
+          ]),
+        );
+        expect(rows).toHaveLength(2);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "INT-5 B: the month spend is the owner's own sum for the UTC month, excluding the boundary seconds on either side and other owners",
+    async () => {
+      // Given: owner A's calls on both sides of November's edges, owner B's call in November
+      const ownerA = newUser();
+      const ownerB = newUser();
+      const clock = settableClock(new Date('2026-11-01T00:00:00Z'));
+      const harness = await createRuntimeHarness({
+        handlers: [],
+        clock,
+        startWorkers: false,
       });
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+      // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
+      const usage = {
+        inputTokens: 1000,
+        outputTokens: 200,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      };
+      const one = { model: TEST_MODEL_ONE, price: TEST_MODEL_ONE_PRICE };
+      const two = { model: TEST_MODEL_TWO, price: TEST_MODEL_TWO_PRICE };
+      const calls = [
+        { ownerId: ownerA, ...one, at: '2026-10-31T23:59:59Z' },
+        { ownerId: ownerA, ...one, at: '2026-11-01T00:00:00Z' },
+        { ownerId: ownerA, ...two, at: '2026-11-30T23:59:59Z' },
+        { ownerId: ownerA, ...two, at: '2026-12-01T00:00:00Z' },
+        { ownerId: ownerB, ...two, at: '2026-11-15T12:00:00Z' },
+      ];
+      try {
+        for (const { at, ...call } of calls) {
+          clock.set(new Date(at));
+          await harness.ledger.record({ ...call, usage });
+        }
+
+        // When / Then: each month holds exactly the owner's calls inside it, by UTC
+        expect(await harness.ledger.monthSpend(ownerA, '2026-11')).toEqual({
+          costUsd: 0.008,
+          calls: 2,
+        });
+        expect(await harness.ledger.monthSpend(ownerA, '2026-10')).toEqual({
+          costUsd: 0.002,
+          calls: 1,
+        });
+        expect(await harness.ledger.monthSpend(ownerA, '2026-12')).toEqual({
+          costUsd: 0.006,
+          calls: 1,
+        });
+        expect(await harness.ledger.monthSpend(ownerB, '2026-11')).toEqual({
+          costUsd: 0.006,
+          calls: 1,
+        });
+        expect(await harness.ledger.monthSpend(ownerA, '2026-09')).toEqual({
+          costUsd: 0,
+          calls: 0,
+        });
+
+        // And: the month spend split by model holds each model's own sum, by the same window
+        expect(
+          await harness.ledger.monthSpendByModel(ownerA, '2026-11'),
+        ).toEqual(
+          new Map([
+            [TEST_MODEL_ONE, 0.002],
+            [TEST_MODEL_TWO, 0.006],
+          ]),
+        );
+        expect(
+          await harness.ledger.monthSpendByModel(ownerA, '2026-09'),
+        ).toEqual(new Map());
+        expect(
+          await harness.ledger.monthSpendByModel(ownerB, '2026-11'),
+        ).toEqual(new Map([[TEST_MODEL_TWO, 0.006]]));
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-5 D: deleting the task tree keeps its rows marked deleted, answers as missing to its own owner, and leaves the ledger and the month spend unchanged',
+    async () => {
+      // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
+      // call recorded for each task in November 2026
+      const ownerId = newUser();
+      const rootType = uniqueType('int5d-root');
+      const childType = uniqueType('int5d-child');
+      const harness = await createRuntimeHarness({
+        handlers: [
+          scriptedHandler({
+            type: rootType,
+            steps: [
+              {
+                outcome: 'await_decision',
+                kind: 'approve',
+                payload: { question: 'go?' },
+              },
+            ],
+          }),
+          scriptedHandler({ type: childType, steps: [{ outcome: 'wait' }] }),
+        ],
+        clock: settableClock(new Date('2026-11-14T10:00:00Z')),
+      });
+      try {
+        const rootId = await harness.tasks.create({
+          type: rootType,
+          ownerId,
+          input: {},
+        });
+        await waitFor(
+          () => harness.tasks.get(rootId, ownerId),
+          (task) => task.waitReason === 'decision',
+          'the root to wait for a decision',
+        );
+        const childId = await harness.tasks.create({
+          type: childType,
+          ownerId,
+          input: {},
+          parentId: rootId,
+        });
+        await waitFor(
+          () => harness.tasks.get(childId, ownerId),
+          (task) => task.waitReason === 'messages',
+          'the child to wait for messages',
+        );
+        await harness.inbox.enqueue(note(rootId, ownerId, { n: 1 }));
+        const [request] = (
+          await harness.decisions.listTree(rootId, ownerId)
+        ).filter((d) => d.status === 'open');
+        // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
+        const usage = {
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+        await harness.ledger.record({
+          ownerId,
+          taskId: rootId,
+          model: TEST_MODEL_ONE,
+          price: TEST_MODEL_ONE_PRICE,
+          usage,
+        });
+        await harness.ledger.record({
+          ownerId,
+          taskId: childId,
+          model: TEST_MODEL_TWO,
+          price: TEST_MODEL_TWO_PRICE,
+          usage,
+        });
+        expect(await harness.ledger.monthSpend(ownerId, '2026-11')).toEqual({
+          costUsd: 0.008,
+          calls: 2,
+        });
+
+        // When: the tree is deleted
+        const answer = await harness.tasks.deleteTree(rootId, ownerId);
+
+        // Then: both tasks stay, stopped and marked deleted; the messages, events and the cancelled
+        // request stay with them
+        expect(answer).toBe('deleted');
+        expect(
+          await harness.db
+            .select({
+              taskId: runtimeTasks.taskId,
+              status: runtimeTasks.status,
+              deletedAt: runtimeTasks.deletedAt,
+            })
+            .from(runtimeTasks)
+            .where(eq(runtimeTasks.rootId, rootId))
+            .orderBy(asc(runtimeTasks.createdSeq)),
+        ).toEqual([
+          { taskId: rootId, status: 'stopped', deletedAt: expect.any(Date) },
+          { taskId: childId, status: 'stopped', deletedAt: expect.any(Date) },
+        ]);
+        expect(
+          (await inboxOf(rootId)).map((message) => [
+            message.kind,
+            message.status,
+          ]),
+        ).toEqual([
+          ['note', 'pending'],
+          ['child_finished', 'pending'],
+        ]);
+        expect((await eventsOf(rootId)).map((event) => event.type)).toEqual(
+          expect.arrayContaining(['task.created', 'task.stopped']),
+        );
+        expect((await eventsOf(childId)).map((event) => event.type)).toEqual(
+          expect.arrayContaining(['task.created', 'task.stopped']),
+        );
+        expect(await decisionOf(harness, request.decisionId)).toMatchObject({
+          status: 'cancelled',
+        });
+
+        // When: the owner calls every operation on the deleted tree, and on an id that exists for nobody
+        const before = await rowVersionsOf(rootId);
+        const missingId = randomUUID();
+        const notFound = { code: 'TASK_NOT_FOUND' };
+        const operations: [
+          string,
+          string,
+          (id: string) => Promise<unknown>,
+          Answer,
+        ][] = [
+          [
+            'tasks.get of the root',
+            rootId,
+            (id) => harness.tasks.get(id, ownerId),
+            notFound,
+          ],
+          [
+            'tasks.get of the child',
+            childId,
+            (id) => harness.tasks.get(id, ownerId),
+            notFound,
+          ],
+          [
+            'tasks.listTree',
+            rootId,
+            (id) => harness.tasks.listTree(id, ownerId),
+            { value: [] },
+          ],
+          [
+            'tasks.interrupt',
+            childId,
+            (id) => harness.tasks.interrupt(id, ownerId),
+            notFound,
+          ],
+          [
+            'tasks.stop',
+            rootId,
+            (id) => harness.tasks.stop(id, ownerId),
+            notFound,
+          ],
+          [
+            'tasks.deleteTree',
+            rootId,
+            (id) => harness.tasks.deleteTree(id, ownerId),
+            notFound,
+          ],
+          [
+            'inbox.enqueue with revive',
+            rootId,
+            (id) =>
+              harness.inbox.enqueue({
+                ...note(id, ownerId, { n: 2 }),
+                revive: true,
+              }),
+            notFound,
+          ],
+          [
+            'tasks.create under the root',
+            rootId,
+            (id) =>
+              harness.tasks.create({
+                type: childType,
+                ownerId,
+                input: {},
+                parentId: id,
+              }),
+            notFound,
+          ],
+          [
+            'decisions.resolve',
+            request.decisionId,
+            (id) => harness.decisions.resolve(id, ownerId, { approved: true }),
+            { code: 'DECISION_NOT_FOUND' },
+          ],
+        ];
+
+        // Then: each answer for the deleted tree equals the answer for the missing id, and no row of
+        // the tree changed: the root is still stopped and its queue got no new message
+        for (const [operation, deletedId, call, expected] of operations) {
+          const deleted = await answerOf(() => call(deletedId));
+          const missing = await answerOf(() => call(missingId));
+          expect({ operation, deleted, missing }).toEqual({
+            operation,
+            deleted: expected,
+            missing: expected,
+          });
+        }
+        expect(await rowVersionsOf(rootId)).toEqual(before);
+        expect(await statusesOf([rootId])).toEqual(
+          new Map([[rootId, 'stopped']]),
+        );
+
+        // And: the ledger rows stay with their task ids, and the month spend is unchanged
+        const rows = await ledgerRowsOf(harness, ownerId);
+        expect(rows.map((row) => [row.taskId, row.model, row.costUsd])).toEqual(
+          expect.arrayContaining([
+            [rootId, TEST_MODEL_ONE, 0.002],
+            [childId, TEST_MODEL_TWO, 0.006],
+          ]),
+        );
+        expect(rows).toHaveLength(2);
+        expect(await harness.ledger.monthSpend(ownerId, '2026-11')).toEqual({
+          costUsd: 0.008,
+          calls: 2,
+        });
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

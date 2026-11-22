@@ -16,8 +16,14 @@ export class RuntimeTrackersRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   /** Inserts an `open` tracker of the owner task. */
-  async insert(tracker: { trackerId: string; taskId: string; ownerId: string }): Promise<void> {
-    await this.db.client.insert(runtimeTrackers).values({ ...tracker, status: open });
+  async insert(tracker: {
+    trackerId: string;
+    taskId: string;
+    ownerId: string;
+  }): Promise<void> {
+    await this.db.client
+      .insert(runtimeTrackers)
+      .values({ ...tracker, status: open });
   }
 
   /**
@@ -28,13 +34,20 @@ export class RuntimeTrackersRepository {
     const [row] = await this.db.client
       .update(runtimeTrackers)
       .set({ status: open })
-      .where(and(eq(runtimeTrackers.trackerId, trackerId), eq(runtimeTrackers.status, open)))
+      .where(
+        and(
+          eq(runtimeTrackers.trackerId, trackerId),
+          eq(runtimeTrackers.status, open),
+        ),
+      )
       .returning();
     return row;
   }
 
   /** Id and status of each task of the tracker, in the order they were created. */
-  taskStatuses(trackerId: string): Promise<{ taskId: string; status: string }[]> {
+  taskStatuses(
+    trackerId: string,
+  ): Promise<{ taskId: string; status: string }[]> {
     return this.db.client
       .select({ taskId: runtimeTasks.taskId, status: runtimeTasks.status })
       .from(runtimeTasks)
@@ -47,7 +60,12 @@ export class RuntimeTrackersRepository {
     await this.db.client
       .update(runtimeTrackers)
       .set({ status: finished, finishedAt: sql`now()` })
-      .where(and(eq(runtimeTrackers.trackerId, trackerId), eq(runtimeTrackers.status, open)));
+      .where(
+        and(
+          eq(runtimeTrackers.trackerId, trackerId),
+          eq(runtimeTrackers.status, open),
+        ),
+      );
   }
 
   /**

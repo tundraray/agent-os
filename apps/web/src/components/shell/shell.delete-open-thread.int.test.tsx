@@ -19,7 +19,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it } from 'vitest';
-import { conversationWithTurns, threadList, threadSummary } from '@/test/fixtures';
+import {
+  conversationWithTurns,
+  threadList,
+  threadSummary,
+} from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 import type { TestMedia } from '@/test/setup';
@@ -61,12 +65,22 @@ describe('Shell: deleting the open thread (FR-06, AC-06.2)', () => {
       server.use(
         http.get(`${API}/api/threads`, () =>
           HttpResponse.json(
-            threadList([threadSummary({ id: 'a', title: 'Беседа A' }), threadSummary({ id: 'b', title: 'Беседа B' })]),
+            threadList([
+              threadSummary({ id: 'a', title: 'Беседа A' }),
+              threadSummary({ id: 'b', title: 'Беседа B' }),
+            ]),
           ),
         ),
-        http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' }))),
+        http.get(`${API}/api/threads/a`, () =>
+          HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' })),
+        ),
         http.get(`${API}/api/threads/a/history`, () =>
-          HttpResponse.json(conversationWithTurns(threadSummary({ id: 'a', title: 'Беседа A' }), ['Вопрос', 'Ответ'])),
+          HttpResponse.json(
+            conversationWithTurns(
+              threadSummary({ id: 'a', title: 'Беседа A' }),
+              ['Вопрос', 'Ответ'],
+            ),
+          ),
         ),
         http.delete(`${API}/api/threads/:id`, ({ params }) => {
           deleteCalls.push(String(params.id));
@@ -76,26 +90,47 @@ describe('Shell: deleting the open thread (FR-06, AC-06.2)', () => {
       // The browser address bar as a load of /chat/a leaves it; the mocked router never touches window.location.
       window.history.replaceState(null, '', '/chat/a');
       const user = userEvent.setup();
-      const { router, setPathname } = renderWithRuntime({ pathname: '/chat/a', pointer });
+      const { router, setPathname } = renderWithRuntime({
+        pathname: '/chat/a',
+        pointer,
+      });
       const historyLengthBefore = window.history.length;
       const history = screen.getByRole('navigation', { name: 'История бесед' });
       await waitFor(() =>
-        expect(within(history).getByRole('link', { name: 'Беседа A' })).toHaveAttribute('aria-current', 'page'),
+        expect(
+          within(history).getByRole('link', { name: 'Беседа A' }),
+        ).toHaveAttribute('aria-current', 'page'),
       );
       await screen.findByText('Ответ');
 
       // Act
-      await user.click(within(history).getByRole('button', { name: 'Действия с беседой «Беседа A»' }));
-      await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Удалить' }));
-      const dialog = await screen.findByRole('alertdialog', { name: 'Удалить беседу?' });
+      await user.click(
+        within(history).getByRole('button', {
+          name: 'Действия с беседой «Беседа A»',
+        }),
+      );
+      await user.click(
+        within(await screen.findByRole('menu')).getByRole('menuitem', {
+          name: 'Удалить',
+        }),
+      );
+      const dialog = await screen.findByRole('alertdialog', {
+        name: 'Удалить беседу?',
+      });
       await user.click(within(dialog).getByRole('button', { name: 'Удалить' }));
       await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
       setPathname('/');
 
       // Assert
       await waitFor(() => expect(deleteCalls).toEqual(['a']));
-      await waitFor(() => expect(within(history).queryByRole('link', { name: 'Беседа A' })).toBeNull());
-      expect(within(history).getByRole('link', { name: 'Беседа B' })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          within(history).queryByRole('link', { name: 'Беседа A' }),
+        ).toBeNull(),
+      );
+      expect(
+        within(history).getByRole('link', { name: 'Беседа B' }),
+      ).toBeInTheDocument();
       expect(router.push).not.toHaveBeenCalled();
       expect(window.history.length).toBe(historyLengthBefore);
       expect(await screen.findByText('Чем могу помочь?')).toBeVisible();
@@ -104,7 +139,11 @@ describe('Shell: deleting the open thread (FR-06, AC-06.2)', () => {
       if (pointer === 'fine') {
         await waitFor(() => expect(composer).toHaveFocus());
       } else {
-        await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Новый чат' })).toHaveFocus());
+        await waitFor(() =>
+          expect(
+            screen.getByRole('heading', { level: 1, name: 'Новый чат' }),
+          ).toHaveFocus(),
+        );
         expect(composer).not.toHaveFocus();
       }
       expect(deleteCalls).toEqual(['a']);

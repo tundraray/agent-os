@@ -120,7 +120,11 @@ export async function createRuntimeHarness(
     ...options.config,
   };
   const sink = memorySink();
-  const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
+  const logger = createLogger({
+    sinks: [sink],
+    secrets: [],
+    minLevel: 'debug',
+  });
   const app = await Test.createTestingModule({
     imports: runtimeModules(logger, databaseUrl(), config),
   })
@@ -131,7 +135,8 @@ export async function createRuntimeHarness(
   const runtimeDb = app.get(Db);
   await ensureHandlerRowsTable(runtimeDb);
   const handlers = app.get(HandlerRegistry);
-  for (const handler of options.handlers) handlers.register(boundToDb(handler, runtimeDb));
+  for (const handler of options.handlers)
+    handlers.register(boundToDb(handler, runtimeDb));
   const workers = app.get(RuntimeWorkers);
   // The context's start runs `onApplicationBootstrap`, which starts the workers; held workers
   // start by `start()`. `close()` runs the shutdown hooks either way.

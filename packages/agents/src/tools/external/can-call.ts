@@ -15,7 +15,10 @@ function escapeRegExp(text: string): string {
  * each group in order of first mention (UXRD KD-6). Built-in tools and the script API are left out:
  * code cannot call them.
  */
-export function canCallOf(script: string, tools: readonly SessionTool[]): CanCallEntry[] {
+export function canCallOf(
+  script: string,
+  tools: readonly SessionTool[],
+): CanCallEntry[] {
   const changesByName = new Map<string, boolean>();
   for (const tool of tools) {
     if (isMcp(tool)) changesByName.set(tool.name, !tool.mcp.readOnly);
@@ -23,12 +26,23 @@ export function canCallOf(script: string, tools: readonly SessionTool[]): CanCal
   if (changesByName.size === 0) return [];
 
   // Longest first, so a name that extends another is matched as itself.
-  const names = [...changesByName.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${names.join('|')})(?![\\p{L}\\p{N}_])`, 'gu');
+  const names = [...changesByName.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp);
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}_])(?:${names.join('|')})(?![\\p{L}\\p{N}_])`,
+    'gu',
+  );
 
   const mentioned = new Set<string>();
   for (const match of script.matchAll(pattern)) mentioned.add(match[0]);
 
-  const entries = [...mentioned].map((name) => ({ name, changes: changesByName.get(name) === true }));
-  return [...entries.filter((entry) => entry.changes), ...entries.filter((entry) => !entry.changes)];
+  const entries = [...mentioned].map((name) => ({
+    name,
+    changes: changesByName.get(name) === true,
+  }));
+  return [
+    ...entries.filter((entry) => entry.changes),
+    ...entries.filter((entry) => !entry.changes),
+  ];
 }

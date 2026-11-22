@@ -87,28 +87,46 @@ export class AgentsKnowledge {
   constructor(
     @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentKnowledgeRepository) private readonly knowledgeRows: AgentKnowledgeRepository,
-    @Inject(AgentKnowledgeRunsRepository) private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
-    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentKnowledgeRepository)
+    private readonly knowledgeRows: AgentKnowledgeRepository,
+    @Inject(AgentKnowledgeRunsRepository)
+    private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
+    @Inject(AgentMcpServersRepository)
+    private readonly mcpServerRows: AgentMcpServersRepository,
     /** `create` of a vector pass in the deletion's transaction. */
     @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'create'>,
     /** Only `model()`: the view never calls the provider. */
-    @Inject(AgentsEmbeddings) private readonly embeddings: Pick<AgentsEmbeddings, 'model'>,
+    @Inject(AgentsEmbeddings)
+    private readonly embeddings: Pick<AgentsEmbeddings, 'model'>,
     /** Only `list`: which records have a vector of the current model. */
-    @Inject(AgentKnowledgeVectorsRepository) private readonly store: Pick<KnowledgeVectorStore, 'list'>,
+    @Inject(AgentKnowledgeVectorsRepository)
+    private readonly store: Pick<KnowledgeVectorStore, 'list'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.knowledge' });
   }
 
   /** The graph for the knowledge screen; reads only, no embeddings call (C3 «экран знаний»). */
-  async view({ recordId, selfLearning, servers }: KnowledgeViewRequest): Promise<KnowledgeView> {
+  async view({
+    recordId,
+    selfLearning,
+    servers,
+  }: KnowledgeViewRequest): Promise<KnowledgeView> {
     const startedAt = Date.now();
     const settings = await this.knowledgeRows.readSettings();
     const items = graphItemsOf(await this.knowledgeRows.readGraph(recordId));
-    const toolAlive = await registryToolAlive({ mcpServerRows: this.mcpServerRows }, servers);
+    const toolAlive = await registryToolAlive(
+      { mcpServerRows: this.mcpServerRows },
+      servers,
+    );
     const embedding = await this.embeddingState(recordId);
-    const parts = knowledgeViewParts({ items, settings, toolAlive, selfLearning, embedding });
+    const parts = knowledgeViewParts({
+      items,
+      settings,
+      toolAlive,
+      selfLearning,
+      embedding,
+    });
     const last = await this.lastExtractionOf(recordId);
     this.logger.info('knowledge view read', {
       recordId,
@@ -130,7 +148,10 @@ export class AgentsKnowledge {
   }
 
   /** Deletes the entity with its fact relations and queues the cleanup of their vectors. */
-  async deleteEntity({ recordId, entityId }: KnowledgeEntityDelete): Promise<KnowledgeEntityDeletion> {
+  async deleteEntity({
+    recordId,
+    entityId,
+  }: KnowledgeEntityDelete): Promise<KnowledgeEntityDeletion> {
     const startedAt = Date.now();
     const { result, cleanup } = await this.deleteWithCleanup(recordId, () =>
       this.knowledgeRows.deleteEntity(recordId, entityId),
@@ -147,11 +168,17 @@ export class AgentsKnowledge {
   }
 
   /** Deletes the relation, lesson or «searched — found nothing» and queues the cleanup of its vector. */
-  async deleteRelation({ recordId, relationId }: KnowledgeRelationDelete): Promise<KnowledgeRelationDeletion> {
+  async deleteRelation({
+    recordId,
+    relationId,
+  }: KnowledgeRelationDelete): Promise<KnowledgeRelationDeletion> {
     const startedAt = Date.now();
-    const { result, cleanup } = await this.deleteWithCleanup(recordId, async () => ({
-      deleted: await this.knowledgeRows.deleteRelation(recordId, relationId),
-    }));
+    const { result, cleanup } = await this.deleteWithCleanup(
+      recordId,
+      async () => ({
+        deleted: await this.knowledgeRows.deleteRelation(recordId, relationId),
+      }),
+    );
     this.logger.info('knowledge relation delete', {
       recordId,
       relationId,
@@ -179,8 +206,14 @@ export class AgentsKnowledge {
     const after = settingsView(change.after);
     this.logger.info('knowledge settings updated', {
       actorId,
-      before: { limitTokens: before.limitTokens, lessonsEnabled: before.lessonsEnabled },
-      after: { limitTokens: after.limitTokens, lessonsEnabled: after.lessonsEnabled },
+      before: {
+        limitTokens: before.limitTokens,
+        lessonsEnabled: before.lessonsEnabled,
+      },
+      after: {
+        limitTokens: after.limitTokens,
+        lessonsEnabled: after.lessonsEnabled,
+      },
       durationMs: Date.now() - startedAt,
     });
     return { before, after };
@@ -193,13 +226,21 @@ export class AgentsKnowledge {
    * asked for it); a pass in progress — only «one more pass», its payer unchanged. The pass removes every key
    * without a graph record, so no vector of the deleted record is found after it (Invariant 10).
    */
-  private async queueVectorCleanup(recordId: string, row: KnowledgeEmbeddingRow): Promise<VectorCleanup> {
+  private async queueVectorCleanup(
+    recordId: string,
+    row: KnowledgeEmbeddingRow,
+  ): Promise<VectorCleanup> {
     if (row.passTaskId !== null) {
-      await this.knowledgeRunRows.updateEmbeddingRow(recordId, { needsPass: true });
+      await this.knowledgeRunRows.updateEmbeddingRow(recordId, {
+        needsPass: true,
+      });
       return 'pass_marked';
     }
     const passTaskId = await this.tasks.create(embedPassRequest(recordId));
-    await this.knowledgeRunRows.updateEmbeddingRow(recordId, { passTaskId, payerId: null });
+    await this.knowledgeRunRows.updateEmbeddingRow(recordId, {
+      passTaskId,
+      payerId: null,
+    });
     return 'pass_created';
   }
 
@@ -213,10 +254,16 @@ export class AgentsKnowledge {
     remove: () => Promise<T>,
   ): Promise<{ readonly result: T; readonly cleanup: VectorCleanup | null }> {
     return this.db.transaction(async () => {
-      const row = await holdKnowledgeOf(this.db, this.knowledgeRunRows, recordId);
+      const row = await holdKnowledgeOf(
+        this.db,
+        this.knowledgeRunRows,
+        recordId,
+      );
       const result = await remove();
       const cleanup =
-        result.deleted && row !== undefined ? await this.queueVectorCleanup(recordId, row) : null;
+        result.deleted && row !== undefined
+          ? await this.queueVectorCleanup(recordId, row)
+          : null;
       return { result, cleanup };
     });
   }
@@ -241,7 +288,9 @@ export class AgentsKnowledge {
    * ended (`stopped`, `interrupted`) has no model of its own; the extraction runs on the deep agent's model
    * (KD-4), so the run's session names it — the run row lives exactly as long as that session.
    */
-  private async lastExtractionOf(recordId: string): Promise<LastExtraction | null> {
+  private async lastExtractionOf(
+    recordId: string,
+  ): Promise<LastExtraction | null> {
     const row = await this.knowledgeRunRows.lastExtraction(recordId);
     if (row?.lastAt == null) return null;
     const model = row.lastModel ?? (await this.sessions.get(row.runId))?.model;
@@ -268,7 +317,12 @@ function settingsView(row: KnowledgeSettingsRow): KnowledgeSettings {
 }
 
 /** The deep agent's last embedding attempt when it failed with a model; a success or no attempt — `null`. */
-function lastFailureOf(row: KnowledgeEmbeddingRow | undefined): EmbeddingState['lastFailure'] {
+function lastFailureOf(
+  row: KnowledgeEmbeddingRow | undefined,
+): EmbeddingState['lastFailure'] {
   if (row?.lastReason == null || row.lastModel === null) return null;
-  return { reason: EmbeddingFailureReasonSchema.parse(row.lastReason), model: row.lastModel };
+  return {
+    reason: EmbeddingFailureReasonSchema.parse(row.lastReason),
+    model: row.lastModel,
+  };
 }

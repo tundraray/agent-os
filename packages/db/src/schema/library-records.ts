@@ -21,7 +21,9 @@ export const libraryRecords = app.table(
     id: uuid('id').primaryKey().defaultRandom(),
     kind: text('kind').notNull(),
     /** Null — a system record. */
-    ownerId: uuid('owner_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    ownerId: uuid('owner_id').references(() => identityUsers.id, {
+      onDelete: 'cascade',
+    }),
     name: text('name').notNull(),
     description: text('description').notNull(),
     offerInChat: boolean('offer_in_chat').notNull().default(false),
@@ -46,7 +48,10 @@ export const libraryRecords = app.table(
       .on(sql`lower(${t.name})`)
       .where(sql`${t.ownerId} is null`),
     uniqueIndex('library_records_builtin_key_idx').on(t.builtinKey),
-    check('library_records_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
+    check(
+      'library_records_kind_check',
+      isOneOf(t.kind, RecordKindSchema.options),
+    ),
     check(
       'library_records_builtin_key_check',
       sql`${t.builtinKey} is null or ${t.ownerId} is null`,

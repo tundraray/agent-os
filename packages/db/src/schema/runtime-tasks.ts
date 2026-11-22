@@ -21,9 +21,12 @@ export const runtimeTasks = app.table(
     taskId: uuid('task_id').primaryKey(),
     type: text('type').notNull(),
     ownerId: text('owner_id').notNull(),
-    parentId: uuid('parent_id').references((): AnyPgColumn => runtimeTasks.taskId, {
-      onDelete: 'cascade',
-    }),
+    parentId: uuid('parent_id').references(
+      (): AnyPgColumn => runtimeTasks.taskId,
+      {
+        onDelete: 'cascade',
+      },
+    ),
     /** The root of the tree; a root task references itself. */
     rootId: uuid('root_id')
       .notNull()
@@ -61,9 +64,12 @@ export const runtimeTasks = app.table(
     /** Set on every task of a deleted tree, which answers as a missing one; null otherwise. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     /** The tracker the task belongs to, set when a step's commit opened it; null otherwise. */
-    trackerId: uuid('tracker_id').references((): AnyPgColumn => runtimeTrackers.trackerId, {
-      onDelete: 'cascade',
-    }),
+    trackerId: uuid('tracker_id').references(
+      (): AnyPgColumn => runtimeTrackers.trackerId,
+      {
+        onDelete: 'cascade',
+      },
+    ),
   },
   (t) => [
     check(

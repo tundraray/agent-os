@@ -24,16 +24,29 @@ export type ModelProviderErrorCode =
 export const ModelProviderNameSchema = z
   .string()
   .max(MODEL_PROVIDER_NAME_MAX_LENGTH)
-  .regex(/^[a-z0-9][a-z0-9-]*$/, 'expected lowercase letters, digits and hyphens');
+  .regex(
+    /^[a-z0-9][a-z0-9-]*$/,
+    'expected lowercase letters, digits and hyphens',
+  );
 
-export const ModelProviderKindSchema = z.enum(['anthropic', 'gemini', 'openai_compatible']);
+export const ModelProviderKindSchema = z.enum([
+  'anthropic',
+  'gemini',
+  'openai_compatible',
+]);
 export type ModelProviderKind = z.infer<typeof ModelProviderKindSchema>;
 
 /** State of a registered provider by `providerReadiness`; a disabled provider without a key is `disabled`. */
-export const ModelProviderStateSchema = z.enum(['ready', 'disabled', 'key_missing']);
+export const ModelProviderStateSchema = z.enum([
+  'ready',
+  'disabled',
+  'key_missing',
+]);
 export type ModelProviderState = z.infer<typeof ModelProviderStateSchema>;
 
-const BaseUrlSchema = z.url({ protocol: /^https?$/ }).max(MODEL_PROVIDER_BASE_URL_MAX_LENGTH);
+const BaseUrlSchema = z
+  .url({ protocol: /^https?$/ })
+  .max(MODEL_PROVIDER_BASE_URL_MAX_LENGTH);
 
 const ApiKeySchema = z
   .string()
@@ -76,7 +89,9 @@ export const CreateModelProviderBodySchema = z.object({
   baseUrl: BaseUrlSchema.optional(),
   apiKey: ApiKeySchema.optional(),
 });
-export type CreateModelProviderBody = z.infer<typeof CreateModelProviderBodySchema>;
+export type CreateModelProviderBody = z.infer<
+  typeof CreateModelProviderBodySchema
+>;
 
 /**
  * Body of PATCH /api/admin/model-providers/:name. Name and kind never change; `baseUrl: null` — the
@@ -89,7 +104,12 @@ export const UpdateModelProviderBodySchema = z
     enabled: z.boolean().optional(),
   })
   .refine(
-    (body) => body.baseUrl !== undefined || body.apiKey !== undefined || body.enabled !== undefined,
+    (body) =>
+      body.baseUrl !== undefined ||
+      body.apiKey !== undefined ||
+      body.enabled !== undefined,
     { message: 'baseUrl, apiKey or enabled is required' },
   );
-export type UpdateModelProviderBody = z.infer<typeof UpdateModelProviderBodySchema>;
+export type UpdateModelProviderBody = z.infer<
+  typeof UpdateModelProviderBodySchema
+>;

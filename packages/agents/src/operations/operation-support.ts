@@ -32,13 +32,23 @@ export function agentNotFound(id: string): AgentsError {
 }
 
 /** The owner's agent; `AGENT_NOT_FOUND` for a missing or another owner's one. */
-export function agentTask(tasks: Pick<TaskControl, 'get'>, agentId: string, ownerId: string): Promise<Task> {
+export function agentTask(
+  tasks: Pick<TaskControl, 'get'>,
+  agentId: string,
+  ownerId: string,
+): Promise<Task> {
   return asAgent(tasks.get(agentId, ownerId));
 }
 
 /** The parent of a task; `null` for a root. */
-export async function parentOf(tasks: Pick<TaskControl, 'get'>, task: Task, ownerId: string): Promise<Task | null> {
-  return task.parentId === null ? null : asAgent(tasks.get(task.parentId, ownerId));
+export async function parentOf(
+  tasks: Pick<TaskControl, 'get'>,
+  task: Task,
+  ownerId: string,
+): Promise<Task | null> {
+  return task.parentId === null
+    ? null
+    : asAgent(tasks.get(task.parentId, ownerId));
 }
 
 /** Runs an operation and logs it with its ids, outcome and duration: `agents.<operation> answered` or `failed`. */

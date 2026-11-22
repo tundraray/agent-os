@@ -61,7 +61,9 @@ export class RuntimeChild extends TestChild {
       this.failure(`did not reach its crash point within ${CRASH_MS} ms`),
     );
     if (code !== CRASH_EXIT_CODE) {
-      throw this.failure(`exited with ${String(code)} instead of the crash code ${CRASH_EXIT_CODE}`);
+      throw this.failure(
+        `exited with ${String(code)} instead of the crash code ${CRASH_EXIT_CODE}`,
+      );
     }
   }
 }

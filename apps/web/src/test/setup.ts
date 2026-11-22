@@ -14,17 +14,43 @@ export type TestMedia = {
   queries: Readonly<Record<string, boolean>>;
 };
 
-const DEFAULT_MEDIA: TestMedia = { pointer: 'fine', colorScheme: 'light', width: 1280, queries: {} };
+const DEFAULT_MEDIA: TestMedia = {
+  pointer: 'fine',
+  colorScheme: 'light',
+  width: 1280,
+  queries: {},
+};
 
 let media: TestMedia = DEFAULT_MEDIA;
 
-const FEATURE_RULES: ReadonlyArray<{ pattern: RegExp; matches: (value: string) => boolean }> = [
-  { pattern: /^\(\s*min-width:\s*(\d+(?:\.\d+)?)px\s*\)$/, matches: (px) => media.width >= Number(px) },
-  { pattern: /^\(\s*max-width:\s*(\d+(?:\.\d+)?)px\s*\)$/, matches: (px) => media.width <= Number(px) },
-  { pattern: /^\(\s*pointer:\s*(fine|coarse|none)\s*\)$/, matches: (pointer) => media.pointer === pointer },
-  { pattern: /^\(\s*any-pointer:\s*(fine|coarse|none)\s*\)$/, matches: (pointer) => media.pointer === pointer },
-  { pattern: /^\(\s*hover:\s*(hover|none)\s*\)$/, matches: (hover) => (hover === 'hover') === (media.pointer === 'fine') },
-  { pattern: /^\(\s*prefers-color-scheme:\s*(light|dark)\s*\)$/, matches: (scheme) => media.colorScheme === scheme },
+const FEATURE_RULES: ReadonlyArray<{
+  pattern: RegExp;
+  matches: (value: string) => boolean;
+}> = [
+  {
+    pattern: /^\(\s*min-width:\s*(\d+(?:\.\d+)?)px\s*\)$/,
+    matches: (px) => media.width >= Number(px),
+  },
+  {
+    pattern: /^\(\s*max-width:\s*(\d+(?:\.\d+)?)px\s*\)$/,
+    matches: (px) => media.width <= Number(px),
+  },
+  {
+    pattern: /^\(\s*pointer:\s*(fine|coarse|none)\s*\)$/,
+    matches: (pointer) => media.pointer === pointer,
+  },
+  {
+    pattern: /^\(\s*any-pointer:\s*(fine|coarse|none)\s*\)$/,
+    matches: (pointer) => media.pointer === pointer,
+  },
+  {
+    pattern: /^\(\s*hover:\s*(hover|none)\s*\)$/,
+    matches: (hover) => (hover === 'hover') === (media.pointer === 'fine'),
+  },
+  {
+    pattern: /^\(\s*prefers-color-scheme:\s*(light|dark)\s*\)$/,
+    matches: (scheme) => media.colorScheme === scheme,
+  },
 ];
 
 /** Evaluates a media query list of features joined by `and`; an unknown feature does not match. */
@@ -41,11 +67,16 @@ function evaluateQuery(query: string): boolean {
   });
 }
 
-type LegacyMediaListener = (this: MediaQueryList, event: MediaQueryListEvent) => unknown;
+type LegacyMediaListener = (
+  this: MediaQueryList,
+  event: MediaQueryListEvent,
+) => unknown;
 
 class TestMediaQueryList extends EventTarget implements MediaQueryList {
   readonly media: string;
-  onchange: ((this: MediaQueryList, event: MediaQueryListEvent) => unknown) | null = null;
+  onchange:
+    ((this: MediaQueryList, event: MediaQueryListEvent) => unknown) | null =
+    null;
   private readonly legacyListeners = new Set<LegacyMediaListener>();
   private lastMatches: boolean;
 
@@ -72,7 +103,10 @@ class TestMediaQueryList extends EventTarget implements MediaQueryList {
     const matches = this.matches;
     if (matches === this.lastMatches) return;
     this.lastMatches = matches;
-    const event: MediaQueryListEvent = Object.assign(new Event('change'), { matches, media: this.media });
+    const event: MediaQueryListEvent = Object.assign(new Event('change'), {
+      matches,
+      media: this.media,
+    });
     this.dispatchEvent(event);
     this.onchange?.call(this, event);
     for (const listener of this.legacyListeners) listener.call(this, event);

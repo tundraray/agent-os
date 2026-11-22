@@ -16,12 +16,19 @@ type Wrapper = JSXElementConstructor<{ children: ReactNode }>;
 /** The test's own wrapper, if any, inside the interface-language provider. */
 function withIntl(Inner: Wrapper | undefined): Wrapper {
   return function IntlWrapper({ children }: { children: ReactNode }) {
-    return <TestIntlProvider>{Inner === undefined ? children : <Inner>{children}</Inner>}</TestIntlProvider>;
+    return (
+      <TestIntlProvider>
+        {Inner === undefined ? children : <Inner>{children}</Inner>}
+      </TestIntlProvider>
+    );
   };
 }
 
 /** Testing Library's `render` with the Russian interface-language provider around the UI. */
-export function render(ui: ReactNode, options: Omit<RenderOptions, 'queries'> = {}): RenderResult {
+export function render(
+  ui: ReactNode,
+  options: Omit<RenderOptions, 'queries'> = {},
+): RenderResult {
   return baseRender(ui, { ...options, wrapper: withIntl(options.wrapper) });
 }
 
@@ -30,5 +37,8 @@ export function renderHook<Result, Props>(
   callback: (props: Props) => Result,
   options: RenderHookOptions<Props> = {},
 ): RenderHookResult<Result, Props> {
-  return baseRenderHook(callback, { ...options, wrapper: withIntl(options.wrapper) });
+  return baseRenderHook(callback, {
+    ...options,
+    wrapper: withIntl(options.wrapper),
+  });
 }

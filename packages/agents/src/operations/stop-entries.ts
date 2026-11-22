@@ -8,7 +8,10 @@ import { interruptedResults } from '../store/call-records';
 import type { History } from '../store/history';
 
 /** A derived stop record: a closed call or the stop event. */
-export type StopEntry = Extract<HistoryEntry, { kind: 'tool_result' | 'event' }>;
+export type StopEntry = Extract<
+  HistoryEntry,
+  { kind: 'tool_result' | 'event' }
+>;
 
 export interface StopEntriesInput {
   /** The stopped agent, read by the caller with the owner check. */
@@ -25,7 +28,10 @@ export interface StopEntriesInput {
  * writes for real, with the numbers after the last stored one and the time of the stop.
  */
 export async function stopEntries(
-  deps: { readonly history: History; readonly messageRows: AgentMessagesRepository },
+  deps: {
+    readonly history: History;
+    readonly messageRows: AgentMessagesRepository;
+  },
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {
   const { task, parent } = input;
@@ -41,6 +47,11 @@ export async function stopEntries(
   // Each record keeps its own kind and content; TypeScript cannot correlate them across the spread.
   return records.map(
     (record, index) =>
-      ({ seq: lastSeq + index + 1, kind: record.kind, createdAt: stoppedAt, content: record.content }) as StopEntry,
+      ({
+        seq: lastSeq + index + 1,
+        kind: record.kind,
+        createdAt: stoppedAt,
+        content: record.content,
+      }) as StopEntry,
   );
 }

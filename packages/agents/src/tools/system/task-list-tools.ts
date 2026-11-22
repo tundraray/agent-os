@@ -20,7 +20,12 @@ const TASK_GET_TOOL = 'task_get';
 const TASK_LIST_TOOL = 'task_list';
 
 /** The four task-list tools an agent that keeps a task list declares (design-task-list.md KD-2). */
-export const TASK_LIST_TOOLS = [TASK_CREATE_TOOL, TASK_UPDATE_TOOL, TASK_GET_TOOL, TASK_LIST_TOOL] as const;
+export const TASK_LIST_TOOLS = [
+  TASK_CREATE_TOOL,
+  TASK_UPDATE_TOOL,
+  TASK_GET_TOOL,
+  TASK_LIST_TOOL,
+] as const;
 
 /** Field limits of Contract «Инструменты». */
 const SUBJECT_MAX_LENGTH = 200;
@@ -39,7 +44,9 @@ function oneLine(max: number) {
 const taskNumber = z.number().int().positive();
 
 const TaskCreateArgsSchema = z.object({
-  subject: oneLine(SUBJECT_MAX_LENGTH).describe('A short title of the task, in the imperative: "Check the orders"'),
+  subject: oneLine(SUBJECT_MAX_LENGTH).describe(
+    'A short title of the task, in the imperative: "Check the orders"',
+  ),
   description: z
     .string()
     .trim()
@@ -48,7 +55,9 @@ const TaskCreateArgsSchema = z.object({
     .describe('What has to be done and how you will know it is done'),
   activeForm: oneLine(ACTIVE_FORM_MAX_LENGTH)
     .optional()
-    .describe('The task in the present continuous, shown while it is in progress: "Checking the orders"'),
+    .describe(
+      'The task in the present continuous, shown while it is in progress: "Checking the orders"',
+    ),
 }) satisfies z.ZodType<TaskCreateArgs>;
 
 const TaskUpdateArgsSchema = z.object({
@@ -56,21 +65,42 @@ const TaskUpdateArgsSchema = z.object({
   status: z
     .enum([...SessionTaskStatusSchema.options, TASK_DELETED])
     .optional()
-    .describe('in_progress before you start the task, completed right after it is done, deleted when it is no longer needed'),
+    .describe(
+      'in_progress before you start the task, completed right after it is done, deleted when it is no longer needed',
+    ),
   subject: oneLine(SUBJECT_MAX_LENGTH).optional().describe('A new title'),
-  description: z.string().trim().min(1).max(DESCRIPTION_MAX_LENGTH).optional().describe('A new description'),
-  activeForm: oneLine(ACTIVE_FORM_MAX_LENGTH).optional().describe('A new present continuous form'),
-  owner: oneLine(OWNER_MAX_LENGTH).optional().describe('A label of who works on the task'),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(DESCRIPTION_MAX_LENGTH)
+    .optional()
+    .describe('A new description'),
+  activeForm: oneLine(ACTIVE_FORM_MAX_LENGTH)
+    .optional()
+    .describe('A new present continuous form'),
+  owner: oneLine(OWNER_MAX_LENGTH)
+    .optional()
+    .describe('A label of who works on the task'),
   addBlockedBy: z
     .array(taskNumber)
     .optional()
-    .describe('Numbers of tasks that must be completed before this one can start'),
-  addBlocks: z.array(taskNumber).optional().describe('Numbers of tasks that cannot start before this one is completed'),
+    .describe(
+      'Numbers of tasks that must be completed before this one can start',
+    ),
+  addBlocks: z
+    .array(taskNumber)
+    .optional()
+    .describe(
+      'Numbers of tasks that cannot start before this one is completed',
+    ),
 }) satisfies z.ZodType<TaskUpdateArgs>;
 type TaskCreateInput = z.infer<typeof TaskCreateArgsSchema>;
 type TaskUpdateInput = z.infer<typeof TaskUpdateArgsSchema>;
 
-const TaskGetArgsSchema = z.object({ taskId: taskNumber.describe('The number of the task') });
+const TaskGetArgsSchema = z.object({
+  taskId: taskNumber.describe('The number of the task'),
+});
 type TaskGetInput = z.infer<typeof TaskGetArgsSchema>;
 const TaskListArgsSchema = z.object({});
 type TaskListInput = z.infer<typeof TaskListArgsSchema>;
@@ -103,7 +133,9 @@ const UPDATE_FIELDS = new Set(Object.keys(TaskUpdateArgsSchema.shape));
 
 /** Numbers only out of arguments the model wrote, before they were checked: anything else is dropped. */
 function numbersOf(value: unknown): number[] {
-  return Array.isArray(value) ? value.filter((item): item is number => typeof item === 'number') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is number => typeof item === 'number')
+    : [];
 }
 
 /** Statuses only, for the same reason. */
@@ -114,12 +146,19 @@ function statusOf(value: unknown): string | undefined {
 
 /** The log fields of a call: the caller's ids and the call id, never a task's texts (Contract «Журнал»). */
 function idsOf(caller: ToolCaller, callId: string): Record<string, unknown> {
-  return { agentId: caller.agentId, rootId: caller.rootId, ownerId: caller.ownerId, callId };
+  return {
+    agentId: caller.agentId,
+    rootId: caller.rootId,
+    ownerId: caller.ownerId,
+    callId,
+  };
 }
 
 /** The task whole, as `task_get` answers: number, title, status, label, blockers, whom it blocks, description. */
 function taskDetails(task: SessionTask, tasks: readonly SessionTask[]): string {
-  const blocks = tasks.filter((other) => other.blockedBy.includes(task.number)).map((other) => other.number);
+  const blocks = tasks
+    .filter((other) => other.blockedBy.includes(task.number))
+    .map((other) => other.number);
   return [
     `Task ${task.number}: ${task.subject}`,
     `Status: ${task.status}`,
@@ -159,14 +198,26 @@ export function createTaskListTools(deps: {
     const state = await sessionTaskRows.read(input.caller.agentId);
     const decision = decideTaskChange(state, call);
     if (decision.kind === 'refused') {
-      logger.info('task call refused', { ...ids, tool: call.tool, field: decision.field, rule: decision.rule });
-      return { kind: 'refused', reason: 'invalid_arguments', text: decision.text };
+      logger.info('task call refused', {
+        ...ids,
+        tool: call.tool,
+        field: decision.field,
+        rule: decision.rule,
+      });
+      return {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: decision.text,
+      };
     }
     await sessionTaskRows.write(input.caller.agentId, decision);
     logger.info(`task ${decision.event.action}`, {
       ...ids,
       ...decision.event,
-      tasks: state.tasks.length + (decision.event.action === 'created' ? 1 : 0) - decision.deleted.length,
+      tasks:
+        state.tasks.length +
+        (decision.event.action === 'created' ? 1 : 0) -
+        decision.deleted.length,
     });
     return { kind: 'done', outcome: 'success', text: decision.text };
   }
@@ -176,8 +227,13 @@ export function createTaskListTools(deps: {
     description: CREATE_DESCRIPTION,
     argsSchema: TaskCreateArgsSchema,
     mode: 'in_commit',
-    loggedArgs: (args) => ({ fields: Object.keys(args).filter((key) => key in TaskCreateArgsSchema.shape) }),
-    execute: ({ args, caller, callId }) => change({ tool: 'create', args }, { caller, callId }),
+    loggedArgs: (args) => ({
+      fields: Object.keys(args).filter(
+        (key) => key in TaskCreateArgsSchema.shape,
+      ),
+    }),
+    execute: ({ args, caller, callId }) =>
+      change({ tool: 'create', args }, { caller, callId }),
   };
 
   const update: InCommitAgentTool<TaskUpdateInput> = {
@@ -192,7 +248,8 @@ export function createTaskListTools(deps: {
       addBlockedBy: numbersOf(args.addBlockedBy),
       addBlocks: numbersOf(args.addBlocks),
     }),
-    execute: ({ args, caller, callId }) => change({ tool: 'update', args }, { caller, callId }),
+    execute: ({ args, caller, callId }) =>
+      change({ tool: 'update', args }, { caller, callId }),
   };
 
   const get: InCommitAgentTool<TaskGetInput> = {
@@ -200,13 +257,28 @@ export function createTaskListTools(deps: {
     description: GET_DESCRIPTION,
     argsSchema: TaskGetArgsSchema,
     mode: 'in_commit',
-    loggedArgs: (args) => ({ taskId: typeof args.taskId === 'number' ? args.taskId : null }),
+    loggedArgs: (args) => ({
+      taskId: typeof args.taskId === 'number' ? args.taskId : null,
+    }),
     async execute({ args, caller, callId }) {
       const tasks = await sessionTaskRows.list(caller.agentId);
       const task = tasks.find((candidate) => candidate.number === args.taskId);
-      logger.info('task read', { ...idsOf(caller, callId), number: args.taskId, found: task !== undefined });
-      if (task === undefined) return { kind: 'done', outcome: 'empty', text: `There is no task ${args.taskId}` };
-      return { kind: 'done', outcome: 'success', text: taskDetails(task, tasks) };
+      logger.info('task read', {
+        ...idsOf(caller, callId),
+        number: args.taskId,
+        found: task !== undefined,
+      });
+      if (task === undefined)
+        return {
+          kind: 'done',
+          outcome: 'empty',
+          text: `There is no task ${args.taskId}`,
+        };
+      return {
+        kind: 'done',
+        outcome: 'success',
+        text: taskDetails(task, tasks),
+      };
     },
   };
 
@@ -218,8 +290,12 @@ export function createTaskListTools(deps: {
     loggedArgs: () => ({}),
     async execute({ caller, callId }) {
       const tasks = await sessionTaskRows.list(caller.agentId);
-      logger.info('task list read', { ...idsOf(caller, callId), tasks: tasks.length });
-      if (tasks.length === 0) return { kind: 'done', outcome: 'empty', text: 'No tasks' };
+      logger.info('task list read', {
+        ...idsOf(caller, callId),
+        tasks: tasks.length,
+      });
+      if (tasks.length === 0)
+        return { kind: 'done', outcome: 'empty', text: 'No tasks' };
       const text = tasks.map((task) => taskLine(task, task.subject)).join('\n');
       return { kind: 'done', outcome: 'success', text };
     },

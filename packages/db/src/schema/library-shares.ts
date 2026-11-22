@@ -14,8 +14,12 @@ export const libraryShares = app.table(
     recordId: uuid('record_id')
       .notNull()
       .references(() => libraryRecords.id, { onDelete: 'cascade' }),
-    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id').references(() => identityRoles.id, {
+      onDelete: 'cascade',
+    }),
+    userId: uuid('user_id').references(() => identityUsers.id, {
+      onDelete: 'cascade',
+    }),
     everyone: boolean('everyone').notNull().default(false),
     createdAt: createdAt(),
   },

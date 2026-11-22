@@ -1,4 +1,5 @@
-export type DateGroupKey = 'today' | 'yesterday' | 'previous7' | 'previous30' | 'older';
+export type DateGroupKey =
+  'today' | 'yesterday' | 'previous7' | 'previous30' | 'older';
 
 export type ThreadListEntry = {
   id: string;
@@ -10,7 +11,13 @@ export type ThreadListEntry = {
 /** A date group by its key; the list translates the key into the group's heading. */
 export type ThreadGroup = { key: DateGroupKey; entries: ThreadListEntry[] };
 
-const GROUP_ORDER: readonly DateGroupKey[] = ['today', 'yesterday', 'previous7', 'previous30', 'older'];
+const GROUP_ORDER: readonly DateGroupKey[] = [
+  'today',
+  'yesterday',
+  'previous7',
+  'previous30',
+  'older',
+];
 
 const DAY_MS = 86_400_000;
 
@@ -22,8 +29,13 @@ export type ActivitySources = {
 };
 
 /** Effective activity time of a thread: the later of its two sources; a thread with neither counts as active now. */
-export function entryActivityAt({ lastMessageAt, activityAt }: ActivitySources, now: Date): number {
-  const times = [lastMessageAt?.getTime(), activityAt].filter((time) => time !== undefined);
+export function entryActivityAt(
+  { lastMessageAt, activityAt }: ActivitySources,
+  now: Date,
+): number {
+  const times = [lastMessageAt?.getTime(), activityAt].filter(
+    (time) => time !== undefined,
+  );
   return times.length > 0 ? Math.max(...times) : now.getTime();
 }
 
@@ -42,14 +54,19 @@ function groupKeyFor(days: number): DateGroupKey {
 }
 
 /** Calendar-day difference in the browser time zone; DST-safe via rounding (days of 23 or 25 hours). */
-export function groupThreadsByDate(entries: readonly ThreadListEntry[], now: Date): ThreadGroup[] {
+export function groupThreadsByDate(
+  entries: readonly ThreadListEntry[],
+  now: Date,
+): ThreadGroup[] {
   const today = startOfDay(now.getTime());
   // Array.prototype.sort is stable, so equal activity times keep their original order.
   const sorted = [...entries].sort((a, b) => b.activityAt - a.activityAt);
 
   const buckets = new Map<DateGroupKey, ThreadListEntry[]>();
   for (const entry of sorted) {
-    const key = groupKeyFor(Math.round((today - startOfDay(entry.activityAt)) / DAY_MS));
+    const key = groupKeyFor(
+      Math.round((today - startOfDay(entry.activityAt)) / DAY_MS),
+    );
     const bucket = buckets.get(key);
     if (bucket) bucket.push(entry);
     else buckets.set(key, [entry]);

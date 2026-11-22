@@ -59,7 +59,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { describe, expect, it, vi } from 'vitest';
-import { logRecords, trackRequests, type TrackedRequests } from '@/test/admin-support';
+import {
+  logRecords,
+  trackRequests,
+  type TrackedRequests,
+} from '@/test/admin-support';
 import {
   currentUser,
   deepAgentContent,
@@ -77,7 +81,10 @@ import {
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
-vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
+vi.mock(
+  '@/lib/logger',
+  async () => (await import('@/test/admin-support')).loggerModule,
+);
 
 const API = 'http://api.test';
 
@@ -103,8 +110,19 @@ function resetRow(): void {
   server.resetHandlers();
 }
 
-const apiError = (status: number, message: string, errorCode?: string): Response =>
-  HttpResponse.json({ statusCode: status, message, ...(errorCode === undefined ? {} : { errorCode }) }, { status });
+const apiError = (
+  status: number,
+  message: string,
+  errorCode?: string,
+): Response =>
+  HttpResponse.json(
+    {
+      statusCode: status,
+      message,
+      ...(errorCode === undefined ? {} : { errorCode }),
+    },
+    { status },
+  );
 
 type Answer = () => Response;
 
@@ -133,26 +151,45 @@ function serveKnowledge({
   graph?: Answer;
 }): void {
   serveViewer(viewer);
-  server.use(http.get(`${API}${at === 'library' ? '/api/library' : '/api/admin/library'}/:id`, () => record()));
-  if (graph !== undefined) server.use(http.get(`${API}/api/library/:id/knowledge`, () => graph()));
+  server.use(
+    http.get(
+      `${API}${at === 'library' ? '/api/library' : '/api/admin/library'}/:id`,
+      () => record(),
+    ),
+  );
+  if (graph !== undefined)
+    server.use(http.get(`${API}/api/library/:id/knowledge`, () => graph()));
 }
 
 /** «METHOD path» of the record's and the graph's requests (both places) since request number `from`, in the order sent. */
-const knowledgeRequestsSince = ({ requests }: TrackedRequests, from: number): string[] =>
+const knowledgeRequestsSince = (
+  { requests }: TrackedRequests,
+  from: number,
+): string[] =>
   requests
     .slice(from)
-    .filter((request) => request.path.startsWith('/api/library/') || request.path.startsWith('/api/admin/library/'))
+    .filter(
+      (request) =>
+        request.path.startsWith('/api/library/') ||
+        request.path.startsWith('/api/admin/library/'),
+    )
     .map((request) => `${request.method} ${request.path}`);
 
 /** The keys (`${type}:${id}`) of the table's rows in display order; a row collapsing after a re-read is not counted. */
 const rowKeys = (table: HTMLElement): (string | null)[] =>
-  Array.from(table.querySelectorAll('tbody tr[data-row-key]:not([data-leaving])'), (row) => row.getAttribute('data-row-key'));
+  Array.from(
+    table.querySelectorAll('tbody tr[data-row-key]:not([data-leaving])'),
+    (row) => row.getAttribute('data-row-key'),
+  );
 
 /** The cells of row `key` as their text. */
 function rowCells(table: HTMLElement, key: string): string[] {
   const row = table.querySelector(`tr[data-row-key="${key}"]`);
   if (row === null) throw new Error(`no knowledge row «${key}»`);
-  return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '');
+  return Array.from(
+    row.querySelectorAll('td'),
+    (cell) => cell.textContent ?? '',
+  );
 }
 
 /** The labels of the list's tabs, in order. */
@@ -162,7 +199,13 @@ const tabLabels = (): (string | null)[] =>
     .map((tab) => tab.textContent);
 
 /** Texts of the records the «Не найдено» rows' graph holds: none may reach the screen. */
-const ITEM_TEXTS = ['billing-api', 'команда Платежи', 'logs.search', 'ошибки оплаты', 'инциденты оплаты'];
+const ITEM_TEXTS = [
+  'billing-api',
+  'команда Платежи',
+  'logs.search',
+  'ошибки оплаты',
+  'инциденты оплаты',
+];
 
 /** DC-2, AC-11.3: the «Не найдено» screen names nothing of the deep agent and shows none of its records. */
 function expectNothingOfTheDeepAgent(): void {
@@ -195,7 +238,11 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     const user = userEvent.setup({ delay: null });
     const api = trackRequests(server);
     const saved = (version: number, selfLearning: boolean): RecordDetail =>
-      recordDetail({ ...DEEP_AGENT, version, content: deepAgentContent({ selfLearning }) });
+      recordDetail({
+        ...DEEP_AGENT,
+        version,
+        content: deepAgentContent({ selfLearning }),
+      });
     const putBody = (version: number, selfLearning: boolean) => ({
       kind: 'deep_agent',
       name: DEEP_AGENT_NAME,
@@ -214,9 +261,15 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     serveKnowledge({ record: () => HttpResponse.json(saved(2, false)) });
     server.use(
       http.get(`${API}/api/library/choices`, () =>
-        HttpResponse.json({ servers: ['logs'], defaultModel: 'anthropic/claude-haiku-4-5', defaultMaxTurns: 40 } satisfies LibraryChoices),
+        HttpResponse.json({
+          servers: ['logs'],
+          defaultModel: 'anthropic/claude-haiku-4-5',
+          defaultMaxTurns: 40,
+        } satisfies LibraryChoices),
       ),
-      http.get(`${API}/api/auth/me/roles`, () => HttpResponse.json([] satisfies MyRoleList)),
+      http.get(`${API}/api/auth/me/roles`, () =>
+        HttpResponse.json([] satisfies MyRoleList),
+      ),
       http.put(`${API}/api/library/:id`, () => putAnswer()),
     );
     renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}` });
@@ -229,21 +282,35 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     await user.click(flag);
 
     // Assert (AC-10.1): one PUT with the whole definition, the flag on and the version shown; the switch stands on with the link
-    await waitFor(() => expect(putsSince(mark)).toEqual([{ path: `/api/library/${DEEP_AGENT_ID}`, body: putBody(2, true) }]));
-    await waitFor(() => expect(flag).toBeChecked());
-    expect(screen.getByRole('link', { name: 'Что узнал глубокий агент' })).toHaveAttribute(
-      'href',
-      `/library/${DEEP_AGENT_ID}/knowledge`,
+    await waitFor(() =>
+      expect(putsSince(mark)).toEqual([
+        { path: `/api/library/${DEEP_AGENT_ID}`, body: putBody(2, true) },
+      ]),
     );
+    await waitFor(() => expect(flag).toBeChecked());
+    expect(
+      screen.getByRole('link', { name: 'Что узнал глубокий агент' }),
+    ).toHaveAttribute('href', `/library/${DEEP_AGENT_ID}/knowledge`);
 
     // Act: turn it off while the save answers a conflict
-    putAnswer = () => apiError(409, 'Record version conflict', LibraryErrorCode.RECORD_VERSION_CONFLICT);
+    putAnswer = () =>
+      apiError(
+        409,
+        'Record version conflict',
+        LibraryErrorCode.RECORD_VERSION_CONFLICT,
+      );
     mark = api.requests.length;
     await user.click(flag);
 
     // Assert (DA-13): the PUT carried the version the first save answered; the refusal moves the switch back and shows MC-26
-    expect(await screen.findByText('Не удалось сохранить. Попробуйте ещё раз.')).toBeInTheDocument();
-    expect(putsSince(mark).filter((request) => request.path === `/api/library/${DEEP_AGENT_ID}`)).toEqual([
+    expect(
+      await screen.findByText('Не удалось сохранить. Попробуйте ещё раз.'),
+    ).toBeInTheDocument();
+    expect(
+      putsSince(mark).filter(
+        (request) => request.path === `/api/library/${DEEP_AGENT_ID}`,
+      ),
+    ).toEqual([
       { path: `/api/library/${DEEP_AGENT_ID}`, body: putBody(3, false) },
     ]);
     expect(flag).toBeChecked();
@@ -285,26 +352,46 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
       counts: { active: 126, always: 64, beyond: 2, outdated: 0, percent: 180 },
       items: [
         knowledgeEntity({ id: 1, confirmations: 4, placement: 'always' }),
-        knowledgeEntity({ id: 2, name: TEAM.name, description: 'Владеет сервисом списаний', placement: 'by_topic' }),
+        knowledgeEntity({
+          id: 2,
+          name: TEAM.name,
+          description: 'Владеет сервисом списаний',
+          placement: 'by_topic',
+        }),
         knowledgeFact({ id: 1, from: TEAM, to: BILLING, placement: 'always' }),
         knowledgeLesson({ id: 2, confirmations: 3, placement: 'always' }),
         knowledgeSearchedNothing({ id: 3, placement: 'by_topic' }),
       ],
     });
-    serveKnowledge({ record: () => HttpResponse.json(recordDetail(DEEP_AGENT)), graph: () => HttpResponse.json(graph) });
+    serveKnowledge({
+      record: () => HttpResponse.json(recordDetail(DEEP_AGENT)),
+      graph: () => HttpResponse.json(graph),
+    });
     let mark = api.requests.length;
-    let view = renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
+    let view = renderWithRuntime({
+      pathname: `/library/${DEEP_AGENT_ID}/knowledge`,
+    });
 
     // Assert (row A): the `h1` takes focus; exactly the record and the graph were read, and nothing of the panel
-    const title = await screen.findByRole('heading', { level: 1, name: `Что узнал «${DEEP_AGENT_NAME}»` });
+    const title = await screen.findByRole('heading', {
+      level: 1,
+      name: `Что узнал «${DEEP_AGENT_NAME}»`,
+    });
     await waitFor(() => expect(title).toHaveFocus());
-    expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]);
+    expect(knowledgeRequestsSince(api, mark).sort()).toEqual([
+      `GET /api/library/${DEEP_AGENT_ID}`,
+      `GET ${KNOWLEDGE}`,
+    ]);
     expect(api.adminCount()).toBe(0);
-    expect(screen.getByRole('link', { name: 'Открыть глубокого агента' })).toHaveAttribute('href', `/library/${DEEP_AGENT_ID}`);
+    expect(
+      screen.getByRole('link', { name: 'Открыть глубокого агента' }),
+    ).toHaveAttribute('href', `/library/${DEEP_AGENT_ID}`);
 
     // Assert (row A, MC-3): lines 1-2 carry `counts` as the server gave them; no selection line, no «не помещается» anywhere
     expect(
-      screen.getByText('При любом вопросе запуски получают 64 из 126 записей · знания занимают 180% места'),
+      screen.getByText(
+        'При любом вопросе запуски получают 64 из 126 записей · знания занимают 180% места',
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -316,55 +403,91 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
 
     // Assert (row A, MC-4): tabs with the counts of the listed records and the fifth «Только по теме»; rows in the order `core` sent;
     //   the lesson shows its tool and 3 confirmations; the two `by_topic` records carry «только по теме»
-    expect(tabLabels()).toEqual(['Все · 5', 'Факты · 3', 'Уроки · 1', 'Искал — не нашёл · 1', 'Только по теме · 2']);
+    expect(tabLabels()).toEqual([
+      'Все · 5',
+      'Факты · 3',
+      'Уроки · 1',
+      'Искал — не нашёл · 1',
+      'Только по теме · 2',
+    ]);
     const all = screen.getByRole('table', { name: 'Все · 5' });
-    expect(rowKeys(all)).toEqual(['entity:1', 'entity:2', 'relation:1', 'relation:2', 'relation:3']);
+    expect(rowKeys(all)).toEqual([
+      'entity:1',
+      'entity:2',
+      'relation:1',
+      'relation:2',
+      'relation:3',
+    ]);
     expect(rowCells(all, 'relation:2').slice(0, 3)).toEqual([
       'logs.search · ошибки оплатыИскать в логах billing-api — ошибки нашлись',
       'рабочий урок',
       '3',
     ]);
-    expect(within(all).getAllByText('только по теме').map((badge) => badge.closest('tr')?.getAttribute('data-row-key'))).toEqual([
-      'entity:2',
-      'relation:3',
-    ]);
+    expect(
+      within(all)
+        .getAllByText('только по теме')
+        .map((badge) => badge.closest('tr')?.getAttribute('data-row-key')),
+    ).toEqual(['entity:2', 'relation:3']);
     await user.click(screen.getByRole('tab', { name: 'Только по теме · 2' }));
-    expect(rowKeys(await screen.findByRole('table', { name: 'Только по теме · 2' }))).toEqual(['entity:2', 'relation:3']);
+    expect(
+      rowKeys(await screen.findByRole('table', { name: 'Только по теме · 2' })),
+    ).toEqual(['entity:2', 'relation:3']);
 
     // Assert (row A, AC-11.4): neither the employee nor a run is named on the screen
     const main = screen.getByRole('main');
     expect(main).not.toHaveTextContent('Аня Смирнова');
-    expect(main.querySelectorAll('a[href^="/agents/"], a[href^="/chat/"]')).toHaveLength(0);
+    expect(
+      main.querySelectorAll('a[href^="/agents/"], a[href^="/chat/"]'),
+    ).toHaveLength(0);
     view.unmount();
 
     // Arrange (row B): Борис sees the deep agent (shared with his role), but its knowledge is closed to him: the graph answers 403
     resetRow();
     serveKnowledge({
-      viewer: currentUser({ id: fixtureId(2), email: 'boris@corp.example', name: 'Борис Петров' }),
+      viewer: currentUser({
+        id: fixtureId(2),
+        email: 'boris@corp.example',
+        name: 'Борис Петров',
+      }),
       record: () =>
         HttpResponse.json(
           recordDetail({
             ...DEEP_AGENT,
             mine: false,
-            audience: { roles: [{ id: fixtureId(100), name: 'SRE', member: true }] },
+            audience: {
+              roles: [{ id: fixtureId(100), name: 'SRE', member: true }],
+            },
             canEdit: false,
             canShare: false,
             canDelete: false,
           }),
         ),
-      graph: () => apiError(403, 'Knowledge is closed to the viewer', LibraryErrorCode.KNOWLEDGE_FORBIDDEN),
+      graph: () =>
+        apiError(
+          403,
+          'Knowledge is closed to the viewer',
+          LibraryErrorCode.KNOWLEDGE_FORBIDDEN,
+        ),
     });
     mark = api.requests.length;
-    view = renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
+    view = renderWithRuntime({
+      pathname: `/library/${DEEP_AGENT_ID}/knowledge`,
+    });
 
     // Assert (row B): the library's RV-02 «Не найдено», focus on its `h1`; nothing of the deep agent, no «Повторить»
-    const libraryNotFound = await screen.findByRole('heading', { level: 1, name: 'Не найдено' });
+    const libraryNotFound = await screen.findByRole('heading', {
+      level: 1,
+      name: 'Не найдено',
+    });
     await waitFor(() => expect(libraryNotFound).toHaveFocus());
     expect(libraryNotFound.closest('section')?.textContent).toBe(
       'Не найденоТакого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку',
     );
     await waitFor(() =>
-      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]),
+      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([
+        `GET /api/library/${DEEP_AGENT_ID}`,
+        `GET ${KNOWLEDGE}`,
+      ]),
     );
     expectNothingOfTheDeepAgent();
     view.unmount();
@@ -372,23 +495,40 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     // Arrange (row C): the administrator in the panel; the record is gone (404) while the graph still answers with records
     resetRow();
     serveKnowledge({
-      viewer: currentUser({ id: fixtureId(3), email: 'igor@corp.example', name: 'Игорь Петров', isAdmin: true }),
+      viewer: currentUser({
+        id: fixtureId(3),
+        email: 'igor@corp.example',
+        name: 'Игорь Петров',
+        isAdmin: true,
+      }),
       at: 'panel',
-      record: () => apiError(404, 'Record not found', LibraryErrorCode.RECORD_NOT_FOUND),
+      record: () =>
+        apiError(404, 'Record not found', LibraryErrorCode.RECORD_NOT_FOUND),
       graph: () => HttpResponse.json(graph),
     });
     mark = api.requests.length;
-    view = renderWithRuntime({ pathname: `/admin/library/${DEEP_AGENT_ID}/knowledge` });
+    view = renderWithRuntime({
+      pathname: `/admin/library/${DEEP_AGENT_ID}/knowledge`,
+    });
 
     // Assert (row C): the panel's AD-15 «Запись не найдена»; the record by the panel's route, the graph by the one library route
-    const panelNotFound = await screen.findByRole('heading', { level: 1, name: 'Запись не найдена' });
+    const panelNotFound = await screen.findByRole('heading', {
+      level: 1,
+      name: 'Запись не найдена',
+    });
     await waitFor(() => expect(panelNotFound).toHaveFocus());
     expect(panelNotFound.closest('section')?.textContent).toBe(
       'Запись не найденаВозможно, её удалили, или ссылка указана неверно.К списку',
     );
-    expect(screen.getByRole('link', { name: 'К списку' })).toHaveAttribute('href', '/admin/library');
+    expect(screen.getByRole('link', { name: 'К списку' })).toHaveAttribute(
+      'href',
+      '/admin/library',
+    );
     await waitFor(() =>
-      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([`GET /api/admin/library/${DEEP_AGENT_ID}`, `GET ${KNOWLEDGE}`]),
+      expect(knowledgeRequestsSince(api, mark).sort()).toEqual([
+        `GET /api/admin/library/${DEEP_AGENT_ID}`,
+        `GET ${KNOWLEDGE}`,
+      ]),
     );
     expectNothingOfTheDeepAgent();
     view.unmount();
@@ -417,7 +557,11 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
 
     // Arrange: «billing-api» is an end of two relation facts; the server's graph changes only when the DELETE arrives, and its next
     //   answer also holds «ledger-db», which another run added meanwhile - only a re-read can put that row on the screen
-    const team = knowledgeEntity({ id: 2, name: TEAM.name, description: 'Владеет сервисом списаний' });
+    const team = knowledgeEntity({
+      id: 2,
+      name: TEAM.name,
+      description: 'Владеет сервисом списаний',
+    });
     const lesson = knowledgeLesson({ id: 3 });
     const before = knowledgeView({
       counts: { active: 5, always: 5, beyond: 0, outdated: 0, percent: 40 },
@@ -431,10 +575,21 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     });
     const after = knowledgeView({
       counts: { active: 3, always: 3, beyond: 0, outdated: 0, percent: 25 },
-      items: [team, knowledgeEntity({ id: 4, name: 'ledger-db', description: 'База проводок' }), lesson],
+      items: [
+        team,
+        knowledgeEntity({
+          id: 4,
+          name: 'ledger-db',
+          description: 'База проводок',
+        }),
+        lesson,
+      ],
     });
     let held = before;
-    serveKnowledge({ record: () => HttpResponse.json(recordDetail(DEEP_AGENT)), graph: () => HttpResponse.json(held) });
+    serveKnowledge({
+      record: () => HttpResponse.json(recordDetail(DEEP_AGENT)),
+      graph: () => HttpResponse.json(held),
+    });
     server.use(
       http.delete(`${API}/api/library/:id/knowledge/entities/:entityId`, () => {
         held = after;
@@ -443,13 +598,23 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     );
     renderWithRuntime({ pathname: `/library/${DEEP_AGENT_ID}/knowledge` });
     const table = await screen.findByRole('table', { name: 'Все · 5' });
-    expect(rowKeys(table)).toEqual(['entity:1', 'entity:2', 'relation:1', 'relation:2', 'relation:3']);
+    expect(rowKeys(table)).toEqual([
+      'entity:1',
+      'entity:2',
+      'relation:1',
+      'relation:2',
+      'relation:3',
+    ]);
 
     // Act: «Удалить» in the entity's row menu; the dialog names the two relations; nothing is sent before the confirmation
     let mark = api.requests.length;
-    await user.click(within(table).getByRole('button', { name: 'Действия: billing-api' }));
+    await user.click(
+      within(table).getByRole('button', { name: 'Действия: billing-api' }),
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-    const dialog = await screen.findByRole('alertdialog', { name: 'Удалить «billing-api»?' });
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Удалить «billing-api»?',
+    });
     expect(dialog).toHaveTextContent(
       'Вместе с ней удалятся связи: 2. Следующие шаги запусков их уже не получат. Вернуть нельзя — глубокий агент может узнать это снова.',
     );
@@ -457,23 +622,48 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Удалить' }));
 
     // Assert (KD-5, DC-3): the notice counts the loaded relations; the rows are what the re-read returned
-    expect(await screen.findByText('Удалено вместе со связями: 2')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Удалено вместе со связями: 2'),
+    ).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    await waitFor(() => expect(rowKeys(screen.getByRole('table', { name: 'Все · 3' }))).toEqual(['entity:2', 'entity:4', 'relation:3']));
-    expect(tabLabels()).toEqual(['Все · 3', 'Факты · 2', 'Уроки · 1', 'Искал — не нашёл · 0']);
+    await waitFor(() =>
+      expect(rowKeys(screen.getByRole('table', { name: 'Все · 3' }))).toEqual([
+        'entity:2',
+        'entity:4',
+        'relation:3',
+      ]),
+    );
+    expect(tabLabels()).toEqual([
+      'Все · 3',
+      'Факты · 2',
+      'Уроки · 1',
+      'Искал — не нашёл · 0',
+    ]);
 
     // Assert (KD-5): exactly one DELETE to the entity's route (none per relation), then exactly one read of the graph, not of the record
-    expect(knowledgeRequestsSince(api, mark)).toEqual([`DELETE ${KNOWLEDGE}/entities/1`, `GET ${KNOWLEDGE}`]);
+    expect(knowledgeRequestsSince(api, mark)).toEqual([
+      `DELETE ${KNOWLEDGE}/entities/1`,
+      `GET ${KNOWLEDGE}`,
+    ]);
 
     // Act (short row): the lesson's DELETE goes to the relations' route and is refused 500
     server.use(
-      http.delete(`${API}/api/library/:id/knowledge/relations/:relationId`, () => apiError(500, 'Knowledge store unavailable')),
+      http.delete(
+        `${API}/api/library/:id/knowledge/relations/:relationId`,
+        () => apiError(500, 'Knowledge store unavailable'),
+      ),
     );
     mark = api.requests.length;
     const reread = screen.getByRole('table', { name: 'Все · 3' });
-    await user.click(within(reread).getByRole('button', { name: 'Действия: logs.search · ошибки оплаты' }));
+    await user.click(
+      within(reread).getByRole('button', {
+        name: 'Действия: logs.search · ошибки оплаты',
+      }),
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-    const refused = await screen.findByRole('alertdialog', { name: 'Удалить запись?' });
+    const refused = await screen.findByRole('alertdialog', {
+      name: 'Удалить запись?',
+    });
     expect(refused).toHaveTextContent(
       '«logs.search · ошибки оплаты». Следующие шаги запусков её уже не получат. Вернуть нельзя — глубокий агент может узнать это снова.',
     );
@@ -482,12 +672,31 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     // Assert (short row, Flow 3): the dialog stays open with MC-6; one DELETE and no re-read; the row is in place; the refusal is logged
     //   with numbers only
     // The server's text sits in its own lang="en" span, so the phrase is read as one block.
-    expect(await within(refused).findByRole('alert')).toHaveTextContent('Не удалось удалить: Knowledge store unavailable');
-    expect(screen.getByRole('alertdialog', { name: 'Удалить запись?' })).toBe(refused);
-    expect(knowledgeRequestsSince(api, mark)).toEqual([`DELETE ${KNOWLEDGE}/relations/3`]);
+    expect(await within(refused).findByRole('alert')).toHaveTextContent(
+      'Не удалось удалить: Knowledge store unavailable',
+    );
+    expect(screen.getByRole('alertdialog', { name: 'Удалить запись?' })).toBe(
+      refused,
+    );
+    expect(knowledgeRequestsSince(api, mark)).toEqual([
+      `DELETE ${KNOWLEDGE}/relations/3`,
+    ]);
     expect(rowKeys(reread)).toEqual(['entity:2', 'entity:4', 'relation:3']);
-    expect(logRecords.filter((record) => record.message === 'library: knowledge delete: refused').map((record) => record.fields)).toEqual([
-      expect.objectContaining({ recordId: DEEP_AGENT_ID, type: 'relation', id: 3, outcome: 'refused', method: 'DELETE', status: 500 }),
+    expect(
+      logRecords
+        .filter(
+          (record) => record.message === 'library: knowledge delete: refused',
+        )
+        .map((record) => record.fields),
+    ).toEqual([
+      expect.objectContaining({
+        recordId: DEEP_AGENT_ID,
+        type: 'relation',
+        id: 3,
+        outcome: 'refused',
+        method: 'DELETE',
+        status: 500,
+      }),
     ]);
   });
 
@@ -515,14 +724,30 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     // Arrange: the administrator on «Системные»; the settings stand at their defaults (8000, lessons on) until a PUT is accepted
     let held = knowledgeSettings();
     let putAnswer: Answer = () => {
-      held = knowledgeSettings({ limitTokens: 12000, lessonsEnabled: false, updatedAt: fixtureTime(60) });
+      held = knowledgeSettings({
+        limitTokens: 12000,
+        lessonsEnabled: false,
+        updatedAt: fixtureTime(60),
+      });
       return HttpResponse.json(held);
     };
-    serveViewer(currentUser({ id: fixtureId(3), email: 'igor@corp.example', name: 'Игорь Петров', isAdmin: true }));
+    serveViewer(
+      currentUser({
+        id: fixtureId(3),
+        email: 'igor@corp.example',
+        name: 'Игорь Петров',
+        isAdmin: true,
+      }),
+    );
     server.use(
-      http.get(`${API}/api/admin/library/system`, () => HttpResponse.json([] satisfies RecordSummary[])),
+      http.get(`${API}/api/admin/library/system`, () =>
+        HttpResponse.json([] satisfies RecordSummary[]),
+      ),
       http.get(`${API}/api/admin/library/settings`, () =>
-        HttpResponse.json({ defaultMaxTurns: 40, updatedAt: null } satisfies LibrarySettings),
+        HttpResponse.json({
+          defaultMaxTurns: 40,
+          updatedAt: null,
+        } satisfies LibrarySettings),
       ),
       http.get(`${API}${SETTINGS}`, () => HttpResponse.json(held)),
       http.put(`${API}${SETTINGS}`, () => putAnswer()),
@@ -536,23 +761,36 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     renderWithRuntime({ pathname: '/admin/library' });
 
     // Two forms of the tab have «Сохранить»: everything is looked up inside this section
-    const section = await screen.findByRole('region', { name: 'Самообучение глубоких агентов' });
+    const section = await screen.findByRole('region', {
+      name: 'Самообучение глубоких агентов',
+    });
     const form = within(section);
-    expect(screen.getByRole('tab', { name: 'Системные' })).toHaveAttribute('aria-selected', 'true');
-    const limit = await form.findByRole('textbox', { name: 'Место для знаний в запуске, токенов' });
+    expect(screen.getByRole('tab', { name: 'Системные' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const limit = await form.findByRole('textbox', {
+      name: 'Место для знаний в запуске, токенов',
+    });
     expect(limit).toHaveValue('8000');
-    expect(form.getByRole('checkbox', { name: 'Давать запускам уроки' })).toBeChecked();
+    expect(
+      form.getByRole('checkbox', { name: 'Давать запускам уроки' }),
+    ).toBeChecked();
     expect(form.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
 
     // Act: 12000, lessons off, one «Сохранить»
     await user.clear(limit);
     await user.type(limit, '12000');
-    await user.click(form.getByRole('checkbox', { name: 'Давать запускам уроки' }));
+    await user.click(
+      form.getByRole('checkbox', { name: 'Давать запускам уроки' }),
+    );
     let mark = api.requests.length;
     await user.click(form.getByRole('button', { name: 'Сохранить' }));
 
     // Assert (AC-12.1, DC-5): MC-8; one PUT with both values, then one re-read
-    expect(await screen.findByText('Настройки самообучения сохранены')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Настройки самообучения сохранены'),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(settingsSince(mark)).toEqual([
         { method: 'PUT', body: { limitTokens: 12000, lessonsEnabled: false } },
@@ -561,24 +799,45 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
     );
 
     // Assert (Flow 4): the form starts again from the re-read values, so nothing is left to save
-    await waitFor(() => expect(form.getByRole('button', { name: 'Сохранить' })).toBeDisabled());
-    expect(form.getByRole('textbox', { name: 'Место для знаний в запуске, токенов' })).toHaveValue('12000');
-    expect(form.getByRole('checkbox', { name: 'Давать запускам уроки' })).not.toBeChecked();
+    await waitFor(() =>
+      expect(form.getByRole('button', { name: 'Сохранить' })).toBeDisabled(),
+    );
+    expect(
+      form.getByRole('textbox', {
+        name: 'Место для знаний в запуске, токенов',
+      }),
+    ).toHaveValue('12000');
+    expect(
+      form.getByRole('checkbox', { name: 'Давать запускам уроки' }),
+    ).not.toBeChecked();
 
     // Act (short row): 20000 passes the form's rule, the server refuses it 400 VALIDATION_FAILED
-    putAnswer =() => apiError(400, 'limitTokens exceeds the model context', 'VALIDATION_FAILED');
-    const refusedLimit = form.getByRole('textbox', { name: 'Место для знаний в запуске, токенов' });
+    putAnswer = () =>
+      apiError(
+        400,
+        'limitTokens exceeds the model context',
+        'VALIDATION_FAILED',
+      );
+    const refusedLimit = form.getByRole('textbox', {
+      name: 'Место для знаний в запуске, токенов',
+    });
     await user.clear(refusedLimit);
     await user.type(refusedLimit, '20000');
     mark = api.requests.length;
     await user.click(form.getByRole('button', { name: 'Сохранить' }));
 
     // Assert (short row): the reason in the form's error; the typed value stays; one PUT and no re-read
-    expect(await form.findByRole('alert')).toHaveTextContent('Не удалось сохранить: limitTokens exceeds the model context');
+    expect(await form.findByRole('alert')).toHaveTextContent(
+      'Не удалось сохранить: limitTokens exceeds the model context',
+    );
     expect(refusedLimit).toHaveValue('20000');
-    expect(form.getByRole('checkbox', { name: 'Давать запускам уроки' })).not.toBeChecked();
+    expect(
+      form.getByRole('checkbox', { name: 'Давать запускам уроки' }),
+    ).not.toBeChecked();
     await waitFor(() =>
-      expect(settingsSince(mark)).toEqual([{ method: 'PUT', body: { limitTokens: 20000, lessonsEnabled: false } }]),
+      expect(settingsSince(mark)).toEqual([
+        { method: 'PUT', body: { limitTokens: 20000, lessonsEnabled: false } },
+      ]),
     );
   });
 });

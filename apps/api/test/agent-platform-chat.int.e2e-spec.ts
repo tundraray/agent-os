@@ -75,12 +75,7 @@ import {
   runModel,
   useRunModels,
 } from './support/access';
-import {
-  type ChatApi,
-  chatApi,
-  expectError,
-  type Method,
-} from './support/api';
+import { type ChatApi, chatApi, expectError, type Method } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { BUILTIN, pointBuiltinsAt } from './support/library';
 import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers';
@@ -89,11 +84,7 @@ import {
   seedSuperAdmin,
   type Session,
 } from './support/session';
-import {
-  openStream,
-  type SseEvent,
-  type SseStream,
-} from './support/sseClient';
+import { openStream, type SseEvent, type SseStream } from './support/sseClient';
 
 /** Bound of one test; the rows and notes settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
@@ -514,7 +505,10 @@ async function deletedTreeState(
        JOIN app.runtime_tasks t ON t.task_id = c.task_id WHERE t.root_id = $1 ORDER BY c.call_id`,
     [rootId],
   );
-  return { ...(await treeSnapshot(harness, rootId, rootId)), ledger: ledger.rows };
+  return {
+    ...(await treeSnapshot(harness, rootId, rootId)),
+    ledger: ledger.rows,
+  };
 }
 
 /**
@@ -2010,9 +2004,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       );
       harness.model.script(
         { task: briefTask(corrected) },
-        [
-          { calls: [delegate(ANSWER_STEP, answerTask)] },
-        ],
+        [{ calls: [delegate(ANSWER_STEP, answerTask)] }],
         { thereafter: { text: 'Run done.' } },
       );
       harness.model.script({ task: subagentTask(corrected, answerTask) }, [], {
@@ -2101,9 +2093,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       ).toEqual([`${DEEP_RESEARCH.name} ${corrected}`]);
       const deepAgent = agentNamed(ran.agents, corrected);
       expect(deepAgent.origin).toMatchObject(DEEP_RESEARCH_ORIGIN);
-      expect(
-        linesOf((await api.agentPage(deepAgent.agentId)).entries)[0],
-      ).toBe(`task: ${briefTask(corrected)}`);
+      expect(linesOf((await api.agentPage(deepAgent.agentId)).entries)[0]).toBe(
+        `task: ${briefTask(corrected)}`,
+      );
       expect((await api.run(deepAgent.agentId)).brief).toEqual({
         question: corrected,
         boundaries: '',
@@ -2337,10 +2329,17 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       for (const route of THREAD_ROUTES)
         await expectSameAsMissing(api, route, bottom, 'THREAD_NOT_FOUND');
       // And: a send to the deleted id is 404 with the constant body — a random id would be a first message
-      const sentToDeleted = await api.raw('post', `/threads/${bottom}/messages`, {
-        text: 'INT-3 A: a message to the deleted conversation',
-      });
-      expect({ status: sentToDeleted.status, body: sentToDeleted.body as unknown }).toEqual({
+      const sentToDeleted = await api.raw(
+        'post',
+        `/threads/${bottom}/messages`,
+        {
+          text: 'INT-3 A: a message to the deleted conversation',
+        },
+      );
+      expect({
+        status: sentToDeleted.status,
+        body: sentToDeleted.body as unknown,
+      }).toEqual({
         status: 404,
         body: THREAD_NOT_FOUND_BODY,
       });
@@ -2349,16 +2348,22 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       const read = async (sql: string): Promise<unknown[]> =>
         (await harness.pool.query(sql, [bottom])).rows;
       expect(
-        await read('SELECT status, deleted_at IS NOT NULL AS deleted FROM app.runtime_tasks WHERE task_id = $1'),
+        await read(
+          'SELECT status, deleted_at IS NOT NULL AS deleted FROM app.runtime_tasks WHERE task_id = $1',
+        ),
       ).toEqual([{ status: 'stopped', deleted: true }]);
       expect(
-        await read('SELECT deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1'),
+        await read(
+          'SELECT deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1',
+        ),
       ).toEqual([{ deleted: true }]);
       // Four entries were shown before the delete: two messages and their two answers.
       const [history] = await read(
         'SELECT count(*)::int AS entries FROM app.agent_messages WHERE task_id = $1',
       );
-      expect((history as { entries: number }).entries).toBeGreaterThanOrEqual(4);
+      expect((history as { entries: number }).entries).toBeGreaterThanOrEqual(
+        4,
+      );
       // And: nothing woke after those requests — no new queue message, no status change, no model call
       expect(await deletedTreeState(harness, bottom)).toEqual(rightAfterDelete);
     },
@@ -2712,9 +2717,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       );
       harness.model.script(
         { task: briefTask(aQuestion) },
-        [
-          { calls: [delegate(ANSWER_STEP, answerTask)] },
-        ],
+        [{ calls: [delegate(ANSWER_STEP, answerTask)] }],
         { thereafter: { text: 'Run done.' } },
       );
       harness.model.script({ task: subagentTask(aQuestion, answerTask) }, [], {
@@ -2732,7 +2735,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         { text: 'B own done.', latch: bOwnHeld },
       ]);
       const aNextTask = 'INT-4 A: the next thread';
-      harness.model.script({ task: aNextTask }, [], { thereafter: { text: 'Noted.' } });
+      harness.model.script({ task: aNextTask }, [], {
+        thereafter: { text: 'Noted.' },
+      });
       const streams: SseStream[] = [];
       try {
         const aThread = await a.createThread();
@@ -2977,12 +2982,19 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         const aAfterDelete = await openStream(harness.app, INT4.a);
         streams.push(aAfterDelete);
         await aAfterDelete.next('ready');
-        const bToDeleted = await b.raw('post', `/threads/${aThread.id}/messages`, {
-          text: "INT-4 B: a first message with A's deleted id",
-        });
+        const bToDeleted = await b.raw(
+          'post',
+          `/threads/${aThread.id}/messages`,
+          {
+            text: "INT-4 B: a first message with A's deleted id",
+          },
+        );
 
         // Then: B gets the constant 404 and the id stays A's deleted conversation: no row of B's was created
-        expect({ status: bToDeleted.status, body: bToDeleted.body as unknown }).toEqual({
+        expect({
+          status: bToDeleted.status,
+          body: bToDeleted.body as unknown,
+        }).toEqual({
           status: 404,
           body: THREAD_NOT_FOUND_BODY,
         });

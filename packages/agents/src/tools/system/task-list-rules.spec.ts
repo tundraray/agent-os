@@ -13,7 +13,11 @@ import {
 // edge to itself, a cycle and a number not in the list are refused; deleting takes the task out of the blockers;
 // one field given is one field changed; the 51st task is refused. A refusal names the field and the rule.
 
-function task(number: number, status: SessionTask['status'], extra: Partial<SessionTask> = {}): SessionTask {
+function task(
+  number: number,
+  status: SessionTask['status'],
+  extra: Partial<SessionTask> = {},
+): SessionTask {
   return {
     number,
     subject: `Задача ${number}`,
@@ -28,7 +32,11 @@ function task(number: number, status: SessionTask['status'], extra: Partial<Sess
 
 /** Task 1 completed, 2 in progress, 3 pending and blocked by 2; task 4 was deleted, so the counter is at 4. */
 const LIST: TaskListState = {
-  tasks: [task(1, 'completed'), task(2, 'in_progress'), task(3, 'pending', { blockedBy: [2] })],
+  tasks: [
+    task(1, 'completed'),
+    task(2, 'in_progress'),
+    task(3, 'pending', { blockedBy: [2] }),
+  ],
   lastNumber: 4,
 };
 
@@ -45,32 +53,65 @@ describe('task list rules', () => {
     [
       'the first task is number 1, pending',
       { tasks: [], lastNumber: 0 },
-      { tool: 'create', args: { subject: 'Собрать логи', description: 'За неделю', activeForm: 'Собираю логи' } },
+      {
+        tool: 'create',
+        args: {
+          subject: 'Собрать логи',
+          description: 'За неделю',
+          activeForm: 'Собираю логи',
+        },
+      },
       {
         kind: 'change',
-        written: [task(1, 'pending', { subject: 'Собрать логи', description: 'За неделю', activeForm: 'Собираю логи' })],
+        written: [
+          task(1, 'pending', {
+            subject: 'Собрать логи',
+            description: 'За неделю',
+            activeForm: 'Собираю логи',
+          }),
+        ],
         deleted: [],
         lastNumber: 1,
         text: 'Task 1 created: Собрать логи',
-        event: { action: 'created', number: 1, statusBefore: null, statusAfter: 'pending', fields: [] },
+        event: {
+          action: 'created',
+          number: 1,
+          statusBefore: null,
+          statusAfter: 'pending',
+          fields: [],
+        },
       },
     ],
     [
       "a deleted task's number is not given again (DC-1)",
       LIST,
-      { tool: 'create', args: { subject: 'Задача 5', description: 'Описание 5' } },
+      {
+        tool: 'create',
+        args: { subject: 'Задача 5', description: 'Описание 5' },
+      },
       {
         kind: 'change',
         written: [task(5, 'pending')],
         deleted: [],
         lastNumber: 5,
         text: 'Task 5 created: Задача 5',
-        event: { action: 'created', number: 5, statusBefore: null, statusAfter: 'pending', fields: [] },
+        event: {
+          action: 'created',
+          number: 5,
+          statusBefore: null,
+          statusAfter: 'pending',
+          fields: [],
+        },
       },
     ],
     [
       'the 51st task is refused',
-      { tasks: Array.from({ length: 50 }, (_, index) => task(index + 1, 'pending')), lastNumber: 50 },
+      {
+        tasks: Array.from({ length: 50 }, (_, index) =>
+          task(index + 1, 'pending'),
+        ),
+        lastNumber: 50,
+      },
       { tool: 'create', args: { subject: 's', description: 'd' } },
       refusal(
         'task_create',
@@ -78,12 +119,21 @@ describe('task list rules', () => {
         'The list already holds 50 tasks, the most it may hold: delete finished tasks first.',
       ),
     ],
-    ['an unknown task', LIST, update({ taskId: 7, status: 'completed' }), refusal('taskId', 'unknown_task', 'There is no task 7.')],
+    [
+      'an unknown task',
+      LIST,
+      update({ taskId: 7, status: 'completed' }),
+      refusal('taskId', 'unknown_task', 'There is no task 7.'),
+    ],
     [
       'nothing to change',
       LIST,
       update({ taskId: 2 }),
-      refusal('taskId', 'nothing_to_change', 'Nothing to change: give task 2 a status or a field.'),
+      refusal(
+        'taskId',
+        'nothing_to_change',
+        'Nothing to change: give task 2 a status or a field.',
+      ),
     ],
     [
       'one field given is one field changed',
@@ -95,33 +145,58 @@ describe('task list rules', () => {
         deleted: [],
         lastNumber: 4,
         text: 'Task 2 updated: owner',
-        event: { action: 'updated', number: 2, statusBefore: 'in_progress', statusAfter: 'in_progress', fields: ['owner'] },
+        event: {
+          action: 'updated',
+          number: 2,
+          statusBefore: 'in_progress',
+          statusAfter: 'in_progress',
+          fields: ['owner'],
+        },
       },
     ],
     [
       'a task whose blockers are completed starts',
-      { tasks: [task(1, 'completed'), task(2, 'pending', { blockedBy: [1] })], lastNumber: 2 },
+      {
+        tasks: [task(1, 'completed'), task(2, 'pending', { blockedBy: [1] })],
+        lastNumber: 2,
+      },
       update({ taskId: 2, status: 'in_progress', activeForm: 'Делаю 2' }),
       {
         kind: 'change',
-        written: [task(2, 'in_progress', { blockedBy: [1], activeForm: 'Делаю 2' })],
+        written: [
+          task(2, 'in_progress', { blockedBy: [1], activeForm: 'Делаю 2' }),
+        ],
         deleted: [],
         lastNumber: 2,
         text: 'Task 2 updated: status pending → in_progress; activeForm',
-        event: { action: 'updated', number: 2, statusBefore: 'pending', statusAfter: 'in_progress', fields: ['activeForm'] },
+        event: {
+          action: 'updated',
+          number: 2,
+          statusBefore: 'pending',
+          statusAfter: 'in_progress',
+          fields: ['activeForm'],
+        },
       },
     ],
     [
       'a blocked task does not start (AC-14.1)',
       LIST,
       update({ taskId: 3, status: 'in_progress' }),
-      refusal('status', 'blocked', 'Task 3 cannot become in_progress: it is blocked by 2, not completed yet.'),
+      refusal(
+        'status',
+        'blocked',
+        'Task 3 cannot become in_progress: it is blocked by 2, not completed yet.',
+      ),
     ],
     [
       'a blocked task does not complete',
       LIST,
       update({ taskId: 3, status: 'completed' }),
-      refusal('status', 'blocked', 'Task 3 cannot become completed: it is blocked by 2, not completed yet.'),
+      refusal(
+        'status',
+        'blocked',
+        'Task 3 cannot become completed: it is blocked by 2, not completed yet.',
+      ),
     ],
     [
       'a cycle through addBlockedBy',
@@ -137,7 +212,11 @@ describe('task list rules', () => {
       'an edge to itself',
       LIST,
       update({ taskId: 2, addBlockedBy: [2] }),
-      refusal('addBlockedBy', 'self_edge', 'addBlockedBy: a task cannot block itself.'),
+      refusal(
+        'addBlockedBy',
+        'self_edge',
+        'addBlockedBy: a task cannot block itself.',
+      ),
     ],
     [
       'a cycle through addBlocks',
@@ -153,7 +232,11 @@ describe('task list rules', () => {
       'a number not in the list',
       LIST,
       update({ taskId: 3, addBlockedBy: [4] }),
-      refusal('addBlockedBy', 'unknown_task', 'addBlockedBy: there is no task 4 in the list.'),
+      refusal(
+        'addBlockedBy',
+        'unknown_task',
+        'addBlockedBy: there is no task 4 in the list.',
+      ),
     ],
     [
       'addBlocks makes the other task wait, and a known edge is not added twice',
@@ -161,11 +244,21 @@ describe('task list rules', () => {
       update({ taskId: 1, addBlocks: [2, 3], addBlockedBy: [] }),
       {
         kind: 'change',
-        written: [task(1, 'completed'), task(2, 'in_progress', { blockedBy: [1] }), task(3, 'pending', { blockedBy: [2, 1] })],
+        written: [
+          task(1, 'completed'),
+          task(2, 'in_progress', { blockedBy: [1] }),
+          task(3, 'pending', { blockedBy: [2, 1] }),
+        ],
         deleted: [],
         lastNumber: 4,
         text: 'Task 1 updated: addBlockedBy; addBlocks',
-        event: { action: 'updated', number: 1, statusBefore: 'completed', statusAfter: 'completed', fields: ['addBlockedBy', 'addBlocks'] },
+        event: {
+          action: 'updated',
+          number: 1,
+          statusBefore: 'completed',
+          statusAfter: 'completed',
+          fields: ['addBlockedBy', 'addBlocks'],
+        },
       },
     ],
     [
@@ -178,7 +271,13 @@ describe('task list rules', () => {
         deleted: [2],
         lastNumber: 4,
         text: 'Task 2 deleted',
-        event: { action: 'deleted', number: 2, statusBefore: 'in_progress', statusAfter: null, fields: [] },
+        event: {
+          action: 'deleted',
+          number: 2,
+          statusBefore: 'in_progress',
+          statusAfter: null,
+          fields: [],
+        },
       },
     ],
   ])('%s', (_, state, call, expected) => {

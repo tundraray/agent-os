@@ -57,7 +57,9 @@ describe('recordListText', () => {
       records: [record('own', false)],
       servers: [JIRA],
       maxChars: 10_000,
-      has: [`- ${ID} | deep_agent | Разбор логов | yours | not shared | Собирает логи и отвечает`],
+      has: [
+        `- ${ID} | deep_agent | Разбор логов | yours | not shared | Собирает логи и отвечает`,
+      ],
       lacks: [],
     },
     {
@@ -97,7 +99,10 @@ describe('recordListText', () => {
       records: [record('own', false)],
       servers: [JIRA],
       maxChars: 80,
-      has: ['Library records you see', '[cut: 4 more lines are not shown, the answer is limited to 80 characters]'],
+      has: [
+        'Library records you see',
+        '[cut: 4 more lines are not shown, the answer is limited to 80 characters]',
+      ],
       lacks: ['jira'],
     },
   ])('$label', ({ records, servers, maxChars, has, lacks }) => {

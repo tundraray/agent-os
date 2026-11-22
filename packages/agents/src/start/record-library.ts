@@ -10,7 +10,10 @@ export interface RecordLibrary {
   /** The record to start by its id. */
   resolve(viewerId: string, recordId: string): Promise<ResolvedRecord | null>;
   /** The built-in record with this key, such as `chat`. */
-  resolveBuiltin(viewerId: string, builtinKey: string): Promise<ResolvedRecord | null>;
+  resolveBuiltin(
+    viewerId: string,
+    builtinKey: string,
+  ): Promise<ResolvedRecord | null>;
   /** Headers of every record the viewer sees. */
   listVisible(viewerId: string): Promise<RecordHeader[]>;
 }

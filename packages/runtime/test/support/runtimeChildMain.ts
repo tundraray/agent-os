@@ -4,7 +4,11 @@ import { HandlerRegistry, parseRuntimeConfig } from '@agent-os/runtime';
 import { runtimeModules, serveHarness } from '@agent-os/runtime/testing';
 import { Inject, Injectable, Module, type OnModuleInit } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { type ChildTypes, CHILD_TYPES_ENV, handlersFor } from './runtimeChildHandlers';
+import {
+  type ChildTypes,
+  CHILD_TYPES_ENV,
+  handlersFor,
+} from './runtimeChildHandlers';
 import { ensureHandlerRowsTable } from './testHandlers';
 
 /**
@@ -33,7 +37,8 @@ class ChildHandlers implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await ensureHandlerRowsTable(this.db);
-    for (const handler of handlersFor(readTypes(), this.db)) this.handlers.register(handler);
+    for (const handler of handlersFor(readTypes(), this.db))
+      this.handlers.register(handler);
   }
 }
 
@@ -44,7 +49,11 @@ async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
   const config = parseRuntimeConfig(process.env);
-  const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
+  const logger = createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'info',
+  });
   const app = await NestFactory.createApplicationContext(
     {
       module: ChildModule,
@@ -58,9 +67,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'error' }).error(
-    'runtime child failed',
-    { error },
-  );
+  createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'error',
+  }).error('runtime child failed', { error });
   process.exit(1);
 });

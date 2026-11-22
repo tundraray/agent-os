@@ -29,7 +29,9 @@ export interface StartChildDeps {
  * object once the commit succeeds, and the child's first step runs on it. The caller gets the `agentId` at once.
  * Owner and parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
  */
-export function createStartChild(deps: StartChildDeps): (scope: StartChildScope) => StartChild {
+export function createStartChild(
+  deps: StartChildDeps,
+): (scope: StartChildScope) => StartChild {
   return ({ effects, caller }) =>
     async ({ snapshot, prompt, description, forkedFrom }) => {
       if (caller.depth + 1 > deps.maxDepth) {
@@ -82,18 +84,25 @@ export interface StartLogEntry {
 
 /** Logs a start or its refusal with the record, its version and the subagent (design-runtime.md, «Логирование»). */
 export function logStart(logger: Logger, entry: StartLogEntry): void {
-  const origin = entry.resolution?.kind === 'snapshot' ? entry.resolution.snapshot.origin : null;
-  logger.info(entry.refusal === null ? 'agents start done' : 'agents start refused', {
-    ownerId: entry.ownerId,
-    rootId: entry.rootId,
-    parentId: entry.parentId,
-    agentId: entry.agentId,
-    source: entry.source,
-    recordId: origin?.recordId ?? entry.recordId ?? null,
-    version: origin?.version ?? null,
-    subagent: origin?.subagent ?? null,
-    outcome: entry.refusal ?? 'started',
-    refusedModel: entry.resolution?.kind === 'refused' ? entry.resolution.model : null,
-    durationMs: Date.now() - entry.startedAt,
-  });
+  const origin =
+    entry.resolution?.kind === 'snapshot'
+      ? entry.resolution.snapshot.origin
+      : null;
+  logger.info(
+    entry.refusal === null ? 'agents start done' : 'agents start refused',
+    {
+      ownerId: entry.ownerId,
+      rootId: entry.rootId,
+      parentId: entry.parentId,
+      agentId: entry.agentId,
+      source: entry.source,
+      recordId: origin?.recordId ?? entry.recordId ?? null,
+      version: origin?.version ?? null,
+      subagent: origin?.subagent ?? null,
+      outcome: entry.refusal ?? 'started',
+      refusedModel:
+        entry.resolution?.kind === 'refused' ? entry.resolution.model : null,
+      durationMs: Date.now() - entry.startedAt,
+    },
+  );
 }

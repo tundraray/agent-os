@@ -1,8 +1,17 @@
-import type { RecordHeader, ResolvedRecord, RunOrigin } from '@agent-os/contracts';
+import type {
+  RecordHeader,
+  ResolvedRecord,
+  RunOrigin,
+} from '@agent-os/contracts';
 
 import { descriptionLine } from '../chat-listing';
 import { deepAgentDefinition } from '../deep/deep-definition';
-import type { AgentSnapshot, DeepAgentSnapshot, RunSnapshot, StartableAgent } from './snapshot';
+import type {
+  AgentSnapshot,
+  DeepAgentSnapshot,
+  RunSnapshot,
+  StartableAgent,
+} from './snapshot';
 
 /**
  * What a step hands the model, computed from the run's snapshot by one pure function (ADR-0017,
@@ -83,7 +92,10 @@ function originOf(record: ResolvedRecord): RunOrigin {
     kind: record.kind,
     version: record.version,
     name: record.name,
-    author: record.author === null ? null : { id: record.author.id, name: record.author.name },
+    author:
+      record.author === null
+        ? null
+        : { id: record.author.id, name: record.author.name },
     builtinKey: record.builtinKey,
     subagent: null,
   };
@@ -113,14 +125,24 @@ export function recordSnapshot(
   const origin = originOf(record);
   if (record.kind === 'deep_agent') {
     const content = withModel(record.content, defaultModel);
-    const subagents = record.content.subagents.map((subagent) => withModel(subagent, defaultModel));
-    if (content === null || !subagents.every((subagent) => subagent !== null)) return null;
-    return { kind: 'deep_agent', name: record.name, origin, content: { ...content, subagents } };
+    const subagents = record.content.subagents.map((subagent) =>
+      withModel(subagent, defaultModel),
+    );
+    if (content === null || !subagents.every((subagent) => subagent !== null))
+      return null;
+    return {
+      kind: 'deep_agent',
+      name: record.name,
+      origin,
+      content: { ...content, subagents },
+    };
   }
   const content = withModel(record.content, defaultModel);
   if (content === null) return null;
   const agents = content.agents.flatMap((id): StartableAgent[] => {
-    const header = visible.find((candidate) => candidate.id === id && candidate.kind === 'agent');
+    const header = visible.find(
+      (candidate) => candidate.id === id && candidate.kind === 'agent',
+    );
     return header === undefined
       ? []
       : [{ id: header.id, name: header.name, description: header.description }];

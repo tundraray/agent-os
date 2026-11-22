@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { useRef, useState, type ReactNode } from "react";
-import { LoaderCircle } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useRef, useState, type ReactNode } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -11,9 +11,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { CONTROL_SIZE, describeRefusal, FormError } from "./admin-form";
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { CONTROL_SIZE, describeRefusal, FormError } from './admin-form';
 
 export type ConfirmDialogProps = {
   open: boolean;
@@ -58,8 +58,8 @@ export function ConfirmDialog({
   refusalText,
   focusTitleAfterConfirm = false,
 }: ConfirmDialogProps) {
-  const t = useTranslations("common");
-  const tErrors = useTranslations("errors");
+  const t = useTranslations('common');
+  const tErrors = useTranslations('errors');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ReactNode>(null);
   const titleFocus = useRef<HTMLElement | null>(null);
@@ -80,12 +80,16 @@ export function ConfirmDialog({
     titleFocus.current = null;
     try {
       await onConfirm();
-      if (focusTitleAfterConfirm) titleFocus.current = document.querySelector('[data-shell-focus="page-title"]');
+      if (focusTitleAfterConfirm)
+        titleFocus.current = document.querySelector(
+          '[data-shell-focus="page-title"]',
+        );
       running.current = false;
       changeOpen(false);
     } catch (cause) {
       if (refusalText !== undefined) setError(refusalText(cause));
-      else setError(describeRefusal(tErrors, cause, { logEvent })?.text ?? null);
+      else
+        setError(describeRefusal(tErrors, cause, { logEvent })?.text ?? null);
     } finally {
       running.current = false;
       setPending(false);
@@ -96,16 +100,35 @@ export function ConfirmDialog({
     <AlertDialog open={open} onOpenChange={changeOpen}>
       <AlertDialogContent finalFocus={titleFocus}>
         <AlertDialogHeader>
-          <AlertDialogTitle className="wrap-break-word">{title}</AlertDialogTitle>
-          <AlertDialogDescription className="wrap-break-word">{body}</AlertDialogDescription>
+          <AlertDialogTitle className="wrap-break-word">
+            {title}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="wrap-break-word">
+            {body}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         {error !== null && <FormError>{error}</FormError>}
         <AlertDialogFooter>
-          <AlertDialogCancel size="sm" className={CONTROL_SIZE} disabled={pending}>
-            {t("cancel")}
+          <AlertDialogCancel
+            size="sm"
+            className={CONTROL_SIZE}
+            disabled={pending}
+          >
+            {t('cancel')}
           </AlertDialogCancel>
-          <Button variant="destructive" size="sm" className={CONTROL_SIZE} disabled={pending} onClick={() => void confirm()}>
-            {pending && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
+          <Button
+            variant="destructive"
+            size="sm"
+            className={CONTROL_SIZE}
+            disabled={pending}
+            onClick={() => void confirm()}
+          >
+            {pending && (
+              <LoaderCircle
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden
+              />
+            )}
             {confirmLabel}
           </Button>
         </AlertDialogFooter>

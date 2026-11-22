@@ -12,14 +12,20 @@ export const DeepAgentBriefSchema = z.object({
     .string()
     .min(1)
     .max(BRIEF_FIELD_MAX)
-    .describe('The question the deep agent must answer, in the employee’s words'),
+    .describe(
+      'The question the deep agent must answer, in the employee’s words',
+    ),
   boundaries: z
     .string()
     .max(BRIEF_FIELD_MAX)
-    .describe('Boundaries of the work: systems, period, what to leave out; empty string if none'),
+    .describe(
+      'Boundaries of the work: systems, period, what to leave out; empty string if none',
+    ),
   result: z
     .string()
     .max(BRIEF_FIELD_MAX)
-    .describe('What counts as the result: its form and contents; empty string if not stated'),
+    .describe(
+      'What counts as the result: its form and contents; empty string if not stated',
+    ),
 });
 export type DeepAgentBrief = z.infer<typeof DeepAgentBriefSchema>;

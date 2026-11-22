@@ -86,10 +86,20 @@ export class OutboxRelay {
     @Inject(EventConsumerRegistry) consumers: EventConsumerRegistry,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
     @Inject(EventLog) events: EventLog,
-    @Inject(RuntimeEventDeliveriesRepository) deliveries: RuntimeEventDeliveriesRepository,
+    @Inject(RuntimeEventDeliveriesRepository)
+    deliveries: RuntimeEventDeliveriesRepository,
   ) {
     const logger = runtimeLogger.child({ worker: 'relay' });
-    this.deps = { db, config, clock, logger, consumers, taskRows, events, deliveries };
+    this.deps = {
+      db,
+      config,
+      clock,
+      logger,
+      consumers,
+      taskRows,
+      events,
+      deliveries,
+    };
     this.loop = new WorkerLoop({
       name: 'relay',
       periodMs: config.pollMs,

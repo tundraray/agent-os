@@ -14,7 +14,9 @@ export const agentKnowledgeSettings = app.table(
   {
     /** Always `true`: keeps the table at one row. */
     id: boolean('id').primaryKey().default(true),
-    limitTokens: integer('limit_tokens').notNull().default(KNOWLEDGE_LIMIT_TOKENS_DEFAULT),
+    limitTokens: integer('limit_tokens')
+      .notNull()
+      .default(KNOWLEDGE_LIMIT_TOKENS_DEFAULT),
     lessonsEnabled: boolean('lessons_enabled').notNull().default(true),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
@@ -23,7 +25,11 @@ export const agentKnowledgeSettings = app.table(
     check('agent_knowledge_settings_single_row_check', sql`${t.id}`),
     check(
       'agent_knowledge_settings_limit_tokens_check',
-      isWithin(t.limitTokens, KNOWLEDGE_LIMIT_TOKENS_MIN, KNOWLEDGE_LIMIT_TOKENS_MAX),
+      isWithin(
+        t.limitTokens,
+        KNOWLEDGE_LIMIT_TOKENS_MIN,
+        KNOWLEDGE_LIMIT_TOKENS_MAX,
+      ),
     ),
   ],
 );

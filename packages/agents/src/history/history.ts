@@ -9,7 +9,11 @@ import {
 import { z } from 'zod';
 
 /** How a child agent ended, as its parent learns it from `child_finished`. */
-const ChildEndSchema = AgentStatusSchema.extract(['completed', 'failed', 'stopped']);
+const ChildEndSchema = AgentStatusSchema.extract([
+  'completed',
+  'failed',
+  'stopped',
+]);
 
 /** One tool call of a model answer: its place in `toolCalls` is its position in the answer. */
 const AnswerCallSchema = z.object({
@@ -31,7 +35,10 @@ export const HistoryContentSchemas = {
   /** The task text; the agent's first own entry. At a conversation's root it keeps its first message's chip. */
   task: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
   /** A message of the employee, with the record chip it carries, if any (design-runtime.md KD-4). */
-  user_message: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+  user_message: z.object({
+    text: z.string(),
+    record: ChipRecordSchema.nullable(),
+  }),
   /** A message of the parent agent. */
   agent_message: z.object({ text: z.string(), agentId: z.string() }),
   /** A child's report: written when the runtime delivers `child_finished`. */
@@ -46,7 +53,10 @@ export const HistoryContentSchemas = {
     durationMs: z.number().int().nonnegative(),
   }),
   /** A model answer: its text and the calls it requested, in order. */
-  model_answer: z.object({ text: z.string(), toolCalls: z.array(AnswerCallSchema) }),
+  model_answer: z.object({
+    text: z.string(),
+    toolCalls: z.array(AnswerCallSchema),
+  }),
   /** The call was put before the employee: written in the commit that ends the step with `await_decision`. */
   tool_confirmation: z.object({ callId: z.string() }),
   /** The employee's decision, written by the step that consumed it; `args` — the edited arguments, if any. */
@@ -70,7 +80,10 @@ export const HistoryContentSchemas = {
     taskId: z.number().int().positive().optional(),
   }),
   /** The start of one attempt of a `run_code` read run (code-execution KD-7). */
-  run_attempt: z.object({ callId: z.string(), attempt: z.number().int().positive() }),
+  run_attempt: z.object({
+    callId: z.string(),
+    attempt: z.number().int().positive(),
+  }),
   /** The result of one tool call: the record that closes it. */
   tool_result: z.object({
     callId: z.string(),
@@ -104,10 +117,15 @@ export const HistoryContentSchemas = {
   /** A lifecycle event; `failed` carries its reason. */
   event: z.object({ event: HistoryEventSchema, reason: z.string().nullable() }),
   /** A summary that replaces for the model every entry through `throughSeq` (KD-7). */
-  compaction: z.object({ summary: z.string(), throughSeq: z.number().int().nonnegative() }),
+  compaction: z.object({
+    summary: z.string(),
+    throughSeq: z.number().int().nonnegative(),
+  }),
 } as const satisfies Record<HistoryEntryKind, z.ZodType>;
 
-export type HistoryContent<K extends HistoryEntryKind> = z.infer<(typeof HistoryContentSchemas)[K]>;
+export type HistoryContent<K extends HistoryEntryKind> = z.infer<
+  (typeof HistoryContentSchemas)[K]
+>;
 
 /** One entry of an agent's history: append-only, `seq` grows within the session (Invariant 5). */
 export type HistoryEntry = {

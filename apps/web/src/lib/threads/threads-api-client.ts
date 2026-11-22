@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   AgentListPageSchema,
   AgentNodeSchema,
@@ -35,22 +35,34 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-} from "@agent-os/contracts";
-import { apiRequest } from "@/lib/api/api-request";
+} from '@agent-os/contracts';
+import { apiRequest } from '@/lib/api/api-request';
 
-const threadRoute = (threadId: string): string => `/api/threads/${encodeURIComponent(threadId)}`;
+const threadRoute = (threadId: string): string =>
+  `/api/threads/${encodeURIComponent(threadId)}`;
 
 async function listThreads(cursor?: string): Promise<ThreadListResponse> {
-  const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return apiRequest({ path: `/api/threads${query}`, schema: ThreadListResponseSchema });
+  const query =
+    cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  return apiRequest({
+    path: `/api/threads${query}`,
+    schema: ThreadListResponseSchema,
+  });
 }
 
 async function getThread(threadId: string): Promise<ThreadSummary> {
-  return apiRequest({ path: threadRoute(threadId), schema: ThreadSummarySchema });
+  return apiRequest({
+    path: threadRoute(threadId),
+    schema: ThreadSummarySchema,
+  });
 }
 
 async function createThread(): Promise<ThreadSummary> {
-  return apiRequest({ path: "/api/threads", method: "POST", schema: ThreadSummarySchema });
+  return apiRequest({
+    path: '/api/threads',
+    method: 'POST',
+    schema: ThreadSummarySchema,
+  });
 }
 
 async function renameThread({
@@ -63,7 +75,7 @@ async function renameThread({
   const body: RenameThreadRequest = { title };
   return apiRequest({
     path: threadRoute(threadId),
-    method: "PATCH",
+    method: 'PATCH',
     body,
     schema: ThreadSummarySchema,
   });
@@ -71,13 +83,17 @@ async function renameThread({
 
 /** 204 on success; 404 surfaces as kind `not_found` and the caller decides what it means. */
 async function deleteThread(threadId: string): Promise<void> {
-  await apiRequest({ path: threadRoute(threadId), method: "DELETE" });
+  await apiRequest({ path: threadRoute(threadId), method: 'DELETE' });
 }
 
-const agentRoute = (agentId: string): string => `/api/agents/${encodeURIComponent(agentId)}`;
+const agentRoute = (agentId: string): string =>
+  `/api/agents/${encodeURIComponent(agentId)}`;
 const afterSeqQuery = (afterSeq: number): string => `?afterSeq=${afterSeq}`;
 
-async function getConversation(threadId: string, afterSeq: number): Promise<ConversationView> {
+async function getConversation(
+  threadId: string,
+  afterSeq: number,
+): Promise<ConversationView> {
   return apiRequest({
     path: `${threadRoute(threadId)}/history${afterSeqQuery(afterSeq)}`,
     schema: ConversationViewSchema,
@@ -85,7 +101,10 @@ async function getConversation(threadId: string, afterSeq: number): Promise<Conv
 }
 
 async function getThreadAgents(threadId: string): Promise<AgentNode[]> {
-  return apiRequest({ path: `${threadRoute(threadId)}/agents`, schema: z.array(AgentNodeSchema) });
+  return apiRequest({
+    path: `${threadRoute(threadId)}/agents`,
+    schema: z.array(AgentNodeSchema),
+  });
 }
 
 /**
@@ -97,10 +116,11 @@ async function sendThreadMessage(
   text: string,
   recordId?: string,
 ): Promise<SendMessageResponse> {
-  const body: SendMessageRequest = recordId === undefined ? { text } : { text, recordId };
+  const body: SendMessageRequest =
+    recordId === undefined ? { text } : { text, recordId };
   return apiRequest({
     path: `${threadRoute(threadId)}/messages`,
-    method: "POST",
+    method: 'POST',
     body,
     schema: SendMessageResponseSchema,
   });
@@ -109,28 +129,41 @@ async function sendThreadMessage(
 async function interruptThread(threadId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${threadRoute(threadId)}/interrupt`,
-    method: "POST",
+    method: 'POST',
     schema: InterruptResponseSchema,
   });
 }
 
 async function listAgents(cursor?: string): Promise<AgentListPage> {
-  const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return apiRequest({ path: `/api/agents${query}`, schema: AgentListPageSchema });
+  const query =
+    cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  return apiRequest({
+    path: `/api/agents${query}`,
+    schema: AgentListPageSchema,
+  });
 }
 
 async function getAwaitingCount(): Promise<AwaitingCount> {
-  return apiRequest({ path: "/api/agents/awaiting", schema: AwaitingCountSchema });
+  return apiRequest({
+    path: '/api/agents/awaiting',
+    schema: AwaitingCountSchema,
+  });
 }
 
-async function getAgentPage(agentId: string, afterSeq: number): Promise<AgentPageView> {
+async function getAgentPage(
+  agentId: string,
+  afterSeq: number,
+): Promise<AgentPageView> {
   return apiRequest({
     path: `${agentRoute(agentId)}/history${afterSeqQuery(afterSeq)}`,
     schema: AgentPageViewSchema,
   });
 }
 
-async function getInherited(agentId: string, afterSeq: number): Promise<InheritedHistory> {
+async function getInherited(
+  agentId: string,
+  afterSeq: number,
+): Promise<InheritedHistory> {
   return apiRequest({
     path: `${agentRoute(agentId)}/inherited${afterSeqQuery(afterSeq)}`,
     schema: InheritedHistorySchema,
@@ -138,19 +171,28 @@ async function getInherited(agentId: string, afterSeq: number): Promise<Inherite
 }
 
 async function getRun(agentId: string): Promise<DeepAgentRunView> {
-  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: DeepAgentRunViewSchema });
+  return apiRequest({
+    path: `${agentRoute(agentId)}/run`,
+    schema: DeepAgentRunViewSchema,
+  });
 }
 
 /** The session's tasks by number and its delegations in order; both empty for an agent without them. */
 async function getAgentTasks(agentId: string): Promise<AgentTasksView> {
-  return apiRequest({ path: `${agentRoute(agentId)}/tasks`, schema: AgentTasksViewSchema });
+  return apiRequest({
+    path: `${agentRoute(agentId)}/tasks`,
+    schema: AgentTasksViewSchema,
+  });
 }
 
-async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {
+async function sendAgentMessage(
+  agentId: string,
+  text: string,
+): Promise<SendMessageResponse> {
   const body: SendMessageRequest = { text };
   return apiRequest({
     path: `${agentRoute(agentId)}/messages`,
-    method: "POST",
+    method: 'POST',
     body,
     schema: SendMessageResponseSchema,
   });
@@ -159,7 +201,7 @@ async function sendAgentMessage(agentId: string, text: string): Promise<SendMess
 async function interruptAgent(agentId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/interrupt`,
-    method: "POST",
+    method: 'POST',
     schema: InterruptResponseSchema,
   });
 }
@@ -167,7 +209,7 @@ async function interruptAgent(agentId: string): Promise<InterruptResponse> {
 async function stopAgent(agentId: string): Promise<StopResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/stop`,
-    method: "POST",
+    method: 'POST',
     schema: StopResponseSchema,
   });
 }
@@ -176,23 +218,26 @@ async function stopAgent(agentId: string): Promise<StopResponse> {
 async function restartAgent(agentId: string): Promise<RestartResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/restart`,
-    method: "POST",
+    method: 'POST',
     schema: RestartResponseSchema,
   });
 }
 
 /** `args` are the tool's full arguments when the brief or call was edited. */
-async function decide(decisionId: string, decision: DecisionRequest): Promise<DecisionResponse> {
+async function decide(
+  decisionId: string,
+  decision: DecisionRequest,
+): Promise<DecisionResponse> {
   return apiRequest({
     path: `/api/decisions/${encodeURIComponent(decisionId)}`,
-    method: "POST",
+    method: 'POST',
     body: decision,
     schema: DecisionResponseSchema,
   });
 }
 
 async function getSpend(): Promise<SpendResponse> {
-  return apiRequest({ path: "/api/spend", schema: SpendResponseSchema });
+  return apiRequest({ path: '/api/spend', schema: SpendResponseSchema });
 }
 
 export const threadsApiClient = {

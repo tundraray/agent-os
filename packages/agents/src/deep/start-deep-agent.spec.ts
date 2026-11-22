@@ -100,7 +100,10 @@ async function runConfirmed(resolution: StartResolution, inLaunchSet: boolean) {
       started.push(request);
       return { agentId: 'run-42' };
     },
-  } as unknown as InCommitToolInput<StartDeepAgentArgs, PreparedDeepAgentStart>);
+  } as unknown as InCommitToolInput<
+    StartDeepAgentArgs,
+    PreparedDeepAgentStart
+  >);
   return { asked, started, result };
 }
 
@@ -131,12 +134,23 @@ describe('start_deep_agent on the confirmed brief', () => {
       'a resolved deep agent starts on its snapshot',
       { kind: 'snapshot', snapshot },
       true,
-      [{ snapshot, prompt: confirmedBrief, description: 'Why did checkout errors rise on Monday?' }],
+      [
+        {
+          snapshot,
+          prompt: confirmedBrief,
+          description: 'Why did checkout errors rise on Monday?',
+        },
+      ],
       { kind: 'done', outcome: 'success', childAgentId: 'run-42' },
     ],
     [
       'an unavailable record starts nothing',
-      { kind: 'refused', reason: 'record_unavailable', model: null, denied: null },
+      {
+        kind: 'refused',
+        reason: 'record_unavailable',
+        model: null,
+        denied: null,
+      },
       true,
       [],
       { kind: 'refused', reason: 'record_unavailable', refusalDetail: null },
@@ -151,21 +165,40 @@ describe('start_deep_agent on the confirmed brief', () => {
     ],
     [
       'a model not allowed starts nothing and names the model',
-      { kind: 'refused', reason: 'model_not_allowed', model: MODEL, denied: null },
+      {
+        kind: 'refused',
+        reason: 'model_not_allowed',
+        model: MODEL,
+        denied: null,
+      },
       true,
       [],
-      { kind: 'refused', reason: 'model_not_allowed', refusalDetail: { model: MODEL } },
-    ],
-  ])('%s', async (_case, resolution, inLaunchSet, expectedStarts, expectedResult) => {
-    const { asked, started, result } = await runConfirmed(resolution, inLaunchSet);
-
-    expect(asked).toEqual([
       {
-        ownerId: 'owner-1',
-        source: { kind: 'record', recordId: EDITED_DEEP_AGENT_ID, expected: 'deep_agent' },
+        kind: 'refused',
+        reason: 'model_not_allowed',
+        refusalDetail: { model: MODEL },
       },
-    ]);
-    expect(started).toEqual(expectedStarts);
-    expect(result).toMatchObject(expectedResult as object);
-  });
+    ],
+  ])(
+    '%s',
+    async (_case, resolution, inLaunchSet, expectedStarts, expectedResult) => {
+      const { asked, started, result } = await runConfirmed(
+        resolution,
+        inLaunchSet,
+      );
+
+      expect(asked).toEqual([
+        {
+          ownerId: 'owner-1',
+          source: {
+            kind: 'record',
+            recordId: EDITED_DEEP_AGENT_ID,
+            expected: 'deep_agent',
+          },
+        },
+      ]);
+      expect(started).toEqual(expectedStarts);
+      expect(result).toMatchObject(expectedResult as object);
+    },
+  );
 });

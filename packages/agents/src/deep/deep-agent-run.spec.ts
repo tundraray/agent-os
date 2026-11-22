@@ -44,7 +44,11 @@ const deepAgentSnapshot: DeepAgentSnapshot = {
     servers: [],
     model: MODEL,
     maxTurns: 20,
-    subagents: [subagent('gather', 2), subagent('check', 1), subagent('answer', 1)],
+    subagents: [
+      subagent('gather', 2),
+      subagent('check', 1),
+      subagent('answer', 1),
+    ],
     finalSubagent: 'answer',
     taskList: true,
     listDelegation: true,
@@ -52,14 +56,21 @@ const deepAgentSnapshot: DeepAgentSnapshot = {
   },
 };
 
-function agentView(agentId: string, parentId: string | null, subagentName: string | null): AgentView {
+function agentView(
+  agentId: string,
+  parentId: string | null,
+  subagentName: string | null,
+): AgentView {
   return {
     agentId,
     parentId,
     rootId: 'chat-1',
     depth: parentId === null ? 0 : parentId === RUN ? 2 : 1,
     name: subagentName ?? 'Demo research',
-    origin: subagentName === null ? deepAgentOrigin : { ...deepAgentOrigin, subagent: subagentName },
+    origin:
+      subagentName === null
+        ? deepAgentOrigin
+        : { ...deepAgentOrigin, subagent: subagentName },
     firstRun: false,
     description: `${subagentName ?? 'run'} step`,
     model: MODEL,
@@ -91,7 +102,11 @@ const briefTask: AgentHistoryEntry = {
   },
 };
 
-function taskResult(seq: number, subagentType: string, refusalReason: 'run_limit' | 'not_allowed' | null) {
+function taskResult(
+  seq: number,
+  subagentType: string,
+  refusalReason: 'run_limit' | 'not_allowed' | null,
+) {
   const at = new Date(Date.UTC(2026, 10, 14, 10, seq));
   return {
     seq,
@@ -139,7 +154,11 @@ function sessionsOver(
 // refusal of a name outside the team is not a limit refusal.
 describe('the run view maps a deep agent to DeepAgentRun and refuses everything else alike', () => {
   it('maps the team, the steps with their subagents and the run_limit refusal', async () => {
-    const view = await readDeepAgentRun(sessionsOver(async () => deepAgent), RUN, OWNER);
+    const view = await readDeepAgentRun(
+      sessionsOver(async () => deepAgent),
+      RUN,
+      OWNER,
+    );
 
     expect(view).toEqual({
       origin: deepAgentOrigin,
@@ -155,13 +174,19 @@ describe('the run view maps a deep agent to DeepAgentRun and refuses everything 
         { name: 'answer', maxRuns: 1, final: true },
       ],
       steps: [gather, answer],
-      limitRefusals: [{ subagent: 'answer', at: new Date('2026-11-14T10:04:00Z') }],
+      limitRefusals: [
+        { subagent: 'answer', at: new Date('2026-11-14T10:04:00Z') },
+      ],
     });
   });
 
   // Isolation: an agent whose snapshot is not a deep agent's, a missing and another owner's agent are refused alike.
   it.each<[string, () => Promise<AgentView>, RunSnapshot | null]>([
-    ['a subagent', async () => gather, subagentSnapshot(deepAgentSnapshot, 'gather')],
+    [
+      'a subagent',
+      async () => gather,
+      subagentSnapshot(deepAgentSnapshot, 'gather'),
+    ],
     ['an agent without an agent snapshot', async () => chat, null],
     [
       'a missing or another owner’s agent (AGENT_NOT_FOUND)',
@@ -171,9 +196,11 @@ describe('the run view maps a deep agent to DeepAgentRun and refuses everything 
       deepAgentSnapshot,
     ],
   ])('refuses %s with RUN_NOT_FOUND', async (_case, get, snapshot) => {
-    const refusal = await readDeepAgentRun(sessionsOver(get, snapshot), RUN, OWNER).catch(
-      (error: unknown) => error,
-    );
+    const refusal = await readDeepAgentRun(
+      sessionsOver(get, snapshot),
+      RUN,
+      OWNER,
+    ).catch((error: unknown) => error);
 
     expect(refusal).toBeInstanceOf(AgentsError);
     expect(refusal).toMatchObject({

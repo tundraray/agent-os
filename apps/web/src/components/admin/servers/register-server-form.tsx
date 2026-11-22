@@ -2,22 +2,37 @@
 
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { MCP_SERVER_NAME_MAX_LENGTH, type McpServerMode, type RegisterMcpServerBody } from '@agent-os/contracts';
+import {
+  MCP_SERVER_NAME_MAX_LENGTH,
+  type McpServerMode,
+  type RegisterMcpServerBody,
+} from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { adminApi } from '@/lib/admin/admin-api';
 import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminForm, AdminRadioField, AdminTextField, type AdminRadioOption } from '../admin-form';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminTextField,
+  type AdminRadioOption,
+} from '../admin-form';
 import { useAdminTitles } from '../admin-header';
 import { SecretField } from '../secret-field';
 import { serverModeLabel } from './server-list';
 import type { ServersTranslator } from '@/i18n/catalog';
 
 /** MC-29: the credentials modes, each with what it means under its radio. */
-const modes = (t: ServersTranslator): readonly AdminRadioOption<McpServerMode>[] =>
-  (['shared', 'oauth'] as const).map((mode) => ({ value: mode, label: serverModeLabel(t, mode), hint: t(`modeHint.${mode}`) }));
+const modes = (
+  t: ServersTranslator,
+): readonly AdminRadioOption<McpServerMode>[] =>
+  (['shared', 'oauth'] as const).map((mode) => ({
+    value: mode,
+    label: serverModeLabel(t, mode),
+    hint: t(`modeHint.${mode}`),
+  }));
 
 type RegisterValues = {
   name: string;
@@ -27,10 +42,20 @@ type RegisterValues = {
   sharedToken: string | undefined;
 };
 
-const INITIAL: RegisterValues = { name: '', url: '', mode: 'shared', sharedToken: '' };
+const INITIAL: RegisterValues = {
+  name: '',
+  url: '',
+  mode: 'shared',
+  sharedToken: '',
+};
 
 /** The `POST` body: the token goes only with the shared mode, as the contract's two shapes require. */
-function registerBodyOf({ name, url, mode, sharedToken }: RegisterValues): RegisterMcpServerBody {
+function registerBodyOf({
+  name,
+  url,
+  mode,
+  sharedToken,
+}: RegisterValues): RegisterMcpServerBody {
   return mode === 'shared'
     ? { name, url: url.trim(), mode, sharedToken: sharedToken ?? '' }
     : { name, url: url.trim(), mode };
@@ -50,7 +75,9 @@ export function RegisterServerForm() {
   const register = async (values: RegisterValues): Promise<void> => {
     const server = await adminApi.servers.register(registerBodyOf(values));
     if (server.status === 'awaiting_admin_account') {
-      logger.info('admin: server register: connecting the admin account', { server: server.name });
+      logger.info('admin: server register: connecting the admin account', {
+        server: server.name,
+      });
       navigate(adminApi.servers.connectUrl(server.name));
       return;
     }
@@ -59,14 +86,22 @@ export function RegisterServerForm() {
 
   return (
     <>
-      <PageHeader area={titles.panel} title={t('registration.title')} parent={titles.parent('servers')} />
+      <PageHeader
+        area={titles.panel}
+        title={t('registration.title')}
+        parent={titles.parent('servers')}
+      />
       <AdminForm
         variant="page"
         initialValues={INITIAL}
-        validate={({ sharedToken, ...values }) => serverRules({ ...values, sharedToken: sharedToken ?? '' })}
+        validate={({ sharedToken, ...values }) =>
+          serverRules({ ...values, sharedToken: sharedToken ?? '' })
+        }
         onSubmit={register}
         submitLabel={t('registration.submit')}
-        savingLabel={({ mode }) => (mode === 'shared' ? t('checking') : undefined)}
+        savingLabel={({ mode }) =>
+          mode === 'shared' ? t('checking') : undefined
+        }
         savedText={null}
         onCancel={() => router.push(adminPath('servers'))}
         secretFields={['sharedToken']}

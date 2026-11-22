@@ -1,6 +1,13 @@
 import { EmbeddingFailureReasonSchema } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  index,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { isOneOf } from './helpers';
 import { libraryRecords } from './library-records';

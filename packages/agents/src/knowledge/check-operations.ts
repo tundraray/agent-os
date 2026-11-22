@@ -8,7 +8,10 @@ import {
 } from './operations';
 
 /** Outcome of a call of the extraction input: only these outcomes are taken into it. */
-export type RoundCallOutcome = Extract<ToolOutcome, 'success' | 'empty' | 'tool_error'>;
+export type RoundCallOutcome = Extract<
+  ToolOutcome,
+  'success' | 'empty' | 'tool_error'
+>;
 
 /** A tool call of the round's input, cited by its number `c…`. */
 export interface RoundCall {
@@ -66,7 +69,12 @@ export type EntityEnd = { readonly id: number } | { readonly ref: string };
 
 /** A new record to insert, in the answer's order: a `ref` is always inserted before what uses it. */
 export type KnowledgeAddition =
-  | { readonly type: 'entity'; readonly ref: string; readonly name: string; readonly description: string }
+  | {
+      readonly type: 'entity';
+      readonly ref: string;
+      readonly name: string;
+      readonly description: string;
+    }
   | {
       readonly type: 'relation';
       readonly kind: 'fact';
@@ -144,9 +152,22 @@ type Target =
 /** What one operation comes to before the repeat check; `key` names the record it takes. */
 type Verdict =
   | { readonly kind: 'reject'; readonly reason: OperationRejectionReason }
-  | { readonly kind: 'add'; readonly key: string; readonly addition: KnowledgeAddition }
-  | { readonly kind: 'confirm'; readonly key: string; readonly target: Target; readonly ref?: string }
-  | { readonly kind: 'outdated'; readonly key: string; readonly target: Target };
+  | {
+      readonly kind: 'add';
+      readonly key: string;
+      readonly addition: KnowledgeAddition;
+    }
+  | {
+      readonly kind: 'confirm';
+      readonly key: string;
+      readonly target: Target;
+      readonly ref?: string;
+    }
+  | {
+      readonly kind: 'outdated';
+      readonly key: string;
+      readonly target: Target;
+    };
 
 interface Context {
   readonly entities: ReadonlyMap<number, GraphEntity>;
@@ -163,11 +184,22 @@ interface Context {
  * One operation's rejection does not touch the others. Records are found by id or by an exact repeat
  * after case and spaces are folded — never by likeness. No I/O, no logging: the caller logs.
  */
-export function checkOperations(input: CheckOperationsInput): CheckedOperations {
-  const result: CheckedOperations = { apply: [], confirm: [], outdated: [], rejected: [] };
+export function checkOperations(
+  input: CheckOperationsInput,
+): CheckedOperations {
+  const result: CheckedOperations = {
+    apply: [],
+    confirm: [],
+    outdated: [],
+    rejected: [],
+  };
   const context: Context = {
-    entities: new Map(input.graph.entities.map((entity) => [entity.id, entity])),
-    relations: new Map(input.graph.relations.map((relation) => [relation.id, relation])),
+    entities: new Map(
+      input.graph.entities.map((entity) => [entity.id, entity]),
+    ),
+    relations: new Map(
+      input.graph.relations.map((relation) => [relation.id, relation]),
+    ),
     graph: input.graph,
     calls: input.calls,
     refs: new Map(),
@@ -176,7 +208,10 @@ export function checkOperations(input: CheckOperationsInput): CheckedOperations 
 
   input.operations.forEach((raw, index) => {
     const op = maskStrings(raw, input.mask);
-    const verdict = index >= KNOWLEDGE_OPERATIONS_MAX ? reject('too_many') : decide(op, context);
+    const verdict =
+      index >= KNOWLEDGE_OPERATIONS_MAX
+        ? reject('too_many')
+        : decide(op, context);
     if (verdict.kind === 'reject') {
       result.rejected.push({ op, reason: verdict.reason });
       return;
@@ -192,10 +227,14 @@ export function checkOperations(input: CheckOperationsInput): CheckedOperations 
       }
       result.apply.push(verdict.addition);
     } else if (verdict.kind === 'confirm') {
-      if (verdict.ref !== undefined) context.refs.set(verdict.ref, { id: verdict.target.item.id });
+      if (verdict.ref !== undefined)
+        context.refs.set(verdict.ref, { id: verdict.target.item.id });
       result.confirm.push(confirmation(verdict.target, input));
     } else {
-      result.outdated.push({ type: verdict.target.type, id: verdict.target.item.id });
+      result.outdated.push({
+        type: verdict.target.type,
+        id: verdict.target.item.id,
+      });
     }
   });
   return result;
@@ -208,7 +247,9 @@ function decide(raw: unknown, context: Context): Verdict {
   switch (op.op) {
     case 'mark_outdated': {
       const target = findItem(op.id, context);
-      return target === null ? reject('unknown_item') : { kind: 'outdated', key: op.id, target };
+      return target === null
+        ? reject('unknown_item')
+        : { kind: 'outdated', key: op.id, target };
     }
     case 'confirm': {
       const target = findItem(op.id, context);
@@ -223,12 +264,17 @@ function decide(raw: unknown, context: Context): Verdict {
   }
 }
 
-function decideEntity(op: Extract<KnowledgeOperation, { op: 'add_entity' }>, context: Context): Verdict {
+function decideEntity(
+  op: Extract<KnowledgeOperation, { op: 'add_entity' }>,
+  context: Context,
+): Verdict {
   if (context.refs.has(op.ref)) return reject('repeated');
   const proof = checkEvidence(op.evidence, fitsFact, context);
   if (proof !== null) return proof;
   const name = fold(op.name);
-  const existing = context.graph.entities.find((entity) => fold(entity.name) === name);
+  const existing = context.graph.entities.find(
+    (entity) => fold(entity.name) === name,
+  );
   if (existing !== undefined) {
     const target: Target = { type: 'entity', item: existing };
     return { kind: 'confirm', key: `e${existing.id}`, target, ref: op.ref };
@@ -236,7 +282,12 @@ function decideEntity(op: Extract<KnowledgeOperation, { op: 'add_entity' }>, con
   return {
     kind: 'add',
     key: `new entity ${name}`,
-    addition: { type: 'entity', ref: op.ref, name: op.name, description: op.description },
+    addition: {
+      type: 'entity',
+      ref: op.ref,
+      name: op.name,
+      description: op.description,
+    },
   };
 }
 
@@ -257,16 +308,28 @@ function decideRelation(
     const tool = { server: op.server, tool: op.tool, question: op.question };
     addition =
       op.kind === 'lesson'
-        ? { type: 'relation', kind: 'lesson', ...tool, hint: op.hint, outcome: op.outcome }
+        ? {
+            type: 'relation',
+            kind: 'lesson',
+            ...tool,
+            hint: op.hint,
+            outcome: op.outcome,
+          }
         : { type: 'relation', kind: 'searched_nothing', ...tool };
     fit = fitsTool(op.server, op.tool, op.kind === 'searched_nothing');
   }
   const proof = checkEvidence(op.evidence, fit, context);
   if (proof !== null) return proof;
   const key = relationKey(addition);
-  const existing = context.graph.relations.find((row) => relationKey(fromRow(row)) === key);
+  const existing = context.graph.relations.find(
+    (row) => relationKey(fromRow(row)) === key,
+  );
   if (existing !== undefined) {
-    return { kind: 'confirm', key: `r${existing.id}`, target: { type: 'relation', item: existing } };
+    return {
+      kind: 'confirm',
+      key: `r${existing.id}`,
+      target: { type: 'relation', item: existing },
+    };
   }
   return { kind: 'add', key: `new relation ${key}`, addition };
 }
@@ -276,7 +339,10 @@ type CallFit = (call: RoundCall) => boolean;
 const fitsFact: CallFit = (call) => call.outcome === 'success';
 
 function fitsTool(server: string, tool: string, empty: boolean): CallFit {
-  return (call) => call.server === server && call.tool === tool && (!empty || call.outcome === 'empty');
+  return (call) =>
+    call.server === server &&
+    call.tool === tool &&
+    (!empty || call.outcome === 'empty');
 }
 
 function fitOfTarget(target: Target): CallFit {
@@ -287,10 +353,15 @@ function fitOfTarget(target: Target): CallFit {
 }
 
 /** Every cited call is in the round's input and fits the record; `null` when the evidence holds. */
-function checkEvidence(evidence: readonly string[], fit: CallFit, context: Context): Verdict | null {
+function checkEvidence(
+  evidence: readonly string[],
+  fit: CallFit,
+  context: Context,
+): Verdict | null {
   const calls = evidence.map((id) => context.calls.get(id));
   if (calls.some((call) => call === undefined)) return reject('unknown_call');
-  if (!calls.every((call) => call !== undefined && fit(call))) return reject('evidence_mismatch');
+  if (!calls.every((call) => call !== undefined && fit(call)))
+    return reject('evidence_mismatch');
   return null;
 }
 
@@ -304,7 +375,10 @@ function findItem(id: string, context: Context): Target | null {
   return item === undefined ? null : { type: 'relation', item };
 }
 
-function resolveEnd(end: string, context: Context): EntityEnd | 'unknown_item' | 'unknown_ref' {
+function resolveEnd(
+  end: string,
+  context: Context,
+): EntityEnd | 'unknown_item' | 'unknown_ref' {
   if (ENTITY_ID_PATTERN.test(end)) {
     const id = Number(end.slice(1));
     return context.entities.has(id) ? { id } : 'unknown_item';
@@ -316,9 +390,21 @@ function resolveEnd(end: string, context: Context): EntityEnd | 'unknown_item' |
 function relationKey(addition: RelationAddition): string {
   const parts =
     addition.kind === 'fact'
-      ? [addition.kind, endKey(addition.from), endKey(addition.to), addition.label]
+      ? [
+          addition.kind,
+          endKey(addition.from),
+          endKey(addition.to),
+          addition.label,
+        ]
       : addition.kind === 'lesson'
-        ? [addition.kind, addition.server, addition.tool, addition.question, addition.hint, addition.outcome]
+        ? [
+            addition.kind,
+            addition.server,
+            addition.tool,
+            addition.question,
+            addition.hint,
+            addition.outcome,
+          ]
         : [addition.kind, addition.server, addition.tool, addition.question];
   return JSON.stringify(parts.map(fold));
 }
@@ -339,19 +425,35 @@ function fromRow(row: GraphRelation): RelationAddition {
       label: text(row.label),
     };
   }
-  const tool = { server: text(row.server), tool: text(row.tool), question: text(row.question) };
+  const tool = {
+    server: text(row.server),
+    tool: text(row.tool),
+    question: text(row.question),
+  };
   return row.kind === 'lesson'
-    ? { type: 'relation', kind: 'lesson', ...tool, hint: text(row.hint), outcome: text(row.outcome) }
+    ? {
+        type: 'relation',
+        kind: 'lesson',
+        ...tool,
+        hint: text(row.hint),
+        outcome: text(row.outcome),
+      }
     : { type: 'relation', kind: 'searched_nothing', ...tool };
 }
 
 /** +1, the round's date and run; a run that was the last to confirm the record does not add again. */
-function confirmation(target: Target, input: CheckOperationsInput): KnowledgeConfirmation {
+function confirmation(
+  target: Target,
+  input: CheckOperationsInput,
+): KnowledgeConfirmation {
   const { item } = target;
   return {
     type: target.type,
     id: item.id,
-    confirmations: item.confirmedByRunId === input.runId ? item.confirmations : item.confirmations + 1,
+    confirmations:
+      item.confirmedByRunId === input.runId
+        ? item.confirmations
+        : item.confirmations + 1,
     confirmedAt: input.roundAt,
     confirmedByRunId: input.runId,
   };
@@ -361,7 +463,10 @@ function confirmation(target: Target, input: CheckOperationsInput): KnowledgeCon
 function maskStrings(raw: unknown, mask: (text: string) => string): unknown {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
   return Object.fromEntries(
-    Object.entries(raw).map(([key, value]) => [key, typeof value === 'string' ? mask(value) : value]),
+    Object.entries(raw).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? mask(value) : value,
+    ]),
   );
 }
 

@@ -26,7 +26,8 @@ export const IdentityErrorCode = {
   PROVIDER_CHECK_FAILED: 'PROVIDER_CHECK_FAILED',
   PUBLIC_URL_REQUIRED: 'PUBLIC_URL_REQUIRED',
 } as const;
-export type IdentityErrorCode = (typeof IdentityErrorCode)[keyof typeof IdentityErrorCode];
+export type IdentityErrorCode =
+  (typeof IdentityErrorCode)[keyof typeof IdentityErrorCode];
 
 /** `reason` of a 400 VALIDATION_FAILED answered by the identity service. */
 export const IdentityValidationReason = {
@@ -45,7 +46,8 @@ export const ProviderCheckFailure = {
   UNREACHABLE: 'unreachable',
   INVALID_DOCUMENT: 'invalid_document',
 } as const;
-export type ProviderCheckFailure = (typeof ProviderCheckFailure)[keyof typeof ProviderCheckFailure];
+export type ProviderCheckFailure =
+  (typeof ProviderCheckFailure)[keyof typeof ProviderCheckFailure];
 
 /** `error` query parameter of the /login redirect after a failed provider sign-in (uxrd MC-3). */
 export const SignInErrorSchema = z.enum([
@@ -61,7 +63,11 @@ const IdSchema = z.uuid();
 /** Any non-empty password: length rules are the service's `weak_password`, so the reason reaches the client. */
 const PasswordSchema = z.string().min(1);
 const RoleNameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
-const ProviderNameSchema = z.string().trim().min(1).max(PROVIDER_NAME_MAX_LENGTH);
+const ProviderNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROVIDER_NAME_MAX_LENGTH);
 const CursorSchema = z.string().min(1).max(512);
 
 // ---------- Sign-in and session (web) ----------
@@ -194,7 +200,9 @@ export type RoleList = z.infer<typeof RoleListSchema>;
 
 /** Response of GET /api/admin/roles/:id. */
 export const RoleDetailSchema = RoleSummarySchema.extend({
-  members: z.array(z.object({ id: IdSchema, name: z.string(), email: z.string() })),
+  members: z.array(
+    z.object({ id: IdSchema, name: z.string(), email: z.string() }),
+  ),
 });
 export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 
@@ -290,26 +298,37 @@ export const PublicUrlSchema = z.string().refine(isPublicUrl, {
 
 /** `https`, or `http` only on `localhost` (development): the rule for the public address and an issuer. */
 export function isHttpsOrLocalhost(url: URL): boolean {
-  return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+  return (
+    url.protocol === 'https:' ||
+    (url.protocol === 'http:' && url.hostname === 'localhost')
+  );
 }
 
 function isPublicUrl(value: string): boolean {
   if (!URL.canParse(value)) return false;
   const url = new URL(value);
-  const noPath = url.pathname === '/' && !value.endsWith('/') && !url.search && !url.hash;
+  const noPath =
+    url.pathname === '/' && !value.endsWith('/') && !url.search && !url.hash;
   return isHttpsOrLocalhost(url) && noPath && !url.username && !url.password;
 }
 
 const sessionLimitsFields = {
   publicUrl: PublicUrlSchema.nullable(),
   idleMinutes: z.number().int().min(IDLE_MINUTES_MIN).max(IDLE_MINUTES_MAX),
-  absoluteMinutes: z.number().int().min(ABSOLUTE_MINUTES_MIN).max(ABSOLUTE_MINUTES_MAX),
+  absoluteMinutes: z
+    .number()
+    .int()
+    .min(ABSOLUTE_MINUTES_MIN)
+    .max(ABSOLUTE_MINUTES_MAX),
 };
 
 const idleNotAboveAbsolute = {
   check: (settings: { idleMinutes: number; absoluteMinutes: number }) =>
     settings.idleMinutes <= settings.absoluteMinutes,
-  params: { message: 'idleMinutes must not exceed absoluteMinutes', path: ['idleMinutes'] },
+  params: {
+    message: 'idleMinutes must not exceed absoluteMinutes',
+    path: ['idleMinutes'],
+  },
 };
 
 /** Response of GET/PUT /api/admin/settings/sign-in. `updatedAt: null` while the defaults stand. */
@@ -322,4 +341,6 @@ export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 export const UpdateSignInSettingsBodySchema = z
   .object(sessionLimitsFields)
   .refine(idleNotAboveAbsolute.check, idleNotAboveAbsolute.params);
-export type UpdateSignInSettingsBody = z.infer<typeof UpdateSignInSettingsBodySchema>;
+export type UpdateSignInSettingsBody = z.infer<
+  typeof UpdateSignInSettingsBodySchema
+>;

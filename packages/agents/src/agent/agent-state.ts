@@ -63,11 +63,16 @@ export async function loadState(
   const entries = await deps.history.visible(taskId);
   const compacted = entries.some((entry) => entry.kind === 'compaction');
   const forkPrefix: ForkPrefix | undefined =
-    compacted || session.forkedFromTaskId === null || session.forkedThroughSeq === null
+    compacted ||
+    session.forkedFromTaskId === null ||
+    session.forkedThroughSeq === null
       ? undefined
       : {
           throughSeq: session.forkedThroughSeq,
-          entries: await deps.history.through(session.forkedFromTaskId, session.forkedThroughSeq),
+          entries: await deps.history.through(
+            session.forkedFromTaskId,
+            session.forkedThroughSeq,
+          ),
         };
   return stateOf(session, forkPrefix, entries, entries.at(-1)?.seq ?? 0);
 }
@@ -77,18 +82,32 @@ export async function loadState(
  * `compaction` among them drops every entry before the last one and the fork prefix, as `history.visible`
  * does; otherwise they follow the kept ones. Pure.
  */
-function withDelta(state: AgentState, session: Session, delta: readonly HistoryEntry[]): AgentState {
+function withDelta(
+  state: AgentState,
+  session: Session,
+  delta: readonly HistoryEntry[],
+): AgentState {
   const lastSeq = delta.at(-1)?.seq ?? state.lastSeq;
-  const compaction = delta.findLastIndex((entry) => entry.kind === 'compaction');
+  const compaction = delta.findLastIndex(
+    (entry) => entry.kind === 'compaction',
+  );
   return compaction === -1
     ? stateOf(session, state.forkPrefix, [...state.entries, ...delta], lastSeq)
     : stateOf(session, undefined, delta.slice(compaction), lastSeq);
 }
 
 /** The state brought up to the database: the session row read again and the entries after `lastSeq`. */
-export async function absorbState(deps: StateDeps, state: AgentState): Promise<AgentState> {
+export async function absorbState(
+  deps: StateDeps,
+  state: AgentState,
+): Promise<AgentState> {
   const { taskId } = state.session;
   const session = await deps.sessions.get(taskId);
-  if (session === undefined) throw new Error(`Session of agent ${taskId} is gone`);
-  return withDelta(state, session, await deps.history.after(taskId, state.lastSeq));
+  if (session === undefined)
+    throw new Error(`Session of agent ${taskId} is gone`);
+  return withDelta(
+    state,
+    session,
+    await deps.history.after(taskId, state.lastSeq),
+  );
 }

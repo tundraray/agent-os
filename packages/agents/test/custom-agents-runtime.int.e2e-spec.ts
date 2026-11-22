@@ -75,31 +75,48 @@ const TEST_TIMEOUT_MS = 120_000;
 const UNCONNECTED_MODEL = 'anthropic/test-unconnected';
 
 /** The refusal `ownerModelRefusals` gives for a model taken from an owner. */
-const MODEL_NOT_ALLOWED = { kind: 'refused', reason: 'model_not_allowed' } as const;
+const MODEL_NOT_ALLOWED = {
+  kind: 'refused',
+  reason: 'model_not_allowed',
+} as const;
 
 /** A built-in call that needs no server; a record without `list_agents` in its tools gets it refused. */
 const LIST_AGENTS: ScriptedToolCall = { tool: 'list_agents', args: {} };
 
 /** A `start_agent` call of a scripted answer: `agent` is a record id, a subagent's name or `fork`. */
-function startAgent(args: { agent: string; description: string; prompt: string }): ScriptedToolCall {
+function startAgent(args: {
+  agent: string;
+  description: string;
+  prompt: string;
+}): ScriptedToolCall {
   return { tool: 'start_agent', args };
 }
 
 /** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_deep_agent`). */
-async function startedChildrenOf(harness: AgentsHarness, agentId: string): Promise<string[]> {
+async function startedChildrenOf(
+  harness: AgentsHarness,
+  agentId: string,
+): Promise<string[]> {
   const calls = await toolCallRowsOf(harness.db, agentId);
-  return calls.flatMap((call) => (call.childTaskId !== null ? [call.childTaskId] : []));
+  return calls.flatMap((call) =>
+    call.childTaskId !== null ? [call.childTaskId] : [],
+  );
 }
 
 /** Waits until the agent has started `count` children (1 by default) and returns the last of them. */
-async function startedChild(harness: AgentsHarness, agentId: string, count = 1): Promise<string> {
+async function startedChild(
+  harness: AgentsHarness,
+  agentId: string,
+  count = 1,
+): Promise<string> {
   const children = await waitFor(
     () => startedChildrenOf(harness, agentId),
     (started) => started.length >= count,
     `child ${count} of agent ${agentId}`,
   );
   const child = children[count - 1];
-  if (child === undefined) throw new Error(`agent ${agentId} started no child ${count}`);
+  if (child === undefined)
+    throw new Error(`agent ${agentId} started no child ${count}`);
   return child;
 }
 
@@ -131,7 +148,10 @@ function withPrompts(scripted: ScriptedModel): {
 }
 
 /** The owner's agents and their sessions as rows: a refused start or restart adds to neither. */
-async function ownerRowCounts(db: Database, ownerId: string): Promise<{ tasks: number; sessions: number }> {
+async function ownerRowCounts(
+  db: Database,
+  ownerId: string,
+): Promise<{ tasks: number; sessions: number }> {
   const { rows } = await db.execute(sql`
     SELECT (SELECT count(*) FROM app.runtime_tasks WHERE owner_id = ${ownerId})::int AS tasks,
            (SELECT count(*) FROM app.agent_sessions WHERE owner_id = ${ownerId})::int AS sessions`);
@@ -141,7 +161,9 @@ async function ownerRowCounts(db: Database, ownerId: string): Promise<{ tasks: n
 /** Log records of an instance whose late step result for the task was refused (the attempt was taken over). */
 function notCurrentLogsOf(harness: AgentsHarness, taskId: string): LogRecord[] {
   return harness.logs.filter(
-    (record) => record.fields.taskId === taskId && record.message.endsWith('the attempt is no longer current'),
+    (record) =>
+      record.fields.taskId === taskId &&
+      record.message.endsWith('the attempt is no longer current'),
   );
 }
 
@@ -155,7 +177,8 @@ const TEAM_NAME = 'incident review';
 const TEAM_MAX_TURNS = 5;
 
 /** The finishing rule of a deep agent without `finalSubagent` (DC-7). */
-const WRITES_ANSWER_ITSELF = 'When the work is done, write the answer yourself as plain text without tool calls.';
+const WRITES_ANSWER_ITSELF =
+  'When the work is done, write the answer yourself as plain text without tool calls.';
 
 /** The line of the built-in subagent every deep agent's `task` names (FR-20). */
 const GENERAL_PURPOSE_LINE =
@@ -214,7 +237,8 @@ function teamV2(): DeepAgentContent {
       subagent.name === 'a'
         ? {
             ...subagent,
-            description: 'Reads the incident timeline and the deploy log (version 2).',
+            description:
+              'Reads the incident timeline and the deploy log (version 2).',
             prompt: 'You are subagent a of team version 2.',
           }
         : subagent,
@@ -223,7 +247,8 @@ function teamV2(): DeepAgentContent {
 }
 
 const FIRST_RUN_TASK = 'Review the incident of Monday.';
-const FIRST_ANSWER = 'Review: the timeline, the logs and the note agree - a bad deploy at 10:40.';
+const FIRST_ANSWER =
+  'Review: the timeline, the logs and the note agree - a bad deploy at 10:40.';
 const SECOND_RUN_TASK = 'Review the incident of Tuesday.';
 const SECOND_ANSWER = 'Review: the timeline shows a second deploy.';
 
@@ -256,14 +281,22 @@ async function startDeepAgentRun(
         calls: [
           {
             tool: START_TEST_DEEP_AGENT,
-            args: { deepAgent: deepAgentId, prompt: task, description: TEAM_NAME },
+            args: {
+              deepAgent: deepAgentId,
+              prompt: task,
+              description: TEAM_NAME,
+            },
           },
         ],
       },
     ],
     { thereafter: { text: 'noted' } },
   );
-  const { agentId: rootId } = await harness.sessions.start({ ownerId, prompt: conversation, description: conversation });
+  const { agentId: rootId } = await harness.sessions.start({
+    ownerId,
+    prompt: conversation,
+    description: conversation,
+  });
   return { rootId, deepAgentId: await startedChild(harness, rootId) };
 }
 
@@ -315,436 +348,649 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   // @category: core-functionality
   // @dependency: Agents.resolveStart, Agents.sessions.start / restart / snapshot, startChild, tool gate, RecordLibrary (double), AccessGate (double), runtime (tasks.input), Postgres
   // @complexity: high
-  it('INT-1 A: a started agent keeps the version it started on across an edit of its record and of the chat and a server restart, while the next start, a new conversation and a restart from scratch take the new version', async () => {
-    // Given: Аня's agent R in version 1 (no tools, the default model), shared with Борис and offered in the chat;
-    // Борис's root on chat version 1 starts R; the child's first model call will be held
-    const anya = randomUUID();
-    const boris = newUser();
-    const library = createLibraryDouble();
-    const recordR = testRecord('log digest', {
-      ownerId: anya,
-      everyone: false,
-      viewers: [boris],
-      prompt: 'Digest prompt, version 1.',
-    });
-    const recordId = library.add(recordR);
-    const childHeld = createLatch();
-    const { model, lineOf } = withPrompts(createScriptedModel());
-    const firstAsk = model.script(
-      { task: 'Run the digest' },
-      [{ calls: [startAgent({ agent: recordId, description: 'digest one', prompt: 'Digest task' })] }],
-      { thereafter: { text: 'noted' } },
-    );
-    const secondAsk = model.script(
-      { task: 'Run the digest again' },
-      [{ calls: [startAgent({ agent: recordId, description: 'digest two', prompt: 'Second digest task' })] }],
-      { thereafter: { text: 'noted' } },
-    );
-    const digest = model.script({ task: 'Digest task' }, [
-      { calls: [LIST_AGENTS], latch: childHeld },
-      { calls: [LIST_AGENTS] },
-      { text: 'report of the first digest' },
-      { text: 'report of the restarted digest' },
-    ]);
-    const secondDigest = model.script({ task: 'Second digest task' }, [{ text: 'report of the second digest' }]);
-    const newConversation = model.script({ task: 'A new conversation' }, [{ text: 'hello' }]);
-    const options = { model, library, access: {} };
-    const harnesses: AgentsHarness[] = [];
-    try {
-      // Instance A: one slot, a sweeper that never passes again
-      const zombie = await createAgentsHarness({
-        ...options,
-        root: testRecord('chat', { prompt: 'Chat prompt, version 1.', tools: ['start_agent'] }),
-        runtimeConfig: ZOMBIE_RUNTIME,
-      });
-      harnesses.push(zombie);
-      const { agentId: rootId } = await zombie.sessions.start({
-        ownerId: boris,
-        prompt: 'Run the digest',
-        description: 'conversation before the edit',
-      });
-      const firstChildId = await startedChild(zombie, rootId);
-      await childHeld.reached();
-
-      // When: Аня saves version 2 of R (another prompt, a tool, another model) and the administrator edits
-      // the chat record while the child's call is held
-      library.edit(recordId, {
-        body: {
-          kind: 'agent',
-          content: {
-            ...recordR.content,
-            prompt: 'Digest prompt, version 2.',
-            tools: ['list_agents'],
-            model: TEST_MODEL_CHOSEN,
-          },
-        },
-      });
-      await setRootRecord(library, testRecord('chat', { prompt: 'Chat prompt, version 2.', tools: ['start_agent'] }));
-
-      // When: instance B starts, requeues the held step as a lost one and takes it over; then A's held call answers
-      const restarted = await createAgentsHarness(options);
-      harnesses.push(restarted);
-      await waitForTaskStatus(restarted, firstChildId, boris, 'completed');
-      // The root takes the child's report on B while A's only slot is still held
-      await firstAsk.called(2);
-      await waitForTaskStatus(restarted, rootId, boris, 'waiting');
-      childHeld.open();
-      await waitFor(
-        () => notCurrentLogsOf(zombie, firstChildId),
-        (records) => records.length > 0,
-        'the late step result of instance A to be refused',
-      );
-      // Instance A is the dead process: one process executes steps, so its workers stop here. Left running, its
-      // freed slot claims the root's next step on the object A kept from before the takeover, and B's sweeper
-      // requeues that step as a lost one.
-      await zombie.runtime.stop();
-
-      // Then: every call of the first child, on A before the takeover and on B after it, ran on version 1 -
-      // its prompt, its (empty) tool set, its model - and the call of the tool only version 2 has was refused
-      expect(digest.calls.map(lineOf)).toEqual([
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
-      ]);
-      expect(historyLines(await historyOf(restarted, firstChildId, boris))).toEqual([
-        'task: Digest task',
-        'model_answer:  [list_agents]',
-        'tool_result: list_agents refused tool_not_in_definition',
-        'model_answer: report of the first digest []',
-      ]);
-      // Then: instance B reads the snapshot from the task input in Postgres
-      expect((await restarted.sessions.snapshot(firstChildId, boris))?.content).toMatchObject({
+  it(
+    'INT-1 A: a started agent keeps the version it started on across an edit of its record and of the chat and a server restart, while the next start, a new conversation and a restart from scratch take the new version',
+    async () => {
+      // Given: Аня's agent R in version 1 (no tools, the default model), shared with Борис and offered in the chat;
+      // Борис's root on chat version 1 starts R; the child's first model call will be held
+      const anya = randomUUID();
+      const boris = newUser();
+      const library = createLibraryDouble();
+      const recordR = testRecord('log digest', {
+        ownerId: anya,
+        everyone: false,
+        viewers: [boris],
         prompt: 'Digest prompt, version 1.',
-        tools: [],
       });
-
-      // When: Борис's root, created before the chat edit, gets a message and starts R again
-      await restarted.sessions.send({ agentId: rootId, ownerId: boris, text: 'Run the digest again' });
-      const secondChildId = await startedChild(restarted, rootId, 2);
-      await waitForTaskStatus(restarted, secondChildId, boris, 'completed');
-
-      // Then: the second child runs on version 2; the run origins say 1 and 2
-      expect(secondDigest.calls.map(lineOf)).toEqual([
-        `Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`,
-      ]);
-      const firstView = await restarted.sessions.get(firstChildId, boris);
-      const secondView = await restarted.sessions.get(secondChildId, boris);
-      expect([firstView.origin?.recordId, firstView.origin?.version]).toEqual([recordId, 1]);
-      expect([secondView.origin?.recordId, secondView.origin?.version]).toEqual([recordId, 2]);
-
-      // Then: the old conversation answered every message, the one after the edit too, on chat version 1
-      expect(lineOf(secondAsk.calls[0]).split(' | ')[0]).toBe('Chat prompt, version 1.');
-      expect(new Set([...firstAsk.calls, ...secondAsk.calls].map((call) => lineOf(call).split(' | ')[0]))).toEqual(
-        new Set(['Chat prompt, version 1.']),
-      );
-
-      // When: the finished first child is restarted from scratch
-      const { agentId: restartId } = await restarted.sessions.restart({ agentId: firstChildId, ownerId: boris });
-      await waitForTaskStatus(restarted, restartId, boris, 'completed');
-
-      // Then: a new agent under the same root on version 2, asked of the library for Борис
-      expect(lineOf(digest.calls[3])).toBe(`Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`);
-      expect(inputLines(digest.calls[3]?.messages ?? [])).toEqual(['user: Digest task']);
-      const restartView = await restarted.sessions.get(restartId, boris);
-      expect([restartView.parentId, restartView.origin?.version]).toEqual([rootId, 2]);
-      expect(library.resolveCalls.at(-1)).toEqual({ viewerId: boris, recordId });
-
-      // When: Борис opens a new conversation after the chat edit
-      await restarted.sessions.start({ ownerId: boris, prompt: 'A new conversation', description: 'conversation after the edit' });
-      await newConversation.called(1);
-
-      // Then: it runs on chat version 2
-      expect(lineOf(newConversation.calls[0]).split(' | ')[0]).toBe('Chat prompt, version 2.');
-    } finally {
-      childHeld.open();
-      await closeAll(harnesses);
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-1 B: a subagent and a fork restart on their own snapshot without asking the library, and a restart refused for a deleted record or a withdrawn model names its reason and creates no agent', async () => {
-    // Given: a deep agent record with the subagent `planner`; an agent record
-    // `forker` that forks itself; a `leaf` record. The root starts the deep agent, the forker and the leaf;
-    // the deep agent and the forker are then held in a model call, so they stay unfinished parents
-    const boris = newUser();
-    const library = createLibraryDouble();
-    const deepAgentRecordId = library.add({
-      kind: 'deep_agent',
-      name: 'restart deep agent',
-      ownerId: TEST_AUTHOR_ID,
-      everyone: true,
-      offerInChat: true,
-      content: {
-        prompt: 'You run the plan.',
-        servers: [],
-        model: TEST_MODEL_DEFAULT,
-        maxTurns: 20,
-        subagents: [
+      const recordId = library.add(recordR);
+      const childHeld = createLatch();
+      const { model, lineOf } = withPrompts(createScriptedModel());
+      const firstAsk = model.script(
+        { task: 'Run the digest' },
+        [
           {
-            name: 'planner',
-            description: 'Plans the work',
-            prompt: 'Planner prompt.',
-            servers: [],
-            model: TEST_MODEL_CHOSEN,
-            maxTurns: 20,
-            maxRuns: 1,
-            taskList: false,
+            calls: [
+              startAgent({
+                agent: recordId,
+                description: 'digest one',
+                prompt: 'Digest task',
+              }),
+            ],
           },
         ],
-        finalSubagent: null,
-        taskList: true,
-        listDelegation: true,
-        selfLearning: false,
-      },
-    });
-    const forkerRecord = testRecord('forker', { prompt: 'Forker prompt, version 1.', tools: ['start_agent'] });
-    const forkerRecordId = library.add(forkerRecord);
-    const leafRecordId = library.add(testRecord('leaf'));
-    const deepAgentHeld = createLatch();
-    const forkerHeld = createLatch();
-    const modelRefusals: Record<string, Record<string, typeof MODEL_NOT_ALLOWED>> = {};
-    const { model, lineOf } = withPrompts(createScriptedModel());
-    model.script(
-      { task: 'Start the restart tree' },
-      [
-        {
-          calls: [
-            {
-              tool: START_TEST_DEEP_AGENT,
-              args: { deepAgent: deepAgentRecordId, prompt: 'Coordinate the plan', description: 'deep agent' },
-            },
-            startAgent({ agent: forkerRecordId, description: 'forker', prompt: 'Fork yourself' }),
-            startAgent({ agent: leafRecordId, description: 'leaf', prompt: 'Leaf task' }),
-          ],
-        },
-      ],
-      { thereafter: { text: 'noted' } },
-    );
-    model.script(
-      { task: 'Coordinate the plan' },
-      [{ calls: [taskCall({ subagentType: 'planner', description: 'Plan the work' })] }],
-      { thereafter: { text: 'deep agent holds', latch: deepAgentHeld } },
-    );
-    const planner = model.script({ task: 'Plan the work' }, [
-      { text: 'plan' },
-      { text: 'plan of the restarted subagent' },
-    ]);
-    model.script(
-      { task: 'Fork yourself' },
-      [{ calls: [startAgent({ agent: 'fork', description: 'the fork', prompt: 'Fork task' })] }],
-      { thereafter: { text: 'forker holds', latch: forkerHeld } },
-    );
-    const fork = model.script({ task: 'Fork task' }, [
-      { text: 'report of the fork' },
-      { text: 'report of the restarted fork' },
-    ]);
-    model.script({ task: 'Leaf task' }, [{ text: 'report of the leaf' }]);
-    const harness = await createAgentsHarness({
-      model,
-      library,
-      access: {},
-      root: testRecord('chat', { tools: ['start_agent'] }),
-      deepAgentStarter: true,
-      ownerModelRefusals: modelRefusals,
-    });
-    try {
-      const { agentId: rootId } = await harness.sessions.start({
-        ownerId: boris,
-        prompt: 'Start the restart tree',
-        description: 'restart tree',
-      });
-      await startedChild(harness, rootId, 3);
-      const [deepAgentId, forkerId, leafId] = await startedChildrenOf(harness, rootId);
-      if (deepAgentId === undefined || forkerId === undefined || leafId === undefined) {
-        throw new Error('the root started no deep agent, forker and leaf');
-      }
-      const plannerId = await startedChild(harness, deepAgentId);
-      const forkId = await startedChild(harness, forkerId);
-      await waitForTaskStatus(harness, plannerId, boris, 'completed');
-      await waitForTaskStatus(harness, forkId, boris, 'completed');
-      await waitForTaskStatus(harness, leafId, boris, 'completed');
-      await deepAgentHeld.reached();
-      await forkerHeld.reached();
-      // Given: the fork ran on the forker's snapshot and saw its history up to the start call
-      expect(inputLines(fork.calls[0]?.messages ?? [])).toEqual(['user: Fork yourself', 'user: Fork task']);
-
-      // When: the subagent's deep agent is deleted, the forker's record gets version 2,
-      // and the subagent and the fork are restarted from scratch
-      library.remove(deepAgentRecordId);
-      library.edit(forkerRecordId, {
-        body: { kind: 'agent', content: { ...forkerRecord.content, prompt: 'Forker prompt, version 2.' } },
-      });
-      const resolvedBefore = library.resolveCalls.length;
-      const { agentId: plannerRestartId } = await harness.sessions.restart({ agentId: plannerId, ownerId: boris });
-      await waitForTaskStatus(harness, plannerRestartId, boris, 'completed');
-      const { agentId: forkRestartId } = await harness.sessions.restart({ agentId: forkId, ownerId: boris });
-      await waitForTaskStatus(harness, forkRestartId, boris, 'completed');
-
-      // Then: neither restart asked the library
-      expect(library.resolveCalls).toHaveLength(resolvedBefore);
-      // Then: the subagent restarted on its own snapshot although its deep agent is gone
-      expect(planner.calls.map(lineOf)).toEqual([
-        `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
-        `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
-      ]);
-      const plannerRestart = await harness.sessions.get(plannerRestartId, boris);
-      expect([
-        plannerRestart.parentId,
-        plannerRestart.origin?.recordId,
-        plannerRestart.origin?.version,
-        plannerRestart.origin?.subagent,
-      ]).toEqual([deepAgentId, deepAgentRecordId, 1, 'planner']);
-      // Then: the fork restarted on the forker's snapshot of version 1, without the forker's history
-      expect(fork.calls.map(lineOf)).toEqual([
-        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
-        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
-      ]);
-      expect(inputLines(fork.calls[1]?.messages ?? [])).toEqual(['user: Fork task']);
-      const forkRestart = await harness.sessions.get(forkRestartId, boris);
-      expect([forkRestart.parentId, forkRestart.forkedFrom]).toEqual([forkerId, null]);
-
-      // When: the leaf's record is deleted, then the planner's model is withdrawn from Борис, and each is restarted
-      expect(await ownerRowCounts(harness.db, boris)).toEqual({ tasks: 8, sessions: 8 });
-      library.remove(leafRecordId);
-      await expect(harness.sessions.restart({ agentId: leafId, ownerId: boris })).rejects.toMatchObject({
-        code: 'START_REFUSED',
-        refusal: { reason: 'record_unavailable', model: null },
-      });
-      modelRefusals[boris] = { [TEST_MODEL_CHOSEN]: MODEL_NOT_ALLOWED };
-      await expect(harness.sessions.restart({ agentId: plannerId, ownerId: boris })).rejects.toMatchObject({
-        code: 'START_REFUSED',
-        refusal: { reason: 'model_not_allowed', model: TEST_MODEL_CHOSEN },
-      });
-
-      // Then: neither refused restart made an agent or a session
-      expect(await ownerRowCounts(harness.db, boris)).toEqual({ tasks: 8, sessions: 8 });
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
-
-  it('INT-1 C: a start refused for a record the runner cannot see or a model he may not use names its reason to the parent and writes no child task, session or ledger row', async () => {
-    // Given: Аня's agent may start four of her records - her personal "сбор логов", one she will delete, one
-    // the administrator will close and one of a role Борис will leave; it runs in Борис's tree. Борис's root
-    // also starts a record on a model taken from him and one on a model with no connection
-    const anya = randomUUID();
-    const boris = newUser();
-    const library = createLibraryDouble();
-    const personalId = library.add(testRecord('сбор логов', { ownerId: anya, everyone: false }));
-    const deletedId = library.add(testRecord('deleted target', { ownerId: anya }));
-    const closedId = library.add(testRecord('closed target', { ownerId: anya }));
-    const roleId = library.add(testRecord('role target', { ownerId: anya, everyone: false, viewers: [boris] }));
-    const targets = [personalId, deletedId, closedId, roleId];
-    const anyaAgentRecordId = library.add(
-      testRecord('agent of Anya', { ownerId: anya, tools: ['start_agent'], agents: targets }),
-    );
-    const chosenModelRecordId = library.add(testRecord('chosen model agent', { model: TEST_MODEL_CHOSEN }));
-    const unconnectedRecordId = library.add(testRecord('unconnected model agent', { model: UNCONNECTED_MODEL }));
-    const anyaHeld = createLatch();
-    const model = createScriptedModel();
-    const root = model.script(
-      { task: 'Start the agents of Anya' },
-      [
-        {
-          calls: [
-            startAgent({ agent: anyaAgentRecordId, description: 'agent of anya', prompt: 'Collect the logs for Boris' }),
-            startAgent({ agent: chosenModelRecordId, description: 'chosen model', prompt: 'Work on the chosen model' }),
-            startAgent({ agent: unconnectedRecordId, description: 'unconnected model', prompt: 'Work unconnected' }),
-          ],
-        },
-      ],
-      { thereafter: { text: 'noted' } },
-    );
-    model.script({ task: 'Collect the logs for Boris' }, [
-      {
-        latch: anyaHeld,
-        calls: targets.map((agent, index) =>
-          startAgent({ agent, description: `target ${index + 1}`, prompt: `Target task ${index + 1}` }),
-        ),
-      },
-      { text: 'nothing started' },
-    ]);
-    const harness = await createAgentsHarness({
-      model,
-      library,
-      access: {},
-      root: testRecord('chat', { tools: ['start_agent'] }),
-      ownerModelRefusals: { [boris]: { [TEST_MODEL_CHOSEN]: MODEL_NOT_ALLOWED } },
-    });
-    try {
-      const { agentId: rootId } = await harness.sessions.start({
-        ownerId: boris,
-        prompt: 'Start the agents of Anya',
-        description: 'conversation of Boris',
-      });
-      const anyaAgentId = await startedChild(harness, rootId);
-      await anyaHeld.reached();
-      await root.called(2);
-      await waitForTaskStatus(harness, rootId, boris, 'waiting');
-
-      // When: while Аня's agent is in its model call, one target is deleted, one closed and Борис leaves the
-      // role of another; then the agent starts all four
-      library.remove(deletedId);
-      library.close(closedId);
-      library.hideFrom(roleId, boris);
-      anyaHeld.open();
-      await waitForTaskStatus(harness, anyaAgentId, boris, 'completed');
-      await root.called(3);
-      await waitForTaskStatus(harness, rootId, boris, 'waiting');
-
-      // Then: each start is refused `record_unavailable` with no child, and the library was asked for Борис only
-      expect(
-        (await toolCallRowsOf(harness.db, anyaAgentId)).map(
-          (call) => `${call.tool} ${call.outcome} ${call.refusalReason} ${call.childTaskId}`,
-        ),
-      ).toEqual(Array<string>(4).fill('start_agent refused record_unavailable null'));
-      expect(
-        library.resolveCalls
-          .filter((call) => targets.includes(call.recordId))
-          .map((call) => `${call.viewerId} ${call.recordId}`)
-          .sort(),
-      ).toEqual(targets.map((id) => `${boris} ${id}`).sort());
-      // Then: the agent's history holds the four refusals with their reason, and it went on
-      expect(historyLines(await historyOf(harness, anyaAgentId, boris))).toEqual([
-        'task: Collect the logs for Boris',
-        'model_answer:  [start_agent, start_agent, start_agent, start_agent]',
-        ...Array<string>(4).fill('tool_result: start_agent refused record_unavailable'),
-        'model_answer: nothing started []',
-      ]);
-
-      // Then: the root's starts on a withdrawn and an unconnected model are refused with the model's number,
-      // and the root kept answering
-      expect(
-        (await toolCallRowsOf(harness.db, rootId)).map(
-          (call) => `${call.tool} ${call.outcome} ${call.refusalReason ?? '-'} ${JSON.stringify(call.refusalDetail)}`,
-        ),
-      ).toEqual([
-        'start_agent success - null',
-        `start_agent refused model_not_allowed {"model":"${TEST_MODEL_CHOSEN}"}`,
-        `start_agent refused model_not_connected {"model":"${UNCONNECTED_MODEL}"}`,
-      ]);
-      expect(historyLines(await historyOf(harness, rootId, boris))).toEqual([
-        'task: Start the agents of Anya',
-        'model_answer:  [start_agent, start_agent, start_agent]',
-        'tool_result: start_agent success',
-        'tool_result: start_agent refused model_not_allowed',
-        'tool_result: start_agent refused model_not_connected',
-        'model_answer: noted []',
-        'child_report: agent of anya completed',
-        'model_answer: noted []',
-      ]);
-
-      // Then: Борис has the root and Аня's agent only - no other task or session - and ledger rows of their
-      // model calls only
-      expect(await ownerRowCounts(harness.db, boris)).toEqual({ tasks: 2, sessions: 2 });
-      const ledgerTaskIds = (await ledgerRowsOf(harness.db, boris)).map((row) => String(row.taskId));
-      expect(ledgerTaskIds.sort((a, b) => a.localeCompare(b))).toEqual(
-        [rootId, rootId, rootId, anyaAgentId, anyaAgentId].sort((a, b) => a.localeCompare(b)),
+        { thereafter: { text: 'noted' } },
       );
-    } finally {
-      anyaHeld.open();
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+      const secondAsk = model.script(
+        { task: 'Run the digest again' },
+        [
+          {
+            calls: [
+              startAgent({
+                agent: recordId,
+                description: 'digest two',
+                prompt: 'Second digest task',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'noted' } },
+      );
+      const digest = model.script({ task: 'Digest task' }, [
+        { calls: [LIST_AGENTS], latch: childHeld },
+        { calls: [LIST_AGENTS] },
+        { text: 'report of the first digest' },
+        { text: 'report of the restarted digest' },
+      ]);
+      const secondDigest = model.script({ task: 'Second digest task' }, [
+        { text: 'report of the second digest' },
+      ]);
+      const newConversation = model.script({ task: 'A new conversation' }, [
+        { text: 'hello' },
+      ]);
+      const options = { model, library, access: {} };
+      const harnesses: AgentsHarness[] = [];
+      try {
+        // Instance A: one slot, a sweeper that never passes again
+        const zombie = await createAgentsHarness({
+          ...options,
+          root: testRecord('chat', {
+            prompt: 'Chat prompt, version 1.',
+            tools: ['start_agent'],
+          }),
+          runtimeConfig: ZOMBIE_RUNTIME,
+        });
+        harnesses.push(zombie);
+        const { agentId: rootId } = await zombie.sessions.start({
+          ownerId: boris,
+          prompt: 'Run the digest',
+          description: 'conversation before the edit',
+        });
+        const firstChildId = await startedChild(zombie, rootId);
+        await childHeld.reached();
+
+        // When: Аня saves version 2 of R (another prompt, a tool, another model) and the administrator edits
+        // the chat record while the child's call is held
+        library.edit(recordId, {
+          body: {
+            kind: 'agent',
+            content: {
+              ...recordR.content,
+              prompt: 'Digest prompt, version 2.',
+              tools: ['list_agents'],
+              model: TEST_MODEL_CHOSEN,
+            },
+          },
+        });
+        await setRootRecord(
+          library,
+          testRecord('chat', {
+            prompt: 'Chat prompt, version 2.',
+            tools: ['start_agent'],
+          }),
+        );
+
+        // When: instance B starts, requeues the held step as a lost one and takes it over; then A's held call answers
+        const restarted = await createAgentsHarness(options);
+        harnesses.push(restarted);
+        await waitForTaskStatus(restarted, firstChildId, boris, 'completed');
+        // The root takes the child's report on B while A's only slot is still held
+        await firstAsk.called(2);
+        await waitForTaskStatus(restarted, rootId, boris, 'waiting');
+        childHeld.open();
+        await waitFor(
+          () => notCurrentLogsOf(zombie, firstChildId),
+          (records) => records.length > 0,
+          'the late step result of instance A to be refused',
+        );
+        // Instance A is the dead process: one process executes steps, so its workers stop here. Left running, its
+        // freed slot claims the root's next step on the object A kept from before the takeover, and B's sweeper
+        // requeues that step as a lost one.
+        await zombie.runtime.stop();
+
+        // Then: every call of the first child, on A before the takeover and on B after it, ran on version 1 -
+        // its prompt, its (empty) tool set, its model - and the call of the tool only version 2 has was refused
+        expect(digest.calls.map(lineOf)).toEqual([
+          `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
+          `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
+          `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
+        ]);
+        expect(
+          historyLines(await historyOf(restarted, firstChildId, boris)),
+        ).toEqual([
+          'task: Digest task',
+          'model_answer:  [list_agents]',
+          'tool_result: list_agents refused tool_not_in_definition',
+          'model_answer: report of the first digest []',
+        ]);
+        // Then: instance B reads the snapshot from the task input in Postgres
+        expect(
+          (await restarted.sessions.snapshot(firstChildId, boris))?.content,
+        ).toMatchObject({
+          prompt: 'Digest prompt, version 1.',
+          tools: [],
+        });
+
+        // When: Борис's root, created before the chat edit, gets a message and starts R again
+        await restarted.sessions.send({
+          agentId: rootId,
+          ownerId: boris,
+          text: 'Run the digest again',
+        });
+        const secondChildId = await startedChild(restarted, rootId, 2);
+        await waitForTaskStatus(restarted, secondChildId, boris, 'completed');
+
+        // Then: the second child runs on version 2; the run origins say 1 and 2
+        expect(secondDigest.calls.map(lineOf)).toEqual([
+          `Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`,
+        ]);
+        const firstView = await restarted.sessions.get(firstChildId, boris);
+        const secondView = await restarted.sessions.get(secondChildId, boris);
+        expect([firstView.origin?.recordId, firstView.origin?.version]).toEqual(
+          [recordId, 1],
+        );
+        expect([
+          secondView.origin?.recordId,
+          secondView.origin?.version,
+        ]).toEqual([recordId, 2]);
+
+        // Then: the old conversation answered every message, the one after the edit too, on chat version 1
+        expect(lineOf(secondAsk.calls[0]).split(' | ')[0]).toBe(
+          'Chat prompt, version 1.',
+        );
+        expect(
+          new Set(
+            [...firstAsk.calls, ...secondAsk.calls].map(
+              (call) => lineOf(call).split(' | ')[0],
+            ),
+          ),
+        ).toEqual(new Set(['Chat prompt, version 1.']));
+
+        // When: the finished first child is restarted from scratch
+        const { agentId: restartId } = await restarted.sessions.restart({
+          agentId: firstChildId,
+          ownerId: boris,
+        });
+        await waitForTaskStatus(restarted, restartId, boris, 'completed');
+
+        // Then: a new agent under the same root on version 2, asked of the library for Борис
+        expect(lineOf(digest.calls[3])).toBe(
+          `Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`,
+        );
+        expect(inputLines(digest.calls[3]?.messages ?? [])).toEqual([
+          'user: Digest task',
+        ]);
+        const restartView = await restarted.sessions.get(restartId, boris);
+        expect([restartView.parentId, restartView.origin?.version]).toEqual([
+          rootId,
+          2,
+        ]);
+        expect(library.resolveCalls.at(-1)).toEqual({
+          viewerId: boris,
+          recordId,
+        });
+
+        // When: Борис opens a new conversation after the chat edit
+        await restarted.sessions.start({
+          ownerId: boris,
+          prompt: 'A new conversation',
+          description: 'conversation after the edit',
+        });
+        await newConversation.called(1);
+
+        // Then: it runs on chat version 2
+        expect(lineOf(newConversation.calls[0]).split(' | ')[0]).toBe(
+          'Chat prompt, version 2.',
+        );
+      } finally {
+        childHeld.open();
+        await closeAll(harnesses);
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-1 B: a subagent and a fork restart on their own snapshot without asking the library, and a restart refused for a deleted record or a withdrawn model names its reason and creates no agent',
+    async () => {
+      // Given: a deep agent record with the subagent `planner`; an agent record
+      // `forker` that forks itself; a `leaf` record. The root starts the deep agent, the forker and the leaf;
+      // the deep agent and the forker are then held in a model call, so they stay unfinished parents
+      const boris = newUser();
+      const library = createLibraryDouble();
+      const deepAgentRecordId = library.add({
+        kind: 'deep_agent',
+        name: 'restart deep agent',
+        ownerId: TEST_AUTHOR_ID,
+        everyone: true,
+        offerInChat: true,
+        content: {
+          prompt: 'You run the plan.',
+          servers: [],
+          model: TEST_MODEL_DEFAULT,
+          maxTurns: 20,
+          subagents: [
+            {
+              name: 'planner',
+              description: 'Plans the work',
+              prompt: 'Planner prompt.',
+              servers: [],
+              model: TEST_MODEL_CHOSEN,
+              maxTurns: 20,
+              maxRuns: 1,
+              taskList: false,
+            },
+          ],
+          finalSubagent: null,
+          taskList: true,
+          listDelegation: true,
+          selfLearning: false,
+        },
+      });
+      const forkerRecord = testRecord('forker', {
+        prompt: 'Forker prompt, version 1.',
+        tools: ['start_agent'],
+      });
+      const forkerRecordId = library.add(forkerRecord);
+      const leafRecordId = library.add(testRecord('leaf'));
+      const deepAgentHeld = createLatch();
+      const forkerHeld = createLatch();
+      const modelRefusals: Record<
+        string,
+        Record<string, typeof MODEL_NOT_ALLOWED>
+      > = {};
+      const { model, lineOf } = withPrompts(createScriptedModel());
+      model.script(
+        { task: 'Start the restart tree' },
+        [
+          {
+            calls: [
+              {
+                tool: START_TEST_DEEP_AGENT,
+                args: {
+                  deepAgent: deepAgentRecordId,
+                  prompt: 'Coordinate the plan',
+                  description: 'deep agent',
+                },
+              },
+              startAgent({
+                agent: forkerRecordId,
+                description: 'forker',
+                prompt: 'Fork yourself',
+              }),
+              startAgent({
+                agent: leafRecordId,
+                description: 'leaf',
+                prompt: 'Leaf task',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'noted' } },
+      );
+      model.script(
+        { task: 'Coordinate the plan' },
+        [
+          {
+            calls: [
+              taskCall({
+                subagentType: 'planner',
+                description: 'Plan the work',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'deep agent holds', latch: deepAgentHeld } },
+      );
+      const planner = model.script({ task: 'Plan the work' }, [
+        { text: 'plan' },
+        { text: 'plan of the restarted subagent' },
+      ]);
+      model.script(
+        { task: 'Fork yourself' },
+        [
+          {
+            calls: [
+              startAgent({
+                agent: 'fork',
+                description: 'the fork',
+                prompt: 'Fork task',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'forker holds', latch: forkerHeld } },
+      );
+      const fork = model.script({ task: 'Fork task' }, [
+        { text: 'report of the fork' },
+        { text: 'report of the restarted fork' },
+      ]);
+      model.script({ task: 'Leaf task' }, [{ text: 'report of the leaf' }]);
+      const harness = await createAgentsHarness({
+        model,
+        library,
+        access: {},
+        root: testRecord('chat', { tools: ['start_agent'] }),
+        deepAgentStarter: true,
+        ownerModelRefusals: modelRefusals,
+      });
+      try {
+        const { agentId: rootId } = await harness.sessions.start({
+          ownerId: boris,
+          prompt: 'Start the restart tree',
+          description: 'restart tree',
+        });
+        await startedChild(harness, rootId, 3);
+        const [deepAgentId, forkerId, leafId] = await startedChildrenOf(
+          harness,
+          rootId,
+        );
+        if (
+          deepAgentId === undefined ||
+          forkerId === undefined ||
+          leafId === undefined
+        ) {
+          throw new Error('the root started no deep agent, forker and leaf');
+        }
+        const plannerId = await startedChild(harness, deepAgentId);
+        const forkId = await startedChild(harness, forkerId);
+        await waitForTaskStatus(harness, plannerId, boris, 'completed');
+        await waitForTaskStatus(harness, forkId, boris, 'completed');
+        await waitForTaskStatus(harness, leafId, boris, 'completed');
+        await deepAgentHeld.reached();
+        await forkerHeld.reached();
+        // Given: the fork ran on the forker's snapshot and saw its history up to the start call
+        expect(inputLines(fork.calls[0]?.messages ?? [])).toEqual([
+          'user: Fork yourself',
+          'user: Fork task',
+        ]);
+
+        // When: the subagent's deep agent is deleted, the forker's record gets version 2,
+        // and the subagent and the fork are restarted from scratch
+        library.remove(deepAgentRecordId);
+        library.edit(forkerRecordId, {
+          body: {
+            kind: 'agent',
+            content: {
+              ...forkerRecord.content,
+              prompt: 'Forker prompt, version 2.',
+            },
+          },
+        });
+        const resolvedBefore = library.resolveCalls.length;
+        const { agentId: plannerRestartId } = await harness.sessions.restart({
+          agentId: plannerId,
+          ownerId: boris,
+        });
+        await waitForTaskStatus(harness, plannerRestartId, boris, 'completed');
+        const { agentId: forkRestartId } = await harness.sessions.restart({
+          agentId: forkId,
+          ownerId: boris,
+        });
+        await waitForTaskStatus(harness, forkRestartId, boris, 'completed');
+
+        // Then: neither restart asked the library
+        expect(library.resolveCalls).toHaveLength(resolvedBefore);
+        // Then: the subagent restarted on its own snapshot although its deep agent is gone
+        expect(planner.calls.map(lineOf)).toEqual([
+          `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
+          `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
+        ]);
+        const plannerRestart = await harness.sessions.get(
+          plannerRestartId,
+          boris,
+        );
+        expect([
+          plannerRestart.parentId,
+          plannerRestart.origin?.recordId,
+          plannerRestart.origin?.version,
+          plannerRestart.origin?.subagent,
+        ]).toEqual([deepAgentId, deepAgentRecordId, 1, 'planner']);
+        // Then: the fork restarted on the forker's snapshot of version 1, without the forker's history
+        expect(fork.calls.map(lineOf)).toEqual([
+          `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
+          `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
+        ]);
+        expect(inputLines(fork.calls[1]?.messages ?? [])).toEqual([
+          'user: Fork task',
+        ]);
+        const forkRestart = await harness.sessions.get(forkRestartId, boris);
+        expect([forkRestart.parentId, forkRestart.forkedFrom]).toEqual([
+          forkerId,
+          null,
+        ]);
+
+        // When: the leaf's record is deleted, then the planner's model is withdrawn from Борис, and each is restarted
+        expect(await ownerRowCounts(harness.db, boris)).toEqual({
+          tasks: 8,
+          sessions: 8,
+        });
+        library.remove(leafRecordId);
+        await expect(
+          harness.sessions.restart({ agentId: leafId, ownerId: boris }),
+        ).rejects.toMatchObject({
+          code: 'START_REFUSED',
+          refusal: { reason: 'record_unavailable', model: null },
+        });
+        modelRefusals[boris] = { [TEST_MODEL_CHOSEN]: MODEL_NOT_ALLOWED };
+        await expect(
+          harness.sessions.restart({ agentId: plannerId, ownerId: boris }),
+        ).rejects.toMatchObject({
+          code: 'START_REFUSED',
+          refusal: { reason: 'model_not_allowed', model: TEST_MODEL_CHOSEN },
+        });
+
+        // Then: neither refused restart made an agent or a session
+        expect(await ownerRowCounts(harness.db, boris)).toEqual({
+          tasks: 8,
+          sessions: 8,
+        });
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'INT-1 C: a start refused for a record the runner cannot see or a model he may not use names its reason to the parent and writes no child task, session or ledger row',
+    async () => {
+      // Given: Аня's agent may start four of her records - her personal "сбор логов", one she will delete, one
+      // the administrator will close and one of a role Борис will leave; it runs in Борис's tree. Борис's root
+      // also starts a record on a model taken from him and one on a model with no connection
+      const anya = randomUUID();
+      const boris = newUser();
+      const library = createLibraryDouble();
+      const personalId = library.add(
+        testRecord('сбор логов', { ownerId: anya, everyone: false }),
+      );
+      const deletedId = library.add(
+        testRecord('deleted target', { ownerId: anya }),
+      );
+      const closedId = library.add(
+        testRecord('closed target', { ownerId: anya }),
+      );
+      const roleId = library.add(
+        testRecord('role target', {
+          ownerId: anya,
+          everyone: false,
+          viewers: [boris],
+        }),
+      );
+      const targets = [personalId, deletedId, closedId, roleId];
+      const anyaAgentRecordId = library.add(
+        testRecord('agent of Anya', {
+          ownerId: anya,
+          tools: ['start_agent'],
+          agents: targets,
+        }),
+      );
+      const chosenModelRecordId = library.add(
+        testRecord('chosen model agent', { model: TEST_MODEL_CHOSEN }),
+      );
+      const unconnectedRecordId = library.add(
+        testRecord('unconnected model agent', { model: UNCONNECTED_MODEL }),
+      );
+      const anyaHeld = createLatch();
+      const model = createScriptedModel();
+      const root = model.script(
+        { task: 'Start the agents of Anya' },
+        [
+          {
+            calls: [
+              startAgent({
+                agent: anyaAgentRecordId,
+                description: 'agent of anya',
+                prompt: 'Collect the logs for Boris',
+              }),
+              startAgent({
+                agent: chosenModelRecordId,
+                description: 'chosen model',
+                prompt: 'Work on the chosen model',
+              }),
+              startAgent({
+                agent: unconnectedRecordId,
+                description: 'unconnected model',
+                prompt: 'Work unconnected',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'noted' } },
+      );
+      model.script({ task: 'Collect the logs for Boris' }, [
+        {
+          latch: anyaHeld,
+          calls: targets.map((agent, index) =>
+            startAgent({
+              agent,
+              description: `target ${index + 1}`,
+              prompt: `Target task ${index + 1}`,
+            }),
+          ),
+        },
+        { text: 'nothing started' },
+      ]);
+      const harness = await createAgentsHarness({
+        model,
+        library,
+        access: {},
+        root: testRecord('chat', { tools: ['start_agent'] }),
+        ownerModelRefusals: {
+          [boris]: { [TEST_MODEL_CHOSEN]: MODEL_NOT_ALLOWED },
+        },
+      });
+      try {
+        const { agentId: rootId } = await harness.sessions.start({
+          ownerId: boris,
+          prompt: 'Start the agents of Anya',
+          description: 'conversation of Boris',
+        });
+        const anyaAgentId = await startedChild(harness, rootId);
+        await anyaHeld.reached();
+        await root.called(2);
+        await waitForTaskStatus(harness, rootId, boris, 'waiting');
+
+        // When: while Аня's agent is in its model call, one target is deleted, one closed and Борис leaves the
+        // role of another; then the agent starts all four
+        library.remove(deletedId);
+        library.close(closedId);
+        library.hideFrom(roleId, boris);
+        anyaHeld.open();
+        await waitForTaskStatus(harness, anyaAgentId, boris, 'completed');
+        await root.called(3);
+        await waitForTaskStatus(harness, rootId, boris, 'waiting');
+
+        // Then: each start is refused `record_unavailable` with no child, and the library was asked for Борис only
+        expect(
+          (await toolCallRowsOf(harness.db, anyaAgentId)).map(
+            (call) =>
+              `${call.tool} ${call.outcome} ${call.refusalReason} ${call.childTaskId}`,
+          ),
+        ).toEqual(
+          Array<string>(4).fill('start_agent refused record_unavailable null'),
+        );
+        expect(
+          library.resolveCalls
+            .filter((call) => targets.includes(call.recordId))
+            .map((call) => `${call.viewerId} ${call.recordId}`)
+            .sort(),
+        ).toEqual(targets.map((id) => `${boris} ${id}`).sort());
+        // Then: the agent's history holds the four refusals with their reason, and it went on
+        expect(
+          historyLines(await historyOf(harness, anyaAgentId, boris)),
+        ).toEqual([
+          'task: Collect the logs for Boris',
+          'model_answer:  [start_agent, start_agent, start_agent, start_agent]',
+          ...Array<string>(4).fill(
+            'tool_result: start_agent refused record_unavailable',
+          ),
+          'model_answer: nothing started []',
+        ]);
+
+        // Then: the root's starts on a withdrawn and an unconnected model are refused with the model's number,
+        // and the root kept answering
+        expect(
+          (await toolCallRowsOf(harness.db, rootId)).map(
+            (call) =>
+              `${call.tool} ${call.outcome} ${call.refusalReason ?? '-'} ${JSON.stringify(call.refusalDetail)}`,
+          ),
+        ).toEqual([
+          'start_agent success - null',
+          `start_agent refused model_not_allowed {"model":"${TEST_MODEL_CHOSEN}"}`,
+          `start_agent refused model_not_connected {"model":"${UNCONNECTED_MODEL}"}`,
+        ]);
+        expect(historyLines(await historyOf(harness, rootId, boris))).toEqual([
+          'task: Start the agents of Anya',
+          'model_answer:  [start_agent, start_agent, start_agent]',
+          'tool_result: start_agent success',
+          'tool_result: start_agent refused model_not_allowed',
+          'tool_result: start_agent refused model_not_connected',
+          'model_answer: noted []',
+          'child_report: agent of anya completed',
+          'model_answer: noted []',
+        ]);
+
+        // Then: Борис has the root and Аня's agent only - no other task or session - and ledger rows of their
+        // model calls only
+        expect(await ownerRowCounts(harness.db, boris)).toEqual({
+          tasks: 2,
+          sessions: 2,
+        });
+        const ledgerTaskIds = (await ledgerRowsOf(harness.db, boris)).map(
+          (row) => String(row.taskId),
+        );
+        expect(ledgerTaskIds.sort((a, b) => a.localeCompare(b))).toEqual(
+          [rootId, rootId, rootId, anyaAgentId, anyaAgentId].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+        );
+      } finally {
+        anyaHeld.open();
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2 A: a deep agent runs to its end on the copy of its whole team it started with, and the next run takes the new version
   // ---------------------------------------------------------------------------------------------------------------
@@ -759,120 +1005,208 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   // @category: core-functionality
   // @dependency: Agents.resolveStart (deep agent source), startChild, gateStart, subagent snapshots, RecordLibrary (double), runtime, Postgres
   // @complexity: high
-  it('INT-2 A: a deep agent runs on one copy of its whole team whatever the author edits, ends with its own answer, and the next run takes the new version', async () => {
-    // Given: Аня's deep agent version 1, open to Борис and offered in his chat
-    const boris = newUser();
-    const ana = randomUUID();
-    const library = createLibraryDouble();
-    const deepAgentId = library.add(
-      testDeepAgent(TEAM_NAME, teamV1(), { ownerId: ana, ownerName: 'Аня', everyone: false, viewers: [boris] }),
-    );
-    const model = createScriptedModel();
-    const held = createLatch();
-    const firstRun = model.script(
-      { task: FIRST_RUN_TASK },
-      [
-        {
-          calls: [
-            taskCall({ subagentType: 'a', description: 'Read the timeline (run one).' }),
-            taskCall({ subagentType: 'b', description: 'Check the payment logs (run one).' }),
-            taskCall({ subagentType: 'c', description: 'Write the customer note (run one).' }),
+  it(
+    'INT-2 A: a deep agent runs on one copy of its whole team whatever the author edits, ends with its own answer, and the next run takes the new version',
+    async () => {
+      // Given: Аня's deep agent version 1, open to Борис and offered in his chat
+      const boris = newUser();
+      const ana = randomUUID();
+      const library = createLibraryDouble();
+      const deepAgentId = library.add(
+        testDeepAgent(TEAM_NAME, teamV1(), {
+          ownerId: ana,
+          ownerName: 'Аня',
+          everyone: false,
+          viewers: [boris],
+        }),
+      );
+      const model = createScriptedModel();
+      const held = createLatch();
+      const firstRun = model.script(
+        { task: FIRST_RUN_TASK },
+        [
+          {
+            calls: [
+              taskCall({
+                subagentType: 'a',
+                description: 'Read the timeline (run one).',
+              }),
+              taskCall({
+                subagentType: 'b',
+                description: 'Check the payment logs (run one).',
+              }),
+              taskCall({
+                subagentType: 'c',
+                description: 'Write the customer note (run one).',
+              }),
+            ],
+            latch: held,
+          },
+        ],
+        // The three task calls wake the deep agent once, with all three answers (deep-agents/design-task.md KD-4).
+        { thereafter: { text: FIRST_ANSWER } },
+      );
+      const subagentA = model.script({ task: 'Read the timeline (run one).' }, [
+        { text: 'The timeline is read.' },
+      ]);
+      const subagentB = model.script(
+        { task: 'Check the payment logs (run one).' },
+        [{ text: 'The logs are checked.' }],
+      );
+      const subagentC = model.script(
+        { task: 'Write the customer note (run one).' },
+        [{ text: 'The note is written.' }],
+      );
+      const harness = await createAgentsHarness({
+        model,
+        library,
+        access: {},
+        root: testRecord('chat'),
+        deepAgentStarter: true,
+      });
+      try {
+        // When: Борис's conversation starts the deep agent; its first call is held
+        const first = await startDeepAgentRun(
+          harness,
+          model,
+          boris,
+          deepAgentId,
+          FIRST_RUN_TASK,
+        );
+        await held.reached();
+
+        // Then: the deep agent starts from its record's prompt, writes the answer itself and sees each subagent's line and limit
+        const firstCall = firstRun.calls[0];
+        expect(promptOf(firstCall)).toBe('You review incidents, version 1.');
+        expect(firstCall?.instructions).toContain(WRITES_ANSWER_ITSELF);
+        expect(teamLinesOf(firstCall)).toEqual(TEAM_V1_LINES);
+
+        // When: while the run goes on, Аня saves version 2
+        library.edit(deepAgentId, {
+          body: { kind: 'deep_agent', content: teamV2() },
+        });
+        const readsBefore = library.resolveCalls.length;
+        held.open();
+
+        // Then: the run ends with the deep agent's own answer, on version 1, with no library read for a subagent
+        expect(
+          await waitForStatus(harness, first.deepAgentId, boris, 'completed'),
+        ).toMatchObject({
+          name: TEAM_NAME,
+          origin: {
+            recordId: deepAgentId,
+            kind: 'deep_agent',
+            version: 1,
+            subagent: null,
+          },
+        });
+        expect(library.resolveCalls.slice(readsBefore)).toEqual([]);
+
+        // Then: the three subagents ran on the version-1 copy
+        const team = (await harness.sessions.list(first.rootId, boris)).filter(
+          (view) => view.parentId === first.deepAgentId,
+        );
+        expect(
+          team
+            .map(({ name, status, origin }) => ({
+              name,
+              status,
+              version: origin?.version,
+              subagent: origin?.subagent,
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        ).toEqual([
+          { name: 'a', status: 'completed', version: 1, subagent: 'a' },
+          { name: 'b', status: 'completed', version: 1, subagent: 'b' },
+          { name: 'c', status: 'completed', version: 1, subagent: 'c' },
+        ]);
+        expect(
+          [subagentA, subagentB, subagentC].map((script) =>
+            promptOf(script.calls[0]),
+          ),
+        ).toEqual([
+          'You are subagent a of team version 1.',
+          'You are subagent b of team version 1.',
+          'You are subagent c of team version 1.',
+        ]);
+
+        // Then: every later input of the deep agent still holds the version-1 prompt and team
+        expect(firstRun.calls.length).toBeGreaterThan(1);
+        for (const call of firstRun.calls) {
+          expect(promptOf(call)).toBe('You review incidents, version 1.');
+          expect(teamLinesOf(call)).toEqual(TEAM_V1_LINES);
+        }
+
+        // Then: no "answer through the final subagent" notice; the root receives the deep agent's answer as the run's report
+        expect(
+          (await historyOf(harness, first.deepAgentId, boris)).filter(
+            (entry) => entry.kind === 'notice',
+          ),
+        ).toEqual([]);
+        const firstReports = await waitFor(
+          () => childReportsOf(harness, first.rootId, boris),
+          (reports) => reports.length > 0,
+          'the report of the first run at the root',
+        );
+        expect(
+          firstReports.map(({ agentId, status, text }) => ({
+            agentId,
+            status,
+            text,
+          })),
+        ).toEqual([
+          {
+            agentId: first.deepAgentId,
+            status: 'completed',
+            text: FIRST_ANSWER,
+          },
+        ]);
+
+        // When: Борис starts the deep agent again
+        const secondRun = model.script(
+          { task: SECOND_RUN_TASK },
+          [
+            {
+              calls: [
+                taskCall({
+                  subagentType: 'a',
+                  description: 'Read the timeline (run two).',
+                }),
+              ],
+            },
           ],
-          latch: held,
-        },
-      ],
-      // The three task calls wake the deep agent once, with all three answers (deep-agents/design-task.md KD-4).
-      { thereafter: { text: FIRST_ANSWER } },
-    );
-    const subagentA = model.script({ task: 'Read the timeline (run one).' }, [{ text: 'The timeline is read.' }]);
-    const subagentB = model.script({ task: 'Check the payment logs (run one).' }, [{ text: 'The logs are checked.' }]);
-    const subagentC = model.script({ task: 'Write the customer note (run one).' }, [{ text: 'The note is written.' }]);
-    const harness = await createAgentsHarness({
-      model,
-      library,
-      access: {},
-      root: testRecord('chat'),
-      deepAgentStarter: true,
-    });
-    try {
-      // When: Борис's conversation starts the deep agent; its first call is held
-      const first = await startDeepAgentRun(harness, model, boris, deepAgentId, FIRST_RUN_TASK);
-      await held.reached();
+          { thereafter: { text: SECOND_ANSWER } },
+        );
+        const subagentASecond = model.script(
+          { task: 'Read the timeline (run two).' },
+          [{ text: 'The timeline is read again.' }],
+        );
+        const second = await startDeepAgentRun(
+          harness,
+          model,
+          boris,
+          deepAgentId,
+          SECOND_RUN_TASK,
+        );
 
-      // Then: the deep agent starts from its record's prompt, writes the answer itself and sees each subagent's line and limit
-      const firstCall = firstRun.calls[0];
-      expect(promptOf(firstCall)).toBe('You review incidents, version 1.');
-      expect(firstCall?.instructions).toContain(WRITES_ANSWER_ITSELF);
-      expect(teamLinesOf(firstCall)).toEqual(TEAM_V1_LINES);
-
-      // When: while the run goes on, Аня saves version 2
-      library.edit(deepAgentId, { body: { kind: 'deep_agent', content: teamV2() } });
-      const readsBefore = library.resolveCalls.length;
-      held.open();
-
-      // Then: the run ends with the deep agent's own answer, on version 1, with no library read for a subagent
-      expect(await waitForStatus(harness, first.deepAgentId, boris, 'completed')).toMatchObject({
-        name: TEAM_NAME,
-        origin: { recordId: deepAgentId, kind: 'deep_agent', version: 1, subagent: null },
-      });
-      expect(library.resolveCalls.slice(readsBefore)).toEqual([]);
-
-      // Then: the three subagents ran on the version-1 copy
-      const team = (await harness.sessions.list(first.rootId, boris)).filter(
-        (view) => view.parentId === first.deepAgentId,
-      );
-      expect(
-        team
-          .map(({ name, status, origin }) => ({ name, status, version: origin?.version, subagent: origin?.subagent }))
-          .sort((left, right) => left.name.localeCompare(right.name)),
-      ).toEqual([
-        { name: 'a', status: 'completed', version: 1, subagent: 'a' },
-        { name: 'b', status: 'completed', version: 1, subagent: 'b' },
-        { name: 'c', status: 'completed', version: 1, subagent: 'c' },
-      ]);
-      expect([subagentA, subagentB, subagentC].map((script) => promptOf(script.calls[0]))).toEqual([
-        'You are subagent a of team version 1.',
-        'You are subagent b of team version 1.',
-        'You are subagent c of team version 1.',
-      ]);
-
-      // Then: every later input of the deep agent still holds the version-1 prompt and team
-      expect(firstRun.calls.length).toBeGreaterThan(1);
-      for (const call of firstRun.calls) {
-        expect(promptOf(call)).toBe('You review incidents, version 1.');
-        expect(teamLinesOf(call)).toEqual(TEAM_V1_LINES);
+        // Then: the second run is version 2 - the deep agent's prompt and team, and `a` with its new prompt (AC-16.2)
+        expect(
+          await waitForStatus(harness, second.deepAgentId, boris, 'completed'),
+        ).toMatchObject({
+          origin: { recordId: deepAgentId, version: 2, subagent: null },
+        });
+        expect(promptOf(secondRun.calls[0])).toBe(
+          'You review incidents, version 2.',
+        );
+        expect(teamLinesOf(secondRun.calls[0])).toEqual(TEAM_V2_LINES);
+        expect(promptOf(subagentASecond.calls[0])).toBe(
+          'You are subagent a of team version 2.',
+        );
+      } finally {
+        held.open();
+        await harness.close();
       }
-
-      // Then: no "answer through the final subagent" notice; the root receives the deep agent's answer as the run's report
-      expect((await historyOf(harness, first.deepAgentId, boris)).filter((entry) => entry.kind === 'notice')).toEqual([]);
-      const firstReports = await waitFor(
-        () => childReportsOf(harness, first.rootId, boris),
-        (reports) => reports.length > 0,
-        'the report of the first run at the root',
-      );
-      expect(firstReports.map(({ agentId, status, text }) => ({ agentId, status, text }))).toEqual([
-        { agentId: first.deepAgentId, status: 'completed', text: FIRST_ANSWER },
-      ]);
-
-      // When: Борис starts the deep agent again
-      const secondRun = model.script(
-        { task: SECOND_RUN_TASK },
-        [{ calls: [taskCall({ subagentType: 'a', description: 'Read the timeline (run two).' })] }],
-        { thereafter: { text: SECOND_ANSWER } },
-      );
-      const subagentASecond = model.script({ task: 'Read the timeline (run two).' }, [{ text: 'The timeline is read again.' }]);
-      const second = await startDeepAgentRun(harness, model, boris, deepAgentId, SECOND_RUN_TASK);
-
-      // Then: the second run is version 2 - the deep agent's prompt and team, and `a` with its new prompt (AC-16.2)
-      expect(await waitForStatus(harness, second.deepAgentId, boris, 'completed')).toMatchObject({
-        origin: { recordId: deepAgentId, version: 2, subagent: null },
-      });
-      expect(promptOf(secondRun.calls[0])).toBe('You review incidents, version 2.');
-      expect(teamLinesOf(secondRun.calls[0])).toEqual(TEAM_V2_LINES);
-      expect(promptOf(subagentASecond.calls[0])).toBe('You are subagent a of team version 2.');
-    } finally {
-      held.open();
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
+    },
+    TEST_TIMEOUT_MS,
+  );
 });

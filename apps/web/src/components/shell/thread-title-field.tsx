@@ -20,7 +20,11 @@ export type ThreadTitleFieldProps = {
  * SB-08: in-place rename field. Enter saves the trimmed title, Esc cancels, leaving the field saves when the
  * value is valid and changed. An empty value on Enter keeps the field open with «Введите название» (AC-05.3).
  */
-export function ThreadTitleField({ initialTitle, onSave, onCancel }: ThreadTitleFieldProps) {
+export function ThreadTitleField({
+  initialTitle,
+  onSave,
+  onCancel,
+}: ThreadTitleFieldProps) {
   const t = useTranslations('shell.thread');
   const errorId = useId();
   const [value, setValue] = useState(initialTitle);

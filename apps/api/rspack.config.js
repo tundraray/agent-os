@@ -17,12 +17,18 @@ export default (defaults, rspack) => ({
     'seed-mcp-cli': './src/cli/seed-mcp-cli.ts',
     'seed-access-cli': './src/cli/seed-access-cli.ts',
     // The code executor is its own process: one plain file in its own directory, the only one it may read.
-    'executor/executor-main': path.join(packages, 'code-runner/src/executor/executor-main.ts'),
+    'executor/executor-main': path.join(
+      packages,
+      'code-runner/src/executor/executor-main.ts',
+    ),
   },
   output: { ...defaults.output, filename: '[name].js' },
   externals: [
     ({ request }, callback) => {
-      const bundled = /^[.#]/.test(request) || path.isAbsolute(request) || request.startsWith('@agent-os/');
+      const bundled =
+        /^[.#]/.test(request) ||
+        path.isAbsolute(request) ||
+        request.startsWith('@agent-os/');
       // `module-import` keeps a static import static and a dynamic `import()` lazy.
       return bundled ? callback() : callback(null, `module-import ${request}`);
     },
@@ -35,7 +41,9 @@ export default (defaults, rspack) => ({
   plugins: [
     ...defaults.plugins,
     new rspack.CopyRspackPlugin({
-      patterns: [{ from: path.join(packages, 'db/src/migrations'), to: 'migrations' }],
+      patterns: [
+        { from: path.join(packages, 'db/src/migrations'), to: 'migrations' },
+      ],
     }),
   ],
 });

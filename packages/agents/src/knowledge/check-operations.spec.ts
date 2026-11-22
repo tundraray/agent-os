@@ -18,10 +18,21 @@ const ROUND_AT = new Date('2026-11-20T10:00:00.000Z');
 const SECRET = 'sk-live-0123456789abcdef';
 rememberSecret(SECRET);
 
-const relationFields = { fromEntityId: null, toEntityId: null, label: null, hint: null, outcome: null };
+const relationFields = {
+  fromEntityId: null,
+  toEntityId: null,
+  label: null,
+  hint: null,
+  outcome: null,
+};
 const GRAPH: KnowledgeGraph = {
   entities: [
-    { id: 1, name: 'billing-api', confirmations: 1, confirmedByRunId: OTHER_RUN },
+    {
+      id: 1,
+      name: 'billing-api',
+      confirmations: 1,
+      confirmedByRunId: OTHER_RUN,
+    },
     { id: 2, name: 'ledger-db', confirmations: 3, confirmedByRunId: RUN },
   ],
   relations: [
@@ -52,7 +63,11 @@ const entity = (ref: string, name: string, description = 'A service') => ({
   description,
   evidence: ['c3'],
 });
-const confirm = (id: string, evidence: string[]) => ({ op: 'confirm', id, evidence });
+const confirm = (id: string, evidence: string[]) => ({
+  op: 'confirm',
+  id,
+  evidence,
+});
 const toolRelation = (kind: string, evidence: string[]) => ({
   op: 'add_relation',
   kind,
@@ -62,23 +77,35 @@ const toolRelation = (kind: string, evidence: string[]) => ({
   ...(kind === 'lesson' ? { hint: 'filter by tag', outcome: 'found it' } : {}),
   evidence,
 });
-const confirmed = (type: 'entity' | 'relation', id: number, confirmations: number) => ({
+const confirmed = (
+  type: 'entity' | 'relation',
+  id: number,
+  confirmations: number,
+) => ({
   type,
   id,
   confirmations,
   confirmedAt: ROUND_AT,
   confirmedByRunId: RUN,
 });
-const newEntity = (ref: string, name: string, description = 'A service'): KnowledgeAddition => ({
+const newEntity = (
+  ref: string,
+  name: string,
+  description = 'A service',
+): KnowledgeAddition => ({
   type: 'entity',
   ref,
   name,
   description,
 });
 
-const MANY = Array.from({ length: 51 }, (_, i) => entity(`n${i}`, `service ${i}`));
+const MANY = Array.from({ length: 51 }, (_, i) =>
+  entity(`n${i}`, `service ${i}`),
+);
 
-type Outcome = Omit<CheckedOperations, 'rejected'> & { rejected: OperationRejectionReason[] };
+type Outcome = Omit<CheckedOperations, 'rejected'> & {
+  rejected: OperationRejectionReason[];
+};
 const none: Outcome = { apply: [], confirm: [], outdated: [], rejected: [] };
 
 describe('checkOperations decides each operation by id, evidence and exact repeat', () => {
@@ -87,13 +114,26 @@ describe('checkOperations decides each operation by id, evidence and exact repea
       'AC-04.1: a new fact joins the existing entity e1',
       [
         entity('invoice', 'invoice-service'),
-        { op: 'add_relation', kind: 'fact', from: 'invoice', to: 'e1', label: 'calls', evidence: ['c3'] },
+        {
+          op: 'add_relation',
+          kind: 'fact',
+          from: 'invoice',
+          to: 'e1',
+          label: 'calls',
+          evidence: ['c3'],
+        },
       ],
       {
         ...none,
         apply: [
           newEntity('invoice', 'invoice-service'),
-          { type: 'relation', kind: 'fact', from: { ref: 'invoice' }, to: { id: 1 }, label: 'calls' },
+          {
+            type: 'relation',
+            kind: 'fact',
+            from: { ref: 'invoice' },
+            to: { id: 1 },
+            label: 'calls',
+          },
         ],
       },
     ],
@@ -102,13 +142,26 @@ describe('checkOperations decides each operation by id, evidence and exact repea
       [
         entity('billing', ' Billing-API '),
         entity('ledger', 'ledger'),
-        { op: 'add_relation', kind: 'fact', from: 'billing', to: 'ledger', label: 'writes to', evidence: ['c3'] },
+        {
+          op: 'add_relation',
+          kind: 'fact',
+          from: 'billing',
+          to: 'ledger',
+          label: 'writes to',
+          evidence: ['c3'],
+        },
       ],
       {
         ...none,
         apply: [
           newEntity('ledger', 'ledger'),
-          { type: 'relation', kind: 'fact', from: { id: 1 }, to: { ref: 'ledger' }, label: 'writes to' },
+          {
+            type: 'relation',
+            kind: 'fact',
+            from: { id: 1 },
+            to: { ref: 'ledger' },
+            label: 'writes to',
+          },
         ],
         confirm: [confirmed('entity', 1, 2)],
       },
@@ -137,7 +190,14 @@ describe('checkOperations decides each operation by id, evidence and exact repea
       'DC-6: unknown id, unknown ref, a repeated id and a malformed operation are rejected, the rest applies',
       [
         confirm('e9', ['c3']),
-        { op: 'add_relation', kind: 'fact', from: 'ghost', to: 'e1', label: 'uses', evidence: ['c3'] },
+        {
+          op: 'add_relation',
+          kind: 'fact',
+          from: 'ghost',
+          to: 'e1',
+          label: 'uses',
+          evidence: ['c3'],
+        },
         confirm('e1', ['c3']),
         confirm('e1', ['c3']),
         { op: 'add_entity', name: 'no ref, no evidence' },
@@ -160,7 +220,13 @@ describe('checkOperations decides each operation by id, evidence and exact repea
       {
         ...none,
         apply: [
-          { type: 'relation', kind: 'searched_nothing', server: 'logs', tool: 'search', question: 'deploy lookup' },
+          {
+            type: 'relation',
+            kind: 'searched_nothing',
+            server: 'logs',
+            tool: 'search',
+            question: 'deploy lookup',
+          },
         ],
         rejected: ['evidence_mismatch', 'evidence_mismatch'],
       },
@@ -177,7 +243,10 @@ describe('checkOperations decides each operation by id, evidence and exact repea
     [
       'AC-05.1: a secret of the process memory is redacted before the checks',
       [entity('vault', 'vault', `Opens with ${SECRET} only`)],
-      { ...none, apply: [newEntity('vault', 'vault', 'Opens with [redacted] only')] },
+      {
+        ...none,
+        apply: [newEntity('vault', 'vault', 'Opens with [redacted] only')],
+      },
     ],
   ])('%s', (_, operations, expected) => {
     const result = checkOperations({
@@ -188,6 +257,9 @@ describe('checkOperations decides each operation by id, evidence and exact repea
       roundAt: ROUND_AT,
       runId: RUN,
     });
-    expect({ ...result, rejected: result.rejected.map(({ reason }) => reason) }).toEqual(expected);
+    expect({
+      ...result,
+      rejected: result.rejected.map(({ reason }) => reason),
+    }).toEqual(expected);
   });
 });

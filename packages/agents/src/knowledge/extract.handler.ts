@@ -1,5 +1,8 @@
 import { createSecretMasker, type Logger } from '@agent-os/common';
-import type { LastExtractionReason, LastExtractionStatus } from '@agent-os/contracts';
+import type {
+  LastExtractionReason,
+  LastExtractionStatus,
+} from '@agent-os/contracts';
 import type {
   AgentCodeCallsRepository,
   AgentKnowledgeRepository,
@@ -18,12 +21,24 @@ import {
 } from '@agent-os/runtime';
 
 import type { AgentsEmbeddings } from '../embeddings/embeddings';
-import type { AgentToolCall, AgentToolDefinition, AgentTurnMessage } from '../model/mastra-turn';
-import type { ModelCallRequest, ModelCallResult, ModelClient } from '../model/model-client';
+import type {
+  AgentToolCall,
+  AgentToolDefinition,
+  AgentTurnMessage,
+} from '../model/mastra-turn';
+import type {
+  ModelCallRequest,
+  ModelCallResult,
+  ModelClient,
+} from '../model/model-client';
 import { envelope } from '../model/provider-messages';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 import type { Sessions } from '../store/sessions';
-import { type CheckedOperations, checkOperations, type RoundCall } from './check-operations';
+import {
+  type CheckedOperations,
+  checkOperations,
+  type RoundCall,
+} from './check-operations';
 import { type ExtractionInput, readExtractionInput } from './extraction-input';
 import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
 import { graphItemsOf, registryToolAlive } from './knowledge-block';
@@ -85,13 +100,15 @@ const CHOOSE_RULE =
 
 const RECORD_KNOWLEDGE: AgentToolDefinition = {
   name: RECORD_KNOWLEDGE_TOOL,
-  description: 'Records what this run learned: operations on the knowledge graph of the deep agent.',
+  description:
+    'Records what this run learned: operations on the knowledge graph of the deep agent.',
   inputSchema: RecordKnowledgeArgsSchema,
 };
 
 const CHOOSE_ENTITIES: AgentToolDefinition = {
   name: CHOOSE_ENTITIES_TOOL,
-  description: 'For each new entity, chooses the existing entity it is, or null to keep it new.',
+  description:
+    'For each new entity, chooses the existing entity it is, or null to keep it new.',
   inputSchema: ChooseEntitiesArgsSchema,
 };
 
@@ -120,7 +137,10 @@ type RoundResult =
   /** The model's operations, after the choice among similar entities when there was one. */
   | { readonly kind: 'answered'; readonly operations: readonly unknown[] }
   | { readonly kind: 'skipped'; readonly reason: LastExtractionReason }
-  | { readonly kind: 'failed'; readonly reason: 'model_error' | 'invalid_answer' };
+  | {
+      readonly kind: 'failed';
+      readonly reason: 'model_error' | 'invalid_answer';
+    };
 
 /** How the commit left the task. */
 type Settled =
@@ -142,7 +162,8 @@ const NO_COUNTS: RoundCounts = { added: 0, confirmed: 0, outdated: 0 };
 
 /** The model's call of one tool, parsed, or why the answer is not good. */
 type Parsed<T> =
-  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
 
 // ---------- Parsing the answers ----------
 
@@ -153,7 +174,10 @@ function parseToolCall<T>(
 ): Parsed<T> {
   const call = toolCalls.find((candidate) => candidate.toolName === name);
   if (call === undefined)
-    return { ok: false, error: `You did not call ${name}. Call ${name} exactly once.` };
+    return {
+      ok: false,
+      error: `You did not call ${name}. Call ${name} exactly once.`,
+    };
   return parse(call.args);
 }
 
@@ -172,7 +196,10 @@ function parseOperations(args: unknown): Parsed<readonly unknown[]> {
  */
 function retryMessages(
   first: AgentTurnMessage,
-  answer: { readonly text: string; readonly toolCalls: readonly AgentToolCall[] },
+  answer: {
+    readonly text: string;
+    readonly toolCalls: readonly AgentToolCall[];
+  },
   error: string,
 ): AgentTurnMessage[] {
   if (answer.toolCalls.length > 0) {
@@ -190,7 +217,9 @@ function retryMessages(
     ];
   }
   const said: AgentTurnMessage[] =
-    answer.text.trim() === '' ? [] : [{ role: 'assistant', content: answer.text, toolCalls: [] }];
+    answer.text.trim() === ''
+      ? []
+      : [{ role: 'assistant', content: answer.text, toolCalls: [] }];
   return [first, ...said, { role: 'user', content: error }];
 }
 
@@ -212,10 +241,13 @@ async function applyChecked(
     confirmedAt: roundAt,
   };
   const refIds = new Map<string, number>();
-  const endId = (end: { readonly id: number } | { readonly ref: string }): number => {
+  const endId = (
+    end: { readonly id: number } | { readonly ref: string },
+  ): number => {
     if ('id' in end) return end.id;
     const id = refIds.get(end.ref);
-    if (id === undefined) throw new Error('knowledge fact points at a ref that was not inserted');
+    if (id === undefined)
+      throw new Error('knowledge fact points at a ref that was not inserted');
     return id;
   };
   const relationRows: NewKnowledgeRelation[] = [];
@@ -270,7 +302,8 @@ async function applyChecked(
       runId: confirmation.confirmedByRunId,
     });
   }
-  for (const item of checked.outdated) await knowledgeRows.markOutdated(recordId, item);
+  for (const item of checked.outdated)
+    await knowledgeRows.markOutdated(recordId, item);
 }
 
 function statusOf(result: RoundResult): {
@@ -289,7 +322,9 @@ function statusOf(result: RoundResult): {
 }
 
 /** Counts of the operations by kind for the log: never their texts. */
-function operationCounts(operations: readonly unknown[]): Record<string, number> {
+function operationCounts(
+  operations: readonly unknown[],
+): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const operation of operations) {
     const op =
@@ -304,7 +339,8 @@ function operationCounts(operations: readonly unknown[]): Record<string, number>
 
 function rejectionCounts(checked: CheckedOperations): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const { reason } of checked.rejected) counts[reason] = (counts[reason] ?? 0) + 1;
+  for (const { reason } of checked.rejected)
+    counts[reason] = (counts[reason] ?? 0) + 1;
   return counts;
 }
 
@@ -336,14 +372,28 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  * the next round. A step lost before it re-runs from the start: its model calls are made and billed again,
  * nothing was applied. Nothing is applied twice — every write is inside the one transaction.
  */
-export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps): TaskHandler {
-  const { db, modelClient, embeddings, store, sessions, knowledgeRows, knowledgeRunRows } = deps;
+export function createKnowledgeExtractHandler(
+  deps: KnowledgeExtractHandlerDeps,
+): TaskHandler {
+  const {
+    db,
+    modelClient,
+    embeddings,
+    store,
+    sessions,
+    knowledgeRows,
+    knowledgeRunRows,
+  } = deps;
   const mask = createSecretMasker([]);
 
   /** The round's model call through `ModelClient`: the starter as owner, the extraction task as task and root. */
   function callModel(
     ctx: StepContext,
-    round: { readonly ownerId: string; readonly model: string; readonly logger: Logger },
+    round: {
+      readonly ownerId: string;
+      readonly model: string;
+      readonly logger: Logger;
+    },
     call: Pick<ModelCallRequest, 'instructions' | 'messages' | 'tools'>,
   ): Promise<ModelCallResult> {
     return modelClient.call({
@@ -362,7 +412,11 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
   /** The extraction call and its one retry on an answer that cannot be parsed. At most two model calls. */
   async function extract(
     ctx: StepContext,
-    round: { readonly ownerId: string; readonly model: string; readonly logger: Logger },
+    round: {
+      readonly ownerId: string;
+      readonly model: string;
+      readonly logger: Logger;
+    },
     message: AgentTurnMessage,
   ): Promise<RoundResult> {
     let messages: AgentTurnMessage[] = [message];
@@ -388,7 +442,11 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         });
         return { kind: 'failed', reason: 'model_error' };
       }
-      const parsed = parseToolCall(result.toolCalls, RECORD_KNOWLEDGE_TOOL, parseOperations);
+      const parsed = parseToolCall(
+        result.toolCalls,
+        RECORD_KNOWLEDGE_TOOL,
+        parseOperations,
+      );
       round.logger.info('knowledge extraction answered', {
         attempt,
         modelCallId: result.modelCallId,
@@ -399,7 +457,9 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       if (parsed.ok) return { kind: 'answered', operations: parsed.value };
       messages = retryMessages(message, result, parsed.error);
     }
-    round.logger.warn('knowledge round failed: invalid answer twice', { attempts: 2 });
+    round.logger.warn('knowledge round failed: invalid answer twice', {
+      attempts: 2,
+    });
     return { kind: 'failed', reason: 'invalid_answer' };
   }
 
@@ -424,10 +484,15 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       name: mask(entity.name),
       description: mask(entity.description),
     }));
-    if (proposed.length === 0 || !graphItems.some((item) => item.type === 'entity'))
+    if (
+      proposed.length === 0 ||
+      !graphItems.some((item) => item.type === 'entity')
+    )
       return operations;
 
-    const texts = proposed.map((entity) => `${entity.name}: ${entity.description}`);
+    const texts = proposed.map(
+      (entity) => `${entity.name}: ${entity.description}`,
+    );
     const embedded = await embeddings.embed({
       texts,
       inputType: 'document',
@@ -449,10 +514,17 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     try {
       for (const [index, entity] of proposed.entries()) {
         const vector = embedded.vectors[index];
-        if (vector === undefined) throw new Error('embeddings gave fewer vectors than texts');
+        if (vector === undefined)
+          throw new Error('embeddings gave fewer vectors than texts');
         pairsByRef.set(
           entity.ref,
-          await store.query(round.recordId, vector, embedded.model, SIMILAR_ENTITY_LIMIT, 'entity'),
+          await store.query(
+            round.recordId,
+            vector,
+            embedded.model,
+            SIMILAR_ENTITY_LIMIT,
+            'entity',
+          ),
         );
       }
     } catch (error) {
@@ -482,16 +554,21 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     if (result.kind !== 'answer') {
       round.logger.warn('similar entities choice skipped', {
         result: result.kind,
-        reason: result.kind === 'not_started' ? result.verdict.reason : result.reason,
+        reason:
+          result.kind === 'not_started' ? result.verdict.reason : result.reason,
       });
       return operations;
     }
-    const parsed = parseToolCall(result.toolCalls, CHOOSE_ENTITIES_TOOL, (args) => {
-      const choice = ChooseEntitiesArgsSchema.safeParse(args);
-      return choice.success
-        ? { ok: true, value: choice.data.choices }
-        : { ok: false, error: choice.error.message };
-    });
+    const parsed = parseToolCall(
+      result.toolCalls,
+      CHOOSE_ENTITIES_TOOL,
+      (args) => {
+        const choice = ChooseEntitiesArgsSchema.safeParse(args);
+        return choice.success
+          ? { ok: true, value: choice.data.choices }
+          : { ok: false, error: choice.error.message };
+      },
+    );
     if (!parsed.ok) {
       round.logger.warn('similar entities choice dropped: invalid answer', {
         modelCallId: result.modelCallId,
@@ -520,21 +597,34 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       readonly logger: Logger;
     },
     result: RoundResult | null,
-    window: { readonly calls: ReadonlyMap<string, RoundCall>; readonly readAt: Date } | null,
+    window: {
+      readonly calls: ReadonlyMap<string, RoundCall>;
+      readonly readAt: Date;
+    } | null,
   ): Promise<Settled | 'fenced'> {
     const guarded = await ctx.guard(async (): Promise<Settled> => {
-      const run = knowledgeRunOf(await knowledgeRunRows.findRunById(round.runId));
-      if (run === undefined || run.extractTaskId !== ctx.taskId) return { kind: 'not_current' };
+      const run = knowledgeRunOf(
+        await knowledgeRunRows.findRunById(round.runId),
+      );
+      if (run === undefined || run.extractTaskId !== ctx.taskId)
+        return { kind: 'not_current' };
 
       let counts = NO_COUNTS;
       let recordDeleted = false;
       const roundAt = new Date();
       const writesGraph = result?.kind === 'answered' && window !== null;
-      if (writesGraph && (await holdKnowledgeOf(db, knowledgeRunRows, round.recordId)) === undefined) {
+      if (
+        writesGraph &&
+        (await holdKnowledgeOf(db, knowledgeRunRows, round.recordId)) ===
+          undefined
+      ) {
         recordDeleted = true;
-        round.logger.warn('knowledge graph writes dropped: deep agent deleted', {
-          reason: 'record_deleted',
-        });
+        round.logger.warn(
+          'knowledge graph writes dropped: deep agent deleted',
+          {
+            reason: 'record_deleted',
+          },
+        );
       } else if (result?.kind === 'answered' && window !== null) {
         const graph = await knowledgeRows.readGraph(round.recordId);
         const checked = checkOperations({
@@ -555,7 +645,13 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         });
         try {
           await db.savepoint(() =>
-            applyChecked(knowledgeRows, round.recordId, round.runId, roundAt, checked),
+            applyChecked(
+              knowledgeRows,
+              round.recordId,
+              round.runId,
+              roundAt,
+              checked,
+            ),
           );
           counts = {
             added: checked.apply.length,
@@ -565,9 +661,12 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         } catch (error) {
           if (!isForeignKeyViolation(error)) throw error;
           recordDeleted = true;
-          round.logger.warn('knowledge graph writes dropped: deep agent deleted', {
-            reason: 'record_deleted',
-          });
+          round.logger.warn(
+            'knowledge graph writes dropped: deep agent deleted',
+            {
+              reason: 'record_deleted',
+            },
+          );
         }
       }
 
@@ -580,8 +679,14 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
           extractTaskId: ctx.taskId,
         });
         // Only a done round moves the mark, and only forward (Invariant 2, DC-3).
-        if (window !== null && (result.kind === 'answered' || result.kind === 'empty')) {
-          await knowledgeRunRows.advanceExtractedUpTo(round.runId, window.readAt);
+        if (
+          window !== null &&
+          (result.kind === 'answered' || result.kind === 'empty')
+        ) {
+          await knowledgeRunRows.advanceExtractedUpTo(
+            round.runId,
+            window.readAt,
+          );
         }
       }
 
@@ -589,7 +694,10 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         await knowledgeRunRows.updateRun(round.runId, { needsRound: false });
         return { kind: 'continue', counts, recordDeleted };
       }
-      await knowledgeRunRows.updateRun(round.runId, { extractTaskId: null, needsRound: false });
+      await knowledgeRunRows.updateRun(round.runId, {
+        extractTaskId: null,
+        needsRound: false,
+      });
       return { kind: 'complete', counts, recordDeleted };
     });
     return guarded.outcome === 'fenced' ? 'fenced' : guarded.value;
@@ -643,11 +751,14 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
   }
 
   /** The deep agent's task, read by `readExtractionInput`, is gone: the conversation was deleted. */
-  async function inputOf(run: KnowledgeRun): Promise<ExtractionInput | undefined> {
+  async function inputOf(
+    run: KnowledgeRun,
+  ): Promise<ExtractionInput | undefined> {
     try {
       return await readExtractionInput(deps, run);
     } catch (error) {
-      if (error instanceof RuntimeError && error.code === 'TASK_NOT_FOUND') return undefined;
+      if (error instanceof RuntimeError && error.code === 'TASK_NOT_FOUND')
+        return undefined;
       throw error;
     }
   }
@@ -682,7 +793,13 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       logger.info('knowledge round without writes: conversation gone', {
         session: session !== undefined,
       });
-      return finish(ctx, { runId, recordId, model: null, logger }, null, null, startedAt);
+      return finish(
+        ctx,
+        { runId, recordId, model: null, logger },
+        null,
+        null,
+        startedAt,
+      );
     }
 
     // The deep agent's model from its session: a later change of the deep agent does not touch it (AC-08.3).
@@ -693,7 +810,8 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       ...input.counts,
       readAt: input.readAt.toISOString(),
     });
-    if (input.counts.calls === 0) return finish(ctx, round, { kind: 'empty' }, input, startedAt);
+    if (input.counts.calls === 0)
+      return finish(ctx, round, { kind: 'empty' }, input, startedAt);
 
     const settings = await knowledgeRows.readSettings();
     const graphItems = graphItemsOf(await knowledgeRows.readGraph(recordId));
@@ -727,11 +845,20 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       extracted.kind === 'answered'
         ? {
             kind: 'answered' as const,
-            operations: await chooseSimilar(ctx, round, extracted.operations, graphItems),
+            operations: await chooseSimilar(
+              ctx,
+              round,
+              extracted.operations,
+              graphItems,
+            ),
           }
         : extracted;
     return finish(ctx, round, result, input, startedAt);
   }
 
-  return { type: KNOWLEDGE_EXTRACT_TASK_TYPE, inputSchema: KnowledgeExtractInputSchema, step };
+  return {
+    type: KNOWLEDGE_EXTRACT_TASK_TYPE,
+    inputSchema: KnowledgeExtractInputSchema,
+    step,
+  };
 }

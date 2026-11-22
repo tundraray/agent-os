@@ -15,6 +15,9 @@ export const agentKnowledgeEntities = app.table(
   (t) => [
     index('agent_knowledge_entities_record_idx').on(t.recordId),
     /** Invariant 4. */
-    check('agent_knowledge_entities_confirmations_check', sql`${t.confirmations} >= 1`),
+    check(
+      'agent_knowledge_entities_confirmations_check',
+      sql`${t.confirmations} >= 1`,
+    ),
   ],
 );

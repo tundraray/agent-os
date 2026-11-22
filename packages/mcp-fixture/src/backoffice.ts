@@ -77,7 +77,9 @@ function createBackOffice(dataset: LogDataset): BackOffice {
       createdAt: first.submittedAt,
       amount: first.amount,
       currency: CURRENCY,
-      status: payments.some((payment) => payment.status === 'authorized') ? 'paid' : 'failed',
+      status: payments.some((payment) => payment.status === 'authorized')
+        ? 'paid'
+        : 'failed',
       paymentMethod: paymentMethodOf(first.traceId),
       payments,
     };
@@ -156,5 +158,7 @@ function paymentOf(drawn: PaymentOrder): BackOfficePayment {
  * log record, and with them the pinned snapshots, unchanged; no log record names the method.
  */
 function paymentMethodOf(traceId: string): PaymentMethod {
-  return PAYMENT_METHODS[Number.parseInt(traceId.slice(0, 2), 16) % PAYMENT_METHODS.length];
+  return PAYMENT_METHODS[
+    Number.parseInt(traceId.slice(0, 2), 16) % PAYMENT_METHODS.length
+  ];
 }

@@ -1,4 +1,11 @@
-import { index, integer, numeric, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  index,
+  integer,
+  numeric,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { app } from './app';
 
 /** Token ledger (KD-5): one row per model call; no FK to the task, so rows outlive the tree. */
@@ -24,5 +31,7 @@ export const runtimeModelCalls = app.table(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index('runtime_model_calls_owner_called_idx').on(t.ownerId, t.calledAt)],
+  (t) => [
+    index('runtime_model_calls_owner_called_idx').on(t.ownerId, t.calledAt),
+  ],
 );

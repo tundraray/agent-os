@@ -64,11 +64,7 @@ import {
   returnTo,
   type OAuthReturn,
 } from './support/mcp-browser';
-import {
-  BACKOFFICE_SERVER,
-  LOGS_SERVER,
-  runName,
-} from './support/mcp-servers';
+import { BACKOFFICE_SERVER, LOGS_SERVER, runName } from './support/mcp-servers';
 import {
   apiOrigin,
   apiRequest,
@@ -1011,8 +1007,12 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       // Then: no account and no grant names it; the history of its calls stays with the name as text
       expect(await ownersOn(BACKOFFICE_SERVER)).toEqual([]);
       expect(
-        (await pool.query('SELECT id FROM app.access_grants WHERE server = $1', [BACKOFFICE_SERVER]))
-          .rows,
+        (
+          await pool.query(
+            'SELECT id FROM app.access_grants WHERE server = $1',
+            [BACKOFFICE_SERVER],
+          )
+        ).rows,
       ).toEqual([]);
       const history = await pool.query<{
         server: string | null;

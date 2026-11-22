@@ -10,7 +10,8 @@ const MAX_FRAMES = 30;
 const SETTLE_FRAMES = 300;
 
 /** A fine pointer (mouse, trackpad) gets the composer focused; a coarse one must not raise the on-screen keyboard. */
-export const isFinePointer = (): boolean => window.matchMedia('(pointer: fine)').matches;
+export const isFinePointer = (): boolean =>
+  window.matchMedia('(pointer: fine)').matches;
 
 /**
  * Focuses after the next paint so the target of the new view exists.
@@ -19,7 +20,9 @@ export const isFinePointer = (): boolean => window.matchMedia('(pointer: fine)')
 export function focusShellTarget(target: FocusTarget): void {
   let settleFramesLeft = SETTLE_FRAMES;
   const search = (framesLeft: number): void => {
-    const element = document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`);
+    const element = document.querySelector<HTMLElement>(
+      `[data-shell-focus="${target}"]`,
+    );
     if (element !== null) {
       element.focus();
       requestAnimationFrame(() => watch(element));
@@ -41,10 +44,12 @@ export function focusShellTarget(target: FocusTarget): void {
       search(MAX_FRAMES);
       return;
     }
-    if (document.activeElement === element) requestAnimationFrame(() => watch(element));
+    if (document.activeElement === element)
+      requestAnimationFrame(() => watch(element));
   };
   requestAnimationFrame(() => search(MAX_FRAMES));
 }
 
 /** «Новый чат» and the cases that follow its pointer rule: the composer with a fine pointer, HD-03 otherwise. */
-export const focusAfterNewChat = (): void => focusShellTarget(isFinePointer() ? 'composer' : 'page-title');
+export const focusAfterNewChat = (): void =>
+  focusShellTarget(isFinePointer() ? 'composer' : 'page-title');

@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 
 function msUntilNextMidnight(from: Date): number {
-  const midnight = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+  const midnight = new Date(
+    from.getFullYear(),
+    from.getMonth(),
+    from.getDate() + 1,
+  );
   return midnight.getTime() - from.getTime();
 }
 
@@ -17,11 +21,15 @@ export function useNow(): Date {
       if (document.visibilityState === 'visible') setNow(new Date());
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setNow(new Date()), msUntilNextMidnight(now));
+    const timer = window.setTimeout(
+      () => setNow(new Date()),
+      msUntilNextMidnight(now),
+    );
     return () => window.clearTimeout(timer);
   }, [now]);
 

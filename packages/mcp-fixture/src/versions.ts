@@ -26,7 +26,10 @@ export interface DatasetParams {
 }
 
 /** The week of logs `v1` serves; the tracker's tickets are created inside it too. */
-export const LOG_WEEK = { start: '2026-09-14T00:00:00.000Z', end: '2026-09-21T00:00:00.000Z' } as const;
+export const LOG_WEEK = {
+  start: '2026-09-14T00:00:00.000Z',
+  end: '2026-09-21T00:00:00.000Z',
+} as const;
 
 /** The first two days, dense; records 0–119 999 keep their content whatever is appended after them. */
 const BASE_SEGMENT: Readonly<TimeSegment> = {
@@ -45,7 +48,10 @@ const HOUR_AFTER_WINDOW: Readonly<TimeSegment> = {
   end: '2026-09-21T01:00:00.000Z',
   records: 2_000,
 };
-const WEEK_SEGMENTS: readonly Readonly<TimeSegment>[] = [BASE_SEGMENT, REST_OF_WEEK];
+const WEEK_SEGMENTS: readonly Readonly<TimeSegment>[] = [
+  BASE_SEGMENT,
+  REST_OF_WEEK,
+];
 const SHARED = {
   seed: 0x20260915,
   recordsPerBlock: 8,
@@ -54,7 +60,12 @@ const SHARED = {
 } as const;
 
 export const DATASET_PARAMS: Readonly<Record<DatasetVersion, DatasetParams>> = {
-  v1: { version: 'v1', ...SHARED, providerTimeoutMs: { ...SHARED.providerTimeoutMs }, segments: copied(WEEK_SEGMENTS) },
+  v1: {
+    version: 'v1',
+    ...SHARED,
+    providerTimeoutMs: { ...SHARED.providerTimeoutMs },
+    segments: copied(WEEK_SEGMENTS),
+  },
   v2: {
     version: 'v2',
     ...SHARED,

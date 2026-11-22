@@ -2,7 +2,12 @@
 
 import { useTranslations } from 'next-intl';
 import { PasswordField } from '@/components/password-field';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { passwordResetRules } from '@/lib/admin/form-rules';
 import { AdminForm } from '../admin-form';
@@ -22,7 +27,12 @@ type ResetPasswordDialogProps = {
  * UXRD AD-04 «Сбросить пароль» of a local account. The form mounts with the dialog's content, so the new
  * password lives only in the open dialog's state: a reopened dialog starts empty (Invariant 3).
  */
-export function ResetPasswordDialog({ open, onOpenChange, user, track }: ResetPasswordDialogProps) {
+export function ResetPasswordDialog({
+  open,
+  onOpenChange,
+  user,
+  track,
+}: ResetPasswordDialogProps) {
   const t = useTranslations('admin.users.reset');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,7 +44,9 @@ export function ResetPasswordDialog({ open, onOpenChange, user, track }: ResetPa
           variant="dialog"
           initialValues={{ password: '' }}
           validate={passwordResetRules}
-          onSubmit={({ password }) => track(() => adminApi.users.resetPassword(user.id, password))}
+          onSubmit={({ password }) =>
+            track(() => adminApi.users.resetPassword(user.id, password))
+          }
           submitLabel={t('submit')}
           savedText={t('done')}
           onSaved={() => onOpenChange(false)}

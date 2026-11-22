@@ -7,7 +7,10 @@ import type { Locale } from './pick-locale';
  * built-in one still named as it was seeded shows its name in `locale`; a name an administrator gave shows
  * as it is.
  */
-export function builtinName(named: { builtinKey: string | null; name: string }, locale: Locale): string {
+export function builtinName(
+  named: { builtinKey: string | null; name: string },
+  locale: Locale,
+): string {
   return builtinNameIn(named, locale);
 }
 
@@ -24,7 +27,10 @@ type ToolLabels = { title: string; args: Readonly<Record<string, string>> };
  * does not hold, which then reads by its name. `tools` is the page's catalogue (`useMessages().tools`). Only
  * a call with `server === null` is a built-in tool's.
  */
-export function builtinToolLabels(tools: Messages['tools'], tool: string): ToolLabels | null {
+export function builtinToolLabels(
+  tools: Messages['tools'],
+  tool: string,
+): ToolLabels | null {
   return hasMessage(tools, tool) ? tools[tool] : null;
 }
 
@@ -46,5 +52,8 @@ export function toolCallLabels(
 ): { title: string; args: Readonly<Record<string, string>> | undefined } {
   const builtin = server === null ? builtinToolLabels(tools, tool) : null;
   const mcpTitle = server === null ? null : (toolTitle ?? null);
-  return { title: builtin?.title ?? mcpTitle ?? tool, args: builtin?.args ?? argLabels };
+  return {
+    title: builtin?.title ?? mcpTitle ?? tool,
+    args: builtin?.args ?? argLabels,
+  };
 }

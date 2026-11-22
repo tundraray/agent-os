@@ -26,13 +26,22 @@ export const TaskStatusSchema = z.enum([
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 /** The statuses that end a task. */
-export const TaskEndStatusSchema = TaskStatusSchema.extract(['completed', 'failed', 'stopped']);
+export const TaskEndStatusSchema = TaskStatusSchema.extract([
+  'completed',
+  'failed',
+  'stopped',
+]);
 
 /**
  * Why a `waiting` task waits; null in every other status. `tasks`: the step opened a tracker, and
  * only its `tasks_finished` wakes the task (deep-agents/design-task.md, KD-3).
  */
-export const WaitReasonSchema = z.enum(['messages', 'decision', 'interrupted', 'tasks']);
+export const WaitReasonSchema = z.enum([
+  'messages',
+  'decision',
+  'interrupted',
+  'tasks',
+]);
 export type WaitReason = z.infer<typeof WaitReasonSchema>;
 
 /**

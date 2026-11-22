@@ -43,16 +43,18 @@ describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   //   | closer                                   | focus before close | focus after close            |
   //   | button "Закрыть схему" (WS-03) | on «×» (in panel)  | button "Схема" (HD-04) |
   //   | button "Схема" (HD-04)         | on HD-04           | button "Схема" (HD-04) |
-  it.each([
-    { closer: 'Закрыть схему' },
-    { closer: 'Схема' },
-  ])(
+  it.each([{ closer: 'Закрыть схему' }, { closer: 'Схема' }])(
     'AC-11.3 + AC-11.1: the workspace is hidden on load; closing it by "$closer" hides it and leaves focus on the header button',
     async ({ closer }) => {
       // Arrange
-      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+      server.use(
+        http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+      );
       const user = userEvent.setup();
-      renderWithRuntime({ pathname: '/', media: { '(min-width: 1024px)': true, '(min-width: 768px)': true } });
+      renderWithRuntime({
+        pathname: '/',
+        media: { '(min-width: 1024px)': true, '(min-width: 768px)': true },
+      });
 
       // Act 1: load
       await screen.findByText('Пока нет бесед');

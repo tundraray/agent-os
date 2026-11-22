@@ -35,8 +35,14 @@ export type DeleteThreadDialogProps = {
  * Whether the thread has agents, read each time the dialog opens. Until the answer arrives, and after a
  * failed read, the dialog shows no MC-26 paragraph.
  */
-function useThreadHasAgents(threadId: string | undefined, open: boolean): boolean {
-  const [answer, setAnswer] = useState<{ threadId: string; hasAgents: boolean } | null>(null);
+function useThreadHasAgents(
+  threadId: string | undefined,
+  open: boolean,
+): boolean {
+  const [answer, setAnswer] = useState<{
+    threadId: string;
+    hasAgents: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!open || threadId === undefined) return;
@@ -46,7 +52,10 @@ function useThreadHasAgents(threadId: string | undefined, open: boolean): boolea
         if (current) setAnswer({ threadId, hasAgents: agents.length > 0 });
       },
       (error: unknown) => {
-        logger.warn('thread agents read failed', { ...describeApiError(error), threadId });
+        logger.warn('thread agents read failed', {
+          ...describeApiError(error),
+          threadId,
+        });
       },
     );
     return () => {
@@ -81,7 +90,10 @@ export function DeleteThreadDialog({
       >
         <AlertDialogHeader>
           <AlertDialogTitle>{t('title')}</AlertDialogTitle>
-          <AlertDialogDescription render={<div />} className="flex flex-col gap-2 wrap-break-word">
+          <AlertDialogDescription
+            render={<div />}
+            className="flex flex-col gap-2 wrap-break-word"
+          >
             <p>{t('description', { title: threadTitle })}</p>
             {/* MC-26 */}
             {hasAgents && <p>{t('agents')}</p>}

@@ -1,5 +1,9 @@
 import { sql } from 'drizzle-orm';
-import { identityRoleMembers, identityRoles, identitySettings } from '../schema';
+import {
+  identityRoleMembers,
+  identityRoles,
+  identitySettings,
+} from '../schema';
 
 /** A column written with its table name: drizzle drops it in a query over one table, and the subquery below needs it. */
 const col = (table: string, column: string) =>

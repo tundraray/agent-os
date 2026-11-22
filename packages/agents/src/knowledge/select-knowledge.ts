@@ -14,18 +14,25 @@ import type { KnowledgeCloseness, KnowledgeVectorKey } from './vector-store';
 /** The share of the limit the first pass gives to the records closest to the question (KD-6, FR-06). */
 const KNOWLEDGE_BY_MEANING_SHARE = 1 / 2;
 
-type WithoutComputed<Item> = Item extends unknown ? Omit<Item, 'state' | 'placement'> : never;
+type WithoutComputed<Item> = Item extends unknown
+  ? Omit<Item, 'state' | 'placement'>
+  : never;
 
 /**
  * A graph record as read from the tables: the view's fields without the computed `state` and
  * `placement`, and `outdated` — the model's mark. `date` is ISO, as in the view.
  */
-export type GraphItem = WithoutComputed<KnowledgeItem> & { readonly outdated: boolean };
+export type GraphItem = WithoutComputed<KnowledgeItem> & {
+  readonly outdated: boolean;
+};
 
 /** Whether the deep agent still has the tool: in the registry and on the team's servers (`*` — any), KD-5. */
 export type ToolAlive = (server: string, tool: string) => boolean;
 
-export type SelectionSettings = Pick<KnowledgeSettings, 'limitTokens' | 'lessonsEnabled'>;
+export type SelectionSettings = Pick<
+  KnowledgeSettings,
+  'limitTokens' | 'lessonsEnabled'
+>;
 
 export interface SelectKnowledgeInput {
   readonly items: readonly GraphItem[];
@@ -61,9 +68,17 @@ interface Sized {
  * and stops at the first record that does not fit; a record without a vector of the current model has
  * no pair, so only this pass can take it. No pairs — the whole limit in the common order.
  */
-export function selectKnowledge({ items, settings, toolAlive, closeness }: SelectKnowledgeInput): KnowledgeChoice {
+export function selectKnowledge({
+  items,
+  settings,
+  toolAlive,
+  closeness,
+}: SelectKnowledgeInput): KnowledgeChoice {
   const active = activeInCommonOrder(items, settings, toolAlive);
-  const byMeaning = takeWhileFits(closestFirst(active, closeness), halfOf(settings.limitTokens));
+  const byMeaning = takeWhileFits(
+    closestFirst(active, closeness),
+    halfOf(settings.limitTokens),
+  );
   const taken = new Set(byMeaning);
   const byOrder = takeWhileFits(
     active.filter((record) => !taken.has(record)),
@@ -71,7 +86,9 @@ export function selectKnowledge({ items, settings, toolAlive, closeness }: Selec
   );
   for (const record of byOrder) taken.add(record);
   return {
-    chosen: active.filter((record) => taken.has(record)).map((record) => record.item),
+    chosen: active
+      .filter((record) => taken.has(record))
+      .map((record) => record.item),
     byMeaning: byMeaning.length,
     byOrder: byOrder.length,
     left: active.length - taken.size,
@@ -83,7 +100,10 @@ export interface EmbeddingState {
   /** `Agents.embeddings.model()`: the current model, `null` on `model_not_configured`. */
   readonly model: string | null;
   /** The deep agent's last embedding attempt, when it failed: its reason and model. */
-  readonly lastFailure: { readonly reason: EmbeddingFailureReason; readonly model: string } | null;
+  readonly lastFailure: {
+    readonly reason: EmbeddingFailureReason;
+    readonly model: string;
+  } | null;
   /** `list` of the deep agent's collection. */
   readonly vectors: readonly Pick<KnowledgeVectorKey, 'key' | 'model'>[];
 }
@@ -118,7 +138,9 @@ export function knowledgeViewParts({
   embedding,
 }: KnowledgeViewPartsInput): KnowledgeViewParts {
   const all = inCommonOrder(items.map(sized));
-  const states = new Map(all.map((record) => [record, stateOf(record.item, settings, toolAlive)]));
+  const states = new Map(
+    all.map((record) => [record, stateOf(record.item, settings, toolAlive)]),
+  );
   const active = all.filter((record) => states.get(record) === 'active');
   const selection = selectionOf(embedding, active);
   const total = tokensOf(active);
@@ -126,7 +148,12 @@ export function knowledgeViewParts({
   const byMeaningOn = selection.state !== 'off';
   const always = new Set(
     selfLearning && !allFit
-      ? takeWhileFits(active, byMeaningOn ? settings.limitTokens - halfOf(settings.limitTokens) : settings.limitTokens)
+      ? takeWhileFits(
+          active,
+          byMeaningOn
+            ? settings.limitTokens - halfOf(settings.limitTokens)
+            : settings.limitTokens,
+        )
       : [],
   );
   const placementOf = (record: Sized): KnowledgePlacement => {
@@ -135,7 +162,8 @@ export function knowledgeViewParts({
     return byMeaningOn ? 'by_topic' : 'does_not_fit';
   };
   const alwaysCount = allFit ? active.length : always.size;
-  const view = (record: Sized): KnowledgeItem => viewItem(record.item, states.get(record) ?? 'active', placementOf(record));
+  const view = (record: Sized): KnowledgeItem =>
+    viewItem(record.item, states.get(record) ?? 'active', placementOf(record));
   return {
     selection,
     counts: {
@@ -144,7 +172,8 @@ export function knowledgeViewParts({
       beyond: active.length - alwaysCount,
       outdated: all.filter(
         (record) =>
-          states.get(record) === 'outdated' && (settings.lessonsEnabled || record.item.kind !== 'lesson'),
+          states.get(record) === 'outdated' &&
+          (settings.lessonsEnabled || record.item.kind !== 'lesson'),
       ).length,
       percent: Math.ceil((total * 100) / settings.limitTokens),
     },
@@ -167,14 +196,20 @@ const PROVIDER_FAILURES: ReadonlySet<EmbeddingFailureReason> = new Set([
 ]);
 
 /** The first state that applies, top to bottom (Contract `KnowledgeSelection`). */
-function selectionOf(embedding: EmbeddingState, active: readonly Sized[]): KnowledgeSelection {
-  if (embedding.model === null) return { state: 'off', reason: 'model_not_selected', model: null };
+function selectionOf(
+  embedding: EmbeddingState,
+  active: readonly Sized[],
+): KnowledgeSelection {
+  if (embedding.model === null)
+    return { state: 'off', reason: 'model_not_selected', model: null };
   const failure = embedding.lastFailure;
   if (failure !== null && PROVIDER_FAILURES.has(failure.reason)) {
     return { state: 'off', reason: 'provider_failed', model: failure.model };
   }
   const withVector = new Set(
-    embedding.vectors.filter((vector) => vector.model === embedding.model).map((vector) => vector.key),
+    embedding.vectors
+      .filter((vector) => vector.model === embedding.model)
+      .map((vector) => vector.key),
   );
   const pending = active.filter((record) => !withVector.has(record.key)).length;
   return pending > 0 ? { state: 'preparing', pending } : { state: 'on' };
@@ -184,9 +219,18 @@ function selectionOf(embedding: EmbeddingState, active: readonly Sized[]): Knowl
  * The record's state (KD-5, FR-15, FR-17): `outdated` when the model marked it or its tool is gone —
  * a returned tool makes it `active` again (DC-12) — before `lessons_off` for a lesson while lessons are off.
  */
-function stateOf(item: GraphItem, settings: SelectionSettings, toolAlive: ToolAlive): KnowledgeItemState {
+function stateOf(
+  item: GraphItem,
+  settings: SelectionSettings,
+  toolAlive: ToolAlive,
+): KnowledgeItemState {
   if (item.outdated) return 'outdated';
-  if (item.type === 'relation' && item.kind !== 'fact' && !toolAlive(item.server, item.tool)) return 'outdated';
+  if (
+    item.type === 'relation' &&
+    item.kind !== 'fact' &&
+    !toolAlive(item.server, item.tool)
+  )
+    return 'outdated';
   if (item.kind === 'lesson' && !settings.lessonsEnabled) return 'lessons_off';
   return 'active';
 }
@@ -196,11 +240,19 @@ function activeInCommonOrder(
   settings: SelectionSettings,
   toolAlive: ToolAlive,
 ): Sized[] {
-  return inCommonOrder(items.filter((item) => stateOf(item, settings, toolAlive) === 'active').map(sized));
+  return inCommonOrder(
+    items
+      .filter((item) => stateOf(item, settings, toolAlive) === 'active')
+      .map(sized),
+  );
 }
 
 function sized(item: GraphItem): Sized {
-  return { item, key: knowledgeKey(item), tokens: tokensOfBytes(utf8Bytes(knowledgeLine(item))) };
+  return {
+    item,
+    key: knowledgeKey(item),
+    tokens: tokensOfBytes(utf8Bytes(knowledgeLine(item))),
+  };
 }
 
 /** Terms «Общий порядок»: more confirmations first, among equals newer first, then by id. */
@@ -214,15 +266,22 @@ function inCommonOrder(records: readonly Sized[]): Sized[] {
 }
 
 /** The records that have a pair, closest first, among equals by id; a key without a record is dropped (Invariant 10). */
-function closestFirst(records: readonly Sized[], closeness: readonly KnowledgeCloseness[]): Sized[] {
+function closestFirst(
+  records: readonly Sized[],
+  closeness: readonly KnowledgeCloseness[],
+): Sized[] {
   const byKey = new Map(records.map((record) => [record.key, record]));
   const scored = new Map<Sized, number>();
   for (const pair of closeness) {
     const record = byKey.get(pair.key);
-    if (record !== undefined && !scored.has(record)) scored.set(record, pair.closeness);
+    if (record !== undefined && !scored.has(record))
+      scored.set(record, pair.closeness);
   }
   return [...scored]
-    .sort(([a, aCloseness], [b, bCloseness]) => bCloseness - aCloseness || byId(a, b))
+    .sort(
+      ([a, aCloseness], [b, bCloseness]) =>
+        bCloseness - aCloseness || byId(a, b),
+    )
     .map(([record]) => record);
 }
 
@@ -255,7 +314,11 @@ function tokensOf(records: readonly Sized[]): number {
   return records.reduce((sum, record) => sum + record.tokens, 0);
 }
 
-function viewItem(item: GraphItem, state: KnowledgeItemState, placement: KnowledgePlacement): KnowledgeItem {
+function viewItem(
+  item: GraphItem,
+  state: KnowledgeItemState,
+  placement: KnowledgePlacement,
+): KnowledgeItem {
   const { outdated: _outdated, ...fields } = item;
   return { ...fields, state, placement };
 }

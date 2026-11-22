@@ -31,10 +31,22 @@ describe('parseRuntimeConfig', () => {
       },
       DEFAULTS,
     ],
-    ['RUNTIME_WORKERS=maybe is rejected', { RUNTIME_WORKERS: 'maybe' }, /RUNTIME_WORKERS/],
-    ['RUNTIME_CONCURRENCY=0 is rejected', { RUNTIME_CONCURRENCY: '0' }, /RUNTIME_CONCURRENCY/],
+    [
+      'RUNTIME_WORKERS=maybe is rejected',
+      { RUNTIME_WORKERS: 'maybe' },
+      /RUNTIME_WORKERS/,
+    ],
+    [
+      'RUNTIME_CONCURRENCY=0 is rejected',
+      { RUNTIME_CONCURRENCY: '0' },
+      /RUNTIME_CONCURRENCY/,
+    ],
     // The step limit is an integer of at least 1000 ms.
-    ['RUNTIME_STEP_MS=999 is rejected', { RUNTIME_STEP_MS: '999' }, /RUNTIME_STEP_MS/],
+    [
+      'RUNTIME_STEP_MS=999 is rejected',
+      { RUNTIME_STEP_MS: '999' },
+      /RUNTIME_STEP_MS/,
+    ],
     [
       'INBOX_PAYLOAD_MAX_BYTES=0 is rejected',
       { INBOX_PAYLOAD_MAX_BYTES: '0' },

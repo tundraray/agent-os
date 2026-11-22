@@ -10,6 +10,10 @@ export interface KnowledgeRun extends Omit<OwnedKnowledgeRunRow, 'servers'> {
 const ServersSchema = z.array(z.string());
 
 /** A run row read back as a run that learns; `undefined` stays `undefined`. */
-export function knowledgeRunOf(row: OwnedKnowledgeRunRow | undefined): KnowledgeRun | undefined {
-  return row === undefined ? undefined : { ...row, servers: ServersSchema.parse(row.servers) };
+export function knowledgeRunOf(
+  row: OwnedKnowledgeRunRow | undefined,
+): KnowledgeRun | undefined {
+  return row === undefined
+    ? undefined
+    : { ...row, servers: ServersSchema.parse(row.servers) };
 }

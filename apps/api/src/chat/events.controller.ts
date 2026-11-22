@@ -43,7 +43,9 @@ export class EventsController {
       this.logger.info('live stream connected', fields);
       return this.hub.register(fields.ownerId, parseWatch(query.watch));
     }).pipe(
-      map((event, index) => (index === 0 ? { ...event, retry: RETRY_MS } : event)),
+      map((event, index) =>
+        index === 0 ? { ...event, retry: RETRY_MS } : event,
+      ),
       finalize(() => this.logger.info('live stream disconnected', fields)),
     );
   }

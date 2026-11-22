@@ -42,8 +42,14 @@ export const agentKnowledgeRelations = app.table(
       foreignColumns: [agentKnowledgeEntities.id],
     }).onDelete('cascade'),
     /** Invariant 4. */
-    check('agent_knowledge_relations_confirmations_check', sql`${t.confirmations} >= 1`),
-    check('agent_knowledge_relations_kind_check', isOneOf(t.kind, KnowledgeItemKindSchema.options)),
+    check(
+      'agent_knowledge_relations_confirmations_check',
+      sql`${t.confirmations} >= 1`,
+    ),
+    check(
+      'agent_knowledge_relations_kind_check',
+      isOneOf(t.kind, KnowledgeItemKindSchema.options),
+    ),
     check(
       'agent_knowledge_relations_shape_check',
       sql`(${t.kind} = ${literal(KnowledgeItemKindSchema.enum.fact)}

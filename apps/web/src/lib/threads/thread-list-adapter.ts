@@ -1,14 +1,16 @@
-import type { RemoteThreadListAdapter } from "@assistant-ui/react";
-import type { ThreadSummary } from "@agent-os/contracts";
-import { logger } from "@/lib/logger";
-import type { ThreadsApiClient } from "./threads-api-client";
-import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import type { ShellStatusStore } from "./shell-status-store";
-import { createTitlePollStream } from "./title-poller";
+import type { RemoteThreadListAdapter } from '@assistant-ui/react';
+import type { ThreadSummary } from '@agent-os/contracts';
+import { logger } from '@/lib/logger';
+import type { ThreadsApiClient } from './threads-api-client';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import type { ShellStatusStore } from './shell-status-store';
+import { createTitlePollStream } from './title-poller';
 
 // @assistant-ui/react re-exports the adapter type only; the metadata type is derived from it
 // (@assistant-ui/core is a transitive dependency and is not imported directly).
-type RemoteThreadMetadata = Awaited<ReturnType<RemoteThreadListAdapter["fetch"]>>;
+type RemoteThreadMetadata = Awaited<
+  ReturnType<RemoteThreadListAdapter['fetch']>
+>;
 
 export type OperationNotifier = {
   renameFailed: () => void;
@@ -25,7 +27,7 @@ export type ThreadListAdapterDeps = {
 };
 
 const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
-  status: "regular",
+  status: 'regular',
   remoteId: thread.id,
   title: thread.title ?? undefined,
   lastMessageAt: new Date(thread.updatedAt),
@@ -59,7 +61,7 @@ export function createThreadListAdapter({
           nextCursor: page.nextCursor ?? undefined,
         };
       } catch (error) {
-        logger.error("[web-shell] thread list load failed", {
+        logger.error('[web-shell] thread list load failed', {
           nextPage: isNextPage,
           ...describeApiError(error),
         });
@@ -71,7 +73,7 @@ export function createThreadListAdapter({
       const thread = await api.createThread();
       // A thread created in this tab has no stored history to load: mark it ready so the
       // main view never treats it as a route thread still waiting for history.
-      status.getState().setHistory(thread.id, "ready");
+      status.getState().setHistory(thread.id, 'ready');
       return { remoteId: thread.id };
     },
     async fetch(threadId) {
@@ -81,7 +83,7 @@ export function createThreadListAdapter({
       try {
         await api.renameThread({ threadId: remoteId, title: newTitle });
       } catch (error) {
-        logger.error("[web-shell] thread rename failed", {
+        logger.error('[web-shell] thread rename failed', {
           remoteId,
           ...describeApiError(error),
         });
@@ -95,12 +97,15 @@ export function createThreadListAdapter({
         await api.deleteThread(remoteId);
       } catch (error) {
         // 404: the thread is already gone (AC-16.3) — the user's intent is fulfilled.
-        if (!(isApiRequestError(error) && error.kind === "not_found")) {
+        if (!(isApiRequestError(error) && error.kind === 'not_found')) {
           if (cleanup) {
             // The row stays in the list; the employee can delete it by hand.
-            logger.warn("[web-shell] empty thread cleanup failed", { remoteId, ...describeApiError(error) });
+            logger.warn('[web-shell] empty thread cleanup failed', {
+              remoteId,
+              ...describeApiError(error),
+            });
           } else {
-            logger.error("[web-shell] thread delete failed", {
+            logger.error('[web-shell] thread delete failed', {
               remoteId,
               ...describeApiError(error),
             });
@@ -111,14 +116,22 @@ export function createThreadListAdapter({
       }
       feeds.forget(remoteId);
       status.getState().forgetThread(remoteId);
-      if (cleanup) logger.info("[web-shell] empty thread cleanup done", { remoteId, outcome: "deleted" });
+      if (cleanup)
+        logger.info('[web-shell] empty thread cleanup done', {
+          remoteId,
+          outcome: 'deleted',
+        });
       else notify.deleted();
     },
-    archive: () => Promise.reject(new Error("Archive is not supported")),
+    archive: () => Promise.reject(new Error('Archive is not supported')),
     // The library asks once, right after `initialize()` and before any answer, which the poll closes at
     // once; the conversation's runtime asks again after the first model answer (spike S-1, c).
     async generateTitle(remoteId, messages) {
-      return createTitlePollStream({ remoteId, messages, deps: { api, status } });
+      return createTitlePollStream({
+        remoteId,
+        messages,
+        deps: { api, status },
+      });
     },
   };
 }

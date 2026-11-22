@@ -37,7 +37,8 @@ import { z } from 'zod';
  */
 
 const iso = (date: Date): string => date.toISOString();
-const isoOrNull = (date: Date | null): string | null => (date === null ? null : iso(date));
+const isoOrNull = (date: Date | null): string | null =>
+  date === null ? null : iso(date);
 
 /**
  * The record a run started from, field by field: an origin read from a snapshot may carry more than
@@ -49,7 +50,10 @@ function toRunOrigin(origin: RunOrigin): RunOrigin {
     kind: origin.kind,
     version: origin.version,
     name: origin.name,
-    author: origin.author === null ? null : { id: origin.author.id, name: origin.author.name },
+    author:
+      origin.author === null
+        ? null
+        : { id: origin.author.id, name: origin.author.name },
     builtinKey: origin.builtinKey,
     subagent: origin.subagent,
   };
@@ -79,7 +83,10 @@ export function toAgentView(view: AgentsAgentView): AgentView {
  * The subtree under `parentId` (that agent itself not included): its children with their subtrees,
  * each level in the order of `agents`, which the agents' `list` returns in creation order.
  */
-export function toAgentTree(agents: readonly AgentsAgentView[], parentId: string): AgentNode[] {
+export function toAgentTree(
+  agents: readonly AgentsAgentView[],
+  parentId: string,
+): AgentNode[] {
   const byParent = new Map<string, AgentView[]>();
   for (const view of agents.map(toAgentView)) {
     if (view.parentId === null) continue;
@@ -88,7 +95,10 @@ export function toAgentTree(agents: readonly AgentsAgentView[], parentId: string
     byParent.set(view.parentId, siblings);
   }
   const nodesOf = (id: string): AgentNode[] =>
-    (byParent.get(id) ?? []).map((view) => ({ ...view, children: nodesOf(view.agentId) }));
+    (byParent.get(id) ?? []).map((view) => ({
+      ...view,
+      children: nodesOf(view.agentId),
+    }));
   return nodesOf(parentId);
 }
 
@@ -115,7 +125,9 @@ export function toHistoryEntry(entry: AgentHistoryEntry): HistoryEntry {
 }
 
 /** The next `afterSeq` of a history page: the last seq of a full page, `null` when everything is read. */
-export const nextAfterSeqOf = (entries: readonly AgentHistoryEntry[]): number | null =>
+export const nextAfterSeqOf = (
+  entries: readonly AgentHistoryEntry[],
+): number | null =>
   entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null;
 
 /**
@@ -126,7 +138,8 @@ export function toConfirmation(
   confirmation: AgentConfirmation,
   views: readonly Pick<AgentsAgentView, 'agentId' | 'origin'>[],
 ): Confirmation {
-  const origin = views.find((view) => view.agentId === confirmation.agentId)?.origin ?? null;
+  const origin =
+    views.find((view) => view.agentId === confirmation.agentId)?.origin ?? null;
   return {
     decisionId: confirmation.decisionId,
     agentId: confirmation.agentId,
@@ -141,11 +154,18 @@ export function toConfirmation(
     resolution:
       confirmation.resolution === null
         ? null
-        : { approve: confirmation.resolution.approve, args: confirmation.resolution.args },
+        : {
+            approve: confirmation.resolution.approve,
+            args: confirmation.resolution.args,
+          },
     createdAt: iso(confirmation.createdAt),
     resolvedAt: isoOrNull(confirmation.resolvedAt),
-    ...(confirmation.toolTitle === undefined ? {} : { toolTitle: confirmation.toolTitle }),
-    ...(confirmation.argLabels === undefined ? {} : { argLabels: confirmation.argLabels }),
+    ...(confirmation.toolTitle === undefined
+      ? {}
+      : { toolTitle: confirmation.toolTitle }),
+    ...(confirmation.argLabels === undefined
+      ? {}
+      : { argLabels: confirmation.argLabels }),
   };
 }
 
@@ -155,7 +175,11 @@ export function toConfirmation(
 export function toDeepAgentRunView(run: DeepAgentRun): DeepAgentRunView {
   return {
     origin: toRunOrigin(run.origin),
-    brief: { question: run.brief.question, boundaries: run.brief.boundaries, result: run.brief.result },
+    brief: {
+      question: run.brief.question,
+      boundaries: run.brief.boundaries,
+      result: run.brief.result,
+    },
     deepAgent: toAgentView(run.deepAgent),
     team: run.team.map((member) => ({
       name: member.name,
@@ -163,7 +187,10 @@ export function toDeepAgentRunView(run: DeepAgentRun): DeepAgentRunView {
       final: member.final,
     })),
     steps: run.steps.map(toAgentView),
-    limitRefusals: run.limitRefusals.map(({ subagent, at }) => ({ subagent, at: iso(at) })),
+    limitRefusals: run.limitRefusals.map(({ subagent, at }) => ({
+      subagent,
+      at: iso(at),
+    })),
   };
 }
 
@@ -189,12 +216,16 @@ type ToolResultEntry = Extract<HistoryEntry, { kind: 'tool_result' }>;
 function focusTargetOf(
   result: ToolResultEntry,
   confirmations: readonly Confirmation[],
-): { readonly recordId: string; readonly action: RecordFocusAction } | undefined {
+):
+  | { readonly recordId: string; readonly action: RecordFocusAction }
+  | undefined {
   const { tool, args: callArgs } = result.content;
   const byId = RECORD_ID_ACTIONS[tool];
   if (byId !== undefined) {
     const args = RecordIdArgsSchema.safeParse(callArgs);
-    return args.success ? { recordId: args.data.recordId, action: byId } : undefined;
+    return args.success
+      ? { recordId: args.data.recordId, action: byId }
+      : undefined;
   }
   if (tool === CREATE_RECORD_TOOL) {
     const card = confirmations.findLast(
@@ -206,14 +237,20 @@ function focusTargetOf(
         confirmation.resolvedAt <= result.createdAt,
     );
     const content = RecordIdArgsSchema.safeParse(card?.content);
-    return content.success ? { recordId: content.data.recordId, action: 'created' } : undefined;
+    return content.success
+      ? { recordId: content.data.recordId, action: 'created' }
+      : undefined;
   }
   const startsDeepAgent = confirmations.some(
-    (confirmation) => confirmation.kind === AGENTS_BRIEF_CONFIRMATION && confirmation.tool === tool,
+    (confirmation) =>
+      confirmation.kind === AGENTS_BRIEF_CONFIRMATION &&
+      confirmation.tool === tool,
   );
   if (!startsDeepAgent) return undefined;
   const args = DeepAgentArgsSchema.safeParse(callArgs);
-  return args.success ? { recordId: args.data.deepAgent, action: 'started' } : undefined;
+  return args.success
+    ? { recordId: args.data.deepAgent, action: 'started' }
+    : undefined;
 }
 
 /**
@@ -227,7 +264,8 @@ export function focusOf(
   confirmations: readonly Confirmation[],
 ): RecordFocus | null {
   for (const entry of [...entries].reverse()) {
-    if (entry.kind !== 'tool_result' || entry.content.outcome !== 'success') continue;
+    if (entry.kind !== 'tool_result' || entry.content.outcome !== 'success')
+      continue;
     const target = focusTargetOf(entry, confirmations);
     if (target !== undefined)
       return { ...target, at: entry.content.finishedAt ?? entry.createdAt };
@@ -242,8 +280,11 @@ const ChildFinishedPayloadSchema = z.object({
   status: z.enum(['completed', 'failed', 'stopped']),
 });
 
-const { user_message: userMessage, agent_message: agentMessage, interrupt } =
-  AgentMessageKindSchema.enum;
+const {
+  user_message: userMessage,
+  agent_message: agentMessage,
+  interrupt,
+} = AgentMessageKindSchema.enum;
 
 /**
  * Undelivered messages of an agent in queue order: the employee's message, the parent's message, and
@@ -255,12 +296,17 @@ export function toPending(
   messages: readonly StepMessage[],
   views: readonly Pick<AgentsAgentView, 'agentId' | 'description'>[],
 ): PendingMessage[] {
-  const descriptions = new Map(views.map((view) => [view.agentId, view.description]));
+  const descriptions = new Map(
+    views.map((view) => [view.agentId, view.description]),
+  );
   return messages
     .filter((message) => message.kind !== interrupt)
     .sort((left, right) => left.seq - right.seq)
     .map((message): PendingMessage => {
-      const base = { messageId: message.messageId, createdAt: iso(message.createdAt) };
+      const base = {
+        messageId: message.messageId,
+        createdAt: iso(message.createdAt),
+      };
       switch (message.kind) {
         case userMessage:
         case agentMessage:
@@ -280,7 +326,9 @@ export function toPending(
           };
         }
         default:
-          throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
+          throw new Error(
+            `Unknown message kind "${message.kind}" in the queue of an agent`,
+          );
       }
     });
 }

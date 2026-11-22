@@ -8,10 +8,13 @@ import { TestIntlProvider } from './intl';
 import { createTestLiveSource, type TestLiveSource } from './live-source';
 import { setTestMedia, type TestMedia } from './setup';
 
-type RouterMethod = 'back' | 'forward' | 'refresh' | 'push' | 'replace' | 'prefetch';
+type RouterMethod =
+  'back' | 'forward' | 'refresh' | 'push' | 'replace' | 'prefetch';
 
 /** `useRouter()` stand-in: every navigation method is a spy; nothing navigates. */
-export type RouterSpy = { [Method in RouterMethod]: Mock<AppRouterInstance[Method]> } & Pick<AppRouterInstance, 'bfcacheId'>;
+export type RouterSpy = {
+  [Method in RouterMethod]: Mock<AppRouterInstance[Method]>;
+} & Pick<AppRouterInstance, 'bfcacheId'>;
 
 const createRouterSpy = (): RouterSpy => ({
   back: vi.fn<AppRouterInstance['back']>(),
@@ -26,7 +29,10 @@ const createRouterSpy = (): RouterSpy => ({
 /** The emulated Next router: the pathname is set by the test, router calls are only recorded. */
 const navigation = vi.hoisted(() => {
   const listeners = new Set<() => void>();
-  const state: { pathname: string; router: RouterSpy | undefined } = { pathname: '/', router: undefined };
+  const state: { pathname: string; router: RouterSpy | undefined } = {
+    pathname: '/',
+    router: undefined,
+  };
   return {
     state,
     getPathname: (): string => state.pathname,
@@ -49,10 +55,16 @@ vi.mock('next/navigation', async (importOriginal) => {
   return {
     ...actual,
     usePathname: (): string =>
-      useSyncExternalStore(navigation.subscribe, navigation.getPathname, navigation.getPathname),
+      useSyncExternalStore(
+        navigation.subscribe,
+        navigation.getPathname,
+        navigation.getPathname,
+      ),
     useRouter: (): AppRouterInstance => {
       if (navigation.state.router === undefined) {
-        throw new Error('next/navigation is mocked for renderWithRuntime: call renderWithRuntime() first');
+        throw new Error(
+          'next/navigation is mocked for renderWithRuntime: call renderWithRuntime() first',
+        );
       }
       return navigation.state.router;
     },
@@ -112,13 +124,18 @@ export function renderWithRuntime({
 
   // In Vitest `next/link` is the pages-router variant, which ignores a click (and `onNavigate`) without a
   // RouterContext; the app-dir link production uses calls both. The spies stand in for that router too.
-  const pagesRouter = { ...router, prefetch: () => Promise.resolve() } as unknown as NonNullable<
-    React.ContextType<typeof RouterContext>
-  >;
+  const pagesRouter = {
+    ...router,
+    prefetch: () => Promise.resolve(),
+  } as unknown as NonNullable<React.ContextType<typeof RouterContext>>;
   const result = render(
     <RouterContext.Provider value={pagesRouter}>
       <TestIntlProvider>
-        <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open} location={{ assign }}>
+        <ChatShell
+          defaultSidebarOpen={defaultSidebarOpen}
+          openEventSource={liveSource.open}
+          location={{ assign }}
+        >
           {null}
         </ChatShell>
         <Toaster />

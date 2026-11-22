@@ -199,7 +199,9 @@ export class OidcSignIn {
   async finish(callback: ReturnFromProvider): Promise<FinishedSignIn> {
     const state = callback.query.get('state');
     const loginRequest =
-      state === null ? undefined : await this.providers.consumeLoginRequest(state);
+      state === null
+        ? undefined
+        : await this.providers.consumeLoginRequest(state);
     const refuse = (
       reason: ProviderRefusal,
       detail: string,

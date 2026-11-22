@@ -7,7 +7,12 @@ import type {
   StoredToolResult,
   ToolResultSettingsRow,
 } from '@agent-os/db';
-import type { Trackers, StepEffects, Tracker, TrackerTask } from '@agent-os/runtime';
+import type {
+  Trackers,
+  StepEffects,
+  Tracker,
+  TrackerTask,
+} from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { descriptionLine } from '../chat-listing';
@@ -17,10 +22,18 @@ import type { DeepAgentSnapshot } from '../start/snapshot';
 import { snapshotDefinition } from '../start/snapshot-definition';
 import type { CallEnding, CallRecords } from '../store/call-records';
 import type { History } from '../store/history';
-import { AnswerFieldSchema, type SessionInput, type Sessions } from '../store/sessions';
+import {
+  AnswerFieldSchema,
+  type SessionInput,
+  type Sessions,
+} from '../store/sessions';
 import { wrapperText } from '../tools/large-result';
 import { decideTaskChange } from '../tools/system/task-list-rules';
-import type { InCommitAgentTool, ToolCaller, ToolDeclaration } from '../tools/tool';
+import type {
+  InCommitAgentTool,
+  ToolCaller,
+  ToolDeclaration,
+} from '../tools/tool';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
 import { delegationTeam, subagentSnapshot, TASK_TOOL } from './deep-definition';
 import {
@@ -42,7 +55,10 @@ const ANSWER_FIELDS_MAX = 10;
 
 /** The arguments of `task` with every field; a session gets the fields its flags allow (`taskArgsSchema`). */
 const TaskArgsSchema = z.strictObject({
-  subagentType: z.string().min(1).describe('The name of the subagent, as the list below gives it'),
+  subagentType: z
+    .string()
+    .min(1)
+    .describe('The name of the subagent, as the list below gives it'),
   description: z
     .string()
     .trim()
@@ -56,16 +72,22 @@ const TaskArgsSchema = z.strictObject({
     .min(1)
     .max(ASSIGNMENT_MAX_LENGTH)
     .optional()
-    .describe('What to do for each item of items; give it with items instead of description'),
+    .describe(
+      'What to do for each item of items; give it with items instead of description',
+    ),
   items: z
     .array(z.string().trim().min(1).max(ITEM_MAX_LENGTH))
     .optional()
-    .describe('The items, one subagent each; the result is a table with a row per item'),
+    .describe(
+      'The items, one subagent each; the result is a table with a row per item',
+    ),
   answerFields: z
     .array(AnswerFieldSchema)
     .max(ANSWER_FIELDS_MAX)
     .optional()
-    .describe('The fields of the answer: the subagent then answers with one JSON object of them'),
+    .describe(
+      'The fields of the answer: the subagent then answers with one JSON object of them',
+    ),
   taskId: z
     .number()
     .int()
@@ -78,7 +100,9 @@ const TaskArgsSchema = z.strictObject({
  * The schema of `task` a session is offered (DC-6): without the list fields when the list form is off and
  * without `taskId` without a task list. A key outside it is refused, as any extra key is.
  */
-function taskArgsSchema(declaration: Pick<ToolDeclaration, 'listDelegation' | 'taskList'>): z.ZodType<TaskArgs> {
+function taskArgsSchema(
+  declaration: Pick<ToolDeclaration, 'listDelegation' | 'taskList'>,
+): z.ZodType<TaskArgs> {
   return TaskArgsSchema.omit({
     ...(declaration.listDelegation ? {} : { instruction: true, items: true }),
     ...(declaration.taskList ? {} : { taskId: true }),
@@ -87,7 +111,10 @@ function taskArgsSchema(declaration: Pick<ToolDeclaration, 'listDelegation' | 't
 
 /** The description of `task` (Contract «Инструмент `task`»): the forms, then the subagents with their limits. */
 function describeTask(
-  declaration: Pick<ToolDeclaration, 'listDelegation' | 'taskList' | 'startable'>,
+  declaration: Pick<
+    ToolDeclaration,
+    'listDelegation' | 'taskList' | 'startable'
+  >,
 ): string {
   return [
     'Give work to a subagent. It works in the background on its own and sees only what you give it; the call’s result is its last message.',
@@ -107,11 +134,21 @@ function describeTask(
 }
 
 /** The fields of a call the log may name: never the assignment, the instruction, the items or the fields' texts. */
-function loggedTaskArgs(args: Partial<Record<keyof TaskArgs, unknown>>): Record<string, unknown> {
+function loggedTaskArgs(
+  args: Partial<Record<keyof TaskArgs, unknown>>,
+): Record<string, unknown> {
   const { subagentType, description, items, answerFields, taskId } = args;
   return {
-    subagentType: typeof subagentType === 'string' ? descriptionLine(subagentType).slice(0, 80) : null,
-    form: description !== undefined ? 'single' : items !== undefined ? 'list' : null,
+    subagentType:
+      typeof subagentType === 'string'
+        ? descriptionLine(subagentType).slice(0, 80)
+        : null,
+    form:
+      description !== undefined
+        ? 'single'
+        : items !== undefined
+          ? 'list'
+          : null,
     items: Array.isArray(items) ? items.length : null,
     answerFields: Array.isArray(answerFields) ? answerFields.length : null,
     taskId: typeof taskId === 'number' ? taskId : null,
@@ -127,7 +164,11 @@ function loggedTaskArgs(args: Partial<Record<keyof TaskArgs, unknown>>): Record<
 export function createTaskTool(): InCommitAgentTool<TaskArgs> {
   return {
     name: TASK_TOOL,
-    description: describeTask({ listDelegation: true, taskList: true, startable: [] }),
+    description: describeTask({
+      listDelegation: true,
+      taskList: true,
+      startable: [],
+    }),
     argsSchema: TaskArgsSchema,
     mode: 'in_commit',
     describe: (declaration) => ({
@@ -136,7 +177,9 @@ export function createTaskTool(): InCommitAgentTool<TaskArgs> {
     }),
     loggedArgs: loggedTaskArgs,
     async execute({ caller, callId }) {
-      throw new Error(`task call ${callId} of agent ${caller.agentId} runs through the tool step, never alone`);
+      throw new Error(
+        `task call ${callId} of agent ${caller.agentId} runs through the tool step, never alone`,
+      );
     },
   };
 }
@@ -158,7 +201,10 @@ export interface DelegationClosing {
 /** What `DeepAgent` asks of `task` (KD-4, KD-5, KD-8). */
 export interface Delegations {
   /** Checks the `task` calls of one answer together, outside any transaction. */
-  decide(caller: ToolCaller, calls: readonly TaskCall[]): Promise<DelegationDecision>;
+  decide(
+    caller: ToolCaller,
+    calls: readonly TaskCall[],
+  ): Promise<DelegationDecision>;
   /**
    * In the step's commit: the subagents' sessions with their assignments, one tracker of all their tasks, the
    * `tool_sent` of each accepted call with its task ids, and the named task of the list `in_progress` with the
@@ -172,11 +218,18 @@ export interface Delegations {
   }): Promise<void>;
   /** The endings of the sent `task` calls once their tracker has finished, read outside any transaction. */
   closings(
-    ctx: { readonly taskId: string; readonly ownerId: string; readonly logger: Logger },
+    ctx: {
+      readonly taskId: string;
+      readonly ownerId: string;
+      readonly logger: Logger;
+    },
     calls: readonly CallState[],
   ): Promise<DelegationClosing[]>;
   /** In the step's commit: the call's `tool_result`, its stored result and its task of the list `completed`. */
-  close(agentId: string, closing: DelegationClosing): Promise<HistoryEntry | undefined>;
+  close(
+    agentId: string,
+    closing: DelegationClosing,
+  ): Promise<HistoryEntry | undefined>;
 }
 
 export interface DelegationsDeps {
@@ -198,7 +251,9 @@ export interface DelegationsDeps {
 
 function deepAgentOf(caller: ToolCaller): DeepAgentSnapshot {
   if (caller.snapshot.kind !== 'deep_agent') {
-    throw new Error(`Agent ${caller.agentId} calls task without a deep agent's snapshot`);
+    throw new Error(
+      `Agent ${caller.agentId} calls task without a deep agent's snapshot`,
+    );
   }
   return caller.snapshot;
 }
@@ -211,7 +266,9 @@ async function briefOf(
   const [first] = await history.through(agentId, 1);
   if (first?.kind !== 'task') return null;
   try {
-    const parsed = DeepAgentBriefSchema.safeParse(JSON.parse(first.content.text));
+    const parsed = DeepAgentBriefSchema.safeParse(
+      JSON.parse(first.content.text),
+    );
     return parsed.success ? parsed.data : null;
   } catch {
     // A task written as text, not as a brief: the deep agent was started without one.
@@ -223,7 +280,9 @@ async function briefOf(
 function answerRule(fields: readonly AnswerField[]): string {
   return [
     'Answer with one JSON object and nothing else. Its fields, each a non-empty string:',
-    ...fields.map((field) => `- ${field.name}: ${descriptionLine(field.description)}`),
+    ...fields.map(
+      (field) => `- ${field.name}: ${descriptionLine(field.description)}`,
+    ),
   ].join('\n');
 }
 
@@ -231,25 +290,41 @@ function answerRule(fields: readonly AnswerField[]): string {
  * The one `task` entry of a subagent (C3): the brief of the deep agent's start, then the description or the
  * instruction with the item, then the rule of the answer when fields are named.
  */
-function assignmentOf(brief: DeepAgentBrief | null, body: string, fields: readonly AnswerField[]): string {
+function assignmentOf(
+  brief: DeepAgentBrief | null,
+  body: string,
+  fields: readonly AnswerField[],
+): string {
   const briefLines =
     brief === null
       ? []
       : [
           [
             `Question: ${brief.question}`,
-            ...(brief.boundaries === '' ? [] : [`Boundaries: ${brief.boundaries}`]),
+            ...(brief.boundaries === ''
+              ? []
+              : [`Boundaries: ${brief.boundaries}`]),
             ...(brief.result === '' ? [] : [`Result: ${brief.result}`]),
           ].join('\n'),
         ];
-  return [...briefLines, body, ...(fields.length === 0 ? [] : [answerRule(fields)])].join('\n\n');
+  return [
+    ...briefLines,
+    body,
+    ...(fields.length === 0 ? [] : [answerRule(fields)]),
+  ].join('\n\n');
 }
 
 /** The subagents of an accepted call: the session description and the assignment body of each. */
-function partsOf(accepted: AcceptedDelegation): { description: string; body: string }[] {
+function partsOf(
+  accepted: AcceptedDelegation,
+): { description: string; body: string }[] {
   const { form } = accepted;
-  if (form.kind === 'single') return [{ description: form.description, body: form.description }];
-  return form.items.map((item) => ({ description: item, body: `${form.instruction}\n\nItem: ${item}` }));
+  if (form.kind === 'single')
+    return [{ description: form.description, body: form.description }];
+  return form.items.map((item) => ({
+    description: item,
+    body: `${form.instruction}\n\nItem: ${item}`,
+  }));
 }
 
 /** The report of a completed agent task: `{ report }`. */
@@ -266,12 +341,16 @@ function endOf(task: TrackerTask): TableRow['status'] {
 }
 
 function failureText(task: TrackerTask): string {
-  return endOf(task) === 'failed' ? `The subagent failed: ${task.failure?.reason ?? 'unknown'}.` : 'The task was cancelled.';
+  return endOf(task) === 'failed'
+    ? `The subagent failed: ${task.failure?.reason ?? 'unknown'}.`
+    : 'The task was cancelled.';
 }
 
 /** The line about the task of the list a call names (Contract «Инструмент `task`»). */
 function listTaskLine(listTask: number, completed: boolean): string {
-  return completed ? `Task ${listTask} completed` : `Task ${listTask} is still in_progress`;
+  return completed
+    ? `Task ${listTask} completed`
+    : `Task ${listTask} is still in_progress`;
 }
 
 function withLine(text: string, line: string | null): string {
@@ -280,7 +359,14 @@ function withLine(text: string, line: string | null): string {
 
 export function createDelegations(deps: DelegationsDeps): Delegations {
   const { trackers, resultSettings, maxDepth } = deps;
-  const { sessions, history, messageRows, callRecords, sessionTaskRows, toolResultRows } = deps;
+  const {
+    sessions,
+    history,
+    messageRows,
+    callRecords,
+    sessionTaskRows,
+    toolResultRows,
+  } = deps;
 
   /** The ending of a single call: the answer, a long one stored as an MCP result is; a failure or a cancel as an error. */
   function singleEnding(
@@ -292,17 +378,36 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
     const childTaskId = task.taskId;
     if (endOf(task) !== 'completed') {
       return {
-        ending: { outcome: ToolOutcomeSchema.enum.tool_error, resultText: withLine(failureText(task), listLine), childTaskId },
+        ending: {
+          outcome: ToolOutcomeSchema.enum.tool_error,
+          resultText: withLine(failureText(task), listLine),
+          childTaskId,
+        },
         stored: null,
       };
     }
     const report = reportOf(task);
     if (report.length <= settings.storeFromChars) {
-      return { ending: { outcome: 'success', resultText: withLine(report, listLine), childTaskId }, stored: null };
+      return {
+        ending: {
+          outcome: 'success',
+          resultText: withLine(report, listLine),
+          childTaskId,
+        },
+        stored: null,
+      };
     }
-    const text = wrapperText({ callId: call.callId, text: report, previewChars: settings.previewChars });
+    const text = wrapperText({
+      callId: call.callId,
+      text: report,
+      previewChars: settings.previewChars,
+    });
     return {
-      ending: { outcome: 'success', resultText: withLine(text, listLine), childTaskId },
+      ending: {
+        outcome: 'success',
+        resultText: withLine(text, listLine),
+        childTaskId,
+      },
       stored: { value: report, text: report },
     };
   }
@@ -319,7 +424,8 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       item: items[index] ?? '',
       status: endOf(task),
       answer: endOf(task) === 'completed' ? reportOf(task) : null,
-      reason: endOf(task) === 'failed' ? (task.failure?.reason ?? 'unknown') : null,
+      reason:
+        endOf(task) === 'failed' ? (task.failure?.reason ?? 'unknown') : null,
     }));
     const table = resultTable({
       rows,
@@ -328,17 +434,28 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       maxChars: TASK_TABLE_MAX_CHARS,
     });
     return {
-      ending: { outcome: 'success', resultText: withLine(table.text, listLine) },
+      ending: {
+        outcome: 'success',
+        resultText: withLine(table.text, listLine),
+      },
       stored: table.cut ? { value: table.full, text: table.full } : null,
     };
   }
 
   /** The tracker that holds the call's tasks, which must have finished. */
-  function trackerOf(all: readonly Tracker[], call: CallState, agentId: string): Tracker {
+  function trackerOf(
+    all: readonly Tracker[],
+    call: CallState,
+    agentId: string,
+  ): Tracker {
     const first = call.delegation?.taskIds[0];
-    const tracker = all.find((candidate) => candidate.tasks.some((task) => task.taskId === first));
+    const tracker = all.find((candidate) =>
+      candidate.tasks.some((task) => task.taskId === first),
+    );
     if (tracker?.status !== 'finished') {
-      throw new Error(`task call ${call.callId} of agent ${agentId} has no finished tracker`);
+      throw new Error(
+        `task call ${call.callId} of agent ${agentId} has no finished tracker`,
+      );
     }
     return tracker;
   }
@@ -349,9 +466,14 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       const definition = snapshotDefinition(deepAgent);
       const [runs, tasks] = await Promise.all([
         messageRows.singleTaskRuns(caller.agentId, TASK_TOOL),
-        definition.taskList ? sessionTaskRows.read(caller.agentId) : Promise.resolve(null),
+        definition.taskList
+          ? sessionTaskRows.read(caller.agentId)
+          : Promise.resolve(null),
       ]);
-      const delegationCalls: DelegationCall[] = calls.map(({ call, args }) => ({ callId: call.callId, args }));
+      const delegationCalls: DelegationCall[] = calls.map(({ call, args }) => ({
+        callId: call.callId,
+        args,
+      }));
       return decideDelegations({
         calls: delegationCalls,
         team: delegationTeam(deepAgent),
@@ -367,12 +489,17 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       const children = accepted.flatMap((delegation) =>
         partsOf(delegation).map(({ description, body }) => {
           const snapshot = subagentSnapshot(deepAgent, delegation.subagent);
-          if (snapshot === null) throw new Error(`Subagent ${delegation.subagent} left the team of ${caller.agentId}`);
+          if (snapshot === null)
+            throw new Error(
+              `Subagent ${delegation.subagent} left the team of ${caller.agentId}`,
+            );
           const input: SessionInput = {
             snapshot,
             prompt: assignmentOf(brief, body, delegation.answerFields),
             description,
-            ...(delegation.answerFields.length === 0 ? {} : { answerFields: [...delegation.answerFields] }),
+            ...(delegation.answerFields.length === 0
+              ? {}
+              : { answerFields: [...delegation.answerFields] }),
           };
           return { delegation, input };
         }),
@@ -382,10 +509,18 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       );
       for (const [index, { delegation, input }] of children.entries()) {
         const taskId = taskIds[index];
-        if (taskId === undefined) throw new Error(`Tracker ${trackerId} gave no task for subagent ${index}`);
+        if (taskId === undefined)
+          throw new Error(
+            `Tracker ${trackerId} gave no task for subagent ${index}`,
+          );
         // A subagent's kind adds nothing to a new session, so the store makes it directly.
         await sessions.ensureSession(
-          { taskId, ownerId: caller.ownerId, parentId: caller.agentId, rootId: caller.rootId },
+          {
+            taskId,
+            ownerId: caller.ownerId,
+            parentId: caller.agentId,
+            rootId: caller.rootId,
+          },
           input,
         );
         logger.info('task delegation started', {
@@ -414,33 +549,47 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
               callId: delegation.callId,
               startedAt,
               taskIds: callTasks,
-              ...(delegation.listTask === null ? {} : { taskId: delegation.listTask }),
+              ...(delegation.listTask === null
+                ? {}
+                : { taskId: delegation.listTask }),
             },
           },
         ]);
         if (delegation.listTask !== null) {
-          await changeListTask(sessionTaskRows, caller.agentId, delegation.listTask, {
-            status: 'in_progress',
-            owner: delegation.subagent,
-          });
+          await changeListTask(
+            sessionTaskRows,
+            caller.agentId,
+            delegation.listTask,
+            {
+              status: 'in_progress',
+              owner: delegation.subagent,
+            },
+          );
         }
       }
     },
 
     async closings(ctx, calls) {
-      const [all, settings] = await Promise.all([trackers.list(ctx.taskId, ctx.ownerId), resultSettings()]);
+      const [all, settings] = await Promise.all([
+        trackers.list(ctx.taskId, ctx.ownerId),
+        resultSettings(),
+      ]);
       return calls.map((call) => {
         const tracker = trackerOf(all, call, ctx.taskId);
         const taskIds = call.delegation?.taskIds ?? [];
         const tasks = taskIds.map((taskId) => {
-          const task = tracker.tasks.find((candidate) => candidate.taskId === taskId);
-          if (task === undefined) throw new Error(`Tracker ${tracker.trackerId} lost task ${taskId}`);
+          const task = tracker.tasks.find(
+            (candidate) => candidate.taskId === taskId,
+          );
+          if (task === undefined)
+            throw new Error(`Tracker ${tracker.trackerId} lost task ${taskId}`);
           return task;
         });
         const args = TaskArgsSchema.parse(call.args);
         const listTask = call.delegation?.listTask ?? null;
         const allCompleted = tasks.every((task) => endOf(task) === 'completed');
-        const listLine = listTask === null ? null : listTaskLine(listTask, allCompleted);
+        const listLine =
+          listTask === null ? null : listTaskLine(listTask, allCompleted);
         const single = tasks.length === 1 && args.description !== undefined;
         const { ending, stored } = single
           ? singleEnding(call, tasks[0] as TrackerTask, settings, listLine)
@@ -458,15 +607,28 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
             listTask,
           });
         }
-        return { call, ending, stored, completedTask: listTask !== null && allCompleted ? listTask : null };
+        return {
+          call,
+          ending,
+          stored,
+          completedTask: listTask !== null && allCompleted ? listTask : null,
+        };
       });
     },
 
     async close(agentId, { call, ending, stored, completedTask }) {
       const closed = await callRecords.close(agentId, call, ending);
       if (closed === undefined) return undefined;
-      if (stored !== null) await toolResultRows.insert({ taskId: agentId, callId: call.callId, ...stored });
-      if (completedTask !== null) await changeListTask(sessionTaskRows, agentId, completedTask, { status: 'completed' });
+      if (stored !== null)
+        await toolResultRows.insert({
+          taskId: agentId,
+          callId: call.callId,
+          ...stored,
+        });
+      if (completedTask !== null)
+        await changeListTask(sessionTaskRows, agentId, completedTask, {
+          status: 'completed',
+        });
       return closed;
     },
   };
@@ -480,12 +642,20 @@ async function changeListTask(
   sessionTaskRows: AgentSessionTasksRepository,
   agentId: string,
   taskId: number,
-  change: { readonly status: 'in_progress' | 'completed'; readonly owner?: string },
+  change: {
+    readonly status: 'in_progress' | 'completed';
+    readonly owner?: string;
+  },
 ): Promise<void> {
   const state = await sessionTaskRows.read(agentId);
-  const decision = decideTaskChange(state, { tool: 'update', args: { taskId, ...change } });
+  const decision = decideTaskChange(state, {
+    tool: 'update',
+    args: { taskId, ...change },
+  });
   if (decision.kind === 'refused') {
-    throw new Error(`Task ${taskId} of agent ${agentId} cannot become ${change.status}: ${decision.text}`);
+    throw new Error(
+      `Task ${taskId} of agent ${agentId} cannot become ${change.status}: ${decision.text}`,
+    );
   }
   await sessionTaskRows.write(agentId, decision);
 }

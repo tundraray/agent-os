@@ -1,5 +1,8 @@
-import { AgentFailureReasonSchema, type AgentFailureReason } from "@agent-os/contracts";
-import type { ErrorsTranslator, FormatsTranslator } from "@/i18n/catalog";
+import {
+  AgentFailureReasonSchema,
+  type AgentFailureReason,
+} from '@agent-os/contracts';
+import type { ErrorsTranslator, FormatsTranslator } from '@/i18n/catalog';
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides
@@ -14,29 +17,44 @@ function capitalize(text: string): string {
 
 /** The failure reasons of a model provider (model-providers UXRD MC-9). */
 export const PROVIDER_FAILURE_REASONS = [
-  "provider_missing",
-  "provider_disabled",
-  "provider_key_missing",
-  "provider_key_rejected",
-  "provider_unavailable",
-  "provider_tools_rejected",
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_tools_rejected',
 ] as const satisfies readonly AgentFailureReason[];
 export type ProviderFailureReason = (typeof PROVIDER_FAILURE_REASONS)[number];
 
-export const isProviderFailureReason = (reason: string | null): reason is ProviderFailureReason =>
+export const isProviderFailureReason = (
+  reason: string | null,
+): reason is ProviderFailureReason =>
   PROVIDER_FAILURE_REASONS.some((known) => known === reason);
 
 /**
  * The MC-9 words of a provider reason (model-providers design-web.md, KD-7), lowercase as after «Сбой:» and
  * «Причина:»; `model` is the model's label, and without it the words name no model.
  */
-export function providerFailureText(t: ErrorsTranslator, reason: ProviderFailureReason, model?: string): string {
-  return model === undefined ? t(`providerReason.unnamed.${reason}`) : t(`providerReason.named.${reason}`, { model });
+export function providerFailureText(
+  t: ErrorsTranslator,
+  reason: ProviderFailureReason,
+  model?: string,
+): string {
+  return model === undefined
+    ? t(`providerReason.unnamed.${reason}`)
+    : t(`providerReason.named.${reason}`, { model });
 }
 
 /** MC-10: the second line under a provider failure — who can fix it, or that a retry may help. */
-export function providerFailureHint(t: ErrorsTranslator, reason: ProviderFailureReason): string {
-  return t(reason === "provider_unavailable" ? "providerHint.retry" : "providerHint.admin");
+export function providerFailureHint(
+  t: ErrorsTranslator,
+  reason: ProviderFailureReason,
+): string {
+  return t(
+    reason === 'provider_unavailable'
+      ? 'providerHint.retry'
+      : 'providerHint.admin',
+  );
 }
 
 /**
@@ -51,8 +69,9 @@ export function failureReasonText(
   model?: string,
 ): { text: string; hint: string | null } {
   const named = AgentFailureReasonSchema.safeParse(reason);
-  if (!named.success) return { text: t("platformFailure"), hint: reason };
-  if (isProviderFailureReason(named.data)) return { text: providerFailureText(t, named.data, model), hint: null };
+  if (!named.success) return { text: t('platformFailure'), hint: reason };
+  if (isProviderFailureReason(named.data))
+    return { text: providerFailureText(t, named.data, model), hint: null };
   return { text: t(`failureReason.${named.data}`), hint: null };
 }
 
@@ -81,13 +100,17 @@ export function formatModel(modelId: string, names?: ModelNames): string {
 }
 
 /** The model a record runs on: `null` is the default chat model, named when `names` knows it. */
-export function formatRecordModel(t: FormatsTranslator, modelId: string | null, names?: ModelNames): string {
+export function formatRecordModel(
+  t: FormatsTranslator,
+  modelId: string | null,
+  names?: ModelNames,
+): string {
   if (modelId !== null) return formatModel(modelId, names);
   const defaultModel = names?.defaultModel;
-  if (defaultModel === undefined) return t("defaultModel");
-  if (defaultModel === null) return t("defaultModelUnset");
-  return t("defaultModelNamed", { model: formatModel(defaultModel, names) });
+  if (defaultModel === undefined) return t('defaultModel');
+  if (defaultModel === null) return t('defaultModelUnset');
+  return t('defaultModelNamed', { model: formatModel(defaultModel, names) });
 }
 
 /** The deep agent brief's three parts in card order (MC-9, MC-20); each reads `agents.brief.{part}`. */
-export const BRIEF_PARTS = ["question", "boundaries", "result"] as const;
+export const BRIEF_PARTS = ['question', 'boundaries', 'result'] as const;

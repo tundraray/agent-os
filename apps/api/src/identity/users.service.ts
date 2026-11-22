@@ -100,9 +100,7 @@ export class UsersService {
       limit: ADMIN_USER_PAGE_SIZE + 1,
     });
     const page = rows.slice(0, ADMIN_USER_PAGE_SIZE);
-    const roles = await this.roles.ofUsers(
-      page.map((user) => user.id),
-    );
+    const roles = await this.roles.ofUsers(page.map((user) => user.id));
     const last = page.at(-1);
     return {
       users: page.map((user) =>
@@ -277,8 +275,7 @@ export class UsersService {
     const disabling = status === UserStatusSchema.enum.disabled;
     await this.db.transaction(async () => {
       await this.users.setStatus(user.id, status);
-      if (disabling)
-        await this.sessions.endLive(user.id, ENDED_BY_BLOCK);
+      if (disabling) await this.sessions.endLive(user.id, ENDED_BY_BLOCK);
       await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
@@ -367,9 +364,7 @@ export class UsersService {
 
   /** The employee, or 404 USER_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
   async findOr404(userId: string): Promise<IdentityUserRow> {
-    const user = isUuid(userId)
-      ? await this.users.findById(userId)
-      : undefined;
+    const user = isUuid(userId) ? await this.users.findById(userId) : undefined;
     if (user === undefined) throw identityError('USER_NOT_FOUND');
     return user;
   }

@@ -3,7 +3,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { Db } from '../db';
 import { agentCodeCalls, agentMessages } from '../schema';
-import { type FinishedMcpCall, finishedIn, type FinishedWindow } from './finished-window';
+import {
+  type FinishedMcpCall,
+  finishedIn,
+  type FinishedWindow,
+} from './finished-window';
 
 /** One call of an agent: its session and the call id its provider gave. */
 export interface CallKey {

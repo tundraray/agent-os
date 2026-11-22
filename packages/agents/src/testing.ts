@@ -13,7 +13,11 @@ import {
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { AgentMessagesRepository, type Database, Db } from '@agent-os/db';
-import { FIXTURE_SHARED_TOKEN, type FixtureProcess, type FixtureSource } from '@agent-os/mcp-fixture';
+import {
+  FIXTURE_SHARED_TOKEN,
+  type FixtureProcess,
+  type FixtureSource,
+} from '@agent-os/mcp-fixture';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
@@ -87,7 +91,9 @@ export function createLatch(): Latch {
     },
     reached(count = 1) {
       if (arrived >= count) return Promise.resolve();
-      return new Promise<void>((resolve) => countWaiters.push({ count, resolve }));
+      return new Promise<void>((resolve) =>
+        countWaiters.push({ count, resolve }),
+      );
     },
     open() {
       isOpen = true;
@@ -150,7 +156,9 @@ export interface ScriptedModelError {
   readonly statusCode: number;
 }
 
-export function modelError(statusCode = DEFAULT_ERROR_STATUS): ScriptedModelError {
+export function modelError(
+  statusCode = DEFAULT_ERROR_STATUS,
+): ScriptedModelError {
   return { kind: 'model_error', statusCode };
 }
 
@@ -160,7 +168,8 @@ export type ReplyFromInput = (
 ) => ScriptedAnswer | ScriptedModelError;
 
 /** What a script answers one call with. */
-export type ScriptedReply = ScriptedAnswer | ScriptedModelError | ReplyFromInput;
+export type ScriptedReply =
+  ScriptedAnswer | ScriptedModelError | ReplyFromInput;
 
 /** A model call as the double received it. */
 export interface RecordedModelCall {
@@ -220,7 +229,11 @@ export interface ScriptedModel {
   /** Every agent call of every script, in order of arrival; `completeText` calls are not among them. */
   readonly calls: readonly RecordedModelCall[];
   /** Adds the replies of one agent. */
-  script(key: ScriptKey, replies: readonly ScriptedReply[], options?: ScriptOptions): Script;
+  script(
+    key: ScriptKey,
+    replies: readonly ScriptedReply[],
+    options?: ScriptOptions,
+  ): Script;
   /**
    * Sets the reply to every `completeText` call: an answer (its latch holds the call), or a provider
    * error on every attempt. Without it a `completeText` call fails as a defect of the test.
@@ -240,19 +253,34 @@ function describeKey(key: ScriptKey): string {
   return 'task' in key ? `task "${key.task}"` : `agent "${key.agent}"`;
 }
 
-function isModelError(reply: ScriptedAnswer | ScriptedModelError): reply is ScriptedModelError {
+function isModelError(
+  reply: ScriptedAnswer | ScriptedModelError,
+): reply is ScriptedModelError {
   return 'kind' in reply && reply.kind === 'model_error';
 }
 
 /** The rejection the provider client gives: `classifyRejection` reads it by `name`, `statusCode` and `responseBody`. */
-function providerError(caller: string, statusCode: number, responseBody?: string): Error {
-  const error = new Error(`Scripted provider error ${statusCode} for ${caller}`);
+function providerError(
+  caller: string,
+  statusCode: number,
+  responseBody?: string,
+): Error {
+  const error = new Error(
+    `Scripted provider error ${statusCode} for ${caller}`,
+  );
   error.name = 'AI_APICallError';
-  return Object.assign(error, { statusCode }, responseBody === undefined ? {} : { responseBody });
+  return Object.assign(
+    error,
+    { statusCode },
+    responseBody === undefined ? {} : { responseBody },
+  );
 }
 
 /** Resolves the waiters whose count the calls reached. */
-function resolveWaiters(waiters: { count: number; resolve: () => void }[], arrived: number): void {
+function resolveWaiters(
+  waiters: { count: number; resolve: () => void }[],
+  arrived: number,
+): void {
   for (const waiter of waiters.slice()) {
     if (arrived >= waiter.count) {
       waiters.splice(waiters.indexOf(waiter), 1);
@@ -272,13 +300,18 @@ async function streamAnswer(
 ): Promise<AgentTurnGeneration> {
   await answer.latch?.pass(signal);
   signal.throwIfAborted();
-  const parts = typeof answer.text === 'string' ? [answer.text] : (answer.text ?? []);
+  const parts =
+    typeof answer.text === 'string' ? [answer.text] : (answer.text ?? []);
   for (const part of parts) {
     if (part !== '') onText(part);
   }
   const calls = toolCalls();
   return {
-    finishReason: answer.cutOff ? 'length' : calls.length > 0 ? 'tool-calls' : 'stop',
+    finishReason: answer.cutOff
+      ? 'length'
+      : calls.length > 0
+        ? 'tool-calls'
+        : 'stop',
     text: parts.join(''),
     toolCalls: calls,
     usage: { ...DEFAULT_USAGE, ...answer.usage },
@@ -294,10 +327,14 @@ export function createScriptedModel(): ScriptedModel {
   function scriptOf(call: AgentTurnCall): ScriptState {
     for (const message of [...call.messages].reverse()) {
       if (message.role !== 'user') continue;
-      const byTask = scripts.find((state) => 'task' in state.key && state.key.task === message.content);
+      const byTask = scripts.find(
+        (state) => 'task' in state.key && state.key.task === message.content,
+      );
       if (byTask !== undefined) return byTask;
     }
-    const byAgent = scripts.find((state) => 'agent' in state.key && state.key.agent === call.agentName);
+    const byAgent = scripts.find(
+      (state) => 'agent' in state.key && state.key.agent === call.agentName,
+    );
     if (byAgent !== undefined) return byAgent;
     throw new Error(`No script answers a call of agent ${call.agentName}`);
   }
@@ -307,7 +344,10 @@ export function createScriptedModel(): ScriptedModel {
   let textReply: ScriptedAnswer | ScriptedModelError | undefined;
 
   /** Answers a `completeText` call from the text script. */
-  async function answerText(call: AgentTurnCall, options: StreamTurnOptions): Promise<AgentTurnGeneration> {
+  async function answerText(
+    call: AgentTurnCall,
+    options: StreamTurnOptions,
+  ): Promise<AgentTurnGeneration> {
     const prompt = call.messages[0];
     textCalls.push({
       model: call.model,
@@ -315,8 +355,10 @@ export function createScriptedModel(): ScriptedModel {
       prompt: prompt?.role === 'user' ? prompt.content : '',
     });
     resolveWaiters(textWaiters, textCalls.length);
-    if (textReply === undefined) throw new Error('No text script answers a completeText call');
-    if (isModelError(textReply)) throw providerError('completeText', textReply.statusCode);
+    if (textReply === undefined)
+      throw new Error('No text script answers a completeText call');
+    if (isModelError(textReply))
+      throw providerError('completeText', textReply.statusCode);
     return streamAnswer(textReply, options, () => []);
   }
 
@@ -330,7 +372,9 @@ export function createScriptedModel(): ScriptedModel {
         instructions: call.instructions,
         messages: call.messages,
         toolNames: call.tools.map((tool) => tool.name),
-        toolDescriptions: Object.fromEntries(call.tools.map((tool) => [tool.name, tool.description])),
+        toolDescriptions: Object.fromEntries(
+          call.tools.map((tool) => [tool.name, tool.description]),
+        ),
         toolCallIds: [],
       };
       calls.push(recorded);
@@ -340,18 +384,27 @@ export function createScriptedModel(): ScriptedModel {
 
       const reply = state.replies[index] ?? state.thereafter;
       if (reply === undefined) {
-        throw new Error(`Script of ${describeKey(state.key)} has no answer for call ${index + 1}`);
+        throw new Error(
+          `Script of ${describeKey(state.key)} has no answer for call ${index + 1}`,
+        );
       }
       const answer = typeof reply === 'function' ? reply(call.messages) : reply;
-      if (isModelError(answer)) throw providerError(`agent ${call.agentName}`, answer.statusCode);
+      if (isModelError(answer))
+        throw providerError(`agent ${call.agentName}`, answer.statusCode);
 
       const generation = await streamAnswer(answer, options, () =>
         (answer.calls ?? []).map((scripted) => {
           nextCallId += 1;
-          return { toolCallId: `call-${nextCallId}`, toolName: scripted.tool, args: scripted.args };
+          return {
+            toolCallId: `call-${nextCallId}`,
+            toolName: scripted.tool,
+            args: scripted.args,
+          };
         }),
       );
-      recorded.toolCallIds.push(...generation.toolCalls.map((toolCall) => toolCall.toolCallId));
+      recorded.toolCallIds.push(
+        ...generation.toolCalls.map((toolCall) => toolCall.toolCallId),
+      );
       return generation;
     },
   };
@@ -365,7 +418,9 @@ export function createScriptedModel(): ScriptedModel {
         calls: textCalls,
         called(count) {
           if (textCalls.length >= count) return Promise.resolve();
-          return new Promise<void>((resolve) => textWaiters.push({ count, resolve }));
+          return new Promise<void>((resolve) =>
+            textWaiters.push({ count, resolve }),
+          );
         },
       };
     },
@@ -382,7 +437,9 @@ export function createScriptedModel(): ScriptedModel {
         calls: state.calls,
         called(count) {
           if (state.calls.length >= count) return Promise.resolve();
-          return new Promise<void>((resolve) => state.waiters.push({ count, resolve }));
+          return new Promise<void>((resolve) =>
+            state.waiters.push({ count, resolve }),
+          );
         },
       };
     },
@@ -437,17 +494,40 @@ export function createScriptedEmbeddings(): ScriptedEmbeddings {
     failure: null,
     vectorOf: null,
     client: {
-      async embed({ connection, modelName, texts, inputType, dimensions, signal }) {
+      async embed({
+        connection,
+        modelName,
+        texts,
+        inputType,
+        dimensions,
+        signal,
+      }) {
         signal.throwIfAborted();
         const model = `${connection.name}/${modelName}`;
-        calls.push({ model, apiKey: connection.apiKey, texts, inputType, dimensions });
+        calls.push({
+          model,
+          apiKey: connection.apiKey,
+          texts,
+          inputType,
+          dimensions,
+        });
         const { failure, vectorOf } = scripted;
-        if (failure !== null) throw providerError(`embeddings of ${model}`, failure.statusCode, failure.body);
+        if (failure !== null)
+          throw providerError(
+            `embeddings of ${model}`,
+            failure.statusCode,
+            failure.body,
+          );
         const length = scripted.vectorLength ?? dimensions;
-        const byLength = (text: string) => Array.from({ length }, (_, index) => text.length + index);
+        const byLength = (text: string) =>
+          Array.from({ length }, (_, index) => text.length + index);
         return {
-          vectors: texts.map((text) => (vectorOf === null ? byLength(text) : [...vectorOf(text, model)])),
-          inputTokens: scripted.withoutTokenCount ? null : texts.length * SCRIPTED_EMBEDDING_TOKENS_PER_TEXT,
+          vectors: texts.map((text) =>
+            vectorOf === null ? byLength(text) : [...vectorOf(text, model)],
+          ),
+          inputTokens: scripted.withoutTokenCount
+            ? null
+            : texts.length * SCRIPTED_EMBEDDING_TOKENS_PER_TEXT,
         };
       },
     },
@@ -489,7 +569,9 @@ export interface AccessGateDoubleOptions {
    * `{ <owner id>: { <model>: <refusal> } }`: a refusal of a model for one owner, before `refusedModels`;
    * read on every question, so a test may withdraw a model from an owner mid-run by adding to the object.
    */
-  readonly ownerModelRefusals?: Readonly<Record<string, Readonly<Record<string, ModelRefusal>>>>;
+  readonly ownerModelRefusals?: Readonly<
+    Record<string, Readonly<Record<string, ModelRefusal>>>
+  >;
   /** The default chat model; `null` (no model chosen) by default. */
   readonly defaultChatModel?: string | null;
   /**
@@ -508,10 +590,16 @@ const EVERY_OWNER = '*';
  * An `AccessGate` for the package's tests (ADR-0004: a double of the package's own contract): rights by
  * server from a table, prices from literals, no database. `apps/api` implements the real one over its tables.
  */
-export function createAccessGateDouble(options: AccessGateDoubleOptions): AccessGate {
-  const disabled = (ownerId: string): boolean => options.refusedOwners?.includes(ownerId) === true;
+export function createAccessGateDouble(
+  options: AccessGateDoubleOptions,
+): AccessGate {
+  const disabled = (ownerId: string): boolean =>
+    options.refusedOwners?.includes(ownerId) === true;
   const serversOf = (ownerId: string): ReadonlySet<string> =>
-    new Set([...(options.servers?.[ownerId] ?? []), ...(options.servers?.[EVERY_OWNER] ?? [])]);
+    new Set([
+      ...(options.servers?.[ownerId] ?? []),
+      ...(options.servers?.[EVERY_OWNER] ?? []),
+    ]);
   return {
     async tools(ownerId) {
       if (disabled(ownerId)) return { kind: 'owner_disabled' };
@@ -519,8 +607,11 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
       return { kind: 'allowed', allows: (server) => servers.has(server) };
     },
     async model(ownerId, model) {
-      if (disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
-      const refusal = options.ownerModelRefusals?.[ownerId]?.[model] ?? options.refusedModels?.[model];
+      if (disabled(ownerId))
+        return { kind: 'refused', reason: 'owner_disabled' };
+      const refusal =
+        options.ownerModelRefusals?.[ownerId]?.[model] ??
+        options.refusedModels?.[model];
       if (refusal !== undefined) return refusal;
       const price = options.prices[model];
       return price === undefined
@@ -531,8 +622,14 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
       return options.defaultChatModel ?? null;
     },
     async embedding(ownerId) {
-      if (ownerId !== null && disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
-      return options.embedding?.() ?? { kind: 'refused', reason: 'model_not_configured' };
+      if (ownerId !== null && disabled(ownerId))
+        return { kind: 'refused', reason: 'owner_disabled' };
+      return (
+        options.embedding?.() ?? {
+          kind: 'refused',
+          reason: 'model_not_configured',
+        }
+      );
     },
   };
 }
@@ -563,7 +660,12 @@ export function createProviderRegistryDouble(
       };
     },
     async readiness(names) {
-      return new Map(names.map((name): [string, ProviderReadiness] => [name, states[name] ?? 'missing']));
+      return new Map(
+        names.map((name): [string, ProviderReadiness] => [
+          name,
+          states[name] ?? 'missing',
+        ]),
+      );
     },
   };
 }
@@ -611,7 +713,10 @@ export interface LibraryDouble extends RecordLibrary {
   /** The viewer stops seeing the record, as one taken out of its role. */
   hideFrom(recordId: string, viewerId: string): void;
   /** Every `resolve` call in order: who asked for which record. */
-  readonly resolveCalls: readonly { readonly viewerId: string; readonly recordId: string }[];
+  readonly resolveCalls: readonly {
+    readonly viewerId: string;
+    readonly recordId: string;
+  }[];
 }
 
 interface StoredRecord {
@@ -637,7 +742,8 @@ export function createLibraryDouble(): LibraryDouble {
 
   function stored(recordId: string): StoredRecord {
     const record = records.get(recordId);
-    if (record === undefined) throw new Error(`The library double holds no record ${recordId}`);
+    if (record === undefined)
+      throw new Error(`The library double holds no record ${recordId}`);
     return record;
   }
 
@@ -656,14 +762,19 @@ export function createLibraryDouble(): LibraryDouble {
       version: record.version,
       builtinKey: record.builtinKey,
       author:
-        record.ownerId === null ? null : { id: record.ownerId, name: record.ownerName, disabled: false },
+        record.ownerId === null
+          ? null
+          : { id: record.ownerId, name: record.ownerName, disabled: false },
       mine: record.ownerId === viewerId,
       shared: record.shared,
       offerInChat: record.offerInChat,
     };
   }
 
-  function resolvedOf(record: StoredRecord | undefined, viewerId: string): ResolvedRecord | null {
+  function resolvedOf(
+    record: StoredRecord | undefined,
+    viewerId: string,
+  ): ResolvedRecord | null {
     if (record === undefined || !visibleTo(record, viewerId)) return null;
     const { kind: _kind, ...header } = headerOf(record, viewerId);
     return { ...header, ...structuredClone(record.body) };
@@ -673,7 +784,8 @@ export function createLibraryDouble(): LibraryDouble {
     resolveCalls,
     add(record) {
       const id = record.id ?? randomUUID();
-      if (records.has(id)) throw new Error(`The library double already holds record ${id}`);
+      if (records.has(id))
+        throw new Error(`The library double already holds record ${id}`);
       const body: RecordBody =
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
@@ -699,11 +811,14 @@ export function createLibraryDouble(): LibraryDouble {
     edit(recordId, change) {
       const record = stored(recordId);
       if (change.body !== undefined && change.body.kind !== record.body.kind) {
-        throw new Error(`Record ${recordId} is a ${record.body.kind}, not a ${change.body.kind}`);
+        throw new Error(
+          `Record ${recordId} is a ${record.body.kind}, not a ${change.body.kind}`,
+        );
       }
       record.name = change.name ?? record.name;
       record.description = change.description ?? record.description;
-      record.body = change.body === undefined ? record.body : structuredClone(change.body);
+      record.body =
+        change.body === undefined ? record.body : structuredClone(change.body);
       record.version += 1;
     },
     remove(recordId) {
@@ -721,7 +836,9 @@ export function createLibraryDouble(): LibraryDouble {
       return resolvedOf(records.get(recordId), viewerId);
     },
     async resolveBuiltin(viewerId, builtinKey) {
-      const record = [...records.values()].find((candidate) => candidate.builtinKey === builtinKey);
+      const record = [...records.values()].find(
+        (candidate) => candidate.builtinKey === builtinKey,
+      );
       return resolvedOf(record, viewerId);
     },
     async listVisible(viewerId) {
@@ -758,8 +875,13 @@ export interface ToolCallRow {
  * The tool calls of an agent, by answer and position, folded from its whole history in `agent_messages`
  * (every entry after `seq` 0) by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
-export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await new History(new AgentMessagesRepository(new Db(db))).after(agentId, 0);
+export async function toolCallRowsOf(
+  db: Database,
+  agentId: string,
+): Promise<ToolCallRow[]> {
+  const entries = await new History(
+    new AgentMessagesRepository(new Db(db)),
+  ).after(agentId, 0);
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {
@@ -771,7 +893,8 @@ export async function toolCallRowsOf(db: Database, agentId: string): Promise<Too
       resultText: result?.text ?? null,
       childTaskId: result?.childTaskId ?? null,
       startedAt: startedAt === null ? null : new Date(startedAt),
-      finishedAt: result?.finishedAt == null ? null : new Date(result.finishedAt),
+      finishedAt:
+        result?.finishedAt == null ? null : new Date(result.finishedAt),
       output: result?.output ?? null,
     };
   });
@@ -810,7 +933,11 @@ export async function removeServer(agents: McpOf, name: string): Promise<void> {
   try {
     await agents.mcp.remove(name);
   } catch (error) {
-    if (!(error instanceof McpError && error.code === McpErrorCode.MCP_SERVER_NOT_FOUND)) throw error;
+    if (!(
+      error instanceof McpError &&
+      error.code === McpErrorCode.MCP_SERVER_NOT_FOUND
+    ))
+      throw error;
   }
 }
 
@@ -818,12 +945,25 @@ export async function removeServer(agents: McpOf, name: string): Promise<void> {
  * Registers `server` through the registry (the server check included), replacing a row of the same name
  * left by an earlier harness of the run, which may point at a stopped fixture process.
  */
-export async function registerServer(agents: McpOf, server: TestServer): Promise<McpServerWrite> {
+export async function registerServer(
+  agents: McpOf,
+  server: TestServer,
+): Promise<McpServerWrite> {
   await removeServer(agents, server.name);
-  const common = { name: server.name, url: server.url, redirectUrl: mcpRedirectUrl(server.name) };
-  if (server.mode === 'oauth') return agents.mcp.register({ ...common, mode: 'oauth' });
-  if (server.sharedToken === undefined) throw new Error(`Shared server ${server.name} needs a shared token`);
-  return agents.mcp.register({ ...common, mode: 'shared', sharedToken: server.sharedToken });
+  const common = {
+    name: server.name,
+    url: server.url,
+    redirectUrl: mcpRedirectUrl(server.name),
+  };
+  if (server.mode === 'oauth')
+    return agents.mcp.register({ ...common, mode: 'oauth' });
+  if (server.sharedToken === undefined)
+    throw new Error(`Shared server ${server.name} needs a shared token`);
+  return agents.mcp.register({
+    ...common,
+    mode: 'shared',
+    sharedToken: server.sharedToken,
+  });
 }
 
 /**

@@ -186,9 +186,12 @@ export class TestChild {
     const startedAt = Date.now();
     for (;;) {
       if (await condition()) return Date.now() - startedAt;
-      if (!this.running) throw this.failure(`exited while waiting for ${options.what}`);
+      if (!this.running)
+        throw this.failure(`exited while waiting for ${options.what}`);
       if (Date.now() - startedAt > options.timeoutMs) {
-        throw this.failure(`did not reach ${options.what} within ${options.timeoutMs} ms`);
+        throw this.failure(
+          `did not reach ${options.what} within ${options.timeoutMs} ms`,
+        );
       }
       await delay(POLL_MS);
     }
@@ -207,7 +210,9 @@ export class TestChild {
       if (await condition()) return 'condition';
       if (!this.running) return 'exited';
       if (Date.now() - startedAt > options.timeoutMs) {
-        throw this.failure(`did not reach ${options.what} within ${options.timeoutMs} ms`);
+        throw this.failure(
+          `did not reach ${options.what} within ${options.timeoutMs} ms`,
+        );
       }
       await delay(POLL_MS);
     }
@@ -221,7 +226,8 @@ export class TestChild {
     const code = await within(this.exited, STOP_MS, () =>
       this.failure(`did not stop within ${STOP_MS} ms`),
     );
-    if (code !== 0) throw this.failure(`stopped with exit code ${String(code)}`);
+    if (code !== 0)
+      throw this.failure(`stopped with exit code ${String(code)}`);
   }
 
   /** Kills the process outright, as a server that dies without shutdown, and waits for its end. */
@@ -231,7 +237,9 @@ export class TestChild {
   }
 
   failure(what: string): Error {
-    return new Error(`${this.name} ${what}; its last output:\n${this.tail.join('\n')}`);
+    return new Error(
+      `${this.name} ${what}; its last output:\n${this.tail.join('\n')}`,
+    );
   }
 }
 
@@ -242,9 +250,11 @@ export async function within<T>(
   onTimeout: () => Error,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = delay(ms, undefined, { signal: controller.signal }).then(() => {
-    throw onTimeout();
-  });
+  const timeout = delay(ms, undefined, { signal: controller.signal }).then(
+    () => {
+      throw onTimeout();
+    },
+  );
   try {
     return await Promise.race([promise, timeout]);
   } finally {

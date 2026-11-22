@@ -32,9 +32,19 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AGENTS_CONFIG, AGENTS_LOGGER } from '../agents.tokens';
 import type { AgentsConfig } from '../config';
-import { CLIENT_INFO, type McpAuth, McpClient, deadlineFetch } from './mcp-client';
+import {
+  CLIENT_INFO,
+  type McpAuth,
+  McpClient,
+  deadlineFetch,
+} from './mcp-client';
 import { McpError } from './mcp-errors';
-import { type McpFailureReason, failureName, mcpFailureReason, transportFailureReason } from './mcp-failure';
+import {
+  type McpFailureReason,
+  failureName,
+  mcpFailureReason,
+  transportFailureReason,
+} from './mcp-failure';
 import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
 import { shapeBlockOf } from './tool-shape';
@@ -72,7 +82,9 @@ export interface McpServerRemoval {
 }
 
 /** Registration as the admin sent it, with the server's own OAuth return address the controller built. */
-export type McpServerRegistration = RegisterMcpServerBody & { readonly redirectUrl: string };
+export type McpServerRegistration = RegisterMcpServerBody & {
+  readonly redirectUrl: string;
+};
 
 /**
  * After the admin connected his account: the list was read and stored, the server still waits for it
@@ -82,20 +94,25 @@ export type McpAdminAccountCompletion =
   | { readonly outcome: 'connected'; readonly change: McpToolsRefresh }
   | { readonly outcome: 'tools_failed' | 'connect_failed' };
 
-const CHECK_REASON_OF_FAILURE: Record<McpFailureReason, McpCheckFailureReason> = {
-  connection_lost: 'unreachable',
-  timeout: 'timeout',
-  protocol_error: 'not_mcp',
-  client_error: 'not_mcp',
-  unauthorized: 'unauthorized',
-};
+const CHECK_REASON_OF_FAILURE: Record<McpFailureReason, McpCheckFailureReason> =
+  {
+    connection_lost: 'unreachable',
+    timeout: 'timeout',
+    protocol_error: 'not_mcp',
+    client_error: 'not_mcp',
+    unauthorized: 'unauthorized',
+  };
 
 /** The first request of an MCP session, sent without a token to learn whether and how the server asks for one. */
 const PROBE_REQUEST = {
   jsonrpc: '2.0',
   id: 0,
   method: 'initialize',
-  params: { protocolVersion: LATEST_PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
+  params: {
+    protocolVersion: LATEST_PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: CLIENT_INFO,
+  },
 };
 
 /** PKCE method the platform uses (KD-4); a server that does not announce it cannot be connected. */
@@ -107,40 +124,67 @@ export function credentialsCheckFailed(reason: McpFailureReason): McpError {
 }
 
 function checkFailed(reason: McpCheckFailureReason): McpError {
-  return new McpError(McpErrorCode.MCP_SERVER_CHECK_FAILED, `MCP server check failed: ${reason}`, reason);
+  return new McpError(
+    McpErrorCode.MCP_SERVER_CHECK_FAILED,
+    `MCP server check failed: ${reason}`,
+    reason,
+  );
 }
 
 export function notFound(name: string): McpError {
-  return new McpError(McpErrorCode.MCP_SERVER_NOT_FOUND, `MCP server ${name} is not registered`);
+  return new McpError(
+    McpErrorCode.MCP_SERVER_NOT_FOUND,
+    `MCP server ${name} is not registered`,
+  );
 }
 
 function nameTaken(name: string): McpError {
-  return new McpError(McpErrorCode.MCP_SERVER_NAME_TAKEN, `MCP server name ${name} is taken`);
+  return new McpError(
+    McpErrorCode.MCP_SERVER_NAME_TAKEN,
+    `MCP server name ${name} is taken`,
+  );
 }
 
 /** A failed tool listing as the reason of the check; an error outside the client's classes is a defect. */
-function listingFailureReason(error: unknown, mode: McpServerMode): McpCheckFailureReason {
+function listingFailureReason(
+  error: unknown,
+  mode: McpServerMode,
+): McpCheckFailureReason {
   const failure = mcpFailureReason(error, mode);
-  return failure.kind === 'auth_required' ? 'unauthorized' : CHECK_REASON_OF_FAILURE[failure.reason];
+  return failure.kind === 'auth_required'
+    ? 'unauthorized'
+    : CHECK_REASON_OF_FAILURE[failure.reason];
 }
 
 /** A failed OAuth discovery or registration: no connection, no answer in time, or the step's own reason. */
-function oauthFailureReason(error: unknown, otherwise: McpCheckFailureReason): McpCheckFailureReason {
-  if (error instanceof RegistrationRejectedError) return 'registration_rejected';
+function oauthFailureReason(
+  error: unknown,
+  otherwise: McpCheckFailureReason,
+): McpCheckFailureReason {
+  if (error instanceof RegistrationRejectedError)
+    return 'registration_rejected';
   const reason = transportFailureReason(error);
-  return reason === 'connection_lost' || reason === 'timeout' ? CHECK_REASON_OF_FAILURE[reason] : otherwise;
+  return reason === 'connection_lost' || reason === 'timeout'
+    ? CHECK_REASON_OF_FAILURE[reason]
+    : otherwise;
 }
 
 function bearer(mode: McpServerMode, token: string): McpAuth {
   return { mode, token: () => Promise.resolve(token) };
 }
 
-function statusOf(row: McpServerRow, tools: readonly McpTool[] | null): McpServerStatus {
+function statusOf(
+  row: McpServerRow,
+  tools: readonly McpTool[] | null,
+): McpServerStatus {
   if (row.enabled) return 'enabled';
   return tools === null ? 'awaiting_admin_account' : 'disabled';
 }
 
-function summaryOf(row: McpServerRow, tools = storedMcpTools(row.tools)): McpServerSummary {
+function summaryOf(
+  row: McpServerRow,
+  tools = storedMcpTools(row.tools),
+): McpServerSummary {
   return {
     name: row.name,
     url: row.url,
@@ -169,7 +213,10 @@ function viewOf(row: McpServerRow): McpServerView {
   };
 }
 
-function auditStateOf(row: McpServerRow, tokenChanged: boolean): McpServerAuditState {
+function auditStateOf(
+  row: McpServerRow,
+  tokenChanged: boolean,
+): McpServerAuditState {
   return {
     name: row.name,
     url: row.url,
@@ -180,7 +227,10 @@ function auditStateOf(row: McpServerRow, tokenChanged: boolean): McpServerAuditS
   };
 }
 
-function difference(from: readonly string[] | null, without: readonly string[] | null): string[] {
+function difference(
+  from: readonly string[] | null,
+  without: readonly string[] | null,
+): string[] {
   const excluded = new Set(without ?? []);
   return (from ?? []).filter((name) => !excluded.has(name));
 }
@@ -200,10 +250,12 @@ export class McpRegistry {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentMcpServersRepository)
+    private readonly mcpServerRows: AgentMcpServersRepository,
     @Inject(McpClient) private readonly client: McpClient,
     @Inject(AGENTS_LOGGER) logger: Logger,
-    @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs' | 'allowHttpUrls'>,
+    @Inject(AGENTS_CONFIG)
+    config: Pick<AgentsConfig, 'mcpCallTimeoutMs' | 'allowHttpUrls'>,
   ) {
     this.logger = logger.child({ service: 'agents.mcp' });
     this.callTimeoutMs = config.mcpCallTimeoutMs;
@@ -225,40 +277,72 @@ export class McpRegistry {
    * (DC-7). A failed check stores nothing.
    */
   register(input: McpServerRegistration): Promise<McpServerWrite> {
-    return this.logged('mcp server registration', { server: input.name, mode: input.mode }, async () => {
-      const { name, url, mode } = input;
-      if ((await this.mcpServerRows.find(name)) !== undefined) throw nameTaken(name);
-      this.requireSecureUrl(url);
-      const row: NewMcpServerRow =
-        input.mode === 'shared'
-          ? {
-              name,
-              url,
-              mode,
-              enabled: true,
-              tools: await this.listChecked(name, url, bearer('shared', input.sharedToken)),
-              sharedToken: input.sharedToken,
-            }
-          : { name, url, mode, ...(await this.registerOAuthClient(url, input.redirectUrl)) };
-      const inserted = await this.mcpServerRows.insert(row);
-      if (inserted === undefined) throw nameTaken(name);
-      return { view: viewOf(inserted), before: null, after: auditStateOf(inserted, mode === 'shared') };
-    });
+    return this.logged(
+      'mcp server registration',
+      { server: input.name, mode: input.mode },
+      async () => {
+        const { name, url, mode } = input;
+        if ((await this.mcpServerRows.find(name)) !== undefined)
+          throw nameTaken(name);
+        this.requireSecureUrl(url);
+        const row: NewMcpServerRow =
+          input.mode === 'shared'
+            ? {
+                name,
+                url,
+                mode,
+                enabled: true,
+                tools: await this.listChecked(
+                  name,
+                  url,
+                  bearer('shared', input.sharedToken),
+                ),
+                sharedToken: input.sharedToken,
+              }
+            : {
+                name,
+                url,
+                mode,
+                ...(await this.registerOAuthClient(url, input.redirectUrl)),
+              };
+        const inserted = await this.mcpServerRows.insert(row);
+        if (inserted === undefined) throw nameTaken(name);
+        return {
+          view: viewOf(inserted),
+          before: null,
+          after: auditStateOf(inserted, mode === 'shared'),
+        };
+      },
+    );
   }
 
   /** Switches the server on or off and replaces its shared token; a new token is checked first (DC-6, DC-7). */
   update(name: string, patch: UpdateMcpServerBody): Promise<McpServerWrite> {
-    const fields = { server: name, enabled: patch.enabled, sharedTokenReplaced: patch.sharedToken !== undefined };
+    const fields = {
+      server: name,
+      enabled: patch.enabled,
+      sharedTokenReplaced: patch.sharedToken !== undefined,
+    };
     return this.logged('mcp server update', fields, async () => {
       const row = await this.rowOf(name);
       if (patch.enabled === true && row.tools === null) {
-        throw new McpError(McpErrorCode.MCP_SERVER_INCOMPLETE, `MCP server ${name} has no tool list yet`);
+        throw new McpError(
+          McpErrorCode.MCP_SERVER_INCOMPLETE,
+          `MCP server ${name} has no tool list yet`,
+        );
       }
       if (patch.sharedToken !== undefined) {
         if (row.mode !== McpServerModeSchema.enum.shared) {
-          throw new McpError('VALIDATION_FAILED', `MCP server ${name} is in mode ${row.mode} and has no shared token`);
+          throw new McpError(
+            'VALIDATION_FAILED',
+            `MCP server ${name} is in mode ${row.mode} and has no shared token`,
+          );
         }
-        await this.listChecked(name, row.url, bearer('shared', patch.sharedToken));
+        await this.listChecked(
+          name,
+          row.url,
+          bearer('shared', patch.sharedToken),
+        );
       }
       return this.write(name, patch, patch.sharedToken !== undefined);
     });
@@ -270,16 +354,24 @@ export class McpRegistry {
    * its list is switched on with it (waiting → enabled).
    */
   refreshTools(name: string, auth: McpAuth): Promise<McpToolsRefresh> {
-    return this.logged('mcp server tools refresh', { server: name, mode: auth.mode }, async () => {
-      const row = await this.rowOf(name);
-      const tools = await this.listChecked(name, row.url, auth);
-      const write = await this.write(name, { tools, ...(row.tools === null ? { enabled: true } : {}) }, false);
-      return {
-        ...write,
-        added: difference(write.after.tools, write.before?.tools ?? null),
-        removed: difference(write.before?.tools ?? null, write.after.tools),
-      };
-    });
+    return this.logged(
+      'mcp server tools refresh',
+      { server: name, mode: auth.mode },
+      async () => {
+        const row = await this.rowOf(name);
+        const tools = await this.listChecked(name, row.url, auth);
+        const write = await this.write(
+          name,
+          { tools, ...(row.tools === null ? { enabled: true } : {}) },
+          false,
+        );
+        return {
+          ...write,
+          added: difference(write.after.tools, write.before?.tools ?? null),
+          removed: difference(write.before?.tools ?? null, write.after.tools),
+        };
+      },
+    );
   }
 
   /**
@@ -287,13 +379,21 @@ export class McpRegistry {
    * waiting server is switched on (Flow 1). A failed read leaves the server waiting: `tools_failed`; a server
    * removed meanwhile is `connect_failed`.
    */
-  async completeAdminAccount(name: string, accessToken: string): Promise<McpAdminAccountCompletion> {
+  async completeAdminAccount(
+    name: string,
+    accessToken: string,
+  ): Promise<McpAdminAccountCompletion> {
     try {
-      return { outcome: 'connected', change: await this.refreshTools(name, bearer('oauth', accessToken)) };
+      return {
+        outcome: 'connected',
+        change: await this.refreshTools(name, bearer('oauth', accessToken)),
+      };
     } catch (error) {
       if (!(error instanceof McpError)) throw error;
-      if (error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED) return { outcome: 'tools_failed' };
-      if (error.code === McpErrorCode.MCP_SERVER_NOT_FOUND) return { outcome: 'connect_failed' };
+      if (error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED)
+        return { outcome: 'tools_failed' };
+      if (error.code === McpErrorCode.MCP_SERVER_NOT_FOUND)
+        return { outcome: 'connect_failed' };
       throw error;
     }
   }
@@ -313,7 +413,11 @@ export class McpRegistry {
     return row;
   }
 
-  private async write(name: string, patch: McpServerPatch, tokenChanged: boolean): Promise<McpServerWrite> {
+  private async write(
+    name: string,
+    patch: McpServerPatch,
+    tokenChanged: boolean,
+  ): Promise<McpServerWrite> {
     const change = await this.db.transaction(async () =>
       this.mcpServerRows.update(name, patch),
     );
@@ -326,15 +430,26 @@ export class McpRegistry {
   }
 
   private requireSecureUrl(url: string | URL): void {
-    if (checkServerUrl(url, { allowHttp: this.allowHttp }) !== 'ok') throw checkFailed('insecure_url');
+    if (checkServerUrl(url, { allowHttp: this.allowHttp }) !== 'ok')
+      throw checkFailed('insecure_url');
   }
 
   /** The server's tools by name as `McpTool`s, or the reason the listing failed. */
-  private async listChecked(name: string, url: string, auth: McpAuth): Promise<McpTool[]> {
+  private async listChecked(
+    name: string,
+    url: string,
+    auth: McpAuth,
+  ): Promise<McpTool[]> {
     const { client, callTimeoutMs } = this;
     try {
-      const listed = await client.listTools({ url, auth, timeoutMs: callTimeoutMs });
-      const tools = listed.map((tool) => toMcpTool(name, tool)).sort((a, b) => a.tool.localeCompare(b.tool));
+      const listed = await client.listTools({
+        url,
+        auth,
+        timeoutMs: callTimeoutMs,
+      });
+      const tools = listed
+        .map((tool) => toMcpTool(name, tool))
+        .sort((a, b) => a.tool.localeCompare(b.tool));
       this.logShapes(name, tools);
       return tools;
     } catch (error) {
@@ -355,14 +470,21 @@ export class McpRegistry {
    */
   private logShapes(server: string, tools: readonly McpTool[]): void {
     const shapes = tools.flatMap(({ tool, outputSchema }) =>
-      outputSchema === undefined ? [] : [{ tool, ...shapeBlockOf(outputSchema) }],
+      outputSchema === undefined
+        ? []
+        : [{ tool, ...shapeBlockOf(outputSchema) }],
     );
     this.logger.info('mcp server tools listed', {
       server,
       tools: tools.length,
       withShape: shapes.length,
-      longestShapeBlock: Math.max(0, ...shapes.map(({ block }) => block.length)),
-      truncatedShapes: shapes.filter(({ truncated }) => truncated).map(({ tool }) => tool),
+      longestShapeBlock: Math.max(
+        0,
+        ...shapes.map(({ block }) => block.length),
+      ),
+      truncatedShapes: shapes
+        .filter(({ truncated }) => truncated)
+        .map(({ tool }) => tool),
     });
   }
 
@@ -375,11 +497,18 @@ export class McpRegistry {
   private async registerOAuthClient(
     url: string,
     redirectUrl: string,
-  ): Promise<Pick<NewMcpServerRow, 'oauthServer' | 'oauthClientId' | 'oauthClientSecret'>> {
+  ): Promise<
+    Pick<NewMcpServerRow, 'oauthServer' | 'oauthClientId' | 'oauthClientSecret'>
+  > {
     const fetchFn = deadlineFetch(this.callTimeoutMs);
     const resourceMetadataUrl = await this.challengeOf(url, fetchFn);
-    if (resourceMetadataUrl !== undefined) this.requireSecureUrl(resourceMetadataUrl);
-    const metadata = await this.discoverRegistrable(url, resourceMetadataUrl, fetchFn);
+    if (resourceMetadataUrl !== undefined)
+      this.requireSecureUrl(resourceMetadataUrl);
+    const metadata = await this.discoverRegistrable(
+      url,
+      resourceMetadataUrl,
+      fetchFn,
+    );
     try {
       const client = await registerClient(metadata.issuer, {
         metadata,
@@ -403,20 +532,30 @@ export class McpRegistry {
   }
 
   /** The `resource_metadata` address of the server's 401 to a request without a token. */
-  private async challengeOf(url: string, fetchFn: FetchLike): Promise<URL | undefined> {
+  private async challengeOf(
+    url: string,
+    fetchFn: FetchLike,
+  ): Promise<URL | undefined> {
     let response: Response;
     try {
       response = await fetchFn(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
         body: JSON.stringify(PROBE_REQUEST),
       });
     } catch (error) {
       throw checkFailed(listingFailureReason(error, 'oauth'));
     }
     await response.body?.cancel();
-    if (response.status === 401) return extractWWWAuthenticateParams(response).resourceMetadataUrl;
-    this.logger.warn('mcp server did not ask for a token', { url, status: response.status });
+    if (response.status === 401)
+      return extractWWWAuthenticateParams(response).resourceMetadataUrl;
+    this.logger.warn('mcp server did not ask for a token', {
+      url,
+      status: response.status,
+    });
     throw checkFailed(response.ok ? 'oauth_not_supported' : 'not_mcp');
   }
 
@@ -428,12 +567,16 @@ export class McpRegistry {
   ): Promise<AuthorizationServerMetadata> {
     let info: OAuthServerInfo;
     try {
-      info = await discoverOAuthServerInfo(url, { resourceMetadataUrl, fetchFn });
+      info = await discoverOAuthServerInfo(url, {
+        resourceMetadataUrl,
+        fetchFn,
+      });
     } catch (error) {
       throw this.oauthCheckFailed(url, error, 'oauth_not_supported');
     }
     const metadata = info.authorizationServerMetadata;
-    const announced = (info.resourceMetadata?.authorization_servers?.length ?? 0) > 0;
+    const announced =
+      (info.resourceMetadata?.authorization_servers?.length ?? 0) > 0;
     if (
       !announced ||
       metadata?.registration_endpoint === undefined ||
@@ -459,7 +602,11 @@ export class McpRegistry {
   }
 
   /** Logs the error class and, for a rejected registration, only its status: bodies of the authorization server stay out. */
-  private oauthCheckFailed(url: string, error: unknown, otherwise: McpCheckFailureReason): McpError {
+  private oauthCheckFailed(
+    url: string,
+    error: unknown,
+    otherwise: McpCheckFailureReason,
+  ): McpError {
     const reason = oauthFailureReason(error, otherwise);
     this.logger.warn('mcp server OAuth check failed', {
       url,
@@ -472,12 +619,20 @@ export class McpRegistry {
   }
 
   /** Runs a registry operation with one log record of its outcome, reason and duration. */
-  private async logged<T>(operation: string, fields: LogFields, work: () => Promise<T>): Promise<T> {
+  private async logged<T>(
+    operation: string,
+    fields: LogFields,
+    work: () => Promise<T>,
+  ): Promise<T> {
     const startedAt = performance.now();
     const durationMs = () => Math.round(performance.now() - startedAt);
     try {
       const result = await work();
-      this.logger.info(`${operation} done`, { ...fields, outcome: 'done', durationMs: durationMs() });
+      this.logger.info(`${operation} done`, {
+        ...fields,
+        outcome: 'done',
+        durationMs: durationMs(),
+      });
       return result;
     } catch (error) {
       if (error instanceof McpError) {
@@ -488,7 +643,11 @@ export class McpRegistry {
           durationMs: durationMs(),
         });
       } else {
-        this.logger.error(`${operation} failed`, { ...fields, durationMs: durationMs(), error });
+        this.logger.error(`${operation} failed`, {
+          ...fields,
+          durationMs: durationMs(),
+          error,
+        });
       }
       throw error;
     }

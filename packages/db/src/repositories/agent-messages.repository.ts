@@ -18,7 +18,11 @@ import {
 } from 'drizzle-orm';
 import { Db } from '../db';
 import { agentMessages } from '../schema';
-import { type FinishedMcpCall, finishedIn, type FinishedWindow } from './finished-window';
+import {
+  type FinishedMcpCall,
+  finishedIn,
+  type FinishedWindow,
+} from './finished-window';
 
 /** An entry as a read selects it; the kind and the content are checked by the reader. */
 export interface AgentMessageRow {
@@ -31,7 +35,13 @@ export interface AgentMessageRow {
 /** An entry to append with its promoted columns: the call it is about and the end time of a result. */
 export type NewAgentMessageRow = Pick<
   typeof agentMessages.$inferInsert,
-  'taskId' | 'seq' | 'kind' | 'content' | 'modelCallId' | 'callId' | 'finishedAt'
+  | 'taskId'
+  | 'seq'
+  | 'kind'
+  | 'content'
+  | 'modelCallId'
+  | 'callId'
+  | 'finishedAt'
 >;
 
 /** What a read of entries selects. */
@@ -100,7 +110,12 @@ export class AgentMessagesRepository {
     return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), gte(agentMessages.seq, lastCompaction)))
+      .where(
+        and(
+          eq(agentMessages.taskId, taskId),
+          gte(agentMessages.seq, lastCompaction),
+        ),
+      )
       .orderBy(asc(agentMessages.seq));
   }
 
@@ -139,7 +154,12 @@ export class AgentMessagesRepository {
     return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), lte(agentMessages.seq, throughSeq)))
+      .where(
+        and(
+          eq(agentMessages.taskId, taskId),
+          lte(agentMessages.seq, throughSeq),
+        ),
+      )
       .orderBy(asc(agentMessages.seq));
   }
 
@@ -170,12 +190,20 @@ export class AgentMessagesRepository {
     return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), inArray(agentMessages.callId, [...callIds])))
+      .where(
+        and(
+          eq(agentMessages.taskId, taskId),
+          inArray(agentMessages.callId, [...callIds]),
+        ),
+      )
       .orderBy(asc(agentMessages.seq));
   }
 
   /** `seq` of the `model_answer` that requested the call; `undefined` when no answer of the agent did. */
-  async answerSeqOf(taskId: string, callId: string): Promise<number | undefined> {
+  async answerSeqOf(
+    taskId: string,
+    callId: string,
+  ): Promise<number | undefined> {
     const [answer] = await this.db.client
       .select({ seq: agentMessages.seq })
       .from(agentMessages)
@@ -223,7 +251,11 @@ export class AgentMessagesRepository {
           finishedIn(agentMessages.finishedAt, window),
         ),
       )
-      .orderBy(asc(agentMessages.finishedAt), asc(agentMessages.taskId), asc(agentMessages.seq));
+      .orderBy(
+        asc(agentMessages.finishedAt),
+        asc(agentMessages.taskId),
+        asc(agentMessages.seq),
+      );
     // The query keeps only rows with a server, one of the outcomes and an end time.
     return rows.map((row) => ({
       server: row.server as string,
@@ -242,7 +274,12 @@ export class AgentMessagesRepository {
         calls: sql<number>`coalesce(sum(jsonb_array_length(${agentMessages.content} -> 'toolCalls')), 0)::int`,
       })
       .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), eq(agentMessages.kind, 'model_answer')));
+      .where(
+        and(
+          eq(agentMessages.taskId, taskId),
+          eq(agentMessages.kind, 'model_answer'),
+        ),
+      );
     return row?.calls ?? 0;
   }
 
@@ -250,7 +287,10 @@ export class AgentMessagesRepository {
    * How many single assignments each subagent got from the agent's calls of the tool, whatever was
    * compacted since. List items and refused or interrupted calls do not count.
    */
-  singleTaskRuns(taskId: string, tool: string): Promise<{ subagent: string; runs: number }[]> {
+  singleTaskRuns(
+    taskId: string,
+    tool: string,
+  ): Promise<{ subagent: string; runs: number }[]> {
     const subagent = sql<string>`${agentMessages.content} -> 'args' ->> 'subagentType'`;
     return this.db.client
       .select({ subagent, runs: count() })
@@ -269,7 +309,11 @@ export class AgentMessagesRepository {
     subagent: string,
   ): Promise<string | undefined> {
     const [row] = await this.db.client
-      .select({ childTaskId: sql<string | null>`${agentMessages.content} ->> 'childTaskId'` })
+      .select({
+        childTaskId: sql<
+          string | null
+        >`${agentMessages.content} ->> 'childTaskId'`,
+      })
       .from(agentMessages)
       .where(
         and(

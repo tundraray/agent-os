@@ -54,7 +54,9 @@ function whose(header: RecordHeader): string {
 /** A line of the listing (KD-4): id, name, whose record and, while the budget allows, the description. */
 function line(header: RecordHeader, withDescription: boolean): string {
   const head = `${header.id}: ${header.name} (${whose(header)})`;
-  return descriptionLine(withDescription ? `${head} — ${header.description}` : head);
+  return descriptionLine(
+    withDescription ? `${head} — ${header.description}` : head,
+  );
 }
 
 function byName(left: RecordHeader, right: RecordHeader): number {
@@ -76,12 +78,20 @@ function displayOrder(left: RecordHeader, right: RecordHeader): number {
  * descriptions are dropped one by one, first from the records the employee started fewer sessions
  * with; at an equal count by name without case, then by id. Names stay at any budget.
  */
-export function chatListing({ headers, sessionCounts, budget }: ChatListingInput): ChatListing {
+export function chatListing({
+  headers,
+  sessionCounts,
+  budget,
+}: ChatListingInput): ChatListing {
   const offered = headers.filter(inRootLaunchSet).sort(displayOrder);
-  const countOf = (header: RecordHeader): number => sessionCounts.get(header.id) ?? 0;
+  const countOf = (header: RecordHeader): number =>
+    sessionCounts.get(header.id) ?? 0;
 
   const described = new Set(offered.map((header) => header.id));
-  let size = offered.reduce((sum, header) => sum + line(header, true).length, 0);
+  let size = offered.reduce(
+    (sum, header) => sum + line(header, true).length,
+    0,
+  );
   const dropOrder = [...offered].sort(
     (left, right) => countOf(left) - countOf(right) || byName(left, right),
   );
@@ -95,5 +105,9 @@ export function chatListing({ headers, sessionCounts, budget }: ChatListingInput
     offered
       .filter((header) => header.kind === kind)
       .map((header) => line(header, described.has(header.id)));
-  return { agents: linesOf('agent'), deepAgents: linesOf('deep_agent'), described: described.size };
+  return {
+    agents: linesOf('agent'),
+    deepAgents: linesOf('deep_agent'),
+    described: described.size,
+  };
 }

@@ -67,7 +67,11 @@ export class WorkerLoop {
     } catch (error) {
       this.failures += 1;
       delay = backoffDelay(pollMs, this.failures);
-      logger.error('worker pass failed', { worker: name, error, retryInMs: delay });
+      logger.error('worker pass failed', {
+        worker: name,
+        error,
+        retryInMs: delay,
+      });
     }
     if (this.running) this.schedule(delay);
   }

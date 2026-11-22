@@ -24,16 +24,25 @@ import { adminLibraryTabPath, adminRecordPath } from '@/lib/shell-route';
 const EMPTY_VALUE = '—';
 
 /** The panel's own address of a record: links in the panel never lead to the employee's library. */
-export const panelRecordHref = (id: string): string => adminRecordPath('library', id);
+export const panelRecordHref = (id: string): string =>
+  adminRecordPath('library', id);
 
 /** An employee's record whose access the administrator closes: a row of «Открытые ролям» or AL-03. */
-export type ClosableRecord = Pick<RecordSummary, 'id' | 'kind' | 'name' | 'audience'> & {
+export type ClosableRecord = Pick<
+  RecordSummary,
+  'id' | 'kind' | 'name' | 'audience'
+> & {
   author: NonNullable<RecordSummary['author']>;
 };
 
 /** The roles a record is open to, in the page's language (KD-6). */
-const rolesOf = (record: Pick<RecordSummary, 'audience'>, locale: Locale): string =>
-  record.audience.roles.map((role) => builtinRoleName(role.name, locale)).join(', ');
+const rolesOf = (
+  record: Pick<RecordSummary, 'audience'>,
+  locale: Locale,
+): string =>
+  record.audience.roles
+    .map((role) => builtinRoleName(role.name, locale))
+    .join(', ');
 
 type CloseAccessDialogProps = {
   record: ClosableRecord;
@@ -48,15 +57,26 @@ type CloseAccessDialogProps = {
  * `close` through `recordAction`, and `libraryIndex` is re-read (KD-2). A refusal stays in the dialog with its
  * text; «Отмена» and Esc send nothing.
  */
-export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: CloseAccessDialogProps) {
+export function CloseAccessDialog({
+  record,
+  open,
+  onOpenChange,
+  onClosed,
+}: CloseAccessDialogProps) {
   const t = useTranslations('errors');
   const tLibrary = useTranslations('admin.library');
   const locale = useLocale();
   const { libraryIndex } = useShellServices();
 
   async function close(): Promise<void> {
-    await recordAction({ recordId: record.id, kind: record.kind, action: 'close', version: null }, () =>
-      adminApi.library.close(record.id),
+    await recordAction(
+      {
+        recordId: record.id,
+        kind: record.kind,
+        action: 'close',
+        version: null,
+      },
+      () => adminApi.library.close(record.id),
     );
     void libraryIndex.refresh();
     toast.success(tLibrary('closed'));
@@ -77,7 +97,10 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
       confirmLabel={tLibrary('close')}
       onConfirm={close}
       // `recordAction` has logged the refusal.
-      refusalText={(cause) => describeLibraryError(t, cause, { where: 'panel', kind: record.kind }).text}
+      refusalText={(cause) =>
+        describeLibraryError(t, cause, { where: 'panel', kind: record.kind })
+          .text
+      }
     />
   );
 }
@@ -101,21 +124,36 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
 
   return (
     <>
-      <PageHeader area={titles.panel} title={builtinName(record, locale)} parent={titles.parent('library')}>
+      <PageHeader
+        area={titles.panel}
+        title={builtinName(record, locale)}
+        parent={titles.parent('library')}
+      >
         <KnowledgeButton record={record} />
         {author !== null && (
-          <Button variant="outline" size="sm" className={CONTROL_SIZE} onClick={() => setClosing(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className={CONTROL_SIZE}
+            onClick={() => setClosing(true)}
+          >
             {t('close')}
           </Button>
         )}
       </PageHeader>
       <div className="flex max-w-240 flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <RecordLabel variant="under" summary={record} href={panelRecordHref(record.id)} />
+          <RecordLabel
+            variant="under"
+            summary={record}
+            href={panelRecordHref(record.id)}
+          />
           <p className="text-data text-foreground">
             {t.rich('rolesLine', {
               roles: roles === '' ? EMPTY_VALUE : roles,
-              label: (chunks) => <span className="text-muted-foreground">{chunks}</span>,
+              label: (chunks) => (
+                <span className="text-muted-foreground">{chunks}</span>
+              ),
             })}
           </p>
         </div>

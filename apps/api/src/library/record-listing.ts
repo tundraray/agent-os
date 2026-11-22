@@ -41,7 +41,10 @@ const OWNERSHIP_LABELS: Record<RecordOwnership, string> = {
 };
 
 /** The chat's reading of a stored record the employee may see. */
-export function chatRecordOf(record: LibraryRecord, viewerId: string): ChatRecord {
+export function chatRecordOf(
+  record: LibraryRecord,
+  viewerId: string,
+): ChatRecord {
   return {
     id: record.id,
     kind: record.body.kind,
@@ -54,7 +57,10 @@ export function chatRecordOf(record: LibraryRecord, viewerId: string): ChatRecor
   };
 }
 
-function ownershipOf(ownerId: string | null, viewerId: string): RecordOwnership {
+function ownershipOf(
+  ownerId: string | null,
+  viewerId: string,
+): RecordOwnership {
   if (ownerId === null) return 'system';
   return ownerId === viewerId ? 'own' : 'role';
 }
@@ -130,13 +136,19 @@ export function recordText(record: ChatRecord): string {
     `sharing: ${sharingLabel(record.shared)}`,
     ...(selfLearning === null
       ? []
-      : [`selfLearning: ${selfLearning} (only a person changes it, on the record's card)`]),
+      : [
+          `selfLearning: ${selfLearning} (only a person changes it, on the record's card)`,
+        ]),
     `content: ${JSON.stringify(content)}`,
   ].join('\n');
 }
 
-function splitFlag(body: RecordBody): { selfLearning: boolean | null; content: object } {
-  if (body.kind === 'agent') return { selfLearning: null, content: body.content };
+function splitFlag(body: RecordBody): {
+  selfLearning: boolean | null;
+  content: object;
+} {
+  if (body.kind === 'agent')
+    return { selfLearning: null, content: body.content };
   const { selfLearning, ...content } = body.content;
   return { selfLearning, content };
 }

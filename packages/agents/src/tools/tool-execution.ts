@@ -62,7 +62,11 @@ export interface LoggedCall {
 }
 
 export function loggedCall(call: ResolvedCall): LoggedCall {
-  return { callId: call.callId, ...callTarget(call.tool), args: loggedArgs(call.tool, call.args) };
+  return {
+    callId: call.callId,
+    ...callTarget(call.tool),
+    args: loggedArgs(call.tool, call.args),
+  };
 }
 
 /** Logs one tool call the runner ran (rule 9 of the plan): ids, tool, server, arguments, outcome, reason, duration. */
@@ -83,13 +87,25 @@ export function logCall(
       });
       return;
     case 'refused':
-      logger.info('tool call finished', { ...fields, outcome: 'refused', reason: execution.reason });
+      logger.info('tool call finished', {
+        ...fields,
+        outcome: 'refused',
+        reason: execution.reason,
+      });
       return;
     case 'aborted':
-      logger.info('tool call aborted by the step signal', { ...fields, outcome: null, reason: 'aborted' });
+      logger.info('tool call aborted by the step signal', {
+        ...fields,
+        outcome: null,
+        reason: 'aborted',
+      });
       return;
     case 'not_sent':
-      logger.warn('confirmed tool call not sent', { ...fields, outcome: null, reason: execution.reason });
+      logger.warn('confirmed tool call not sent', {
+        ...fields,
+        outcome: null,
+        reason: execution.reason,
+      });
       return;
   }
 }
@@ -114,13 +130,21 @@ export interface McpCallOptions {
 /** The two ways an MCP call goes out: a direct call of the model, and a script's call. */
 export interface McpCalls {
   /** A direct call: its answer masked, a large one wrapped, the full result kept for the step's commit. */
-  readonly direct: (call: McpCall, signal: AbortSignal, logger: Logger) => Promise<ToolExecution | AbortedExecution>;
+  readonly direct: (
+    call: McpCall,
+    signal: AbortSignal,
+    logger: Logger,
+  ) => Promise<ToolExecution | AbortedExecution>;
   /** A script's call: the whole text and, with `success` or `empty`, the value. */
-  readonly fromCode: (call: McpCall, signal: AbortSignal) => Promise<ToolExecution | AbortedExecution>;
+  readonly fromCode: (
+    call: McpCall,
+    signal: AbortSignal,
+  ) => Promise<ToolExecution | AbortedExecution>;
 }
 
 export function createMcpCalls(options: McpCallOptions): McpCalls {
-  const { client, accounts, callTimeoutMs, resultSettings, maskSecrets } = options;
+  const { client, accounts, callTimeoutMs, resultSettings, maskSecrets } =
+    options;
 
   /**
    * Sends one MCP call with the owner's credentials (KD-5): without an account the call is `auth_required`
@@ -134,7 +158,11 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
     readonly ownerId: string;
     readonly signal: AbortSignal;
   }): Promise<McpCallResponse | { readonly kind: 'server_gone' }> {
-    const credentials = await accounts.credentialsFor(request.server, request.ownerId, 'call');
+    const credentials = await accounts.credentialsFor(
+      request.server,
+      request.ownerId,
+      'call',
+    );
     if (credentials.kind !== 'ready') return credentials;
     const response = await client.callTool({
       url: credentials.url,
@@ -154,15 +182,24 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
   async function callMcp(
     call: McpCall,
     signal: AbortSignal,
-    finish: (response: McpCallResponse) => ToolExecution | Promise<ToolExecution>,
+    finish: (
+      response: McpCallResponse,
+    ) => ToolExecution | Promise<ToolExecution>,
   ): Promise<ToolExecution | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
     const { server, tool } = call.tool.mcp;
     try {
-      const response = await sendMcp({ server, tool, args, ownerId: call.caller.ownerId, signal });
+      const response = await sendMcp({
+        server,
+        tool,
+        args,
+        ownerId: call.caller.ownerId,
+        signal,
+      });
       if (signal.aborted) return { kind: 'aborted' };
-      if (response.kind === 'server_gone') return { kind: 'refused', reason: 'tool_not_in_definition' };
+      if (response.kind === 'server_gone')
+        return { kind: 'refused', reason: 'tool_not_in_definition' };
       const execution = await finish(response);
       return signal.aborted ? { kind: 'aborted' } : execution;
     } catch (error) {
@@ -196,8 +233,10 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
     });
     if (result.outcome === 'empty') return { ...done, text, stored: stored() };
     const settings = await resultSettings();
-    if (result.outcome === 'tool_error') return { ...done, text: cutText(text, settings.storeFromChars) };
-    if (text.length <= settings.storeFromChars) return { ...done, text, stored: stored() };
+    if (result.outcome === 'tool_error')
+      return { ...done, text: cutText(text, settings.storeFromChars) };
+    if (text.length <= settings.storeFromChars)
+      return { ...done, text, stored: stored() };
     logger.info('tool result wrapped', {
       callId: call.callId,
       server,
@@ -207,28 +246,42 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
     });
     return {
       ...done,
-      text: wrapperText({ callId: call.callId, text, previewChars: settings.previewChars }),
+      text: wrapperText({
+        callId: call.callId,
+        text,
+        previewChars: settings.previewChars,
+      }),
       stored: stored(),
     };
   }
 
   /** A script's call's answer, as today: the whole text and, with `success` or `empty`, the value. */
-  function codeExecution(call: McpCall, response: McpCallResponse): ToolExecution {
+  function codeExecution(
+    call: McpCall,
+    response: McpCallResponse,
+  ): ToolExecution {
     const { server, readOnly } = call.tool.mcp;
     const result = toOutcome(response, { server, readOnly });
     const hasValue =
-      response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
+      response.kind === 'result' &&
+      (result.outcome === 'success' || result.outcome === 'empty');
     return {
       kind: 'done',
       outcome: result.outcome,
       text: result.text,
       ...(result.reason === undefined ? {} : { failureReason: result.reason }),
-      ...(hasValue ? { fullResult: { value: scriptValueOf(response.result) } } : {}),
+      ...(hasValue
+        ? { fullResult: { value: scriptValueOf(response.result) } }
+        : {}),
     };
   }
 
   return {
-    direct: (call, signal, logger) => callMcp(call, signal, (response) => directExecution(call, response, logger)),
-    fromCode: (call, signal) => callMcp(call, signal, (response) => codeExecution(call, response)),
+    direct: (call, signal, logger) =>
+      callMcp(call, signal, (response) =>
+        directExecution(call, response, logger),
+      ),
+    fromCode: (call, signal) =>
+      callMcp(call, signal, (response) => codeExecution(call, response)),
   };
 }

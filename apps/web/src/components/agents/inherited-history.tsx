@@ -1,19 +1,27 @@
-"use client";
+'use client';
 
-import { useEffect, useId, useRef, useState } from "react";
-import type { HistoryEntry } from "@agent-os/contracts";
-import { ChevronRightIcon } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { logger } from "@/lib/logger";
-import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
-import { describeApiError } from "@/lib/api/api-request";
-import { cn } from "@/lib/utils";
+import { useEffect, useId, useRef, useState } from 'react';
+import type { HistoryEntry } from '@agent-os/contracts';
+import { ChevronRightIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { logger } from '@/lib/logger';
+import type { ThreadsApiClient } from '@/lib/threads/threads-api-client';
+import { describeApiError } from '@/lib/api/api-request';
+import { cn } from '@/lib/utils';
 
 /** A message of the parent's history as the block shows it; `caption` is a `chat.caption` key. */
-type InheritedMessage = { seq: number; side: "sent" | "answer"; caption: "assignment" | "report" | null; text: string };
+type InheritedMessage = {
+  seq: number;
+  side: 'sent' | 'answer';
+  caption: 'assignment' | 'report' | null;
+  text: string;
+};
 
-type Read = { status: "loading" } | { status: "ready"; messages: InheritedMessage[] } | { status: "failed" };
+type Read =
+  | { status: 'loading' }
+  | { status: 'ready'; messages: InheritedMessage[] }
+  | { status: 'failed' };
 
 /**
  * The entries that read as messages: what was sent to the parent and what it answered. Tool calls,
@@ -21,24 +29,47 @@ type Read = { status: "loading" } | { status: "ready"; messages: InheritedMessag
  */
 function toMessage(entry: HistoryEntry): InheritedMessage | null {
   switch (entry.kind) {
-    case "task":
-      return { seq: entry.seq, side: "sent", caption: "assignment", text: entry.content.text };
-    case "user_message":
-    case "agent_message":
-      return { seq: entry.seq, side: "sent", caption: null, text: entry.content.text };
-    case "model_answer":
-      return entry.content.text.trim() === ""
+    case 'task':
+      return {
+        seq: entry.seq,
+        side: 'sent',
+        caption: 'assignment',
+        text: entry.content.text,
+      };
+    case 'user_message':
+    case 'agent_message':
+      return {
+        seq: entry.seq,
+        side: 'sent',
+        caption: null,
+        text: entry.content.text,
+      };
+    case 'model_answer':
+      return entry.content.text.trim() === ''
         ? null
-        : { seq: entry.seq, side: "answer", caption: null, text: entry.content.text };
-    case "child_report":
-      return { seq: entry.seq, side: "answer", caption: "report", text: entry.content.text ?? entry.content.description };
+        : {
+            seq: entry.seq,
+            side: 'answer',
+            caption: null,
+            text: entry.content.text,
+          };
+    case 'child_report':
+      return {
+        seq: entry.seq,
+        side: 'answer',
+        caption: 'report',
+        text: entry.content.text ?? entry.content.description,
+      };
     default:
       return null;
   }
 }
 
 /** Every page of the inherited history: a full page names where the next one starts. */
-async function readInherited(api: ThreadsApiClient, agentId: string): Promise<InheritedMessage[]> {
+async function readInherited(
+  api: ThreadsApiClient,
+  agentId: string,
+): Promise<InheritedMessage[]> {
   const messages: InheritedMessage[] = [];
   let afterSeq: number | null = 0;
   while (afterSeq !== null) {
@@ -59,9 +90,9 @@ async function readInherited(api: ThreadsApiClient, agentId: string): Promise<In
  */
 export function InheritedHistory({ agentId }: { agentId: string }) {
   const { apiClient } = useShellServices();
-  const t = useTranslations("formats");
-  const tChat = useTranslations("chat.caption");
-  const [read, setRead] = useState<Read>({ status: "loading" });
+  const t = useTranslations('formats');
+  const tChat = useTranslations('chat.caption');
+  const [read, setRead] = useState<Read>({ status: 'loading' });
   const [open, setOpen] = useState(false);
   const panelId = useId();
   // A remount under StrictMode keeps the ref: the history is still read once.
@@ -71,19 +102,25 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
     if (requested.current === agentId) return;
     requested.current = agentId;
     readInherited(apiClient, agentId).then(
-      (messages) => setRead({ status: "ready", messages }),
+      (messages) => setRead({ status: 'ready', messages }),
       (error: unknown) => {
-        logger.warn("inherited history read failed", { ...describeApiError(error), agentId });
-        setRead({ status: "failed" });
+        logger.warn('inherited history read failed', {
+          ...describeApiError(error),
+          agentId,
+        });
+        setRead({ status: 'failed' });
       },
     );
   }, [apiClient, agentId]);
 
-  if (read.status !== "ready") {
+  if (read.status !== 'ready') {
     return (
-      <p data-slot="inherited-history" className="text-muted-foreground flex h-8 items-center gap-1 text-xs leading-4 font-medium">
+      <p
+        data-slot="inherited-history"
+        className="text-muted-foreground flex h-8 items-center gap-1 text-xs leading-4 font-medium"
+      >
         <ChevronRightIcon aria-hidden className="size-3.5" />
-        {t("inheritedHistory")}
+        {t('inheritedHistory')}
       </p>
     );
   }
@@ -97,8 +134,11 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
         onClick={() => setOpen((value) => !value)}
         className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 self-start rounded-md text-xs leading-4 font-medium outline-none focus-visible:ring-2 pointer-coarse:h-11"
       >
-        <ChevronRightIcon aria-hidden className={cn("size-3.5", open && "rotate-90")} />
-        {t("inheritedHistoryCount", { count: read.messages.length })}
+        <ChevronRightIcon
+          aria-hidden
+          className={cn('size-3.5', open && 'rotate-90')}
+        />
+        {t('inheritedHistoryCount', { count: read.messages.length })}
       </button>
       {open && (
         <ol
@@ -108,15 +148,21 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
           {read.messages.map((message) => (
             <li
               key={message.seq}
-              className={cn("flex min-w-0 flex-col gap-1", message.side === "sent" && "items-end")}
+              className={cn(
+                'flex min-w-0 flex-col gap-1',
+                message.side === 'sent' && 'items-end',
+              )}
             >
               {message.caption !== null && (
-                <span className="text-muted-foreground text-xs leading-4 font-medium">{tChat(message.caption)}</span>
+                <span className="text-muted-foreground text-xs leading-4 font-medium">
+                  {tChat(message.caption)}
+                </span>
               )}
               <p
                 className={cn(
-                  "text-foreground whitespace-pre-wrap wrap-break-word",
-                  message.side === "sent" && "bg-muted max-w-[85%] rounded-(--composer-radius) px-4 py-2",
+                  'text-foreground whitespace-pre-wrap wrap-break-word',
+                  message.side === 'sent' &&
+                    'bg-muted max-w-[85%] rounded-(--composer-radius) px-4 py-2',
                 )}
               >
                 {message.text}

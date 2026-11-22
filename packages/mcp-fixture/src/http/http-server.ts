@@ -1,10 +1,28 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { isJSONRPCRequest, requireBearerAuth, type JSONRPCRequest } from '@modelcontextprotocol/server';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
+import {
+  isJSONRPCRequest,
+  requireBearerAuth,
+  type JSONRPCRequest,
+} from '@modelcontextprotocol/server';
 import { CallLog } from '../call-log';
 import { argsHash } from '../canonical-json';
 import type { LogDataset } from '../dataset';
-import { FaultSchedule, isResultFault, type FaultRule, type ResultFaultRule } from '../fault-schedule';
-import { FixtureServer, FixtureSourceSchema, type FixtureSource } from '../fixture-server';
+import {
+  FaultSchedule,
+  isResultFault,
+  type FaultRule,
+  type ResultFaultRule,
+} from '../fault-schedule';
+import {
+  FixtureServer,
+  FixtureSourceSchema,
+  type FixtureSource,
+} from '../fixture-server';
 import { FixtureAuthorizationServer } from './authorization-server';
 import { handleControl, type ControlTargets } from './controls';
 import { answerWithFault, type HttpAnswer } from './http-faults';
@@ -42,10 +60,20 @@ interface Caller {
  */
 export function createFixtureHttpServer(options: FixtureHttpOptions): Server {
   const sources = Object.fromEntries(
-    FixtureSourceSchema.options.map((source) => [source, new FixtureServer(options.dataset, source)]),
+    FixtureSourceSchema.options.map((source) => [
+      source,
+      new FixtureServer(options.dataset, source),
+    ]),
   ) as Record<FixtureSource, FixtureServer>;
-  const targets: ControlTargets = { auth: new FixtureAuthorizationServer(), sources, revokedShared: new Set() };
-  const log = options.callLogPath === undefined ? undefined : new CallLog(options.callLogPath);
+  const targets: ControlTargets = {
+    auth: new FixtureAuthorizationServer(),
+    sources,
+    revokedShared: new Set(),
+  };
+  const log =
+    options.callLogPath === undefined
+      ? undefined
+      : new CallLog(options.callLogPath);
 
   const route = async (request: Request): Promise<HttpAnswer> => {
     const url = new URL(request.url);
@@ -57,7 +85,10 @@ export function createFixtureHttpServer(options: FixtureHttpOptions): Server {
         : new Response(null, { status: 404 });
     }
     if (path.startsWith(`${PROTECTED_RESOURCE_PREFIX}/`)) {
-      return protectedResourceMetadata(path.slice(PROTECTED_RESOURCE_PREFIX.length), issuer);
+      return protectedResourceMetadata(
+        path.slice(PROTECTED_RESOURCE_PREFIX.length),
+        issuer,
+      );
     }
     const authAnswer = await targets.auth.handle(request, path, issuer);
     if (authAnswer !== undefined) {
@@ -71,11 +102,20 @@ export function createFixtureHttpServer(options: FixtureHttpOptions): Server {
     const caller =
       match[2] === undefined
         ? sharedCaller(request, source, targets.revokedShared)
-        : await oauthCaller(request, `${issuer}${PROTECTED_RESOURCE_PREFIX}${path}`, targets.auth);
+        : await oauthCaller(
+            request,
+            `${issuer}${PROTECTED_RESOURCE_PREFIX}${path}`,
+            targets.auth,
+          );
     if (caller instanceof Response) {
       return caller;
     }
-    return serveMcp(request, sources[source], { source, caller, log, faultsPath: options.faultsPath });
+    return serveMcp(request, sources[source], {
+      source,
+      caller,
+      log,
+      faultsPath: options.faultsPath,
+    });
   };
 
   return createServer((req, res) => {
@@ -86,13 +126,18 @@ export function createFixtureHttpServer(options: FixtureHttpOptions): Server {
         if (!res.headersSent) {
           res.writeHead(500, { 'content-type': 'text/plain' });
         }
-        res.end(`fixture error: ${error instanceof Error ? error.message : String(error)}`);
+        res.end(
+          `fixture error: ${error instanceof Error ? error.message : String(error)}`,
+        );
       });
   });
 }
 
 /** RFC 9728 metadata, only for the OAuth paths: the shared-token paths declare no OAuth at all. */
-function protectedResourceMetadata(resourcePath: string, issuer: string): Response {
+function protectedResourceMetadata(
+  resourcePath: string,
+  issuer: string,
+): Response {
   const match = MCP_PATH.exec(resourcePath);
   if (match === null || match[2] === undefined) {
     return new Response(null, { status: 404 });
@@ -105,13 +150,26 @@ function protectedResourceMetadata(resourcePath: string, issuer: string): Respon
 }
 
 /** The shared token while the source's token is not revoked; 401 without OAuth metadata otherwise. */
-function sharedCaller(request: Request, source: FixtureSource, revoked: ReadonlySet<FixtureSource>): Caller | Response {
-  if (request.headers.get('authorization') === `Bearer ${FIXTURE_SHARED_TOKEN}` && !revoked.has(source)) {
+function sharedCaller(
+  request: Request,
+  source: FixtureSource,
+  revoked: ReadonlySet<FixtureSource>,
+): Caller | Response {
+  if (
+    request.headers.get('authorization') === `Bearer ${FIXTURE_SHARED_TOKEN}` &&
+    !revoked.has(source)
+  ) {
     return { account: 'shared', tokenId: null };
   }
   return Response.json(
-    { error: 'invalid_token', error_description: 'missing, wrong or revoked shared token' },
-    { status: 401, headers: { 'www-authenticate': 'Bearer error="invalid_token"' } },
+    {
+      error: 'invalid_token',
+      error_description: 'missing, wrong or revoked shared token',
+    },
+    {
+      status: 401,
+      headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+    },
   );
 }
 
@@ -121,7 +179,10 @@ async function oauthCaller(
   resourceMetadataUrl: string,
   auth: FixtureAuthorizationServer,
 ): Promise<Caller | Response> {
-  const authInfo = await requireBearerAuth({ verifier: auth, resourceMetadataUrl })(request);
+  const authInfo = await requireBearerAuth({
+    verifier: auth,
+    resourceMetadataUrl,
+  })(request);
   if (authInfo instanceof Response) {
     return authInfo;
   }
@@ -140,14 +201,25 @@ interface McpContext {
 }
 
 /** Logs a `tools/call` with its caller before the server sees it, and applies the matching fault rule. */
-async function serveMcp(request: Request, server: FixtureServer, context: McpContext): Promise<HttpAnswer> {
+async function serveMcp(
+  request: Request,
+  server: FixtureServer,
+  context: McpContext,
+): Promise<HttpAnswer> {
   const parsedBody: unknown = await request
     .clone()
     .json()
     .catch(() => undefined);
-  const call = isJSONRPCRequest(parsedBody) && parsedBody.method === 'tools/call' ? parsedBody : undefined;
-  const fault = call === undefined || context.log === undefined ? undefined : logCall(call, context.log, context);
-  const serve = (resultFault?: ResultFaultRule) => server.handleHttp(request, { parsedBody, resultFault });
+  const call =
+    isJSONRPCRequest(parsedBody) && parsedBody.method === 'tools/call'
+      ? parsedBody
+      : undefined;
+  const fault =
+    call === undefined || context.log === undefined
+      ? undefined
+      : logCall(call, context.log, context);
+  const serve = (resultFault?: ResultFaultRule) =>
+    server.handleHttp(request, { parsedBody, resultFault });
   if (fault === undefined) {
     return serve();
   }
@@ -157,13 +229,27 @@ async function serveMcp(request: Request, server: FixtureServer, context: McpCon
   return answerWithFault(fault, (call as JSONRPCRequest).id, () => serve());
 }
 
-function logCall(request: JSONRPCRequest, log: CallLog, context: McpContext): FaultRule | undefined {
+function logCall(
+  request: JSONRPCRequest,
+  log: CallLog,
+  context: McpContext,
+): FaultRule | undefined {
   const params: Record<string, unknown> = request.params ?? {};
   const tool = typeof params.name === 'string' ? params.name : '';
   const args = isRecord(params.arguments) ? params.arguments : {};
-  const schedule = context.faultsPath === undefined ? FaultSchedule.empty() : FaultSchedule.fromFile(context.faultsPath);
-  const call = { source: context.source, ...context.caller, tool, argsHash: argsHash(args) };
-  return log.record(call, (occurrence) => schedule.match({ tool, argsHash: call.argsHash, occurrence }));
+  const schedule =
+    context.faultsPath === undefined
+      ? FaultSchedule.empty()
+      : FaultSchedule.fromFile(context.faultsPath);
+  const call = {
+    source: context.source,
+    ...context.caller,
+    tool,
+    argsHash: argsHash(args),
+  };
+  return log.record(call, (occurrence) =>
+    schedule.match({ tool, argsHash: call.argsHash, occurrence }),
+  );
 }
 
 /** A `node:http` request as a web `Request`, its body read in full. */
@@ -174,20 +260,31 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
   }
   const headers = new Headers();
   for (const [name, value] of Object.entries(req.headers)) {
-    for (const one of Array.isArray(value) ? value : value === undefined ? [] : [value]) {
+    for (const one of Array.isArray(value)
+      ? value
+      : value === undefined
+        ? []
+        : [value]) {
       headers.append(name, one);
     }
   }
   const method = req.method ?? 'GET';
   const hasBody = method !== 'GET' && method !== 'HEAD' && chunks.length > 0;
-  return new Request(`http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`, {
-    method,
-    headers,
-    body: hasBody ? Buffer.concat(chunks) : undefined,
-  });
+  return new Request(
+    `http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`,
+    {
+      method,
+      headers,
+      body: hasBody ? Buffer.concat(chunks) : undefined,
+    },
+  );
 }
 
-async function writeAnswer(answer: HttpAnswer, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function writeAnswer(
+  answer: HttpAnswer,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   if (answer === 'hang') {
     return;
   }

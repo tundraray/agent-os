@@ -41,7 +41,9 @@ import type { ErrorsTranslator, Messages } from '@/i18n/catalog';
 /** A field error: the key of its message under `admin.field` of the `errors` catalogue. */
 export type FieldRuleKey = keyof Messages['errors']['admin']['field'];
 
-export type FieldErrors<Field extends string> = Partial<Record<Field, FieldRuleKey>>;
+export type FieldErrors<Field extends string> = Partial<
+  Record<Field, FieldRuleKey>
+>;
 
 /**
  * The bounds the field messages name, from `contracts`. Passed as text, so a bound reads as the server writes it
@@ -64,7 +66,10 @@ const FIELD_RULE_VALUES = {
 } as const;
 
 /** The text of a field error in the page's language. */
-export const fieldErrorText = (t: ErrorsTranslator, key: FieldRuleKey): string => t(`admin.field.${key}`, FIELD_RULE_VALUES);
+export const fieldErrorText = (
+  t: ErrorsTranslator,
+  key: FieldRuleKey,
+): string => t(`admin.field.${key}`, FIELD_RULE_VALUES);
 
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 256;
@@ -89,7 +94,10 @@ function readDecimal(text: string): Decimal | null {
   if (match === null) return null;
   const [, whole, fraction = ''] = match;
   // Built from the typed digits, so «0,29» is exactly the literal 0.29.
-  return { value: Number(fraction === '' ? whole : `${whole}.${fraction}`), decimals: fraction.length };
+  return {
+    value: Number(fraction === '' ? whole : `${whole}.${fraction}`),
+    decimals: fraction.length,
+  };
 }
 
 /** «0,29» and «0.29» → 0.29; anything that is not a number → `null`. */
@@ -119,13 +127,24 @@ function isSecureUrl(text: string): boolean {
 }
 
 const isPasswordLength = (password: string): boolean =>
-  lengthOf(password) >= PASSWORD_MIN_LENGTH && lengthOf(password) <= PASSWORD_MAX_LENGTH;
+  lengthOf(password) >= PASSWORD_MIN_LENGTH &&
+  lengthOf(password) <= PASSWORD_MAX_LENGTH;
 
 // ---------- Accounts (AD-16, MC-22, MC-23) ----------
 
-export type AccountValues = { login: string; name: string; email: string; password: string };
+export type AccountValues = {
+  login: string;
+  name: string;
+  email: string;
+  password: string;
+};
 
-export function accountRules({ login, name, email, password }: AccountValues): FieldErrors<keyof AccountValues> {
+export function accountRules({
+  login,
+  name,
+  email,
+  password,
+}: AccountValues): FieldErrors<keyof AccountValues> {
   const errors: FieldErrors<keyof AccountValues> = {};
   if (isBlank(login)) errors.login = 'loginRequired';
   if (isBlank(name)) errors.name = 'nameRequired';
@@ -134,7 +153,11 @@ export function accountRules({ login, name, email, password }: AccountValues): F
   return errors;
 }
 
-export function passwordResetRules({ password }: { password: string }): FieldErrors<'password'> {
+export function passwordResetRules({
+  password,
+}: {
+  password: string;
+}): FieldErrors<'password'> {
   return isPasswordLength(password) ? {} : { password: 'passwordLength' };
 }
 
@@ -149,10 +172,17 @@ export function roleNameRules({ name }: { name: string }): FieldErrors<'name'> {
 }
 
 /** `issuer` is the field of an `oidc` provider; `google` has none. */
-export function providerRules({ name, issuer }: { name: string; issuer?: string }): FieldErrors<'name' | 'issuer'> {
+export function providerRules({
+  name,
+  issuer,
+}: {
+  name: string;
+  issuer?: string;
+}): FieldErrors<'name' | 'issuer'> {
   const errors: FieldErrors<'name' | 'issuer'> = {};
   const length = lengthOf(name.trim());
-  if (length < 1 || length > PROVIDER_NAME_MAX_LENGTH) errors.name = 'providerNameLength';
+  if (length < 1 || length > PROVIDER_NAME_MAX_LENGTH)
+    errors.name = 'providerNameLength';
   if (issuer !== undefined && !isSecureUrl(issuer)) errors.issuer = 'fullUrl';
   return errors;
 }
@@ -167,10 +197,17 @@ export function hoursToMinutes(text: string): number | null {
 
 /** Minutes the server stores → hours the field shows, the page's decimal mark, no grouping: 480 → «8», 15 → «0,25» on `ru`. */
 export function minutesToHours(format: Formatter, minutes: number): string {
-  return format.number(minutes / MINUTES_PER_HOUR, { useGrouping: false, maximumFractionDigits: 2 });
+  return format.number(minutes / MINUTES_PER_HOUR, {
+    useGrouping: false,
+    maximumFractionDigits: 2,
+  });
 }
 
-export type SignInSettingsValues = { publicUrl: string; idleHours: string; absoluteHours: string };
+export type SignInSettingsValues = {
+  publicUrl: string;
+  idleHours: string;
+  absoluteHours: string;
+};
 
 export function signInSettingsRules({
   publicUrl,
@@ -190,7 +227,8 @@ export function signInSettingsRules({
   if (!idleValid) errors.idleHours = 'idleHours';
 
   const absolute = parseDecimal(absoluteHours);
-  const absoluteMinutes = absolute === null ? Number.NaN : absolute * MINUTES_PER_HOUR;
+  const absoluteMinutes =
+    absolute === null ? Number.NaN : absolute * MINUTES_PER_HOUR;
   if (
     absolute === null ||
     !Number.isInteger(absolute) ||
@@ -207,17 +245,28 @@ export function signInSettingsRules({
 // ---------- Library settings ----------
 
 /** «Лимит ходов для новой записи»: a whole number within the contract's bounds of a record's «Максимум шагов». */
-export function librarySettingsRules({ defaultMaxTurns }: { defaultMaxTurns: string }): FieldErrors<'defaultMaxTurns'> {
+export function librarySettingsRules({
+  defaultMaxTurns,
+}: {
+  defaultMaxTurns: string;
+}): FieldErrors<'defaultMaxTurns'> {
   const turns = parseDecimal(defaultMaxTurns);
   const valid =
-    turns !== null && Number.isInteger(turns) && turns >= RECORD_MAX_TURNS_MIN && turns <= RECORD_MAX_TURNS_MAX;
+    turns !== null &&
+    Number.isInteger(turns) &&
+    turns >= RECORD_MAX_TURNS_MIN &&
+    turns <= RECORD_MAX_TURNS_MAX;
   return valid ? {} : { defaultMaxTurns: 'defaultMaxTurns' };
 }
 
 // ---------- Self-learning settings (self-learning AS-01, MC-8, DC-5) ----------
 
 /** «Место для знаний в запуске, токенов»: a whole number within the contract's bounds. */
-export function knowledgeSettingsRules({ limitTokens }: { limitTokens: string }): FieldErrors<'limitTokens'> {
+export function knowledgeSettingsRules({
+  limitTokens,
+}: {
+  limitTokens: string;
+}): FieldErrors<'limitTokens'> {
   const tokens = parseDecimal(limitTokens);
   const valid =
     tokens !== null &&
@@ -229,19 +278,29 @@ export function knowledgeSettingsRules({ limitTokens }: { limitTokens: string })
 
 // ---------- Large tool results (tool-result-reading R-5) ----------
 
-export type ToolResultSettingsValues = { storeFromChars: string; previewChars: string; readMaxTokens: string };
+export type ToolResultSettingsValues = {
+  storeFromChars: string;
+  previewChars: string;
+  readMaxTokens: string;
+};
 
-const TOOL_RESULT_RANGE_TEXT: Readonly<Record<keyof ToolResultSettingsValues, FieldRuleKey>> = {
+const TOOL_RESULT_RANGE_TEXT: Readonly<
+  Record<keyof ToolResultSettingsValues, FieldRuleKey>
+> = {
   storeFromChars: 'toolResultStoreFromChars',
   previewChars: 'toolResultPreviewChars',
   readMaxTokens: 'toolResultReadMaxTokens',
 };
 
-const isToolResultField = (key: PropertyKey | undefined): key is keyof ToolResultSettingsValues =>
+const isToolResultField = (
+  key: PropertyKey | undefined,
+): key is keyof ToolResultSettingsValues =>
   typeof key === 'string' && key in TOOL_RESULT_RANGE_TEXT;
 
 /** The typed texts as the request body; a text that is not a number becomes `NaN`, which the schema refuses. */
-export function toolResultSettingsBodyOf(values: ToolResultSettingsValues): UpdateToolResultSettingsBody {
+export function toolResultSettingsBodyOf(
+  values: ToolResultSettingsValues,
+): UpdateToolResultSettingsBody {
   const numberOf = (text: string): number => parseDecimal(text) ?? Number.NaN;
   return {
     storeFromChars: numberOf(values.storeFromChars),
@@ -254,15 +313,21 @@ export function toolResultSettingsBodyOf(values: ToolResultSettingsValues): Upda
  * The contract's body schema decides, as the server's 400 does: whole numbers within its bounds, and the
  * preview shorter than the threshold (its only custom rule).
  */
-export function toolResultSettingsRules(values: ToolResultSettingsValues): FieldErrors<keyof ToolResultSettingsValues> {
-  const parsed = UpdateToolResultSettingsBodySchema.safeParse(toolResultSettingsBodyOf(values));
+export function toolResultSettingsRules(
+  values: ToolResultSettingsValues,
+): FieldErrors<keyof ToolResultSettingsValues> {
+  const parsed = UpdateToolResultSettingsBodySchema.safeParse(
+    toolResultSettingsBodyOf(values),
+  );
   const errors: FieldErrors<keyof ToolResultSettingsValues> = {};
   if (parsed.success) return errors;
   for (const issue of parsed.error.issues) {
     const field = issue.path[0];
     if (!isToolResultField(field) || errors[field] !== undefined) continue;
     errors[field] =
-      issue.code === 'custom' ? 'toolResultPreviewBelowThreshold' : TOOL_RESULT_RANGE_TEXT[field];
+      issue.code === 'custom'
+        ? 'toolResultPreviewBelowThreshold'
+        : TOOL_RESULT_RANGE_TEXT[field];
   }
   return errors;
 }
@@ -294,48 +359,86 @@ export type GrantValues = {
   quota: string | null;
 };
 
-export function grantRules({ kind, server, tool, model, quota }: GrantValues): FieldErrors<'server' | 'tool' | 'model' | 'quota'> {
+export function grantRules({
+  kind,
+  server,
+  tool,
+  model,
+  quota,
+}: GrantValues): FieldErrors<'server' | 'tool' | 'model' | 'quota'> {
   const errors: FieldErrors<'server' | 'tool' | 'model' | 'quota'> = {};
   if (kind !== 'model' && server === '') errors.server = 'serverRequired';
   if (kind === 'tool' && tool === '') errors.tool = 'toolRequired';
   if (kind === 'model' && model === '') errors.model = 'modelRequired';
-  if (kind === 'model' && quota !== null) Object.assign(errors, quotaRules({ quota }));
+  if (kind === 'model' && quota !== null)
+    Object.assign(errors, quotaRules({ quota }));
   return errors;
 }
 
 // ---------- MCP servers (AD-09, MC-29) ----------
 
-export type ServerValues = { name: string; url: string; mode: McpServerMode; sharedToken: string };
+export type ServerValues = {
+  name: string;
+  url: string;
+  mode: McpServerMode;
+  sharedToken: string;
+};
 
-export function serverRules({ name, url, mode, sharedToken }: ServerValues): FieldErrors<'name' | 'url' | 'sharedToken'> {
+export function serverRules({
+  name,
+  url,
+  mode,
+  sharedToken,
+}: ServerValues): FieldErrors<'name' | 'url' | 'sharedToken'> {
   const errors: FieldErrors<'name' | 'url' | 'sharedToken'> = {};
-  if (name === '' || !McpServerNameSchema.safeParse(name).success) errors.name = 'serverNameRule';
+  if (name === '' || !McpServerNameSchema.safeParse(name).success)
+    errors.name = 'serverNameRule';
   if (!isSecureUrl(url)) errors.url = 'serverUrl';
-  if (mode === 'shared') Object.assign(errors, sharedTokenRules({ sharedToken }));
+  if (mode === 'shared')
+    Object.assign(errors, sharedTokenRules({ sharedToken }));
   return errors;
 }
 
 /** The shared token, at registration and when it is replaced (DC-10): 1–4096 characters. */
-export function sharedTokenRules({ sharedToken }: { sharedToken: string }): FieldErrors<'sharedToken'> {
-  return sharedToken.length >= 1 && sharedToken.length <= SHARED_TOKEN_MAX_LENGTH
+export function sharedTokenRules({
+  sharedToken,
+}: {
+  sharedToken: string;
+}): FieldErrors<'sharedToken'> {
+  return sharedToken.length >= 1 &&
+    sharedToken.length <= SHARED_TOKEN_MAX_LENGTH
     ? {}
     : { sharedToken: 'sharedToken' };
 }
 
 // ---------- Model providers (model-providers MP-04, MC-4) ----------
 
-export type ModelProviderValues = { name: string; baseUrl: string; apiKey: string };
+export type ModelProviderValues = {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+};
 
 /** Name, address and key bounds are those of `contracts`; an empty address or key is not sent. */
-export function modelProviderRules({ name, baseUrl, apiKey }: ModelProviderValues): FieldErrors<keyof ModelProviderValues> {
+export function modelProviderRules({
+  name,
+  baseUrl,
+  apiKey,
+}: ModelProviderValues): FieldErrors<keyof ModelProviderValues> {
   const errors: FieldErrors<keyof ModelProviderValues> = {};
   if (isBlank(name)) errors.name = 'nameRequired';
-  else if (!ModelProviderNameSchema.safeParse(name).success) errors.name = 'modelProviderNameRule';
+  else if (!ModelProviderNameSchema.safeParse(name).success)
+    errors.name = 'modelProviderNameRule';
   if (!isBlank(baseUrl)) {
     const protocol = parseUrl(baseUrl)?.protocol;
-    if (protocol !== 'http:' && protocol !== 'https:') errors.baseUrl = 'modelProviderUrl';
+    if (protocol !== 'http:' && protocol !== 'https:')
+      errors.baseUrl = 'modelProviderUrl';
   }
-  if (apiKey !== '' && (apiKey.length < MODEL_PROVIDER_API_KEY_MIN_LENGTH || apiKey.length > MODEL_PROVIDER_API_KEY_MAX_LENGTH)) {
+  if (
+    apiKey !== '' &&
+    (apiKey.length < MODEL_PROVIDER_API_KEY_MIN_LENGTH ||
+      apiKey.length > MODEL_PROVIDER_API_KEY_MAX_LENGTH)
+  ) {
     errors.apiKey = 'modelProviderApiKey';
   }
   return errors;
@@ -386,7 +489,10 @@ const isPrice = (text: string): boolean => {
 function isModelName(provider: string | null, modelName: string): boolean {
   const trimmed = modelName.trim();
   if (trimmed === '') return false;
-  return provider === null || ModelIdSchema.safeParse(`${provider}/${trimmed}`).success;
+  return (
+    provider === null ||
+    ModelIdSchema.safeParse(`${provider}/${trimmed}`).success
+  );
 }
 
 function isDimensions(text: string): boolean {
@@ -410,9 +516,11 @@ export function modelRules({
 }: ModelValues): FieldErrors<ModelField> {
   const errors: FieldErrors<ModelField> = {};
   if (provider === null) errors.provider = 'modelProviderRequired';
-  if (!isModelName(provider, modelName)) errors.modelName = 'modelNameAtProviderRequired';
+  if (!isModelName(provider, modelName))
+    errors.modelName = 'modelNameAtProviderRequired';
   const nameLength = lengthOf(name.trim());
-  if (nameLength < 1 || nameLength > MODEL_NAME_MAX_LENGTH) errors.name = 'modelNameLength';
+  if (nameLength < 1 || nameLength > MODEL_NAME_MAX_LENGTH)
+    errors.name = 'modelNameLength';
   if (purpose === 'embedding') {
     if (!isPrice(prices.inputUsdPerMTok)) errors.inputUsdPerMTok = 'priceRule';
     if (!isDimensions(dimensions)) errors.dimensions = 'dimensionsRule';
@@ -427,7 +535,8 @@ export function modelRules({
       errors.aboveInputTokens = 'thresholdRule';
     }
     for (const field of PRICE_FIELDS) {
-      if (!isPrice(longContext.prices[field])) errors[`long.${field}`] = 'priceRule';
+      if (!isPrice(longContext.prices[field]))
+        errors[`long.${field}`] = 'priceRule';
     }
   }
   return errors;

@@ -9,10 +9,15 @@ describe('ThreadNotice — TH-06 / TH-07 (AC-04.3, AC-02.5)', () => {
     const onNewChat = vi.fn();
     render(<ThreadNotice variant="not-found" onNewChat={onNewChat} />);
 
-    const heading = screen.getByRole('heading', { level: 1, name: 'Беседа не найдена' });
+    const heading = screen.getByRole('heading', {
+      level: 1,
+      name: 'Беседа не найдена',
+    });
     expect(heading).toHaveFocus();
     expect(heading).toHaveAttribute('tabindex', '-1');
-    expect(screen.getByText('Возможно, её удалили или ссылка указана неверно.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Возможно, её удалили или ссылка указана неверно.'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Новый чат' }));
@@ -23,11 +28,22 @@ describe('ThreadNotice — TH-06 / TH-07 (AC-04.3, AC-02.5)', () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
     const onNewChat = vi.fn();
-    render(<ThreadNotice variant="load-error" onRetry={onRetry} onNewChat={onNewChat} />);
+    render(
+      <ThreadNotice
+        variant="load-error"
+        onRetry={onRetry}
+        onNewChat={onNewChat}
+      />,
+    );
 
-    const heading = screen.getByRole('heading', { level: 1, name: 'Не удалось загрузить беседу' });
+    const heading = screen.getByRole('heading', {
+      level: 1,
+      name: 'Не удалось загрузить беседу',
+    });
     expect(heading).toHaveFocus();
-    expect(screen.getByText('Проверьте подключение и попробуйте ещё раз.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Проверьте подключение и попробуйте ещё раз.'),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Повторить' }));
     expect(onRetry).toHaveBeenCalledOnce();
@@ -42,14 +58,20 @@ describe('ThreadNotice — TH-06 / TH-07 (AC-04.3, AC-02.5)', () => {
     const onNewChat = vi.fn();
     render(<ThreadNotice variant="deleted" onNewChat={onNewChat} />);
 
-    expect(screen.getByRole('heading', { level: 2, name: 'Беседа удалена' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Беседа удалена' }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent('Её удалили в другой вкладке или окне.');
     const newChat = screen.getByRole('button', { name: 'Новый чат' });
-    expect(newChat).toHaveAccessibleDescription('Её удалили в другой вкладке или окне.');
+    expect(newChat).toHaveAccessibleDescription(
+      'Её удалили в другой вкладке или окне.',
+    );
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Перегенерировать' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Перегенерировать' }),
+    ).toBeNull();
 
     await user.click(newChat);
     expect(onNewChat).toHaveBeenCalledOnce();

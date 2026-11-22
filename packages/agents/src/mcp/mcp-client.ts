@@ -10,7 +10,10 @@ import {
 import { Injectable } from '@nestjs/common';
 import { type McpFailure, mcpFailureReason } from './mcp-failure';
 
-export const CLIENT_INFO = { name: 'agent-os-agents', version: '1.0.0' } as const;
+export const CLIENT_INFO = {
+  name: 'agent-os-agents',
+  version: '1.0.0',
+} as const;
 
 /** The credentials of one call: whose token goes to the server and how a rejected one is handled. */
 export interface McpAuth {
@@ -45,19 +48,27 @@ export interface McpCallToolOptions extends McpConnectionOptions {
 }
 
 /** A call answered by the server (its `isError` included), or why it got no result. */
-export type McpCallResponse = { readonly kind: 'result'; readonly result: CallToolResult } | McpFailure;
+export type McpCallResponse =
+  { readonly kind: 'result'; readonly result: CallToolResult } | McpFailure;
 
 /** `fetch` bounded by one deadline for a whole OAuth exchange: a server check, a code exchange or a token refresh. */
 export function deadlineFetch(timeoutMs: number): FetchLike {
   const deadline = AbortSignal.timeout(timeoutMs);
   return (url, init) =>
-    fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline });
+    fetch(url, {
+      ...init,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, deadline])
+        : deadline,
+    });
 }
 
 /** One deadline for the whole call: the timeout and the step's signal, whichever comes first. */
 function callSignal(options: McpConnectionOptions): AbortSignal {
   const deadline = AbortSignal.timeout(options.timeoutMs);
-  return options.signal === undefined ? deadline : AbortSignal.any([deadline, options.signal]);
+  return options.signal === undefined
+    ? deadline
+    : AbortSignal.any([deadline, options.signal]);
 }
 
 /**
@@ -68,9 +79,14 @@ async function withConnection<T>(
   options: McpConnectionOptions,
   use: (client: Client, request: RequestOptions) => Promise<T>,
 ): Promise<T> {
-  const request: RequestOptions = { timeout: options.timeoutMs, signal: callSignal(options) };
+  const request: RequestOptions = {
+    timeout: options.timeoutMs,
+    signal: callSignal(options),
+  };
   const client = new Client(CLIENT_INFO);
-  const transport = new StreamableHTTPClientTransport(new URL(options.url), { authProvider: options.auth });
+  const transport = new StreamableHTTPClientTransport(new URL(options.url), {
+    authProvider: options.auth,
+  });
   try {
     await client.connect(transport, request);
     return await use(client, request);
@@ -87,7 +103,11 @@ async function withConnection<T>(
 export class McpClient {
   /** Lists the server's tools as the server listed them; any failure is an exception for the caller to classify. */
   async listTools(options: McpConnectionOptions): Promise<Tool[]> {
-    return withConnection(options, async (client, request) => (await client.listTools(undefined, request)).tools);
+    return withConnection(
+      options,
+      async (client, request) =>
+        (await client.listTools(undefined, request)).tools,
+    );
   }
 
   /**

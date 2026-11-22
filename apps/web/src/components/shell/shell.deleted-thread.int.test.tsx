@@ -17,7 +17,11 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
-import { conversationWithTurns, threadList, threadSummary } from '@/test/fixtures';
+import {
+  conversationWithTurns,
+  threadList,
+  threadSummary,
+} from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
@@ -46,43 +50,72 @@ describe('Shell: sending into a thread deleted elsewhere (AC-08.5e, UXRD E-8 / T
     let sendCalls = 0;
     let createCalls = 0;
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadA]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([threadA])),
+      ),
       http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadA)),
       http.get(`${API}/api/threads/a/history`, () =>
-        HttpResponse.json(conversationWithTurns(threadA, ['Первый вопрос', 'Первый ответ'])),
+        HttpResponse.json(
+          conversationWithTurns(threadA, ['Первый вопрос', 'Первый ответ']),
+        ),
       ),
       http.post(`${API}/api/threads/a/messages`, () => {
         sendCalls += 1;
         return HttpResponse.json(
-          { statusCode: 404, message: 'Thread not found', error: 'Not Found', errorCode: 'THREAD_NOT_FOUND' },
+          {
+            statusCode: 404,
+            message: 'Thread not found',
+            error: 'Not Found',
+            errorCode: 'THREAD_NOT_FOUND',
+          },
           { status: 404 },
         );
       }),
       http.post(`${API}/api/threads`, () => {
         createCalls += 1;
-        return HttpResponse.json(threadSummary({ id: 'resurrected', title: null }), { status: 201 });
+        return HttpResponse.json(
+          threadSummary({ id: 'resurrected', title: null }),
+          { status: 201 },
+        );
       }),
     );
     const user = userEvent.setup();
-    const { container, router, setPathname } = renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' });
+    const { container, router, setPathname } = renderWithRuntime({
+      pathname: '/chat/a',
+      pointer: 'fine',
+    });
     await screen.findByText('Первый ответ');
 
     // Act
-    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Ещё вопрос{Enter}');
+    await user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Ещё вопрос{Enter}',
+    );
     const title = await screen.findByText('Беседа удалена');
 
     // Assert (notice, in place of the TH-08 block)
     const reason = screen.getByText('Её удалили в другой вкладке или окне.');
-    expect(screen.getByText('Первый ответ').compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(
+      screen.getByText('Первый ответ').compareDocumentPosition(title),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     // An inline notice in the feed, not a screen: h2 under the page h1 (design ThreadNotice `deleted`).
-    expect(screen.queryByRole('heading', { level: 1, name: 'Беседа удалена' })).toBeNull();
-    expect(screen.getByRole('heading', { level: 2, name: 'Беседа удалена' })).toBe(title);
+    expect(
+      screen.queryByRole('heading', { level: 1, name: 'Беседа удалена' }),
+    ).toBeNull();
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Беседа удалена' }),
+    ).toBe(title);
     expect(screen.getByRole('alert')).toBe(reason);
     const notice = title.closest<HTMLElement>('section');
-    if (notice === null) throw new Error('«Беседа удалена» is not inside its notice section');
+    if (notice === null)
+      throw new Error('«Беседа удалена» is not inside its notice section');
     const newChat = within(notice).getByRole('button', { name: 'Новый чат' });
-    expect(newChat).toHaveAccessibleDescription('Её удалили в другой вкладке или окне.');
-    expect(screen.queryAllByRole('button', { name: 'Перегенерировать' })).toHaveLength(0);
+    expect(newChat).toHaveAccessibleDescription(
+      'Её удалили в другой вкладке или окне.',
+    );
+    expect(
+      screen.queryAllByRole('button', { name: 'Перегенерировать' }),
+    ).toHaveLength(0);
     expect(container).not.toHaveTextContent(/Не удалось получить ответ/);
     expect(container).not.toHaveTextContent('Thread not found');
     expect(container.querySelector('[data-slot="message-error"]')).toBeNull();
@@ -106,6 +139,8 @@ describe('Shell: sending into a thread deleted elsewhere (AC-08.5e, UXRD E-8 / T
     expect(router.push).toHaveBeenCalledWith('/');
     setPathname('/');
     expect(await screen.findByText('Чем могу помочь?')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Сообщение' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+    ).toBeInTheDocument();
   });
 });

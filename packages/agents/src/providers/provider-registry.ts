@@ -7,7 +7,11 @@ import {
   type ModelProviderView,
   type UpdateModelProviderBody,
 } from '@agent-os/contracts';
-import { AgentModelProvidersRepository, Db, type ModelProviderRow } from '@agent-os/db';
+import {
+  AgentModelProvidersRepository,
+  Db,
+  type ModelProviderRow,
+} from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
@@ -19,7 +23,11 @@ import {
 } from './model-provider-errors';
 import { checkProvider } from './provider-check';
 import { PROVIDER_KINDS } from './provider-kinds';
-import { type ProviderReadiness, providerReadiness, providerState } from './provider-readiness';
+import {
+  type ProviderReadiness,
+  providerReadiness,
+  providerState,
+} from './provider-readiness';
 
 /** Stands in for the key in «было/стало»: `AuditLog` writes `secret_changed` for its field name. */
 const SECRET_MARK = 'changed';
@@ -103,7 +111,10 @@ function viewOf(row: ModelProviderRow): ProviderRegistryView {
   };
 }
 
-function auditStateOf(row: ModelProviderRow, keyChanged: boolean): ModelProviderAuditState {
+function auditStateOf(
+  row: ModelProviderRow,
+  keyChanged: boolean,
+): ModelProviderAuditState {
   return {
     name: row.name,
     kind: kindOf(row),
@@ -124,7 +135,8 @@ export class AgentsProviders {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentModelProvidersRepository) private readonly providerRows: AgentModelProvidersRepository,
+    @Inject(AgentModelProvidersRepository)
+    private readonly providerRows: AgentModelProvidersRepository,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.providers' });
@@ -142,7 +154,11 @@ export class AgentsProviders {
   /** The provider is created enabled. */
   create(input: CreateModelProviderBody): Promise<ModelProviderWrite> {
     if (input.apiKey !== undefined) rememberSecret(input.apiKey);
-    const fields = { provider: input.name, kind: input.kind, changed: Object.keys(input) };
+    const fields = {
+      provider: input.name,
+      kind: input.kind,
+      changed: Object.keys(input),
+    };
     return this.logged('model provider creation', fields, async () => {
       const row = remembered(
         await this.providerRows.insert({
@@ -153,19 +169,28 @@ export class AgentsProviders {
         }),
       );
       if (row === undefined) throw providerNameTaken(input.name);
-      return { view: viewOf(row), before: null, after: auditStateOf(row, row.apiKey !== null) };
+      return {
+        view: viewOf(row),
+        before: null,
+        after: auditStateOf(row, row.apiKey !== null),
+      };
     });
   }
 
   /** `baseUrl: null` — the kind's default address; `apiKey: null` — remove the key. */
-  update(name: string, patch: UpdateModelProviderBody): Promise<ModelProviderWrite> {
+  update(
+    name: string,
+    patch: UpdateModelProviderBody,
+  ): Promise<ModelProviderWrite> {
     if (typeof patch.apiKey === 'string') rememberSecret(patch.apiKey);
     const fields = { provider: name, changed: Object.keys(patch) };
     return this.logged(
       'model provider update',
       fields,
       async () => {
-        const change = await this.db.transaction(async () => this.providerRows.update(name, patch));
+        const change = await this.db.transaction(async () =>
+          this.providerRows.update(name, patch),
+        );
         if (change === undefined) throw providerNotFound(name);
         const keyChanged = patch.apiKey !== undefined;
         return {
@@ -179,7 +204,10 @@ export class AgentsProviders {
   }
 
   /** Refused with `MODEL_PROVIDER_HAS_MODELS` while the catalogue has models of the provider (Invariant 5). */
-  remove({ name, catalogModels }: ModelProviderRemove): Promise<ModelProviderRemoval> {
+  remove({
+    name,
+    catalogModels,
+  }: ModelProviderRemove): Promise<ModelProviderRemoval> {
     return this.logged(
       'model provider removal',
       { provider: name, catalogModels },
@@ -200,10 +228,16 @@ export class AgentsProviders {
   }
 
   /** Readiness of each named provider, in one query. */
-  async readiness(names: readonly string[]): Promise<ReadonlyMap<string, ProviderReadiness>> {
+  async readiness(
+    names: readonly string[],
+  ): Promise<ReadonlyMap<string, ProviderReadiness>> {
     const rows = await this.providerRows.findMany(names);
-    const byName = new Map(rows.map((row) => [row.name, connectionOf(remembered(row))]));
-    return new Map(names.map((name) => [name, providerReadiness(byName.get(name) ?? null)]));
+    const byName = new Map(
+      rows.map((row) => [row.name, connectionOf(remembered(row))]),
+    );
+    return new Map(
+      names.map((name) => [name, providerReadiness(byName.get(name) ?? null)]),
+    );
   }
 
   /** The provider's connection with its key, or `null` when it is not registered. */
@@ -255,7 +289,11 @@ export class AgentsProviders {
           durationMs: durationMs(),
         });
       } else {
-        this.logger.error(`${operation} failed`, { ...fields, durationMs: durationMs(), error });
+        this.logger.error(`${operation} failed`, {
+          ...fields,
+          durationMs: durationMs(),
+          error,
+        });
       }
       throw error;
     }

@@ -5,7 +5,10 @@ export interface ChatStatusInput {
   /** The root's view. */
   readonly root: Pick<AgentView, 'status' | 'failureReason'>;
   /** The root's runtime task. */
-  readonly task: { readonly status: TaskStatus; readonly waitReason: WaitReason | null };
+  readonly task: {
+    readonly status: TaskStatus;
+    readonly waitReason: WaitReason | null;
+  };
 }
 
 export interface ChatState {
@@ -31,7 +34,10 @@ export function chatStatus({ root, task }: ChatStatusInput): ChatState {
       return { status: 'idle', failureReason: null };
     case 'working':
       return {
-        status: task.status === 'waiting' && task.waitReason === 'messages' ? 'idle' : 'working',
+        status:
+          task.status === 'waiting' && task.waitReason === 'messages'
+            ? 'idle'
+            : 'working',
         failureReason: null,
       };
   }

@@ -4,9 +4,16 @@ import { useState, type ReactNode } from 'react';
 import { PlusIcon, ShieldCheckIcon, UserIcon, UsersIcon } from 'lucide-react';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { CHAT_BUILTIN_KEY, type BannedRecord, type RecordSummary } from '@agent-os/contracts';
+import {
+  CHAT_BUILTIN_KEY,
+  type BannedRecord,
+  type RecordSummary,
+} from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { RecordPlaceholder, useAdminTitles } from '@/components/admin/admin-header';
+import {
+  RecordPlaceholder,
+  useAdminTitles,
+} from '@/components/admin/admin-header';
 import {
   DataTable,
   resourceTableState,
@@ -32,9 +39,21 @@ import type { LibraryTranslator } from '@/i18n/catalog';
 import type { Locale } from '@/i18n/pick-locale';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
-import { adminLibraryTabPath, adminNewAgentPath, adminRecordPath, LIBRARY_TABS, type AdminPage, type LibraryTab } from '@/lib/shell-route';
+import {
+  adminLibraryTabPath,
+  adminNewAgentPath,
+  adminRecordPath,
+  LIBRARY_TABS,
+  type AdminPage,
+  type LibraryTab,
+} from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
-import { CloseAccessDialog, EmployeeRecordPage, panelRecordHref, type ClosableRecord } from './employee-record-page';
+import {
+  CloseAccessDialog,
+  EmployeeRecordPage,
+  panelRecordHref,
+  type ClosableRecord,
+} from './employee-record-page';
 import { KnowledgeSettingsForm } from './knowledge-settings-form';
 import { LibrarySettingsForm } from './library-settings-form';
 import { useCreatedHandoff } from '@/components/library/record-editor';
@@ -74,10 +93,16 @@ type LibrarySectionProps = {
  * a record is AL-03. Mounted by `AdminScreen` only, under `AdminGate`.
  */
 export function LibrarySection({ page }: LibrarySectionProps) {
-  if (page.kind === 'record') return <LibraryRecord key={page.key} id={page.key} />;
-  if (page.kind === 'knowledge') return <KnowledgePage key={page.key} id={page.key} variant="panel" />;
+  if (page.kind === 'record')
+    return <LibraryRecord key={page.key} id={page.key} />;
+  if (page.kind === 'knowledge')
+    return <KnowledgePage key={page.key} id={page.key} variant="panel" />;
   if (page.kind === 'new') return <NewSystemRecordPage />;
-  return <LibraryTabs tab={page.kind === 'list' ? (page.tab ?? 'system') : 'system'} />;
+  return (
+    <LibraryTabs
+      tab={page.kind === 'list' ? (page.tab ?? 'system') : 'system'}
+    />
+  );
 }
 
 /** `/admin/library/<id>`: the record read on open; any 404 is the panel's «Запись не найдена». */
@@ -86,12 +111,20 @@ function LibraryRecord({ id }: { id: string }) {
   const record = useResource(() => adminApi.library.get(id), `library:${id}`);
   // Taken on mount, before the record is read: leaving during the read must not leave the handoff behind.
   const created = useCreatedHandoff(adminRecordPath('library', id));
-  if (isNotFound(record.error)) return <ThreadNotice variant="record-not-found" section="library" />;
+  if (isNotFound(record.error))
+    return <ThreadNotice variant="record-not-found" section="library" />;
   if (record.data === undefined) {
-    return <RecordPlaceholder section="library" resource={record} loadFailed={t('loadFailed')} />;
+    return (
+      <RecordPlaceholder
+        section="library"
+        resource={record}
+        loadFailed={t('loadFailed')}
+      />
+    );
   }
   // A record without an author is the company's: AL-02, the administrator edits it; an employee's is AL-03.
-  if (record.data.author === null) return <SystemRecordPage record={record.data} created={created} />;
+  if (record.data.author === null)
+    return <SystemRecordPage record={record.data} created={created} />;
   return <EmployeeRecordPage record={record.data} />;
 }
 
@@ -128,7 +161,10 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
               onChange={(event) => setQuery(event.target.value)}
               aria-label={t('search')}
               placeholder={t('search')}
-              className={cn(CONTROL_SIZE, 'min-w-0 flex-1 text-data md:ml-auto md:w-72 md:flex-none md:text-data')}
+              className={cn(
+                CONTROL_SIZE,
+                'min-w-0 flex-1 text-data md:ml-auto md:w-72 md:flex-none md:text-data',
+              )}
             />
           )}
         </div>
@@ -140,7 +176,9 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
               <KnowledgeSettingsForm />
             </div>
           )}
-          {tab === 'shared' && <SharedTab caption={t('tabs.shared')} query={query.trim()} />}
+          {tab === 'shared' && (
+            <SharedTab caption={t('tabs.shared')} query={query.trim()} />
+          )}
           {tab === 'bans' && <BansTab caption={t('tabs.bans')} />}
         </TabsContent>
       </Tabs>
@@ -152,7 +190,10 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
 function CreateButton() {
   const t = useTranslations('library.screen');
   return (
-    <ShellLink href={adminNewAgentPath()} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
+    <ShellLink
+      href={adminNewAgentPath()}
+      className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}
+    >
       <PlusIcon aria-hidden />
       {t('create')}
     </ShellLink>
@@ -175,18 +216,34 @@ function NameCell({ name, extra }: { name: string; extra?: ReactNode }) {
 function AudienceCell({ record }: { record: RecordSummary }) {
   const t = useTranslations('admin.library');
   const locale = useLocale();
-  if (record.builtinKey === CHAT_BUILTIN_KEY) return <>{t('everyoneWithRights')}</>;
+  if (record.builtinKey === CHAT_BUILTIN_KEY)
+    return <>{t('everyoneWithRights')}</>;
   if (record.audience.everyone === true) return <>{t('everyone')}</>;
   const holders = [
-    ...record.audience.roles.map((role) => ({ key: role.id, name: builtinRoleName(role.name, locale), Icon: UsersIcon })),
-    ...(record.audience.users ?? []).map((user) => ({ key: user.id, name: user.name, Icon: UserIcon })),
+    ...record.audience.roles.map((role) => ({
+      key: role.id,
+      name: builtinRoleName(role.name, locale),
+      Icon: UsersIcon,
+    })),
+    ...(record.audience.users ?? []).map((user) => ({
+      key: user.id,
+      name: user.name,
+      Icon: UserIcon,
+    })),
   ];
   if (holders.length === 0) return <>{EMPTY_VALUE}</>;
   return (
     <span className="flex min-w-0 items-center gap-3 truncate">
       {holders.map(({ key, name, Icon }) => (
-        <span key={key} className="inline-flex min-w-0 items-center gap-1" title={name}>
-          <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <span
+          key={key}
+          className="inline-flex min-w-0 items-center gap-1"
+          title={name}
+        >
+          <Icon
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
           <span className="truncate">{name}</span>
         </span>
       ))}
@@ -201,7 +258,10 @@ type SystemRowContext = {
   onDelete: (record: RecordSummary) => void;
 };
 
-function systemRow(record: RecordSummary, { t, tLibrary, locale, onDelete }: SystemRowContext): DataTableRow {
+function systemRow(
+  record: RecordSummary,
+  { t, tLibrary, locale, onDelete }: SystemRowContext,
+): DataTableRow {
   // A built-in record is never deleted (AC-12.2).
   const deletable = record.canDelete && record.builtinKey === null;
   const name = builtinName(record, locale);
@@ -213,13 +273,19 @@ function systemRow(record: RecordSummary, { t, tLibrary, locale, onDelete }: Sys
       <NameCell
         key="name"
         name={name}
-        extra={record.builtinKey !== null && <StateBadge variant="source">{t('builtin')}</StateBadge>}
+        extra={
+          record.builtinKey !== null && (
+            <StateBadge variant="source">{t('builtin')}</StateBadge>
+          )
+        }
       />,
       tLibrary('kind', { kind: record.kind }),
       <AudienceCell key="audience" record={record} />,
       record.version,
     ],
-    actions: deletable ? [{ label: t('delete'), onSelect: () => onDelete(record) }] : undefined,
+    actions: deletable
+      ? [{ label: t('delete'), onSelect: () => onDelete(record) }]
+      : undefined,
   };
 }
 
@@ -234,11 +300,18 @@ function SystemTab({ caption }: { caption: string }) {
   const list = useResource(adminApi.library.system, 'library:system');
   const [deleting, setDeleting] = useState<RecordSummary | null>(null);
   const state = resourceTableState(list, t('loadFailed'), (records) => ({
-    rows: records.map((record) => systemRow(record, { t, tLibrary, locale, onDelete: setDeleting })),
+    rows: records.map((record) =>
+      systemRow(record, { t, tLibrary, locale, onDelete: setDeleting }),
+    ),
   }));
   return (
     <>
-      <DataTable caption={caption} columns={systemColumns(t)} state={state} actionsAs="menu" />
+      <DataTable
+        caption={caption}
+        columns={systemColumns(t)}
+        state={state}
+        actionsAs="menu"
+      />
       {deleting !== null && (
         <DeleteRecordDialog
           record={deleting}
@@ -254,17 +327,33 @@ function SystemTab({ caption }: { caption: string }) {
   );
 }
 
-function AuthorCell({ author }: { author: { name: string; disabled: boolean } }) {
+function AuthorCell({
+  author,
+}: {
+  author: { name: string; disabled: boolean };
+}) {
   const t = useTranslations('admin.library');
   return (
-    <NameCell name={author.name} extra={author.disabled && <StateBadge state="off">{t('disabled')}</StateBadge>} />
+    <NameCell
+      name={author.name}
+      extra={
+        author.disabled && <StateBadge state="off">{t('disabled')}</StateBadge>
+      }
+    />
   );
 }
 
-const matches = (record: RecordSummary, query: string, locale: Locale): boolean => {
+const matches = (
+  record: RecordSummary,
+  query: string,
+  locale: Locale,
+): boolean => {
   const lower = (text: string): string => text.toLocaleLowerCase(locale);
   const needle = lower(query);
-  return lower(record.name).includes(needle) || (record.author !== null && lower(record.author.name).includes(needle));
+  return (
+    lower(record.name).includes(needle) ||
+    (record.author !== null && lower(record.author.name).includes(needle))
+  );
 };
 
 /** A row of «Открытые ролям» is an employee's record: the server never lists a company record there. */
@@ -280,7 +369,9 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
 
   const row = (record: RecordSummary): DataTableRow => {
     const target = closable(record);
-    const roles = record.audience.roles.map((role) => builtinRoleName(role.name, locale)).join(', ');
+    const roles = record.audience.roles
+      .map((role) => builtinRoleName(role.name, locale))
+      .join(', ');
     return {
       key: record.id,
       name: record.name,
@@ -290,22 +381,35 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
           <span className="truncate" title={record.name}>
             {record.name}
           </span>
-          <span className="truncate text-xs leading-4 text-muted-foreground" title={record.description}>
+          <span
+            className="truncate text-xs leading-4 text-muted-foreground"
+            title={record.description}
+          >
             {record.description}
           </span>
         </span>,
-        record.author === null ? EMPTY_VALUE : <AuthorCell key="author" author={record.author} />,
+        record.author === null ? (
+          EMPTY_VALUE
+        ) : (
+          <AuthorCell key="author" author={record.author} />
+        ),
         <span key="roles" className="block truncate" title={roles}>
           {roles === '' ? EMPTY_VALUE : roles}
         </span>,
         record.offerInChat ? t('yes') : t('no'),
       ],
-      actions: target === null ? undefined : [{ label: t('close'), onSelect: () => setClosing(target) }],
+      actions:
+        target === null
+          ? undefined
+          : [{ label: t('close'), onSelect: () => setClosing(target) }],
     };
   };
 
   const state = resourceTableState(list, t('loadFailed'), (records) => {
-    const shown = query === '' ? records : records.filter((record) => matches(record, query, locale));
+    const shown =
+      query === ''
+        ? records
+        : records.filter((record) => matches(record, query, locale));
     return {
       rows: shown.map(row),
       empty: { Icon: UsersIcon, title: t('sharedEmpty') },
@@ -315,7 +419,12 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
 
   return (
     <>
-      <DataTable caption={caption} columns={sharedColumns(t)} state={state} actionsAs="menu" />
+      <DataTable
+        caption={caption}
+        columns={sharedColumns(t)}
+        state={state}
+        actionsAs="menu"
+      />
       {closing !== null && (
         <CloseAccessDialog
           record={closing}
@@ -338,19 +447,34 @@ function BansTab({ caption }: { caption: string }) {
   const tSection = useTranslations('admin.library');
   const { libraryIndex } = useShellServices();
   const [pending, setPending] = useState<string | null>(null);
-  const [failure, setFailure] = useState<{ id: string; text: ReactNode } | null>(null);
+  const [failure, setFailure] = useState<{
+    id: string;
+    text: ReactNode;
+  } | null>(null);
 
   async function liftBan(record: BannedRecord): Promise<void> {
     setFailure(null);
     setPending(record.id);
     try {
-      await recordAction({ recordId: record.id, kind: record.kind, action: 'unban', version: null }, () =>
-        adminApi.library.liftBan(record.id),
+      await recordAction(
+        {
+          recordId: record.id,
+          kind: record.kind,
+          action: 'unban',
+          version: null,
+        },
+        () => adminApi.library.liftBan(record.id),
       );
       toast.success(tSection('banLifted'));
       void libraryIndex.refresh();
     } catch (error) {
-      setFailure({ id: record.id, text: describeLibraryError(t, error, { where: 'panel', kind: record.kind }).text });
+      setFailure({
+        id: record.id,
+        text: describeLibraryError(t, error, {
+          where: 'panel',
+          kind: record.kind,
+        }).text,
+      });
     } finally {
       setPending(null);
       list.reload();
@@ -382,5 +506,11 @@ function BansTab({ caption }: { caption: string }) {
     empty: { Icon: ShieldCheckIcon, title: tSection('bansEmpty') },
   }));
 
-  return <DataTable caption={caption} columns={bansColumns(tSection)} state={state} />;
+  return (
+    <DataTable
+      caption={caption}
+      columns={bansColumns(tSection)}
+      state={state}
+    />
+  );
 }

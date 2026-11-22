@@ -1,4 +1,8 @@
-import type { AgentKnowledgeRunsRepository, Db, KnowledgeEmbeddingRow } from '@agent-os/db';
+import type {
+  AgentKnowledgeRunsRepository,
+  Db,
+  KnowledgeEmbeddingRow,
+} from '@agent-os/db';
 import { PLATFORM_OWNER_ID, type TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -11,7 +15,10 @@ export const KNOWLEDGE_EXTRACT_TASK_TYPE = 'knowledge.extract';
 export const KNOWLEDGE_EMBED_TASK_TYPE = 'knowledge.embed';
 
 /** Input of `knowledge.extract`: the deep agent task of the run and the root of its conversation. */
-export const KnowledgeExtractInputSchema = z.object({ runId: z.uuid(), rootId: z.uuid() });
+export const KnowledgeExtractInputSchema = z.object({
+  runId: z.uuid(),
+  rootId: z.uuid(),
+});
 export type KnowledgeExtractInput = z.infer<typeof KnowledgeExtractInputSchema>;
 
 /** Input of `knowledge.embed`: the deep agent record whose graph gets vectors. */
@@ -22,7 +29,9 @@ export type KnowledgeEmbedInput = z.infer<typeof KnowledgeEmbedInputSchema>;
  * The request of a vector pass of the deep agent. The pass belongs to the platform; who pays is the
  * vector row's `payer_id`, decided per embed call (KD-8).
  */
-export function embedPassRequest(recordId: string): Parameters<TaskControl['create']>[0] {
+export function embedPassRequest(
+  recordId: string,
+): Parameters<TaskControl['create']>[0] {
   const input: KnowledgeEmbedInput = { recordId };
   return { type: KNOWLEDGE_EMBED_TASK_TYPE, ownerId: PLATFORM_OWNER_ID, input };
 }
@@ -33,7 +42,8 @@ const FOREIGN_KEY_VIOLATION = '23503';
 /** Whether the error, or a cause of it (drizzle wraps the driver's error), is a foreign key violation. */
 export function isForeignKeyViolation(error: unknown): boolean {
   for (let current = error; current instanceof Error; current = current.cause) {
-    if ((current as { code?: unknown }).code === FOREIGN_KEY_VIOLATION) return true;
+    if ((current as { code?: unknown }).code === FOREIGN_KEY_VIOLATION)
+      return true;
   }
   return false;
 }

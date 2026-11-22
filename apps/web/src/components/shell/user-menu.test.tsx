@@ -27,7 +27,13 @@ function Harness({ location }: { location: Pick<Location, 'assign'> }) {
 /** The `RootLayout` theme configuration (DD «Тема, шрифт, токены»); `assign` stands in for the page navigation. */
 function renderUserMenu(assign: (url: string) => void = vi.fn()) {
   return render(
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem enableColorScheme disableTransitionOnChange>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      enableColorScheme
+      disableTransitionOnChange
+    >
       <TooltipProvider>
         <SidebarProvider>
           <Harness location={{ assign }} />
@@ -39,12 +45,24 @@ function renderUserMenu(assign: (url: string) => void = vi.fn()) {
 
 const MENU_BUTTON = 'Меню пользователя Аня Смирнова';
 
-const SENTRY: McpConnection = { server: 'sentry', url: 'https://mcp.sentry.dev/mcp', status: 'needs_auth' };
-const JIRA: McpConnection = { server: 'jira', url: 'https://jira.example.com/mcp', status: 'connected' };
+const SENTRY: McpConnection = {
+  server: 'sentry',
+  url: 'https://mcp.sentry.dev/mcp',
+  status: 'needs_auth',
+};
+const JIRA: McpConnection = {
+  server: 'jira',
+  url: 'https://jira.example.com/mcp',
+  status: 'connected',
+};
 
-const isDark = (): boolean => document.documentElement.classList.contains('dark');
+const isDark = (): boolean =>
+  document.documentElement.classList.contains('dark');
 
-async function chooseTheme(user: ReturnType<typeof userEvent.setup>, label: string): Promise<void> {
+async function chooseTheme(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+): Promise<void> {
   await user.click(await screen.findByRole('button', { name: MENU_BUTTON }));
   const menu = await screen.findByRole('menu');
   await user.click(within(menu).getByRole('menuitemradio', { name: label }));
@@ -101,17 +119,31 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
     const menu = await screen.findByRole('menu');
     expect(within(menu).getByText('Аня Смирнова')).toBeInTheDocument();
     expect(within(menu).getByText('anya@corp.example')).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitem', { name: 'Мой доступ' })).toHaveAttribute('href', '/account');
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Мой доступ' }),
+    ).toHaveAttribute('href', '/account');
     expect(within(menu).queryByText(/разработки/)).toBeNull();
 
     await user.click(within(menu).getByRole('menuitem', { name: 'Выйти' }));
-    await waitFor(() => expect(steps).toEqual(['sign-out', 'assign /login?reason=signed_out']));
+    await waitFor(() =>
+      expect(steps).toEqual(['sign-out', 'assign /login?reason=signed_out']),
+    );
   });
 
   // AC-14.1, UM-01, MC-6: only `needs_auth` rows count; the count goes to the trigger's name and next to «Мой доступ».
   it.each([
-    { name: 'nothing waits → no count', list: [JIRA], label: MENU_BUTTON, count: null },
-    { name: 'one needs_auth → dot and «1»', list: [SENTRY, JIRA], label: `${MENU_BUTTON}, нужна аутентификация: 1`, count: '1' },
+    {
+      name: 'nothing waits → no count',
+      list: [JIRA],
+      label: MENU_BUTTON,
+      count: null,
+    },
+    {
+      name: 'one needs_auth → dot and «1»',
+      list: [SENTRY, JIRA],
+      label: `${MENU_BUTTON}, нужна аутентификация: 1`,
+      count: '1',
+    },
   ] as const)('$name', async ({ list, label, count }) => {
     let served = false;
     server.use(
@@ -127,7 +159,10 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
     await waitFor(() => expect(served).toBe(true));
     const trigger = await screen.findByRole('button', { name: label });
     await user.click(trigger);
-    const access = within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Мой доступ' });
+    const access = within(await screen.findByRole('menu')).getByRole(
+      'menuitem',
+      { name: 'Мой доступ' },
+    );
     if (count === null) expect(access).toHaveTextContent(/^Мой доступ$/);
     else expect(access).toHaveTextContent(`Мой доступ${count}`);
   });
@@ -147,13 +182,23 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
 
     await mcpApi.disconnect('jira');
 
-    expect(await screen.findByRole('button', { name: `${MENU_BUTTON}, нужна аутентификация: 1` })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', {
+        name: `${MENU_BUTTON}, нужна аутентификация: 1`,
+      }),
+    ).toBeInTheDocument();
   });
 
   it('without a name the block shows the email up to «@»', async () => {
-    server.use(http.get('/api/auth/me', () => HttpResponse.json(currentUser({ name: '' }))));
+    server.use(
+      http.get('/api/auth/me', () =>
+        HttpResponse.json(currentUser({ name: '' })),
+      ),
+    );
     renderUserMenu();
 
-    expect(await screen.findByRole('button', { name: 'Меню пользователя anya' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Меню пользователя anya' }),
+    ).toBeInTheDocument();
   });
 });

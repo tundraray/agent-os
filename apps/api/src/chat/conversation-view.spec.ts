@@ -30,7 +30,11 @@ const STEP_ORIGIN: RunOrigin = {
   subagent: 'gather',
 };
 
-function agent(agentId: string, parentId: string | null, origin: RunOrigin | null = null): AgentsAgentView {
+function agent(
+  agentId: string,
+  parentId: string | null,
+  origin: RunOrigin | null = null,
+): AgentsAgentView {
   return {
     agentId,
     parentId,
@@ -49,7 +53,9 @@ function agent(agentId: string, parentId: string | null, origin: RunOrigin | nul
   };
 }
 
-function confirmation(overrides: Partial<AgentConfirmation>): AgentConfirmation {
+function confirmation(
+  overrides: Partial<AgentConfirmation>,
+): AgentConfirmation {
   return {
     decisionId: 'd1',
     agentId: 'a1',
@@ -68,7 +74,15 @@ function confirmation(overrides: Partial<AgentConfirmation>): AgentConfirmation 
 }
 
 function message(seq: number, kind: string, payload: unknown): StepMessage {
-  return { messageId: `m${seq}`, seq, kind, sender: 'owner', payload, revive: false, createdAt: CREATED };
+  return {
+    messageId: `m${seq}`,
+    seq,
+    kind,
+    sender: 'owner',
+    payload,
+    revive: false,
+    createdAt: CREATED,
+  };
 }
 
 // AC-17.3 (a decision request as the card shows it, with the asking agent's origin), AC-24.1 (the
@@ -126,8 +140,18 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         kind: 'agents.brief',
         tool: 'start_deep_agent',
         server: null,
-        args: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
-        content: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        args: {
+          deepAgent: RECORD_ID,
+          question: 'Q',
+          boundaries: '',
+          result: '',
+        },
+        content: {
+          deepAgent: RECORD_ID,
+          question: 'Q',
+          boundaries: '',
+          result: '',
+        },
       }),
       expected: {
         decisionId: 'd1',
@@ -137,8 +161,18 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         kind: 'agents.brief',
         tool: 'start_deep_agent',
         server: null,
-        args: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
-        content: { deepAgent: RECORD_ID, question: 'Q', boundaries: '', result: '' },
+        args: {
+          deepAgent: RECORD_ID,
+          question: 'Q',
+          boundaries: '',
+          result: '',
+        },
+        content: {
+          deepAgent: RECORD_ID,
+          question: 'Q',
+          boundaries: '',
+          result: '',
+        },
         status: 'open',
         resolution: null,
         createdAt: '2026-11-14T10:00:00.000Z',
@@ -153,8 +187,15 @@ describe('conversation view maps confirmations, the agent tree and the pending q
   // AC-17.1, AC-15.6: the record a run started from, with its author and subagent, and the first-run
   // mark; the author's `disabled`, which an origin read from a snapshot may carry, never reaches the web.
   it('agent: name, origin with author and subagent, firstRun; no author.disabled; dates are ISO', () => {
-    const origin = { ...STEP_ORIGIN, author: { id: AUTHOR_ID, name: 'Аня', disabled: true } };
-    const step = { ...agent('s1', 'c1', origin), firstRun: true, finishedAt: RESOLVED };
+    const origin = {
+      ...STEP_ORIGIN,
+      author: { id: AUTHOR_ID, name: 'Аня', disabled: true },
+    };
+    const step = {
+      ...agent('s1', 'c1', origin),
+      firstRun: true,
+      finishedAt: RESOLVED,
+    };
 
     expect(toAgentView(step)).toEqual({
       agentId: 's1',
@@ -194,15 +235,29 @@ describe('conversation view maps confirmations, the agent tree and the pending q
 
   it('pending: messages in queue order with their sources, an interrupt left out', () => {
     const messages = [
-      message(4, 'child_finished', { taskId: 'a', status: 'failed', durationMs: 10 }),
+      message(4, 'child_finished', {
+        taskId: 'a',
+        status: 'failed',
+        durationMs: 10,
+      }),
       message(1, 'user_message', { text: 'hello' }),
       message(3, 'interrupt', {}),
       message(2, 'agent_message', { text: 'from parent', fromAgentId: 'p' }),
     ];
 
     expect(toPending(messages, [agent('a', 'root')])).toEqual([
-      { messageId: 'm1', source: 'user', text: 'hello', createdAt: '2026-11-14T10:00:00.000Z' },
-      { messageId: 'm2', source: 'parent', text: 'from parent', createdAt: '2026-11-14T10:00:00.000Z' },
+      {
+        messageId: 'm1',
+        source: 'user',
+        text: 'hello',
+        createdAt: '2026-11-14T10:00:00.000Z',
+      },
+      {
+        messageId: 'm2',
+        source: 'parent',
+        text: 'from parent',
+        createdAt: '2026-11-14T10:00:00.000Z',
+      },
       {
         messageId: 'm4',
         source: 'report',
@@ -224,7 +279,15 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         createdAt: CREATED,
         content: {
           text: 'Looking',
-          toolCalls: [{ callId: 'c1', tool: 'search', server: null, args: { q: 'x' }, state: 'done' }],
+          toolCalls: [
+            {
+              callId: 'c1',
+              tool: 'search',
+              server: null,
+              args: { q: 'x' },
+              state: 'done',
+            },
+          ],
         },
       },
       expected: {
@@ -233,7 +296,15 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         createdAt: '2026-11-14T10:00:00.000Z',
         content: {
           text: 'Looking',
-          toolCalls: [{ callId: 'c1', tool: 'search', server: null, args: { q: 'x' }, state: 'done' }],
+          toolCalls: [
+            {
+              callId: 'c1',
+              tool: 'search',
+              server: null,
+              args: { q: 'x' },
+              state: 'done',
+            },
+          ],
         },
       },
     },
@@ -243,13 +314,27 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         seq: 3,
         kind: 'user_message',
         createdAt: CREATED,
-        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'deep_agent', name: 'Разбор инцидента' } },
+        content: {
+          text: 'Разбери',
+          record: {
+            id: RECORD_ID,
+            kind: 'deep_agent',
+            name: 'Разбор инцидента',
+          },
+        },
       },
       expected: {
         seq: 3,
         kind: 'user_message',
         createdAt: '2026-11-14T10:00:00.000Z',
-        content: { text: 'Разбери', record: { id: RECORD_ID, kind: 'deep_agent', name: 'Разбор инцидента' } },
+        content: {
+          text: 'Разбери',
+          record: {
+            id: RECORD_ID,
+            kind: 'deep_agent',
+            name: 'Разбор инцидента',
+          },
+        },
       },
     },
     {

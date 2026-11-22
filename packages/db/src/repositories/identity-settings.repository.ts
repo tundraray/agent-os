@@ -37,13 +37,17 @@ export class IdentitySettingsRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   async readSessionLimits(): Promise<SessionLimitsRow> {
-    const [row] = await this.db.client.select(sessionLimitColumns).from(identitySettings);
+    const [row] = await this.db.client
+      .select(sessionLimitColumns)
+      .from(identitySettings);
     if (row === undefined) throw new Error('identity_settings row is missing');
     return row;
   }
 
   async read(): Promise<IdentitySettingsRow> {
-    const [row] = await this.db.client.select(settingsColumns).from(identitySettings);
+    const [row] = await this.db.client
+      .select(settingsColumns)
+      .from(identitySettings);
     if (row === undefined) throw new Error('identity_settings row is missing');
     return row;
   }

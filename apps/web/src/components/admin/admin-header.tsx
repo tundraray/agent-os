@@ -34,13 +34,21 @@ type RecordPlaceholderProps = {
 };
 
 /** A record page until its record is read: the section's title over the table's Loading or its load error. */
-export function RecordPlaceholder({ section, resource, loadFailed }: RecordPlaceholderProps) {
+export function RecordPlaceholder({
+  section,
+  resource,
+  loadFailed,
+}: RecordPlaceholderProps) {
   const titles = useAdminTitles();
   const title = titles.section(section);
   return (
     <>
       <PageHeader title={title} area={titles.panel} />
-      <DataTable caption={title} columns={[]} state={resourceTableState({ ...resource, data: undefined }, loadFailed)} />
+      <DataTable
+        caption={title}
+        columns={[]}
+        state={resourceTableState({ ...resource, data: undefined }, loadFailed)}
+      />
     </>
   );
 }

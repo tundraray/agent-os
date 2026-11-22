@@ -45,7 +45,9 @@ export const UpdateToolResultSettingsBodySchema = z
     path: ['previewChars'],
     message: 'previewChars must be less than storeFromChars',
   });
-export type UpdateToolResultSettingsBody = z.infer<typeof UpdateToolResultSettingsBodySchema>;
+export type UpdateToolResultSettingsBody = z.infer<
+  typeof UpdateToolResultSettingsBodySchema
+>;
 
 /** Response of GET/PUT /api/admin/tool-results/settings. `updatedAt: null` while the defaults stand. */
 export const ToolResultSettingsSchema = z.object({

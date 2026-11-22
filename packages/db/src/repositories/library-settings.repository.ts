@@ -22,7 +22,9 @@ export class LibrarySettingsRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   async read(): Promise<LibrarySettingsRow> {
-    const [row] = await this.db.client.select(settingsColumns).from(librarySettings);
+    const [row] = await this.db.client
+      .select(settingsColumns)
+      .from(librarySettings);
     if (row === undefined) throw new Error('library_settings row is missing');
     return row;
   }

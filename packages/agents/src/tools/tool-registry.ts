@@ -53,11 +53,16 @@ export interface ToolTarget {
 }
 
 export function callTarget(tool: SessionTool): ToolTarget {
-  return isMcp(tool) ? { tool: tool.mcp.tool, server: tool.mcp.server } : { tool: tool.name, server: null };
+  return isMcp(tool)
+    ? { tool: tool.mcp.tool, server: tool.mcp.server }
+    : { tool: tool.name, server: null };
 }
 
 /** The target of a requested name in a tool set; an unknown name stays as written, with no server. */
-export function callTargetOf(tools: readonly SessionTool[], name: string): ToolTarget {
+export function callTargetOf(
+  tools: readonly SessionTool[],
+  name: string,
+): ToolTarget {
   const tool = tools.find((candidate) => candidate.name === name);
   return tool === undefined ? { tool: name, server: null } : callTarget(tool);
 }
@@ -65,7 +70,9 @@ export function callTargetOf(tools: readonly SessionTool[], name: string): ToolT
 /** What a tool's `loggedArgs` keeps, or the whole arguments of a tool without it; a non-object is not logged then. */
 function keptArgs(tool: AgentTool, args: unknown): unknown {
   if (tool.loggedArgs === undefined) return args;
-  return typeof args === 'object' && args !== null ? tool.loggedArgs(args) : null;
+  return typeof args === 'object' && args !== null
+    ? tool.loggedArgs(args)
+    : null;
 }
 
 /** The arguments of a call as the log may hold them: {@link keptArgs} of a registered tool, all of an MCP call. */
@@ -87,7 +94,9 @@ export function loggedArgsOf(
   if (offered !== undefined) return loggedArgs(offered, call.args);
   const registered = toolOf(call.name);
   if (registered !== undefined) return keptArgs(registered, call.args);
-  return typeof call.args === 'object' && call.args !== null ? { keys: Object.keys(call.args) } : null;
+  return typeof call.args === 'object' && call.args !== null
+    ? { keys: Object.keys(call.args) }
+    : null;
 }
 
 /** The tools library: the registry of the tools a session may offer its model (C3, `ToolRunner` reads it). */
@@ -100,8 +109,10 @@ export class ToolRegistry {
 
   constructor(
     /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
-    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
-    @Inject(AgentMcpAccountsRepository) private readonly mcpAccountRows: AgentMcpAccountsRepository,
+    @Inject(AgentMcpServersRepository)
+    private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentMcpAccountsRepository)
+    private readonly mcpAccountRows: AgentMcpAccountsRepository,
     /** The one access check: the same in the tool set, in the call check and in the connections list. */
     @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,
   ) {}
@@ -111,8 +122,10 @@ export class ToolRegistry {
    * second call, or a name a registered tool already has, throws.
    */
   useRunCode(tool: AgentTool): void {
-    if (this.runCode !== undefined) throw new Error(`Tool ${tool.name} is set as run_code twice`);
-    if (this.tools.has(tool.name)) throw new Error(`Tool ${tool.name} is registered twice`);
+    if (this.runCode !== undefined)
+      throw new Error(`Tool ${tool.name} is set as run_code twice`);
+    if (this.tools.has(tool.name))
+      throw new Error(`Tool ${tool.name} is registered twice`);
     this.runCode = tool;
   }
 
@@ -122,7 +135,9 @@ export class ToolRegistry {
    */
   register(tool: AgentTool): void {
     if (this.sealed) {
-      throw new Error(`Tool ${tool.name} is registered after start(): register tools before it`);
+      throw new Error(
+        `Tool ${tool.name} is registered after start(): register tools before it`,
+      );
     }
     if (this.tools.has(tool.name) || tool.name === this.runCode?.name) {
       throw new Error(`Tool ${tool.name} is registered twice`);
@@ -151,12 +166,19 @@ export class ToolRegistry {
    * empty for a registered tool and for an MCP tool that is not listed now. The servers are read in one query.
    */
   async displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]> {
-    const names = new Set(calls.flatMap(({ server }) => (server === null ? [] : [server])));
+    const names = new Set(
+      calls.flatMap(({ server }) => (server === null ? [] : [server])),
+    );
     const rows = await this.mcpServerRows.findMany([...names]);
-    const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row.tools)]));
+    const listed = new Map(
+      rows.map((row) => [row.name, storedMcpTools(row.tools)]),
+    );
     return calls.map(
       ({ tool, server }): ToolDisplay =>
-        (server === null ? undefined : listed.get(server)?.find((mcp) => mcp.tool === tool)?.display) ?? {},
+        (server === null
+          ? undefined
+          : listed.get(server)?.find((mcp) => mcp.tool === tool)?.display) ??
+        {},
     );
   }
 
@@ -174,9 +196,18 @@ export class ToolRegistry {
    *
    * Nothing is kept between steps (Invariant 3).
    */
-  async toolsFor(ownerId: string, declaration: ToolDeclaration): Promise<SessionTool[]> {
-    const rows = await this.withAccounts(await this.enabledServers(declaration.servers), ownerId);
-    return [...this.registeredTools(declaration), ...(await this.allowedTools(rows, ownerId))];
+  async toolsFor(
+    ownerId: string,
+    declaration: ToolDeclaration,
+  ): Promise<SessionTool[]> {
+    const rows = await this.withAccounts(
+      await this.enabledServers(declaration.servers),
+      ownerId,
+    );
+    return [
+      ...this.registeredTools(declaration),
+      ...(await this.allowedTools(rows, ownerId)),
+    ];
   }
 
   /**
@@ -186,7 +217,10 @@ export class ToolRegistry {
    * design-mcp-connect.md DC-2).
    */
   async checkTools(declaration: ToolDeclaration): Promise<SessionTool[]> {
-    return [...this.registeredTools(declaration), ...mcpToolsOf(await this.enabledServers(declaration.servers))];
+    return [
+      ...this.registeredTools(declaration),
+      ...mcpToolsOf(await this.enabledServers(declaration.servers)),
+    ];
   }
 
   /**
@@ -194,21 +228,28 @@ export class ToolRegistry {
    * without accounts: the set a `run_code` run checks its calls against, so a server the owner may not use
    * is `no_access`, not `tool_not_in_definition` (code-execution DC-6; ADR-0011).
    */
-  async declaredMcpTools(servers: readonly string[]): Promise<McpSessionTool[]> {
+  async declaredMcpTools(
+    servers: readonly string[],
+  ): Promise<McpSessionTool[]> {
     return mcpToolsOf(await this.enabledServers(servers));
   }
 
   /** `run_code`, which every tool set and every lookup by name needs: `useRunCode` sets it before them. */
   private runCodeTool(): AgentTool {
     if (this.runCode === undefined) {
-      throw new Error('The tool registry is used before run_code was set: call useRunCode() first');
+      throw new Error(
+        'The tool registry is used before run_code was set: call useRunCode() first',
+      );
     }
     return this.runCode;
   }
 
   private declared(name: string): AgentTool {
     const tool = this.tools.get(name);
-    if (tool === undefined) throw new Error(`An agent declares tool ${name}, which is not registered`);
+    if (tool === undefined)
+      throw new Error(
+        `An agent declares tool ${name}, which is not registered`,
+      );
     return tool;
   }
 
@@ -241,40 +282,58 @@ export class ToolRegistry {
   }
 
   /** The MCP tools of the given servers whose pair the gate allows the owner; none for a disabled owner. */
-  private async allowedTools(rows: readonly McpServerRow[], ownerId: string): Promise<McpSessionTool[]> {
+  private async allowedTools(
+    rows: readonly McpServerRow[],
+    ownerId: string,
+  ): Promise<McpSessionTool[]> {
     if (rows.length === 0) return [];
     const answer = await this.access.tools(ownerId);
     if (answer.kind === 'owner_disabled') return [];
-    return mcpToolsOf(rows).filter((tool) => answer.allows(tool.mcp.server, tool.mcp.tool));
+    return mcpToolsOf(rows).filter((tool) =>
+      answer.allows(tool.mcp.server, tool.mcp.tool),
+    );
   }
 
   /** Keeps a shared server, and an `oauth` server only when the owner has an account on it. */
-  private async withAccounts(rows: McpServerRow[], ownerId: string): Promise<McpServerRow[]> {
-    const isOAuth = (row: McpServerRow) => row.mode === McpServerModeSchema.enum.oauth;
+  private async withAccounts(
+    rows: McpServerRow[],
+    ownerId: string,
+  ): Promise<McpServerRow[]> {
+    const isOAuth = (row: McpServerRow) =>
+      row.mode === McpServerModeSchema.enum.oauth;
     if (!rows.some(isOAuth)) return rows;
     const connected = new Set(
-      (await this.mcpAccountRows.listOwned(ownerId)).map((account) => account.server),
+      (await this.mcpAccountRows.listOwned(ownerId)).map(
+        (account) => account.server,
+      ),
     );
     return rows.filter((row) => !isOAuth(row) || connected.has(row.name));
   }
 }
 
 /** The tool as the declaring agent sees it: by its `describe`, or its own description and schema. */
-function systemTool(tool: AgentTool, declaration: ToolDeclaration): SessionTool {
+function systemTool(
+  tool: AgentTool,
+  declaration: ToolDeclaration,
+): SessionTool {
   const { description, argsSchema } = tool.describe?.(declaration) ?? tool;
-  return { kind: 'system', name: tool.name, description, inputSchema: argsSchema ?? tool.argsSchema, tool };
+  return {
+    kind: 'system',
+    name: tool.name,
+    description,
+    inputSchema: argsSchema ?? tool.argsSchema,
+    tool,
+  };
 }
 
 function mcpToolsOf(rows: readonly McpServerRow[]): McpSessionTool[] {
   return rows.flatMap((row) =>
-    (storedMcpTools(row.tools) ?? []).map(
-      (mcp): McpSessionTool => ({
-        kind: 'external',
-        name: mcp.name,
-        description: mcpToolDescription(mcp),
-        inputSchema: mcp.inputSchema,
-        mcp,
-      }),
-    ),
+    (storedMcpTools(row.tools) ?? []).map((mcp): McpSessionTool => ({
+      kind: 'external',
+      name: mcp.name,
+      description: mcpToolDescription(mcp),
+      inputSchema: mcp.inputSchema,
+      mcp,
+    })),
   );
 }

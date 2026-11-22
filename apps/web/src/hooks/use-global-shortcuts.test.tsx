@@ -15,10 +15,16 @@ afterEach(() => {
 describe('useGlobalShortcuts — Ctrl/⌘+Shift+O wiring (AC-22.1)', () => {
   it('opens a new chat and takes the key from the browser; inside SB-08 it does neither', () => {
     renderHook(() => useGlobalShortcuts());
-    const composer = document.body.appendChild(document.createElement('textarea'));
-    const renameWrapper = document.body.appendChild(document.createElement('div'));
+    const composer = document.body.appendChild(
+      document.createElement('textarea'),
+    );
+    const renameWrapper = document.body.appendChild(
+      document.createElement('div'),
+    );
     renameWrapper.setAttribute('data-shortcuts-blocked', '');
-    const renameField = renameWrapper.appendChild(document.createElement('input'));
+    const renameField = renameWrapper.appendChild(
+      document.createElement('input'),
+    );
     const keys = { code: 'KeyO', key: 'O', ctrlKey: true, shiftKey: true };
 
     const composerNotPrevented = fireEvent.keyDown(composer, keys);

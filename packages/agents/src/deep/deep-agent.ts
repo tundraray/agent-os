@@ -16,13 +16,24 @@ import type { DeepAgentSnapshot, RunSnapshot } from '../start/snapshot';
 import type { SessionTool } from '../tools/tool-registry';
 import { learningRunOf, TASK_TOOL } from './deep-definition';
 import type { TaskArgs } from './delegation-rules';
-import { createDelegations, type Delegations, type DelegationsDeps, reportOf, type TaskCall } from './task-delegation';
+import {
+  createDelegations,
+  type Delegations,
+  type DelegationsDeps,
+  reportOf,
+  type TaskCall,
+} from './task-delegation';
 
 const { refused } = ToolOutcomeSchema.enum;
 
-function deepAgentOf(snapshot: RunSnapshot, agentId: string): DeepAgentSnapshot {
+function deepAgentOf(
+  snapshot: RunSnapshot,
+  agentId: string,
+): DeepAgentSnapshot {
   if (snapshot.kind !== 'deep_agent') {
-    throw new Error(`Agent ${agentId} runs as a deep agent without a deep agent's snapshot`);
+    throw new Error(
+      `Agent ${agentId} runs as a deep agent without a deep agent's snapshot`,
+    );
   }
   return snapshot;
 }
@@ -48,26 +59,40 @@ export class DeepAgent extends BaseAgent {
     super(deps, run);
     this.delegations = createDelegations(deps);
     this.trackers = deps.trackers;
-    this.finalSubagent = deepAgentOf(run.input.snapshot, run.task.taskId).content.finalSubagent;
+    this.finalSubagent = deepAgentOf(
+      run.input.snapshot,
+      run.task.taskId,
+    ).content.finalSubagent;
   }
 
   /** A run that learns gets its row with its deep agent session, in the same transaction (self-learning KD-2). */
   protected override async sessionCreated(): Promise<void> {
     const learning = learningRunOf(this.input.snapshot);
-    if (learning !== null) await this.deps.knowledgeRunRows.insertRun({ runId: this.task.taskId, ...learning });
+    if (learning !== null)
+      await this.deps.knowledgeRunRows.insertRun({
+        runId: this.task.taskId,
+        ...learning,
+      });
   }
 
   /**
    * Sent `task` calls wait for their tracker, and the step that delivers its `tasks_finished` closes them with
    * the outcomes of their tasks (KD-4), never as `unknown`.
    */
-  override async closeDelegated(ctx: StepContext, calls: readonly CallState[]): Promise<CallClosing[]> {
+  override async closeDelegated(
+    ctx: StepContext,
+    calls: readonly CallState[],
+  ): Promise<CallClosing[]> {
     if (calls.length === 0) return [];
     const results = await this.delegations.closings(
       { taskId: ctx.taskId, ownerId: ctx.ownerId, logger: ctx.logger },
       calls,
     );
-    return results.map((result): CallClosing => () => this.delegations.close(ctx.taskId, result));
+    return results.map(
+      (result): CallClosing =>
+        () =>
+          this.delegations.close(ctx.taskId, result),
+    );
   }
 
   override delegates(tool: Pick<SessionTool, 'kind' | 'name'>): boolean {
@@ -78,13 +103,26 @@ export class DeepAgent extends BaseAgent {
    * The `task` calls of the answer, checked together once every other call is closed (KD-4): a refusal is
    * closed with its text; the accepted ones open one tracker in the commit, and the step waits for it.
    */
-  override async delegate({ ctx, caller, calls, loggedArgs }: DelegationInput): Promise<Delegation> {
+  override async delegate({
+    ctx,
+    caller,
+    calls,
+    loggedArgs,
+  }: DelegationInput): Promise<Delegation> {
     // The schema checked the arguments against the session's `task`, as its declaration describes it.
-    const taskCalls: TaskCall[] = calls.map(({ call, args }) => ({ call, args: args as TaskArgs }));
+    const taskCalls: TaskCall[] = calls.map(({ call, args }) => ({
+      call,
+      args: args as TaskArgs,
+    }));
     const decision = await this.delegations.decide(caller, taskCalls);
     const refusals = decision.refused.map((refusal) => {
-      const call = taskCalls.find((candidate) => candidate.call.callId === refusal.callId)?.call;
-      if (call === undefined) throw new Error(`Refused task call ${refusal.callId} is not of this step`);
+      const call = taskCalls.find(
+        (candidate) => candidate.call.callId === refusal.callId,
+      )?.call;
+      if (call === undefined)
+        throw new Error(
+          `Refused task call ${refusal.callId} is not of this step`,
+        );
       ctx.logger.info('task delegation refused', {
         agentId: ctx.taskId,
         rootId: ctx.rootId,
@@ -94,7 +132,14 @@ export class DeepAgent extends BaseAgent {
         reason: refusal.reason,
         rule: refusal.rule,
       });
-      return { call, ending: { outcome: refused, refusalReason: refusal.reason, resultText: refusal.text } };
+      return {
+        call,
+        ending: {
+          outcome: refused,
+          refusalReason: refusal.reason,
+          resultText: refusal.text,
+        },
+      };
     });
     for (const accepted of decision.accepted) {
       ctx.logger.info('task delegation accepted', {
@@ -116,7 +161,12 @@ export class DeepAgent extends BaseAgent {
         decision.accepted.length === 0
           ? null
           : (effects) =>
-              this.delegations.open({ effects, caller, accepted: decision.accepted, logger: ctx.logger }),
+              this.delegations.open({
+                effects,
+                caller,
+                accepted: decision.accepted,
+                logger: ctx.logger,
+              }),
     };
   }
 
@@ -126,20 +176,38 @@ export class DeepAgent extends BaseAgent {
    * kind, not from the step's entries: the result may stand before the last compaction. `null` — the snapshot
    * names no final subagent, and the deep agent's own answer ends the run.
    */
-  protected override async finalAnswer(ctx: StepContext): Promise<FinalAnswer | null> {
+  protected override async finalAnswer(
+    ctx: StepContext,
+  ): Promise<FinalAnswer | null> {
     const subagent = this.finalSubagent;
     if (subagent === null) return null;
     return { subagent, report: await this.finalSubagentReport(ctx, subagent) };
   }
 
-  private async finalSubagentReport(ctx: StepContext, subagent: string): Promise<FinalSubagentReport | null> {
+  private async finalSubagentReport(
+    ctx: StepContext,
+    subagent: string,
+  ): Promise<FinalSubagentReport | null> {
     const { messageRows } = this.deps;
-    const childTaskId = await messageRows.lastSingleTask(ctx.taskId, TASK_TOOL, subagent);
+    const childTaskId = await messageRows.lastSingleTask(
+      ctx.taskId,
+      TASK_TOOL,
+      subagent,
+    );
     if (childTaskId === undefined) return null;
     const trackers = await this.trackers.list(ctx.taskId, ctx.ownerId);
-    const task = trackers.flatMap((tracker) => tracker.tasks).find((candidate) => candidate.taskId === childTaskId);
-    if (task === undefined) throw new Error(`Subagent task ${childTaskId} of agent ${ctx.taskId} is in no tracker`);
-    if (task.status === 'completed') return { status: 'completed', text: reportOf(task) };
-    return { status: task.status === 'failed' ? 'failed' : 'stopped', text: null };
+    const task = trackers
+      .flatMap((tracker) => tracker.tasks)
+      .find((candidate) => candidate.taskId === childTaskId);
+    if (task === undefined)
+      throw new Error(
+        `Subagent task ${childTaskId} of agent ${ctx.taskId} is in no tracker`,
+      );
+    if (task.status === 'completed')
+      return { status: 'completed', text: reportOf(task) };
+    return {
+      status: task.status === 'failed' ? 'failed' : 'stopped',
+      text: null,
+    };
   }
 }

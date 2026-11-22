@@ -92,7 +92,9 @@ import {
 const FIXTURE_TIME = '2026-10-28T10:00:00.000Z';
 
 /** A thread as GET /api/threads returns it; validated by ThreadSummarySchema. */
-export function threadSummary(overrides: Partial<ThreadSummary> & Pick<ThreadSummary, 'id'>): ThreadSummary {
+export function threadSummary(
+  overrides: Partial<ThreadSummary> & Pick<ThreadSummary, 'id'>,
+): ThreadSummary {
   return ThreadSummarySchema.parse({
     title: 'Беседа',
     createdAt: FIXTURE_TIME,
@@ -102,7 +104,10 @@ export function threadSummary(overrides: Partial<ThreadSummary> & Pick<ThreadSum
 }
 
 /** Body of GET /api/threads; validated by ThreadListResponseSchema. */
-export function threadList(threads: ThreadSummary[], nextCursor: string | null = null): ThreadListResponse {
+export function threadList(
+  threads: ThreadSummary[],
+  nextCursor: string | null = null,
+): ThreadListResponse {
   return ThreadListResponseSchema.parse({ threads, nextCursor });
 }
 
@@ -130,7 +135,9 @@ export function fixtureTime(seconds: number): string {
 const FIXTURE_MODEL = 'claude-haiku-4-5';
 
 /** An agent as the API returns it: a working child of the root `root` in thread `t1`. */
-function agentView(overrides: Partial<AgentView> & Pick<AgentView, 'agentId'>): AgentView {
+function agentView(
+  overrides: Partial<AgentView> & Pick<AgentView, 'agentId'>,
+): AgentView {
   return AgentViewSchema.parse({
     parentId: 'root',
     rootId: 'root',
@@ -166,7 +173,9 @@ export function deepAgentOrigin(): RunOrigin {
 }
 
 /** An agent with its subtree; no children by default. */
-export function agentNode(overrides: Partial<AgentNode> & Pick<AgentNode, 'agentId'>): AgentNode {
+export function agentNode(
+  overrides: Partial<AgentNode> & Pick<AgentNode, 'agentId'>,
+): AgentNode {
   const { children = [], ...view } = overrides;
   return AgentNodeSchema.parse({ ...agentView(view), children });
 }
@@ -179,7 +188,10 @@ type FixtureEntryKind =
   | 'model_answer'
   | 'tool_result'
   | 'event';
-type EntryContent<K extends FixtureEntryKind> = Extract<HistoryEntry, { kind: K }>['content'];
+type EntryContent<K extends FixtureEntryKind> = Extract<
+  HistoryEntry,
+  { kind: K }
+>['content'];
 
 const ENTRY_CONTENT: { [K in FixtureEntryKind]: EntryContent<K> } = {
   task: { text: 'Задача', record: null },
@@ -229,7 +241,9 @@ export function historyEntry<K extends FixtureEntryKind>({
 }
 
 /** A queued message: from the user by default. */
-export function pendingMessage(overrides: Partial<PendingMessage> & Pick<PendingMessage, 'messageId'>): PendingMessage {
+export function pendingMessage(
+  overrides: Partial<PendingMessage> & Pick<PendingMessage, 'messageId'>,
+): PendingMessage {
   return PendingMessageSchema.parse({
     source: 'user',
     text: 'Сообщение в очереди',
@@ -239,7 +253,9 @@ export function pendingMessage(overrides: Partial<PendingMessage> & Pick<Pending
 }
 
 /** An open tool confirmation of agent `a1`. */
-export function confirmation(overrides: Partial<Confirmation> & Pick<Confirmation, 'decisionId'>): Confirmation {
+export function confirmation(
+  overrides: Partial<Confirmation> & Pick<Confirmation, 'decisionId'>,
+): Confirmation {
   return ConfirmationSchema.parse({
     agentId: 'a1',
     description: 'Агент',
@@ -266,24 +282,35 @@ export function recordConfirmation(
   overrides: Partial<Confirmation> & Pick<Confirmation, 'decisionId'>,
 ): Confirmation {
   const content = LibraryRecordCardSchema.parse(card);
-  const recordId = content.action === 'create' ? {} : { recordId: content.recordId };
+  const recordId =
+    content.action === 'create' ? {} : { recordId: content.recordId };
   return confirmation({
     agentId: 'root',
     description: 'Чат',
     kind: LIBRARY_RECORD_CONFIRMATION,
     tool: `${content.action}_record`,
     server: null,
-    args: { ...recordId, ...(content.next === null ? {} : { kind: content.kind, ...content.next }) },
+    args: {
+      ...recordId,
+      ...(content.next === null ? {} : { kind: content.kind, ...content.next }),
+    },
     content,
     ...overrides,
   });
 }
 
 /** GET /threads/:id/history of an idle conversation `t1` with root `root` and nothing read yet. */
-export function conversationView(overrides: Partial<ConversationView> = {}): ConversationView {
+export function conversationView(
+  overrides: Partial<ConversationView> = {},
+): ConversationView {
   return ConversationViewSchema.parse({
     thread: threadSummary({ id: 't1' }),
-    chat: { status: 'idle', failureReason: null, rootAgentId: 'root', model: FIXTURE_MODEL },
+    chat: {
+      status: 'idle',
+      failureReason: null,
+      rootAgentId: 'root',
+      model: FIXTURE_MODEL,
+    },
     entries: [],
     nextAfterSeq: null,
     pending: [],
@@ -298,12 +325,20 @@ export function conversationView(overrides: Partial<ConversationView> = {}): Con
  * GET /threads/:id/history of an idle conversation whose turns alternate from the employee: the first
  * text is the task, then the root's answer, then a message, and so on (seq 1, 2, …).
  */
-export function conversationWithTurns(thread: ThreadSummary, texts: readonly string[]): ConversationView {
+export function conversationWithTurns(
+  thread: ThreadSummary,
+  texts: readonly string[],
+): ConversationView {
   return conversationView({
     thread,
     entries: texts.map((text, index) =>
       historyEntry({
-        kind: index === 0 ? 'task' : index % 2 === 1 ? 'model_answer' : 'user_message',
+        kind:
+          index === 0
+            ? 'task'
+            : index % 2 === 1
+              ? 'model_answer'
+              : 'user_message',
         seq: index + 1,
         content: { text },
       }),
@@ -313,11 +348,18 @@ export function conversationWithTurns(thread: ThreadSummary, texts: readonly str
 
 /** GET /agents/:id/history of agent `a1` (a child of the root) in conversation `t1`. */
 export function agentPageView(
-  overrides: Partial<Omit<AgentPageView, 'agent'>> & { agent?: Partial<AgentPageView['agent']> } = {},
+  overrides: Partial<Omit<AgentPageView, 'agent'>> & {
+    agent?: Partial<AgentPageView['agent']>;
+  } = {},
 ): AgentPageView {
   const { agent, ...rest } = overrides;
   return AgentPageViewSchema.parse({
-    agent: { ...agentView({ agentId: 'a1' }), threadId: 't1', threadTitle: 'Беседа', ...agent },
+    agent: {
+      ...agentView({ agentId: 'a1' }),
+      threadId: 't1',
+      threadTitle: 'Беседа',
+      ...agent,
+    },
     entries: [],
     nextAfterSeq: null,
     pending: [],
@@ -329,16 +371,25 @@ export function agentPageView(
 
 /** GET /agents page: each top agent defaults to conversation `t1` «Беседа» without children. */
 export function agentListPage(
-  agents: ReadonlyArray<Partial<AgentListNode> & Pick<AgentListNode, 'agentId'>>,
+  agents: ReadonlyArray<
+    Partial<AgentListNode> & Pick<AgentListNode, 'agentId'>
+  >,
   nextCursor: string | null = null,
 ): AgentListPage {
   return AgentListPageSchema.parse({
-    agents: agents.map(({ children = [], threadId = 't1', threadTitle = 'Беседа', ...view }) => ({
-      ...agentView(view),
-      children,
-      threadId,
-      threadTitle,
-    })),
+    agents: agents.map(
+      ({
+        children = [],
+        threadId = 't1',
+        threadTitle = 'Беседа',
+        ...view
+      }) => ({
+        ...agentView(view),
+        children,
+        threadId,
+        threadTitle,
+      }),
+    ),
     nextCursor,
   });
 }
@@ -370,7 +421,10 @@ export function adminUserSummary(
 }
 
 /** Body of GET /api/admin/users. */
-export function adminUserPage(users: AdminUserSummary[], nextCursor: string | null = null): AdminUserPage {
+export function adminUserPage(
+  users: AdminUserSummary[],
+  nextCursor: string | null = null,
+): AdminUserPage {
   return AdminUserPageSchema.parse({ users, nextCursor });
 }
 
@@ -379,18 +433,34 @@ export function adminUserDetail(
   overrides: Partial<AdminUserDetail> & Pick<AdminUserDetail, 'id'>,
 ): AdminUserDetail {
   const { adminRight = { personal: false, roles: [] }, ...summary } = overrides;
-  return AdminUserDetailSchema.parse({ ...adminUserSummary(summary), adminRight });
+  return AdminUserDetailSchema.parse({
+    ...adminUserSummary(summary),
+    adminRight,
+  });
 }
 
 /** Row of GET /api/admin/roles: an ordinary role «SRE» without members. */
-export function roleSummary(overrides: Partial<RoleSummary> & Pick<RoleSummary, 'id'>): RoleSummary {
-  return RoleSummarySchema.parse({ name: 'SRE', memberCount: 0, isAdmin: false, builtin: false, ...overrides });
+export function roleSummary(
+  overrides: Partial<RoleSummary> & Pick<RoleSummary, 'id'>,
+): RoleSummary {
+  return RoleSummarySchema.parse({
+    name: 'SRE',
+    memberCount: 0,
+    isAdmin: false,
+    builtin: false,
+    ...overrides,
+  });
 }
 
 /** GET /api/admin/roles/:id; `memberCount` follows `members` unless given. */
-export function roleDetail(overrides: Partial<RoleDetail> & Pick<RoleDetail, 'id'>): RoleDetail {
+export function roleDetail(
+  overrides: Partial<RoleDetail> & Pick<RoleDetail, 'id'>,
+): RoleDetail {
   const { members = [], ...summary } = overrides;
-  return RoleDetailSchema.parse({ ...roleSummary({ memberCount: members.length, ...summary }), members });
+  return RoleDetailSchema.parse({
+    ...roleSummary({ memberCount: members.length, ...summary }),
+    members,
+  });
 }
 
 /** Row of GET /api/admin/grants: role «SRE» (`fixtureId(100)`) may call `sentry` / `list_issues`, no quota. */
@@ -406,8 +476,15 @@ export function grant(overrides: Partial<Grant> & Pick<Grant, 'id'>): Grant {
 }
 
 /** Row of GET /api/admin/providers: a disabled OIDC provider «Okta». */
-export function providerSummary(overrides: Partial<ProviderSummary> & Pick<ProviderSummary, 'id'>): ProviderSummary {
-  return ProviderSummarySchema.parse({ type: 'oidc', name: 'Okta', enabled: false, ...overrides });
+export function providerSummary(
+  overrides: Partial<ProviderSummary> & Pick<ProviderSummary, 'id'>,
+): ProviderSummary {
+  return ProviderSummarySchema.parse({
+    type: 'oidc',
+    name: 'Okta',
+    enabled: false,
+    ...overrides,
+  });
 }
 
 /**
@@ -415,13 +492,19 @@ export function providerSummary(overrides: Partial<ProviderSummary> & Pick<Provi
  * address is built from the provider id as the API builds it.
  */
 export function providerView(
-  overrides: Partial<Omit<ProviderView, 'options'>> & Pick<ProviderView, 'id'> & { options?: Partial<ProviderOptionsView> },
+  overrides: Partial<Omit<ProviderView, 'options'>> &
+    Pick<ProviderView, 'id'> & { options?: Partial<ProviderOptionsView> },
 ): ProviderView {
   const { options, complete = false, providerData, ...summary } = overrides;
   return ProviderViewSchema.parse({
     ...providerSummary(summary),
     complete,
-    options: { clientId: null, issuer: null, clientSecretSet: false, ...options },
+    options: {
+      clientId: null,
+      issuer: null,
+      clientSecretSet: false,
+      ...options,
+    },
     providerData: providerData ?? {
       redirectUri: `${FIXTURE_PUBLIC_URL}/api/auth/oauth/${summary.id}/callback`,
       scopes: 'openid email profile',
@@ -430,7 +513,9 @@ export function providerView(
 }
 
 /** GET /api/admin/settings/sign-in: the saved address and the default limits (8 h idle, 24 h total). */
-export function signInSettings(overrides: Partial<SignInSettings> = {}): SignInSettings {
+export function signInSettings(
+  overrides: Partial<SignInSettings> = {},
+): SignInSettings {
   return SignInSettingsSchema.parse({
     publicUrl: FIXTURE_PUBLIC_URL,
     idleMinutes: 480,
@@ -455,13 +540,29 @@ export function mcpServerSummary(
 
 /** Tools of a server view by default: one that reads and one that changes. */
 const FIXTURE_TOOLS: McpToolView[] = [
-  { name: 'list_issues', title: 'List issues', description: 'Список задач', readOnly: true },
-  { name: 'update_issue', title: 'Update issue', description: 'Изменяет задачу', readOnly: false },
+  {
+    name: 'list_issues',
+    title: 'List issues',
+    description: 'Список задач',
+    readOnly: true,
+  },
+  {
+    name: 'update_issue',
+    title: 'Update issue',
+    description: 'Изменяет задачу',
+    readOnly: false,
+  },
 ];
 
 /** GET /api/admin/mcp-servers/:name: `list_issues` (reads) and `update_issue` (changes); `toolCount` follows `tools`. */
-export function mcpServerView(overrides: Partial<McpServerView> & Pick<McpServerView, 'name'>): McpServerView {
-  const { tools = FIXTURE_TOOLS, sharedTokenSet = false, ...summary } = overrides;
+export function mcpServerView(
+  overrides: Partial<McpServerView> & Pick<McpServerView, 'name'>,
+): McpServerView {
+  const {
+    tools = FIXTURE_TOOLS,
+    sharedTokenSet = false,
+    ...summary
+  } = overrides;
   return McpServerViewSchema.parse({
     ...mcpServerSummary({ toolCount: tools.length, ...summary }),
     sharedTokenSet,
@@ -470,19 +571,28 @@ export function mcpServerView(overrides: Partial<McpServerView> & Pick<McpServer
 }
 
 /** Row of GET /api/admin/models: a chat model with one price, no long-context rates. */
-export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id'>): CatalogModel {
+export function catalogModel(
+  overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id'>,
+): CatalogModel {
   return CatalogModelSchema.parse({
     name: 'Claude Sonnet 4.5',
     purpose: 'chat',
     provider: modelProvider(overrides.id),
-    prices: { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheWriteUsdPerMTok: 3.75, cacheReadUsdPerMTok: 0.3 },
+    prices: {
+      inputUsdPerMTok: 3,
+      outputUsdPerMTok: 15,
+      cacheWriteUsdPerMTok: 3.75,
+      cacheReadUsdPerMTok: 0.3,
+    },
     longContext: null,
     ...overrides,
   });
 }
 
 /** Row of GET /api/admin/model-providers: `anthropic`, enabled, key set, ready, no catalogue models. */
-export function modelProviderView(overrides: Partial<ModelProviderView> = {}): ModelProviderView {
+export function modelProviderView(
+  overrides: Partial<ModelProviderView> = {},
+): ModelProviderView {
   return ModelProviderViewSchema.parse({
     servesEmbeddings: (overrides.kind ?? 'anthropic') !== 'anthropic',
     name: 'anthropic',
@@ -500,7 +610,9 @@ export function modelProviderView(overrides: Partial<ModelProviderView> = {}): M
 }
 
 /** GET /api/admin/model-defaults: neither model chosen, never set. */
-export function modelDefaults(overrides: Partial<ModelDefaults> = {}): ModelDefaults {
+export function modelDefaults(
+  overrides: Partial<ModelDefaults> = {},
+): ModelDefaults {
   return ModelDefaultsSchema.parse({
     chatModel: null,
     embeddingModel: null,
@@ -511,7 +623,9 @@ export function modelDefaults(overrides: Partial<ModelDefaults> = {}): ModelDefa
 }
 
 /** GET /api/admin/knowledge/settings: the defaults, never set. */
-export function knowledgeSettings(overrides: Partial<KnowledgeSettings> = {}): KnowledgeSettings {
+export function knowledgeSettings(
+  overrides: Partial<KnowledgeSettings> = {},
+): KnowledgeSettings {
   return KnowledgeSettingsSchema.parse({
     limitTokens: KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
     lessonsEnabled: true,
@@ -521,7 +635,9 @@ export function knowledgeSettings(overrides: Partial<KnowledgeSettings> = {}): K
 }
 
 /** GET /api/admin/tool-results/settings: the defaults, never set. */
-export function toolResultSettings(overrides: Partial<ToolResultSettings> = {}): ToolResultSettings {
+export function toolResultSettings(
+  overrides: Partial<ToolResultSettings> = {},
+): ToolResultSettings {
   return ToolResultSettingsSchema.parse({
     storeFromChars: TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
     previewChars: TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
@@ -537,13 +653,23 @@ export function toolResultSettings(overrides: Partial<ToolResultSettings> = {}):
 type KnowledgeEntity = Extract<KnowledgeItem, { type: 'entity' }>;
 type KnowledgeFact = Extract<KnowledgeItem, { type: 'relation'; kind: 'fact' }>;
 type KnowledgeLesson = Extract<KnowledgeItem, { kind: 'lesson' }>;
-type KnowledgeSearchedNothing = Extract<KnowledgeItem, { kind: 'searched_nothing' }>;
+type KnowledgeSearchedNothing = Extract<
+  KnowledgeItem,
+  { kind: 'searched_nothing' }
+>;
 
 /** What every record has by default: added once at FIXTURE_TIME, active, no placement mark. */
-const KNOWLEDGE_ITEM = { confirmations: 1, date: FIXTURE_TIME, state: 'active', placement: null } as const;
+const KNOWLEDGE_ITEM = {
+  confirmations: 1,
+  date: FIXTURE_TIME,
+  state: 'active',
+  placement: null,
+} as const;
 
 /** An entity (always a fact): «billing-api», «Сервис списаний». */
-export function knowledgeEntity(overrides: Partial<KnowledgeEntity> & Pick<KnowledgeEntity, 'id'>): KnowledgeItem {
+export function knowledgeEntity(
+  overrides: Partial<KnowledgeEntity> & Pick<KnowledgeEntity, 'id'>,
+): KnowledgeItem {
   return KnowledgeItemSchema.parse({
     ...KNOWLEDGE_ITEM,
     name: 'billing-api',
@@ -555,12 +681,22 @@ export function knowledgeEntity(overrides: Partial<KnowledgeEntity> & Pick<Knowl
 }
 
 /** A relation fact «{from} → владеет → {to}» between two entities. */
-export function knowledgeFact(overrides: Partial<KnowledgeFact> & Pick<KnowledgeFact, 'id' | 'from' | 'to'>): KnowledgeItem {
-  return KnowledgeItemSchema.parse({ ...KNOWLEDGE_ITEM, label: 'владеет', ...overrides, type: 'relation', kind: 'fact' });
+export function knowledgeFact(
+  overrides: Partial<KnowledgeFact> & Pick<KnowledgeFact, 'id' | 'from' | 'to'>,
+): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    label: 'владеет',
+    ...overrides,
+    type: 'relation',
+    kind: 'fact',
+  });
 }
 
 /** A lesson of `logs.search` on «ошибки оплаты». */
-export function knowledgeLesson(overrides: Partial<KnowledgeLesson> & Pick<KnowledgeLesson, 'id'>): KnowledgeItem {
+export function knowledgeLesson(
+  overrides: Partial<KnowledgeLesson> & Pick<KnowledgeLesson, 'id'>,
+): KnowledgeItem {
   return KnowledgeItemSchema.parse({
     ...KNOWLEDGE_ITEM,
     server: 'logs',
@@ -576,7 +712,8 @@ export function knowledgeLesson(overrides: Partial<KnowledgeLesson> & Pick<Knowl
 
 /** «Искал — не нашёл» of `jira.search_issues` on «инциденты оплаты». */
 export function knowledgeSearchedNothing(
-  overrides: Partial<KnowledgeSearchedNothing> & Pick<KnowledgeSearchedNothing, 'id'>,
+  overrides: Partial<KnowledgeSearchedNothing> &
+    Pick<KnowledgeSearchedNothing, 'id'>,
 ): KnowledgeItem {
   return KnowledgeItemSchema.parse({
     ...KNOWLEDGE_ITEM,
@@ -593,7 +730,9 @@ export function knowledgeSearchedNothing(
  * GET /api/library/:id/knowledge: self-learning and lessons on, selection by meaning on, no records, zero counts,
  * no round yet. `counts` are the server's own numbers and never follow `items` here.
  */
-export function knowledgeView(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
+export function knowledgeView(
+  overrides: Partial<KnowledgeView> = {},
+): KnowledgeView {
   return KnowledgeViewSchema.parse({
     selfLearning: true,
     lessonsEnabled: true,
@@ -612,7 +751,9 @@ export function knowledgeView(overrides: Partial<KnowledgeView> = {}): Knowledge
 const FIXTURE_RECORD_MODEL = 'anthropic/claude-haiku-4-5';
 
 /** Content of an agent record: one system, no agents to start, no tools. */
-export function agentContent(overrides: Partial<AgentContent> = {}): AgentContent {
+export function agentContent(
+  overrides: Partial<AgentContent> = {},
+): AgentContent {
   return AgentContentSchema.parse({
     prompt: 'Найди в логах причины ошибок и перечисли их.',
     servers: ['logs'],
@@ -625,7 +766,9 @@ export function agentContent(overrides: Partial<AgentContent> = {}): AgentConten
 }
 
 /** Content of a deep agent record: one subagent «Аналитик»; the deep agent writes the answer itself. */
-export function deepAgentContent(overrides: Partial<DeepAgentContent> = {}): DeepAgentContent {
+export function deepAgentContent(
+  overrides: Partial<DeepAgentContent> = {},
+): DeepAgentContent {
   return DeepAgentContentSchema.parse({
     prompt: 'Разбери ошибки командой и напиши сводку.',
     servers: [],
@@ -648,7 +791,9 @@ export function deepAgentContent(overrides: Partial<DeepAgentContent> = {}): Dee
 }
 
 /** Row of GET /api/library: the viewer's own personal agent «Разбор логов», version 1, every action allowed. */
-export function recordSummary(overrides: Partial<RecordSummary> & Pick<RecordSummary, 'id'>): RecordSummary {
+export function recordSummary(
+  overrides: Partial<RecordSummary> & Pick<RecordSummary, 'id'>,
+): RecordSummary {
   return RecordSummarySchema.parse({
     kind: 'agent',
     name: 'Разбор логов',
@@ -678,7 +823,9 @@ export function recordDetail(
   const row = recordSummary(summary);
   return RecordDetailSchema.parse({
     ...row,
-    content: content ?? (row.kind === 'deep_agent' ? deepAgentContent() : agentContent()),
+    content:
+      content ??
+      (row.kind === 'deep_agent' ? deepAgentContent() : agentContent()),
   });
 }
 
@@ -709,7 +856,8 @@ export function sessionTask(
 
 /** One delegation of a deep agent (`GET /api/agents/:agentId/tasks`): running, naming no task, unless overridden. */
 export function delegation(
-  overrides: Partial<DelegationView> & Pick<DelegationView, 'agentId' | 'subagent' | 'item'>,
+  overrides: Partial<DelegationView> &
+    Pick<DelegationView, 'agentId' | 'subagent' | 'item'>,
 ): DelegationView {
   return DelegationViewSchema.parse({
     taskId: null,
@@ -721,11 +869,17 @@ export function delegation(
 }
 
 /** GET /agents/:id/run of the deep agent `deep` «Исследование»: one subagent «Аналитик», nothing called yet. */
-export function deepAgentRunView(overrides: Partial<DeepAgentRunView> = {}): DeepAgentRunView {
+export function deepAgentRunView(
+  overrides: Partial<DeepAgentRunView> = {},
+): DeepAgentRunView {
   return DeepAgentRunViewSchema.parse({
     origin: deepAgentOrigin(),
     brief: { question: 'Почему падают платежи?', boundaries: '', result: '' },
-    deepAgent: agentView({ agentId: 'deep', name: 'Исследование', origin: deepAgentOrigin() }),
+    deepAgent: agentView({
+      agentId: 'deep',
+      name: 'Исследование',
+      origin: deepAgentOrigin(),
+    }),
     team: [{ name: 'Аналитик', maxRuns: 3, final: false }],
     steps: [],
     limitRefusals: [],

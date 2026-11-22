@@ -14,7 +14,11 @@ export const CHAT_TASK_TYPE = 'chat';
 export const DEEP_AGENT_TASK_TYPE = 'deep_agent';
 
 /** Every task type that is an agent: such a task has a session and a snapshot in its input. */
-export const AGENT_TASK_TYPES: readonly string[] = [AGENT_TASK_TYPE, CHAT_TASK_TYPE, DEEP_AGENT_TASK_TYPE];
+export const AGENT_TASK_TYPES: readonly string[] = [
+  AGENT_TASK_TYPE,
+  CHAT_TASK_TYPE,
+  DEEP_AGENT_TASK_TYPE,
+];
 
 /** Event written in every transaction that appended to an agent's history. */
 export const AGENTS_HISTORY_APPENDED = 'agents.history_appended';
@@ -160,7 +164,8 @@ const MAX_SCRIPT_BYTES = 64 * 1024;
  * line terminators a browser draws inside a line (U+2028, U+2029, a CR not followed by LF) — code
  * after one of them in a `//` comment runs, while the card shows it as part of the comment. CRLF is allowed.
  */
-const HIDDEN_CHARACTER = /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF\u2028\u2029]|\r(?!\n)/;
+const HIDDEN_CHARACTER =
+  /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF\u2028\u2029]|\r(?!\n)/;
 
 function codePointLabel(character: string): string {
   const codePoint = character.codePointAt(0) ?? 0;
@@ -197,7 +202,9 @@ export type RunCodeArgs = z.infer<typeof RunCodeArgsSchema>;
 export const RunCodeConfirmationContentSchema = z.object({
   canCall: z.array(z.object({ name: z.string(), changes: z.boolean() })),
 });
-export type RunCodeConfirmationContent = z.infer<typeof RunCodeConfirmationContentSchema>;
+export type RunCodeConfirmationContent = z.infer<
+  typeof RunCodeConfirmationContentSchema
+>;
 
 /** Status of an agent for the employee, derived from the runtime task status and the session marks. */
 export const AgentStatusSchema = z.enum([

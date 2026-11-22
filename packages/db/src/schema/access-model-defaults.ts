@@ -10,7 +10,9 @@ export const accessModelDefaults = app.table(
     /** Always `true`: keeps the table at one row. */
     id: boolean('id').primaryKey().default(true),
     /** Null — not chosen; deleting the model clears the choice (DC-6). */
-    chatModel: text('chat_model').references(() => accessModels.id, { onDelete: 'set null' }),
+    chatModel: text('chat_model').references(() => accessModels.id, {
+      onDelete: 'set null',
+    }),
     embeddingModel: text('embedding_model').references(() => accessModels.id, {
       onDelete: 'set null',
     }),

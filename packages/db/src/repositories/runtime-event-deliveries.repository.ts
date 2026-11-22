@@ -4,7 +4,8 @@ import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
 import { Db } from '../db';
 import { runtimeEventDeliveries, runtimeEvents } from '../schema';
 
-export type RuntimeEventDeliveryRow = typeof runtimeEventDeliveries.$inferSelect;
+export type RuntimeEventDeliveryRow =
+  typeof runtimeEventDeliveries.$inferSelect;
 
 /** One delivery row: the event and the consumer it is owed to. */
 export interface RuntimeEventDeliveryKey {
@@ -41,7 +42,10 @@ export class RuntimeEventDeliveriesRepository {
         consumer: runtimeEventDeliveries.consumer,
       })
       .from(runtimeEventDeliveries)
-      .innerJoin(runtimeEvents, eq(runtimeEvents.eventId, runtimeEventDeliveries.eventId))
+      .innerJoin(
+        runtimeEvents,
+        eq(runtimeEvents.eventId, runtimeEventDeliveries.eventId),
+      )
       .where(
         and(
           eq(runtimeEventDeliveries.status, pending),
@@ -79,7 +83,12 @@ export class RuntimeEventDeliveriesRepository {
 
   async update(
     key: RuntimeEventDeliveryKey,
-    fields: Partial<Pick<RuntimeEventDeliveryRow, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError'>>,
+    fields: Partial<
+      Pick<
+        RuntimeEventDeliveryRow,
+        'status' | 'attempts' | 'nextAttemptAt' | 'lastError'
+      >
+    >,
   ): Promise<void> {
     await this.db.client
       .update(runtimeEventDeliveries)

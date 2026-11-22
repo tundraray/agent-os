@@ -1,28 +1,47 @@
-"use client";
+'use client';
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { useTranslations } from "next-intl";
-import type { AgentNode, AgentPageView, AgentTasksView, DeepAgentRunView } from "@agent-os/contracts";
-import { AgentMeta } from "@/components/agents/agent-meta";
-import { InheritedHistory } from "@/components/agents/inherited-history";
-import { SessionTaskList, useAgentTasks } from "@/components/agents/session-task-list";
-import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { ShellLink } from "@/components/shell/shell-link";
-import { ThreadNotice } from "@/components/shell/thread-notice";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Resource } from "@/hooks/use-resource";
-import { BRIEF_PARTS } from "@/lib/agents/format";
-import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
-import { isDeepAgentRun, selectAgent } from "@/lib/feed/to-feed";
-import { useFeedRuntime } from "@/lib/feed/use-feed-runtime";
-import { logger } from "@/lib/logger";
-import { describeApiError } from "@/lib/api/api-request";
-import { agentPath, parseShellRoute } from "@/lib/shell-route";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { usePathname } from 'next/navigation';
+import { AssistantRuntimeProvider } from '@assistant-ui/react';
+import { useTranslations } from 'next-intl';
+import type {
+  AgentNode,
+  AgentPageView,
+  AgentTasksView,
+  DeepAgentRunView,
+} from '@agent-os/contracts';
+import { AgentMeta } from '@/components/agents/agent-meta';
+import { InheritedHistory } from '@/components/agents/inherited-history';
+import {
+  SessionTaskList,
+  useAgentTasks,
+} from '@/components/agents/session-task-list';
+import {
+  Thread,
+  type ThreadComponents,
+} from '@/components/assistant-ui/elements/thread.aui';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { ShellLink } from '@/components/shell/shell-link';
+import { ThreadNotice } from '@/components/shell/thread-notice';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { Resource } from '@/hooks/use-resource';
+import { BRIEF_PARTS } from '@/lib/agents/format';
+import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
+import { isDeepAgentRun, selectAgent } from '@/lib/feed/to-feed';
+import { useFeedRuntime } from '@/lib/feed/use-feed-runtime';
+import { logger } from '@/lib/logger';
+import { describeApiError } from '@/lib/api/api-request';
+import { agentPath, parseShellRoute } from '@/lib/shell-route';
 
-type Brief = DeepAgentRunView["brief"];
+type Brief = DeepAgentRunView['brief'];
 
 /** The page has no welcome: an agent always starts with its task. */
 const NoWelcome = () => null;
@@ -34,7 +53,9 @@ function AgentFeedHeader() {
   return (
     <>
       <AgentMeta agent={agent} />
-      {agent.forkedFrom !== null && <InheritedHistory agentId={agent.agentId} />}
+      {agent.forkedFrom !== null && (
+        <InheritedHistory agentId={agent.agentId} />
+      )}
     </>
   );
 }
@@ -44,13 +65,15 @@ const BriefContext = createContext<Brief | null>(null);
 /** AV-03: the deep agent's task as the three parts of its brief; an empty part is left out. */
 function TaskBrief() {
   const brief = useContext(BriefContext);
-  const t = useTranslations("agents.brief");
+  const t = useTranslations('agents.brief');
   if (brief === null) return null;
   return (
     <dl className="flex flex-col gap-2">
-      {BRIEF_PARTS.filter((key) => brief[key].trim() !== "").map((key) => (
+      {BRIEF_PARTS.filter((key) => brief[key].trim() !== '').map((key) => (
         <div key={key} className="flex flex-col gap-0.5">
-          <dt className="text-muted-foreground text-xs leading-4 font-medium">{t(key)}</dt>
+          <dt className="text-muted-foreground text-xs leading-4 font-medium">
+            {t(key)}
+          </dt>
           <dd className="whitespace-pre-wrap">{brief[key]}</dd>
         </div>
       ))}
@@ -68,20 +91,44 @@ const NO_CHILDREN: readonly AgentNode[] = [];
  */
 function TasksFeed() {
   const tasks = useContext(TasksContext);
-  const children = useFeedSelector((state) => state.view?.children ?? NO_CHILDREN, NO_CHILDREN);
+  const children = useFeedSelector(
+    (state) => state.view?.children ?? NO_CHILDREN,
+    NO_CHILDREN,
+  );
   const awaitingAgents = useMemo(
-    () => new Set(children.filter((child) => child.status === "awaiting_confirmation").map((child) => child.agentId)),
+    () =>
+      new Set(
+        children
+          .filter((child) => child.status === 'awaiting_confirmation')
+          .map((child) => child.agentId),
+      ),
     [children],
   );
-  return tasks === null ? null : <SessionTaskList tasks={tasks} layout="page" awaitingAgents={awaitingAgents} />;
+  return tasks === null ? null : (
+    <SessionTaskList
+      tasks={tasks}
+      layout="page"
+      awaitingAgents={awaitingAgents}
+    />
+  );
 }
 
-const COMPONENTS: ThreadComponents = { Welcome: NoWelcome, FeedHeader: AgentFeedHeader };
+const COMPONENTS: ThreadComponents = {
+  Welcome: NoWelcome,
+  FeedHeader: AgentFeedHeader,
+};
 const BRIEF_COMPONENTS: ThreadComponents = { ...COMPONENTS, TaskBrief };
 const TASKS_COMPONENTS: ThreadComponents = { ...COMPONENTS, Feed: TasksFeed };
-const BRIEF_TASKS_COMPONENTS: ThreadComponents = { ...BRIEF_COMPONENTS, Feed: TasksFeed };
+const BRIEF_TASKS_COMPONENTS: ThreadComponents = {
+  ...BRIEF_COMPONENTS,
+  Feed: TasksFeed,
+};
 
-type DeepAgentTabsProps = { agent: AgentPageView["agent"]; tasksTab: boolean; children: ReactNode };
+type DeepAgentTabsProps = {
+  agent: AgentPageView['agent'];
+  tasksTab: boolean;
+  children: ReactNode;
+};
 
 /**
  * DA-04: only a deep agent's page has the tab row «Ход работы» and «Задачи · {N}» under the header; it does not
@@ -89,9 +136,9 @@ type DeepAgentTabsProps = { agent: AgentPageView["agent"]; tasksTab: boolean; ch
  * list is read on open and on every `tree` note of the agent's conversation, so the count is live on both tabs.
  */
 function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
-  const t = useTranslations("agents.tasks");
+  const t = useTranslations('agents.tasks');
   const tasks = useAgentTasks(agent.agentId, agent.threadId);
-  const tab = tasksTab ? "tasks" : "activity";
+  const tab = tasksTab ? 'tasks' : 'activity';
   return (
     <TasksContext.Provider value={tasks}>
       <Tabs value={tab} className="h-full gap-0">
@@ -103,15 +150,15 @@ function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
               className="pointer-coarse:h-11"
               render={<ShellLink href={agentPath(agent.agentId)} />}
             >
-              {t("tabs.activity")}
+              {t('tabs.activity')}
             </TabsTrigger>
             <TabsTrigger
               value="tasks"
               nativeButton={false}
               className="pointer-coarse:h-11"
-              render={<ShellLink href={agentPath(agent.agentId, "tasks")} />}
+              render={<ShellLink href={agentPath(agent.agentId, 'tasks')} />}
             >
-              {t("tabs.tasks", { count: tasks.data?.tasks.length ?? 0 })}
+              {t('tabs.tasks', { count: tasks.data?.tasks.length ?? 0 })}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -127,7 +174,10 @@ function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
  * The deep agent's brief (`GET /agents/:id/run`), read once when the page shows a deep agent; null for
  * any other agent, and when the read fails — 404 `RUN_NOT_FOUND` included — the task reads as text.
  */
-function useDeepAgentBrief(agentId: string | null, deepAgent: boolean): Brief | null {
+function useDeepAgentBrief(
+  agentId: string | null,
+  deepAgent: boolean,
+): Brief | null {
   const { apiClient } = useShellServices();
   const [brief, setBrief] = useState<Brief | null>(null);
   // A remount under StrictMode keeps the ref: the run is still read once.
@@ -139,7 +189,10 @@ function useDeepAgentBrief(agentId: string | null, deepAgent: boolean): Brief | 
     apiClient.getRun(agentId).then(
       (run) => setBrief(run.brief),
       (error: unknown) => {
-        logger.warn("deep agent run read failed", { ...describeApiError(error), agentId });
+        logger.warn('deep agent run read failed', {
+          ...describeApiError(error),
+          agentId,
+        });
       },
     );
   }, [apiClient, agentId, deepAgent]);
@@ -155,10 +208,11 @@ function useDeepAgentBrief(agentId: string | null, deepAgent: boolean): Brief | 
  */
 export function AgentScreen() {
   const feed = useFeed();
-  if (feed === null) throw new Error("AgentScreen must be used inside AgentFeedProvider");
+  if (feed === null)
+    throw new Error('AgentScreen must be used inside AgentFeedProvider');
 
   const runtime = useFeedRuntime(feed);
-  const t = useTranslations("agents");
+  const t = useTranslations('agents');
   const { libraryIndex } = useShellServices();
   // The record labels and «изменён после запуска» read the library list on every visit (KD-2).
   useEffect(() => {
@@ -170,12 +224,13 @@ export function AgentScreen() {
   const deepAgent = agent !== null && isDeepAgentRun(agent);
   const brief = useDeepAgentBrief(agent?.agentId ?? null, deepAgent);
   const route = parseShellRoute(usePathname());
-  const tasksTab = deepAgent && route.kind === "agent" && route.tab === "tasks";
+  const tasksTab = deepAgent && route.kind === 'agent' && route.tab === 'tasks';
   // «Повторить» shows the loading state until the read settles; the store keeps its error meanwhile.
   const [retrying, setRetrying] = useState(false);
 
-  if (!retrying && loadError === "not_found") return <ThreadNotice variant="agent-not-found" />;
-  if (!retrying && loadError === "failed") {
+  if (!retrying && loadError === 'not_found')
+    return <ThreadNotice variant="agent-not-found" />;
+  if (!retrying && loadError === 'failed') {
     const retry = () => {
       setRetrying(true);
       void feed.load().finally(() => setRetrying(false));
@@ -196,7 +251,9 @@ export function AgentScreen() {
         <Thread
           components={components}
           historyPending={retrying || !loaded}
-          composerPlaceholder={t("composerPlaceholder", { status: agent?.status ?? "working" })}
+          composerPlaceholder={t('composerPlaceholder', {
+            status: agent?.status ?? 'working',
+          })}
         />
       </BriefContext.Provider>
     </AssistantRuntimeProvider>

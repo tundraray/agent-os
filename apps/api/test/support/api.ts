@@ -166,7 +166,12 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         { text },
       ),
     interrupt: (threadId) =>
-      ok(200, InterruptResponseSchema, 'post', `/threads/${threadId}/interrupt`),
+      ok(
+        200,
+        InterruptResponseSchema,
+        'post',
+        `/threads/${threadId}/interrupt`,
+      ),
 
     agentList: (cursor) =>
       ok(200, AgentListPageSchema, 'get', `/agents${cursorQuery(cursor)}`),

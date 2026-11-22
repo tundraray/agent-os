@@ -15,7 +15,9 @@ export const librarySettings = app.table(
     /** Always `true`: keeps the table at one row. */
     id: boolean('id').primaryKey().default(true),
     /** «Максимум шагов» a new agent or deep agent starts with; each record may change its own. */
-    defaultMaxTurns: integer('default_max_turns').notNull().default(RECORD_MAX_TURNS_DEFAULT),
+    defaultMaxTurns: integer('default_max_turns')
+      .notNull()
+      .default(RECORD_MAX_TURNS_DEFAULT),
     /** Null while the default stands. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
   },

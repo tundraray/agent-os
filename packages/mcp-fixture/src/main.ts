@@ -14,24 +14,35 @@ import { DatasetVersionSchema } from './versions';
 const DEFAULT_PORT = 4100;
 const HOST = '127.0.0.1';
 
-const { values } = parseArgs({ options: { port: { type: 'string', default: String(DEFAULT_PORT) } } });
+const { values } = parseArgs({
+  options: { port: { type: 'string', default: String(DEFAULT_PORT) } },
+});
 const port = z.coerce.number().int().min(0).max(65_535).parse(values.port);
 const production = process.env.NODE_ENV === 'production';
 const callLogPath = nonEmpty(process.env.FIXTURE_CALL_LOG);
-const faultsPath = production ? undefined : nonEmpty(process.env.FIXTURE_FAULTS);
+const faultsPath = production
+  ? undefined
+  : nonEmpty(process.env.FIXTURE_FAULTS);
 if (faultsPath !== undefined && callLogPath === undefined) {
-  throw new Error('FIXTURE_FAULTS requires FIXTURE_CALL_LOG: fault occurrences are counted by the call log');
+  throw new Error(
+    'FIXTURE_FAULTS requires FIXTURE_CALL_LOG: fault occurrences are counted by the call log',
+  );
 }
 
 const server = createFixtureHttpServer({
-  dataset: createLogDataset(DatasetVersionSchema.default('v1').parse(nonEmpty(process.env.FIXTURE_DATASET))),
+  dataset: createLogDataset(
+    DatasetVersionSchema.default('v1').parse(
+      nonEmpty(process.env.FIXTURE_DATASET),
+    ),
+  ),
   callLogPath,
   faultsPath,
   controlsEnabled: !production,
 });
 server.listen(port, HOST, () => {
   const address = server.address();
-  const actualPort = typeof address === 'object' && address !== null ? address.port : port;
+  const actualPort =
+    typeof address === 'object' && address !== null ? address.port : port;
   process.stdout.write(`fixture listening ${actualPort}\n`);
 });
 

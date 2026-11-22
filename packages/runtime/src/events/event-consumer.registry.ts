@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 
-
 /** An event as stored, with its insertion order. */
 export interface StoredEvent {
   eventId: string;
@@ -43,7 +42,9 @@ export class EventConsumerRegistry {
   /** Throws on a second consumer with the same name, which stops the start. */
   register(consumer: EventConsumer): void {
     if (this.consumers.has(consumer.name)) {
-      throw new Error(`Event consumer "${consumer.name}" is already registered`);
+      throw new Error(
+        `Event consumer "${consumer.name}" is already registered`,
+      );
     }
     this.consumers.set(consumer.name, consumer);
   }

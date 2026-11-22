@@ -2,11 +2,21 @@
 
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
-import { SearchXIcon, ShieldOffIcon, SquarePenIcon, type LucideIcon } from 'lucide-react';
+import {
+  SearchXIcon,
+  ShieldOffIcon,
+  SquarePenIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { pageTitle, useDocumentTitle } from '@/hooks/use-document-title';
-import { adminPath, AGENTS_PATH, libraryPath, type AdminSection } from '@/lib/shell-route';
+import {
+  adminPath,
+  AGENTS_PATH,
+  libraryPath,
+  type AdminSection,
+} from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
 
 export type ThreadNoticeProps =
@@ -61,7 +71,10 @@ export function ThreadNotice(props: ThreadNoticeProps) {
     case 'agent-not-found':
       return (
         <NoticeScreen variant={props.variant}>
-          <Link href={AGENTS_PATH} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+          <Link
+            href={AGENTS_PATH}
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
             {t('notice.toAgents')}
           </Link>
         </NoticeScreen>
@@ -77,7 +90,10 @@ export function ThreadNotice(props: ThreadNoticeProps) {
     case 'no-access':
       return (
         <NoticeScreen variant={props.variant} Icon={ShieldOffIcon}>
-          <Link href="/" className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+          <Link
+            href="/"
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
             {t('notice.toChat')}
           </Link>
         </NoticeScreen>
@@ -85,15 +101,25 @@ export function ThreadNotice(props: ThreadNoticeProps) {
     case 'record-not-found':
       return (
         <NoticeScreen variant={props.variant} Icon={SearchXIcon}>
-          <Link href={adminPath(props.section)} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+          <Link
+            href={adminPath(props.section)}
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
             {t('notice.toList')}
           </Link>
         </NoticeScreen>
       );
     case 'library-not-found':
       return (
-        <NoticeScreen variant={props.variant} Icon={SearchXIcon} tab={pageTitle(t('notice.libraryNotFound.title'))}>
-          <Link href={libraryPath()} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+        <NoticeScreen
+          variant={props.variant}
+          Icon={SearchXIcon}
+          tab={pageTitle(t('notice.libraryNotFound.title'))}
+        >
+          <Link
+            href={libraryPath()}
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
             {t('notice.toLibrary')}
           </Link>
         </NoticeScreen>
@@ -108,11 +134,17 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       );
     case 'not-found':
     case 'load-error': {
-      const canRetry = props.variant === 'load-error' && props.onRetry !== undefined;
+      const canRetry =
+        props.variant === 'load-error' && props.onRetry !== undefined;
       return (
         <NoticeScreen variant={props.variant}>
-          {canRetry && <Button onClick={props.onRetry}>{t('notice.retry')}</Button>}
-          <Button variant={canRetry ? 'outline' : 'default'} onClick={props.onNewChat}>
+          {canRetry && (
+            <Button onClick={props.onRetry}>{t('notice.retry')}</Button>
+          )}
+          <Button
+            variant={canRetry ? 'outline' : 'default'}
+            onClick={props.onNewChat}
+          >
             <SquarePenIcon aria-hidden />
             {t('sidebar.newChat')}
           </Button>
@@ -147,11 +179,20 @@ function NoticeScreen({ variant, Icon, tab, children }: NoticeScreenProps) {
       aria-labelledby={headingId}
       className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center"
     >
-      {Icon !== undefined && <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />}
-      <h1 ref={headingRef} id={headingId} tabIndex={-1} className="text-xl font-semibold outline-none">
+      {Icon !== undefined && (
+        <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />
+      )}
+      <h1
+        ref={headingRef}
+        id={headingId}
+        tabIndex={-1}
+        className="text-xl font-semibold outline-none"
+      >
         {t(`${COPY[variant]}.title`)}
       </h1>
-      <p className="text-muted-foreground text-sm">{t(`${COPY[variant]}.description`)}</p>
+      <p className="text-muted-foreground text-sm">
+        {t(`${COPY[variant]}.description`)}
+      </p>
       <div className="mt-4 flex flex-wrap justify-center gap-2">{children}</div>
     </section>
   );
@@ -183,7 +224,13 @@ function DeletedInlineNotice({ onNewChat }: { onNewChat: () => void }) {
       <p id={reasonId} role="alert" className="text-muted-foreground">
         {t('notice.deleted.description')}
       </p>
-      <Button ref={buttonRef} size="sm" className="mt-2 pointer-coarse:h-11" aria-describedby={reasonId} onClick={onNewChat}>
+      <Button
+        ref={buttonRef}
+        size="sm"
+        className="mt-2 pointer-coarse:h-11"
+        aria-describedby={reasonId}
+        onClick={onNewChat}
+      >
         <SquarePenIcon aria-hidden />
         {t('sidebar.newChat')}
       </Button>

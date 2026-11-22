@@ -1,13 +1,13 @@
-import type { AgentListNode, AgentStatus } from "@agent-os/contracts";
-import { createStore, type StoreApi } from "zustand/vanilla";
+import type { AgentListNode, AgentStatus } from '@agent-os/contracts';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { createCoalescedRunner } from "@/lib/live/coalesced-runner";
-import type { LiveStore } from "@/lib/live/live-store";
-import type { logger as appLogger } from "@/lib/logger";
-import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
-import { describeApiError } from "@/lib/api/api-request";
+import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
+import type { LiveStore } from '@/lib/live/live-store';
+import type { logger as appLogger } from '@/lib/logger';
+import type { ThreadsApiClient } from '@/lib/threads/threads-api-client';
+import { describeApiError } from '@/lib/api/api-request';
 
-export type AgentListStatus = "idle" | "loading" | "ready" | "error";
+export type AgentListStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export type AgentListState = {
   /** `idle` before the first load; `error` only when the first page failed. */
@@ -42,11 +42,11 @@ export type AgentListStore = StoreApi<AgentListState> & {
   attach: () => () => void;
 };
 
-type AgentListLogger = Pick<typeof appLogger, "warn">;
+type AgentListLogger = Pick<typeof appLogger, 'warn'>;
 
 export type CreateAgentListStoreInput = {
-  api: Pick<ThreadsApiClient, "listAgents">;
-  live: Pick<LiveStore, "onTree" | "onReady">;
+  api: Pick<ThreadsApiClient, 'listAgents'>;
+  live: Pick<LiveStore, 'onTree' | 'onReady'>;
   logger: AgentListLogger;
 };
 
@@ -55,20 +55,27 @@ const REFRESH_INTERVAL_MS = 1000;
 
 /** Roots in these statuses are expanded the first time they appear (agent-tree.md, States). */
 const EXPANDED_AT_FIRST_SIGHT: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
-  "working",
-  "awaiting_confirmation",
-  "interrupted",
+  'working',
+  'awaiting_confirmation',
+  'interrupted',
 ]);
 
 /** Appends `next` to `rows`, dropping agents already present: a keyset page may repeat a boundary row. */
-function appendUnique(rows: readonly AgentListNode[], next: readonly AgentListNode[]): AgentListNode[] {
+function appendUnique(
+  rows: readonly AgentListNode[],
+  next: readonly AgentListNode[],
+): AgentListNode[] {
   const known = new Set(rows.map((row) => row.agentId));
   return [...rows, ...next.filter((row) => !known.has(row.agentId))];
 }
 
-export function createAgentListStore({ api, live, logger }: CreateAgentListStoreInput): AgentListStore {
+export function createAgentListStore({
+  api,
+  live,
+  logger,
+}: CreateAgentListStoreInput): AgentListStore {
   const store = createStore<AgentListState>()(() => ({
-    status: "idle",
+    status: 'idle',
     agents: [],
     nextCursor: null,
     pages: 0,
@@ -90,33 +97,37 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
     const expanded = new Set(current);
     for (const agent of added) {
       seen.add(agent.agentId);
-      if (agent.children.length > 0 && EXPANDED_AT_FIRST_SIGHT.has(agent.status)) expanded.add(agent.agentId);
+      if (
+        agent.children.length > 0 &&
+        EXPANDED_AT_FIRST_SIGHT.has(agent.status)
+      )
+        expanded.add(agent.agentId);
     }
     return expanded;
   }
 
   async function load(): Promise<void> {
-    if (get().status === "loading") return;
-    set({ status: "loading", loadMoreFailed: false });
+    if (get().status === 'loading') return;
+    set({ status: 'loading', loadMoreFailed: false });
     try {
       const page = await api.listAgents();
       version += 1;
       set({
-        status: "ready",
+        status: 'ready',
         agents: page.agents,
         nextCursor: page.nextCursor,
         pages: 1,
         expanded: expandedWith(page.agents),
       });
     } catch (error) {
-      logger.warn("agent list load failed", describeApiError(error));
-      set({ status: "error" });
+      logger.warn('agent list load failed', describeApiError(error));
+      set({ status: 'error' });
     }
   }
 
   async function loadMore(): Promise<void> {
     const { status, nextCursor, loadingMore } = get();
-    if (status !== "ready" || nextCursor === null || loadingMore) return;
+    if (status !== 'ready' || nextCursor === null || loadingMore) return;
     set({ loadingMore: true, loadMoreFailed: false });
     try {
       const page = await api.listAgents(nextCursor);
@@ -129,7 +140,7 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         expanded: expandedWith(page.agents),
       }));
     } catch (error) {
-      logger.warn("agent list load more failed", describeApiError(error));
+      logger.warn('agent list load more failed', describeApiError(error));
       set({ loadingMore: false, loadMoreFailed: true });
     }
   }
@@ -137,7 +148,7 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
   /** One re-read; resolves in every case, so the runner never hands a rejection to its callers. */
   async function reread(): Promise<void> {
     const before = get();
-    if (before.status !== "ready") return;
+    if (before.status !== 'ready') return;
     const started = version;
     const oldestShown = before.agents.at(-1)?.agentId;
 
@@ -154,12 +165,14 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         if (nextCursor === null) break;
         // New agents push the tail down: one page past the loaded count keeps the oldest shown row
         // on screen instead of dropping it with the shifted tail.
-        const tailKept = oldestShown === undefined || agents.some((agent) => agent.agentId === oldestShown);
+        const tailKept =
+          oldestShown === undefined ||
+          agents.some((agent) => agent.agentId === oldestShown);
         if (pages > before.pages || (pages === before.pages && tailKept)) break;
         cursor = nextCursor;
       }
     } catch (error) {
-      logger.warn("agent list refresh failed", describeApiError(error));
+      logger.warn('agent list refresh failed', describeApiError(error));
       return;
     }
 
@@ -171,7 +184,9 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
     set({ agents, nextCursor, pages, expanded: expandedWith(agents) });
   }
 
-  const reads = createCoalescedRunner(reread, { minIntervalMs: REFRESH_INTERVAL_MS });
+  const reads = createCoalescedRunner(reread, {
+    minIntervalMs: REFRESH_INTERVAL_MS,
+  });
   // `reread` never rejects; a queued run that is cancelled resolves.
   const refresh = (): Promise<void> => reads.request();
 
@@ -195,8 +210,8 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         }),
       ];
       const { status } = get();
-      if (status === "idle" || status === "error") void load();
-      else if (status === "ready") void refresh();
+      if (status === 'idle' || status === 'error') void load();
+      else if (status === 'ready') void refresh();
       return () => {
         for (const unsubscribe of unsubscribers) unsubscribe();
         reads.cancel();

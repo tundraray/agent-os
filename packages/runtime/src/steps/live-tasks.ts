@@ -72,7 +72,8 @@ export class LiveTasks {
 
   constructor(
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(RuntimeTasksRepository) private readonly taskRows: RuntimeTasksRepository,
+    @Inject(RuntimeTasksRepository)
+    private readonly taskRows: RuntimeTasksRepository,
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(RUNTIME_CONFIG) private readonly config: RuntimeConfig,
     @Inject(RUNTIME_LOGGER) logger: Logger,
@@ -92,10 +93,13 @@ export class LiveTasks {
     const handler = this.handlers.handler(task.type);
     if (handler) return handler;
     const type = this.handlers.live(task.type);
-    if (!type) throw new Error(`No handler is registered for task type "${task.type}"`);
+    if (!type)
+      throw new Error(`No handler is registered for task type "${task.type}"`);
     for (;;) {
       if (handle.signal.aborted) {
-        throw new Error(`The step of task ${task.taskId} was cut off before it got its object`);
+        throw new Error(
+          `The step of task ${task.taskId} was cut off before it got its object`,
+        );
       }
       const entry = this.entries.get(task.taskId);
       if (!entry) {
@@ -124,11 +128,15 @@ export class LiveTasks {
    * (`committed`), unless the step finished the task; any other end lets the object go. Never
    * rejects.
    */
-  async settled(step: StepContext, commit: StepCommit | undefined): Promise<void> {
+  async settled(
+    step: StepContext,
+    commit: StepCommit | undefined,
+  ): Promise<void> {
     try {
       const committed = commit?.outcome === 'committed';
       if (committed) {
-        for (const { taskId, object } of commit.adopted) this.adopt(taskId, object);
+        for (const { taskId, object } of commit.adopted)
+          this.adopt(taskId, object);
       }
       const entry = this.entries.get(step.taskId);
       const holder = entry?.holder;
@@ -164,11 +172,18 @@ export class LiveTasks {
   adopt(taskId: string, object: LiveTask): void {
     if (!this.config.workers) return;
     if (this.entries.has(taskId) || this.restoring.has(taskId)) {
-      this.logger.info('live task not adopted: the task has an object already', { taskId });
+      this.logger.info(
+        'live task not adopted: the task has an object already',
+        { taskId },
+      );
       this.dispose(taskId, object);
       return;
     }
-    this.entries.set(taskId, { object, lastUsedAt: this.now(), holder: undefined });
+    this.entries.set(taskId, {
+      object,
+      lastUsedAt: this.now(),
+      holder: undefined,
+    });
     this.logger.info('live task adopted', { taskId, kept: this.entries.size });
   }
 
@@ -186,13 +201,15 @@ export class LiveTasks {
     const idle: [string, Entry][] = [];
     for (const [taskId, entry] of this.entries) {
       if (entry.holder) continue;
-      if (time - entry.lastUsedAt >= LIVE_TASK_IDLE_MS) this.drop(taskId, entry, 'idle');
+      if (time - entry.lastUsedAt >= LIVE_TASK_IDLE_MS)
+        this.drop(taskId, entry, 'idle');
       else idle.push([taskId, entry]);
     }
     const over = this.entries.size - LIVE_TASKS_MAX;
     if (over <= 0) return;
     idle.sort(([, left], [, right]) => left.lastUsedAt - right.lastUsedAt);
-    for (const [taskId, entry] of idle.slice(0, over)) this.drop(taskId, entry, 'cap');
+    for (const [taskId, entry] of idle.slice(0, over))
+      this.drop(taskId, entry, 'cap');
   }
 
   /**
@@ -210,7 +227,11 @@ export class LiveTasks {
       let restored = 0;
       let failed = 0;
       const next = async (): Promise<void> => {
-        for (let row = rows.shift(); row && this.epoch === epoch; row = rows.shift()) {
+        for (
+          let row = rows.shift();
+          row && this.epoch === epoch;
+          row = rows.shift()
+        ) {
           const type = this.handlers.live(row.type);
           if (!type || this.entries.has(row.taskId)) continue;
           try {
@@ -245,7 +266,8 @@ export class LiveTasks {
   clear(): void {
     this.epoch += 1;
     this.restoring.clear();
-    for (const [taskId, entry] of this.entries) this.drop(taskId, entry, 'workers_stopped');
+    for (const [taskId, entry] of this.entries)
+      this.drop(taskId, entry, 'workers_stopped');
   }
 
   /** Restores the task's object and keeps it; the task's callers share one restore in flight. */
@@ -268,7 +290,11 @@ export class LiveTasks {
             this.dispose(task.taskId, object);
             return;
           }
-          this.entries.set(task.taskId, { object, lastUsedAt: this.now(), holder: undefined });
+          this.entries.set(task.taskId, {
+            object,
+            lastUsedAt: this.now(),
+            holder: undefined,
+          });
           this.logger.info('live task restored', {
             ...fields,
             kept: this.entries.size,
@@ -285,7 +311,8 @@ export class LiveTasks {
         },
       )
       .finally(() => {
-        if (this.restoring.get(task.taskId) === pending) this.restoring.delete(task.taskId);
+        if (this.restoring.get(task.taskId) === pending)
+          this.restoring.delete(task.taskId);
       });
     this.restoring.set(task.taskId, pending);
     return pending;
@@ -295,7 +322,10 @@ export class LiveTasks {
    * The object's `committed`, bounded by {@link COMMITTED_MAX_MS} so that a stuck one does not
    * hold the step's slot and the shutdown. `false` when it threw or ran out of time.
    */
-  private async absorbed(object: LiveTask, step: StepContext): Promise<boolean> {
+  private async absorbed(
+    object: LiveTask,
+    step: StepContext,
+  ): Promise<boolean> {
     if (!object.committed) return true;
     const startedAt = Date.now();
     let cancel: CancelTimer | undefined;

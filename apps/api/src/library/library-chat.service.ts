@@ -6,9 +6,7 @@ import {
   type LibraryRecordCard,
   type RecordBody,
 } from '@agent-os/contracts';
-import {
-  LibraryRecordsRepository,
-} from '@agent-os/db';
+import { LibraryRecordsRepository } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import { LibraryRecords, recordFields } from './library-records';
 import { LibrarySave } from './library-save';
@@ -39,7 +37,11 @@ function chatRefused(
   refusal: ChatRefusalCode,
   field?: RefusedField,
 ): ChatRefusal {
-  return { outcome: 'refused', refusal, ...(field === undefined ? {} : { field }) };
+  return {
+    outcome: 'refused',
+    refusal,
+    ...(field === undefined ? {} : { field }),
+  };
 }
 
 /** A refusal of the save rules, with the servers the request could choose from. */
@@ -60,11 +62,13 @@ function chatSaved(result: SaveResult, request: SaveRequest): ChatSaveResult {
       };
 }
 
-function chatOutcomeFields(
-  result: ChatReview | ChatSaveResult,
-): LogFields {
+function chatOutcomeFields(result: ChatReview | ChatSaveResult): LogFields {
   return result.outcome === 'refused'
-    ? { outcome: 'refused', reason: result.refusal, path: result.field?.path ?? null }
+    ? {
+        outcome: 'refused',
+        reason: result.refusal,
+        path: result.field?.path ?? null,
+      }
     : { outcome: result.outcome };
 }
 
@@ -142,18 +146,22 @@ function libraryRecordCard(card: {
 function cardRecordOf(card: LibraryRecordCard): ChatRecordInput | null {
   if (card.kind === 'agent') {
     const { next } = card;
-    return next && {
-      name: next.name,
-      description: next.description,
-      body: { kind: 'agent', content: next.content },
-    };
+    return (
+      next && {
+        name: next.name,
+        description: next.description,
+        body: { kind: 'agent', content: next.content },
+      }
+    );
   }
   const { next } = card;
-  return next && {
-    name: next.name,
-    description: next.description,
-    body: { kind: 'deep_agent', content: next.content },
-  };
+  return (
+    next && {
+      name: next.name,
+      description: next.description,
+      body: { kind: 'deep_agent', content: next.content },
+    }
+  );
 }
 
 /**
@@ -354,7 +362,8 @@ export class LibraryChatService {
       throw new Error(
         `${card.action} card of record ${card.recordId} has no previous version`,
       );
-    if (!(await this.repository.exists(card.recordId))) return chatRefused('not_found');
+    if (!(await this.repository.exists(card.recordId)))
+      return chatRefused('not_found');
     const target = await this.chatTarget(context, card.recordId);
     const scope = chatScope(target, context, card.action);
     if (scope.outcome === 'refused') return scope;

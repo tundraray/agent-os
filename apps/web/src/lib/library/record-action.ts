@@ -1,9 +1,18 @@
-import { LibraryErrorCode, type RecordDetail, type RecordKind } from '@agent-os/contracts';
-import { ApiRequestError, describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import {
+  LibraryErrorCode,
+  type RecordDetail,
+  type RecordKind,
+} from '@agent-os/contracts';
+import {
+  ApiRequestError,
+  describeApiError,
+  isApiRequestError,
+} from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 
 /** Every change of a record the web makes (design-web.md, Логирование). */
-export type RecordChange = 'create' | 'save' | 'audience' | 'copy' | 'delete' | 'close' | 'unban';
+export type RecordChange =
+  'create' | 'save' | 'audience' | 'copy' | 'delete' | 'close' | 'unban';
 
 export type RecordActionInput = {
   /** `null` while the record is being created. */
@@ -40,10 +49,13 @@ export class RecordConflictError extends ApiRequestError {
 }
 
 const isConflict = (error: unknown): error is ApiRequestError =>
-  isApiRequestError(error) && error.code === LibraryErrorCode.RECORD_VERSION_CONFLICT;
+  isApiRequestError(error) &&
+  error.code === LibraryErrorCode.RECORD_VERSION_CONFLICT;
 
 /** The saved record after a conflict; a failed read is logged and leaves `null`. */
-async function readSavedAfterConflict(input: RecordActionInput): Promise<RecordDetail | null> {
+async function readSavedAfterConflict(
+  input: RecordActionInput,
+): Promise<RecordDetail | null> {
   if (input.readSaved === undefined) return null;
   try {
     return await input.readSaved();
@@ -65,9 +77,13 @@ function answeredRecordId(result: unknown): string | null {
 }
 
 /** The ids a success logs: a create names the new record; a copy names its source and the copy. */
-function loggedIds(input: RecordActionInput, result: unknown): { recordId: string | null; copyId?: string | null } {
+function loggedIds(
+  input: RecordActionInput,
+  result: unknown,
+): { recordId: string | null; copyId?: string | null } {
   if (input.action === 'create') return { recordId: answeredRecordId(result) };
-  if (input.action === 'copy') return { recordId: input.recordId, copyId: answeredRecordId(result) };
+  if (input.action === 'copy')
+    return { recordId: input.recordId, copyId: answeredRecordId(result) };
   return { recordId: input.recordId };
 }
 
@@ -76,7 +92,10 @@ function loggedIds(input: RecordActionInput, result: unknown): { recordId: strin
  * outcome and `durationMs` (a conflict adds the edit's and the saved version), and throws the error on.
  * The prompt, rules, description and content never reach the log.
  */
-export async function recordAction<T>(input: RecordActionInput, call: () => Promise<T>): Promise<T> {
+export async function recordAction<T>(
+  input: RecordActionInput,
+  call: () => Promise<T>,
+): Promise<T> {
   const { recordId, kind, action, version } = input;
   const started = performance.now();
   const durationMs = () => Math.round(performance.now() - started);
@@ -93,13 +112,25 @@ export async function recordAction<T>(input: RecordActionInput, call: () => Prom
     return result;
   } catch (error) {
     // Nested: the request's `kind` (`http`, `network`) would overwrite the record's.
-    const fields = { recordId, kind, action, version, outcome: 'refused', durationMs: durationMs(), failure: describeApiError(error) };
+    const fields = {
+      recordId,
+      kind,
+      action,
+      version,
+      outcome: 'refused',
+      durationMs: durationMs(),
+      failure: describeApiError(error),
+    };
     if (!isConflict(error)) {
       logger.warn('library: record change refused', fields);
       throw error;
     }
     const saved = await readSavedAfterConflict(input);
-    logger.warn('library: record change refused', { ...fields, editVersion: version, savedVersion: saved?.version ?? null });
+    logger.warn('library: record change refused', {
+      ...fields,
+      editVersion: version,
+      savedVersion: saved?.version ?? null,
+    });
     throw new RecordConflictError(error, saved);
   }
 }

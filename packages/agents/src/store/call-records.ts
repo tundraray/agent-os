@@ -7,8 +7,17 @@ import {
 } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 
-import { type CallState, isDelegated, isRunCodeCall, openCalls } from '../history/call-state';
-import type { AnswerCall, HistoryContent, HistoryEntry } from '../history/history';
+import {
+  type CallState,
+  isDelegated,
+  isRunCodeCall,
+  openCalls,
+} from '../history/call-state';
+import type {
+  AnswerCall,
+  HistoryContent,
+  HistoryEntry,
+} from '../history/history';
 import { History, type NewHistoryEntry } from './history';
 
 /** The refused model of a refusal by model (design-runtime.md, «Данные для `web`»). */
@@ -55,7 +64,10 @@ export function interruptedRunOutcome(runArgs: unknown): ToolOutcome {
     : ToolOutcomeSchema.enum.interrupted;
 }
 
-function decisionEntry(callId: string, decision: CallDecision): NewHistoryEntry {
+function decisionEntry(
+  callId: string,
+  decision: CallDecision,
+): NewHistoryEntry {
   return {
     kind: 'tool_decision',
     content: {
@@ -89,7 +101,9 @@ function resultEntry(
       ...(isRunCodeCall(call) ? { output: ending.output ?? null } : {}),
       startedAt: call.sentAt ?? (ending.startedAt ?? finishedAt).toISOString(),
       finishedAt: finishedAt.toISOString(),
-      ...(ending.childTaskId === undefined ? {} : { childTaskId: ending.childTaskId }),
+      ...(ending.childTaskId === undefined
+        ? {}
+        : { childTaskId: ending.childTaskId }),
     },
   };
 }
@@ -108,7 +122,10 @@ function interruptedEnding(call: Pick<CallState, 'sentAt'>): CallEnding {
  * one: the preview of a step and the derived view of a stopped agent's history. A sent `task` call is
  * not among them: its tracker's outcomes close it (deep-agents/design-task.md KD-3, KD-4).
  */
-export function interruptedResults(open: readonly CallState[], finishedAt: Date): ResultEntry[] {
+export function interruptedResults(
+  open: readonly CallState[],
+  finishedAt: Date,
+): ResultEntry[] {
   return open
     .filter((call) => !isDelegated(call))
     .map((call) => resultEntry(call, interruptedEnding(call), finishedAt));
@@ -125,7 +142,8 @@ export function interruptedResults(open: readonly CallState[], finishedAt: Date)
 export class CallRecords {
   constructor(
     @Inject(History) private readonly history: History,
-    @Inject(AgentCodeCallsRepository) private readonly codeCallRows: AgentCodeCallsRepository,
+    @Inject(AgentCodeCallsRepository)
+    private readonly codeCallRows: AgentCodeCallsRepository,
   ) {}
 
   /**
@@ -140,7 +158,8 @@ export class CallRecords {
     decision?: CallDecision,
   ): Promise<Extract<HistoryEntry, { kind: 'tool_result' }> | undefined> {
     const records = await this.history.callRecords(taskId, [call.callId]);
-    if (records.some((record) => record.kind === 'tool_result')) return undefined;
+    if (records.some((record) => record.kind === 'tool_result'))
+      return undefined;
     const sent = records.find((record) => record.kind === 'tool_sent');
     const closing = {
       ...call,
@@ -149,7 +168,9 @@ export class CallRecords {
     };
     const decided = records.some((record) => record.kind === 'tool_decision');
     const appended = await this.history.append(taskId, [
-      ...(decision === undefined || decided ? [] : [decisionEntry(call.callId, decision)]),
+      ...(decision === undefined || decided
+        ? []
+        : [decisionEntry(call.callId, decision)]),
       resultEntry(closing, ending, ending.finishedAt ?? new Date()),
     ]);
     if (isRunCodeCall(call)) {
@@ -159,7 +180,8 @@ export class CallRecords {
       );
     }
     const result = appended.at(-1);
-    if (result?.kind !== 'tool_result') throw new Error(`The result of call ${call.callId} was not appended`);
+    if (result?.kind !== 'tool_result')
+      throw new Error(`The result of call ${call.callId} was not appended`);
     return result;
   }
 
@@ -183,10 +205,16 @@ export class CallRecords {
    * the call goes out (KD-4, Invariant 2). `args` — the arguments the employee edited; they replace the
    * call's. `false` when the call does not await confirmation — then it must not be sent.
    */
-  async markSent(call: CallKey & { readonly args?: unknown }): Promise<boolean> {
+  async markSent(
+    call: CallKey & { readonly args?: unknown },
+  ): Promise<boolean> {
     const records = await this.history.callRecords(call.taskId, [call.callId]);
     const kinds = new Set(records.map((record) => record.kind));
-    if (!kinds.has('tool_confirmation') || kinds.has('tool_sent') || kinds.has('tool_result')) {
+    if (
+      !kinds.has('tool_confirmation') ||
+      kinds.has('tool_sent') ||
+      kinds.has('tool_result')
+    ) {
       return false;
     }
     const edited = call.args === undefined ? {} : { args: call.args };
@@ -194,7 +222,11 @@ export class CallRecords {
       decisionEntry(call.callId, { approved: true, ...edited }),
       {
         kind: 'tool_sent',
-        content: { callId: call.callId, startedAt: new Date().toISOString(), ...edited },
+        content: {
+          callId: call.callId,
+          startedAt: new Date().toISOString(),
+          ...edited,
+        },
       },
     ]);
     return true;
@@ -207,9 +239,12 @@ export class CallRecords {
    */
   async startAttempt(run: CallKey, runArgs: unknown): Promise<number | null> {
     const records = await this.history.callRecords(run.taskId, [run.callId]);
-    const attempt = records.filter((record) => record.kind === 'run_attempt').length + 1;
+    const attempt =
+      records.filter((record) => record.kind === 'run_attempt').length + 1;
     if (attempt > MAX_RUN_ATTEMPTS) return null;
-    await this.history.append(run.taskId, [{ kind: 'run_attempt', content: { callId: run.callId, attempt } }]);
+    await this.history.append(run.taskId, [
+      { kind: 'run_attempt', content: { callId: run.callId, attempt } },
+    ]);
     await this.codeCallRows.closeOpenOfRun(run, interruptedRunOutcome(runArgs));
     return attempt;
   }

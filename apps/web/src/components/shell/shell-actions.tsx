@@ -1,13 +1,27 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAui } from '@assistant-ui/react';
 import { useStore } from 'zustand';
-import { focusAfterNewChat, focusShellTarget, isFinePointer } from '@/lib/focus';
+import {
+  focusAfterNewChat,
+  focusShellTarget,
+  isFinePointer,
+} from '@/lib/focus';
 import type { LeaveGuard } from '@/lib/leave-guard';
 import type { ShellServices } from '@/lib/threads/shell-services';
-import type { ShellStatusState, ShellStatusStore } from '@/lib/threads/shell-status-store';
+import type {
+  ShellStatusState,
+  ShellStatusStore,
+} from '@/lib/threads/shell-status-store';
 
 export type ShellActions = {
   /** Asks MC-11 first while unsaved changes are held (KD-4); the shortcut calls it too. */
@@ -45,7 +59,10 @@ type ShellActionsProviderProps = {
 };
 
 /** Must render inside AssistantRuntimeProvider: retrySwitch drives the runtime's thread list. */
-export function ShellActionsProvider({ services, children }: ShellActionsProviderProps) {
+export function ShellActionsProvider({
+  services,
+  children,
+}: ShellActionsProviderProps) {
   const router = useRouter();
   const pathname = usePathname();
   const aui = useAui();
@@ -55,7 +72,8 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
 
   // Cold load of `/`: the composer gets focus only with a fine pointer; `/chat/<id>` is left alone.
   useEffect(() => {
-    if (initialPathname.current === '/' && isFinePointer()) focusShellTarget('composer');
+    if (initialPathname.current === '/' && isFinePointer())
+      focusShellTarget('composer');
   }, []);
 
   useEffect(() => {
@@ -76,8 +94,10 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
           focusOnRoot.current = true;
           router.push('/');
         }),
-      leaveTo: (href) => leaveThenGo(services.leaveGuard, () => router.push(href)),
-      retryHistory: (remoteId) => void services.feeds.forThread(remoteId).load(),
+      leaveTo: (href) =>
+        leaveThenGo(services.leaveGuard, () => router.push(href)),
+      retryHistory: (remoteId) =>
+        void services.feeds.forThread(remoteId).load(),
       retrySwitch: (threadId) => aui.threads.switchToThread(threadId),
     }),
     [aui, pathname, router, services],
@@ -85,14 +105,17 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
 
   return (
     <ShellServicesContext.Provider value={services}>
-      <ShellActionsContext.Provider value={actions}>{children}</ShellActionsContext.Provider>
+      <ShellActionsContext.Provider value={actions}>
+        {children}
+      </ShellActionsContext.Provider>
     </ShellServicesContext.Provider>
   );
 }
 
 export function useShellActions(): ShellActions {
   const actions = useContext(ShellActionsContext);
-  if (actions === null) throw new Error('useShellActions must be used inside ShellActionsProvider');
+  if (actions === null)
+    throw new Error('useShellActions must be used inside ShellActionsProvider');
   return actions;
 }
 
@@ -108,6 +131,9 @@ function useShellStatusStore(): ShellStatusStore {
 /** The shell's live stream, announcer, feed stores and API client for the screens' components. */
 export function useShellServices(): ShellServices {
   const services = useContext(ShellServicesContext);
-  if (services === null) throw new Error('useShellServices must be used inside ShellActionsProvider');
+  if (services === null)
+    throw new Error(
+      'useShellServices must be used inside ShellActionsProvider',
+    );
   return services;
 }

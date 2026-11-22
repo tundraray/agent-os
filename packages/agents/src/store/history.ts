@@ -3,13 +3,14 @@ import {
   type HistoryEntryKind,
   HistoryEntryKindSchema,
 } from '@agent-os/contracts';
-import {
-  type AgentMessageRow,
-  AgentMessagesRepository,
-} from '@agent-os/db';
+import { type AgentMessageRow, AgentMessagesRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
-import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history';
+import {
+  type HistoryContent,
+  HistoryContentSchemas,
+  type HistoryEntry,
+} from '../history/history';
 
 /** An entry to append: its kind, its content and, for a `model_answer`, the token ledger row. */
 export type NewHistoryEntry = {
@@ -21,20 +22,31 @@ export type NewHistoryEntry = {
 }[HistoryEntryKind];
 
 /** A record of one call (`CALL_RECORD_KINDS`). */
-type CallRecord = Extract<HistoryEntry, { kind: (typeof CALL_RECORD_KINDS)[number] }>;
+type CallRecord = Extract<
+  HistoryEntry,
+  { kind: (typeof CALL_RECORD_KINDS)[number] }
+>;
 
 /** Call records the employee does not read as entries: `history` folds them onto the call's state. */
 const HIDDEN_KINDS = CALL_RECORD_KINDS.filter((kind) => kind !== 'tool_result');
 
 /** An entry a history page shows. */
-export type PageEntry = Exclude<HistoryEntry, { kind: (typeof HIDDEN_KINDS)[number] }>;
+export type PageEntry = Exclude<
+  HistoryEntry,
+  { kind: (typeof HIDDEN_KINDS)[number] }
+>;
 
 /** Reads a row back as an entry; the content is checked against the schema of its kind. */
 function toEntry(row: AgentMessageRow): HistoryEntry {
   const kind = HistoryEntryKindSchema.parse(row.kind);
   const content = HistoryContentSchemas[kind].parse(row.content);
   // The kind and its content were checked together just above; TypeScript cannot correlate them.
-  return { seq: row.seq, kind, createdAt: row.createdAt, content } as HistoryEntry;
+  return {
+    seq: row.seq,
+    kind,
+    createdAt: row.createdAt,
+    content,
+  } as HistoryEntry;
 }
 
 /**
@@ -42,7 +54,8 @@ function toEntry(row: AgentMessageRow): HistoryEntry {
  * result always has one (`agent_messages_finished_at_check`).
  */
 function promoted(entry: NewHistoryEntry) {
-  const finishedAt = entry.kind === 'tool_result' ? entry.content.finishedAt : null;
+  const finishedAt =
+    entry.kind === 'tool_result' ? entry.content.finishedAt : null;
   return {
     callId: 'callId' in entry.content ? entry.content.callId : null,
     finishedAt: finishedAt === null ? null : new Date(finishedAt),
@@ -58,7 +71,10 @@ function promoted(entry: NewHistoryEntry) {
  */
 @Injectable()
 export class History {
-  constructor(@Inject(AgentMessagesRepository) private readonly rows: AgentMessagesRepository) {}
+  constructor(
+    @Inject(AgentMessagesRepository)
+    private readonly rows: AgentMessagesRepository,
+  ) {}
 
   /**
    * Appends the entries in order with `seq` = `max(seq) + 1`, `+ 2`, …: history is written only in a
@@ -110,7 +126,9 @@ export class History {
   }
 
   /** The `tool_sent` entries of the `task` calls that name a task of the session's list, in order. */
-  async sentForListTask(taskId: string): Promise<Extract<HistoryEntry, { kind: 'tool_sent' }>[]> {
+  async sentForListTask(
+    taskId: string,
+  ): Promise<Extract<HistoryEntry, { kind: 'tool_sent' }>[]> {
     const rows = await this.rows.sentForListTask(taskId);
     // The query selects `tool_sent` entries only.
     return rows.map(toEntry) as Extract<HistoryEntry, { kind: 'tool_sent' }>[];

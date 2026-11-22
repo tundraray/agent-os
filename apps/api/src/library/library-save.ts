@@ -1,10 +1,6 @@
 import { type HttpException, Injectable } from '@nestjs/common';
 import type { RecordDetail } from '@agent-os/contracts';
-import {
-  Db,
-  LibraryRecordsRepository,
-  type LibraryViewer,
-} from '@agent-os/db';
+import { Db, LibraryRecordsRepository, type LibraryViewer } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import {
   LibraryRecords,
@@ -107,9 +103,7 @@ export class LibrarySave {
         return { outcome: 'refused', refusal: 'invalid' };
       previous = record;
     }
-    const decision = decideSave(
-      await this.saveInput(request, previous),
-    );
+    const decision = decideSave(await this.saveInput(request, previous));
     if (decision.kind === 'name_taken')
       return {
         outcome: 'refused',
@@ -133,13 +127,8 @@ export class LibrarySave {
     const { scope, author, body } = request;
     const exceptId = previous?.id;
     const [ownNames, systemNames, visibleAgentIds, models] = await Promise.all([
-      scope === 'employee'
-        ? this.repository.names(author.id, exceptId)
-        : [],
-      this.repository.names(
-        null,
-        scope === 'system' ? exceptId : undefined,
-      ),
+      scope === 'employee' ? this.repository.names(author.id, exceptId) : [],
+      this.repository.names(null, scope === 'system' ? exceptId : undefined),
       this.records.visibleAgentIds(author, refersToRecords(body)),
       request.models ??
         (scope === 'employee'
@@ -169,9 +158,7 @@ export class LibrarySave {
     };
   }
 
-  private async insertSaved(
-    request: SaveRequest,
-  ): Promise<LibraryRecord> {
+  private async insertSaved(request: SaveRequest): Promise<LibraryRecord> {
     const { scope, author, body } = request;
     const inserted = await this.repository.insert({
       ...(request.newId === undefined ? {} : { id: request.newId }),

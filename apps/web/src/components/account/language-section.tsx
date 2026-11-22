@@ -1,21 +1,27 @@
-"use client";
+'use client';
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { useStore } from "zustand";
-import { LanguageSchema, type Language } from "@agent-os/contracts";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { describeApiError } from "@/lib/api/api-request";
-import { authApi } from "@/lib/auth/auth-api";
-import type { CurrentUserStore } from "@/lib/auth/current-user";
-import { logger } from "@/lib/logger";
+import { useEffect, useId, useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import { useStore } from 'zustand';
+import { LanguageSchema, type Language } from '@agent-os/contracts';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { describeApiError } from '@/lib/api/api-request';
+import { authApi } from '@/lib/auth/auth-api';
+import type { CurrentUserStore } from '@/lib/auth/current-user';
+import { logger } from '@/lib/logger';
 
 /** MC-2: each language is named in itself, so the option carries its own `lang` (UXRD Accessibility). */
-const OPTION_LABEL = { en: "optionEn", ru: "optionRu" } as const satisfies Record<Language, string>;
-const OPTIONS = LanguageSchema.options.map((value) => ({ value, label: OPTION_LABEL[value] }));
+const OPTION_LABEL = {
+  en: 'optionEn',
+  ru: 'optionRu',
+} as const satisfies Record<Language, string>;
+const OPTIONS = LanguageSchema.options.map((value) => ({
+  value,
+  label: OPTION_LABEL[value],
+}));
 
 /**
  * LN-01 of the i18n UXRD: the interface language, saved at once on choice (settings-form «Сохранение на
@@ -24,8 +30,12 @@ const OPTIONS = LanguageSchema.options.map((value) => ({ value, label: OPTION_LA
  * this group's focus included — stays. While saving and refreshing the group is marked unavailable but
  * not `disabled`, which would drop focus.
  */
-export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore }) {
-  const t = useTranslations("account.language");
+export function LanguageSection({
+  currentUser,
+}: {
+  currentUser: CurrentUserStore;
+}) {
+  const t = useTranslations('account.language');
   const router = useRouter();
   const { announcer } = useShellServices();
   const headingId = useId();
@@ -43,7 +53,7 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
     if (refreshing || !savedRef.current) return;
     savedRef.current = false;
     setPending(null);
-    announcer.getState().announce("account.language.announced");
+    announcer.getState().announce('account.language.announced');
   }, [refreshing, announcer]);
 
   // UXRD «Focus order»: after a refusal focus stays on the option checked again, or the first one.
@@ -65,12 +75,15 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
     setSaving(true);
     try {
       await authApi.saveLanguage(language);
-      logger.info("account: language saved", { language });
+      logger.info('account: language saved', { language });
       currentUser.setLanguage(language);
       savedRef.current = true;
       startRefresh(() => router.refresh());
     } catch (cause) {
-      logger.error("account: language save failed", { language, ...describeApiError(cause) });
+      logger.error('account: language save failed', {
+        language,
+        ...describeApiError(cause),
+      });
       setPending(null);
       setFailed(true);
     } finally {
@@ -79,9 +92,12 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
   }
 
   return (
-    <section aria-labelledby={headingId} className="flex max-w-160 flex-col gap-4">
+    <section
+      aria-labelledby={headingId}
+      className="flex max-w-160 flex-col gap-4"
+    >
       <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {t("heading")}
+        {t('heading')}
       </h2>
       <div className="flex flex-col gap-1.5">
         <RadioGroup
@@ -90,7 +106,9 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
           aria-disabled={busy || undefined}
           value={checked}
           onValueChange={(next) => {
-            const option = OPTIONS.find((candidate) => candidate.value === next);
+            const option = OPTIONS.find(
+              (candidate) => candidate.value === next,
+            );
             if (option !== undefined) void choose(option.value);
           }}
           className="flex flex-wrap gap-6"
@@ -113,12 +131,16 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
           ))}
         </RadioGroup>
         {failed ? (
-          <p id={hintId} role="alert" className="text-xs leading-4 text-destructive">
-            {t("saveFailed")}
+          <p
+            id={hintId}
+            role="alert"
+            className="text-xs leading-4 text-destructive"
+          >
+            {t('saveFailed')}
           </p>
         ) : (
           <p id={hintId} className="text-xs leading-4 text-muted-foreground">
-            {checked === null ? t("notChosen") : t("appliesEverywhere")}
+            {checked === null ? t('notChosen') : t('appliesEverywhere')}
           </p>
         )}
       </div>

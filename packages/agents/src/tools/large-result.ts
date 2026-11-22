@@ -41,7 +41,11 @@ function isHighSurrogate(code: number): boolean {
 
 /** `end` moved back by one when the character before it is the first half of a surrogate pair. */
 function safeEnd(text: string, end: number): number {
-  return end > 0 && end < text.length && isHighSurrogate(text.charCodeAt(end - 1)) ? end - 1 : end;
+  return end > 0 &&
+    end < text.length &&
+    isHighSurrogate(text.charCodeAt(end - 1))
+    ? end - 1
+    : end;
 }
 
 /**
@@ -87,7 +91,10 @@ export function linesOf(text: string): string[] {
   while (start < text.length) {
     const lineBreak = text.indexOf('\n', start);
     const lineEnd = lineBreak === -1 ? text.length : lineBreak + 1;
-    const end = lineEnd - start > LINE_MAX_CHARS ? safeEnd(text, start + LINE_MAX_CHARS) : lineEnd;
+    const end =
+      lineEnd - start > LINE_MAX_CHARS
+        ? safeEnd(text, start + LINE_MAX_CHARS)
+        : lineEnd;
     lines.push(text.slice(start, end));
     start = end;
   }
@@ -101,7 +108,11 @@ export function linesOf(text: string): string[] {
  */
 export function pageOf(
   text: string,
-  request: { readonly offset: number; readonly limit?: number; readonly maxTokens: number },
+  request: {
+    readonly offset: number;
+    readonly limit?: number;
+    readonly maxTokens: number;
+  },
 ): StoredPage {
   const lines = linesOf(text);
   const total = lines.length;
@@ -123,7 +134,12 @@ export function pageOf(
     lastLine < total
       ? `[partial view: lines ${request.offset}-${lastLine} of ${total}; next page at offset ${lastLine + 1}. Do not answer from this page alone.]`
       : `[lines ${request.offset}-${total} of ${total}: end of the stored result.]`;
-  return { kind: 'page', text: `${banner}\n${body}`, lastLine, totalLines: total };
+  return {
+    kind: 'page',
+    text: `${banner}\n${body}`,
+    lastLine,
+    totalLines: total,
+  };
 }
 
 /**
@@ -164,9 +180,13 @@ export function searchOf(
 }
 
 /** A copy of a JSON value with every string passed through `mask`; keys stay as they are. */
-export function maskValue(value: unknown, mask: (text: string) => string): unknown {
+export function maskValue(
+  value: unknown,
+  mask: (text: string) => string,
+): unknown {
   if (typeof value === 'string') return mask(value);
-  if (Array.isArray(value)) return value.map((item: unknown) => maskValue(item, mask));
+  if (Array.isArray(value))
+    return value.map((item: unknown) => maskValue(item, mask));
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, maskValue(item, mask)]),

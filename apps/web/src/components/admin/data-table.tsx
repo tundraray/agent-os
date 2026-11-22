@@ -1,21 +1,53 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
-import { CircleXIcon, LoaderCircleIcon, MoreHorizontalIcon, RotateCwIcon, type LucideIcon } from 'lucide-react';
+import {
+  CircleXIcon,
+  LoaderCircleIcon,
+  MoreHorizontalIcon,
+  RotateCwIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import type { ResourceStatus } from '@/hooks/use-resource';
 import { focusShellTarget } from '@/lib/focus';
 import { cn } from '@/lib/utils';
 
 /** Matches `--duration-fast`, the collapse of a row that left. */
 const LEAVE_MS = 150;
-const SKELETON_WIDTHS = ['w-3/4', 'w-1/2', 'w-2/3', 'w-5/6', 'w-2/5', 'w-3/5'] as const;
+const SKELETON_WIDTHS = [
+  'w-3/4',
+  'w-1/2',
+  'w-2/3',
+  'w-5/6',
+  'w-2/5',
+  'w-3/5',
+] as const;
 const FOCUSABLE = 'a[href], button:not(:disabled)';
 
 export type DataTableColumn = {
@@ -67,7 +99,11 @@ export type DataTableResult =
   | { state: 'ok'; badge: string; text: string; announcement: string }
   | { state: 'failed'; text: string; announcement: string };
 
-export type DataTableEmpty = { Icon: LucideIcon; title: string; description?: string };
+export type DataTableEmpty = {
+  Icon: LucideIcon;
+  title: string;
+  description?: string;
+};
 
 /** Partial: passed while the list has a next page. */
 export type DataTableMore = {
@@ -102,8 +138,18 @@ export function resourceTableState<T>(
   loadFailedText: string,
   toReady?: (data: T) => Omit<ReadyState, 'status'>,
 ): DataTableState {
-  if (resource.status === 'error') return { status: 'error', message: loadFailedText, onRetry: resource.reload };
-  if (resource.status === 'loading' || resource.data === undefined || toReady === undefined) return { status: 'loading' };
+  if (resource.status === 'error')
+    return {
+      status: 'error',
+      message: loadFailedText,
+      onRetry: resource.reload,
+    };
+  if (
+    resource.status === 'loading' ||
+    resource.data === undefined ||
+    toReady === undefined
+  )
+    return { status: 'loading' };
   return { status: 'ready', ...toReady(resource.data) };
 }
 
@@ -122,15 +168,23 @@ type Leaving = { row: DataTableRow; afterKey: string | null };
 /** Where focus goes when a row left: the next remaining row, else the previous one, else the page `h1`. */
 type Departure = { nextKey: string | null; previousKey: string | null };
 
-type Shown = { rows: readonly DataTableRow[]; leaving: readonly Leaving[]; departure: Departure | null };
+type Shown = {
+  rows: readonly DataTableRow[];
+  leaving: readonly Leaving[];
+  departure: Departure | null;
+};
 
 /** Not ready: neither a departure from it nor to it is a row leaving. */
 const NO_ROWS: readonly DataTableRow[] = [];
 
-const prefersReducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const prefersReducedMotion = (): boolean =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The rows of `before` missing from `after`, each placed after the nearest earlier row that stays. */
-function rowsThatLeft(before: readonly DataTableRow[], after: readonly DataTableRow[]): Leaving[] {
+function rowsThatLeft(
+  before: readonly DataTableRow[],
+  after: readonly DataTableRow[],
+): Leaving[] {
   const staying = new Set(after.map((row) => row.key));
   const left: Leaving[] = [];
   let afterKey: string | null = null;
@@ -141,15 +195,21 @@ function rowsThatLeft(before: readonly DataTableRow[], after: readonly DataTable
   return left;
 }
 
-function departureOf(before: readonly DataTableRow[], after: readonly DataTableRow[], first: Leaving): Departure {
+function departureOf(
+  before: readonly DataTableRow[],
+  after: readonly DataTableRow[],
+  first: Leaving,
+): Departure {
   const staying = new Set(after.map((row) => row.key));
   const index = before.findIndex((row) => row.key === first.row.key);
-  const nextKey = before.slice(index + 1).find((row) => staying.has(row.key))?.key ?? null;
+  const nextKey =
+    before.slice(index + 1).find((row) => staying.has(row.key))?.key ?? null;
   return { nextKey, previousKey: first.afterKey };
 }
 
 function nextShown(shown: Shown, rows: readonly DataTableRow[]): Shown {
-  if (shown.rows === NO_ROWS || rows === NO_ROWS) return { rows, leaving: [], departure: null };
+  if (shown.rows === NO_ROWS || rows === NO_ROWS)
+    return { rows, leaving: [], departure: null };
   const left = rowsThatLeft(shown.rows, rows);
   // A row that is back while it still collapses is shown once, as the row it is now.
   const back = new Set(rows.map((row) => row.key));
@@ -162,10 +222,15 @@ function nextShown(shown: Shown, rows: readonly DataTableRow[]): Shown {
 }
 
 /** The rows in display order, with the rows that are collapsing still in their places. */
-function displayRows(shown: Shown): Array<{ row: DataTableRow; leaving: boolean }> {
+function displayRows(
+  shown: Shown,
+): Array<{ row: DataTableRow; leaving: boolean }> {
   const display = shown.rows.map((row) => ({ row, leaving: false }));
   for (const { row, afterKey } of shown.leaving) {
-    const index = afterKey === null ? -1 : display.findIndex((entry) => entry.row.key === afterKey);
+    const index =
+      afterKey === null
+        ? -1
+        : display.findIndex((entry) => entry.row.key === afterKey);
     display.splice(index + 1, 0, { row, leaving: true });
   }
   return display;
@@ -175,13 +240,23 @@ function displayRows(shown: Shown): Array<{ row: DataTableRow; leaving: boolean 
  * UXRD Accessibility «Строка таблицы ушла»: when focus was in the row that left or fell to `body`, it moves to the
  * first target of the next row, else of the previous one, else to the page `h1`.
  */
-function moveFocusAfterDeparture(body: HTMLElement | null, { nextKey, previousKey }: Departure): void {
+function moveFocusAfterDeparture(
+  body: HTMLElement | null,
+  { nextKey, previousKey }: Departure,
+): void {
   const active = document.activeElement;
-  const lost = active === null || active === document.body || active.closest('tr[data-leaving]') !== null;
+  const lost =
+    active === null ||
+    active === document.body ||
+    active.closest('tr[data-leaving]') !== null;
   if (!lost) return;
   for (const key of [nextKey, previousKey]) {
     if (key === null || body === null) continue;
-    const groupRows = Array.from(body.querySelectorAll<HTMLElement>('tr[data-row-key]:not([data-leaving])'));
+    const groupRows = Array.from(
+      body.querySelectorAll<HTMLElement>(
+        'tr[data-row-key]:not([data-leaving])',
+      ),
+    );
     const target = groupRows
       .filter((tr) => tr.dataset.rowKey === key)
       .map((tr) => tr.querySelector<HTMLElement>(FOCUSABLE))
@@ -198,9 +273,18 @@ function moveFocusAfterDeparture(body: HTMLElement | null, { nextKey, previousKe
  * design-system data-table on shadcn `table` at the panel's compact density (design-admin.md, KD-5, KD-6): rows
  * of 32 px, cells padded 12 px, Data text, technical names in Mono. Rows keep the server's order.
  */
-export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: DataTableProps) {
+export function DataTable({
+  caption,
+  columns,
+  state,
+  actionsAs = 'buttons',
+}: DataTableProps) {
   const rows = state.status === 'ready' ? state.rows : NO_ROWS;
-  const [shown, setShown] = useState<Shown>({ rows, leaving: [], departure: null });
+  const [shown, setShown] = useState<Shown>({
+    rows,
+    leaving: [],
+    departure: null,
+  });
   if (shown.rows !== rows) setShown(nextShown(shown, rows));
 
   const bodyRef = useRef<HTMLTableSectionElement>(null);
@@ -212,20 +296,33 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
 
   useEffect(() => {
     if (leaving.length === 0) return;
-    const timer = window.setTimeout(() => setShown((current) => ({ ...current, leaving: [] })), LEAVE_MS);
+    const timer = window.setTimeout(
+      () => setShown((current) => ({ ...current, leaving: [] })),
+      LEAVE_MS,
+    );
     return () => window.clearTimeout(timer);
   }, [leaving]);
 
-  if (state.status === 'loading') return <LoadingTable caption={caption} columns={columns} />;
-  if (state.status === 'error') return <LoadError message={state.message} onRetry={state.onRetry} />;
-  if (state.rows.length === 0 && state.noMatches === undefined && state.empty !== undefined) {
+  if (state.status === 'loading')
+    return <LoadingTable caption={caption} columns={columns} />;
+  if (state.status === 'error')
+    return <LoadError message={state.message} onRetry={state.onRetry} />;
+  if (
+    state.rows.length === 0 &&
+    state.noMatches === undefined &&
+    state.empty !== undefined
+  ) {
     return <EmptyTable {...state.empty} />;
   }
 
-  const hasActions = state.rows.some((row) => row.actions !== undefined && row.actions.length > 0);
+  const hasActions = state.rows.some(
+    (row) => row.actions !== undefined && row.actions.length > 0,
+  );
   const columnCount = columns.length + (hasActions ? 1 : 0);
   // A result line is as wide as the visible block (`100cqw`), so it wraps there instead of scrolling with the table.
-  const hasResult = [...state.rows, ...leaving.map((entry) => entry.row)].some((row) => row.result !== undefined);
+  const hasResult = [...state.rows, ...leaving.map((entry) => entry.row)].some(
+    (row) => row.result !== undefined,
+  );
 
   return (
     <div className={cn('flex flex-col', hasResult && '@container')}>
@@ -236,7 +333,10 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
         <TableBody ref={bodyRef}>
           {state.rows.length === 0 ? (
             <TableRow className="h-8 hover:bg-transparent pointer-coarse:h-11">
-              <TableCell colSpan={columnCount} className="px-3 text-muted-foreground">
+              <TableCell
+                colSpan={columnCount}
+                className="px-3 text-muted-foreground"
+              >
                 {state.noMatches}
               </TableCell>
             </TableRow>
@@ -259,20 +359,32 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
   );
 }
 
-const headClass = 'h-8 px-3 text-xs leading-4 font-medium text-muted-foreground';
+const headClass =
+  'h-8 px-3 text-xs leading-4 font-medium text-muted-foreground';
 const cellClass = 'px-3 py-0 align-middle';
 
 const alignClass = (column: DataTableColumn | undefined): string | undefined =>
   column?.align === 'end' ? 'text-right tabular-nums' : undefined;
 
-const shrinks = (columns: readonly DataTableColumn[], index: number): boolean => columns[index]?.shrinks ?? index === 0;
+const shrinks = (columns: readonly DataTableColumn[], index: number): boolean =>
+  columns[index]?.shrinks ?? index === 0;
 
-function HeaderRow({ columns, withActions }: { columns: readonly DataTableColumn[]; withActions: boolean }) {
+function HeaderRow({
+  columns,
+  withActions,
+}: {
+  columns: readonly DataTableColumn[];
+  withActions: boolean;
+}) {
   return (
     <TableHeader>
       <TableRow className="border-border hover:bg-transparent">
         {columns.map((column) => (
-          <TableHead key={column.header} scope="col" className={cn(headClass, column.align === 'end' && 'text-right')}>
+          <TableHead
+            key={column.header}
+            scope="col"
+            className={cn(headClass, column.align === 'end' && 'text-right')}
+          >
             {column.header}
           </TableHead>
         ))}
@@ -302,7 +414,11 @@ type CollapsibleProps = {
  * `overflow-hidden` gives the content a zero minimum width, so the wrapper states the cell's width itself; a cell
  * that keeps its content's width clips only while its row leaves, which leaves a button's focus ring whole.
  */
-function Collapsible({ children, shrinks = false, className }: CollapsibleProps) {
+function Collapsible({
+  children,
+  shrinks = false,
+  className,
+}: CollapsibleProps) {
   return (
     <div
       className={cn(
@@ -310,7 +426,15 @@ function Collapsible({ children, shrinks = false, className }: CollapsibleProps)
         shrinks ? 'min-w-40' : 'min-w-max',
       )}
     >
-      <div className={cn('min-h-0', shrinks ? 'overflow-hidden' : 'group-data-leaving/row:overflow-hidden', className)}>
+      <div
+        className={cn(
+          'min-h-0',
+          shrinks
+            ? 'overflow-hidden'
+            : 'group-data-leaving/row:overflow-hidden',
+          className,
+        )}
+      >
         {children}
       </div>
     </div>
@@ -318,9 +442,17 @@ function Collapsible({ children, shrinks = false, className }: CollapsibleProps)
 }
 
 /** A record's row, its nested rows and its action error; they leave together. */
-function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupProps) {
+function RowGroup({
+  row,
+  columns,
+  withActions,
+  actionsAs,
+  leaving,
+}: RowGroupProps) {
   const t = useTranslations('admin.table');
-  const interactive = row.href !== undefined || (row.actions !== undefined && row.actions.length > 0);
+  const interactive =
+    row.href !== undefined ||
+    (row.actions !== undefined && row.actions.length > 0);
   const groupProps = {
     'data-row-key': row.key,
     'data-leaving': leaving ? '' : undefined,
@@ -337,19 +469,35 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
     <>
       <TableRow
         {...groupProps}
-        className={cn(rowClass, interactive && 'hover:bg-accent', row.href !== undefined && 'relative', followed && 'border-b-0')}
+        className={cn(
+          rowClass,
+          interactive && 'hover:bg-accent',
+          row.href !== undefined && 'relative',
+          followed && 'border-b-0',
+        )}
       >
         {row.cells.map((cell, index) => (
-          <TableCell key={columns[index]?.header ?? index} className={cn(cellClass, alignClass(columns[index]))}>
+          <TableCell
+            key={columns[index]?.header ?? index}
+            className={cn(cellClass, alignClass(columns[index]))}
+          >
             <Collapsible shrinks={shrinks(columns, index)}>
-              {index === 0 && row.href !== undefined ? <RowLink href={row.href}>{cell}</RowLink> : cell}
+              {index === 0 && row.href !== undefined ? (
+                <RowLink href={row.href}>{cell}</RowLink>
+              ) : (
+                cell
+              )}
             </Collapsible>
           </TableCell>
         ))}
         {withActions && (
           <TableCell className={cn(cellClass, 'w-px text-right')}>
             <Collapsible className="relative z-10 flex justify-end gap-2">
-              <RowActions name={row.name} actions={row.actions ?? []} actionsAs={actionsAs} />
+              <RowActions
+                name={row.name}
+                actions={row.actions ?? []}
+                actionsAs={actionsAs}
+              />
             </Collapsible>
           </TableCell>
         )}
@@ -360,16 +508,25 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
           {...groupProps}
           className={cn(
             rowClass,
-            (nestedIndex < (row.nested?.length ?? 0) - 1 || lineUnder) && 'border-b-0',
+            (nestedIndex < (row.nested?.length ?? 0) - 1 || lineUnder) &&
+              'border-b-0',
           )}
         >
           {nested.cells.map((cell, index) => (
             <TableCell
               key={columns[index]?.header ?? index}
-              className={cn(cellClass, alignClass(columns[index]), index === 0 && 'pl-9')}
+              className={cn(
+                cellClass,
+                alignClass(columns[index]),
+                index === 0 && 'pl-9',
+              )}
             >
               <Collapsible shrinks={shrinks(columns, index)}>
-                {index === 0 && <span className="sr-only">{t('nestedIn', { parent: row.name })}</span>}
+                {index === 0 && (
+                  <span className="sr-only">
+                    {t('nestedIn', { parent: row.name })}
+                  </span>
+                )}
                 {cell}
               </Collapsible>
             </TableCell>
@@ -378,17 +535,32 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
         </TableRow>
       ))}
       {row.result !== undefined && (
-        <TableRow {...groupProps} className={cn('border-border hover:bg-transparent', row.error !== undefined && 'border-b-0')}>
+        <TableRow
+          {...groupProps}
+          className={cn(
+            'border-border hover:bg-transparent',
+            row.error !== undefined && 'border-b-0',
+          )}
+        >
           <TableCell colSpan={columnCount} className="p-0 whitespace-normal">
             <ResultLine result={row.result} />
           </TableCell>
         </TableRow>
       )}
       {row.error !== undefined && (
-        <TableRow {...groupProps} className="border-border hover:bg-transparent">
-          <TableCell colSpan={columnCount} className="px-3 pb-1.5 whitespace-normal">
+        <TableRow
+          {...groupProps}
+          className="border-border hover:bg-transparent"
+        >
+          <TableCell
+            colSpan={columnCount}
+            className="px-3 pb-1.5 whitespace-normal"
+          >
             <Collapsible shrinks>
-              <p role="alert" className="text-xs leading-4 font-medium text-destructive">
+              <p
+                role="alert"
+                className="text-xs leading-4 font-medium text-destructive"
+              >
                 {row.error}
               </p>
             </Collapsible>
@@ -414,14 +586,23 @@ function ResultLine({ result }: { result: DataTableResult }) {
           aria-hidden
           className={cn(
             'flex items-start gap-1 text-xs leading-4 font-medium',
-            result.state === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+            result.state === 'failed'
+              ? 'text-destructive'
+              : 'text-muted-foreground',
           )}
         >
           {result.state === 'pending' && (
-            <LoaderCircleIcon aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+            <LoaderCircleIcon
+              aria-hidden
+              className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+            />
           )}
-          {result.state === 'failed' && <CircleXIcon aria-hidden className="size-3.5 shrink-0" />}
-          {result.state === 'ok' && <StateBadge state="ok">{result.badge}</StateBadge>}
+          {result.state === 'failed' && (
+            <CircleXIcon aria-hidden className="size-3.5 shrink-0" />
+          )}
+          {result.state === 'ok' && (
+            <StateBadge state="ok">{result.badge}</StateBadge>
+          )}
           <span className="min-w-0 break-words">{result.text}</span>
         </p>
       </Collapsible>
@@ -452,7 +633,8 @@ function RowActions({
 }) {
   const t = useTranslations('admin.table');
   if (actions.length === 0) return null;
-  if (actionsAs === 'menu') return <ActionsMenu name={name} actions={actions} />;
+  if (actionsAs === 'menu')
+    return <ActionsMenu name={name} actions={actions} />;
 
   const busy = actions.some((action) => action.pending === true);
   return actions.map((action) => (
@@ -472,7 +654,13 @@ function RowActions({
 }
 
 /** The «⋯» menu of a record's actions: in a table row and in a record page's header. */
-export function ActionsMenu({ name, actions }: { name: string; actions: readonly DataTableAction[] }) {
+export function ActionsMenu({
+  name,
+  actions,
+}: {
+  name: string;
+  actions: readonly DataTableAction[];
+}) {
   const t = useTranslations('admin.table');
   const busy = actions.some((action) => action.pending === true);
   return (
@@ -508,22 +696,40 @@ export function ActionsMenu({ name, actions }: { name: string; actions: readonly
 }
 
 function Spinner() {
-  return <LoaderCircleIcon aria-hidden className="animate-spin motion-reduce:animate-none" />;
+  return (
+    <LoaderCircleIcon
+      aria-hidden
+      className="animate-spin motion-reduce:animate-none"
+    />
+  );
 }
 
 /** Loading: the header and six skeleton rows of different widths; screen readers hear the table's name. */
-function LoadingTable({ caption, columns }: { caption: string; columns: readonly DataTableColumn[] }) {
+function LoadingTable({
+  caption,
+  columns,
+}: {
+  caption: string;
+  columns: readonly DataTableColumn[];
+}) {
   const count = Math.max(columns.length, 1);
   return (
     <div role="status" aria-label={caption}>
       <Table aria-hidden className="text-data">
-        {columns.length > 0 && <HeaderRow columns={columns} withActions={false} />}
+        {columns.length > 0 && (
+          <HeaderRow columns={columns} withActions={false} />
+        )}
         <TableBody>
           {SKELETON_WIDTHS.map((width) => (
-            <TableRow key={width} className="h-8 border-border hover:bg-transparent pointer-coarse:h-11">
+            <TableRow
+              key={width}
+              className="h-8 border-border hover:bg-transparent pointer-coarse:h-11"
+            >
               {Array.from({ length: count }, (_, index) => (
                 <TableCell key={index} className={cellClass}>
-                  <Skeleton className={cn('h-3 motion-reduce:animate-none', width)} />
+                  <Skeleton
+                    className={cn('h-3 motion-reduce:animate-none', width)}
+                  />
                 </TableCell>
               ))}
             </TableRow>
@@ -534,9 +740,18 @@ function LoadingTable({ caption, columns }: { caption: string; columns: readonly
   );
 }
 
-function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function LoadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
-    <div role="status" className="flex flex-col items-center gap-3 py-8 text-sm leading-5 text-foreground">
+    <div
+      role="status"
+      className="flex flex-col items-center gap-3 py-8 text-sm leading-5 text-foreground"
+    >
       <p>{message}</p>
       <RetryButton onClick={onRetry} />
     </div>
@@ -546,7 +761,12 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 function RetryButton({ onClick }: { onClick: () => void }) {
   const t = useTranslations('admin.table');
   return (
-    <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onClick}>
+    <Button
+      variant="outline"
+      size="sm"
+      className="pointer-coarse:h-11"
+      onClick={onClick}
+    >
       <RotateCwIcon aria-hidden />
       {t('retry')}
     </Button>
@@ -559,7 +779,9 @@ function EmptyTable({ Icon, title, description }: DataTableEmpty) {
     <div className="flex flex-col items-center gap-1 py-12 text-center">
       <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />
       <p className="text-sm leading-5 font-medium text-foreground">{title}</p>
-      {description !== undefined && <p className="text-xs leading-4 text-muted-foreground">{description}</p>}
+      {description !== undefined && (
+        <p className="text-xs leading-4 text-muted-foreground">{description}</p>
+      )}
     </div>
   );
 }
@@ -569,7 +791,10 @@ function LoadMore({ onLoadMore, loading, error }: DataTableMore) {
   if (error !== undefined) {
     return (
       <div className="flex flex-col items-center gap-2 py-2">
-        <p role="alert" className="text-xs leading-4 font-medium text-destructive">
+        <p
+          role="alert"
+          className="text-xs leading-4 font-medium text-destructive"
+        >
           {error}
         </p>
         <RetryButton onClick={onLoadMore} />
@@ -578,7 +803,13 @@ function LoadMore({ onLoadMore, loading, error }: DataTableMore) {
   }
   return (
     <div className="flex justify-center py-2">
-      <Button variant="ghost" size="sm" className="pointer-coarse:h-11" disabled={loading} onClick={onLoadMore}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="pointer-coarse:h-11"
+        disabled={loading}
+        onClick={onLoadMore}
+      >
         {loading && <Spinner />}
         {t('loadMore')}
       </Button>

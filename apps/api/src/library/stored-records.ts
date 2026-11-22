@@ -69,9 +69,13 @@ function holdersByRecord(
     result.set(row.recordId, {
       everyone: current.everyone || row.everyone,
       roleIds:
-        row.roleId === null ? current.roleIds : [...current.roleIds, row.roleId],
+        row.roleId === null
+          ? current.roleIds
+          : [...current.roleIds, row.roleId],
       userIds:
-        row.userId === null ? current.userIds : [...current.userIds, row.userId],
+        row.userId === null
+          ? current.userIds
+          : [...current.userIds, row.userId],
     });
   }
   return result;

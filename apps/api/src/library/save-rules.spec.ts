@@ -161,7 +161,9 @@ describe('save rule: names unique per owner and against system records, only add
     {
       name: 'AC-06.4: all servers in a subagent of an employee record',
       input: save({ body: deepAgent([['sentry'], ['*']], HAIKU) }),
-      expected: refused('all_servers_not_allowed', 'subagents.1.servers', ['*']),
+      expected: refused('all_servers_not_allowed', 'subagents.1.servers', [
+        '*',
+      ]),
     },
     {
       name: 'DC-9: a model not allowed while another one is',

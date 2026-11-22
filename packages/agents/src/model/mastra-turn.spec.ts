@@ -4,13 +4,20 @@
 // request as the model must see it. Only the provider network (the global `fetch` the AI SDK calls) is
 // replaced; the Anthropic adapter, Mastra and the AI SDK are real.
 import { z } from 'zod';
-import { type AgentToolDefinition, type AgentTurnGeneration, createMastraTurnClient } from './mastra-turn';
+import {
+  type AgentToolDefinition,
+  type AgentTurnGeneration,
+  createMastraTurnClient,
+} from './mastra-turn';
 
 /** An MCP tool schema in the shape the fixture servers list: description, enum, array, nested object. */
 const MCP_INPUT_SCHEMA = {
   type: 'object',
   properties: {
-    query: { type: 'string', description: 'Full-text query over the log lines' },
+    query: {
+      type: 'string',
+      description: 'Full-text query over the log lines',
+    },
     level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
     services: { type: 'array', items: { type: 'string' } },
     window: {
@@ -56,9 +63,30 @@ function streamedAnswer(withToolCall = true): Response {
         },
       },
     ],
-    ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-    ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Looking ' } }],
-    ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'at the logs.' } }],
+    [
+      'content_block_start',
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
+      },
+    ],
+    [
+      'content_block_delta',
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'Looking ' },
+      },
+    ],
+    [
+      'content_block_delta',
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'at the logs.' },
+      },
+    ],
     ['content_block_stop', { type: 'content_block_stop', index: 0 }],
   ];
   const toolUse: [string, unknown][] = [
@@ -67,16 +95,29 @@ function streamedAnswer(withToolCall = true): Response {
       {
         type: 'content_block_start',
         index: 1,
-        content_block: { type: 'tool_use', id: 'toolu_probe', name: 'mcp__logs__search_logs', input: {} },
+        content_block: {
+          type: 'tool_use',
+          id: 'toolu_probe',
+          name: 'mcp__logs__search_logs',
+          input: {},
+        },
       },
     ],
     [
       'content_block_delta',
-      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"query":' } },
+      {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: '{"query":' },
+      },
     ],
     [
       'content_block_delta',
-      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '"errors"}' } },
+      {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: '"errors"}' },
+      },
     ],
     ['content_block_stop', { type: 'content_block_stop', index: 1 }],
   ];
@@ -85,28 +126,42 @@ function streamedAnswer(withToolCall = true): Response {
       'message_delta',
       {
         type: 'message_delta',
-        delta: { stop_reason: withToolCall ? 'tool_use' : 'end_turn', stop_sequence: null },
+        delta: {
+          stop_reason: withToolCall ? 'tool_use' : 'end_turn',
+          stop_sequence: null,
+        },
         usage: { output_tokens: 9 },
       },
     ],
     ['message_stop', { type: 'message_stop' }],
   ];
   const body = [...events, ...(withToolCall ? toolUse : []), ...end]
-    .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
-  return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+    .map(
+      ([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+    )
+    .join('');
+  return new Response(body, {
+    headers: { 'content-type': 'text/event-stream' },
+  });
 }
 
 /** The provider is overloaded: the status a retryable provider error carries. */
 function overloaded(): Response {
   return Response.json(
-    { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } },
+    {
+      type: 'error',
+      error: { type: 'overloaded_error', message: 'Overloaded' },
+    },
     { status: 503 },
   );
 }
 
 interface ProbeRun {
   /** Request bodies the provider double received, parsed. */
-  readonly bodies: { stream?: boolean; tools: { name: string; input_schema: unknown }[] }[];
+  readonly bodies: {
+    stream?: boolean;
+    tools: { name: string; input_schema: unknown }[];
+  }[];
   /** Raw request bodies, for the wire flag. */
   readonly rawBodies: string[];
   /** Request addresses, for the connection's address. */
@@ -120,7 +175,10 @@ afterEach(() => {
 });
 
 /** Runs one streamed turn with the given tools against a provider double answering with `answer`. */
-function runTurn(tools: readonly AgentToolDefinition[], answer: () => Response = () => streamedAnswer()): ProbeRun {
+function runTurn(
+  tools: readonly AgentToolDefinition[],
+  answer: () => Response = () => streamedAnswer(),
+): ProbeRun {
   const rawBodies: string[] = [];
   const urls: string[] = [];
   const parts: string[] = [];
@@ -147,11 +205,16 @@ function runTurn(tools: readonly AgentToolDefinition[], answer: () => Response =
       tools,
       maxOutputTokens: 100,
     },
-    { signal: new AbortController().signal, onText: (text) => parts.push(text) },
+    {
+      signal: new AbortController().signal,
+      onText: (text) => parts.push(text),
+    },
   );
   return {
     get bodies() {
-      return rawBodies.map((body) => JSON.parse(body) as ProbeRun['bodies'][number]);
+      return rawBodies.map(
+        (body) => JSON.parse(body) as ProbeRun['bodies'][number],
+      );
     },
     rawBodies,
     urls,
@@ -171,15 +234,25 @@ describe('createMastraTurnClient streams a turn (KD-3)', () => {
     expect(run.parts).toEqual(['Looking ', 'at the logs.']);
     expect(generation.text).toBe('Looking at the logs.');
     expect(generation.toolCalls).toEqual([
-      { toolCallId: 'toolu_probe', toolName: 'mcp__logs__search_logs', args: { query: 'errors' } },
+      {
+        toolCallId: 'toolu_probe',
+        toolName: 'mcp__logs__search_logs',
+        args: { query: 'errors' },
+      },
     ]);
-    expect(generation.usage).toMatchObject({ inputTokens: 12, outputTokens: 9 });
+    expect(generation.usage).toMatchObject({
+      inputTokens: 12,
+      outputTokens: 9,
+    });
   });
 
   it('rejects with the provider error, so ModelClient can retry it', async () => {
     const run = runTurn([SEARCH_LOGS], overloaded);
 
-    await expect(run.result).rejects.toMatchObject({ name: 'AI_APICallError', statusCode: 503 });
+    await expect(run.result).rejects.toMatchObject({
+      name: 'AI_APICallError',
+      statusCode: 503,
+    });
     expect(run.rawBodies).toHaveLength(1);
     expect(run.parts).toEqual([]);
   });
@@ -202,7 +275,13 @@ describe('createMastraTurnClient tool schemas on the wire (KD-6)', () => {
 
   it('a zod schema of a built-in tool reaches the provider as a JSON Schema object', async () => {
     const run = runTurn(
-      [{ name: 'stop_agent', description: 'Stop a child agent', inputSchema: z.object({ agentId: z.string() }) }],
+      [
+        {
+          name: 'stop_agent',
+          description: 'Stop a child agent',
+          inputSchema: z.object({ agentId: z.string() }),
+        },
+      ],
       () => streamedAnswer(false),
     );
     await run.result;

@@ -38,14 +38,23 @@ export interface ScenarioServers {
  * The one agent record of the scenario, the root the test process starts: its name and both fixture
  * servers. A child never asks the library: a step reads the run's snapshot from the task input.
  */
-export function codeRunRecord(servers: ScenarioServers): { readonly name: string; readonly servers: string[] } {
-  return { name: 'code-run-restart', servers: [servers.logs, servers.backoffice] };
+export function codeRunRecord(servers: ScenarioServers): {
+  readonly name: string;
+  readonly servers: string[];
+} {
+  return {
+    name: 'code-run-restart',
+    servers: [servers.logs, servers.backoffice],
+  };
 }
 
 /** The trace the read script reads (`get_trace` of the `logs` server). */
 export const TRACE = { traceId: 'a'.repeat(32) };
 /** The two notes the write script creates, in order (`create_incident_note` of the `backoffice` server). */
-export const FIRST_NOTE = { orderId: 'ORD-1001', text: 'first note of the run' };
+export const FIRST_NOTE = {
+  orderId: 'ORD-1001',
+  text: 'first note of the run',
+};
 const SECOND_NOTE = { orderId: 'ORD-1001', text: 'second note of the run' };
 
 /** One run of the scenario: the agent's task, its `run_code` call and the report after the result. */
@@ -66,7 +75,10 @@ export function readRun(servers: ScenarioServers): ScenarioRun {
     args: {
       description: 'Read one trace',
       class: 'read',
-      script: [`await callTool("${getTrace}", ${JSON.stringify(TRACE)});`, 'return "trace read";'].join('\n'),
+      script: [
+        `await callTool("${getTrace}", ${JSON.stringify(TRACE)});`,
+        'return "trace read";',
+      ].join('\n'),
     },
     report: 'report of the read run',
   };
@@ -120,7 +132,11 @@ export function childScenario(
 function logRecordOf(line: string): LogRecord | undefined {
   try {
     const value = JSON.parse(line) as Partial<LogRecord> | null;
-    if (typeof value?.message !== 'string' || typeof value.fields !== 'object' || value.fields === null) {
+    if (
+      typeof value?.message !== 'string' ||
+      typeof value.fields !== 'object' ||
+      value.fields === null
+    ) {
       return undefined;
     }
     return value as LogRecord;
@@ -152,12 +168,16 @@ export class CodeRunChild extends TestChild {
 
   /** The child's log records of one `run_code` run (its `runId` is the run's `callId`) with this message. */
   runLogs(runId: string, message: string): LogRecord[] {
-    return this.records.filter((record) => record.fields.runId === runId && record.message === message);
+    return this.records.filter(
+      (record) => record.fields.runId === runId && record.message === message,
+    );
   }
 
   /** The pids of the executor processes this child started for the run, in start order. */
   executorPids(runId: string): number[] {
-    return this.runLogs(runId, 'code executor started').map((record) => Number(record.fields.pid));
+    return this.runLogs(runId, 'code executor started').map((record) =>
+      Number(record.fields.pid),
+    );
   }
 }
 

@@ -26,10 +26,18 @@ export type WorkspaceStore = StoreApi<WorkspaceState> & {
  * panel. Memory of the tab only: a reload starts closed (chat-shell UXRD, AC-11.1).
  */
 export function createWorkspaceStore(): WorkspaceStore {
-  const store = createStore<WorkspaceState>()(() => ({ open: false, tab: 'schema', focusHeading: false }));
+  const store = createStore<WorkspaceState>()(() => ({
+    open: false,
+    tab: 'schema',
+    focusHeading: false,
+  }));
   return Object.assign(store, {
     show: ({ tab, focusHeading }: { tab?: SchemaTab; focusHeading: boolean }) =>
-      store.setState((state) => ({ open: true, tab: tab ?? state.tab, focusHeading })),
+      store.setState((state) => ({
+        open: true,
+        tab: tab ?? state.tab,
+        focusHeading,
+      })),
     close: () => store.setState({ open: false, focusHeading: false }),
     setTab: (tab: SchemaTab) => store.setState({ tab }),
     headingFocused: () => store.setState({ focusHeading: false }),

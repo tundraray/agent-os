@@ -7,10 +7,15 @@ import { agentModelProviders } from '../schema';
 export type ModelProviderRow = typeof agentModelProviders.$inferSelect;
 
 /** What creation writes; `enabled` and the times take their defaults. */
-export type NewModelProviderRow = Pick<ModelProviderRow, 'name' | 'kind' | 'baseUrl' | 'apiKey'>;
+export type NewModelProviderRow = Pick<
+  ModelProviderRow,
+  'name' | 'kind' | 'baseUrl' | 'apiKey'
+>;
 
 /** What may change after creation: name and kind never do. */
-export type ModelProviderPatch = Partial<Pick<ModelProviderRow, 'baseUrl' | 'apiKey' | 'enabled'>>;
+export type ModelProviderPatch = Partial<
+  Pick<ModelProviderRow, 'baseUrl' | 'apiKey' | 'enabled'>
+>;
 
 /** The provider rows before and after a write: the audit record is built from them. */
 export interface ModelProviderChange {
@@ -46,11 +51,16 @@ export class AgentModelProvidersRepository {
 
   /** All providers by name. */
   list(): Promise<ModelProviderRow[]> {
-    return this.db.client.select().from(agentModelProviders).orderBy(asc(agentModelProviders.name));
+    return this.db.client
+      .select()
+      .from(agentModelProviders)
+      .orderBy(asc(agentModelProviders.name));
   }
 
   /** Creates the provider; `undefined` when the name is taken (its primary key). */
-  async insert(provider: NewModelProviderRow): Promise<ModelProviderRow | undefined> {
+  async insert(
+    provider: NewModelProviderRow,
+  ): Promise<ModelProviderRow | undefined> {
     const [row] = await this.db.client
       .insert(agentModelProviders)
       .values(provider)
@@ -74,7 +84,8 @@ export class AgentModelProvidersRepository {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(agentModelProviders.name, name))
       .returning();
-    if (after === undefined) throw new Error(`Model provider ${name} vanished during its update`);
+    if (after === undefined)
+      throw new Error(`Model provider ${name} vanished during its update`);
     return { before, after };
   }
 

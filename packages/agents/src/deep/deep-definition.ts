@@ -1,7 +1,14 @@
-import { GENERAL_PURPOSE_SUBAGENT, SUBAGENT_MAX_RUNS_MAX } from '@agent-os/contracts';
+import {
+  GENERAL_PURPOSE_SUBAGENT,
+  SUBAGENT_MAX_RUNS_MAX,
+} from '@agent-os/contracts';
 
 import { descriptionLine } from '../chat-listing';
-import type { DeepAgentSnapshot, RunSnapshot, SubagentSnapshot } from '../start/snapshot';
+import type {
+  DeepAgentSnapshot,
+  RunSnapshot,
+  SubagentSnapshot,
+} from '../start/snapshot';
 import type { RunDefinition } from '../start/snapshot-definition';
 
 /** The tool a deep agent assigns work to its subagents with (deep-agents/design-task.md KD-6). */
@@ -72,11 +79,15 @@ export function delegationTeam(deepAgent: DeepAgentSnapshot): TeamMember[] {
 
 /** A line of the team in the deep agent's `task` (KD-2): `name (up to N runs): description`. */
 function teamLine(subagent: TeamMember): string {
-  return descriptionLine(`${subagent.name} (up to ${subagent.maxRuns} runs): ${subagent.description}`);
+  return descriptionLine(
+    `${subagent.name} (up to ${subagent.maxRuns} runs): ${subagent.description}`,
+  );
 }
 
 /** The deep agent's branch of `snapshotDefinition`: the record's prompt with the platform rules, `task` and the team. */
-export function deepAgentDefinition(snapshot: DeepAgentSnapshot): RunDefinition {
+export function deepAgentDefinition(
+  snapshot: DeepAgentSnapshot,
+): RunDefinition {
   return {
     name: snapshot.name,
     prompt: deepAgentPrompt(snapshot.content),
@@ -96,7 +107,10 @@ export function deepAgentDefinition(snapshot: DeepAgentSnapshot): RunDefinition 
  */
 function learningServers(content: DeepAgentSnapshot['content']): string[] {
   return [
-    ...new Set([...content.servers, ...content.subagents.flatMap((subagent) => subagent.servers)]),
+    ...new Set([
+      ...content.servers,
+      ...content.subagents.flatMap((subagent) => subagent.servers),
+    ]),
   ];
 }
 
@@ -112,9 +126,13 @@ export interface LearningRun {
  * now.
  */
 export function learningRunOf(snapshot: RunSnapshot): LearningRun | null {
-  if (snapshot.kind !== 'deep_agent' || snapshot.origin.subagent !== null) return null;
+  if (snapshot.kind !== 'deep_agent' || snapshot.origin.subagent !== null)
+    return null;
   if (!snapshot.content.selfLearning) return null;
-  return { recordId: snapshot.origin.recordId, servers: learningServers(snapshot.content) };
+  return {
+    recordId: snapshot.origin.recordId,
+    servers: learningServers(snapshot.content),
+  };
 }
 
 /**
@@ -126,7 +144,9 @@ export function subagentSnapshot(
   deepAgent: DeepAgentSnapshot,
   name: string,
 ): SubagentSnapshot | null {
-  const subagent = delegationTeam(deepAgent).find((candidate) => candidate.name === name);
+  const subagent = delegationTeam(deepAgent).find(
+    (candidate) => candidate.name === name,
+  );
   if (subagent === undefined) return null;
   return {
     kind: 'subagent',

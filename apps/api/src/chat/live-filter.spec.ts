@@ -14,27 +14,67 @@ const CHILD = '33333333-3333-4333-8333-333333333333';
 
 type NamedStream = LiveStream & { readonly name: string };
 
-const stream = (name: string, ownerId: string, watch: Watch | null): NamedStream => ({
+const stream = (
+  name: string,
+  ownerId: string,
+  watch: Watch | null,
+): NamedStream => ({
   name,
   ownerId,
   watch,
 });
 
-const ownerThread = stream('owner thread', 'owner', { kind: 'thread', threadId: THREAD });
-const ownerAgent = stream('owner agent', 'owner', { kind: 'agent', agentId: CHILD });
-const ownerRootAgent = stream('owner root agent', 'owner', { kind: 'agent', agentId: ROOT });
+const ownerThread = stream('owner thread', 'owner', {
+  kind: 'thread',
+  threadId: THREAD,
+});
+const ownerAgent = stream('owner agent', 'owner', {
+  kind: 'agent',
+  agentId: CHILD,
+});
+const ownerRootAgent = stream('owner root agent', 'owner', {
+  kind: 'agent',
+  agentId: ROOT,
+});
 const ownerPlain = stream('owner no watch', 'owner', null);
-const strangerAgent = stream('stranger agent', 'stranger', { kind: 'agent', agentId: CHILD });
-const strangerThread = stream('stranger thread', 'stranger', { kind: 'thread', threadId: THREAD });
-const streams = [ownerThread, ownerAgent, ownerRootAgent, ownerPlain, strangerAgent, strangerThread];
+const strangerAgent = stream('stranger agent', 'stranger', {
+  kind: 'agent',
+  agentId: CHILD,
+});
+const strangerThread = stream('stranger thread', 'stranger', {
+  kind: 'thread',
+  threadId: THREAD,
+});
+const streams = [
+  ownerThread,
+  ownerAgent,
+  ownerRootAgent,
+  ownerPlain,
+  strangerAgent,
+  strangerThread,
+];
 
-const rootPart: DeltaAddress = { ownerId: 'owner', rootId: ROOT, agentId: ROOT };
-const childPart: DeltaAddress = { ownerId: 'owner', rootId: ROOT, agentId: CHILD };
+const rootPart: DeltaAddress = {
+  ownerId: 'owner',
+  rootId: ROOT,
+  agentId: ROOT,
+};
+const childPart: DeltaAddress = {
+  ownerId: 'owner',
+  rootId: ROOT,
+  agentId: CHILD,
+};
 
-const names = (targets: NamedStream[]): string[] => targets.map((target) => target.name).sort();
+const names = (targets: NamedStream[]): string[] =>
+  targets.map((target) => target.name).sort();
 
 type Row =
-  | { name: string; rule: 'watch'; value: string | undefined; expected: Watch | null }
+  | {
+      name: string;
+      rule: 'watch';
+      value: string | undefined;
+      expected: Watch | null;
+    }
   | { name: string; rule: 'note'; expected: string[] }
   | {
       name: string;
@@ -44,7 +84,7 @@ type Row =
     };
 
 // DC-4, Invariant 3 (design-chat.md, Contract «Поток»; INT-1 A): the rule; its wiring is INT-4.
-describe('live notes go to the owner\'s streams and text parts only to the owner\'s stream that watches the agent', () => {
+describe("live notes go to the owner's streams and text parts only to the owner's stream that watches the agent", () => {
   it.each<Row>([
     {
       name: 'thread:<uuid> watches the conversation',
@@ -58,14 +98,39 @@ describe('live notes go to the owner\'s streams and text parts only to the owner
       value: `agent:${CHILD}`,
       expected: { kind: 'agent', agentId: CHILD },
     },
-    { name: 'thread: without an id watches nothing', rule: 'watch', value: 'thread:', expected: null },
-    { name: 'an unknown value watches nothing', rule: 'watch', value: 'foo', expected: null },
-    { name: 'an empty value watches nothing', rule: 'watch', value: '', expected: null },
-    { name: 'no value watches nothing', rule: 'watch', value: undefined, expected: null },
+    {
+      name: 'thread: without an id watches nothing',
+      rule: 'watch',
+      value: 'thread:',
+      expected: null,
+    },
+    {
+      name: 'an unknown value watches nothing',
+      rule: 'watch',
+      value: 'foo',
+      expected: null,
+    },
+    {
+      name: 'an empty value watches nothing',
+      rule: 'watch',
+      value: '',
+      expected: null,
+    },
+    {
+      name: 'no value watches nothing',
+      rule: 'watch',
+      value: undefined,
+      expected: null,
+    },
     {
       name: 'a tree note reaches every stream of the owner and none of a stranger',
       rule: 'note',
-      expected: ['owner agent', 'owner no watch', 'owner root agent', 'owner thread'],
+      expected: [
+        'owner agent',
+        'owner no watch',
+        'owner root agent',
+        'owner thread',
+      ],
     },
     {
       name: "a child's part reaches only the owner's stream watching that agent",
@@ -91,7 +156,9 @@ describe('live notes go to the owner\'s streams and text parts only to the owner
     } else if (row.rule === 'note') {
       expect(names(noteTargets('owner', streams))).toStrictEqual(row.expected);
     } else {
-      expect(names(deltaTargets(row.delta, streams))).toStrictEqual(row.expected);
+      expect(names(deltaTargets(row.delta, streams))).toStrictEqual(
+        row.expected,
+      );
     }
   });
 });

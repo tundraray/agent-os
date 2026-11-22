@@ -64,8 +64,14 @@ export interface RefusedField {
 
 export type SaveDecision =
   | { readonly kind: 'allowed' }
-  | ({ readonly kind: 'name_taken'; readonly reason: RecordNameTakenReason } & RefusedField)
-  | ({ readonly kind: 'refused'; readonly reason: LibraryRejectReason } & RefusedField);
+  | ({
+      readonly kind: 'name_taken';
+      readonly reason: RecordNameTakenReason;
+    } & RefusedField)
+  | ({
+      readonly kind: 'refused';
+      readonly reason: LibraryRejectReason;
+    } & RefusedField);
 
 /**
  * Whether the author may save the record (KD-4, Flow 1; DC-8–DC-10, AC-06.1, AC-06.2, AC-07.1–AC-07.3).
@@ -76,7 +82,13 @@ export type SaveDecision =
  */
 export function decideSave(input: SaveInput): SaveDecision {
   const nameTaken = takenNameReason(input);
-  if (nameTaken) return { kind: 'name_taken', reason: nameTaken, path: 'name', values: [input.name] };
+  if (nameTaken)
+    return {
+      kind: 'name_taken',
+      reason: nameTaken,
+      path: 'name',
+      values: [input.name],
+    };
   const refused = contentRefusal(input);
   if (refused) return { kind: 'refused', ...refused };
   return { kind: 'allowed' };
@@ -113,8 +125,18 @@ function contentRefusal({
 
   const serverRefusal =
     choices.scope === 'employee'
-      ? (refusedIn(parts, 'servers', 'all_servers_not_allowed', (server) => server === ALL_SERVERS) ??
-        refusedIn(parts, 'servers', 'server_not_allowed', outside(keptServers, choices.usableServers)))
+      ? (refusedIn(
+          parts,
+          'servers',
+          'all_servers_not_allowed',
+          (server) => server === ALL_SERVERS,
+        ) ??
+        refusedIn(
+          parts,
+          'servers',
+          'server_not_allowed',
+          outside(keptServers, choices.usableServers),
+        ))
       : refusedIn(
           parts,
           'servers',
@@ -148,7 +170,8 @@ function modelBreaks(
   choices: SaveChoices,
   keptModels: ReadonlySet<string>,
 ): (model: string) => boolean {
-  if (choices.scope === 'system') return outside(keptModels, choices.catalogueModels);
+  if (choices.scope === 'system')
+    return outside(keptModels, choices.catalogueModels);
   if (choices.allowedModels.length === 0) return () => false;
   return outside(new Set(), choices.allowedModels);
 }
@@ -172,7 +195,8 @@ function refusedIn(
   for (const part of parts) {
     const values = field === 'servers' ? part.servers : chosenModels([part]);
     const broken = values.filter(breaks);
-    if (broken.length > 0) return { reason, path: fieldPath(part, field), values: broken };
+    if (broken.length > 0)
+      return { reason, path: fieldPath(part, field), values: broken };
   }
   return null;
 }

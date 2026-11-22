@@ -20,10 +20,17 @@ const valuesOf = (settings: KnowledgeSettings): KnowledgeSettingsValues => ({
 });
 
 /** Called after `knowledgeSettingsRules` passed, so the text reads as a number. */
-async function save({ limitTokens, lessonsEnabled }: KnowledgeSettingsValues): Promise<void> {
+async function save({
+  limitTokens,
+  lessonsEnabled,
+}: KnowledgeSettingsValues): Promise<void> {
   const tokens = parseDecimal(limitTokens);
-  if (tokens === null) throw new Error('Knowledge settings: the place was sent unchecked');
-  await adminApi.knowledge.saveSettings({ limitTokens: tokens, lessonsEnabled });
+  if (tokens === null)
+    throw new Error('Knowledge settings: the place was sent unchecked');
+  await adminApi.knowledge.saveSettings({
+    limitTokens: tokens,
+    lessonsEnabled,
+  });
 }
 
 /** AS-01 under «Системные»: the place for knowledge in a run and the lessons switch, one «Сохранить» for both. */
@@ -32,7 +39,10 @@ export function KnowledgeSettingsForm() {
   const headingId = useId();
   const lessonsId = useId();
   const lessonsHintId = `${lessonsId}-hint`;
-  const settings = useResource(adminApi.knowledge.settings, 'knowledge:settings');
+  const settings = useResource(
+    adminApi.knowledge.settings,
+    'knowledge:settings',
+  );
   const data = settings.data;
 
   return (
@@ -41,7 +51,11 @@ export function KnowledgeSettingsForm() {
         {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={t('title')} columns={[]} state={resourceTableState(settings, t('loadFailed'))} />
+        <DataTable
+          caption={t('title')}
+          columns={[]}
+          state={resourceTableState(settings, t('loadFailed'))}
+        />
       ) : (
         // Every save moves `updatedAt`: the new read starts the form from the values the server now holds.
         <AdminForm<KnowledgeSettingsValues>
@@ -51,7 +65,10 @@ export function KnowledgeSettingsForm() {
           validate={knowledgeSettingsRules}
           hasChange={(values) => {
             const saved = valuesOf(data);
-            return values.limitTokens !== saved.limitTokens || values.lessonsEnabled !== saved.lessonsEnabled;
+            return (
+              values.limitTokens !== saved.limitTokens ||
+              values.lessonsEnabled !== saved.lessonsEnabled
+            );
           }}
           onSubmit={save}
           submitLabel={t('save')}
@@ -78,13 +95,21 @@ export function KnowledgeSettingsForm() {
                     // The Base UI checkbox is not a native field: the form's disabled fieldset does not reach it.
                     disabled={form.saving}
                     aria-describedby={lessonsHintId}
-                    onCheckedChange={(checked) => form.set('lessonsEnabled', checked)}
+                    onCheckedChange={(checked) =>
+                      form.set('lessonsEnabled', checked)
+                    }
                   />
-                  <FieldLabel htmlFor={lessonsId} className="text-data font-normal text-foreground">
+                  <FieldLabel
+                    htmlFor={lessonsId}
+                    className="text-data font-normal text-foreground"
+                  >
                     {t('lessonsEnabled')}
                   </FieldLabel>
                 </Field>
-                <FieldDescription id={lessonsHintId} className={cn(CAPTION, 'pl-6 text-muted-foreground')}>
+                <FieldDescription
+                  id={lessonsHintId}
+                  className={cn(CAPTION, 'pl-6 text-muted-foreground')}
+                >
                   {t('lessonsEnabledHint')}
                 </FieldDescription>
               </div>

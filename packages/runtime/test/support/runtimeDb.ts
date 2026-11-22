@@ -69,7 +69,9 @@ export interface HandlerRow {
 }
 
 /** Handler rows of the tasks, by task, step number and attempt. */
-export function handlerRowsOf(taskIds: readonly string[]): Promise<HandlerRow[]> {
+export function handlerRowsOf(
+  taskIds: readonly string[],
+): Promise<HandlerRow[]> {
   return select<HandlerRow>(
     `SELECT task_id AS "taskId", step_no AS "stepNo", attempt,
             resumed_after_loss AS "resumedAfterLoss", note

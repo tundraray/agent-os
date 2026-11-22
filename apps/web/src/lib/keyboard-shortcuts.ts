@@ -2,7 +2,8 @@
 export type Shortcut = 'new-chat' | 'toggle-sidebar';
 
 /** Layers that suspend the global shortcuts while open. */
-const MODAL_LAYER_SELECTOR = '[role="alertdialog"], [role="menu"], [role="dialog"][aria-modal="true"]';
+const MODAL_LAYER_SELECTOR =
+  '[role="alertdialog"], [role="menu"], [role="dialog"][aria-modal="true"]';
 
 /** The mobile drawer SB-13 (`ui/sidebar.tsx`): Ctrl/⌘+B still closes it. */
 const DRAWER_SELECTOR = '[data-slot="sidebar"][data-mobile="true"]';
@@ -27,7 +28,11 @@ export function matchShortcut(event: KeyboardEvent): Shortcut | null {
  */
 export function isShortcutBlocked(event: KeyboardEvent): boolean {
   const target = event.target;
-  if (target instanceof Element && target.closest(BLOCKED_AREA_SELECTOR) !== null) return true;
+  if (
+    target instanceof Element &&
+    target.closest(BLOCKED_AREA_SELECTOR) !== null
+  )
+    return true;
 
   const drawerPasses = matchShortcut(event) === 'toggle-sidebar';
   return Array.from(document.querySelectorAll(MODAL_LAYER_SELECTOR)).some(
@@ -39,13 +44,15 @@ export function isShortcutBlocked(event: KeyboardEvent): boolean {
 export type PlatformSource = { platform: string; userAgentData?: unknown };
 
 function userAgentDataPlatform(data: unknown): string | undefined {
-  if (typeof data !== 'object' || data === null || !('platform' in data)) return undefined;
+  if (typeof data !== 'object' || data === null || !('platform' in data))
+    return undefined;
   return typeof data.platform === 'string' ? data.platform : undefined;
 }
 
 /** macOS and iOS show ⌘ in shortcut hints. */
 export function isApplePlatform(source: PlatformSource): boolean {
-  const platform = userAgentDataPlatform(source.userAgentData) ?? source.platform;
+  const platform =
+    userAgentDataPlatform(source.userAgentData) ?? source.platform;
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
 

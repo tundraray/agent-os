@@ -19,7 +19,9 @@ export interface ContinuationInput {
  * itself) or a message carries the `resume.stopped` mark (plan Notes 5). Pure, so the step knows
  * before its commit that the open calls of a stopped agent are closed, not run.
  */
-export function continuationOf(input: ContinuationInput): Continuation | undefined {
+export function continuationOf(
+  input: ContinuationInput,
+): Continuation | undefined {
   const mark = input.messages
     .map(resumeMarkOf)
     .find((resume): resume is ResumeMark => resume !== undefined);

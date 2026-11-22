@@ -89,7 +89,10 @@ const MODEL_DEFAULTS_OBJECT_TYPE = 'model_defaults';
 type AuditObjectType = 'model' | 'grant' | typeof MODEL_DEFAULTS_OBJECT_TYPE;
 
 /** The two default models as the audit and the log show them, «было» and «стало». */
-type DefaultModels = Pick<AccessModelDefaultsRow, 'chatModel' | 'embeddingModel'>;
+type DefaultModels = Pick<
+  AccessModelDefaultsRow,
+  'chatModel' | 'embeddingModel'
+>;
 
 function defaultModelsOf(row: AccessModelDefaultsRow): DefaultModels {
   return { chatModel: row.chatModel, embeddingModel: row.embeddingModel };
@@ -241,9 +244,7 @@ export class AccessService implements AccessGate {
     const startedAt = Date.now();
     const [active, model] = await Promise.all([
       ownerId === null ? true : this.identity.isActive(ownerId),
-      this.models
-        .findDefaultEmbedding()
-        .then(toCatalogModelOrUndefined),
+      this.models.findDefaultEmbedding().then(toCatalogModelOrUndefined),
     ]);
     if (model !== undefined && model.purpose !== 'embedding')
       throw new Error(`default embedding model ${model.id} is a chat model`);
@@ -397,9 +398,7 @@ export class AccessService implements AccessGate {
   /** The model's grants go by cascade, a default on it is cleared (DC-6). 404 MODEL_NOT_FOUND. */
   async deleteModel(actorId: string, id: string): Promise<void> {
     await this.db.transaction(async () => {
-      const deleted = toCatalogModelOrUndefined(
-        await this.models.delete(id),
-      );
+      const deleted = toCatalogModelOrUndefined(await this.models.delete(id));
       if (deleted === undefined) throw accessError('MODEL_NOT_FOUND');
       await this.audit(actorId, 'model', id, deleted, null);
     });
@@ -640,9 +639,7 @@ export class AccessService implements AccessGate {
   }
 
   /** The catalogue model of the id; `undefined` for a missing one. */
-  private async findModel(
-    id: string,
-  ): Promise<CatalogModel | undefined> {
+  private async findModel(id: string): Promise<CatalogModel | undefined> {
     return toCatalogModelOrUndefined(await this.models.find(id));
   }
 
@@ -657,9 +654,7 @@ export class AccessService implements AccessGate {
   }
 
   private async grantOr404(id: string): Promise<Grant> {
-    const stored = isUuid(id)
-      ? await this.grants.find(id)
-      : undefined;
+    const stored = isUuid(id) ? await this.grants.find(id) : undefined;
     if (stored === undefined) throw accessError('GRANT_NOT_FOUND');
     const [grant] = await this.named([toStoredGrant(stored)]);
     if (grant === undefined) throw new Error(`grant ${id} lost its holder`);
@@ -667,9 +662,7 @@ export class AccessService implements AccessGate {
   }
 
   /** The grants with the name of each role holder, read in `identity`. */
-  private async named(
-    grants: readonly StoredGrant[],
-  ): Promise<Grant[]> {
+  private async named(grants: readonly StoredGrant[]): Promise<Grant[]> {
     const roles = await this.identity.roleNames(
       grants.flatMap(({ holder }) => (holder.kind === 'role' ? holder.id : [])),
     );

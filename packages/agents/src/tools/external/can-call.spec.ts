@@ -12,11 +12,23 @@ function mcpTool(server: string, tool: string, readOnly: boolean): SessionTool {
     name,
     description: tool,
     inputSchema: { type: 'object' },
-    mcp: { name, server, tool, description: tool, inputSchema: { type: 'object' }, readOnly, display: {} },
+    mcp: {
+      name,
+      server,
+      tool,
+      description: tool,
+      inputSchema: { type: 'object' },
+      readOnly,
+      display: {},
+    },
   };
 }
 
-const START_AGENT_ARGS = z.object({ description: z.string(), agent: z.string(), prompt: z.string() });
+const START_AGENT_ARGS = z.object({
+  description: z.string(),
+  agent: z.string(),
+  prompt: z.string(),
+});
 
 const SESSION_TOOLS: readonly SessionTool[] = [
   // readOnlyHint: true

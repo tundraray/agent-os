@@ -59,7 +59,10 @@ export type CallCheck =
     };
 
 /** Whether the owner may call this tool of this server: the answer of `AccessGate.tools` for him. */
-export type PairAllowed = Extract<ToolAccess, { readonly kind: 'allowed' }>['allows'];
+export type PairAllowed = Extract<
+  ToolAccess,
+  { readonly kind: 'allowed' }
+>['allows'];
 
 /** A call refused because the gate does not allow its server–tool pair. */
 export interface NoAccess {
@@ -68,7 +71,11 @@ export interface NoAccess {
 }
 
 /** The `access_denied` record of a tool call refused `no_access` (KD-6): one per refusal. */
-export function toolDeniedEntry(ownerId: string, server: string, tool: string): AccessDeniedEntry {
+export function toolDeniedEntry(
+  ownerId: string,
+  server: string,
+  tool: string,
+): AccessDeniedEntry {
   return {
     kind: 'access_denied',
     actor: ownerId,
@@ -111,16 +118,27 @@ export interface CheckReportScope {
  */
 export async function reportCheck(
   checked: CallCheck,
-  call: { readonly callId: string; readonly server: string | null; readonly tool: string },
+  call: {
+    readonly callId: string;
+    readonly server: string | null;
+    readonly tool: string;
+  },
   scope: CheckReportScope,
 ): Promise<void> {
   const { callId, server, tool } = call;
   if (server === null) return;
   if (checked.kind === 'allowed' && checked.unchecked !== undefined) {
-    scope.logger.warn('tool arguments not checked', { callId, server, tool, reason: checked.unchecked });
+    scope.logger.warn('tool arguments not checked', {
+      callId,
+      server,
+      tool,
+      reason: checked.unchecked,
+    });
   }
   if (checked.kind === 'refused' && checked.reason === 'invalid_arguments') {
-    await scope.audit(toolRefusedEntry(scope.ownerId, server, tool, 'invalid_arguments'));
+    await scope.audit(
+      toolRefusedEntry(scope.ownerId, server, tool, 'invalid_arguments'),
+    );
   }
 }
 
@@ -137,9 +155,18 @@ type SchemaCheck =
   | { readonly kind: 'unchecked'; readonly reason: string };
 
 /** Keywords left to the server: a server-supplied regex or format runs synchronously and could block the event loop (ReDoS). */
-const SERVER_ONLY_KEYWORDS = new Set(['pattern', 'patternProperties', 'format']);
+const SERVER_ONLY_KEYWORDS = new Set([
+  'pattern',
+  'patternProperties',
+  'format',
+]);
 /** Keywords whose keys are property or definition names, not keywords. */
-const NAME_MAP_KEYWORDS = new Set(['properties', '$defs', 'definitions', 'dependentSchemas']);
+const NAME_MAP_KEYWORDS = new Set([
+  'properties',
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+]);
 /** Keywords whose values are data, not subschemas. */
 const DATA_KEYWORDS = new Set(['const', 'enum', 'default', 'examples']);
 
@@ -151,9 +178,17 @@ function withoutServerOnlyKeywords(schema: unknown): unknown {
   for (const [key, value] of Object.entries(schema)) {
     if (SERVER_ONLY_KEYWORDS.has(key)) continue;
     if (DATA_KEYWORDS.has(key)) copy[key] = value;
-    else if (NAME_MAP_KEYWORDS.has(key) && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    else if (
+      NAME_MAP_KEYWORDS.has(key) &&
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
       copy[key] = Object.fromEntries(
-        Object.entries(value).map(([name, subschema]) => [name, withoutServerOnlyKeywords(subschema)]),
+        Object.entries(value).map(([name, subschema]) => [
+          name,
+          withoutServerOnlyKeywords(subschema),
+        ]),
       );
     } else copy[key] = withoutServerOnlyKeywords(value);
   }
@@ -164,28 +199,45 @@ function withoutServerOnlyKeywords(schema: unknown): unknown {
  * Holds MCP arguments against the schema the server listed, without its regex and format keywords. A schema
  * of an unknown dialect, one that does not compile, or a throw while validating: the call goes unchecked.
  */
-function checkMcpArgs(schema: McpTool['inputSchema'], args: unknown): SchemaCheck {
+function checkMcpArgs(
+  schema: McpTool['inputSchema'],
+  args: unknown,
+): SchemaCheck {
   try {
     // A fresh engine per call, never a shared one: ajv resolves a schema with an `$id` by that `$id`, so two
     // tools declaring the same `$id` would have one server's calls checked against another server's schema.
     const validator = new AjvJsonSchemaValidator();
-    const result = validator.getValidator(withoutServerOnlyKeywords(schema) as McpTool['inputSchema'])(args);
-    return result.valid ? { kind: 'valid' } : { kind: 'invalid', text: result.errorMessage ?? '' };
+    const result = validator.getValidator(
+      withoutServerOnlyKeywords(schema) as McpTool['inputSchema'],
+    )(args);
+    return result.valid
+      ? { kind: 'valid' }
+      : { kind: 'invalid', text: result.errorMessage ?? '' };
   } catch (error) {
-    return { kind: 'unchecked', reason: error instanceof Error ? error.message : String(error) };
+    return {
+      kind: 'unchecked',
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
 /** A built-in tool's argument error: each issue by its path and what was expected. */
 function zodErrorText(error: z.ZodError): string {
   return error.issues
-    .map((issue) => `${issue.path.length === 0 ? 'arguments' : issue.path.join('.')}: ${issue.message}`)
+    .map(
+      (issue) =>
+        `${issue.path.length === 0 ? 'arguments' : issue.path.join('.')}: ${issue.message}`,
+    )
     .join('; ');
 }
 
 /** The refusal of a call whose arguments do not fit, its text cut to the bound. */
 function invalidArguments(text: string): CallCheck {
-  return { kind: 'refused', reason: 'invalid_arguments', text: cutText(text, ARGUMENT_ERROR_MAX_CHARS) };
+  return {
+    kind: 'refused',
+    reason: 'invalid_arguments',
+    text: cutText(text, ARGUMENT_ERROR_MAX_CHARS),
+  };
 }
 
 /** The check of a call against its session's tools, the gate's answer and the tool's schema: `ToolRunner.check`. */
@@ -198,15 +250,23 @@ export function checkCall(
   },
 ): CallCheck {
   const { sessionTools, caller, allows } = scope;
-  const tool = sessionTools.find((candidate) => candidate.name === requested.toolName);
-  if (tool === undefined) return { kind: 'refused', reason: 'tool_not_in_definition' };
+  const tool = sessionTools.find(
+    (candidate) => candidate.name === requested.toolName,
+  );
+  if (tool === undefined)
+    return { kind: 'refused', reason: 'tool_not_in_definition' };
   if (isMcp(tool) && !allows(tool.mcp.server, tool.mcp.tool)) {
     return { kind: 'refused', reason: 'no_access' };
   }
   const schema = isMcp(tool) ? MCP_ARGS_SCHEMA : tool.inputSchema;
   const parsed = schema.safeParse(requested.args);
   if (!parsed.success) return invalidArguments(zodErrorText(parsed.error));
-  const call: ResolvedCall = { callId: requested.callId, tool, args: parsed.data, caller };
+  const call: ResolvedCall = {
+    callId: requested.callId,
+    tool,
+    args: parsed.data,
+    caller,
+  };
   if (!isMcp(tool)) return { kind: 'allowed', call };
   const schemaCheck = checkMcpArgs(tool.mcp.inputSchema, parsed.data);
   switch (schemaCheck.kind) {
@@ -272,6 +332,7 @@ export async function admit(
   logger: Logger,
 ): Promise<NoAccess | undefined> {
   const allows = await pairsOf(access, call.callId, call.caller, logger);
-  if (!isMcp(call.tool) || allows(call.tool.mcp.server, call.tool.mcp.tool)) return undefined;
+  if (!isMcp(call.tool) || allows(call.tool.mcp.server, call.tool.mcp.tool))
+    return undefined;
   return refuseNoAccess(audit, call, call.tool.mcp, logger);
 }

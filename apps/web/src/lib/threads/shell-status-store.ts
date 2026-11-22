@@ -1,13 +1,18 @@
-import { createStore, type StoreApi } from "zustand/vanilla";
-import type { LibraryErrorContext } from "@/lib/library/library-errors";
+import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { LibraryErrorContext } from '@/lib/library/library-errors';
 
-export type HistoryStatus = "loading" | "ready" | "not_found" | "load_failed" | "deleted";
+export type HistoryStatus =
+  'loading' | 'ready' | 'not_found' | 'load_failed' | 'deleted';
 
 /**
  * A message the server did not accept: its text, and the refusal with what the sender knew of it — the
  * composer words the notice under the field in the interface language (`describeLibraryError`).
  */
-export type SendFailure = { text: string; cause: unknown; context: LibraryErrorContext };
+export type SendFailure = {
+  text: string;
+  cause: unknown;
+  context: LibraryErrorContext;
+};
 
 /**
  * Shell facts the assistant-ui runtime does not keep (or swallows). The store never mirrors
@@ -61,7 +66,9 @@ export function createShellStatusStore(): ShellStatusStore {
           : { history: { ...state.history, [remoteId]: status } },
       ),
     setLoadMoreFailed: (failed) =>
-      set((state) => (state.loadMoreFailed === failed ? state : { loadMoreFailed: failed })),
+      set((state) =>
+        state.loadMoreFailed === failed ? state : { loadMoreFailed: failed },
+      ),
     setTitleWaiting: (remoteId, waiting) =>
       set((state) => {
         if ((state.titleWaiting[remoteId] === true) === waiting) return state;
@@ -80,6 +87,7 @@ export function createShellStatusStore(): ShellStatusStore {
         titleWaiting: without(state.titleWaiting, remoteId),
         activityAt: without(state.activityAt, remoteId),
       })),
-    setNewThreadSendFailure: (failure) => set({ newThreadSendFailure: failure }),
+    setNewThreadSendFailure: (failure) =>
+      set({ newThreadSendFailure: failure }),
   }));
 }

@@ -31,7 +31,8 @@ export interface Tracker {
 @Injectable()
 export class Trackers {
   constructor(
-    @Inject(RuntimeTrackersRepository) private readonly rows: RuntimeTrackersRepository,
+    @Inject(RuntimeTrackersRepository)
+    private readonly rows: RuntimeTrackersRepository,
   ) {}
 
   /**
@@ -42,7 +43,9 @@ export class Trackers {
     const trackers = await this.rows.listOwned(taskId, ownerId);
     if (trackers.length === 0) return [];
 
-    const tasks = await this.rows.listTasks(trackers.map((tracker) => tracker.trackerId));
+    const tasks = await this.rows.listTasks(
+      trackers.map((tracker) => tracker.trackerId),
+    );
 
     return trackers.map((tracker) => ({
       trackerId: tracker.trackerId,

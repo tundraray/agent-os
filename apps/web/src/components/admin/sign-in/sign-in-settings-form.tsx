@@ -20,7 +20,10 @@ import { DataTable, resourceTableState } from '../data-table';
  * DC-7: the form shows hours; until an address is saved, the address the administrator opened the web at,
  * which is also where the browser reaches the API. Runs only on `useResource` data, so in the browser.
  */
-const valuesOf = (format: Formatter, settings: SignInSettings): SignInSettingsValues => ({
+const valuesOf = (
+  format: Formatter,
+  settings: SignInSettings,
+): SignInSettingsValues => ({
   publicUrl: settings.publicUrl ?? window.location.origin,
   idleHours: minutesToHours(format, settings.idleMinutes),
   absoluteHours: minutesToHours(format, settings.absoluteMinutes),
@@ -30,7 +33,11 @@ const valuesOf = (format: Formatter, settings: SignInSettings): SignInSettingsVa
  * UXRD AD-14: one form, one «Сохранить» — the address and both limits go in one `PUT`, in minutes (FR-26).
  * Called after `signInSettingsRules` passed, so both hours read as numbers.
  */
-async function save({ publicUrl, idleHours, absoluteHours }: SignInSettingsValues): Promise<void> {
+async function save({
+  publicUrl,
+  idleHours,
+  absoluteHours,
+}: SignInSettingsValues): Promise<void> {
   await adminApi.signInSettings.update({
     publicUrl: publicUrl.trim(),
     idleMinutes: minutesOf(idleHours),
@@ -40,7 +47,8 @@ async function save({ publicUrl, idleHours, absoluteHours }: SignInSettingsValue
 
 function minutesOf(hours: string): number {
   const minutes = hoursToMinutes(hours);
-  if (minutes === null) throw new Error('Sign-in settings: hours were sent unchecked');
+  if (minutes === null)
+    throw new Error('Sign-in settings: hours were sent unchecked');
   return minutes;
 }
 
@@ -58,7 +66,11 @@ export function SignInSettingsForm() {
         {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={t('title')} columns={[]} state={resourceTableState(settings, t('loadFailed'))} />
+        <DataTable
+          caption={t('title')}
+          columns={[]}
+          state={resourceTableState(settings, t('loadFailed'))}
+        />
       ) : (
         <>
           {/* Every save moves `updatedAt`: the new read starts the form from the values the server now holds. */}
@@ -107,7 +119,9 @@ export function SignInSettingsForm() {
               </>
             )}
           </AdminForm>
-          <p className={cn(CAPTION, 'max-w-160 text-muted-foreground')}>{t('note')}</p>
+          <p className={cn(CAPTION, 'max-w-160 text-muted-foreground')}>
+            {t('note')}
+          </p>
         </>
       )}
     </section>

@@ -1,7 +1,11 @@
 import type { Logger } from '@agent-os/common';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 
-import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-listing';
+import {
+  CHAT_LISTING_BUDGET,
+  type ChatListing,
+  chatListing,
+} from '../chat-listing';
 import type { RecordLibrary } from '../start/record-library';
 import type { ToolDeclaration } from '../tools/tool';
 import type { AgentDeps } from './agent-deps';
@@ -46,9 +50,15 @@ export class ChatAgent extends BaseAgent {
    * The model call's declaration lists whom the chat may start as the employee's library is now: the agents
    * for `start_agent`, the deep agents for `start_deep_agent`. The check of its calls needs no listing.
    */
-  override async offeredDeclaration(ctx: StepContext): Promise<ToolDeclaration> {
+  override async offeredDeclaration(
+    ctx: StepContext,
+  ): Promise<ToolDeclaration> {
     const listing = await this.listing(ctx);
-    return { ...this.declaration, startable: listing.agents, deepAgents: listing.deepAgents };
+    return {
+      ...this.declaration,
+      startable: listing.agents,
+      deepAgents: listing.deepAgents,
+    };
   }
 
   /** The chat listing of the root's owner (KD-4): his `listVisible` and his session counts, read now. */
@@ -57,26 +67,43 @@ export class ChatAgent extends BaseAgent {
     const startedAt = Date.now();
     const headers = await library.listVisible(ctx.ownerId);
     const counts = await sessionRows.recordCounts(ctx.ownerId);
-    const sessionCounts = new Map(counts.map((row) => [row.recordId, row.sessions]));
-    const listing = chatListing({ headers, sessionCounts, budget: CHAT_LISTING_BUDGET });
-    this.chatDeps.logger.child({ service: 'agents.tools' }).info('chat listing built', {
-      ownerId: ctx.ownerId,
-      agentId: ctx.taskId,
-      visible: headers.length,
-      described: listing.described,
-      length: [...listing.agents, ...listing.deepAgents].reduce((sum, line) => sum + line.length, 0),
-      durationMs: Date.now() - startedAt,
+    const sessionCounts = new Map(
+      counts.map((row) => [row.recordId, row.sessions]),
+    );
+    const listing = chatListing({
+      headers,
+      sessionCounts,
+      budget: CHAT_LISTING_BUDGET,
     });
+    this.chatDeps.logger
+      .child({ service: 'agents.tools' })
+      .info('chat listing built', {
+        ownerId: ctx.ownerId,
+        agentId: ctx.taskId,
+        visible: headers.length,
+        described: listing.described,
+        length: [...listing.agents, ...listing.deepAgents].reduce(
+          (sum, line) => sum + line.length,
+          0,
+        ),
+        durationMs: Date.now() - startedAt,
+      });
     return listing;
   }
 
   /** Every message of the employee starts a new turn (DC-1). */
-  override turnsAfterDelivery(turns: number, messages: readonly StepMessage[]): number {
+  override turnsAfterDelivery(
+    turns: number,
+    messages: readonly StepMessage[],
+  ): number {
     return chatTurns(turns, messages);
   }
 
   /** An answer without tool calls is the chat's reply: it waits for the next message, whatever its children do. */
   override async endOfTurn(): Promise<TurnEnd> {
-    return { ending: { kind: 'wait' }, inFlight: { unfinished: 0, pending: 0 } };
+    return {
+      ending: { kind: 'wait' },
+      inFlight: { unfinished: 0, pending: 0 },
+    };
   }
 }

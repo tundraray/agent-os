@@ -1,6 +1,16 @@
 import type { Logger } from '@agent-os/common';
-import { type EmbeddingFailureReason, modelProvider } from '@agent-os/contracts';
-import { type CallUsage, CLOCK, type Clock, type ModelPrice, PLATFORM_OWNER_ID, TokenLedger } from '@agent-os/runtime';
+import {
+  type EmbeddingFailureReason,
+  modelProvider,
+} from '@agent-os/contracts';
+import {
+  type CallUsage,
+  CLOCK,
+  type Clock,
+  type ModelPrice,
+  PLATFORM_OWNER_ID,
+  TokenLedger,
+} from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { AccessGate } from '../access-gate';
@@ -13,10 +23,20 @@ import {
   providerRetryDelayMs,
 } from '../model/retry-policy';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
-import { type EmbeddingInputType, providerAdapter } from '../providers/adapters';
+import {
+  type EmbeddingInputType,
+  providerAdapter,
+} from '../providers/adapters';
 import { providerState } from '../providers/provider-readiness';
-import { AgentsProviders, type ProviderConnection } from '../providers/provider-registry';
-import { type EmbeddingBatch, type EmbeddingClient, EmbeddingTimeoutError } from './embedding-client';
+import {
+  AgentsProviders,
+  type ProviderConnection,
+} from '../providers/provider-registry';
+import {
+  type EmbeddingBatch,
+  type EmbeddingClient,
+  EmbeddingTimeoutError,
+} from './embedding-client';
 
 /** At most this many texts go in one provider request; a longer list goes in batches, one after another (DC-9). */
 export const EMBEDDING_BATCH_SIZE = 100;
@@ -57,7 +77,11 @@ export type EmbedResult = EmbedVectors | EmbedUnavailable;
 
 /** The default embedding model now, or `model_not_configured`. */
 export type EmbeddingModelChoice =
-  | { readonly kind: 'model'; readonly model: string; readonly dimensions: number }
+  | {
+      readonly kind: 'model';
+      readonly model: string;
+      readonly dimensions: number;
+    }
   | {
       readonly kind: 'unavailable';
       readonly reason: 'model_not_configured';
@@ -104,21 +128,39 @@ function unitLength(vector: readonly number[]): number[] {
 
 /** The input-only price of an embedding model: the catalogue's input rate, zeros elsewhere (KD-6). */
 function inputPrice(inputUsdPerMTok: number): ModelPrice {
-  return { inputUsdPerMTok, outputUsdPerMTok: 0, cacheReadUsdPerMTok: 0, cacheWriteUsdPerMTok: 0 };
+  return {
+    inputUsdPerMTok,
+    outputUsdPerMTok: 0,
+    cacheReadUsdPerMTok: 0,
+    cacheWriteUsdPerMTok: 0,
+  };
 }
 
 function inputUsage(inputTokens: number): CallUsage {
-  return { inputTokens, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  return {
+    inputTokens,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
 }
 
-function unavailable(reason: EmbeddingFailureReason, model: string | null, message: string): EmbedUnavailable {
+function unavailable(
+  reason: EmbeddingFailureReason,
+  model: string | null,
+  message: string,
+): EmbedUnavailable {
   return { kind: 'unavailable', reason, model, message };
 }
 
 /** The reason after the retries: the chat's `provider_tools_rejected` cannot apply to embeddings. */
 function failure(call: EmbedCall, error: ProviderError): EmbedUnavailable {
-  const status = error.statusCode === null ? '' : `, status ${error.statusCode}`;
-  const reason = error.reason === 'provider_tools_rejected' ? 'provider_error' : error.reason;
+  const status =
+    error.statusCode === null ? '' : `, status ${error.statusCode}`;
+  const reason =
+    error.reason === 'provider_tools_rejected'
+      ? 'provider_error'
+      : error.reason;
   const message = `Embedding model ${call.model} of provider ${call.connection.name} failed: ${reason}${status}`;
   return unavailable(reason, call.model, message);
 }
@@ -138,7 +180,8 @@ export class AgentsEmbeddings {
     /** Asked once per `embed`: the owner is enabled, and the model with its input price and dimensions. */
     @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'embedding'>,
     /** The provider's connection, read on every `embed`, never kept (KD-1). */
-    @Inject(AgentsProviders) private readonly providers: Pick<AgentsProviders, 'connection'>,
+    @Inject(AgentsProviders)
+    private readonly providers: Pick<AgentsProviders, 'connection'>,
     @Inject(TokenLedger) private readonly ledger: Pick<TokenLedger, 'record'>,
     /** Times the pauses between retries. */
     @Inject(CLOCK) private readonly clock: Clock,
@@ -179,7 +222,14 @@ export class AgentsEmbeddings {
       });
     } else {
       const { reason, model, message } = result;
-      logger.warn('embeddings unavailable', { model, reason, message, ownerId: owner, taskId, durationMs });
+      logger.warn('embeddings unavailable', {
+        model,
+        reason,
+        message,
+        ownerId: owner,
+        taskId,
+        durationMs,
+      });
     }
     return result;
   }
@@ -188,16 +238,38 @@ export class AgentsEmbeddings {
   async model(): Promise<EmbeddingModelChoice> {
     const verdict = await this.access.embedding(null);
     if (verdict.kind === 'allowed') {
-      return { kind: 'model', model: verdict.model, dimensions: verdict.dimensions };
+      return {
+        kind: 'model',
+        model: verdict.model,
+        dimensions: verdict.dimensions,
+      };
     }
-    return { kind: 'unavailable', reason: 'model_not_configured', model: null, message: NOT_CONFIGURED_MESSAGE };
+    return {
+      kind: 'unavailable',
+      reason: 'model_not_configured',
+      model: null,
+      message: NOT_CONFIGURED_MESSAGE,
+    };
   }
 
   /** Anything that is no provider rejection (a malformed answer, a kind without embeddings) is `provider_error`. */
-  private rejectionOf(error: unknown, connection: ProviderConnection): ProviderError {
+  private rejectionOf(
+    error: unknown,
+    connection: ProviderConnection,
+  ): ProviderError {
     if (error instanceof EmbeddingTimeoutError) return TIMED_OUT;
-    const rejection = classifyRejection(error, providerAdapter(connection.kind));
-    return rejection ?? { statusCode: null, retryable: false, reason: 'provider_error', responseBody: null };
+    const rejection = classifyRejection(
+      error,
+      providerAdapter(connection.kind),
+    );
+    return (
+      rejection ?? {
+        statusCode: null,
+        retryable: false,
+        reason: 'provider_error',
+        responseBody: null,
+      }
+    );
   }
 
   /** Writes the batch's ledger row: the provider's count, or the estimate by bytes (DC-11). */
@@ -225,7 +297,11 @@ export class AgentsEmbeddings {
       estimated,
       durationMs,
     };
-    if (estimated) call.request.logger.warn('embedding batch recorded with estimated usage', fields);
+    if (estimated)
+      call.request.logger.warn(
+        'embedding batch recorded with estimated usage',
+        fields,
+      );
     else call.request.logger.info('embedding batch recorded', fields);
   }
 
@@ -233,7 +309,10 @@ export class AgentsEmbeddings {
    * One batch with up to two retries of a provider error at 1 and 3 seconds. A request the provider rejected
    * leaves no ledger row; a stop that cut a sent request is recorded as an estimate (Invariant 6) and rejects.
    */
-  private async sendBatch(call: EmbedCall, texts: readonly string[]): Promise<BatchOutcome> {
+  private async sendBatch(
+    call: EmbedCall,
+    texts: readonly string[],
+  ): Promise<BatchOutcome> {
     const { signal, logger } = call.request;
     for (let retries = 0; ; retries += 1) {
       signal.throwIfAborted();
@@ -251,7 +330,10 @@ export class AgentsEmbeddings {
       } catch (caught) {
         const durationMs = this.clock.now().getTime() - startedAt;
         if (signal.aborted) {
-          if (classifyRejection(caught, providerAdapter(call.connection.kind)) === null) {
+          if (
+            classifyRejection(caught, providerAdapter(call.connection.kind)) ===
+            null
+          ) {
             await this.record(call, texts, null, durationMs);
           }
           throw signal.reason;
@@ -269,11 +351,17 @@ export class AgentsEmbeddings {
           attempt: retries + 1,
           durationMs,
         });
-        if (!error.retryable || retries === PROVIDER_RETRIES) return { kind: 'failed', error };
+        if (!error.retryable || retries === PROVIDER_RETRIES)
+          return { kind: 'failed', error };
         await pause(this.clock, providerRetryDelayMs(retries + 1), signal);
         continue;
       }
-      await this.record(call, texts, batch.inputTokens, this.clock.now().getTime() - startedAt);
+      await this.record(
+        call,
+        texts,
+        batch.inputTokens,
+        this.clock.now().getTime() - startedAt,
+      );
       return { kind: 'answered', batch };
     }
   }
@@ -283,38 +371,69 @@ export class AgentsEmbeddings {
     const { texts } = call.request;
     const vectors: number[][] = [];
     for (let start = 0; start < texts.length; start += EMBEDDING_BATCH_SIZE) {
-      const outcome = await this.sendBatch(call, texts.slice(start, start + EMBEDDING_BATCH_SIZE));
+      const outcome = await this.sendBatch(
+        call,
+        texts.slice(start, start + EMBEDDING_BATCH_SIZE),
+      );
       if (outcome.kind === 'failed') return failure(call, outcome.error);
       // The batch's row is written already: the provider counted it (AC-07.4).
-      const wrong = outcome.batch.vectors.find((vector) => vector.length !== call.dimensions);
+      const wrong = outcome.batch.vectors.find(
+        (vector) => vector.length !== call.dimensions,
+      );
       if (wrong !== undefined) {
         const message = `Embedding model ${call.model} answered a vector of ${wrong.length} dimensions, expected ${call.dimensions}`;
         return unavailable('dimension_mismatch', call.model, message);
       }
       vectors.push(...outcome.batch.vectors.map(unitLength));
     }
-    return { kind: 'vectors', vectors, model: call.model, dimensions: call.dimensions };
+    return {
+      kind: 'vectors',
+      vectors,
+      model: call.model,
+      dimensions: call.dimensions,
+    };
   }
 
   /** The verdict, the empty list and the provider's readiness: everything decided without a request. */
-  private async callOf(request: EmbedRequest, owner: string): Promise<EmbedCall | EmbedResult> {
+  private async callOf(
+    request: EmbedRequest,
+    owner: string,
+  ): Promise<EmbedCall | EmbedResult> {
     const verdict = await this.access.embedding(request.ownerId);
     if (verdict.kind === 'refused') {
       const message =
-        verdict.reason === 'owner_disabled' ? `Owner ${owner} is disabled or unknown` : NOT_CONFIGURED_MESSAGE;
+        verdict.reason === 'owner_disabled'
+          ? `Owner ${owner} is disabled or unknown`
+          : NOT_CONFIGURED_MESSAGE;
       return unavailable(verdict.reason, null, message);
     }
     const { model, dimensions } = verdict;
-    if (request.texts.length === 0) return { kind: 'vectors', vectors: [], model, dimensions };
+    if (request.texts.length === 0)
+      return { kind: 'vectors', vectors: [], model, dimensions };
     const provider = modelProvider(model);
     const connection = await this.providers.connection(provider);
     if (connection === null) {
-      return unavailable('provider_missing', model, `Provider ${provider} of model ${model} is not registered`);
+      return unavailable(
+        'provider_missing',
+        model,
+        `Provider ${provider} of model ${model} is not registered`,
+      );
     }
     const state = providerState(connection);
     if (state !== 'ready') {
-      return unavailable(`provider_${state}`, model, `Provider ${provider} of model ${model} is ${state}`);
+      return unavailable(
+        `provider_${state}`,
+        model,
+        `Provider ${provider} of model ${model} is ${state}`,
+      );
     }
-    return { request, owner, model, price: inputPrice(verdict.inputUsdPerMTok), dimensions, connection };
+    return {
+      request,
+      owner,
+      model,
+      price: inputPrice(verdict.inputUsdPerMTok),
+      dimensions,
+      connection,
+    };
   }
 }

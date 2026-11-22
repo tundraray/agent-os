@@ -4,7 +4,10 @@ import { setTestMedia } from '@/test/setup';
 import { focusAfterNewChat, focusShellTarget, isFinePointer } from './focus';
 
 /** The two focus targets as the shell renders them: the composer field and HD-03. */
-function mountTargets(): { composer: HTMLTextAreaElement; pageTitle: HTMLHeadingElement } {
+function mountTargets(): {
+  composer: HTMLTextAreaElement;
+  pageTitle: HTMLHeadingElement;
+} {
   const pageTitle = document.createElement('h1');
   pageTitle.tabIndex = -1;
   pageTitle.dataset.shellFocus = 'page-title';
@@ -22,16 +25,20 @@ describe('lib/focus — pointer rule (AC-03.1, UXRD 7.4)', () => {
   it.each([
     { pointer: 'fine', fine: true, target: 'composer' },
     { pointer: 'coarse', fine: false, target: 'page-title' },
-  ] as const)('$pointer pointer: «Новый чат» focuses $target', async ({ pointer, fine, target }) => {
-    setTestMedia({ pointer });
-    const elements = mountTargets();
+  ] as const)(
+    '$pointer pointer: «Новый чат» focuses $target',
+    async ({ pointer, fine, target }) => {
+      setTestMedia({ pointer });
+      const elements = mountTargets();
 
-    focusAfterNewChat();
+      focusAfterNewChat();
 
-    expect(isFinePointer()).toBe(fine);
-    const expected = target === 'composer' ? elements.composer : elements.pageTitle;
-    await waitFor(() => expect(expected).toHaveFocus());
-  });
+      expect(isFinePointer()).toBe(fine);
+      const expected =
+        target === 'composer' ? elements.composer : elements.pageTitle;
+      await waitFor(() => expect(expected).toHaveFocus());
+    },
+  );
 
   // L1-7: from an agent page the outgoing view's h1 takes focus first, then the route replaces it.
   it('focuses the target the transition renders after replacing the outgoing view', async () => {

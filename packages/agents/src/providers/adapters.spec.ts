@@ -1,7 +1,14 @@
-import type { ModelProviderCheck, ModelProviderKind } from '@agent-os/contracts';
+import type {
+  ModelProviderCheck,
+  ModelProviderKind,
+} from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { type EmbeddingInputType, type ProviderOptions, providerAdapter } from './adapters';
+import {
+  type EmbeddingInputType,
+  type ProviderOptions,
+  providerAdapter,
+} from './adapters';
 import { type CheckFetch, checkProvider } from './provider-check';
 import { PROVIDER_KINDS } from './provider-kinds';
 import type { ProviderConnection } from './provider-registry';
@@ -22,7 +29,9 @@ interface KindRow {
   readonly keyHeader: Readonly<Record<string, string>>;
   readonly modelProvider: string;
   readonly cacheMark: ProviderOptions | null;
-  readonly embeddingOptions: Readonly<Record<EmbeddingInputType, ProviderOptions | undefined>> | null;
+  readonly embeddingOptions: Readonly<
+    Record<EmbeddingInputType, ProviderOptions | undefined>
+  > | null;
   readonly toolsBody: string;
   readonly otherBody: string;
 }
@@ -37,7 +46,8 @@ const ROWS: readonly KindRow[] = [
     embeddingOptions: null,
     toolsBody:
       '{"type":"error","error":{"type":"invalid_request_error","message":"tools.0.custom.input_schema: JSON schema is invalid"}}',
-    otherBody: '{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: Field required"}}',
+    otherBody:
+      '{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: Field required"}}',
   },
   {
     kind: 'gemini',
@@ -46,12 +56,23 @@ const ROWS: readonly KindRow[] = [
     modelProvider: 'google.generative-ai',
     cacheMark: null,
     embeddingOptions: {
-      document: { google: { taskType: 'RETRIEVAL_DOCUMENT', outputDimensionality: DIMENSIONS } },
-      query: { google: { taskType: 'RETRIEVAL_QUERY', outputDimensionality: DIMENSIONS } },
+      document: {
+        google: {
+          taskType: 'RETRIEVAL_DOCUMENT',
+          outputDimensionality: DIMENSIONS,
+        },
+      },
+      query: {
+        google: {
+          taskType: 'RETRIEVAL_QUERY',
+          outputDimensionality: DIMENSIONS,
+        },
+      },
     },
     toolsBody:
       '{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \\"additionalProperties\\" at \'tools[0].function_declarations[0].parameters\': Cannot find field.","status":"INVALID_ARGUMENT"}}',
-    otherBody: '{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}',
+    otherBody:
+      '{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}',
   },
   {
     kind: 'openai_compatible',
@@ -73,7 +94,11 @@ interface SentRequest {
 }
 
 /** A provider that answers every request with `status` and `body`, recording what it was sent. */
-function answering(status: number, body: string, sent: SentRequest[]): CheckFetch {
+function answering(
+  status: number,
+  body: string,
+  sent: SentRequest[],
+): CheckFetch {
   return async (url, init) => {
     sent.push({ url, headers: init.headers });
     return new Response(body, { status });
@@ -97,13 +122,18 @@ describe('provider adapters', () => {
       enabled: true,
     };
 
-    expect(adapter.languageModel(connection, 'some-model').provider).toBe(row.modelProvider);
+    expect(adapter.languageModel(connection, 'some-model').provider).toBe(
+      row.modelProvider,
+    );
     expect(adapter.cacheMark).toEqual(row.cacheMark);
     expect(
       adapter.embeddings === null
         ? null
         : {
-            document: adapter.embeddings.providerOptions('document', DIMENSIONS),
+            document: adapter.embeddings.providerOptions(
+              'document',
+              DIMENSIONS,
+            ),
             query: adapter.embeddings.providerOptions('query', DIMENSIONS),
           },
     ).toEqual(row.embeddingOptions);
@@ -116,13 +146,23 @@ describe('provider adapters', () => {
 
     const sent: SentRequest[] = [];
     const works: ModelProviderCheck = { result: 'works', message: null };
-    await expect(checkProvider(connection, { fetch: answering(200, '{"data":[]}', sent) })).resolves.toEqual(works);
+    await expect(
+      checkProvider(connection, { fetch: answering(200, '{"data":[]}', sent) }),
+    ).resolves.toEqual(works);
     expect(sent).toEqual([{ url: row.checkUrl, headers: row.keyHeader }]);
 
-    const keyRejected: ModelProviderCheck = { result: 'key_rejected', message: '401 invalid key' };
-    await expect(checkProvider(connection, { fetch: answering(401, 'invalid key', []) })).resolves.toEqual(keyRejected);
+    const keyRejected: ModelProviderCheck = {
+      result: 'key_rejected',
+      message: '401 invalid key',
+    };
+    await expect(
+      checkProvider(connection, { fetch: answering(401, 'invalid key', []) }),
+    ).resolves.toEqual(keyRejected);
 
-    const unanswered = await checkProvider(connection, { fetch: silent, timeoutMs: SHORT_TIMEOUT_MS });
+    const unanswered = await checkProvider(connection, {
+      fetch: silent,
+      timeoutMs: SHORT_TIMEOUT_MS,
+    });
     expect(unanswered.result).toBe('unreachable');
     expect(unanswered.message).not.toBeNull();
   });

@@ -15,7 +15,10 @@ const fakeDatabase = () => {
   return { db: { client } as unknown as Db, rows };
 };
 
-const entry = (before: AuditEntry['before'], after: AuditEntry['after']): AuditEntry => ({
+const entry = (
+  before: AuditEntry['before'],
+  after: AuditEntry['after'],
+): AuditEntry => ({
   kind: 'admin_change',
   actor: 'system',
   objectType: 'provider',
@@ -38,9 +41,15 @@ describe('AuditLog', () => {
     {
       name: 'nested options.clientSecret beside an ordinary field',
       before: null,
-      after: { name: 'Okta', options: { clientId: 'id-1', clientSecret: 'nested-secret' } },
+      after: {
+        name: 'Okta',
+        options: { clientId: 'id-1', clientSecret: 'nested-secret' },
+      },
       expectedBefore: null,
-      expectedAfter: { name: 'Okta', options: { clientId: 'id-1', clientSecret: 'secret_changed' } },
+      expectedAfter: {
+        name: 'Okta',
+        options: { clientId: 'id-1', clientSecret: 'secret_changed' },
+      },
     },
     {
       name: 'password and newPassword',
@@ -54,10 +63,15 @@ describe('AuditLog', () => {
     async ({ before, after, expectedBefore, expectedAfter }) => {
       const { db, rows } = fakeDatabase();
 
-      await new AuditLog(new AuditEventsRepository(db)).record(entry(before, after));
+      await new AuditLog(new AuditEventsRepository(db)).record(
+        entry(before, after),
+      );
 
       expect(rows).toEqual([
-        expect.objectContaining({ before: expectedBefore, after: expectedAfter }),
+        expect.objectContaining({
+          before: expectedBefore,
+          after: expectedAfter,
+        }),
       ]);
     },
   );

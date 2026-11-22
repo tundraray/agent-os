@@ -8,7 +8,9 @@ export const PROVIDER_RETRIES = 2;
 const PROVIDER_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 
 export function providerRetryDelayMs(retry: number): number {
-  return PROVIDER_RETRY_DELAYS_MS[Math.min(retry, PROVIDER_RETRY_DELAYS_MS.length) - 1];
+  return PROVIDER_RETRY_DELAYS_MS[
+    Math.min(retry, PROVIDER_RETRY_DELAYS_MS.length) - 1
+  ];
 }
 
 /**
@@ -41,9 +43,15 @@ function reasonOf(
   body: string,
   adapter: Pick<ProviderAdapter, 'toolsRejected'>,
 ): { readonly retryable: boolean; readonly reason: ProviderRejectionReason } {
-  if (KEY_REJECTED_STATUSES.has(statusCode)) return { retryable: false, reason: 'provider_key_rejected' };
-  if (adapter.toolsRejected(statusCode, body)) return { retryable: false, reason: 'provider_tools_rejected' };
-  if (statusCode === REQUEST_TIMEOUT || statusCode === TOO_MANY_REQUESTS || statusCode >= SERVER_ERROR_MIN) {
+  if (KEY_REJECTED_STATUSES.has(statusCode))
+    return { retryable: false, reason: 'provider_key_rejected' };
+  if (adapter.toolsRejected(statusCode, body))
+    return { retryable: false, reason: 'provider_tools_rejected' };
+  if (
+    statusCode === REQUEST_TIMEOUT ||
+    statusCode === TOO_MANY_REQUESTS ||
+    statusCode >= SERVER_ERROR_MIN
+  ) {
     return { retryable: true, reason: 'provider_unavailable' };
   }
   return { retryable: false, reason: 'provider_error' };
@@ -61,15 +69,31 @@ export function classifyRejection(
 ): ProviderError | null {
   if (!(error instanceof Error) || error.name !== API_CALL_ERROR) return null;
   const statusCode = 'statusCode' in error ? error.statusCode : undefined;
-  const body = 'responseBody' in error && typeof error.responseBody === 'string' ? error.responseBody : null;
+  const body =
+    'responseBody' in error && typeof error.responseBody === 'string'
+      ? error.responseBody
+      : null;
   if (typeof statusCode !== 'number') {
-    return { statusCode: null, retryable: true, reason: 'provider_unavailable', responseBody: body };
+    return {
+      statusCode: null,
+      retryable: true,
+      reason: 'provider_unavailable',
+      responseBody: body,
+    };
   }
-  return { statusCode, ...reasonOf(statusCode, body ?? '', adapter), responseBody: body };
+  return {
+    statusCode,
+    ...reasonOf(statusCode, body ?? '', adapter),
+    responseBody: body,
+  };
 }
 
 /** Waits on the clock; a cancel or stop ends the wait with the signal's reason. */
-export function pause(clock: Clock, ms: number, signal: AbortSignal): Promise<void> {
+export function pause(
+  clock: Clock,
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(signal.reason);

@@ -25,11 +25,12 @@ import {
 } from './guarded-transition';
 import { HandlerRegistry } from '../steps/handler.registry';
 import { LiveTasks } from '../steps/live-tasks';
-import type {
-  EnqueueMessage,
-  StepSignalReason,
-} from '../steps/step-contract';
-import { Inbox, payloadTooLarge, reservedKindProblem } from '../messaging/inbox';
+import type { EnqueueMessage, StepSignalReason } from '../steps/step-contract';
+import {
+  Inbox,
+  payloadTooLarge,
+  reservedKindProblem,
+} from '../messaging/inbox';
 import { RunningTaskRegistry } from './running-task.registry';
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
@@ -223,7 +224,8 @@ export class TaskControl {
   /** The owner's task; `TASK_NOT_FOUND` for a missing or another owner's one. */
   async get(taskId: string, ownerId: string): Promise<Task> {
     const row = await this.deps.taskRows.findOwned(taskId, ownerId);
-    if (!row) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
+    if (!row)
+      throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
     return toTask(row);
   }
 
@@ -256,7 +258,9 @@ export class TaskControl {
     };
     try {
       if (message) this.checkMessage(message);
-      const interrupted = await db.transaction(() => this.interruptIn(taskId, ownerId, message));
+      const interrupted = await db.transaction(() =>
+        this.interruptIn(taskId, ownerId, message),
+      );
       if (!interrupted) {
         logger.info('task not interrupted: not active', {
           ...fields,
@@ -317,7 +321,11 @@ export class TaskControl {
       });
       return stoppedIds;
     } catch (error) {
-      logger.warn('task stop failed', { ...fields, durationMs: Date.now() - startedAt, error });
+      logger.warn('task stop failed', {
+        ...fields,
+        durationMs: Date.now() - startedAt,
+        error,
+      });
       throw error;
     }
   }
@@ -338,7 +346,9 @@ export class TaskControl {
     const startedAt = Date.now();
     const fields = { rootId, ownerId };
     try {
-      const stoppedTasks = await db.transaction(() => this.deleteTreeIn(rootId, ownerId));
+      const stoppedTasks = await db.transaction(() =>
+        this.deleteTreeIn(rootId, ownerId),
+      );
       this.cutOff(stoppedTasks, 'stopped');
       logger.info('task tree deleted', {
         ...fields,
@@ -358,7 +368,10 @@ export class TaskControl {
   }
 
   /** The deletion's writes: the tree stopped and marked deleted. */
-  private async deleteTreeIn(rootId: string, ownerId: string): Promise<TaskRow[]> {
+  private async deleteTreeIn(
+    rootId: string,
+    ownerId: string,
+  ): Promise<TaskRow[]> {
     const { taskRows } = this.deps;
     const root = await taskRows.findOwned(rootId, ownerId);
     if (!root || root.parentId !== null) {
@@ -370,7 +383,10 @@ export class TaskControl {
   }
 
   /** The creation's writes: the task row and `task.created`. */
-  private async createIn(request: CreateTask, input: unknown): Promise<TaskRow> {
+  private async createIn(
+    request: CreateTask,
+    input: unknown,
+  ): Promise<TaskRow> {
     const { tasks, taskRows, events } = this.deps;
     const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
@@ -381,15 +397,28 @@ export class TaskControl {
     if (request.parentId !== undefined) {
       const found = await taskRows.findOwned(request.parentId, request.ownerId);
       if (!found) {
-        throw new RuntimeError('TASK_NOT_FOUND', `Task ${request.parentId} not found`);
+        throw new RuntimeError(
+          'TASK_NOT_FOUND',
+          `Task ${request.parentId} not found`,
+        );
       }
       // A write of the parent's row: a stop of the parent comes before it, and the child is
       // refused, or after this creation, and stops the child too.
-      const parent = await tasks.hold({ taskId: found.taskId, from: UNFINISHED_STATUSES });
+      const parent = await tasks.hold({
+        taskId: found.taskId,
+        from: UNFINISHED_STATUSES,
+      });
       if (!parent) {
-        throw new RuntimeError('PARENT_FINISHED', `Parent task ${found.taskId} is finished`);
+        throw new RuntimeError(
+          'PARENT_FINISHED',
+          `Parent task ${found.taskId} is finished`,
+        );
       }
-      lineage = { parentId: parent.taskId, rootId: parent.rootId, depth: parent.depth + 1 };
+      lineage = {
+        parentId: parent.taskId,
+        rootId: parent.rootId,
+        depth: parent.depth + 1,
+      };
     }
     const row = await tasks.insert({
       taskId,
@@ -414,7 +443,8 @@ export class TaskControl {
   ): Promise<{ task: TaskRow; messageId: string | undefined } | undefined> {
     const { tasks, taskRows, events, inbox } = this.deps;
     const found = await taskRows.findOwned(taskId, ownerId);
-    if (!found) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
+    if (!found)
+      throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
     // Checked on the plain read too, so that a task that is not active is not written at all.
     if (!isInterruptible(found)) return undefined;
     const task = await tasks.hold({ taskId, from: UNFINISHED_STATUSES });
@@ -422,12 +452,20 @@ export class TaskControl {
 
     const change: TaskChange = message
       ? { kind: 'set', status: queued, fence: true }
-      : { kind: 'wait', reason: WaitReasonSchema.enum.interrupted, fence: true };
+      : {
+          kind: 'wait',
+          reason: WaitReasonSchema.enum.interrupted,
+          fence: true,
+        };
     const row = await writeHeld(tasks, task, change);
     await events.append({
       type: EVENT['task.interrupted'],
       task: row,
-      payload: { from: task.status, status: row.status, withMessage: message !== undefined },
+      payload: {
+        from: task.status,
+        status: row.status,
+        withMessage: message !== undefined,
+      },
     });
     if (!message) return { task: row, messageId: undefined };
     // The task is `queued` already: the message wakes nothing.
@@ -470,7 +508,9 @@ export class TaskControl {
     }
     if (stoppedTasks.length > 0) {
       // Invariant 3: a task that no longer waits has no open request.
-      await this.deps.decisions.cancelOpen(stoppedTasks.map((task) => task.taskId));
+      await this.deps.decisions.cancelOpen(
+        stoppedTasks.map((task) => task.taskId),
+      );
     }
     return stoppedTasks;
   }
@@ -491,7 +531,10 @@ export class TaskControl {
   private checkMessage(message: InterruptMessage): void {
     const reserved = reservedKindProblem(message.kind);
     if (reserved !== undefined) throw new Error(reserved);
-    const tooLarge = payloadTooLarge(message.payload, this.deps.inboxPayloadMaxBytes);
+    const tooLarge = payloadTooLarge(
+      message.payload,
+      this.deps.inboxPayloadMaxBytes,
+    );
     if (tooLarge) throw tooLarge;
   }
 

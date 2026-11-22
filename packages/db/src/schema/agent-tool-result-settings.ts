@@ -23,8 +23,12 @@ export const agentToolResultSettings = app.table(
     storeFromChars: integer('store_from_chars')
       .notNull()
       .default(TOOL_RESULT_STORE_FROM_CHARS_DEFAULT),
-    previewChars: integer('preview_chars').notNull().default(TOOL_RESULT_PREVIEW_CHARS_DEFAULT),
-    readMaxTokens: integer('read_max_tokens').notNull().default(TOOL_RESULT_READ_MAX_TOKENS_DEFAULT),
+    previewChars: integer('preview_chars')
+      .notNull()
+      .default(TOOL_RESULT_PREVIEW_CHARS_DEFAULT),
+    readMaxTokens: integer('read_max_tokens')
+      .notNull()
+      .default(TOOL_RESULT_READ_MAX_TOKENS_DEFAULT),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
   },
@@ -32,15 +36,27 @@ export const agentToolResultSettings = app.table(
     check('agent_tool_result_settings_single_row_check', sql`${t.id}`),
     check(
       'agent_tool_result_settings_store_from_chars_check',
-      isWithin(t.storeFromChars, TOOL_RESULT_STORE_FROM_CHARS_MIN, TOOL_RESULT_STORE_FROM_CHARS_MAX),
+      isWithin(
+        t.storeFromChars,
+        TOOL_RESULT_STORE_FROM_CHARS_MIN,
+        TOOL_RESULT_STORE_FROM_CHARS_MAX,
+      ),
     ),
     check(
       'agent_tool_result_settings_preview_chars_check',
-      isWithin(t.previewChars, TOOL_RESULT_PREVIEW_CHARS_MIN, TOOL_RESULT_PREVIEW_CHARS_MAX),
+      isWithin(
+        t.previewChars,
+        TOOL_RESULT_PREVIEW_CHARS_MIN,
+        TOOL_RESULT_PREVIEW_CHARS_MAX,
+      ),
     ),
     check(
       'agent_tool_result_settings_read_max_tokens_check',
-      isWithin(t.readMaxTokens, TOOL_RESULT_READ_MAX_TOKENS_MIN, TOOL_RESULT_READ_MAX_TOKENS_MAX),
+      isWithin(
+        t.readMaxTokens,
+        TOOL_RESULT_READ_MAX_TOKENS_MIN,
+        TOOL_RESULT_READ_MAX_TOKENS_MAX,
+      ),
     ),
   ],
 );

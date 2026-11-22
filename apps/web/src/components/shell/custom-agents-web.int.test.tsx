@@ -71,7 +71,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { describe, expect, it, vi } from 'vitest';
-import { logRecords, trackRequests, type RecordedRequest } from '@/test/admin-support';
+import {
+  logRecords,
+  trackRequests,
+  type RecordedRequest,
+} from '@/test/admin-support';
 import {
   agentContent,
   agentListPage,
@@ -95,12 +99,19 @@ import { createTestLiveSource } from '@/test/live-source';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
-vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
+vi.mock(
+  '@/lib/logger',
+  async () => (await import('@/test/admin-support')).loggerModule,
+);
 
 const API = 'http://api.test';
 
 /** Борис, the viewer; the fixtures' default employee (`fixtureId(1)`) is Аня, the author of the shared records. */
-const BORIS = currentUser({ id: fixtureId(2), email: 'boris@corp.example', name: 'Борис Петров' });
+const BORIS = currentUser({
+  id: fixtureId(2),
+  email: 'boris@corp.example',
+  name: 'Борис Петров',
+});
 const ANYA = { id: fixtureId(1), name: 'Аня Смирнова', disabled: false };
 const SRE = { id: fixtureId(100), name: 'SRE' };
 const HAIKU = 'anthropic/claude-haiku-4-5';
@@ -109,7 +120,11 @@ const SONNET = 'anthropic/claude-sonnet-4-5';
 const NEW_MAX_TURNS = 25;
 
 /** The one body of every invisible record: the server answers it like a missing one (ADR-0016). */
-const RECORD_NOT_FOUND = { statusCode: 404, message: 'Record not found', errorCode: 'RECORD_NOT_FOUND' };
+const RECORD_NOT_FOUND = {
+  statusCode: 404,
+  message: 'Record not found',
+  errorCode: 'RECORD_NOT_FOUND',
+};
 
 type LibraryAnswers = {
   viewer?: CurrentUser;
@@ -120,27 +135,45 @@ type LibraryAnswers = {
 };
 
 /** The library as the server answers the viewer: who they are, their roles, the list, the records, the editor's choices. */
-function serveLibrary({ viewer = BORIS, roles = [], list = [], records = [] }: LibraryAnswers): void {
+function serveLibrary({
+  viewer = BORIS,
+  roles = [],
+  list = [],
+  records = [],
+}: LibraryAnswers): void {
   server.use(
     http.get(`${API}/api/auth/me`, () => HttpResponse.json(viewer)),
     http.get(`${API}/api/auth/me/roles`, () => HttpResponse.json(roles)),
     http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
     http.get(`${API}/api/library`, () => HttpResponse.json(list)),
     http.get(`${API}/api/library/choices`, () =>
-      HttpResponse.json({ servers: ['logs'], defaultModel: HAIKU, defaultMaxTurns: NEW_MAX_TURNS } satisfies LibraryChoices),
+      HttpResponse.json({
+        servers: ['logs'],
+        defaultModel: HAIKU,
+        defaultMaxTurns: NEW_MAX_TURNS,
+      } satisfies LibraryChoices),
     ),
     http.get(`${API}/api/library/:id`, ({ params }) => {
       const record = records.find((candidate) => candidate.id === params['id']);
-      return record === undefined ? HttpResponse.json(RECORD_NOT_FOUND, { status: 404 }) : HttpResponse.json(record);
+      return record === undefined
+        ? HttpResponse.json(RECORD_NOT_FOUND, { status: 404 })
+        : HttpResponse.json(record);
     }),
   );
 }
 
 /** «METHOD path» of the library requests (and the viewer's roles, read by the share dialog) since request number `from`. */
-const libraryRequestsSince = (requests: readonly RecordedRequest[], from: number): string[] =>
+const libraryRequestsSince = (
+  requests: readonly RecordedRequest[],
+  from: number,
+): string[] =>
   requests
     .slice(from)
-    .filter((request) => request.path.startsWith('/api/library') || request.path === '/api/auth/me/roles')
+    .filter(
+      (request) =>
+        request.path.startsWith('/api/library') ||
+        request.path === '/api/auth/me/roles',
+    )
     .map((request) => `${request.method} ${request.path}`);
 
 /** Row boundary inside a long scenario: the toasts and the handlers the row stacked do not reach the next row. */
@@ -185,7 +218,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: parseShellRoute, MainView, libraryIndex, libraryApi, LibraryScreen, LibraryRow, RecordPage, DefinitionView, RecordLabel, ShareDialog (disabled state), ThreadNotice (RV-02), MSW, next/navigation mock
   // @complexity: high
-  it('INT-1: a colleague\'s record shows only the actions its flags allow with the recipient\'s explanation, a copy tells what was dropped, and every 404 is one screen', async () => {
+  it("INT-1: a colleague's record shows only the actions its flags allow with the recipient's explanation, a copy tells what was dropped, and every 404 is one screen", async () => {
     const user = userEvent.setup();
     const tracked = trackRequests(server);
 
@@ -203,7 +236,10 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       canShare: false,
       canDelete: false,
     } satisfies Partial<RecordSummary> & Pick<RecordSummary, 'id'>;
-    const shared = recordDetail({ ...sharedFields, content: agentContent({ servers: ['logs', 'jira'], model: SONNET }) });
+    const shared = recordDetail({
+      ...sharedFields,
+      content: agentContent({ servers: ['logs', 'jira'], model: SONNET }),
+    });
     const company = recordSummary({
       id: fixtureId(12),
       name: 'general-purpose',
@@ -215,13 +251,21 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       canShare: false,
       canDelete: false,
     });
-    serveLibrary({ roles: [SRE], list: [recordSummary(sharedFields), company], records: [shared] });
+    serveLibrary({
+      roles: [SRE],
+      list: [recordSummary(sharedFields), company],
+      records: [shared],
+    });
     const copyId = fixtureId(201);
     server.use(
       http.post(`${API}/api/library/:id/copy`, () =>
         HttpResponse.json(
           copyResult({
-            record: recordDetail({ id: copyId, name: 'Разбор инцидентов', author: { id: BORIS.id, name: BORIS.name, disabled: false } }),
+            record: recordDetail({
+              id: copyId,
+              name: 'Разбор инцидентов',
+              author: { id: BORIS.id, name: BORIS.name, disabled: false },
+            }),
             removedServers: [{ subagent: null, servers: ['jira'] }],
             replacedModels: [{ subagent: null, from: SONNET, to: HAIKU }],
           }),
@@ -232,11 +276,27 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Assert (row 1, library): the row notes Jira; its menu has neither «Использовать в чате» nor «Поделиться»; the company's agent
     //   reads «от компании»
-    const colleagues = await screen.findByRole('region', { name: 'От коллег · 1' });
-    expect(within(colleagues).getByText('jira у вас недоступна — агент будет работать без неё')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'От компании · 1' })).getByText('от компании')).toBeInTheDocument();
-    await user.click(within(colleagues).getByRole('button', { name: 'Действия: Разбор инцидентов' }));
-    expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Открыть', 'Скопировать себе']);
+    const colleagues = await screen.findByRole('region', {
+      name: 'От коллег · 1',
+    });
+    expect(
+      within(colleagues).getByText(
+        'jira у вас недоступна — агент будет работать без неё',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'От компании · 1' })).getByText(
+        'от компании',
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(colleagues).getByRole('button', {
+        name: 'Действия: Разбор инцидентов',
+      }),
+    );
+    expect(
+      (await screen.findAllByRole('menuitem')).map((item) => item.textContent),
+    ).toEqual(['Открыть', 'Скопировать себе']);
     expectNoPanelWords();
 
     // Act (row 1): «Открыть»
@@ -245,10 +305,21 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     view.setPathname(`/library/${shared.id}`);
 
     // Assert (row 1, page): no «Использовать в чате» and no audience button (absent, not disabled); the recipient is told, not asked
-    expect(await screen.findByRole('heading', { level: 1, name: 'Разбор инцидентов' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Скопировать себе' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Использовать в чате' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^(Поделиться|Кто видит)/ })).toBeNull();
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'Разбор инцидентов',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Скопировать себе' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Использовать в чате' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /^(Поделиться|Кто видит)/ }),
+    ).toBeNull();
     const note = screen.getByRole('note');
     for (const part of [
       'Автор — Аня Смирнова.',
@@ -265,19 +336,33 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     // Act (row 2): «Скопировать себе» opens the dialog naming Jira; nothing is sent before «Скопировать»
     const beforeCopy = tracked.requests.length;
     await user.click(screen.getByRole('button', { name: 'Скопировать себе' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Скопировать «Разбор инцидентов» себе?' });
-    expect(dialog).toHaveTextContent('Не войдут системы, к которым у вас нет доступа: jira');
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Скопировать «Разбор инцидентов» себе?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Не войдут системы, к которым у вас нет доступа: jira',
+    );
     expect(libraryRequestsSince(tracked.requests, beforeCopy)).toEqual([]);
-    await user.click(within(dialog).getByRole('button', { name: 'Скопировать' }));
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Скопировать' }),
+    );
 
     // Assert (row 2): one POST; the toast names the dropped tool and both models; its «Открыть» leads to the copy's page
-    expect(await screen.findByText('Копия «Разбор инцидентов» сохранена', { selector: '[data-title]' })).toBeInTheDocument();
     expect(
-      screen.getByText('Не вошли системы, к которым у вас нет доступа: jira. Модель Sonnet вам недоступна — стоит Haiku.'),
+      await screen.findByText('Копия «Разбор инцидентов» сохранена', {
+        selector: '[data-title]',
+      }),
     ).toBeInTheDocument();
-    expect(libraryRequestsSince(tracked.requests, beforeCopy).filter((request) => request.startsWith('POST'))).toEqual([
-      `POST /api/library/${shared.id}/copy`,
-    ]);
+    expect(
+      screen.getByText(
+        'Не вошли системы, к которым у вас нет доступа: jira. Модель Sonnet вам недоступна — стоит Haiku.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      libraryRequestsSince(tracked.requests, beforeCopy).filter((request) =>
+        request.startsWith('POST'),
+      ),
+    ).toEqual([`POST /api/library/${shared.id}/copy`]);
     await user.click(screen.getByRole('button', { name: 'Открыть' }));
     expect(view.router.push).toHaveBeenLastCalledWith(`/library/${copyId}`);
     view.unmount();
@@ -286,27 +371,44 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     //   `GET /api/library/:id` answers the same 404
     resetRow();
     const hidden = [fixtureId(33), fixtureId(34)];
-    const deletedRow = recordSummary({ id: hidden[0] ?? '', name: 'Отчёт о релизах', mine: false, author: ANYA });
+    const deletedRow = recordSummary({
+      id: hidden[0] ?? '',
+      name: 'Отчёт о релизах',
+      mine: false,
+      author: ANYA,
+    });
     serveLibrary({ roles: [SRE], list: [deletedRow] });
     const beforeHidden = tracked.requests.length;
-    const hiddenView = renderWithRuntime({ pathname: `/library/${hidden[0] ?? ''}` });
+    const hiddenView = renderWithRuntime({
+      pathname: `/library/${hidden[0] ?? ''}`,
+    });
 
     // Assert (row 3): every address shows the same RV-02 screen, focus on its `h1`, nothing of the record
     const screens: string[] = [];
     for (const [index, id] of hidden.entries()) {
       if (index > 0) hiddenView.setPathname(`/library/${id}`);
-      const heading = await screen.findByRole('heading', { level: 1, name: 'Не найдено' });
+      const heading = await screen.findByRole('heading', {
+        level: 1,
+        name: 'Не найдено',
+      });
       await waitFor(() => expect(heading).toHaveFocus());
-      expect(screen.getByRole('link', { name: 'В библиотеку' })).toHaveAttribute('href', '/library');
+      expect(
+        screen.getByRole('link', { name: 'В библиотеку' }),
+      ).toHaveAttribute('href', '/library');
       expect(document.title).toBe('Не найдено — Agent OS');
       expect(document.body.textContent).not.toContain('Отчёт о релизах');
       screens.push(heading.closest('section')?.textContent ?? '');
     }
     expect(screens).toEqual(
-      hidden.map(() => 'Не найденоТакого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку'),
+      hidden.map(
+        () =>
+          'Не найденоТакого агента или глубокого агента нет: его удалили, закрыли для вас или ссылка неверна.В библиотеку',
+      ),
     );
     expect(
-      libraryRequestsSince(tracked.requests, beforeHidden).filter((request) => request.startsWith('GET /api/library/')),
+      libraryRequestsSince(tracked.requests, beforeHidden).filter((request) =>
+        request.startsWith('GET /api/library/'),
+      ),
     ).toEqual(hidden.map((id) => `GET /api/library/${id}`));
     hiddenView.unmount();
 
@@ -318,21 +420,39 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       author: { id: BORIS.id, name: BORIS.name, disabled: false },
     } satisfies Partial<RecordSummary> & Pick<RecordSummary, 'id'>;
     const passes = [
-      { roles: [], record: recordDetail(ownFields), reason: 'У вас нет ролей — поделиться не с кем' },
+      {
+        roles: [],
+        record: recordDetail(ownFields),
+        reason: 'У вас нет ролей — поделиться не с кем',
+      },
       {
         roles: [SRE],
-        record: recordDetail({ ...ownFields, ban: { closedAt: '2026-11-10T09:00:00.000Z' }, canShare: false }),
+        record: recordDetail({
+          ...ownFields,
+          ban: { closedAt: '2026-11-10T09:00:00.000Z' },
+          canShare: false,
+        }),
         reason: 'Доступ закрыл администратор — делиться нельзя',
       },
     ];
     for (const pass of passes) {
       resetRow();
-      serveLibrary({ roles: pass.roles, list: [recordSummary(ownFields)], records: [pass.record] });
-      const ownView = renderWithRuntime({ pathname: `/library/${ownFields.id}` });
+      serveLibrary({
+        roles: pass.roles,
+        list: [recordSummary(ownFields)],
+        records: [pass.record],
+      });
+      const ownView = renderWithRuntime({
+        pathname: `/library/${ownFields.id}`,
+      });
 
       // Assert (row 4): the audience button is disabled with the reason of MC-14; a click opens no dialog and sends no request
-      const audience = await screen.findByRole('button', { name: /^Кто видит: только вы/ });
-      await waitFor(() => expect(audience).toHaveAttribute('aria-disabled', 'true'));
+      const audience = await screen.findByRole('button', {
+        name: /^Кто видит: только вы/,
+      });
+      await waitFor(() =>
+        expect(audience).toHaveAttribute('aria-disabled', 'true'),
+      );
       expect(audience).toHaveAccessibleDescription(pass.reason);
       const beforeClick = tracked.requests.length;
       await user.click(audience);
@@ -371,30 +491,50 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const tracked = trackRequests(server);
     const ANYA_VIEWER = currentUser();
     const TYPED = 'Найди причины ошибок и предложи исправление.';
-    const VERSION_CONFLICT = { statusCode: 409, message: 'Record version conflict', errorCode: 'RECORD_VERSION_CONFLICT' };
-    const CONFLICT_HEAD = 'Вы уже сохранили изменения в другом окне или в чате.';
+    const VERSION_CONFLICT = {
+      statusCode: 409,
+      message: 'Record version conflict',
+      errorCode: 'RECORD_VERSION_CONFLICT',
+    };
+    const CONFLICT_HEAD =
+      'Вы уже сохранили изменения в другом окне или в чате.';
 
     /** Bodies of the `method path` requests since request number `from`. */
-    const bodiesSince = (from: number, method: string, path: string): unknown[] =>
+    const bodiesSince = (
+      from: number,
+      method: string,
+      path: string,
+    ): unknown[] =>
       tracked.requests
         .slice(from)
         .filter((request) => request.method === method && request.path === path)
         .map((request) => request.body);
     /** What `GET /api/library/<id>` answers from now on; any other path of that pattern (`choices`) falls through. */
     const answerRecord = (id: string, answer: () => Response): void => {
-      server.use(http.get(`${API}/api/library/:id`, ({ params }) => (params['id'] === id ? answer() : undefined)));
+      server.use(
+        http.get(`${API}/api/library/:id`, ({ params }) =>
+          params['id'] === id ? answer() : undefined,
+        ),
+      );
     };
     /** The answer of every `PUT /api/library/:id`, switched per step. */
-    let putAnswer: () => Response = () => HttpResponse.json(VERSION_CONFLICT, { status: 409 });
+    let putAnswer: () => Response = () =>
+      HttpResponse.json(VERSION_CONFLICT, { status: 409 });
     const servePut = (): void => {
       server.use(http.put(`${API}/api/library/:id`, () => putAnswer()));
     };
 
     // Аня's agent at version 3 with Jira, which she has no right to any more (`choices.servers` holds only «logs»)
-    const agentFields = { id: fixtureId(51), name: 'Разбор логов', version: 3 } satisfies Partial<RecordSummary> &
-      Pick<RecordSummary, 'id'>;
+    const agentFields = {
+      id: fixtureId(51),
+      name: 'Разбор логов',
+      version: 3,
+    } satisfies Partial<RecordSummary> & Pick<RecordSummary, 'id'>;
     const agentPath = `/api/library/${agentFields.id}`;
-    const agentV3 = recordDetail({ ...agentFields, content: agentContent({ servers: ['logs', 'jira'] }) });
+    const agentV3 = recordDetail({
+      ...agentFields,
+      content: agentContent({ servers: ['logs', 'jira'] }),
+    });
     const agentV4 = recordDetail({
       ...agentFields,
       version: 4,
@@ -402,29 +542,61 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       content: agentContent({ servers: ['logs', 'jira'] }),
     });
     const openAgentEditor = async () => {
-      serveLibrary({ viewer: ANYA_VIEWER, list: [recordSummary(agentFields)], records: [agentV3] });
+      serveLibrary({
+        viewer: ANYA_VIEWER,
+        list: [recordSummary(agentFields)],
+        records: [agentV3],
+      });
       servePut();
-      const view = renderWithRuntime({ pathname: `/library/${agentFields.id}` });
+      const view = renderWithRuntime({
+        pathname: `/library/${agentFields.id}`,
+      });
       const prompt = await screen.findByRole('textbox', { name: 'Инструкция' });
-      return { view, prompt, panel: screen.getByRole('region', { name: 'Сохранение' }) };
+      return {
+        view,
+        prompt,
+        panel: screen.getByRole('region', { name: 'Сохранение' }),
+      };
     };
 
     // Row 1: Jira is marked and does not block «Сохранить»; the `PUT` carries version 3 and the new instruction
     putAnswer = () =>
-      HttpResponse.json(recordDetail({ ...agentFields, version: 4, content: agentContent({ servers: ['logs', 'jira'], prompt: TYPED }) }));
+      HttpResponse.json(
+        recordDetail({
+          ...agentFields,
+          version: 4,
+          content: agentContent({ servers: ['logs', 'jira'], prompt: TYPED }),
+        }),
+      );
     const first = await openAgentEditor();
-    expect(screen.getByText('у вас недоступна').closest('div')).toHaveTextContent('jira');
+    expect(
+      screen.getByText('у вас недоступна').closest('div'),
+    ).toHaveTextContent('jira');
     await user.clear(first.prompt);
     await user.type(first.prompt, TYPED);
     const beforeSave = tracked.requests.length;
-    await user.click(within(first.panel).getByRole('button', { name: 'Сохранить' }));
-    expect(await within(first.panel).findByText('Сохранено')).toBeInTheDocument();
+    await user.click(
+      within(first.panel).getByRole('button', { name: 'Сохранить' }),
+    );
+    expect(
+      await within(first.panel).findByText('Сохранено'),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(bodiesSince(beforeSave, 'PUT', agentPath)).toEqual([
-        expect.objectContaining({ version: 3, content: expect.objectContaining({ prompt: TYPED, servers: ['logs', 'jira'] }) }),
+        expect.objectContaining({
+          version: 3,
+          content: expect.objectContaining({
+            prompt: TYPED,
+            servers: ['logs', 'jira'],
+          }),
+        }),
       ]),
     );
-    await waitFor(() => expect(libraryRequestsSince(tracked.requests, beforeSave)).toContain('GET /api/library'));
+    await waitFor(() =>
+      expect(libraryRequestsSince(tracked.requests, beforeSave)).toContain(
+        'GET /api/library',
+      ),
+    );
     first.view.unmount();
 
     // Row 2: the save answers 409 and the record reads as version 4 with another description
@@ -435,24 +607,46 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     await user.clear(conflicted.prompt);
     await user.type(conflicted.prompt, TYPED);
     const beforeConflict = tracked.requests.length;
-    await user.click(within(conflicted.panel).getByRole('button', { name: 'Сохранить' }));
+    await user.click(
+      within(conflicted.panel).getByRole('button', { name: 'Сохранить' }),
+    );
 
     // Assert (row 2): MC-10 names only the field that differs between 4 and 3; the typed instruction stays; the record is read once
-    expect(await screen.findByText(`${CONFLICT_HEAD} Там изменились: Описание.`)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`${CONFLICT_HEAD} Там изменились: Описание.`),
+    ).toBeInTheDocument();
     expect(conflicted.prompt).toHaveValue(TYPED);
-    await waitFor(() => expect(bodiesSince(beforeConflict, 'PUT', agentPath)).toEqual([expect.objectContaining({ version: 3 })]));
-    expect(libraryRequestsSince(tracked.requests, beforeConflict).filter((request) => request === `GET ${agentPath}`)).toHaveLength(1);
+    await waitFor(() =>
+      expect(bodiesSince(beforeConflict, 'PUT', agentPath)).toEqual([
+        expect.objectContaining({ version: 3 }),
+      ]),
+    );
+    expect(
+      libraryRequestsSince(tracked.requests, beforeConflict).filter(
+        (request) => request === `GET ${agentPath}`,
+      ),
+    ).toHaveLength(1);
 
     // Act (row 2): «Сохранить мои правки» carries the saved version 4
     const beforeMine = tracked.requests.length;
-    await user.click(screen.getByRole('button', { name: 'Сохранить мои правки' }));
-    await waitFor(() => expect(bodiesSince(beforeMine, 'PUT', agentPath)).toEqual([expect.objectContaining({ version: 4 })]));
+    await user.click(
+      screen.getByRole('button', { name: 'Сохранить мои правки' }),
+    );
+    await waitFor(() =>
+      expect(bodiesSince(beforeMine, 'PUT', agentPath)).toEqual([
+        expect.objectContaining({ version: 4 }),
+      ]),
+    );
     await screen.findByRole('button', { name: 'Взять сохранённое' });
 
     // Act (row 2): «Взять сохранённое» makes form and saved version 4; «Вернуть» puts the typed instruction back over it
     await user.click(screen.getByRole('button', { name: 'Взять сохранённое' }));
-    expect(screen.getByRole('textbox', { name: 'Описание' })).toHaveValue('Ищет причины ошибок в логах и метриках');
-    expect(conflicted.prompt).toHaveValue('Найди в логах причины ошибок и перечисли их.');
+    expect(screen.getByRole('textbox', { name: 'Описание' })).toHaveValue(
+      'Ищет причины ошибок в логах и метриках',
+    );
+    expect(conflicted.prompt).toHaveValue(
+      'Найди в логах причины ошибок и перечисли их.',
+    );
     expect(screen.queryByText(CONFLICT_HEAD)).toBeNull();
     await user.click(await screen.findByRole('button', { name: 'Вернуть' }));
     expect(conflicted.prompt).toHaveValue(TYPED);
@@ -462,24 +656,39 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     resetRow();
     putAnswer = () => HttpResponse.json(VERSION_CONFLICT, { status: 409 });
     const unread = await openAgentEditor();
-    answerRecord(agentFields.id, () => HttpResponse.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 }));
+    answerRecord(agentFields.id, () =>
+      HttpResponse.json(
+        { statusCode: 500, message: 'Internal server error' },
+        { status: 500 },
+      ),
+    );
     await user.clear(unread.prompt);
     await user.type(unread.prompt, TYPED);
-    await user.click(within(unread.panel).getByRole('button', { name: 'Сохранить' }));
+    await user.click(
+      within(unread.panel).getByRole('button', { name: 'Сохранить' }),
+    );
     expect(await screen.findByText(CONFLICT_HEAD)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Сохранить мои правки' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Взять сохранённое' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Сохранить мои правки' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Взять сохранённое' }),
+    ).toBeNull();
     unread.view.unmount();
 
     // Row 3: a changed form -> the sidebar item and «Новый чат» each ask MC-11 first
     resetRow();
     const sidebar = (): HTMLElement => {
-      const element = document.querySelector<HTMLElement>('[data-slot="sidebar"]');
+      const element = document.querySelector<HTMLElement>(
+        '[data-slot="sidebar"]',
+      );
       if (element === null) throw new Error('the sidebar is not rendered');
       return element;
     };
     const askedThenStay = async (): Promise<void> => {
-      const dialog = await screen.findByRole('alertdialog', { name: 'Уйти без сохранения?' });
+      const dialog = await screen.findByRole('alertdialog', {
+        name: 'Уйти без сохранения?',
+      });
       const stay = within(dialog).getByRole('button', { name: 'Остаться' });
       await waitFor(() => expect(stay).toHaveFocus());
       await user.click(stay);
@@ -491,7 +700,9 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     await user.click(within(sidebar()).getByRole('link', { name: 'Агенты' }));
     await askedThenStay();
-    await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Новый чат' }),
+    );
     await askedThenStay();
 
     // Assert (row 3): «Остаться» keeps the route and the typed instruction
@@ -499,17 +710,30 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     expect(guarded.prompt).toHaveValue(TYPED);
 
     // Act (row 3): «Уйти без сохранения» goes
-    await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
-    const leave = await screen.findByRole('alertdialog', { name: 'Уйти без сохранения?' });
-    await user.click(within(leave).getByRole('button', { name: 'Уйти без сохранения' }));
-    await waitFor(() => expect(guarded.view.router.push.mock.calls).toEqual([['/']]));
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Новый чат' }),
+    );
+    const leave = await screen.findByRole('alertdialog', {
+      name: 'Уйти без сохранения?',
+    });
+    await user.click(
+      within(leave).getByRole('button', { name: 'Уйти без сохранения' }),
+    );
+    await waitFor(() =>
+      expect(guarded.view.router.push.mock.calls).toEqual([['/']]),
+    );
     guarded.view.unmount();
 
     // Row 3, a clean form: the same two go at once, without a question
     const clean = await openAgentEditor();
     await user.click(within(sidebar()).getByRole('link', { name: 'Агенты' }));
-    await user.click(within(sidebar()).getByRole('button', { name: 'Новый чат' }));
-    expect(clean.view.router.push.mock.calls.map(([href]) => href)).toEqual(['/agents', '/']);
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Новый чат' }),
+    );
+    expect(clean.view.router.push.mock.calls.map(([href]) => href)).toEqual([
+      '/agents',
+      '/',
+    ]);
     expect(screen.queryByRole('alertdialog')).toBeNull();
     clean.view.unmount();
   });
@@ -553,7 +777,14 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const THREAD = threadSummary({ id: 'a', title: 'Выгрузка' });
     const anyaAuthor = { id: ANYA.id, name: ANYA.name };
     const forSre = { roles: [{ ...SRE, member: true }] };
-    const colleagues = { mine: false, author: ANYA, audience: forSre, canEdit: false, canShare: false, canDelete: false };
+    const colleagues = {
+      mine: false,
+      author: ANYA,
+      audience: forSre,
+      canEdit: false,
+      canShare: false,
+      canDelete: false,
+    };
 
     // Аня's agent: the runs started on version 1 «Разбор инцидентов»; the live row is version 2, renamed, open to «SRE»
     const agentId = fixtureId(71);
@@ -566,9 +797,18 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       builtinKey: null,
       subagent: null,
     } satisfies RunOrigin;
-    const liveAgent = recordSummary({ id: agentId, name: 'Разбор инцидентов и сбоев', version: 2, ...colleagues });
+    const liveAgent = recordSummary({
+      id: agentId,
+      name: 'Разбор инцидентов и сбоев',
+      version: 2,
+      ...colleagues,
+    });
     // A record the live list does not hold (deleted or closed for Борис)
-    const goneOrigin = { ...agentOrigin, recordId: fixtureId(72), name: 'Сводка смены' } satisfies RunOrigin;
+    const goneOrigin = {
+      ...agentOrigin,
+      recordId: fixtureId(72),
+      name: 'Сводка смены',
+    } satisfies RunOrigin;
     // Аня's deep agent: the run started on version 3, the live row is version 4; a team of four
     const deepAgentId = fixtureId(81);
     const deepAgentRunOrigin = {
@@ -586,7 +826,13 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       ...colleagues,
     });
 
-    const step = (stepId: string, subagent: string, description: string, status: AgentNode['status'], at: number) =>
+    const step = (
+      stepId: string,
+      subagent: string,
+      description: string,
+      status: AgentNode['status'],
+      at: number,
+    ) =>
       agentNode({
         agentId: stepId,
         parentId: 'w1',
@@ -610,17 +856,29 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
           step('s3', 'Сводка', 'Свести найденное', status, 5.4),
         ],
       });
-    const team = ['Сбор логов', 'Сбор тикетов', 'Метрики', 'Сводка'].map((name) => ({
-      name,
-      maxRuns: 1,
-      final: name === 'Сводка',
-    }));
-    const viewOf = (deepAgentStatus: 'working' | 'completed'): ConversationView =>
+    const team = ['Сбор логов', 'Сбор тикетов', 'Метрики', 'Сводка'].map(
+      (name) => ({
+        name,
+        maxRuns: 1,
+        final: name === 'Сводка',
+      }),
+    );
+    const viewOf = (
+      deepAgentStatus: 'working' | 'completed',
+    ): ConversationView =>
       conversationView({
         thread: THREAD,
         entries: [
-          historyEntry({ kind: 'task', seq: 1, content: { text: 'Разберись с инцидентом 42' } }),
-          historyEntry({ kind: 'model_answer', seq: 2, content: { text: 'Запускаю разбор.' } }),
+          historyEntry({
+            kind: 'task',
+            seq: 1,
+            content: { text: 'Разберись с инцидентом 42' },
+          }),
+          historyEntry({
+            kind: 'model_answer',
+            seq: 2,
+            content: { text: 'Запускаю разбор.' },
+          }),
         ],
         decisions: [
           confirmation({
@@ -640,7 +898,13 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
             status: 'awaiting_confirmation',
             createdAt: fixtureTime(3),
           }),
-          agentNode({ agentId: 'a2', origin: goneOrigin, description: 'Сводка за ночь', status: 'completed', createdAt: fixtureTime(4) }),
+          agentNode({
+            agentId: 'a2',
+            origin: goneOrigin,
+            description: 'Сводка за ночь',
+            status: 'completed',
+            createdAt: fixtureTime(4),
+          }),
           deepAgentNode(deepAgentStatus),
         ],
       });
@@ -656,19 +920,34 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
         threadId: 'a',
         threadTitle: 'Выгрузка',
       },
-      entries: [historyEntry({ kind: 'task', seq: 1, content: { text: 'Проверь инцидент 41' } })],
+      entries: [
+        historyEntry({
+          kind: 'task',
+          seq: 1,
+          content: { text: 'Проверь инцидент 41' },
+        }),
+      ],
     });
     const serveRuns = (list: RecordSummary[]): void => {
       serveLibrary({ roles: [SRE], list });
       server.use(
-        http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([THREAD]))),
+        http.get(`${API}/api/threads`, () =>
+          HttpResponse.json(threadList([THREAD])),
+        ),
         http.get(`${API}/api/threads/a`, () => HttpResponse.json(THREAD)),
         http.get(`${API}/api/threads/a/history`, ({ request }) => {
-          const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
-          return HttpResponse.json({ ...held, entries: held.entries.filter((entry) => entry.seq > afterSeq) });
+          const afterSeq = Number(
+            new URL(request.url).searchParams.get('afterSeq'),
+          );
+          return HttpResponse.json({
+            ...held,
+            entries: held.entries.filter((entry) => entry.seq > afterSeq),
+          });
         }),
         http.get(`${API}/api/agents/w1/run`, () => {
-          const current = held.agents.find((agent) => agent.agentId === 'w1') ?? deepAgentNode('working');
+          const current =
+            held.agents.find((agent) => agent.agentId === 'w1') ??
+            deepAgentNode('working');
           return HttpResponse.json(
             deepAgentRunView({
               origin: deepAgentRunOrigin,
@@ -679,24 +958,35 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
             }),
           );
         }),
-        http.get(`${API}/api/agents`, () => HttpResponse.json(agentListPage([]))),
-        http.get(`${API}/api/agents/a3/history`, () => HttpResponse.json(pageOfA3)),
+        http.get(`${API}/api/agents`, () =>
+          HttpResponse.json(agentListPage([])),
+        ),
+        http.get(`${API}/api/agents/a3/history`, () =>
+          HttpResponse.json(pageOfA3),
+        ),
       );
     };
-    const runCard = (name: string): Promise<HTMLElement> => screen.findByRole('group', { name });
+    const runCard = (name: string): Promise<HTMLElement> =>
+      screen.findByRole('group', { name });
     /** The record label a card shows: the element around the record's name link. */
     const labelOf = (scope: HTMLElement, name: string): HTMLElement => {
       const label = within(scope).getByRole('link', { name }).parentElement;
-      if (label === null) throw new Error(`the label of «${name}» is not rendered`);
+      if (label === null)
+        throw new Error(`the label of «${name}» is not rendered`);
       return label;
     };
     /** The deep agent card's rows: a link (a step the deep agent started) or a plain row, by what a screen reader hears. */
     const runRows = (card: HTMLElement): string[] =>
       Array.from(card.querySelectorAll('li'), (row) => {
         const link = row.querySelector('a');
-        return link === null ? `строка: ${row.querySelector('.sr-only')?.textContent ?? '?'}` : `ссылка: ${link.getAttribute('aria-label')}`;
+        return link === null
+          ? `строка: ${row.querySelector('.sr-only')?.textContent ?? '?'}`
+          : `ссылка: ${link.getAttribute('aria-label')}`;
       });
-    const runReads = (): number => tracked.requests.filter((request) => request.path === '/api/agents/w1/run').length;
+    const runReads = (): number =>
+      tracked.requests.filter(
+        (request) => request.path === '/api/agents/w1/run',
+      ).length;
     const RECIPIENT_NOTE =
       'Аня Смирнова · для роли SRE: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.';
 
@@ -704,36 +994,61 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const live = createTestLiveSource();
     const view = renderWithRuntime({ pathname: '/chat/a', liveSource: live });
     await screen.findByText('Запускаю разбор.');
-    await waitFor(() => expect(live.current()?.url).toBe(`${API}/api/events?watch=thread%3Aa`));
+    await waitFor(() =>
+      expect(live.current()?.url).toBe(`${API}/api/events?watch=thread%3Aa`),
+    );
 
     // Assert (row 1): the decision card names the asking agent's record - name and author from `origin`, the role from the live data
-    const agentCard = await runCard('Проверка инцидента 42: Ждёт подтверждения');
-    await waitFor(() => expect(labelOf(agentCard, 'Разбор инцидентов')).toHaveTextContent(', автор Аня Смирнова, SRE'));
-    const decision = view.container.querySelector<HTMLElement>('[data-decision-id="d1"]');
-    if (decision === null) throw new Error('the decision card d1 is not rendered');
+    const agentCard = await runCard(
+      'Проверка инцидента 42: Ждёт подтверждения',
+    );
+    await waitFor(() =>
+      expect(labelOf(agentCard, 'Разбор инцидентов')).toHaveTextContent(
+        ', автор Аня Смирнова, SRE',
+      ),
+    );
+    const decision = view.container.querySelector<HTMLElement>(
+      '[data-decision-id="d1"]',
+    );
+    if (decision === null)
+      throw new Error('the decision card d1 is not rendered');
     const decisionLabel = labelOf(decision, 'Разбор инцидентов');
-    expect(within(decision).getByRole('link', { name: 'Разбор инцидентов' })).toHaveAttribute('href', `/library/${agentId}`);
+    expect(
+      within(decision).getByRole('link', { name: 'Разбор инцидентов' }),
+    ).toHaveAttribute('href', `/library/${agentId}`);
     expect(decisionLabel).toHaveTextContent(', автор Аня Смирнова, SRE');
     expect(decisionLabel).toHaveTextContent('· Аня Смирнова');
     expect(within(decisionLabel).getByText('SRE')).toBeInTheDocument();
     expect(decision).not.toHaveTextContent('Разбор инцидентов и сбоев');
 
     // Assert (row 1): the first run's card links the record by its origin name and carries the recipient's explanation (MC-17)
-    expect(within(agentCard).getByRole('link', { name: 'Разбор инцидентов' })).toHaveAttribute('href', `/library/${agentId}`);
+    expect(
+      within(agentCard).getByRole('link', { name: 'Разбор инцидентов' }),
+    ).toHaveAttribute('href', `/library/${agentId}`);
     expect(agentCard).not.toHaveTextContent('Разбор инцидентов и сбоев');
     expect(agentCard).toHaveTextContent(RECIPIENT_NOTE);
 
     // Assert (row 1): the run of a record the live list does not hold - the state without a link, no «changed» line, no restart
     const goneCard = await runCard('Сводка за ночь: Завершён');
-    expect(within(goneCard).queryByRole('link', { name: 'Сводка смены' })).toBeNull();
+    expect(
+      within(goneCard).queryByRole('link', { name: 'Сводка смены' }),
+    ).toBeNull();
     expect(within(goneCard).getByText('Сводка смены')).toBeInTheDocument();
     expect(within(goneCard).getByText('агент недоступен')).toBeInTheDocument();
     expect(goneCard).not.toHaveTextContent('изменён после запуска');
-    expect(within(goneCard).queryByRole('button', { name: 'Запустить заново' })).toBeNull();
+    expect(
+      within(goneCard).queryByRole('button', { name: 'Запустить заново' }),
+    ).toBeNull();
 
     // Assert (row 3, card): the live record is newer than the run - the MC-17 line with «Запустить заново»
-    expect(within(agentCard).getByText('Агент изменён после запуска: сейчас версия 2')).toBeInTheDocument();
-    expect(within(agentCard).getByRole('button', { name: 'Запустить заново' })).toBeInTheDocument();
+    expect(
+      within(agentCard).getByText(
+        'Агент изменён после запуска: сейчас версия 2',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(agentCard).getByRole('button', { name: 'Запустить заново' }),
+    ).toBeInTheDocument();
 
     // Assert (row 2, running): the header carries the run's version 3, not the live 4; steps by subagent, the limit refusal among them
     const deepAgentCard = await runCard('Полный разбор инцидента: Работает');
@@ -767,37 +1082,68 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       ]),
     );
     await waitFor(() => expect(runReads()).toBeGreaterThan(readsWhileRunning));
-    expect(labelOf(endedCard, 'Полный разбор инцидента')).toHaveTextContent('версия 3');
-    expect(labelOf(endedCard, 'Полный разбор инцидента')).not.toHaveTextContent('версия 4');
-    expect(within(endedCard).getByText('Глубокий агент изменён после запуска: сейчас версия 4')).toBeInTheDocument();
+    expect(labelOf(endedCard, 'Полный разбор инцидента')).toHaveTextContent(
+      'версия 3',
+    );
+    expect(labelOf(endedCard, 'Полный разбор инцидента')).not.toHaveTextContent(
+      'версия 4',
+    );
+    expect(
+      within(endedCard).getByText(
+        'Глубокий агент изменён после запуска: сейчас версия 4',
+      ),
+    ).toBeInTheDocument();
 
     // Act (row 3, card): «Запустить заново» puts the live record into this conversation's field through `useInChat`
-    await user.click(within(agentCard).getByRole('button', { name: 'Запустить заново' }));
+    await user.click(
+      within(agentCard).getByRole('button', { name: 'Запустить заново' }),
+    );
     expect(view.router.push).toHaveBeenLastCalledWith('/chat/a');
-    expect(await screen.findByRole('button', { name: 'Убрать: Разбор инцидентов и сбоев' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', {
+        name: 'Убрать: Разбор инцидентов и сбоев',
+      }),
+    ).toBeInTheDocument();
     view.unmount();
 
     // Arrange (row 3, agent page): `a3` ran Аня's agent on version 1; the live record is at version 2
     resetRow();
     serveRuns([liveAgent, liveDeepAgent]);
     const pageView = renderWithRuntime({ pathname: '/agents/a3' });
-    expect(await screen.findByRole('heading', { level: 1, name: 'Проверка инцидента 41' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'Проверка инцидента 41',
+      }),
+    ).toBeInTheDocument();
     const restart = screen.getByRole('button', { name: 'Запустить с нуля' });
 
     // Assert (row 3, agent page): the hint names the live version; the running agent keeps version 1; MC-17 without a button of its own
-    await waitFor(() => expect(restart).toHaveAccessibleDescription('Пойдёт на версии 2'));
+    await waitFor(() =>
+      expect(restart).toHaveAccessibleDescription('Пойдёт на версии 2'),
+    );
     expect(restart).toBeEnabled();
     const pageLabel = labelOf(document.body, 'Разбор инцидентов');
     expect(pageLabel).toHaveTextContent('версия 1');
     expect(pageLabel).not.toHaveTextContent('версия 2');
-    expect(screen.getByText('Агент изменён после запуска: сейчас версия 2')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Запустить заново' })).toBeNull();
+    expect(
+      screen.getByText('Агент изменён после запуска: сейчас версия 2'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Запустить заново' }),
+    ).toBeNull();
 
     // Act (row 3, agent page): «Запустить с нуля» while the restart answers 409 `START_REFUSED` `model_not_allowed`
     server.use(
       http.post(`${API}/api/agents/a3/restart`, () =>
         HttpResponse.json(
-          { statusCode: 409, message: 'Start refused', errorCode: 'START_REFUSED', reason: 'model_not_allowed', model: SONNET },
+          {
+            statusCode: 409,
+            message: 'Start refused',
+            errorCode: 'START_REFUSED',
+            reason: 'model_not_allowed',
+            model: SONNET,
+          },
           { status: 409 },
         ),
       ),
@@ -806,9 +1152,17 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Assert (row 3, agent page): the notice says why and offers the record; no new agent is opened, the address stays
     expect(
-      await screen.findByText('Модель Sonnet вам недоступна — агент не запустился. Скопируйте его себе — копия получит вашу модель'),
+      await screen.findByText(
+        'Модель Sonnet вам недоступна — агент не запустился. Скопируйте его себе — копия получит вашу модель',
+      ),
     ).toBeInTheDocument();
-    expect(tracked.requests.filter((request) => request.method === 'POST' && request.path === '/api/agents/a3/restart')).toHaveLength(1);
+    expect(
+      tracked.requests.filter(
+        (request) =>
+          request.method === 'POST' &&
+          request.path === '/api/agents/a3/restart',
+      ),
+    ).toHaveLength(1);
     expect(pageView.router.push).not.toHaveBeenCalled();
     expect(pageView.router.replace).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Открыть' }));
@@ -819,11 +1173,20 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     resetRow();
     serveRuns([liveDeepAgent]);
     const gonePage = renderWithRuntime({ pathname: '/agents/a3' });
-    expect(await screen.findByRole('heading', { level: 1, name: 'Проверка инцидента 41' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'Проверка инцидента 41',
+      }),
+    ).toBeInTheDocument();
     const blocked = screen.getByRole('button', { name: 'Запустить с нуля' });
     await waitFor(() => expect(blocked).toBeDisabled());
-    expect(blocked).toHaveAccessibleDescription('Агент недоступен — запустить с нуля нельзя');
-    expect(screen.queryByRole('link', { name: 'Разбор инцидентов' })).toBeNull();
+    expect(blocked).toHaveAccessibleDescription(
+      'Агент недоступен — запустить с нуля нельзя',
+    );
+    expect(
+      screen.queryByRole('link', { name: 'Разбор инцидентов' }),
+    ).toBeNull();
     expect(document.body).not.toHaveTextContent('изменён после запуска');
     gonePage.unmount();
 
@@ -833,32 +1196,66 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     serveRuns([liveAgent, liveDeepAgent]);
     server.use(
       http.get(`${API}/api/library`, () =>
-        HttpResponse.json({ statusCode: 500, message: 'Internal server error', reason: 'database_unavailable' }, { status: 500 }),
+        HttpResponse.json(
+          {
+            statusCode: 500,
+            message: 'Internal server error',
+            reason: 'database_unavailable',
+          },
+          { status: 500 },
+        ),
       ),
     );
-    const listFailures = (): unknown[] => logRecords.filter((record) => record.message === 'library: list read failed');
+    const listFailures = (): unknown[] =>
+      logRecords.filter(
+        (record) => record.message === 'library: list read failed',
+      );
     const failedView = renderWithRuntime({ pathname: '/chat/a' });
     await screen.findByText('Запускаю разбор.');
     await waitFor(() => expect(listFailures()).toHaveLength(1));
 
     // Assert (row 4): the labels keep name and author of the origin, with no audience, no «changed» line, no restart, no note
-    const unreadCard = await runCard('Проверка инцидента 42: Ждёт подтверждения');
-    expect(labelOf(unreadCard, 'Разбор инцидентов')).toHaveTextContent(', автор Аня Смирнова');
-    expect(labelOf(unreadCard, 'Разбор инцидентов')).not.toHaveTextContent('SRE');
-    expect(within(await runCard('Сводка за ночь: Завершён')).getByRole('link', { name: 'Сводка смены' })).toBeInTheDocument();
+    const unreadCard = await runCard(
+      'Проверка инцидента 42: Ждёт подтверждения',
+    );
+    expect(labelOf(unreadCard, 'Разбор инцидентов')).toHaveTextContent(
+      ', автор Аня Смирнова',
+    );
+    expect(labelOf(unreadCard, 'Разбор инцидентов')).not.toHaveTextContent(
+      'SRE',
+    );
+    expect(
+      within(await runCard('Сводка за ночь: Завершён')).getByRole('link', {
+        name: 'Сводка смены',
+      }),
+    ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('изменён после запуска');
     expect(document.body).not.toHaveTextContent('недоступен');
     expect(document.body).not.toHaveTextContent('работает с вашими правами');
-    expect(screen.queryByRole('button', { name: 'Запустить заново' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Запустить заново' }),
+    ).toBeNull();
     // ...and nothing else breaks: the conversation, the decision card and the deep agent card are on screen
-    expect(failedView.container.querySelector('[data-decision-id="d1"]')).toHaveTextContent('хочет выполнить:');
-    expect(labelOf(await runCard('Полный разбор инцидента: Работает'), 'Полный разбор инцидента')).toHaveTextContent('версия 3');
+    expect(
+      failedView.container.querySelector('[data-decision-id="d1"]'),
+    ).toHaveTextContent('хочет выполнить:');
+    expect(
+      labelOf(
+        await runCard('Полный разбор инцидента: Работает'),
+        'Полный разбор инцидента',
+      ),
+    ).toHaveTextContent('версия 3');
     expect(screen.getByText('Разберись с инцидентом 42')).toBeInTheDocument();
     expect(listFailures()).toEqual([
       {
         level: 'warn',
         message: 'library: list read failed',
-        fields: expect.objectContaining({ method: 'GET', path: '/api/library', status: 500, reason: 'database_unavailable' }),
+        fields: expect.objectContaining({
+          method: 'GET',
+          path: '/api/library',
+          status: 500,
+          reason: 'database_unavailable',
+        }),
       },
     ]);
     failedView.unmount();
@@ -890,21 +1287,28 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: ShareDialog (employee variant), libraryApi, adminApi.library, AdminScreen section `library`, SystemRecordPage, RecordEditor (mode system), DataTable, ConfirmDialog, DeleteRecordDialog, parseShellRoute, MSW, next/navigation mock
   // @complexity: medium
-  it('INT-5: the audience dialog offers the employee\'s roles and keeps a role she left, and the panel section lists shared records and closes access only after a confirmation', async () => {
+  it("INT-5: the audience dialog offers the employee's roles and keeps a role she left, and the panel section lists shared records and closes access only after a confirmation", async () => {
     const user = userEvent.setup();
     const tracked = trackRequests(server);
     const PAYMENTS = { id: fixtureId(101), name: 'Оплаты' };
     const DUTY = { id: fixtureId(102), name: 'Дежурный' };
 
     /** Bodies of the `method path` requests since request number `from`. */
-    const bodiesSince = (from: number, method: string, path: string): unknown[] =>
+    const bodiesSince = (
+      from: number,
+      method: string,
+      path: string,
+    ): unknown[] =>
       tracked.requests
         .slice(from)
         .filter((request) => request.method === method && request.path === path)
         .map((request) => request.body);
     /** An audience body with its `roleIds` in a fixed order (the dialog does not promise one). */
     const withSortedRoles = (body: unknown): unknown =>
-      typeof body === 'object' && body !== null && 'roleIds' in body && Array.isArray(body.roleIds)
+      typeof body === 'object' &&
+      body !== null &&
+      'roleIds' in body &&
+      Array.isArray(body.roleIds)
         ? { ...body, roleIds: body.roleIds.map(String).sort() }
         : body;
 
@@ -915,13 +1319,22 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       offerInChat: false,
     } satisfies Partial<RecordSummary> & Pick<RecordSummary, 'id'>;
     const audiencePath = `/api/library/${ownFields.id}/audience`;
-    serveLibrary({ viewer: currentUser(), roles: [SRE, PAYMENTS], list: [recordSummary(ownFields)] });
+    serveLibrary({
+      viewer: currentUser(),
+      roles: [SRE, PAYMENTS],
+      list: [recordSummary(ownFields)],
+    });
     server.use(
       http.put(`${API}${audiencePath}`, () =>
         HttpResponse.json(
           recordDetail({
             ...ownFields,
-            audience: { roles: [{ ...DUTY, member: false }, { ...SRE, member: true }] },
+            audience: {
+              roles: [
+                { ...DUTY, member: false },
+                { ...SRE, member: true },
+              ],
+            },
             offerInChat: true,
           }),
         ),
@@ -931,42 +1344,77 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Act (row 1): «Поделиться» from the row's menu; the dialog reads the viewer's roles on open
     const mine = await screen.findByRole('region', { name: 'Мои · 1' });
-    await user.click(within(mine).getByRole('button', { name: 'Действия: Разбор логов' }));
+    await user.click(
+      within(mine).getByRole('button', { name: 'Действия: Разбор логов' }),
+    );
     const beforeOpen = tracked.requests.length;
-    await user.click(await screen.findByRole('menuitem', { name: 'Поделиться' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Поделиться «Разбор логов»' });
+    await user.click(
+      await screen.findByRole('menuitem', { name: 'Поделиться' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Поделиться «Разбор логов»',
+    });
     const sre = await within(dialog).findByRole('checkbox', { name: 'SRE' });
-    expect(libraryRequestsSince(tracked.requests, beforeOpen)).toContain('GET /api/auth/me/roles');
+    expect(libraryRequestsSince(tracked.requests, beforeOpen)).toContain(
+      'GET /api/auth/me/roles',
+    );
 
     // Assert (row 1): her two roles, unticked, and «Дежурный» ticked and marked as no longer hers - nothing else
     expect(within(dialog).getAllByRole('checkbox')).toHaveLength(3);
     expect(sre).not.toBeChecked();
-    expect(within(dialog).getByRole('checkbox', { name: 'Оплаты' })).not.toBeChecked();
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'Оплаты' }),
+    ).not.toBeChecked();
     const duty = within(dialog).getByRole('checkbox', { name: 'Дежурный' });
     expect(duty).toBeChecked();
     expect(duty).toHaveAccessibleDescription('вы больше не в этой роли');
 
     // Act (row 1): tick «SRE», let the colleagues' chat offer it, save
     await user.click(sre);
-    await user.click(within(dialog).getByRole('radio', { name: 'Их чат предлагает и запускает агента' }));
+    await user.click(
+      within(dialog).getByRole('radio', {
+        name: 'Их чат предлагает и запускает агента',
+      }),
+    );
     const beforeSave = tracked.requests.length;
     await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
 
     // Assert (row 1): one `PUT …/audience` with «Дежурный» kept, «SRE» added, «Оплаты» absent, and `offerInChat`; the toast of
     //   MC-14 names the saved audience; the dialog closes and `libraryIndex` is re-read
-    expect(await screen.findByText('Теперь видят: Дежурный, SRE')).toBeInTheDocument();
-    await waitFor(() => expect(bodiesSince(beforeSave, 'PUT', audiencePath)).toHaveLength(1));
+    expect(
+      await screen.findByText('Теперь видят: Дежурный, SRE'),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(bodiesSince(beforeSave, 'PUT', audiencePath)).toHaveLength(1),
+    );
     const [audienceBody] = bodiesSince(beforeSave, 'PUT', audiencePath);
-    expect(withSortedRoles(audienceBody)).toEqual({ roleIds: [DUTY.id, SRE.id].sort(), offerInChat: true });
+    expect(withSortedRoles(audienceBody)).toEqual({
+      roleIds: [DUTY.id, SRE.id].sort(),
+      offerInChat: true,
+    });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await waitFor(() => expect(libraryRequestsSince(tracked.requests, beforeSave)).toContain('GET /api/library'));
+    await waitFor(() =>
+      expect(libraryRequestsSince(tracked.requests, beforeSave)).toContain(
+        'GET /api/library',
+      ),
+    );
     libraryView.unmount();
 
     // Row 2: the administrator; «Открытые ролям» holds Аня's agent for «SRE» and Олег's for «Оплаты»; `system` and `bans` answer
     //   their own lists; the close takes the record off the server's list
     resetRow();
-    const ADMIN = currentUser({ id: fixtureId(3), email: 'igor@corp.example', name: 'Игорь Петров', isAdmin: true });
-    const colleagues = { mine: false, canEdit: false, canShare: false, canDelete: false };
+    const ADMIN = currentUser({
+      id: fixtureId(3),
+      email: 'igor@corp.example',
+      name: 'Игорь Петров',
+      isAdmin: true,
+    });
+    const colleagues = {
+      mine: false,
+      canEdit: false,
+      canShare: false,
+      canDelete: false,
+    };
     const anyaFields = {
       id: fixtureId(121),
       name: 'Разбор инцидентов',
@@ -985,7 +1433,10 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       ...colleagues,
     });
     const INSTRUCTION = 'Разбери инцидент по логам и тикетам.';
-    const anyaRecord = recordDetail({ ...anyaFields, content: agentContent({ prompt: INSTRUCTION }) });
+    const anyaRecord = recordDetail({
+      ...anyaFields,
+      content: agentContent({ prompt: INSTRUCTION }),
+    });
     const closePath = `/api/admin/library/${anyaFields.id}/close`;
     let sharedList: RecordSummary[] = [recordSummary(anyaFields), olegRecord];
     // The company's records: one the administrator made, and the built-in one (the server would not offer its deletion; the flag
@@ -998,7 +1449,10 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
       canEdit: true,
       canDelete: true,
     } satisfies Partial<RecordSummary> & Pick<RecordSummary, 'id'>;
-    const companyRecord = recordDetail({ ...companyFields, content: agentContent({ servers: ['logs'] }) });
+    const companyRecord = recordDetail({
+      ...companyFields,
+      content: agentContent({ servers: ['logs'] }),
+    });
     const builtin = recordSummary({
       id: fixtureId(130),
       name: 'general-purpose',
@@ -1012,15 +1466,26 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const servePanel = (): void => {
       serveLibrary({ viewer: ADMIN });
       server.use(
-        http.get(`${API}/api/admin/library/system`, () => HttpResponse.json(systemList)),
-        http.get(`${API}/api/admin/library/shared`, () => HttpResponse.json(sharedList)),
-        http.get(`${API}/api/admin/library/bans`, () => HttpResponse.json([] satisfies BannedRecord[])),
+        http.get(`${API}/api/admin/library/system`, () =>
+          HttpResponse.json(systemList),
+        ),
+        http.get(`${API}/api/admin/library/shared`, () =>
+          HttpResponse.json(sharedList),
+        ),
+        http.get(`${API}/api/admin/library/bans`, () =>
+          HttpResponse.json([] satisfies BannedRecord[]),
+        ),
         http.get(`${API}/api/admin/library/settings`, () =>
-          HttpResponse.json({ defaultMaxTurns: NEW_MAX_TURNS, updatedAt: null } satisfies LibrarySettings),
+          HttpResponse.json({
+            defaultMaxTurns: NEW_MAX_TURNS,
+            updatedAt: null,
+          } satisfies LibrarySettings),
         ),
         http.get(`${API}/api/admin/library/:id`, ({ params }) => {
-          if (params['id'] === anyaRecord.id) return HttpResponse.json(anyaRecord);
-          if (params['id'] === companyRecord.id) return HttpResponse.json(companyRecord);
+          if (params['id'] === anyaRecord.id)
+            return HttpResponse.json(anyaRecord);
+          if (params['id'] === companyRecord.id)
+            return HttpResponse.json(companyRecord);
           return HttpResponse.json(RECORD_NOT_FOUND, { status: 404 });
         }),
         http.post(`${API}${closePath}`, () => {
@@ -1028,10 +1493,18 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
           return new HttpResponse(null, { status: 204 });
         }),
         // What the company record's editor reads on open besides the record: the registry and the model catalogue
-        http.get(`${API}/api/admin/mcp-servers`, () => HttpResponse.json([mcpServerSummary({ name: 'logs' })])),
+        http.get(`${API}/api/admin/mcp-servers`, () =>
+          HttpResponse.json([mcpServerSummary({ name: 'logs' })]),
+        ),
         http.get(`${API}/api/admin/models`, () => HttpResponse.json([])),
         http.put(`${API}${companyPath}`, () =>
-          HttpResponse.json(recordDetail({ ...companyFields, version: 6, content: agentContent({ servers: ['*'] }) })),
+          HttpResponse.json(
+            recordDetail({
+              ...companyFields,
+              version: 6,
+              content: agentContent({ servers: ['*'] }),
+            }),
+          ),
         ),
         http.delete(`${API}${companyPath}`, () => {
           systemList = [builtin];
@@ -1056,75 +1529,136 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Assert (row 2, list): the tab is chosen by the address; each row shows the name, the author and the roles
     const shared = await screen.findByRole('table', { name: 'Открытые ролям' });
-    expect(screen.getByRole('tab', { name: 'Открытые ролям' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Системные' })).toHaveAttribute('href', '/admin/library');
-    expect(screen.getByRole('tab', { name: 'Запреты' })).toHaveAttribute('href', '/admin/library/bans');
-    const anyaRow = within(shared).getByRole('link', { name: /^Разбор инцидентов/ }).closest('tr');
-    if (anyaRow === null) throw new Error('the row of «Разбор инцидентов» is not rendered');
-    expect(Array.from(anyaRow.querySelectorAll('td'), (cell) => cell.textContent)).toEqual([
+    expect(screen.getByRole('tab', { name: 'Открытые ролям' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: 'Системные' })).toHaveAttribute(
+      'href',
+      '/admin/library',
+    );
+    expect(screen.getByRole('tab', { name: 'Запреты' })).toHaveAttribute(
+      'href',
+      '/admin/library/bans',
+    );
+    const anyaRow = within(shared)
+      .getByRole('link', { name: /^Разбор инцидентов/ })
+      .closest('tr');
+    if (anyaRow === null)
+      throw new Error('the row of «Разбор инцидентов» is not rendered');
+    expect(
+      Array.from(anyaRow.querySelectorAll('td'), (cell) => cell.textContent),
+    ).toEqual([
       'Разбор инцидентовИщет причины сбоев',
       'Аня Смирнова',
       'SRE',
       'да',
       '',
     ]);
-    expect(rowHrefs(shared)).toEqual([`/admin/library/${anyaFields.id}`, `/admin/library/${olegRecord.id}`]);
+    expect(rowHrefs(shared)).toEqual([
+      `/admin/library/${anyaFields.id}`,
+      `/admin/library/${olegRecord.id}`,
+    ]);
 
     // Act (row 2): open Аня's record by its row link: the router goes there, then the address changes
-    await user.click(within(anyaRow).getByRole('link', { name: /^Разбор инцидентов/ }));
-    expect(panelView.router.push.mock.lastCall?.[0]).toBe(`/admin/library/${anyaFields.id}`);
+    await user.click(
+      within(anyaRow).getByRole('link', { name: /^Разбор инцидентов/ }),
+    );
+    expect(panelView.router.push.mock.lastCall?.[0]).toBe(
+      `/admin/library/${anyaFields.id}`,
+    );
     panelView.setPathname(`/admin/library/${anyaFields.id}`);
 
     // Assert (row 2, AL-03): the record with its author, its roles and the instruction
-    expect(await screen.findByRole('heading', { level: 1, name: 'Разбор инцидентов' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'Разбор инцидентов',
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText(INSTRUCTION)).toBeInTheDocument();
-    expect(screen.getByText('Роли:').parentElement).toHaveTextContent('Роли: SRE');
+    expect(screen.getByText('Роли:').parentElement).toHaveTextContent(
+      'Роли: SRE',
+    );
     expect(document.body).toHaveTextContent('Аня Смирнова');
 
     // Act (row 2): «Закрыть доступ» asks first; «Отмена» sends nothing
     const beforeClose = tracked.requests.length;
     await user.click(screen.getByRole('button', { name: 'Закрыть доступ' }));
-    const asked = await screen.findByRole('alertdialog', { name: 'Закрыть доступ к «Разбор инцидентов»?' });
-    expect(asked).toHaveTextContent('Агент станет личным у автора, Аня Смирнова: роль SRE перестанет его видеть.');
+    const asked = await screen.findByRole('alertdialog', {
+      name: 'Закрыть доступ к «Разбор инцидентов»?',
+    });
+    expect(asked).toHaveTextContent(
+      'Агент станет личным у автора, Аня Смирнова: роль SRE перестанет его видеть.',
+    );
     await user.click(within(asked).getByRole('button', { name: 'Отмена' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(panelRequestsSince(beforeClose)).toEqual([]);
 
     // Act (row 2): ask again and confirm
     await user.click(screen.getByRole('button', { name: 'Закрыть доступ' }));
-    const confirmation = await screen.findByRole('alertdialog', { name: 'Закрыть доступ к «Разбор инцидентов»?' });
+    const confirmation = await screen.findByRole('alertdialog', {
+      name: 'Закрыть доступ к «Разбор инцидентов»?',
+    });
     expect(panelRequestsSince(beforeClose)).toEqual([]);
-    await user.click(within(confirmation).getByRole('button', { name: 'Закрыть доступ' }));
+    await user.click(
+      within(confirmation).getByRole('button', { name: 'Закрыть доступ' }),
+    );
 
     // Assert (row 2): exactly one close, of this record; the notice; the page returns to «Открытые ролям»
     expect(await screen.findByText('Доступ закрыт')).toBeInTheDocument();
     expect(panelRequestsSince(beforeClose)).toEqual([`POST ${closePath}`]);
-    await waitFor(() => expect(panelView.router.push).toHaveBeenLastCalledWith('/admin/library/shared'));
+    await waitFor(() =>
+      expect(panelView.router.push).toHaveBeenLastCalledWith(
+        '/admin/library/shared',
+      ),
+    );
     panelView.setPathname('/admin/library/shared');
 
     // Assert (row 2): the list is read again and Аня's row is gone, Олег's stays
     const reread = await screen.findByRole('table', { name: 'Открытые ролям' });
-    await waitFor(() => expect(rowHrefs(reread)).toEqual([`/admin/library/${olegRecord.id}`]));
-    expect(panelRequestsSince(beforeClose).filter((request) => request.startsWith('POST'))).toEqual([`POST ${closePath}`]);
+    await waitFor(() =>
+      expect(rowHrefs(reread)).toEqual([`/admin/library/${olegRecord.id}`]),
+    );
+    expect(
+      panelRequestsSince(beforeClose).filter((request) =>
+        request.startsWith('POST'),
+      ),
+    ).toEqual([`POST ${closePath}`]);
     panelView.unmount();
 
     // Row 3: a company record (no author): the editor reads the choices, the registry and the catalogue on open
     resetRow();
     servePanel();
-    const companyView = renderWithRuntime({ pathname: `/admin/library/${companyFields.id}` });
-    const everything = await screen.findByRole('switch', { name: 'Все системы' });
+    const companyView = renderWithRuntime({
+      pathname: `/admin/library/${companyFields.id}`,
+    });
+    const everything = await screen.findByRole('switch', {
+      name: 'Все системы',
+    });
     await waitFor(() => expect(everything).not.toBeChecked());
     const beforeCompany = tracked.requests.length;
     await user.click(everything);
     const companyPanel = screen.getByRole('region', { name: 'Сохранение' });
-    await user.click(within(companyPanel).getByRole('button', { name: 'Сохранить' }));
+    await user.click(
+      within(companyPanel).getByRole('button', { name: 'Сохранить' }),
+    );
 
     // Assert (row 3): one `PUT` of the panel's route with the form's version and «все системы»; the employee's route is not touched
-    expect(await within(companyPanel).findByText('Сохранено')).toBeInTheDocument();
+    expect(
+      await within(companyPanel).findByText('Сохранено'),
+    ).toBeInTheDocument();
     expect(bodiesSince(beforeCompany, 'PUT', companyPath)).toEqual([
-      expect.objectContaining({ version: 5, content: expect.objectContaining({ servers: ['*'] }) }),
+      expect.objectContaining({
+        version: 5,
+        content: expect.objectContaining({ servers: ['*'] }),
+      }),
     ]);
-    expect(tracked.requests.filter((request) => request.path === `/api/library/${companyFields.id}`)).toEqual([]);
+    expect(
+      tracked.requests.filter(
+        (request) => request.path === `/api/library/${companyFields.id}`,
+      ),
+    ).toEqual([]);
     companyView.unmount();
 
     // Row 4: «Системные»; «Удалить» is in the menu of the company record only
@@ -1132,19 +1666,41 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     servePanel();
     const systemView = renderWithRuntime({ pathname: '/admin/library' });
     const system = await screen.findByRole('table', { name: 'Системные' });
-    expect(within(system).queryByRole('button', { name: 'Действия: general-purpose' })).toBeNull();
+    expect(
+      within(system).queryByRole('button', {
+        name: 'Действия: general-purpose',
+      }),
+    ).toBeNull();
     const beforeDelete = tracked.requests.length;
-    await user.click(within(system).getByRole('button', { name: 'Действия: Дежурный помощник' }));
-    expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Удалить']);
+    await user.click(
+      within(system).getByRole('button', {
+        name: 'Действия: Дежурный помощник',
+      }),
+    );
+    expect(
+      (await screen.findAllByRole('menuitem')).map((item) => item.textContent),
+    ).toEqual(['Удалить']);
     await user.click(screen.getByRole('menuitem', { name: 'Удалить' }));
 
     // Assert (row 4): nothing is sent before the confirmation; then exactly one `DELETE`, and the row leaves
-    const confirmDelete = await screen.findByRole('alertdialog', { name: 'Удалить «Дежурный помощник»?' });
+    const confirmDelete = await screen.findByRole('alertdialog', {
+      name: 'Удалить «Дежурный помощник»?',
+    });
     expect(panelRequestsSince(beforeDelete)).toEqual([]);
-    await user.click(within(confirmDelete).getByRole('button', { name: 'Удалить' }));
+    await user.click(
+      within(confirmDelete).getByRole('button', { name: 'Удалить' }),
+    );
     expect(await screen.findByText('Агент удалён')).toBeInTheDocument();
-    expect(panelRequestsSince(beforeDelete).filter((request) => !request.startsWith('GET'))).toEqual([`DELETE ${companyPath}`]);
-    await waitFor(() => expect(within(system).queryByRole('link', { name: 'Дежурный помощник' })).toBeNull());
+    expect(
+      panelRequestsSince(beforeDelete).filter(
+        (request) => !request.startsWith('GET'),
+      ),
+    ).toEqual([`DELETE ${companyPath}`]);
+    await waitFor(() =>
+      expect(
+        within(system).queryByRole('link', { name: 'Дежурный помощник' }),
+      ).toBeNull(),
+    );
     systemView.unmount();
   });
 });

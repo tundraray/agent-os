@@ -9,7 +9,11 @@ import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord } from '@agent-os/runtime';
 
 import type { EmbeddingVerdict } from '../access-gate';
-import { createProviderRegistryDouble, createScriptedEmbeddings, type ScriptedEmbeddings } from '../testing';
+import {
+  createProviderRegistryDouble,
+  createScriptedEmbeddings,
+  type ScriptedEmbeddings,
+} from '../testing';
 import { AgentsEmbeddings } from './embeddings';
 
 const SMALL: EmbeddingVerdict = {
@@ -19,9 +23,18 @@ const SMALL: EmbeddingVerdict = {
   dimensions: 2,
 };
 /** The catalogue's input rate and zeros elsewhere (KD-6). */
-const INPUT_ONLY_PRICE = { inputUsdPerMTok: 0.15, outputUsdPerMTok: 0, cacheReadUsdPerMTok: 0, cacheWriteUsdPerMTok: 0 };
-const NOT_CONFIGURED: EmbeddingVerdict = { kind: 'refused', reason: 'model_not_configured' };
-const BODY_503 = '{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}';
+const INPUT_ONLY_PRICE = {
+  inputUsdPerMTok: 0.15,
+  outputUsdPerMTok: 0,
+  cacheReadUsdPerMTok: 0,
+  cacheWriteUsdPerMTok: 0,
+};
+const NOT_CONFIGURED: EmbeddingVerdict = {
+  kind: 'refused',
+  reason: 'model_not_configured',
+};
+const BODY_503 =
+  '{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}';
 const MANY_TEXTS = Array.from({ length: 101 }, (_, index) => `text ${index}`);
 
 interface Row {
@@ -39,11 +52,23 @@ interface Row {
   readonly pauses: readonly number[];
   /** Owner, model and input tokens of each ledger row. */
   readonly ledger: readonly string[];
-  readonly log?: { readonly message: string; readonly fields: Readonly<Record<string, unknown>> };
+  readonly log?: {
+    readonly message: string;
+    readonly fields: Readonly<Record<string, unknown>>;
+  };
 }
 
-function loggerDouble(): Logger & { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> } {
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => logger };
+function loggerDouble(): Logger & {
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+} {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: () => logger,
+  };
   return logger;
 }
 
@@ -94,7 +119,12 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         ledger: [],
         log: {
           message: 'embedding call failed',
-          fields: { provider: 'gemini', reason: 'provider_unavailable', statusCode: 503, responseBody: BODY_503 },
+          fields: {
+            provider: 'gemini',
+            reason: 'provider_unavailable',
+            statusCode: 503,
+            responseBody: BODY_503,
+          },
         },
       },
     ],
@@ -135,7 +165,10 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         outcome: 'vectors 101',
         requests: [100, 1],
         pauses: [],
-        ledger: ['owner-1 gemini/small-embedding 1000', 'owner-1 gemini/small-embedding 10'],
+        ledger: [
+          'owner-1 gemini/small-embedding 1000',
+          'owner-1 gemini/small-embedding 10',
+        ],
       },
     ],
     [
@@ -208,7 +241,9 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
     });
 
     const outcome =
-      result.kind === 'vectors' ? `vectors ${result.vectors.length}` : `unavailable ${result.reason}`;
+      result.kind === 'vectors'
+        ? `vectors ${result.vectors.length}`
+        : `unavailable ${result.reason}`;
     expect(outcome).toBe(row.outcome);
     if (result.kind === 'vectors') {
       for (const vector of result.vectors) {
@@ -216,8 +251,14 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
       }
     }
     if (row.vectors !== undefined && result.kind === 'vectors') {
-      const rounded = result.vectors.map((vector) => vector.map((value) => Number(value.toFixed(6))));
-      expect(rounded).toEqual(row.vectors.map((vector) => vector.map((value) => Number(value.toFixed(6)))));
+      const rounded = result.vectors.map((vector) =>
+        vector.map((value) => Number(value.toFixed(6))),
+      );
+      expect(rounded).toEqual(
+        row.vectors.map((vector) =>
+          vector.map((value) => Number(value.toFixed(6))),
+        ),
+      );
     }
     expect(seam.calls.map((call) => call.texts.length)).toEqual(row.requests);
     // The batches go in the texts' order; a retry sends its batch again.
@@ -227,15 +268,24 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
       expect(seam.calls.map((call) => call.model)).toEqual([row.calledModel]);
     }
     expect(pauses).toEqual(row.pauses);
-    expect(ledgerRows.map((call) => `${call.ownerId} ${call.model} ${call.usage.inputTokens}`)).toEqual(row.ledger);
+    expect(
+      ledgerRows.map(
+        (call) => `${call.ownerId} ${call.model} ${call.usage.inputTokens}`,
+      ),
+    ).toEqual(row.ledger);
     for (const call of ledgerRows) {
       expect(call.price).toEqual(INPUT_ONLY_PRICE);
-      expect(call.usage).toMatchObject({ outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+      expect(call.usage).toMatchObject({
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
     }
     if (row.log !== undefined) {
-      const logged = [...logger.info.mock.calls, ...logger.warn.mock.calls].filter(
-        ([message]) => message === row.log?.message,
-      );
+      const logged = [
+        ...logger.info.mock.calls,
+        ...logger.warn.mock.calls,
+      ].filter(([message]) => message === row.log?.message);
       expect(logged.at(-1)?.[1]).toMatchObject(row.log.fields);
     }
   });

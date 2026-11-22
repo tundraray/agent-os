@@ -9,21 +9,27 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { adminRecordPath } from '@/lib/shell-route';
 import { FormWarning } from '../admin-form';
-import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import {
+  DataTable,
+  resourceTableState,
+  type DataTableColumn,
+  type DataTableRow,
+} from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 
 /** UXRD MC-27 (`admin.signIn`): the texts the table, the new form and the provider page share. */
 type SignInTranslator = ReturnType<typeof useTranslations<'admin.signIn'>>;
 
 /** MC-27: the provider types of the first version as the panel names them — the same in every language (KD-7). */
-export const PROVIDER_TYPE_LABEL: Readonly<Record<ProviderType, string>> = { google: 'Google', oidc: 'OIDC' };
+export const PROVIDER_TYPE_LABEL: Readonly<Record<ProviderType, string>> = {
+  google: 'Google',
+  oidc: 'OIDC',
+};
 
 /** MC-27: under «Тип» of the new form and under the header of a Google provider's page. */
 export function GoogleWarning() {
   const t = useTranslations('admin.signIn');
-  return (
-    <FormWarning>{t('googleWarning')}</FormWarning>
-  );
+  return <FormWarning>{t('googleWarning')}</FormWarning>;
 }
 
 type ProviderEnabledSwitchProps = {
@@ -38,16 +44,24 @@ type ProviderEnabledSwitchProps = {
  * DC-8: «Включено» of a provider, in its table row and on its page. A refused enable (`PROVIDER_INCOMPLETE`,
  * `PUBLIC_URL_REQUIRED`) puts the switch back with its MC-27 text under it.
  */
-export function ProviderEnabledSwitch({ provider, inTable, onChanged }: ProviderEnabledSwitchProps) {
+export function ProviderEnabledSwitch({
+  provider,
+  inTable,
+  onChanged,
+}: ProviderEnabledSwitchProps) {
   const t = useTranslations('admin.signIn');
   const save = async (enabled: boolean): Promise<void> => {
-    await rereadOnNotFound(onChanged)(() => adminApi.providers.update(provider.id, { enabled }));
+    await rereadOnNotFound(onChanged)(() =>
+      adminApi.providers.update(provider.id, { enabled }),
+    );
     onChanged();
   };
 
   return (
     <SavingSwitch
-      label={inTable ? t('enabledSwitch', { name: provider.name }) : t('enabled')}
+      label={
+        inTable ? t('enabledSwitch', { name: provider.name }) : t('enabled')
+      }
       labelOff={t('disabled')}
       labelHidden={inTable}
       checked={provider.enabled}
@@ -93,13 +107,21 @@ export function ProvidersTable() {
       PROVIDER_TYPE_LABEL[provider.type],
       // Above the row link's overlay, so the switch takes the press instead of opening the provider.
       <div key="enabled" className="relative z-10">
-        <ProviderEnabledSwitch provider={provider} inTable onChanged={providers.reload} />
+        <ProviderEnabledSwitch
+          provider={provider}
+          inTable
+          onChanged={providers.reload}
+        />
       </div>,
     ],
   });
 
   // No empty state: the password row is always there.
-  const state = resourceTableState(providers, t('methodsLoadFailed'), (data) => ({ rows: [passwordRow(t), ...data.map(toRow)] }));
+  const state = resourceTableState(
+    providers,
+    t('methodsLoadFailed'),
+    (data) => ({ rows: [passwordRow(t), ...data.map(toRow)] }),
+  );
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">

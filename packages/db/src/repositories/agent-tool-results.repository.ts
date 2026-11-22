@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { Db } from '../db';
-import { agentSessions, agentToolResults, agentToolResultSettings } from '../schema';
+import {
+  agentSessions,
+  agentToolResults,
+  agentToolResultSettings,
+} from '../schema';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
 export interface StoredToolResult {
@@ -61,11 +65,16 @@ export class AgentToolResultsRepository {
    * The stored result of the call in the caller's session, read only when the session belongs to
    * `ownerId`; `undefined` otherwise. Another session's id and a missing id are indistinguishable (AC-04.3).
    */
-  async findForRun(lookup: ToolResultLookup): Promise<StoredToolResult | undefined> {
+  async findForRun(
+    lookup: ToolResultLookup,
+  ): Promise<StoredToolResult | undefined> {
     const [row] = await this.db.client
       .select({ value: agentToolResults.value, text: agentToolResults.text })
       .from(agentToolResults)
-      .innerJoin(agentSessions, eq(agentSessions.taskId, agentToolResults.taskId))
+      .innerJoin(
+        agentSessions,
+        eq(agentSessions.taskId, agentToolResults.taskId),
+      )
       .where(
         and(
           eq(agentToolResults.taskId, lookup.taskId),
@@ -78,8 +87,11 @@ export class AgentToolResultsRepository {
 
   /** The settings row, read anew on every use (settings-row.md); the migration creates it. */
   async readSettings(): Promise<ToolResultSettingsRow> {
-    const [row] = await this.db.client.select(settingsColumns).from(agentToolResultSettings);
-    if (row === undefined) throw new Error('agent_tool_result_settings row is missing');
+    const [row] = await this.db.client
+      .select(settingsColumns)
+      .from(agentToolResultSettings);
+    if (row === undefined)
+      throw new Error('agent_tool_result_settings row is missing');
     return row;
   }
 
@@ -87,8 +99,11 @@ export class AgentToolResultsRepository {
   async writeSettings(
     values: Omit<ToolResultSettingsRow, 'updatedAt'>,
   ): Promise<ToolResultSettingsRowChange> {
-    const [before] = await this.db.client.select(settingsColumns).from(agentToolResultSettings);
-    if (before === undefined) throw new Error('agent_tool_result_settings row is missing');
+    const [before] = await this.db.client
+      .select(settingsColumns)
+      .from(agentToolResultSettings);
+    if (before === undefined)
+      throw new Error('agent_tool_result_settings row is missing');
     const [after] = await this.db.client
       .update(agentToolResultSettings)
       .set({
@@ -98,7 +113,8 @@ export class AgentToolResultsRepository {
         updatedAt: new Date(),
       })
       .returning(settingsColumns);
-    if (after === undefined) throw new Error('agent_tool_result_settings row is missing');
+    if (after === undefined)
+      throw new Error('agent_tool_result_settings row is missing');
     return { before, after };
   }
 }

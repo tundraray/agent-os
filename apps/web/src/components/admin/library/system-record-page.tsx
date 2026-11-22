@@ -5,7 +5,10 @@ import type { RecordDetail } from '@agent-os/contracts';
 import { RecordPlaceholder } from '@/components/admin/admin-header';
 import { blankAgent } from '@/components/library/agent-fields';
 import { DeepAgentCard } from '@/components/library/deep-agent-card';
-import { RecordEditor, type RecordEditorSource } from '@/components/library/record-editor';
+import {
+  RecordEditor,
+  type RecordEditorSource,
+} from '@/components/library/record-editor';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
@@ -16,8 +19,15 @@ import type { AgentRecord } from '@/lib/library/record-rules';
  * `/admin/library/<id>` of a company record (no author): AL-02, the agent editor in mode `system`; a company deep
  * agent opens in its card (deep-agents UXRD DA-13).
  */
-export function SystemRecordPage({ record, created }: { record: RecordDetail; created: boolean }) {
-  if (record.kind === 'deep_agent') return <DeepAgentCard mode="system" record={record} />;
+export function SystemRecordPage({
+  record,
+  created,
+}: {
+  record: RecordDetail;
+  created: boolean;
+}) {
+  if (record.kind === 'deep_agent')
+    return <DeepAgentCard mode="system" record={record} />;
   return <SystemEditor start={{ saved: record }} created={created} />;
 }
 
@@ -33,19 +43,36 @@ export function NewSystemRecordPage() {
  * `choices`. The editor waits for the registry and the default model; the catalogue and the providers fill the
  * model field once both are read.
  */
-function SystemEditor({ start, created }: { start: { saved: AgentRecord } | 'new'; created: boolean }) {
+function SystemEditor({
+  start,
+  created,
+}: {
+  start: { saved: AgentRecord } | 'new';
+  created: boolean;
+}) {
   const t = useTranslations('admin.library');
   const choices = useResource(libraryApi.choices, 'choices', 'library');
   const servers = useResource(adminApi.servers.list, 'servers', 'library');
   const models = useResource(adminApi.models.list, 'models', 'library');
-  const providers = useResource(adminApi.modelProviders.list, 'model-providers', 'library');
+  const providers = useResource(
+    adminApi.modelProviders.list,
+    'model-providers',
+    'library',
+  );
   const providerList = providers.data;
 
   if (choices.data === undefined || servers.data === undefined) {
     const waiting = choices.data === undefined ? choices : servers;
-    return <RecordPlaceholder section="library" resource={waiting} loadFailed={t('loadFailed')} />;
+    return (
+      <RecordPlaceholder
+        section="library"
+        resource={waiting}
+        loadFailed={t('loadFailed')}
+      />
+    );
   }
-  const source: RecordEditorSource = start === 'new' ? { blank: blankAgent(choices.data) } : start;
+  const source: RecordEditorSource =
+    start === 'new' ? { blank: blankAgent(choices.data) } : start;
   return (
     <RecordEditor
       mode="system"
@@ -63,7 +90,10 @@ function SystemEditor({ start, created }: { start: { saved: AgentRecord } | 'new
                 .map((model) => ({
                   model: model.id,
                   name: model.name,
-                  unavailableReason: modelUnavailableReason(model.id, providerList),
+                  unavailableReason: modelUnavailableReason(
+                    model.id,
+                    providerList,
+                  ),
                 })),
       }}
     />

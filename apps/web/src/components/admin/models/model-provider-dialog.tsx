@@ -10,13 +10,27 @@ import {
   type ModelProviderView,
   type UpdateModelProviderBody,
 } from '@agent-os/contracts';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
 import { modelProviderRules } from '@/lib/admin/form-rules';
-import { DEFAULT_PROVIDER_NAME, providerKindText } from '@/lib/admin/model-providers';
+import {
+  DEFAULT_PROVIDER_NAME,
+  providerKindText,
+} from '@/lib/admin/model-providers';
 import { cn } from '@/lib/utils';
-import { AdminForm, AdminRadioField, AdminTextField, CAPTION, type AdminFormApi } from '../admin-form';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminTextField,
+  CAPTION,
+  type AdminFormApi,
+} from '../admin-form';
 import { SecretField } from '../secret-field';
 
 type ProviderValues = {
@@ -31,9 +45,21 @@ type ProviderValues = {
 
 function valuesOf(provider: ModelProviderView | null): ProviderValues {
   if (provider === null) {
-    return { kind: 'anthropic', name: DEFAULT_PROVIDER_NAME.anthropic ?? '', nameEdited: false, baseUrl: '', apiKey: undefined };
+    return {
+      kind: 'anthropic',
+      name: DEFAULT_PROVIDER_NAME.anthropic ?? '',
+      nameEdited: false,
+      baseUrl: '',
+      apiKey: undefined,
+    };
   }
-  return { kind: provider.kind, name: provider.name, nameEdited: true, baseUrl: provider.baseUrl ?? '', apiKey: undefined };
+  return {
+    kind: provider.kind,
+    name: provider.name,
+    nameEdited: true,
+    baseUrl: provider.baseUrl ?? '',
+    apiKey: undefined,
+  };
 }
 
 /**
@@ -43,19 +69,41 @@ function valuesOf(provider: ModelProviderView | null): ProviderValues {
 const typedKey = (apiKey: string | undefined): { apiKey?: string } =>
   apiKey === undefined || apiKey === '' ? {} : { apiKey };
 
-function createBodyOf({ kind, name, baseUrl, apiKey }: ProviderValues): CreateModelProviderBody {
+function createBodyOf({
+  kind,
+  name,
+  baseUrl,
+  apiKey,
+}: ProviderValues): CreateModelProviderBody {
   const url = baseUrl.trim();
-  return { name, kind, ...(url === '' ? {} : { baseUrl: url }), ...typedKey(apiKey) };
+  return {
+    name,
+    kind,
+    ...(url === '' ? {} : { baseUrl: url }),
+    ...typedKey(apiKey),
+  };
 }
 
 /** Only what changed: an emptied address is `null` (the type's default); an untouched one stays out. */
-function updateBodyOf(provider: ModelProviderView, { baseUrl, apiKey }: ProviderValues): UpdateModelProviderBody {
+function updateBodyOf(
+  provider: ModelProviderView,
+  { baseUrl, apiKey }: ProviderValues,
+): UpdateModelProviderBody {
   const url = baseUrl.trim();
-  const address = url === (provider.baseUrl ?? '') ? {} : { baseUrl: url === '' ? null : url };
+  const address =
+    url === (provider.baseUrl ?? '')
+      ? {}
+      : { baseUrl: url === '' ? null : url };
   return { ...address, ...typedKey(apiKey) };
 }
 
-function ProviderFields({ form, provider }: { form: AdminFormApi<ProviderValues>; provider: ModelProviderView | null }) {
+function ProviderFields({
+  form,
+  provider,
+}: {
+  form: AdminFormApi<ProviderValues>;
+  provider: ModelProviderView | null;
+}) {
   const t = useTranslations('admin.models');
   const { values } = form;
   const kindText = providerKindText(t, values.kind);
@@ -73,14 +121,22 @@ function ProviderFields({ form, provider }: { form: AdminFormApi<ProviderValues>
     <>
       {provider === null ? (
         <>
-          <AdminRadioField label={t('providerDialog.kind')} value={values.kind} options={kindOptions} onChange={chooseKind} />
+          <AdminRadioField
+            label={t('providerDialog.kind')}
+            value={values.kind}
+            options={kindOptions}
+            onChange={chooseKind}
+          />
           <AdminTextField
             {...form.field('name')}
             label={t('providerDialog.name')}
             value={values.name}
             mono
             hint={t('providerDialog.nameHint', {
-              name: values.name === '' ? t('providerDialog.namePlaceholder') : values.name,
+              name:
+                values.name === ''
+                  ? t('providerDialog.namePlaceholder')
+                  : values.name,
             })}
             onChange={(value) => {
               form.set('name', value);
@@ -92,9 +148,14 @@ function ProviderFields({ form, provider }: { form: AdminFormApi<ProviderValues>
         // KD-3: name and type are fixed once added — text, not fields.
         <div className="flex flex-col gap-0.5">
           <p className="text-data wrap-break-word text-foreground">
-            {t('providerDialog.fixed', { name: provider.name, kind: providerKindText(t, provider.kind).label })}
+            {t('providerDialog.fixed', {
+              name: provider.name,
+              kind: providerKindText(t, provider.kind).label,
+            })}
           </p>
-          <p className={cn(CAPTION, 'text-muted-foreground')}>{t('providerDialog.fixedHint')}</p>
+          <p className={cn(CAPTION, 'text-muted-foreground')}>
+            {t('providerDialog.fixedHint')}
+          </p>
         </div>
       )}
       <AdminTextField
@@ -108,7 +169,11 @@ function ProviderFields({ form, provider }: { form: AdminFormApi<ProviderValues>
       />
       <SecretField
         {...form.field('apiKey')}
-        label={provider === null ? t('providerDialog.apiKeyOptional') : t('providerDialog.apiKey')}
+        label={
+          provider === null
+            ? t('providerDialog.apiKeyOptional')
+            : t('providerDialog.apiKey')
+        }
         isSet={provider?.apiKeySet ?? false}
         lastFour={provider?.apiKeyLast4}
         hint={kindText.apiKeyHint}
@@ -135,7 +200,13 @@ type ModelProviderDialogProps = {
  * and in the body of one request (KD-4); `secretFields` empties it after a successful save, and it never goes
  * into an address, a notice or the log (the form logs the event name and the request's shape only).
  */
-export function ModelProviderDialog({ open, onOpenChange, provider, reloadAll, checkConnection }: ModelProviderDialogProps) {
+export function ModelProviderDialog({
+  open,
+  onOpenChange,
+  provider,
+  reloadAll,
+  checkConnection,
+}: ModelProviderDialogProps) {
   const t = useTranslations('admin.models');
   const adding = provider === null;
   // The name of the saved provider, for the notice: the response's, not the form's.
@@ -153,11 +224,18 @@ export function ModelProviderDialog({ open, onOpenChange, provider, reloadAll, c
 
   const submit = async (values: ProviderValues): Promise<void> => {
     if (provider === null) {
-      savedName.current = (await adminApi.modelProviders.create(createBodyOf(values))).name;
+      savedName.current = (
+        await adminApi.modelProviders.create(createBodyOf(values))
+      ).name;
       return;
     }
     try {
-      savedName.current = (await adminApi.modelProviders.update(provider.name, updateBodyOf(provider, values))).name;
+      savedName.current = (
+        await adminApi.modelProviders.update(
+          provider.name,
+          updateBodyOf(provider, values),
+        )
+      ).name;
     } catch (error) {
       if (isNotFound(error)) gone.current = true;
       throw error;
@@ -169,30 +247,61 @@ export function ModelProviderDialog({ open, onOpenChange, provider, reloadAll, c
     onOpenChange(false);
     reloadAll();
     // An edit always changed the address or the key (`hasChange`), so the check is offered after either save.
-    toast.success(adding ? t('providerDialog.added', { name }) : t('providerDialog.saved', { name }), {
-      action: { label: t('providers.check'), onClick: () => checkConnection(name) },
-    });
+    toast.success(
+      adding
+        ? t('providerDialog.added', { name })
+        : t('providerDialog.saved', { name }),
+      {
+        action: {
+          label: t('providers.check'),
+          onClick: () => checkConnection(name),
+        },
+      },
+    );
   };
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="wrap-break-word">{adding ? t('providerDialog.addTitle') : t('providerDialog.editTitle', { name: provider.name })}</DialogTitle>
+          <DialogTitle className="wrap-break-word">
+            {adding
+              ? t('providerDialog.addTitle')
+              : t('providerDialog.editTitle', { name: provider.name })}
+          </DialogTitle>
         </DialogHeader>
         <AdminForm
           key={provider?.name ?? 'new'}
           variant="dialog"
           initialValues={valuesOf(provider)}
-          validate={(values) => modelProviderRules({ name: values.name, baseUrl: values.baseUrl, apiKey: values.apiKey ?? '' })}
+          validate={(values) =>
+            modelProviderRules({
+              name: values.name,
+              baseUrl: values.baseUrl,
+              apiKey: values.apiKey ?? '',
+            })
+          }
           onSubmit={submit}
-          submitLabel={adding ? t('providerDialog.add') : t('providerDialog.save')}
+          submitLabel={
+            adding ? t('providerDialog.add') : t('providerDialog.save')
+          }
           // The contract refuses an empty `PATCH`: with nothing changed «Сохранить» sends nothing.
-          hasChange={provider === null ? undefined : (values) => Object.keys(updateBodyOf(provider, values)).length > 0}
+          hasChange={
+            provider === null
+              ? undefined
+              : (values) =>
+                  Object.keys(updateBodyOf(provider, values)).length > 0
+          }
           onSaved={saved}
           secretFields={['apiKey']}
-          errorContext={provider === null ? undefined : { providerName: provider.name }}
-          logEvent={adding ? 'admin: model provider create' : 'admin: model provider save'}
+          errorContext={
+            provider === null ? undefined : { providerName: provider.name }
+          }
+          logEvent={
+            adding
+              ? 'admin: model provider create'
+              : 'admin: model provider save'
+          }
         >
           {(form) => <ProviderFields form={form} provider={provider} />}
         </AdminForm>

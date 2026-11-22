@@ -2,21 +2,36 @@
 
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { PROVIDER_NAME_MAX_LENGTH, type ProviderType } from '@agent-os/contracts';
+import {
+  PROVIDER_NAME_MAX_LENGTH,
+  type ProviderType,
+} from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { adminApi } from '@/lib/admin/admin-api';
 import { providerRules } from '@/lib/admin/form-rules';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminForm, AdminRadioField, AdminTextField, type AdminFormApi, type AdminRadioOption } from '../admin-form';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminTextField,
+  type AdminFormApi,
+  type AdminRadioOption,
+} from '../admin-form';
 import { useAdminTitles } from '../admin-header';
 import { GoogleWarning, PROVIDER_TYPE_LABEL } from './providers-table';
 
 type NewProviderValues = { type: ProviderType; name: string };
 
-const INITIAL: NewProviderValues = { type: 'google', name: PROVIDER_TYPE_LABEL.google };
+const INITIAL: NewProviderValues = {
+  type: 'google',
+  name: PROVIDER_TYPE_LABEL.google,
+};
 
 /** The Google name is a default: it follows the type until the administrator types a name of their own. */
-function chooseType(form: AdminFormApi<NewProviderValues>, type: ProviderType): void {
+function chooseType(
+  form: AdminFormApi<NewProviderValues>,
+  type: ProviderType,
+): void {
   form.set('type', type);
   const { name } = form.values;
   if (name.trim() === '' || name === PROVIDER_TYPE_LABEL.google) {
@@ -34,17 +49,28 @@ export function NewProviderForm() {
   const router = useRouter();
   const types: readonly AdminRadioOption<ProviderType>[] = [
     { value: 'google', label: PROVIDER_TYPE_LABEL.google },
-    { value: 'oidc', label: PROVIDER_TYPE_LABEL.oidc, hint: t('newProvider.oidcHint') },
+    {
+      value: 'oidc',
+      label: PROVIDER_TYPE_LABEL.oidc,
+      hint: t('newProvider.oidcHint'),
+    },
   ];
 
   const create = async ({ type, name }: NewProviderValues): Promise<void> => {
-    const created = await adminApi.providers.create({ type, name: name.trim() });
+    const created = await adminApi.providers.create({
+      type,
+      name: name.trim(),
+    });
     router.push(adminRecordPath('sign-in', created.id));
   };
 
   return (
     <>
-      <PageHeader area={titles.panel} title={t('newProvider.title')} parent={titles.parent('sign-in')} />
+      <PageHeader
+        area={titles.panel}
+        title={t('newProvider.title')}
+        parent={titles.parent('sign-in')}
+      />
       <AdminForm
         variant="page"
         initialValues={INITIAL}

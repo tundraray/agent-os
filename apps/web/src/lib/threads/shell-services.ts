@@ -2,21 +2,49 @@ import { createElement } from 'react';
 import { AuiConfig } from '@assistant-ui/react';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-list-store';
+import {
+  createAgentListStore,
+  type AgentListStore,
+} from '@/lib/agents/agent-list-store';
 import { authApi } from '@/lib/auth/auth-api';
-import { createCurrentUserStore, type CurrentUserStore } from '@/lib/auth/current-user';
+import {
+  createCurrentUserStore,
+  type CurrentUserStore,
+} from '@/lib/auth/current-user';
 import { createFeedStore, type FeedStore } from '@/lib/feed/feed-store';
 import { createLeaveGuard, type LeaveGuard } from '@/lib/leave-guard';
-import { createCreatedHandoff, type CreatedHandoff } from '@/lib/library/created-handoff';
+import {
+  createCreatedHandoff,
+  type CreatedHandoff,
+} from '@/lib/library/created-handoff';
 import { libraryApi } from '@/lib/library/library-api';
-import { createLibraryIndex, type LibraryIndex } from '@/lib/library/library-index';
-import { createAnnouncerStore, type AnnouncerStore } from '@/lib/live/announcer-store';
-import { createLiveStore, type LiveStore, type OpenEventSource } from '@/lib/live/live-store';
+import {
+  createLibraryIndex,
+  type LibraryIndex,
+} from '@/lib/library/library-index';
+import {
+  createAnnouncerStore,
+  type AnnouncerStore,
+} from '@/lib/live/announcer-store';
+import {
+  createLiveStore,
+  type LiveStore,
+  type OpenEventSource,
+} from '@/lib/live/live-store';
 import { logger } from '@/lib/logger';
-import { createWorkspaceStore, type WorkspaceStore } from '@/lib/shell/workspace-store';
+import {
+  createWorkspaceStore,
+  type WorkspaceStore,
+} from '@/lib/shell/workspace-store';
 import { createComposerSeed, type ComposerSeed } from './composer-seed';
-import { createShellStatusStore, type ShellStatusStore } from './shell-status-store';
-import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
+import {
+  createShellStatusStore,
+  type ShellStatusStore,
+} from './shell-status-store';
+import {
+  createThreadListAdapter,
+  type OperationNotifier,
+} from './thread-list-adapter';
 import { threadsApiClient, type ThreadsApiClient } from './threads-api-client';
 
 /** One feed store per conversation opened in this tab. */
@@ -71,7 +99,8 @@ function ThreadOperationNotice({ notice }: { notice: ThreadNoticeKey }) {
   return useTranslations('shell.thread')(notice);
 }
 
-const noticeOf = (notice: ThreadNoticeKey) => createElement(ThreadOperationNotice, { notice });
+const noticeOf = (notice: ThreadNoticeKey) =>
+  createElement(ThreadOperationNotice, { notice });
 
 const notify: OperationNotifier = {
   renameFailed: () => {
@@ -97,9 +126,15 @@ type ThreadFeedsDeps = {
  * re-reads it; `ready` and the answer's text parts reach it only while the stream watches it,
  * because a `thread:` stream carries the parts of that conversation's root alone.
  */
-function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): ThreadFeeds {
+function createThreadFeeds({
+  api,
+  status,
+  live,
+  announcer,
+}: ThreadFeedsDeps): ThreadFeeds {
   const feeds = new Map<string, { store: FeedStore; release: () => void }>();
-  const watches = (remoteId: string): boolean => live.getState().target === `thread:${remoteId}`;
+  const watches = (remoteId: string): boolean =>
+    live.getState().target === `thread:${remoteId}`;
 
   return {
     forThread: (remoteId, itemId = remoteId) => {
@@ -144,14 +179,27 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
 }
 
 /** Builds the shell's dependencies once per provider mount: wiring, no React state. */
-export function createShellServices({ openEventSource, location }: CreateShellServicesOptions = {}): ShellServices {
+export function createShellServices({
+  openEventSource,
+  location,
+}: CreateShellServicesOptions = {}): ShellServices {
   const apiClient = threadsApiClient;
-  const currentUser = createCurrentUserStore({ read: authApi.me, endSession: authApi.signOut, location, logger });
+  const currentUser = createCurrentUserStore({
+    read: authApi.me,
+    endSession: authApi.signOut,
+    location,
+    logger,
+  });
   const status = createShellStatusStore();
   const announcer = createAnnouncerStore();
   const live = createLiveStore({ openEventSource, announcer, logger });
   const feeds = createThreadFeeds({ api: apiClient, status, live, announcer });
-  const listAdapter = createThreadListAdapter({ api: apiClient, status, notify, feeds });
+  const listAdapter = createThreadListAdapter({
+    api: apiClient,
+    status,
+    notify,
+    feeds,
+  });
   let agentList: AgentListStore | undefined;
   let libraryIndex: LibraryIndex | undefined;
 

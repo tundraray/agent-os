@@ -40,13 +40,22 @@ type WorkspacePanelProps = {
  * WS-01…WS-03, named «Схема» (deep-agents UXRD DA-12, KD-7): the resize handle and the collapsible panel;
  * rendered as direct children of the shell's `ResizablePanelGroup`, and only while the panel is open from 1024 px.
  */
-export function WorkspacePanel({ defaultSize, onClose, children }: WorkspacePanelProps) {
+export function WorkspacePanel({
+  defaultSize,
+  onClose,
+  children,
+}: WorkspacePanelProps) {
   const t = useTranslations('shell.schema');
   const panelRef = usePanelRef();
 
   // A drag past the collapse threshold closes the panel instead of leaving an open, zero-width one.
-  const closeWhenCollapsed = (size: PanelSize, _id: string | number | undefined, previous: PanelSize | undefined) => {
-    if (previous !== undefined && previous.inPixels > 0 && size.inPixels === 0) onClose();
+  const closeWhenCollapsed = (
+    size: PanelSize,
+    _id: string | number | undefined,
+    previous: PanelSize | undefined,
+  ) => {
+    if (previous !== undefined && previous.inPixels > 0 && size.inPixels === 0)
+      onClose();
   };
 
   // WS-02 keyboard steps in pixels (UXRD 6.22); runs before the library's own percent-based handler.
@@ -57,7 +66,8 @@ export function WorkspacePanel({ defaultSize, onClose, children }: WorkspacePane
     const width = panel.getSize().inPixels;
     // The handle sits on the panel's left edge: moving it left widens the panel.
     if (event.key === 'ArrowLeft') panel.resize(`${width + step}px`);
-    else if (event.key === 'ArrowRight') panel.resize(`${Math.max(MIN_WIDTH_PX, width - step)}px`);
+    else if (event.key === 'ArrowRight')
+      panel.resize(`${Math.max(MIN_WIDTH_PX, width - step)}px`);
     else if (event.key === 'End') panel.resize(WORKSPACE_MIN_WIDTH);
     else return;
     event.preventDefault();
@@ -79,9 +89,15 @@ export function WorkspacePanel({ defaultSize, onClose, children }: WorkspacePane
         collapsedSize={0}
         onResize={closeWhenCollapsed}
       >
-        <aside id={WORKSPACE_ID} aria-label={t('title')} className="flex h-full min-w-0 flex-col">
+        <aside
+          id={WORKSPACE_ID}
+          aria-label={t('title')}
+          className="flex h-full min-w-0 flex-col"
+        >
           <WorkspaceHeading onClose={onClose} />
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
+            {children}
+          </div>
         </aside>
       </ResizablePanel>
     </>
@@ -98,10 +114,18 @@ type WorkspaceDrawerProps = {
  * The same panel below 1024 px: a modal drawer on the right, 400 px wide and the full width below 480 px
  * (UXRD Responsive Behavior). Only the header button opens it; Esc and «×» close it and focus returns there.
  */
-export function WorkspaceDrawer({ open, onClose, children }: WorkspaceDrawerProps) {
+export function WorkspaceDrawer({
+  open,
+  onClose,
+  children,
+}: WorkspaceDrawerProps) {
   const t = useTranslations('shell.schema');
   return (
-    <Drawer.Root open={open} onOpenChange={(next) => !next && onClose()} swipeDirection="right">
+    <Drawer.Root
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      swipeDirection="right"
+    >
       <Drawer.Portal>
         <Drawer.Backdrop className="fixed inset-0 z-50 bg-black/10 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none supports-backdrop-filter:backdrop-blur-xs" />
         <Drawer.Viewport className="fixed inset-0 z-50 flex justify-end">
@@ -113,7 +137,9 @@ export function WorkspaceDrawer({ open, onClose, children }: WorkspaceDrawerProp
             className="bg-background flex h-full w-[400px] max-w-full flex-col border-l shadow-lg outline-none transition-transform duration-200 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full motion-reduce:transition-none max-[480px]:w-full"
           >
             <WorkspaceHeading onClose={onClose} />
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">{children}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
+              {children}
+            </div>
           </Drawer.Popup>
         </Drawer.Viewport>
       </Drawer.Portal>
@@ -122,11 +148,14 @@ export function WorkspaceDrawer({ open, onClose, children }: WorkspaceDrawerProp
 }
 
 /** The panel's heading: the drawer opens only by a button, so it always starts there. */
-const headingElement = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-workspace-heading]');
+const headingElement = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[data-workspace-heading]');
 
 /** The header button «Схема» (HD-04): where focus returns when the panel or the drawer closes. */
 export function toggleElement(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('[data-shell-focus="workspace-toggle"]');
+  return document.querySelector<HTMLElement>(
+    '[data-shell-focus="workspace-toggle"]',
+  );
 }
 
 /**
@@ -147,10 +176,19 @@ function WorkspaceHeading({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex h-(--header-height) shrink-0 items-center justify-between gap-2 px-3">
-      <h2 ref={headingRef} tabIndex={-1} data-workspace-heading="" className="truncate text-sm font-medium outline-none">
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        data-workspace-heading=""
+        className="truncate text-sm font-medium outline-none"
+      >
         {t('title')}
       </h2>
-      <TooltipIconButton tooltip={t('close')} className="size-8 pointer-coarse:size-11 [&_svg]:size-4.5" onClick={onClose}>
+      <TooltipIconButton
+        tooltip={t('close')}
+        className="size-8 pointer-coarse:size-11 [&_svg]:size-4.5"
+        onClick={onClose}
+      >
         <XIcon aria-hidden />
       </TooltipIconButton>
     </div>

@@ -1,5 +1,9 @@
 import { createLogger } from '@agent-os/common';
-import { type RecordHeader, RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
+import {
+  type RecordHeader,
+  RUN_CODE_TOOL,
+  RunCodeArgsSchema,
+} from '@agent-os/contracts';
 import {
   AgentCodeCallsRepository,
   AgentMcpAccountsRepository,
@@ -10,7 +14,12 @@ import {
 } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
-import { type AccessDeniedEntry, type AccessGate, type AuditRecord, OwnerDisabledError } from '../../access-gate';
+import {
+  type AccessDeniedEntry,
+  type AccessGate,
+  type AuditRecord,
+  OwnerDisabledError,
+} from '../../access-gate';
 import type { JsonSchemaObject } from '../../model/mastra-turn';
 import type { AgentSnapshot } from '../../start/snapshot';
 import type { CallState } from '../../history/call-state';
@@ -22,7 +31,11 @@ import type { AgentDeps } from '../../agent/agent-deps';
 import { ChatAgent, type ChatAgentDeps } from '../../agent/chat-agent';
 import type { AgentTool, ToolCaller } from '../tool';
 import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate';
-import { type McpSessionTool, type SessionTool, ToolRegistry } from '../tool-registry';
+import {
+  type McpSessionTool,
+  type SessionTool,
+  ToolRegistry,
+} from '../tool-registry';
 import { ToolRunner } from '../tool-runner';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
@@ -90,7 +103,11 @@ const MCP_TOOL: McpSessionTool = {
   },
 };
 
-const START_AGENT_ARGS = z.object({ description: z.string(), agent: z.string(), prompt: z.string() });
+const START_AGENT_ARGS = z.object({
+  description: z.string(),
+  agent: z.string(),
+  prompt: z.string(),
+});
 const START_AGENT_TOOL: SessionTool = {
   kind: 'system',
   name: 'start_agent',
@@ -134,12 +151,17 @@ const NO_SERVER_CALLS = async (): Promise<never> => {
 const SILENT = createLogger({ sinks: [], secrets: [], minLevel: 'error' });
 
 /** The gate double: the owner is on and has `pairs`, or is disabled. */
-function gateOf(pairs: readonly string[] | 'owner_disabled'): Pick<AccessGate, 'tools'> {
+function gateOf(
+  pairs: readonly string[] | 'owner_disabled',
+): Pick<AccessGate, 'tools'> {
   return {
     tools: async () =>
       pairs === 'owner_disabled'
         ? { kind: 'owner_disabled' }
-        : { kind: 'allowed', allows: (server, tool) => pairs.includes(`${server}/${tool}`) },
+        : {
+            kind: 'allowed',
+            allows: (server, tool) => pairs.includes(`${server}/${tool}`),
+          },
   };
 }
 
@@ -157,7 +179,10 @@ interface RunnerDoubles {
 /** A runner over the gate double whose client sends nothing: a call that reaches a server throws. */
 function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
   const runner = new ToolRunner(
-    new CallRecords(new History(new AgentMessagesRepository(DB)), new AgentCodeCallsRepository(DB)),
+    new CallRecords(
+      new History(new AgentMessagesRepository(DB)),
+      new AgentCodeCallsRepository(DB),
+    ),
     { callTool: NO_SERVER_CALLS },
     { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
     gateOf(doubles.pairs ?? []),
@@ -180,18 +205,29 @@ function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
 }
 
 /** `ToolRunner.check` with the given pairs; a check calls no server. */
-function checkCall(input: CallCheckInput, runner = runnerOf({ pairs: input.ownerPairs })) {
+function checkCall(
+  input: CallCheckInput,
+  runner = runnerOf({ pairs: input.ownerPairs }),
+) {
   return runner.check(
     { callId: 'call-1', toolName: input.toolName, args: input.args },
-    { sessionTools: input.sessionTools, caller: CALLER, allows: allowsOf(input.ownerPairs) },
+    {
+      sessionTools: input.sessionTools,
+      caller: CALLER,
+      allows: allowsOf(input.ownerPairs),
+    },
   );
 }
 
 /** DC-2: a call that passed the check, sent after its server row was removed or switched off. */
 async function sendToGoneServer(): Promise<Gate> {
-  const runner = runnerOf({ pairs: MCP_CALL.ownerPairs, credentialsFor: async () => ({ kind: 'server_gone' }) });
+  const runner = runnerOf({
+    pairs: MCP_CALL.ownerPairs,
+    credentialsFor: async () => ({ kind: 'server_gone' }),
+  });
   const checked = checkCall(MCP_CALL, runner);
-  if (checked.kind !== 'allowed') throw new Error('the call must pass the check');
+  if (checked.kind !== 'allowed')
+    throw new Error('the call must pass the check');
   const execution = await runner.runOutside(checked.call, {
     signal: new AbortController().signal,
     logger: SILENT,
@@ -209,7 +245,10 @@ const RUN_CODE_STUB: AgentTool = {
 };
 
 /** `check` of a `run_code` call against the set the registry builds for a child running `NO_TOOLS`. */
-async function checkRunCode(runClass: 'read' | 'write', script: string): Promise<Gate> {
+async function checkRunCode(
+  runClass: 'read' | 'write',
+  script: string,
+): Promise<Gate> {
   const registry = new ToolRegistry(
     // A declaration that names no server reads nothing of the registry.
     new AgentMcpServersRepository(DB),
@@ -247,7 +286,10 @@ const INLINE_LINE_BREAKS = [
 const RUN_CLASSES = ['read', 'write'] as const;
 
 /** A header of the starter's `listVisible`: another's agent the chat offers, unless overridden. */
-function header(n: number, overrides: Partial<RecordHeader> = {}): RecordHeader {
+function header(
+  n: number,
+  overrides: Partial<RecordHeader> = {},
+): RecordHeader {
   return {
     id: id(n),
     kind: 'agent',
@@ -307,22 +349,32 @@ function deepAgentRecord(n: number): StartGateInput['target'] {
   return { kind: 'record', recordId: id(n), recordKind: 'deep_agent' };
 }
 
-type Gate = { kind: 'allowed' } | { kind: 'refused'; reason: string; text?: string };
+type Gate =
+  { kind: 'allowed' } | { kind: 'refused'; reason: string; text?: string };
 
 function kindOf(gate: { kind: string; reason?: string }): Gate {
-  return gate.kind === 'allowed' ? { kind: 'allowed' } : { kind: 'refused', reason: gate.reason ?? '' };
+  return gate.kind === 'allowed'
+    ? { kind: 'allowed' }
+    : { kind: 'refused', reason: gate.reason ?? '' };
 }
 
 describe('a tool call is refused with its reason or allowed', () => {
   it.each<[string, () => Gate | Promise<Gate>, Gate]>([
     [
       'a tool outside the session set',
-      () => kindOf(checkCall({ ...MCP_CALL, toolName: 'mcp__backoffice__create_incident_note' })),
+      () =>
+        kindOf(
+          checkCall({
+            ...MCP_CALL,
+            toolName: 'mcp__backoffice__create_incident_note',
+          }),
+        ),
       { kind: 'refused', reason: 'tool_not_in_definition' },
     ],
     [
       'start_agent without the tool in the definition',
-      () => kindOf(checkCall({ ...START_AGENT_CALL, sessionTools: [MCP_TOOL] })),
+      () =>
+        kindOf(checkCall({ ...START_AGENT_CALL, sessionTools: [MCP_TOOL] })),
       { kind: 'refused', reason: 'tool_not_in_definition' },
     ],
     [
@@ -332,50 +384,96 @@ describe('a tool call is refused with its reason or allowed', () => {
     ],
     [
       'arguments that fail the schema',
-      () => kindOf(checkCall({ ...START_AGENT_CALL, args: { agent: 'general-purpose' } })),
+      () =>
+        kindOf(
+          checkCall({
+            ...START_AGENT_CALL,
+            args: { agent: 'general-purpose' },
+          }),
+        ),
       { kind: 'refused', reason: 'invalid_arguments' },
     ],
-    ['an allowed MCP call', () => kindOf(checkCall(MCP_CALL)), { kind: 'allowed' }],
+    [
+      'an allowed MCP call',
+      () => kindOf(checkCall(MCP_CALL)),
+      { kind: 'allowed' },
+    ],
     [
       'an allowed MCP call whose server is gone by the send',
       sendToGoneServer,
       { kind: 'refused', reason: 'tool_not_in_definition' },
     ],
-    ['an allowed built-in call', () => kindOf(checkCall(START_AGENT_CALL)), { kind: 'allowed' }],
+    [
+      'an allowed built-in call',
+      () => kindOf(checkCall(START_AGENT_CALL)),
+      { kind: 'allowed' },
+    ],
     [
       'run_code in a session of a definition with tools: []',
       () => checkRunCode('read', 'return 1;'),
       { kind: 'allowed' },
     ],
     ...RUN_CLASSES.flatMap((runClass) =>
-      HIDDEN_CODE_POINTS.map((codePoint): [string, () => Gate | Promise<Gate>, Gate] => [
-        `run_code ${runClass} with U+${codePoint.toString(16).toUpperCase()} inside a string literal`,
-        () => checkRunCode(runClass, `return "a${String.fromCodePoint(codePoint)}b";`),
-        { kind: 'refused', reason: 'invalid_arguments' },
-      ]),
+      HIDDEN_CODE_POINTS.map(
+        (codePoint): [string, () => Gate | Promise<Gate>, Gate] => [
+          `run_code ${runClass} with U+${codePoint.toString(16).toUpperCase()} inside a string literal`,
+          () =>
+            checkRunCode(
+              runClass,
+              `return "a${String.fromCodePoint(codePoint)}b";`,
+            ),
+          { kind: 'refused', reason: 'invalid_arguments' },
+        ],
+      ),
     ),
-    ...RUN_CLASSES.map((runClass): [string, () => Gate | Promise<Gate>, Gate] => [
-      `run_code ${runClass} with the character written as an escape`,
-      () => checkRunCode(runClass, 'return "a\\u202Eb";'),
-      { kind: 'allowed' },
-    ]),
+    ...RUN_CLASSES.map(
+      (runClass): [string, () => Gate | Promise<Gate>, Gate] => [
+        `run_code ${runClass} with the character written as an escape`,
+        () => checkRunCode(runClass, 'return "a\\u202Eb";'),
+        { kind: 'allowed' },
+      ],
+    ),
     ...RUN_CLASSES.flatMap((runClass) =>
-      INLINE_LINE_BREAKS.map(([name, lineBreak]): [string, () => Gate | Promise<Gate>, Gate] => [
-        `run_code ${runClass} with ${name} after a // comment`,
-        () => checkRunCode(runClass, `// count only${lineBreak}return 1;`),
-        { kind: 'refused', reason: 'invalid_arguments' },
-      ]),
+      INLINE_LINE_BREAKS.map(
+        ([name, lineBreak]): [string, () => Gate | Promise<Gate>, Gate] => [
+          `run_code ${runClass} with ${name} after a // comment`,
+          () => checkRunCode(runClass, `// count only${lineBreak}return 1;`),
+          { kind: 'refused', reason: 'invalid_arguments' },
+        ],
+      ),
     ),
-    ...RUN_CLASSES.map((runClass): [string, () => Gate | Promise<Gate>, Gate] => [
-      `run_code ${runClass} with CRLF line ends`,
-      () => checkRunCode(runClass, '// count only\r\nreturn 1;'),
+    ...RUN_CLASSES.map(
+      (runClass): [string, () => Gate | Promise<Gate>, Gate] => [
+        `run_code ${runClass} with CRLF line ends`,
+        () => checkRunCode(runClass, '// count only\r\nreturn 1;'),
+        { kind: 'allowed' },
+      ],
+    ),
+    [
+      "a record outside the agent's agents",
+      () => gate(AGENT_SET, agentRecord(3)),
+      { kind: 'refused', reason: 'not_allowed' },
+    ],
+    [
+      "a record of the agent's agents",
+      () => gate(AGENT_SET, agentRecord(2)),
       { kind: 'allowed' },
-    ]),
-    ["a record outside the agent's agents", () => gate(AGENT_SET, agentRecord(3)), { kind: 'refused', reason: 'not_allowed' }],
-    ["a record of the agent's agents", () => gate(AGENT_SET, agentRecord(2)), { kind: 'allowed' }],
-    ["an agent names a deep agent's record", () => gate(AGENT_SET, deepAgentRecord(6)), DEEP_AGENT_RECORD],
-    ['a fork at an agent', () => gate(AGENT_SET, { kind: 'fork' }), { kind: 'allowed' }],
-    ['the root starts an agent the chat offers', () => gate(ROOT, agentRecord(2)), { kind: 'allowed' }],
+    ],
+    [
+      "an agent names a deep agent's record",
+      () => gate(AGENT_SET, deepAgentRecord(6)),
+      DEEP_AGENT_RECORD,
+    ],
+    [
+      'a fork at an agent',
+      () => gate(AGENT_SET, { kind: 'fork' }),
+      { kind: 'allowed' },
+    ],
+    [
+      'the root starts an agent the chat offers',
+      () => gate(ROOT, agentRecord(2)),
+      { kind: 'allowed' },
+    ],
     [
       'the root starts its own agent without «предлагать в главном чате»',
       () => gate(ROOT, agentRecord(3)),
@@ -386,13 +484,21 @@ describe('a tool call is refused with its reason or allowed', () => {
       () => gate(ROOT, agentRecord(4)),
       { kind: 'refused', reason: 'not_allowed' },
     ],
-    ['the root starts a deep agent with start_agent', () => gate(ROOT, deepAgentRecord(5)), DEEP_AGENT_RECORD],
+    [
+      'the root starts a deep agent with start_agent',
+      () => gate(ROOT, deepAgentRecord(5)),
+      DEEP_AGENT_RECORD,
+    ],
     [
       'a depth over the limit',
       () => kindOf(gateStart({ ...START, depth: 3 })),
       { kind: 'refused', reason: 'depth_limit' },
     ],
-    ['a child exactly at the depth limit', () => kindOf(gateStart({ ...START, depth: 2 })), { kind: 'allowed' }],
+    [
+      'a child exactly at the depth limit',
+      () => kindOf(gateStart({ ...START, depth: 2 })),
+      { kind: 'allowed' },
+    ],
   ])('%s', async (_, gate, expected) => {
     expect(await gate()).toEqual(expected);
   });
@@ -404,7 +510,13 @@ const CHANGING_TOOL: SessionTool = {
   name: 'mcp__logs__purge',
   description: 'Purge log lines',
   inputSchema: { type: 'object' },
-  mcp: { ...MCP_TOOL.mcp, name: 'mcp__logs__purge', tool: 'purge', description: 'Purge log lines', readOnly: false },
+  mcp: {
+    ...MCP_TOOL.mcp,
+    name: 'mcp__logs__purge',
+    tool: 'purge',
+    description: 'Purge log lines',
+    readOnly: false,
+  },
 };
 
 /** An agent whose snapshot names the `logs` server. */
@@ -414,7 +526,11 @@ const HELPER: AgentSnapshot = {
   content: { ...NO_TOOLS.content, servers: ['logs'] },
 };
 
-const HELPER_INPUT: SessionInput = { snapshot: HELPER, prompt: 'Clean up the logs', description: 'Clean up' };
+const HELPER_INPUT: SessionInput = {
+  snapshot: HELPER,
+  prompt: 'Clean up the logs',
+  description: 'Clean up',
+};
 
 /** The denied tool was not offered, so the model step stored the name as asked, without a server. */
 const OPEN_PURGE: CallState = {
@@ -485,12 +601,18 @@ const DENIED_PURGE: AccessDeniedEntry = {
   reason: 'no_access',
 };
 
-const DENIED_SEARCH: AccessDeniedEntry = { ...DENIED_PURGE, objectId: 'logs/search' };
+const DENIED_SEARCH: AccessDeniedEntry = {
+  ...DENIED_PURGE,
+  objectId: 'logs/search',
+};
 
 /** Runs one scenario over a runner whose credentials read counts and answers `server_gone`. */
 async function admission(
   pairs: readonly string[] | 'owner_disabled',
-  act: (runner: ToolRunner, audits: AuditRecord[]) => Promise<{ kind: string; reason?: string } | string>,
+  act: (
+    runner: ToolRunner,
+    audits: AuditRecord[],
+  ) => Promise<{ kind: string; reason?: string } | string>,
 ): Promise<Admission> {
   const audits: AuditRecord[] = [];
   let credentialsRead = 0;
@@ -503,8 +625,14 @@ async function admission(
     },
   });
   const end = await act(runner, audits).then(
-    (result) => (typeof result === 'string' ? result : [result.kind, result.reason].filter(Boolean).join(' ')),
-    (error: unknown) => (error instanceof OwnerDisabledError ? `rejects ${error.code}` : Promise.reject(error)),
+    (result) =>
+      typeof result === 'string'
+        ? result
+        : [result.kind, result.reason].filter(Boolean).join(' '),
+    (error: unknown) =>
+      error instanceof OwnerDisabledError
+        ? `rejects ${error.code}`
+        : Promise.reject(error),
   );
   return { end, audits, credentialsRead };
 }
@@ -515,33 +643,49 @@ function resolvedSearch(runner: ToolRunner) {
     { callId: 'call-1', toolName: MCP_TOOL.name, args: { query: 'error' } },
     { sessionTools: [MCP_TOOL], caller: CALLER, allows: () => true },
   );
-  if (checked.kind !== 'allowed') throw new Error('the call must pass the check');
+  if (checked.kind !== 'allowed')
+    throw new Error('the call must pass the check');
   return checked.call;
 }
 
 function resolvedBuiltin(runner: ToolRunner) {
   const checked = runner.check(
-    { callId: 'call-2', toolName: START_AGENT_TOOL.name, args: START_AGENT_CALL.args },
+    {
+      callId: 'call-2',
+      toolName: START_AGENT_TOOL.name,
+      args: START_AGENT_CALL.args,
+    },
     { sessionTools: [START_AGENT_TOOL], caller: CALLER, allows: () => false },
   );
-  if (checked.kind !== 'allowed') throw new Error('the built-in call must pass the check');
+  if (checked.kind !== 'allowed')
+    throw new Error('the built-in call must pass the check');
   return checked.call;
 }
 
-const OUTSIDE = { signal: new AbortController().signal, logger: SILENT, guard: NO_SERVER_CALLS };
+const OUTSIDE = {
+  signal: new AbortController().signal,
+  logger: SILENT,
+  guard: NO_SERVER_CALLS,
+};
 
 describe('a tool call is admitted only when the gate allows its server–tool pair: a refused pair is `no_access` with one audit call and no credentials asked; a denied changing tool is `no_access` without a confirmation; a built-in tool asks only whether the employee is on', () => {
   it.each<[string, () => Promise<Admission>, Admission]>([
     [
       'a direct call whose pair was taken away after the set was built',
-      () => admission([], (runner) => runner.runOutside(resolvedSearch(runner), OUTSIDE)),
+      () =>
+        admission([], (runner) =>
+          runner.runOutside(resolvedSearch(runner), OUTSIDE),
+        ),
       { end: 'refused no_access', audits: [DENIED_SEARCH], credentialsRead: 0 },
     ],
     [
       'a confirmed call whose pair was taken away while the confirmation waited',
       () =>
         admission([], async (runner) => {
-          const send = await runner.sendConfirmed(resolvedSearch(runner), { ...OUTSIDE, taskId: CALLER.agentId });
+          const send = await runner.sendConfirmed(resolvedSearch(runner), {
+            ...OUTSIDE,
+            taskId: CALLER.agentId,
+          });
           return send.kind === 'sent' ? send.execution : send;
         }),
       { end: 'refused no_access', audits: [DENIED_SEARCH], credentialsRead: 0 },
@@ -567,7 +711,10 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
     ],
     [
       'an allowed pair reaches the credentials',
-      () => admission(['logs/search'], (runner) => runner.runOutside(resolvedSearch(runner), OUTSIDE)),
+      () =>
+        admission(['logs/search'], (runner) =>
+          runner.runOutside(resolvedSearch(runner), OUTSIDE),
+        ),
       { end: 'refused tool_not_in_definition', audits: [], credentialsRead: 1 },
     ],
     [
@@ -575,7 +722,10 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
       () =>
         admission(['logs/search'], async (runner, audits) => {
           // The tool step reads only these four of the agent's dependencies.
-          const deps: Pick<AgentDeps, 'registry' | 'runner' | 'access' | 'audit'> = {
+          const deps: Pick<
+            AgentDeps,
+            'registry' | 'runner' | 'access' | 'audit'
+          > = {
             registry: {
               checkTools: async () => [MCP_TOOL, CHANGING_TOOL],
               toolsFor: async () => [],
@@ -588,20 +738,34 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
             },
           };
           const ctx = stepContext();
-          const agent = new ChatAgent(deps as ChatAgentDeps, { task: ctx, input: HELPER_INPUT });
-          const result = await agent.toolStep(ctx, SESSION, [OPEN_PURGE], [OPEN_PURGE]);
+          const agent = new ChatAgent(deps as ChatAgentDeps, {
+            task: ctx,
+            input: HELPER_INPUT,
+          });
+          const result = await agent.toolStep(
+            ctx,
+            SESSION,
+            [OPEN_PURGE],
+            [OPEN_PURGE],
+          );
           return result.outcome;
         }),
       { end: 'continue', audits: [DENIED_PURGE], credentialsRead: 0 },
     ],
     [
       'a built-in tool runs although the gate allows no pair',
-      () => admission([], (runner) => runner.runOutside(resolvedBuiltin(runner), OUTSIDE)),
+      () =>
+        admission([], (runner) =>
+          runner.runOutside(resolvedBuiltin(runner), OUTSIDE),
+        ),
       { end: 'done', audits: [], credentialsRead: 0 },
     ],
     [
       'a built-in tool of a disabled employee does not run',
-      () => admission('owner_disabled', (runner) => runner.runOutside(resolvedBuiltin(runner), OUTSIDE)),
+      () =>
+        admission('owner_disabled', (runner) =>
+          runner.runOutside(resolvedBuiltin(runner), OUTSIDE),
+        ),
       { end: 'rejects OWNER_DISABLED', audits: [], credentialsRead: 0 },
     ],
   ])('%s', async (_, scenario, expected) => {
@@ -617,7 +781,10 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
 const SEARCH_SCHEMA: JsonSchemaObject = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
+  properties: {
+    query: { type: 'string' },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  },
   required: ['query'],
   additionalProperties: false,
 };
@@ -629,18 +796,23 @@ const PATTERN_SCHEMA: JsonSchemaObject = {
   $defs: { hex: { type: 'string', pattern: '^[0-9a-f]{32}$' } },
   properties: {
     query: { $ref: '#/$defs/hex' },
-    window: { type: 'object', properties: { from: { type: 'string', format: 'date-time' } } },
+    window: {
+      type: 'object',
+      properties: { from: { type: 'string', format: 'date-time' } },
+    },
     limit: { type: 'integer' },
   },
   additionalProperties: false,
 };
 
-const FIELD_NAMES =Array.from({ length: 60 }, (_, index) => `field${index}`);
+const FIELD_NAMES = Array.from({ length: 60 }, (_, index) => `field${index}`);
 
 /** Sixty string fields: a number in each makes an error longer than the bound. */
 const WIDE_SCHEMA: JsonSchemaObject = {
   type: 'object',
-  properties: Object.fromEntries(FIELD_NAMES.map((name) => [name, { type: 'string' }])),
+  properties: Object.fromEntries(
+    FIELD_NAMES.map((name) => [name, { type: 'string' }]),
+  ),
 };
 
 /** `MCP_TOOL` listed with the given schema. */
@@ -657,11 +829,25 @@ interface ArgumentCheck {
 
 /** `check` of a call of `tool` with `args`; the owner may use `logs/search`. */
 function argumentCheckOf(tool: SessionTool, args: unknown): ArgumentCheck {
-  const checked = checkCall({ toolName: tool.name, sessionTools: [tool], ownerPairs: ['logs/search'], args });
+  const checked = checkCall({
+    toolName: tool.name,
+    sessionTools: [tool],
+    ownerPairs: ['logs/search'],
+    args,
+  });
   if (checked.kind === 'allowed') {
-    return { kind: 'allowed', ...(checked.unchecked === undefined ? {} : { unchecked: checked.unchecked }) };
+    return {
+      kind: 'allowed',
+      ...(checked.unchecked === undefined
+        ? {}
+        : { unchecked: checked.unchecked }),
+    };
   }
-  return { kind: 'refused', reason: checked.reason, ...(checked.text === undefined ? {} : { text: checked.text }) };
+  return {
+    kind: 'refused',
+    reason: checked.reason,
+    ...(checked.text === undefined ? {} : { text: checked.text }),
+  };
 }
 
 describe('the arguments of a call are held against the tool schema: a refusal names each wrong argument and what was expected, an MCP schema that cannot be built lets the call through unchecked', () => {
@@ -669,7 +855,11 @@ describe('the arguments of a call are held against the tool schema: a refusal na
     [
       'an MCP call without a required argument',
       () => argumentCheckOf(searchWith(SEARCH_SCHEMA), { limit: 5 }),
-      { kind: 'refused', reason: 'invalid_arguments', text: "data must have required property 'query'" },
+      {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: "data must have required property 'query'",
+      },
     ],
     [
       // security review: a server's regex or format is not run in the API process (ReDoS); the server checks it
@@ -680,12 +870,24 @@ describe('the arguments of a call are held against the tool schema: a refusal na
           window: { from: 'yesterday' },
           limit: 'five',
         }),
-      { kind: 'refused', reason: 'invalid_arguments', text: 'data/limit must be integer' },
+      {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: 'data/limit must be integer',
+      },
     ],
-    ['an MCP call that fits the schema', () => argumentCheckOf(searchWith(SEARCH_SCHEMA), { query: 'error' }), { kind: 'allowed' }],
+    [
+      'an MCP call that fits the schema',
+      () => argumentCheckOf(searchWith(SEARCH_SCHEMA), { query: 'error' }),
+      { kind: 'allowed' },
+    ],
     [
       'a built-in call with a number instead of a string',
-      () => argumentCheckOf(START_AGENT_TOOL, { ...(START_AGENT_CALL.args as object), description: 5 }),
+      () =>
+        argumentCheckOf(START_AGENT_TOOL, {
+          ...(START_AGENT_CALL.args as object),
+          description: 5,
+        }),
       {
         kind: 'refused',
         reason: 'invalid_arguments',
@@ -696,10 +898,16 @@ describe('the arguments of a call are held against the tool schema: a refusal na
       'an MCP schema of an unknown dialect',
       () =>
         argumentCheckOf(
-          searchWith({ $schema: 'http://json-schema.org/draft-04/schema#', type: 'object' }),
+          searchWith({
+            $schema: 'http://json-schema.org/draft-04/schema#',
+            type: 'object',
+          }),
           { query: 'error' },
         ),
-      { kind: 'allowed', unchecked: expect.stringContaining('unsupported dialect') as string },
+      {
+        kind: 'allowed',
+        unchecked: expect.stringContaining('unsupported dialect') as string,
+      },
     ],
     [
       'an MCP error longer than the bound',
@@ -711,7 +919,9 @@ describe('the arguments of a call are held against the tool schema: a refusal na
       {
         kind: 'refused',
         reason: 'invalid_arguments',
-        text: expect.stringMatching(/^data\/field0 must be string, [^]{972}\nresult cut by 728 characters$/) as string,
+        text: expect.stringMatching(
+          /^data\/field0 must be string, [^]{972}\nresult cut by 728 characters$/,
+        ) as string,
       },
     ],
   ])('%s', (_, check, expected) => {

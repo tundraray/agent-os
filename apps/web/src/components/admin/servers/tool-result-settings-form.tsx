@@ -34,7 +34,10 @@ async function save(values: ToolResultSettingsValues): Promise<void> {
 export function ToolResultSettingsForm() {
   const headingId = useId();
   const t = useTranslations('admin.servers.toolResults');
-  const settings = useResource(adminApi.toolResults.settings, 'tool-results:settings');
+  const settings = useResource(
+    adminApi.toolResults.settings,
+    'tool-results:settings',
+  );
   const data = settings.data;
 
   return (
@@ -43,7 +46,11 @@ export function ToolResultSettingsForm() {
         {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={t('title')} columns={[]} state={resourceTableState(settings, t('loadFailed'))} />
+        <DataTable
+          caption={t('title')}
+          columns={[]}
+          state={resourceTableState(settings, t('loadFailed'))}
+        />
       ) : (
         // Every save moves `updatedAt`: the new read starts the form from the values the server now holds.
         <AdminForm<ToolResultSettingsValues>

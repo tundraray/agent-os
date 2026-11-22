@@ -29,12 +29,17 @@ class PortsModule {}
  * given doubles behind the port tokens. The seams with a default of the package (`AGENT_TURN_CLIENT`,
  * `EMBEDDING_CLIENT`, `CODE_RUNNER`) are replaced by the caller with `overrideProvider`.
  */
-export function agentsModule(config: AgentsConfig, ports: AgentsPorts): DynamicModule {
+export function agentsModule(
+  config: AgentsConfig,
+  ports: AgentsPorts,
+): DynamicModule {
   const providers: Provider[] = [
     { provide: ACCESS_GATE, useValue: ports.access },
     { provide: ACCESS_AUDIT, useValue: ports.audit },
     { provide: RECORD_LIBRARY, useValue: ports.library },
-    ...(ports.onTextDelta === undefined ? [] : [{ provide: ON_TEXT_DELTA, useValue: ports.onTextDelta }]),
+    ...(ports.onTextDelta === undefined
+      ? []
+      : [{ provide: ON_TEXT_DELTA, useValue: ports.onTextDelta }]),
   ];
   return AgentsModule.forRootAsync({
     imports: [{ module: PortsModule, providers, exports: providers }],

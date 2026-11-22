@@ -1,24 +1,49 @@
 {
-  "start_agent": { "title": "Запустить агента", "args": { "description": "Название", "agent": "Агент", "prompt": "Задание" } },
-  "message_agent": { "title": "Написать агенту", "args": { "agentId": "Агент", "message": "Сообщение" } },
+  "start_agent": {
+    "title": "Запустить агента",
+    "args": { "description": "Название", "agent": "Агент", "prompt": "Задание" }
+  },
+  "message_agent": {
+    "title": "Написать агенту",
+    "args": { "agentId": "Агент", "message": "Сообщение" }
+  },
   "list_agents": { "title": "Показать агентов", "args": {} },
-  "stop_agent": { "title": "Остановить агента", "args": { "agentId": "Агент" } },
+  "stop_agent": {
+    "title": "Остановить агента",
+    "args": { "agentId": "Агент" }
+  },
   "run_code": {
     "title": "Выполнить код",
-    "args": { "description": "Описание", "class": "Класс запуска", "script": "Скрипт" }
+    "args": {
+      "description": "Описание",
+      "class": "Класс запуска",
+      "script": "Скрипт"
+    }
   },
   "read_tool_result": {
     "title": "Прочитать сохранённый результат",
     "args": { "callId": "Вызов", "offset": "С строки", "limit": "Строк" }
   },
-  "search_tool_result": { "title": "Найти в сохранённом результате", "args": { "callId": "Вызов", "pattern": "Что найти" } },
+  "search_tool_result": {
+    "title": "Найти в сохранённом результате",
+    "args": { "callId": "Вызов", "pattern": "Что найти" }
+  },
   "start_deep_agent": {
     "title": "Запустить глубокого агента",
-    "args": { "deepAgent": "Глубокий агент", "question": "Вопрос", "boundaries": "Границы", "result": "Результат" }
+    "args": {
+      "deepAgent": "Глубокий агент",
+      "question": "Вопрос",
+      "boundaries": "Границы",
+      "result": "Результат"
+    }
   },
   "task_create": {
     "title": "Новая задача",
-    "args": { "subject": "Тема", "description": "Описание", "activeForm": "Текст в работе" }
+    "args": {
+      "subject": "Тема",
+      "description": "Описание",
+      "activeForm": "Текст в работе"
+    }
   },
   "task_update": {
     "title": "Изменение задачи",
@@ -50,11 +75,27 @@
   "read_record": { "title": "Чтение записи", "args": { "recordId": "Запись" } },
   "create_record": {
     "title": "Создание записи",
-    "args": { "kind": "Вид", "name": "Имя", "description": "Описание", "content": "Содержимое", "system": "Системная" }
+    "args": {
+      "kind": "Вид",
+      "name": "Имя",
+      "description": "Описание",
+      "content": "Содержимое",
+      "system": "Системная"
+    }
   },
   "edit_record": {
     "title": "Правка записи",
-    "args": { "recordId": "Запись", "kind": "Вид", "name": "Имя", "description": "Описание", "content": "Содержимое", "system": "Системная" }
+    "args": {
+      "recordId": "Запись",
+      "kind": "Вид",
+      "name": "Имя",
+      "description": "Описание",
+      "content": "Содержимое",
+      "system": "Системная"
+    }
   },
-  "delete_record": { "title": "Удаление записи", "args": { "recordId": "Запись" } }
+  "delete_record": {
+    "title": "Удаление записи",
+    "args": { "recordId": "Запись" }
+  }
 }

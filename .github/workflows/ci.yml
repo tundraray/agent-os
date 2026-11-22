@@ -50,6 +50,7 @@ jobs:
             console.log(`journal order ok: ${entries.length} entries`);
           '
       - run: pnpm knip
+      - run: pnpm format:check
 
   # The Postgres suites against a real Postgres 16 (design-runtime.md, Part constraints): the API is
   # built (the packages are not: the suites run their source), the migrations are applied, then each suite runs in turn — db (migrations), runtime (in-process INT file and the

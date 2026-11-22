@@ -16,7 +16,10 @@ import { ModelProvidersTable } from './model-providers-table';
 export function ModelsScreen() {
   const titles = useAdminTitles();
   const defaults = useResource(adminApi.modelDefaults.get, 'models:defaults');
-  const providers = useResource(adminApi.modelProviders.list, 'models:providers');
+  const providers = useResource(
+    adminApi.modelProviders.list,
+    'models:providers',
+  );
   const catalog = useResource(adminApi.models.list, 'models:catalog');
 
   const reloadAll = (): void => {
@@ -29,7 +32,12 @@ export function ModelsScreen() {
     <>
       <PageHeader area={titles.panel} title={titles.section('models')} />
       <div className="flex flex-col gap-8">
-        <ModelDefaultsForm defaults={defaults} providers={providers} catalog={catalog} reloadAll={reloadAll} />
+        <ModelDefaultsForm
+          defaults={defaults}
+          providers={providers}
+          catalog={catalog}
+          reloadAll={reloadAll}
+        />
         <ModelProvidersTable
           providers={providers}
           defaults={defaults.data}

@@ -21,7 +21,9 @@ const { running, waiting } = TaskStatusSchema.enum;
 const nextAttempt = sql`${runtimeTasks.attempt} + 1`;
 
 /** Columns that follow a new status: no wait reason, `finished_at` only when finished. */
-function leaveStatus(status: TaskStatus): PgUpdateSetSource<typeof runtimeTasks> {
+function leaveStatus(
+  status: TaskStatus,
+): PgUpdateSetSource<typeof runtimeTasks> {
   return {
     status,
     waitReason: null,
@@ -29,7 +31,9 @@ function leaveStatus(status: TaskStatus): PgUpdateSetSource<typeof runtimeTasks>
   };
 }
 
-function changeColumns(change: TaskChange): PgUpdateSetSource<typeof runtimeTasks> {
+function changeColumns(
+  change: TaskChange,
+): PgUpdateSetSource<typeof runtimeTasks> {
   switch (change.kind) {
     case 'claim':
       return {
@@ -59,7 +63,10 @@ function changeColumns(change: TaskChange): PgUpdateSetSource<typeof runtimeTask
  */
 @Injectable()
 export class Tasks {
-  constructor(@Inject(RuntimeTasksRepository) private readonly rows: RuntimeTasksRepository) {}
+  constructor(
+    @Inject(RuntimeTasksRepository)
+    private readonly rows: RuntimeTasksRepository,
+  ) {}
 
   /** Inserts a task in `queued`. An id already taken is `TASK_EXISTS`. */
   async insert(task: NewRuntimeTaskRow): Promise<TaskRow> {
@@ -76,7 +83,10 @@ export class Tasks {
    * reason. Returns the updated row, or `undefined` when the guard matched nothing — the write is
    * fenced and dropped.
    */
-  async transition(guard: TaskGuard, change: TaskChange): Promise<TaskRow | undefined> {
+  async transition(
+    guard: TaskGuard,
+    change: TaskChange,
+  ): Promise<TaskRow | undefined> {
     assertAllowed(guard, change);
     return this.rows.updateGuarded(guard, changeColumns(change));
   }

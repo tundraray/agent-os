@@ -1,4 +1,7 @@
-import { type SessionTaskStatus, SessionTaskStatusSchema } from '@agent-os/contracts';
+import {
+  type SessionTaskStatus,
+  SessionTaskStatusSchema,
+} from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { Db } from '../db';
@@ -49,17 +52,26 @@ export class AgentSessionTasksRepository {
       .from(agentSessionTasks)
       .where(eq(agentSessionTasks.taskId, sessionId))
       .orderBy(asc(agentSessionTasks.number));
-    return rows.map((row) => ({ ...row, status: SessionTaskStatusSchema.parse(row.status) }));
+    return rows.map((row) => ({
+      ...row,
+      status: SessionTaskStatusSchema.parse(row.status),
+    }));
   }
 
   /** The list and the last number given, as the rules decide on them. */
-  async read(sessionId: string): Promise<{ tasks: SessionTask[]; lastNumber: number }> {
+  async read(
+    sessionId: string,
+  ): Promise<{ tasks: SessionTask[]; lastNumber: number }> {
     const [session] = await this.db.client
       .select({ lastNumber: agentSessions.lastTaskNumber })
       .from(agentSessions)
       .where(eq(agentSessions.taskId, sessionId));
-    if (session === undefined) throw new Error(`Session ${sessionId} has no row`);
-    return { tasks: await this.list(sessionId), lastNumber: session.lastNumber };
+    if (session === undefined)
+      throw new Error(`Session ${sessionId} has no row`);
+    return {
+      tasks: await this.list(sessionId),
+      lastNumber: session.lastNumber,
+    };
   }
 
   /** Writes a decision: the tasks whole (created or replaced), the deletions and the counter. */
@@ -68,7 +80,10 @@ export class AgentSessionTasksRepository {
       await this.db.client
         .delete(agentSessionTasks)
         .where(
-          and(eq(agentSessionTasks.taskId, sessionId), inArray(agentSessionTasks.number, [...change.deleted])),
+          and(
+            eq(agentSessionTasks.taskId, sessionId),
+            inArray(agentSessionTasks.number, [...change.deleted]),
+          ),
         );
     }
     for (const task of change.written) {

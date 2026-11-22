@@ -27,7 +27,9 @@ export interface OwnedKnowledgeRunRow extends KnowledgeRunRow {
 }
 
 /** What may change on a run row besides the round outcome and the extracted-up-to mark. */
-export type KnowledgeRunPatch = Partial<Pick<KnowledgeRunRow, 'extractTaskId' | 'needsRound'>>;
+export type KnowledgeRunPatch = Partial<
+  Pick<KnowledgeRunRow, 'extractTaskId' | 'needsRound'>
+>;
 
 /** The outcome of a round, or `stopped` / `interrupted` written by the trigger. */
 export interface RoundOutcome {
@@ -48,7 +50,10 @@ export interface RoundOutcome {
 export type KnowledgeQuestionRow = typeof questions.$inferSelect;
 
 /** The question of a session and its vector; `vector` and `model` stay null when embeddings refused. */
-export type KnowledgeQuestion = Omit<typeof questions.$inferInsert, 'createdAt'>;
+export type KnowledgeQuestion = Omit<
+  typeof questions.$inferInsert,
+  'createdAt'
+>;
 
 // ---------- Deep agent vector rows (KD-8) ----------
 
@@ -79,12 +84,18 @@ export class AgentKnowledgeRunsRepository {
    * Creates the run row with the deep agent session (KD-2, called from `DeepAgent.sessionStarted` in its
    * transaction); a second call for the same run writes nothing.
    */
-  async insertRun(
-    run: { readonly runId: string; readonly recordId: string; readonly servers: readonly string[] },
-  ): Promise<void> {
+  async insertRun(run: {
+    readonly runId: string;
+    readonly recordId: string;
+    readonly servers: readonly string[];
+  }): Promise<void> {
     await this.db.client
       .insert(runs)
-      .values({ runId: run.runId, recordId: run.recordId, servers: [...run.servers] })
+      .values({
+        runId: run.runId,
+        recordId: run.recordId,
+        servers: [...run.servers],
+      })
       .onConflictDoNothing({ target: runs.runId });
   }
 
@@ -114,12 +125,16 @@ export class AgentKnowledgeRunsRepository {
   }
 
   /** The run whose extraction task is in progress — how the trigger recognises its failure. */
-  findRunByExtractTask(taskId: string): Promise<OwnedKnowledgeRunRow | undefined> {
+  findRunByExtractTask(
+    taskId: string,
+  ): Promise<OwnedKnowledgeRunRow | undefined> {
     return this.findRun(eq(runs.extractTaskId, taskId));
   }
 
   /** The run whose last committed round belongs to the task — how the trigger recognises its end. */
-  findRunByLastExtractTask(taskId: string): Promise<OwnedKnowledgeRunRow | undefined> {
+  findRunByLastExtractTask(
+    taskId: string,
+  ): Promise<OwnedKnowledgeRunRow | undefined> {
     return this.findRun(eq(runs.lastExtractTaskId, taskId));
   }
 
@@ -150,7 +165,9 @@ export class AgentKnowledgeRunsRepository {
   async advanceExtractedUpTo(runId: string, at: Date): Promise<void> {
     await this.db.client
       .update(runs)
-      .set({ extractedUpTo: sql`greatest(${runs.extractedUpTo}, ${at.toISOString()}::timestamptz)` })
+      .set({
+        extractedUpTo: sql`greatest(${runs.extractedUpTo}, ${at.toISOString()}::timestamptz)`,
+      })
       .where(eq(runs.runId, runId));
   }
 
@@ -166,8 +183,13 @@ export class AgentKnowledgeRunsRepository {
   }
 
   /** The question row of the session; `undefined` before its first question. */
-  async readQuestion(taskId: string): Promise<KnowledgeQuestionRow | undefined> {
-    const [row] = await this.db.client.select().from(questions).where(eq(questions.taskId, taskId));
+  async readQuestion(
+    taskId: string,
+  ): Promise<KnowledgeQuestionRow | undefined> {
+    const [row] = await this.db.client
+      .select()
+      .from(questions)
+      .where(eq(questions.taskId, taskId));
     return row;
   }
 
@@ -186,8 +208,13 @@ export class AgentKnowledgeRunsRepository {
   }
 
   /** The deep agent's vector row; `undefined` before its first pass or question outcome. */
-  async findEmbeddingRow(recordId: string): Promise<KnowledgeEmbeddingRow | undefined> {
-    const [row] = await this.db.client.select().from(embedding).where(eq(embedding.recordId, recordId));
+  async findEmbeddingRow(
+    recordId: string,
+  ): Promise<KnowledgeEmbeddingRow | undefined> {
+    const [row] = await this.db.client
+      .select()
+      .from(embedding)
+      .where(eq(embedding.recordId, recordId));
     return row;
   }
 
@@ -195,7 +222,9 @@ export class AgentKnowledgeRunsRepository {
    * The vector row whose pass is the task — how the trigger recognises a failed pass. Read by an UPDATE
    * that changes nothing: the other writers of the row wait until the transaction ends.
    */
-  async findEmbeddingByPassTask(taskId: string): Promise<KnowledgeEmbeddingRow | undefined> {
+  async findEmbeddingByPassTask(
+    taskId: string,
+  ): Promise<KnowledgeEmbeddingRow | undefined> {
     const [row] = await this.db.client
       .update(embedding)
       .set({ needsPass: sql`${embedding.needsPass}` })
@@ -215,7 +244,8 @@ export class AgentKnowledgeRunsRepository {
       .values({ recordId })
       .onConflictDoUpdate({ target: embedding.recordId, set: { recordId } })
       .returning();
-    if (row === undefined) throw new Error(`knowledge embedding row of ${recordId} is missing`);
+    if (row === undefined)
+      throw new Error(`knowledge embedding row of ${recordId} is missing`);
     return row;
   }
 
@@ -225,7 +255,10 @@ export class AgentKnowledgeRunsRepository {
     patch: KnowledgeEmbeddingPatch,
   ): Promise<void> {
     if (Object.values(patch).every((value) => value === undefined)) return;
-    await this.db.client.update(embedding).set(patch).where(eq(embedding.recordId, recordId));
+    await this.db.client
+      .update(embedding)
+      .set(patch)
+      .where(eq(embedding.recordId, recordId));
   }
 
   private async upsertOutcome(
@@ -233,20 +266,34 @@ export class AgentKnowledgeRunsRepository {
     outcome: EmbeddingOutcome,
     setWhere?: SQL,
   ): Promise<void> {
-    const attempt = { lastReason: outcome.reason, lastModel: outcome.model, lastAt: new Date() };
+    const attempt = {
+      lastReason: outcome.reason,
+      lastModel: outcome.model,
+      lastAt: new Date(),
+    };
     await this.db.client
       .insert(embedding)
       .values({ recordId, ...attempt })
-      .onConflictDoUpdate({ target: embedding.recordId, set: attempt, setWhere });
+      .onConflictDoUpdate({
+        target: embedding.recordId,
+        set: attempt,
+        setWhere,
+      });
   }
 
   /** Writes the outcome of a pass attempt. */
-  writeEmbeddingOutcome(recordId: string, outcome: EmbeddingOutcome): Promise<void> {
+  writeEmbeddingOutcome(
+    recordId: string,
+    outcome: EmbeddingOutcome,
+  ): Promise<void> {
     return this.upsertOutcome(recordId, outcome);
   }
 
   /** Writes the outcome of a session question's embedding, only when it differs from the stored one. */
-  writeQuestionOutcome(recordId: string, outcome: EmbeddingOutcome): Promise<void> {
+  writeQuestionOutcome(
+    recordId: string,
+    outcome: EmbeddingOutcome,
+  ): Promise<void> {
     return this.upsertOutcome(
       recordId,
       outcome,

@@ -3,35 +3,60 @@
 import { useId, useState, type ReactNode } from 'react';
 import { KeyRoundIcon } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
-import { AccessErrorCode, type Grant, type GrantEffect, type McpServerView } from '@agent-os/contracts';
+import {
+  AccessErrorCode,
+  type Grant,
+  type GrantEffect,
+  type McpServerView,
+} from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { grantTargetText, orphanGrantIds, serversToRead } from '@/lib/admin/grants';
+import {
+  grantTargetText,
+  orphanGrantIds,
+  serversToRead,
+} from '@/lib/admin/grants';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { formatQuota } from '@/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CONTROL_SIZE, describeRefusal } from '../admin-form';
-import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import {
+  DataTable,
+  resourceTableState,
+  type DataTableColumn,
+  type DataTableRow,
+} from '../data-table';
 import { GrantDialog, type GrantHolderRef } from './grant-dialog';
 import { QuotaDialog } from './quota-dialog';
 
-const isModelAllow = (grant: Grant): boolean => grant.effect === 'allow' && grant.target.kind === 'model';
+const isModelAllow = (grant: Grant): boolean =>
+  grant.effect === 'allow' && grant.target.kind === 'model';
 
-const holderQuery = (holder: GrantHolderRef): { roleId: string } | { userId: string } =>
+const holderQuery = (
+  holder: GrantHolderRef,
+): { roleId: string } | { userId: string } =>
   holder.kind === 'role' ? { roleId: holder.id } : { userId: holder.id };
 
 /** The grants whose «Убрать» is running, and the refusals shown under their rows. */
-type RowState = { pending: ReadonlySet<string>; errors: ReadonlyMap<string, ReactNode> };
+type RowState = {
+  pending: ReadonlySet<string>;
+  errors: ReadonlyMap<string, ReactNode>;
+};
 
 /** Each record on its own: one that fails to read is logged and left out, the others still tell their orphans. */
 async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
-  const reads = await Promise.allSettled(names.map((name) => adminApi.servers.get(name)));
+  const reads = await Promise.allSettled(
+    names.map((name) => adminApi.servers.get(name)),
+  );
   return reads.flatMap((read, index) => {
     if (read.status === 'fulfilled') return [read.value];
-    logger.error('admin: grants: server record read failed', { server: names[index], ...describeApiError(read.reason) });
+    logger.error('admin: grants: server record read failed', {
+      server: names[index],
+      ...describeApiError(read.reason),
+    });
     return [];
   });
 }
@@ -45,14 +70,26 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   const tErrors = useTranslations('errors');
   const headingId = useId();
   const format = useFormatter();
-  const grants = useResource(() => adminApi.grants.list(holderQuery(holder)), `grants:${holder.kind}:${holder.id}`);
+  const grants = useResource(
+    () => adminApi.grants.list(holderQuery(holder)),
+    `grants:${holder.kind}:${holder.id}`,
+  );
   const servers = useResource(adminApi.servers.list, 'servers');
 
   // Design-admin «Права (GR-01, GR-02)»: the record of every server the holder has tool grants on, for its `tools`.
-  const toRead = grants.data !== undefined && servers.data !== undefined ? serversToRead(grants.data, servers.data) : [];
-  const records = useResource(() => readRecords(toRead), `records:${toRead.join('\n')}`);
+  const toRead =
+    grants.data !== undefined && servers.data !== undefined
+      ? serversToRead(grants.data, servers.data)
+      : [];
+  const records = useResource(
+    () => readRecords(toRead),
+    `records:${toRead.join('\n')}`,
+  );
 
-  const [rowState, setRowState] = useState<RowState>({ pending: new Set(), errors: new Map() });
+  const [rowState, setRowState] = useState<RowState>({
+    pending: new Set(),
+    errors: new Map(),
+  });
   const [adding, setAdding] = useState(false);
   const [addEffect, setAddEffect] = useState<GrantEffect>('allow');
   const [quotaOpen, setQuotaOpen] = useState(false);
@@ -82,9 +119,15 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       await adminApi.grants.remove(grant.id);
       grants.reload();
     } catch (error) {
-      const refusal = describeRefusal(tErrors, error, { logEvent: 'admin: grant remove' });
+      const refusal = describeRefusal(tErrors, error, {
+        logEvent: 'admin: grant remove',
+      });
       // Error handling: a grant already gone is not an error of the row — the screen reads its rights again.
-      if (isApiRequestError(error) && error.code === AccessErrorCode.GRANT_NOT_FOUND) grants.reload();
+      if (
+        isApiRequestError(error) &&
+        error.code === AccessErrorCode.GRANT_NOT_FOUND
+      )
+        grants.reload();
       else if (refusal !== null) setRowError(grant.id, refusal.text);
     } finally {
       setRowPending(grant.id, false);
@@ -121,7 +164,9 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       ? orphanGrantIds(
           grants.data,
           servers.data,
-          new Map((records.data ?? []).map((record) => [record.name, record.tools])),
+          new Map(
+            (records.data ?? []).map((record) => [record.name, record.tools]),
+          ),
         )
       : new Set<string>();
 
@@ -135,20 +180,34 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   const toRow = (grant: Grant): DataTableRow => {
     const orphan = orphans.has(grant.id);
     const target = grantTargetText(grant.target);
-    const removeAction = { label: t('remove'), onSelect: () => void remove(grant), pending: rowState.pending.has(grant.id) };
+    const removeAction = {
+      label: t('remove'),
+      onSelect: () => void remove(grant),
+      pending: rowState.pending.has(grant.id),
+    };
     return {
       key: grant.id,
       name: target,
       cells: [
         <TargetCell key="target" grant={grant} text={target} orphan={orphan} />,
-        <StateBadge key="effect" state={grant.effect === 'allow' ? 'ok' : 'closed'}>
+        <StateBadge
+          key="effect"
+          state={grant.effect === 'allow' ? 'ok' : 'closed'}
+        >
           {grant.effect === 'allow' ? t('allow') : t('deny')}
         </StateBadge>,
-        isModelAllow(grant) ? (grant.quotaUsd === null ? t('noQuota') : formatQuota(format, grant.quotaUsd)) : t('notApplicable'),
+        isModelAllow(grant)
+          ? grant.quotaUsd === null
+            ? t('noQuota')
+            : formatQuota(format, grant.quotaUsd)
+          : t('notApplicable'),
       ],
       actions:
         !orphan && isModelAllow(grant)
-          ? [{ label: t('changeQuota'), onSelect: () => openQuota(grant) }, removeAction]
+          ? [
+              { label: t('changeQuota'), onSelect: () => openQuota(grant) },
+              removeAction,
+            ]
           : [removeAction],
       error: rowState.errors.get(grant.id),
     };
@@ -158,7 +217,12 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   // The table waits for both reads: the registry tells which rows are orphans.
   const state = resourceTableState(
     {
-      status: grants.status === 'error' || servers.status === 'error' ? 'error' : ready ? 'ready' : 'loading',
+      status:
+        grants.status === 'error' || servers.status === 'error'
+          ? 'error'
+          : ready
+            ? 'ready'
+            : 'loading',
       data: grants.data,
       reload: () => {
         grants.reload();
@@ -168,7 +232,10 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
     t('loadFailed'),
     (data) => ({
       rows: data.map(toRow),
-      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? t('emptyRole') : t('emptyUser') },
+      empty: {
+        Icon: KeyRoundIcon,
+        title: holder.kind === 'role' ? t('emptyRole') : t('emptyUser'),
+      },
     }),
   );
 
@@ -195,7 +262,12 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
           )}
         </div>
       </div>
-      <DataTable caption={title} columns={columns} state={state} actionsAs="menu" />
+      <DataTable
+        caption={title}
+        columns={columns}
+        state={state}
+        actionsAs="menu"
+      />
       <GrantDialog
         open={adding}
         onOpenChange={changeAdding}
@@ -205,27 +277,58 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         servers={servers.data ?? []}
         onSaved={saved(setAdding)}
       />
-      <QuotaDialog open={quotaOpen} onOpenChange={setQuotaOpen} grant={quotaGrant} onSaved={saved(setQuotaOpen)} />
+      <QuotaDialog
+        open={quotaOpen}
+        onOpenChange={setQuotaOpen}
+        grant={quotaGrant}
+        onSaved={saved(setQuotaOpen)}
+      />
     </section>
   );
 }
 
-function AddButton({ disabled, onClick, children }: { disabled: boolean; onClick: () => void; children: string }) {
+function AddButton({
+  disabled,
+  onClick,
+  children,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+  children: string;
+}) {
   return (
-    <Button variant="outline" size="sm" className={CONTROL_SIZE} disabled={disabled} onClick={onClick}>
+    <Button
+      variant="outline"
+      size="sm"
+      className={CONTROL_SIZE}
+      disabled={disabled}
+      onClick={onClick}
+    >
       {children}
     </Button>
   );
 }
 
 /** Servers and tools are technical names (Mono); an orphan's target is muted with «Нет в реестре» (GR-02). */
-function TargetCell({ grant, text, orphan }: { grant: Grant; text: string; orphan: boolean }) {
+function TargetCell({
+  grant,
+  text,
+  orphan,
+}: {
+  grant: Grant;
+  text: string;
+  orphan: boolean;
+}) {
   const t = useTranslations('admin.grants');
   const mono = grant.target.kind !== 'model';
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span
-        className={cn('truncate', mono && 'font-mono text-mono-compact', orphan && 'text-muted-foreground')}
+        className={cn(
+          'truncate',
+          mono && 'font-mono text-mono-compact',
+          orphan && 'text-muted-foreground',
+        )}
         title={text}
       >
         {text}

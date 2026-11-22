@@ -1,4 +1,8 @@
-import { RUN_CODE_TOOL, type ToolCallState, ToolCallStateSchema } from '@agent-os/contracts';
+import {
+  RUN_CODE_TOOL,
+  type ToolCallState,
+  ToolCallStateSchema,
+} from '@agent-os/contracts';
 
 import { mcpToolName } from '../mcp/mcp-tool';
 import type { HistoryContent, HistoryEntry } from './history';
@@ -35,7 +39,12 @@ export interface CallDelegation {
   readonly listTask: number | null;
 }
 
-const { requested, awaiting_confirmation: awaiting, sending, done } = ToolCallStateSchema.enum;
+const {
+  requested,
+  awaiting_confirmation: awaiting,
+  sending,
+  done,
+} = ToolCallStateSchema.enum;
 
 /** A sent `task` call: never closed as unknown or interrupted, only with its tracker's outcomes. */
 export function isDelegated(call: Pick<CallState, 'delegation'>): boolean {
@@ -43,12 +52,18 @@ export function isDelegated(call: Pick<CallState, 'delegation'>): boolean {
 }
 
 /** The name the model called: the history keeps an MCP tool as its server and raw name. */
-export function requestedName(call: { readonly tool: string; readonly server: string | null }): string {
+export function requestedName(call: {
+  readonly tool: string;
+  readonly server: string | null;
+}): string {
   return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
 }
 
 /** A `run_code` call: the built-in tool, not an MCP tool of the same name. */
-export function isRunCodeCall(call: { readonly tool: string; readonly server: string | null }): boolean {
+export function isRunCodeCall(call: {
+  readonly tool: string;
+  readonly server: string | null;
+}): boolean {
   return call.tool === RUN_CODE_TOOL && call.server === null;
 }
 
@@ -103,10 +118,18 @@ export function foldCalls(entries: readonly HistoryEntry[]): CallState[] {
       case 'tool_sent':
         update(entry.content.callId, (folding) => {
           const { content } = entry;
-          const args = content.args === undefined ? folding.call.args : content.args;
+          const args =
+            content.args === undefined ? folding.call.args : content.args;
           const delegation =
-            content.taskIds === undefined ? null : { taskIds: content.taskIds, listTask: content.taskId ?? null };
-          folding.call = { ...folding.call, args, sentAt: content.startedAt, delegation };
+            content.taskIds === undefined
+              ? null
+              : { taskIds: content.taskIds, listTask: content.taskId ?? null };
+          folding.call = {
+            ...folding.call,
+            args,
+            sentAt: content.startedAt,
+            delegation,
+          };
         });
         break;
       case 'run_attempt':
@@ -123,7 +146,10 @@ export function foldCalls(entries: readonly HistoryEntry[]): CallState[] {
         break;
     }
   }
-  return [...calls.values()].map((folding) => ({ ...folding.call, state: stateOf(folding) }));
+  return [...calls.values()].map((folding) => ({
+    ...folding.call,
+    state: stateOf(folding),
+  }));
 }
 
 /** The calls that have no result yet, by answer and position. */

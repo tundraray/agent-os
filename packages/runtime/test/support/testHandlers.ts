@@ -185,7 +185,10 @@ export function boundToDb(handler: TaskHandler, db: Db): TaskHandler {
         const result = await handler.step(ctx);
         const { commit } = result;
         if (!commit) return result;
-        return { ...result, commit: (effects) => handlerDb.run(db, () => commit(effects)) };
+        return {
+          ...result,
+          commit: (effects) => handlerDb.run(db, () => commit(effects)),
+        };
       }),
   };
 }
@@ -198,7 +201,10 @@ export function boundToDb(handler: TaskHandler, db: Db): TaskHandler {
 export function writeHandlerRow(ctx: StepContext, note: string | null) {
   return async () => {
     const db = handlerDb.getStore();
-    if (!db) throw new Error('writeHandlerRow called outside a handler bound by boundToDb');
+    if (!db)
+      throw new Error(
+        'writeHandlerRow called outside a handler bound by boundToDb',
+      );
     await db.client.execute(sql`
       INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
       SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${note}
@@ -216,9 +222,13 @@ export function scriptedHandler(options: ScriptedHandlerOptions): TaskHandler {
     async step(ctx: StepContext): Promise<StepResult> {
       const scripted = steps[Math.min(ctx.stepNo, steps.length - 1)];
       seen?.push(viewOf(ctx));
-      if (scripted.gate) await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
+      if (scripted.gate)
+        await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
       if (scripted.outcome === 'throw') throw scripted.error;
-      return { ...outcomeOf(scripted), commit: writeHandlerRow(ctx, note ?? null) };
+      return {
+        ...outcomeOf(scripted),
+        commit: writeHandlerRow(ctx, note ?? null),
+      };
     },
   };
 }
@@ -247,7 +257,8 @@ export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
     inputSchema: z.record(z.string(), z.unknown()),
     async step(ctx: StepContext): Promise<StepResult> {
       seen?.push(viewOf(ctx));
-      if (ctx.stepNo > 0) return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
+      if (ctx.stepNo > 0)
+        return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
       return {
         outcome: 'wait',
         commit: async (effects) => {
@@ -260,7 +271,9 @@ export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
   };
 }
 
-function outcomeOf(scripted: Exclude<ScriptedStep, { outcome: 'throw' }>): StepResult {
+function outcomeOf(
+  scripted: Exclude<ScriptedStep, { outcome: 'throw' }>,
+): StepResult {
   switch (scripted.outcome) {
     case 'continue':
     case 'wait':
@@ -268,6 +281,10 @@ function outcomeOf(scripted: Exclude<ScriptedStep, { outcome: 'throw' }>): StepR
     case 'complete':
       return { outcome: 'complete', result: scripted.result };
     case 'await_decision':
-      return { outcome: 'await_decision', kind: scripted.kind, payload: scripted.payload };
+      return {
+        outcome: 'await_decision',
+        kind: scripted.kind,
+        payload: scripted.payload,
+      };
   }
 }

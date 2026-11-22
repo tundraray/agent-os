@@ -35,7 +35,8 @@ export interface QuestionVectorDeps {
 }
 
 /** What the embeddings call gave: its result, or the error it threw while the step was not cancelled. */
-type EmbedAttempt = EmbedResult | { readonly kind: 'error'; readonly message: string };
+type EmbedAttempt =
+  EmbedResult | { readonly kind: 'error'; readonly message: string };
 
 /**
  * The question to embed now (KD-6, Invariant 12), for a session that learns: a step of an agent that embeds
@@ -50,12 +51,18 @@ function questionToEmbed(
   messages: readonly StepMessage[],
   stored: KnowledgeQuestionRow | undefined,
 ): SessionQuestion | null {
-  const employees = embedsEmployeeMessages ? messages.filter((message) => message.kind === userMessage) : [];
+  const employees = embedsEmployeeMessages
+    ? messages.filter((message) => message.kind === userMessage)
+    : [];
   const latest = employees[employees.length - 1];
   if (latest !== undefined && latest.messageId !== stored?.source) {
-    return { source: latest.messageId, text: UserMessageTextSchema.parse(latest.payload).text };
+    return {
+      source: latest.messageId,
+      text: UserMessageTextSchema.parse(latest.payload).text,
+    };
   }
-  if (stored === undefined) return { source: TASK_QUESTION_SOURCE, text: session.prompt };
+  if (stored === undefined)
+    return { source: TASK_QUESTION_SOURCE, text: session.prompt };
   return null;
 }
 
@@ -65,7 +72,8 @@ function questionToEmbed(
  */
 function outcomeOf(attempt: EmbedAttempt): EmbeddingOutcome | null {
   if (attempt.kind === 'vectors') return { reason: null, model: attempt.model };
-  if (attempt.kind === 'error' || attempt.reason === 'owner_disabled') return null;
+  if (attempt.kind === 'error' || attempt.reason === 'owner_disabled')
+    return null;
   return { reason: attempt.reason, model: attempt.model };
 }
 
@@ -91,7 +99,12 @@ export async function embedQuestion(
   const { recordId } = learning;
 
   const stored = await deps.knowledgeRunRows.readQuestion(ctx.taskId);
-  const question = questionToEmbed(session, embedsEmployeeMessages, ctx.messages, stored);
+  const question = questionToEmbed(
+    session,
+    embedsEmployeeMessages,
+    ctx.messages,
+    stored,
+  );
   if (question === null) return true;
 
   const startedAt = Date.now();
@@ -99,8 +112,12 @@ export async function embedQuestion(
     taskId: ctx.taskId,
     recordId,
     ownerId: session.ownerId,
-    source: question.source === TASK_QUESTION_SOURCE ? TASK_QUESTION_SOURCE : userMessage,
-    messageId: question.source === TASK_QUESTION_SOURCE ? null : question.source,
+    source:
+      question.source === TASK_QUESTION_SOURCE
+        ? TASK_QUESTION_SOURCE
+        : userMessage,
+    messageId:
+      question.source === TASK_QUESTION_SOURCE ? null : question.source,
   };
   let attempt: EmbedAttempt;
   try {
@@ -114,7 +131,10 @@ export async function embedQuestion(
     });
   } catch (error) {
     if (ctx.signal.aborted) return false;
-    attempt = { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+    attempt = {
+      kind: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const vector = attempt.kind === 'vectors' ? attempt.vectors[0] : undefined;
@@ -130,7 +150,9 @@ export async function embedQuestion(
     if (outcome === null) return;
     // A deep agent deleted during the run takes its vector row with it: the outcome is lost, not the step.
     await deps.db
-      .savepoint(() => deps.knowledgeRunRows.writeQuestionOutcome(recordId, outcome))
+      .savepoint(() =>
+        deps.knowledgeRunRows.writeQuestionOutcome(recordId, outcome),
+      )
       .catch((error: unknown) => {
         ctx.logger.warn('question outcome not written', {
           ...fields,
@@ -142,7 +164,12 @@ export async function embedQuestion(
 
   const durationMs = Date.now() - startedAt;
   if (attempt.kind === 'vectors') {
-    ctx.logger.info('question vector written', { ...fields, model, outcome: 'vectors', durationMs });
+    ctx.logger.info('question vector written', {
+      ...fields,
+      model,
+      outcome: 'vectors',
+      durationMs,
+    });
   } else if (attempt.kind === 'unavailable') {
     ctx.logger.warn('question vector written empty', {
       ...fields,

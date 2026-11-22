@@ -6,12 +6,20 @@ import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
-import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
+import {
+  DataTable,
+  resourceTableState,
+  type DataTableColumn,
+  type DataTableRow,
+} from '@/components/admin/data-table';
 import { PageHeader } from '@/components/shell/page-header';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounced-value';
+import {
+  EMPLOYEE_SEARCH_DELAY_MS,
+  useDebouncedValue,
+} from '@/hooks/use-debounced-value';
 import { usePagedResource, type Page } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isListChanged } from '@/lib/admin/admin-errors';
@@ -26,14 +34,18 @@ const EMPTY_VALUE = '—';
 
 type UsersTranslator = ReturnType<typeof useTranslations<'admin.users'>>;
 
-async function loadUsersPage(query: string, cursor: string | null): Promise<Page<AdminUserSummary>> {
+async function loadUsersPage(
+  query: string,
+  cursor: string | null,
+): Promise<Page<AdminUserSummary>> {
   const page = await adminApi.users.list({ query, cursor });
   return { items: page.users, nextCursor: page.nextCursor };
 }
 
 /** A non-empty `login` is a local account (design-admin.md, DC-4). */
-export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =>
-  user.login !== null && user.login !== '';
+export const isLocalAccount = (
+  user: Pick<AdminUserSummary, 'login'>,
+): boolean => user.login !== null && user.login !== '';
 
 /** «Включён» / «Отключён» of the list and the employee's page (MC-22). */
 export function UserStatusBadge({ status }: { status: UserStatus }) {
@@ -58,7 +70,10 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
         </span>
         {local && <StateBadge variant="source">{t('local')}</StateBadge>}
       </span>
-      <span className="truncate text-xs leading-4 text-muted-foreground" title={contact}>
+      <span
+        className="truncate text-xs leading-4 text-muted-foreground"
+        title={contact}
+      >
         {contact}
       </span>
     </div>
@@ -67,8 +82,13 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
 
 type RowContext = { t: UsersTranslator; format: Formatter; locale: Locale };
 
-function rowOf(user: AdminUserSummary, { t, format, locale }: RowContext): DataTableRow {
-  const roles = user.roles.map((role) => builtinRoleName(role.name, locale)).join(' · ');
+function rowOf(
+  user: AdminUserSummary,
+  { t, format, locale }: RowContext,
+): DataTableRow {
+  const roles = user.roles
+    .map((role) => builtinRoleName(role.name, locale))
+    .join(' · ');
   return {
     key: user.id,
     name: user.name,
@@ -79,7 +99,9 @@ function rowOf(user: AdminUserSummary, { t, format, locale }: RowContext): DataT
       <span key="roles" className="block truncate" title={roles}>
         {roles === '' ? EMPTY_VALUE : roles}
       </span>,
-      user.lastSignInAt === null ? t('never') : formatListTime(format, user.lastSignInAt),
+      user.lastSignInAt === null
+        ? t('never')
+        : formatListTime(format, user.lastSignInAt),
     ],
   };
 }
@@ -98,7 +120,10 @@ export function UserList() {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
-  const list = usePagedResource((cursor) => loadUsersPage(searched, cursor), searched);
+  const list = usePagedResource(
+    (cursor) => loadUsersPage(searched, cursor),
+    searched,
+  );
   const [creating, setCreating] = useState(false);
 
   const columns: readonly DataTableColumn[] = [
@@ -115,21 +140,28 @@ export function UserList() {
   const loadMoreErrorText = (error: unknown): string =>
     isListChanged(error) ? tErrors('admin.listChanged') : t('loadFailed');
 
-  const state = resourceTableState({ ...list, data: list.items }, t('loadFailed'), (items) => ({
-    rows: items.map((user) => rowOf(user, { t, format, locale })),
-    // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
-    // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
-    empty: { Icon: SearchXIcon, title: t('noMatches') },
-    noMatches: t('noMatches'),
-    more:
-      list.nextCursor === null
-        ? undefined
-        : {
-            onLoadMore: list.loadMore,
-            loading: list.loadingMore,
-            error: list.loadMoreError === undefined ? undefined : loadMoreErrorText(list.loadMoreError),
-          },
-  }));
+  const state = resourceTableState(
+    { ...list, data: list.items },
+    t('loadFailed'),
+    (items) => ({
+      rows: items.map((user) => rowOf(user, { t, format, locale })),
+      // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
+      // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
+      empty: { Icon: SearchXIcon, title: t('noMatches') },
+      noMatches: t('noMatches'),
+      more:
+        list.nextCursor === null
+          ? undefined
+          : {
+              onLoadMore: list.loadMore,
+              loading: list.loadingMore,
+              error:
+                list.loadMoreError === undefined
+                  ? undefined
+                  : loadMoreErrorText(list.loadMoreError),
+            },
+    }),
+  );
 
   return (
     <>
@@ -140,14 +172,25 @@ export function UserList() {
           onChange={(event) => setQuery(event.target.value)}
           aria-label={t('search')}
           placeholder={t('search')}
-          className={cn(CONTROL_SIZE, 'min-w-0 flex-1 text-data md:w-72 md:flex-none md:text-data')}
+          className={cn(
+            CONTROL_SIZE,
+            'min-w-0 flex-1 text-data md:w-72 md:flex-none md:text-data',
+          )}
         />
-        <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
+        <Button
+          size="sm"
+          className={CONTROL_SIZE}
+          onClick={() => setCreating(true)}
+        >
           {t('create')}
         </Button>
       </PageHeader>
       <DataTable caption={title} columns={columns} state={state} />
-      <AccountDialog open={creating} onOpenChange={setCreating} onCreated={list.reload} />
+      <AccountDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={list.reload}
+      />
     </>
   );
 }

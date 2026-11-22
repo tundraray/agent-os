@@ -1,10 +1,20 @@
-import { AgentFailureReasonSchema, AGENTS_HISTORY_APPENDED, type ChipRecord, HistoryEventSchema } from '@agent-os/contracts';
+import {
+  AgentFailureReasonSchema,
+  AGENTS_HISTORY_APPENDED,
+  type ChipRecord,
+  HistoryEventSchema,
+} from '@agent-os/contracts';
 import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
 import type { HistoryEntry } from '../history/history';
-import { modelDeniedEntry, type ModelRefusal, modelRefusalMessage, refusalFields } from '../model/model-client';
+import {
+  modelDeniedEntry,
+  type ModelRefusal,
+  modelRefusalMessage,
+  refusalFields,
+} from '../model/model-client';
 import type { AgentTurnMessage } from '../model/mastra-turn';
 import { buildProviderMessages } from '../model/provider-messages';
 import type { NewHistoryEntry } from '../store/history';
@@ -39,7 +49,12 @@ export function previewEntries(
   // Each entry keeps its own kind and content; TypeScript cannot correlate them across the spread.
   return entries.map(
     (entry, index) =>
-      ({ seq: lastSeq + index + 1, kind: entry.kind, createdAt, content: entry.content }) as HistoryEntry,
+      ({
+        seq: lastSeq + index + 1,
+        kind: entry.kind,
+        createdAt,
+        content: entry.content,
+      }) as HistoryEntry,
   );
 }
 
@@ -72,7 +87,12 @@ export function providerMessagesOf(
   return buildProviderMessages({
     ...(forkPrefix === undefined
       ? {}
-      : { forkPrefix: { ...forkPrefix, entries: withChipLines(forkPrefix.entries) } }),
+      : {
+          forkPrefix: {
+            ...forkPrefix,
+            entries: withChipLines(forkPrefix.entries),
+          },
+        }),
     entries: withChipLines([...view.entries, ...shown]),
   });
 }
@@ -92,14 +112,20 @@ export async function appendWithEvent(
   const appended = await deps.history.append(taskId, entries);
   const last = appended.at(-1) ?? before.at(-1);
   if (last !== undefined) {
-    await effects.emit(AGENTS_HISTORY_APPENDED, { agentId: taskId, seq: last.seq });
+    await effects.emit(AGENTS_HISTORY_APPENDED, {
+      agentId: taskId,
+      seq: last.seq,
+    });
   }
   return appended;
 }
 
 /** The `failed` event the history shows before the step fails. */
 function failedEvent(reason: string): NewHistoryEntry {
-  return { kind: 'event', content: { event: HistoryEventSchema.enum.failed, reason } };
+  return {
+    kind: 'event',
+    content: { event: HistoryEventSchema.enum.failed, reason },
+  };
 }
 
 /**
@@ -113,7 +139,9 @@ export function failResult(input: {
   readonly reason: string;
   readonly message: string;
   /** Writes the entries before the event and returns them. */
-  readonly writeEntries: (effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (
+    effects: StepEffects,
+  ) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): StepResult {
   const { deps, ctx, reason, message } = input;
@@ -123,7 +151,10 @@ export function failResult(input: {
     message,
     commit: async (effects) => {
       const entries = await input.writeEntries(effects);
-      await appendWithEvent(deps, effects, ctx.taskId, [...entries, failedEvent(reason)]);
+      await appendWithEvent(deps, effects, ctx.taskId, [
+        ...entries,
+        failedEvent(reason),
+      ]);
       await deps.sessionRows.update(ctx.taskId, {
         ...input.patch,
         turns: 0,
@@ -147,14 +178,19 @@ export async function refusedResult(input: {
   readonly model: string;
   readonly refusal: ModelRefusal;
   readonly audit: AccessAudit;
-  readonly writeEntries: (effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (
+    effects: StepEffects,
+  ) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): Promise<StepResult> {
   const { ctx, model, refusal } = input;
   if (refusal.reason !== FAILURE_REASONS.owner_disabled) {
     await input.audit(modelDeniedEntry(ctx.ownerId, model, refusal));
   }
-  logStep(ctx, input.stepKind, input.startedAt, 'fail', { model, ...refusalFields(refusal) });
+  logStep(ctx, input.stepKind, input.startedAt, 'fail', {
+    model,
+    ...refusalFields(refusal),
+  });
   return failResult({
     deps: input.deps,
     ctx,
@@ -189,7 +225,10 @@ export function logStep(
  * Calls the model; a cancel of the step (the signal aborted) gives `undefined` — the runtime rejects
  * the result of a step that is no longer current, so the step ends without writes.
  */
-export async function callUnlessAborted<T>(ctx: StepContext, call: () => Promise<T>): Promise<T | undefined> {
+export async function callUnlessAborted<T>(
+  ctx: StepContext,
+  call: () => Promise<T>,
+): Promise<T | undefined> {
   try {
     return await call();
   } catch (error) {
@@ -216,5 +255,7 @@ interface StepBlocks {
  * compaction call carries the same text as the model call. No block — the prompt unchanged, byte for byte.
  */
 export function withStepBlocks(prompt: string, blocks: StepBlocks): string {
-  return [prompt, blocks.knowledge, blocks.tasks].filter((part) => part !== null).join('\n\n');
+  return [prompt, blocks.knowledge, blocks.tasks]
+    .filter((part) => part !== null)
+    .join('\n\n');
 }

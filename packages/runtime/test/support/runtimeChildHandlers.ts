@@ -83,7 +83,9 @@ function parentHandler(type: string, db: Db): TaskHandler {
     inputSchema: ParentInputSchema,
     async step(ctx): Promise<StepResult> {
       const { children } = ParentInputSchema.parse(ctx.input);
-      const notices = ctx.messages.filter((message) => message.kind === 'child_finished').length;
+      const notices = ctx.messages.filter(
+        (message) => message.kind === 'child_finished',
+      ).length;
       // Notices of earlier steps: only committed steps left a row.
       const { rows } = await db.client.execute<{ note: string }>(sql`
         SELECT note FROM ${sql.raw(HANDLER_ROWS_TABLE)}
@@ -122,10 +124,15 @@ function writerHandler(type: string, db: Db): TaskHandler {
         return 'written' as const;
       });
       if (guarded.outcome === 'fenced') {
-        throw new Error(`Step ${ctx.stepNo} of ${ctx.taskId} was fenced at its intent`);
+        throw new Error(
+          `Step ${ctx.stepNo} of ${ctx.taskId} was fenced at its intent`,
+        );
       }
       if (guarded.value === 'written') await callExternalAction(db, ctx);
-      const commit = writeHandlerRow(ctx, guarded.value === 'found' ? STEP_UNKNOWN : STEP_DONE);
+      const commit = writeHandlerRow(
+        ctx,
+        guarded.value === 'found' ? STEP_UNKNOWN : STEP_DONE,
+      );
       return ctx.stepNo >= steps - 1
         ? { outcome: 'complete', result: { steps }, commit }
         : { outcome: 'continue', commit };
@@ -137,7 +144,10 @@ function writerHandler(type: string, db: Db): TaskHandler {
 function readerHandler(type: string): TaskHandler {
   return scriptedHandler({
     type,
-    steps: [{ outcome: 'continue' }, { outcome: 'complete', result: { steps: 2 } }],
+    steps: [
+      { outcome: 'continue' },
+      { outcome: 'complete', result: { steps: 2 } },
+    ],
     note: STEP_DONE,
   });
 }
@@ -201,7 +211,10 @@ function ownerOfTrackerHandler(type: string): TaskHandler {
           outcome: 'wait',
           commit: async (effects) => {
             await effects.openTracker(
-              Array.from({ length: tasks }, (_, item) => ({ type: taskType, input: { item } })),
+              Array.from({ length: tasks }, (_, item) => ({
+                type: taskType,
+                input: { item },
+              })),
             );
             await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)();
           },
@@ -232,7 +245,11 @@ function trackerTaskHandler(type: string): TaskHandler {
     inputSchema: TrackerTaskInputSchema,
     async step(ctx): Promise<StepResult> {
       const { item } = TrackerTaskInputSchema.parse(ctx.input);
-      return { outcome: 'complete', result: { item }, commit: writeHandlerRow(ctx, STEP_DONE) };
+      return {
+        outcome: 'complete',
+        result: { item },
+        commit: writeHandlerRow(ctx, STEP_DONE),
+      };
     },
   };
 }
@@ -283,8 +300,10 @@ export function handlersFor(types: ChildTypes, db: Db): TaskHandler[] {
   if (types.reader) handlers.push(readerHandler(types.reader));
   if (types.decider) handlers.push(deciderHandler(types.decider));
   if (types.hold) handlers.push(holdHandler(types.hold));
-  if (types.trackerOwner) handlers.push(ownerOfTrackerHandler(types.trackerOwner));
+  if (types.trackerOwner)
+    handlers.push(ownerOfTrackerHandler(types.trackerOwner));
   if (types.trackerTask) handlers.push(trackerTaskHandler(types.trackerTask));
-  if (types.parkedTrackerTask) handlers.push(parkedTrackerTaskHandler(types.parkedTrackerTask));
+  if (types.parkedTrackerTask)
+    handlers.push(parkedTrackerTaskHandler(types.parkedTrackerTask));
   return handlers.map((handler) => boundToDb(handler, db));
 }

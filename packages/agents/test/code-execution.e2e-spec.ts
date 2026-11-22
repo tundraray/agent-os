@@ -75,7 +75,9 @@ interface Scene {
   readonly control: AgentsHarness;
 }
 
-async function openScene(holds: (latch: FileLatch) => FixtureFaultRule[]): Promise<Scene> {
+async function openScene(
+  holds: (latch: FileLatch) => FixtureFaultRule[],
+): Promise<Scene> {
   const ownerId = newUser();
   const fixture = createFixtureFiles('code-run-restart');
   fixture.setFaults(holds(fixture.latch(HOLD)));
@@ -89,7 +91,13 @@ async function openScene(holds: (latch: FileLatch) => FixtureFaultRule[]): Promi
     root: testRecord(CODE_RUN.name, { servers: CODE_RUN.servers }),
     runtimeConfig: { workers: false },
   });
-  return { ownerId, fixture, scenario: childScenario(access, SERVERS), children, control };
+  return {
+    ownerId,
+    fixture,
+    scenario: childScenario(access, SERVERS),
+    children,
+    control,
+  };
 }
 
 async function closeScene(scene: Scene): Promise<void> {
@@ -139,10 +147,15 @@ async function killDuringCall(
   agentId: string,
   call: { readonly tool: string; readonly count: number },
 ): Promise<number[]> {
-  await child.until(async () => fixtureCallsOf(scene.fixture.callLog, { tool: call.tool }).length === call.count, {
-    what: `call ${call.count} of ${call.tool} on the server`,
-    timeoutMs: STEP_MS,
-  });
+  await child.until(
+    async () =>
+      fixtureCallsOf(scene.fixture.callLog, { tool: call.tool }).length ===
+      call.count,
+    {
+      what: `call ${call.count} of ${call.tool} on the server`,
+      timeoutMs: STEP_MS,
+    },
+  );
   const { callId } = await runOf(scene, agentId);
   await child.until(async () => child.executorPids(callId).length > 0, {
     what: 'the executor start of the run in its log',
@@ -162,17 +175,26 @@ async function killDuringCall(
 }
 
 /** Waits until the agent reported after its run, while `child` lives. */
-async function untilReported(scene: Scene, child: CodeRunChild, agentId: string, run: ScenarioRun): Promise<void> {
+async function untilReported(
+  scene: Scene,
+  child: CodeRunChild,
+  agentId: string,
+  run: ScenarioRun,
+): Promise<void> {
   await child.until(
     async () =>
-      historyLines(await historyOf(scene.control, agentId, scene.ownerId)).includes(`model_answer: ${run.report} []`),
+      historyLines(
+        await historyOf(scene.control, agentId, scene.ownerId),
+      ).includes(`model_answer: ${run.report} []`),
     { what: `the report of agent ${agentId}`, timeoutMs: STEP_MS },
   );
 }
 
 /** What reached the servers, in order: `<tool> <fault mode or "answered">`. */
 function journalLines(scene: Scene): string[] {
-  return readFixtureLog(scene.fixture.callLog).map((entry) => `${entry.tool} ${entry.mode ?? 'answered'}`);
+  return readFixtureLog(scene.fixture.callLog).map(
+    (entry) => `${entry.tool} ${entry.mode ?? 'answered'}`,
+  );
 }
 
 /** The run's row: `<tool> <outcome> attempts <n> <result text or ->`. */
@@ -185,11 +207,19 @@ async function runLine(scene: Scene, agentId: string): Promise<string> {
 async function codeCallLines(scene: Scene, agentId: string): Promise<string[]> {
   const { callId } = await runOf(scene, agentId);
   const rows = await codeCallRowsOf(scene.control.db, agentId, callId);
-  return rows.map((row) => `${row.attempt}/${row.seq} ${row.server ?? '-'}/${row.tool} ${row.outcome ?? 'open'}`);
+  return rows.map(
+    (row) =>
+      `${row.attempt}/${row.seq} ${row.server ?? '-'}/${row.tool} ${row.outcome ?? 'open'}`,
+  );
 }
 
 function historyOfRun(run: ScenarioRun, resultLine: string): string[] {
-  return [`task: ${run.task}`, 'model_answer:  [run_code]', resultLine, `model_answer: ${run.report} []`];
+  return [
+    `task: ${run.task}`,
+    'model_answer:  [run_code]',
+    resultLine,
+    `model_answer: ${run.report} []`,
+  ];
 }
 
 describe('E2E-1: a server restart in the middle of a run (killed process, second instance)', () => {
@@ -208,13 +238,18 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
     'E2E-1 row A: AC-10.6 a read run killed mid-call is executed once more, exactly once, and the agent gets its result',
     async () => {
       // Given: the fixture holds the first get_trace of the script; the first API process runs the read run
-      const scene = await openScene((latch) => [holdCall('get_trace', TRACE, latch)]);
+      const scene = await openScene((latch) => [
+        holdCall('get_trace', TRACE, latch),
+      ]);
       try {
         const first = await scene.children.start(scene.scenario);
         const agentId = await startAgent(scene, READ_RUN);
 
         // When: the API process dies while the call is held, and a second one starts
-        const killedExecutors = await killDuringCall(scene, first, agentId, { tool: 'get_trace', count: 1 });
+        const killedExecutors = await killDuringCall(scene, first, agentId, {
+          tool: 'get_trace',
+          count: 1,
+        });
         const second = await scene.children.start(scene.scenario);
         await untilReported(scene, second, agentId, READ_RUN);
         await second.stop();
@@ -223,11 +258,16 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         const { callId } = await runOf(scene, agentId);
         expect(killedExecutors).toHaveLength(1);
         expect(second.executorPids(callId)).toHaveLength(1);
-        expect(journalLines(scene)).toEqual(['get_trace wait_for_file', 'get_trace answered']);
+        expect(journalLines(scene)).toEqual([
+          'get_trace wait_for_file',
+          'get_trace answered',
+        ]);
 
         // Then: one re-execution record in the run's log (attempt 2); the call of attempt 1 is interrupted, attempt 2 succeeded
         expect(
-          second.runLogs(callId, 'code run re-executed after a lost step').map((record) => record.fields.attempt),
+          second
+            .runLogs(callId, 'code run re-executed after a lost step')
+            .map((record) => record.fields.attempt),
         ).toEqual([2]);
         expect(await codeCallLines(scene, agentId)).toEqual([
           `1/1 ${LOGS_SERVER}/get_trace interrupted`,
@@ -235,10 +275,12 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         ]);
 
         // Then: the agent got the script's result as from an ordinary run and reported
-        expect(await runLine(scene, agentId)).toBe('run_code success attempts 2 trace read');
-        expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
-          historyOfRun(READ_RUN, 'tool_result: run_code success'),
+        expect(await runLine(scene, agentId)).toBe(
+          'run_code success attempts 2 trace read',
         );
+        expect(
+          historyLines(await historyOf(scene.control, agentId, scene.ownerId)),
+        ).toEqual(historyOfRun(READ_RUN, 'tool_result: run_code success'));
       } finally {
         await closeScene(scene);
       }
@@ -250,15 +292,23 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
     'E2E-1 row B: DC-15 a read run killed twice ends with "the run was interrupted by a restart twice" and is not executed a third time',
     async () => {
       // Given: the fixture holds the first two get_trace calls; the first API process runs the read run
-      const scene = await openScene((latch) => [holdCall('get_trace', TRACE, latch, [1, 2])]);
+      const scene = await openScene((latch) => [
+        holdCall('get_trace', TRACE, latch, [1, 2]),
+      ]);
       try {
         const first = await scene.children.start(scene.scenario);
         const agentId = await startAgent(scene, READ_RUN);
 
         // When: the API process dies during attempt 1, the second one during attempt 2, and a third starts
-        await killDuringCall(scene, first, agentId, { tool: 'get_trace', count: 1 });
+        await killDuringCall(scene, first, agentId, {
+          tool: 'get_trace',
+          count: 1,
+        });
         const second = await scene.children.start(scene.scenario);
-        await killDuringCall(scene, second, agentId, { tool: 'get_trace', count: 2 });
+        await killDuringCall(scene, second, agentId, {
+          tool: 'get_trace',
+          count: 2,
+        });
         const third = await scene.children.start(scene.scenario);
         await untilReported(scene, third, agentId, READ_RUN);
         await third.stop();
@@ -266,18 +316,28 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         // Then: the third process started no executor for the run and nothing more reached the server
         const { callId } = await runOf(scene, agentId);
         expect(third.executorPids(callId)).toEqual([]);
-        expect(third.runLogs(callId, 'code run not started: it was lost to a restart twice')).toHaveLength(1);
-        expect(journalLines(scene)).toEqual(['get_trace wait_for_file', 'get_trace wait_for_file']);
+        expect(
+          third.runLogs(
+            callId,
+            'code run not started: it was lost to a restart twice',
+          ),
+        ).toHaveLength(1);
+        expect(journalLines(scene)).toEqual([
+          'get_trace wait_for_file',
+          'get_trace wait_for_file',
+        ]);
 
         // Then: both attempts' calls are interrupted, attempts stays 2, and the agent got the error and reported
         expect(await codeCallLines(scene, agentId)).toEqual([
           `1/1 ${LOGS_SERVER}/get_trace interrupted`,
           `2/1 ${LOGS_SERVER}/get_trace interrupted`,
         ]);
-        expect(await runLine(scene, agentId)).toBe('run_code tool_error attempts 2 the run was interrupted by a restart twice');
-        expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
-          historyOfRun(READ_RUN, 'tool_result: run_code tool_error'),
+        expect(await runLine(scene, agentId)).toBe(
+          'run_code tool_error attempts 2 the run was interrupted by a restart twice',
         );
+        expect(
+          historyLines(await historyOf(scene.control, agentId, scene.ownerId)),
+        ).toEqual(historyOfRun(READ_RUN, 'tool_result: run_code tool_error'));
       } finally {
         await closeScene(scene);
       }
@@ -289,14 +349,16 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
     'E2E-1 row C: AC-10.2 a confirmed write run killed after its first call ends "исход неизвестен" and the server journal grows by no further call',
     async () => {
       // Given: the fixture holds the first note of the script; the employee approves the write run
-      const scene = await openScene((latch) => [holdCall('create_incident_note', FIRST_NOTE, latch)]);
+      const scene = await openScene((latch) => [
+        holdCall('create_incident_note', FIRST_NOTE, latch),
+      ]);
       try {
         const first = await scene.children.start(scene.scenario);
         const agentId = await startAgent(scene, WRITE_RUN);
         const openRequests = async () =>
-          (await scene.control.sessions.confirmations(agentId, scene.ownerId)).filter(
-            (request) => request.status === 'open',
-          );
+          (
+            await scene.control.sessions.confirmations(agentId, scene.ownerId)
+          ).filter((request) => request.status === 'open');
         await first.until(async () => (await openRequests()).length === 1, {
           what: 'the confirmation request of the write run',
           timeoutMs: STEP_MS,
@@ -311,7 +373,10 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         ).toBe('resolved');
 
         // When: the API process dies while its first note is held on the server, and a second one starts
-        const killedExecutors = await killDuringCall(scene, first, agentId, { tool: 'create_incident_note', count: 1 });
+        const killedExecutors = await killDuringCall(scene, first, agentId, {
+          tool: 'create_incident_note',
+          count: 1,
+        });
         const journalBeforeRestart = journalLines(scene);
         const second = await scene.children.start(scene.scenario);
         await untilReported(scene, second, agentId, WRITE_RUN);
@@ -321,15 +386,21 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         const { callId } = await runOf(scene, agentId);
         expect(killedExecutors).toHaveLength(1);
         expect(second.executorPids(callId)).toEqual([]);
-        expect(journalBeforeRestart).toEqual(['create_incident_note wait_for_file']);
+        expect(journalBeforeRestart).toEqual([
+          'create_incident_note wait_for_file',
+        ]);
         expect(journalLines(scene)).toEqual(journalBeforeRestart);
 
         // Then: the run and its sent call end "исход неизвестен"; a write run counts no attempts
-        expect(await codeCallLines(scene, agentId)).toEqual([`1/1 ${BACKOFFICE_SERVER}/create_incident_note unknown`]);
-        expect(await runLine(scene, agentId)).toBe('run_code unknown attempts 0 -');
-        expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
-          historyOfRun(WRITE_RUN, 'tool_result: run_code unknown'),
+        expect(await codeCallLines(scene, agentId)).toEqual([
+          `1/1 ${BACKOFFICE_SERVER}/create_incident_note unknown`,
+        ]);
+        expect(await runLine(scene, agentId)).toBe(
+          'run_code unknown attempts 0 -',
         );
+        expect(
+          historyLines(await historyOf(scene.control, agentId, scene.ownerId)),
+        ).toEqual(historyOfRun(WRITE_RUN, 'tool_result: run_code unknown'));
       } finally {
         await closeScene(scene);
       }

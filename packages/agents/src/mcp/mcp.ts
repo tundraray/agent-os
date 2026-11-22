@@ -28,7 +28,8 @@ import {
 
 /** How a return from the authorization server ended for the controller and the audit. */
 export interface McpConnectResult {
-  readonly outcome: 'connected' | 'tools_failed' | 'connect_failed' | 'access_denied';
+  readonly outcome:
+    'connected' | 'tools_failed' | 'connect_failed' | 'access_denied';
   /** `null` when no connection request matched the return. */
   readonly server: string | null;
   readonly target: ConnectTarget | null;
@@ -69,7 +70,11 @@ export class AgentsMcp {
    * on an `oauth` server — without one, `MCP_ACCOUNT_REQUIRED`.
    */
   async refreshTools(name: string, actorId: string): Promise<McpToolsRefresh> {
-    const credentials = await this.accounts.credentialsFor(name, actorId, 'admin');
+    const credentials = await this.accounts.credentialsFor(
+      name,
+      actorId,
+      'admin',
+    );
     if (credentials.kind === 'server_gone') throw notFound(name);
     if (credentials.kind === 'auth_required') {
       throw new McpError(
@@ -77,7 +82,8 @@ export class AgentsMcp {
         `MCP server ${name} needs the account of the current admin to read its tools`,
       );
     }
-    if (credentials.kind === 'failure') throw credentialsCheckFailed(credentials.reason);
+    if (credentials.kind === 'failure')
+      throw credentialsCheckFailed(credentials.reason);
     try {
       return await this.registry.refreshTools(name, credentials.auth);
     } catch (error) {
@@ -118,7 +124,11 @@ export class AgentsMcp {
     if (finished.outcome === 'connected' && request?.target === 'admin') {
       return this.completeAdminAccount(request.server, input.ownerId);
     }
-    return { outcome: finished.outcome, server: request?.server ?? null, target: request?.target ?? null };
+    return {
+      outcome: finished.outcome,
+      server: request?.server ?? null,
+      target: request?.target ?? null,
+    };
   }
 
   disconnect(ownerId: string, server: string): Promise<void> {
@@ -129,11 +139,20 @@ export class AgentsMcp {
    * The admin's fresh account reads the list of a waiting server and switches it on; a server removed
    * meanwhile ends the connection `connect_failed`.
    */
-  private async completeAdminAccount(server: string, adminId: string): Promise<McpConnectResult> {
+  private async completeAdminAccount(
+    server: string,
+    adminId: string,
+  ): Promise<McpConnectResult> {
     const ended = { server, target: 'admin' as const };
-    const credentials = await this.accounts.credentialsFor(server, adminId, 'admin');
-    if (credentials.kind === 'server_gone') return { ...ended, outcome: 'connect_failed' };
-    if (credentials.kind !== 'ready') return { ...ended, outcome: 'tools_failed' };
+    const credentials = await this.accounts.credentialsFor(
+      server,
+      adminId,
+      'admin',
+    );
+    if (credentials.kind === 'server_gone')
+      return { ...ended, outcome: 'connect_failed' };
+    if (credentials.kind !== 'ready')
+      return { ...ended, outcome: 'tools_failed' };
     const token = await credentials.auth.token();
     if (token === undefined) return { ...ended, outcome: 'tools_failed' };
     const completion = await this.registry.completeAdminAccount(server, token);
@@ -146,6 +165,8 @@ export class AgentsMcp {
 /** The token was refused even after a refresh: the account it came from is lost (KD-5). */
 function isRejectedToken(error: unknown): boolean {
   return (
-    error instanceof McpError && error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED && error.reason === 'unauthorized'
+    error instanceof McpError &&
+    error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED &&
+    error.reason === 'unauthorized'
   );
 }

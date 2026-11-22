@@ -13,7 +13,11 @@ import { z } from 'zod';
 import { DeepAgent, type DeepAgentDeps } from '../deep/deep-agent';
 import { subagentSnapshot } from '../deep/deep-definition';
 import { createTaskTool } from '../deep/task-delegation';
-import type { AgentSnapshot, DeepAgentSnapshot, RunSnapshot } from '../start/snapshot';
+import type {
+  AgentSnapshot,
+  DeepAgentSnapshot,
+  RunSnapshot,
+} from '../start/snapshot';
 import { createLibraryDouble } from '../testing';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { AgentTool } from '../tools/tool';
@@ -37,7 +41,9 @@ const CTX = { ownerId: OWNER, taskId: 'agent-1' } as StepContext;
 function emptyDatabase(): Database {
   const query: object = new Proxy(() => {}, {
     get: (_target, property) =>
-      property === 'then' ? (resolve: (rows: unknown[]) => void) => resolve([]) : query,
+      property === 'then'
+        ? (resolve: (rows: unknown[]) => void) => resolve([])
+        : query,
     apply: () => query,
   });
   return query as Database;
@@ -54,12 +60,23 @@ const DEPS = {
 /** The agent of each class for a snapshot: a declaration is data of the run the object is made for. */
 type AgentOf = (snapshot: RunSnapshot) => BaseAgent;
 const runOf = (snapshot: RunSnapshot): AgentRun => ({
-  task: { taskId: CTX.taskId, rootId: CTX.taskId, parentId: null, ownerId: OWNER, depth: 0, type: 'stub', input: null },
+  task: {
+    taskId: CTX.taskId,
+    rootId: CTX.taskId,
+    parentId: null,
+    ownerId: OWNER,
+    depth: 0,
+    type: 'stub',
+    input: null,
+  },
   input: { snapshot, prompt: 'Do it', description: 'Do it' },
 });
-const CHAT: AgentOf = (snapshot) => new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(snapshot));
-const AGENT: AgentOf = (snapshot) => new Agent(DEPS as unknown as AgentDeps, runOf(snapshot));
-const DEEP: AgentOf = (snapshot) => new DeepAgent(DEPS as unknown as DeepAgentDeps, runOf(snapshot));
+const CHAT: AgentOf = (snapshot) =>
+  new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(snapshot));
+const AGENT: AgentOf = (snapshot) =>
+  new Agent(DEPS as unknown as AgentDeps, runOf(snapshot));
+const DEEP: AgentOf = (snapshot) =>
+  new DeepAgent(DEPS as unknown as DeepAgentDeps, runOf(snapshot));
 
 function stubTool(name: string, rootOnly = false): AgentTool {
   return {
@@ -85,7 +102,10 @@ function origin(overrides: Partial<RunOrigin> = {}): RunOrigin {
   };
 }
 
-function agentSnapshot(builtinKey: string | null, taskList: boolean): AgentSnapshot {
+function agentSnapshot(
+  builtinKey: string | null,
+  taskList: boolean,
+): AgentSnapshot {
   return {
     kind: 'agent',
     name: 'Помощник',
@@ -132,11 +152,15 @@ const DEEP_AGENT: DeepAgentSnapshot = {
 };
 
 const SUBAGENT = subagentSnapshot(DEEP_AGENT, 'searcher');
-if (SUBAGENT === null) throw new Error('the deep agent has the subagent searcher');
+if (SUBAGENT === null)
+  throw new Error('the deep agent has the subagent searcher');
 
 /** The tools of a model call: what the agent declares for its snapshot, answered by the library for the owner. */
 async function toolsOf(agentOf: AgentOf, snapshot: RunSnapshot) {
-  return registryOfStubs().toolsFor(OWNER, await agentOf(snapshot).offeredDeclaration(CTX));
+  return registryOfStubs().toolsFor(
+    OWNER,
+    await agentOf(snapshot).offeredDeclaration(CTX),
+  );
 }
 
 describe('the root alone gets the root tools; the task tools follow the flag, and the root always has them', () => {
@@ -145,12 +169,29 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
       "a conversation's root with the task list off in its record",
       CHAT,
       agentSnapshot(CHAT_BUILTIN_KEY, false),
-      ['start_agent', 'list_agents', ...TASK_LIST_TOOLS, 'start_deep_agent', 'list_records', 'run_code'],
+      [
+        'start_agent',
+        'list_agents',
+        ...TASK_LIST_TOOLS,
+        'start_deep_agent',
+        'list_records',
+        'run_code',
+      ],
     ],
-    ['a child agent with the task list off', AGENT, agentSnapshot(null, false), ['start_agent', 'list_agents', 'run_code']],
+    [
+      'a child agent with the task list off',
+      AGENT,
+      agentSnapshot(null, false),
+      ['start_agent', 'list_agents', 'run_code'],
+    ],
     ['a subagent with the task list off', AGENT, SUBAGENT, ['run_code']],
     // deep-agents/design-task.md KD-6: a deep agent gives work only through task.
-    ['a deep agent with the task list on', DEEP, DEEP_AGENT, ['task', ...TASK_LIST_TOOLS, 'run_code']],
+    [
+      'a deep agent with the task list on',
+      DEEP,
+      DEEP_AGENT,
+      ['task', ...TASK_LIST_TOOLS, 'run_code'],
+    ],
   ])('%s', async (_, agent, snapshot, expected) => {
     const tools = await toolsOf(agent, snapshot);
 
@@ -159,12 +200,22 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
 });
 
 function registryOfStubs() {
-  const registry = new ToolRegistry(new AgentMcpServersRepository(DB), new AgentMcpAccountsRepository(DB), {
-    tools: async () => ({ kind: 'allowed', allows: () => true }),
-  });
+  const registry = new ToolRegistry(
+    new AgentMcpServersRepository(DB),
+    new AgentMcpAccountsRepository(DB),
+    {
+      tools: async () => ({ kind: 'allowed', allows: () => true }),
+    },
+  );
   registry.useRunCode(stubTool('run_code'));
   [
-    ...['start_agent', 'message_agent', 'list_agents', 'stop_agent', ...TASK_LIST_TOOLS].map((name) => stubTool(name)),
+    ...[
+      'start_agent',
+      'message_agent',
+      'list_agents',
+      'stop_agent',
+      ...TASK_LIST_TOOLS,
+    ].map((name) => stubTool(name)),
     stubTool('start_deep_agent', true),
     createTaskTool(),
     stubTool('list_records', true),
@@ -177,13 +228,22 @@ function registryOfStubs() {
 // with a task list, and any other key is refused.
 describe("a deep agent's task follows its snapshot", () => {
   async function taskOf(content: Partial<DeepAgentSnapshot['content']>) {
-    const snapshot: DeepAgentSnapshot = { ...DEEP_AGENT, content: { ...DEEP_AGENT.content, ...content } };
-    const task = (await toolsOf(DEEP, snapshot)).find((tool) => tool.name === 'task');
+    const snapshot: DeepAgentSnapshot = {
+      ...DEEP_AGENT,
+      content: { ...DEEP_AGENT.content, ...content },
+    };
+    const task = (await toolsOf(DEEP, snapshot)).find(
+      (tool) => tool.name === 'task',
+    );
     if (task?.kind !== 'system') throw new Error('the deep agent has no task');
     return task;
   }
   const LIST = { subagentType: 'searcher', instruction: 'Find', items: ['a'] };
-  const LINKED = { subagentType: 'general-purpose', description: 'Do it', taskId: 1 };
+  const LINKED = {
+    subagentType: 'general-purpose',
+    description: 'Do it',
+    taskId: 1,
+  };
 
   it('names the subagents of the record and general-purpose with their limits', async () => {
     const task = await taskOf({});
@@ -196,12 +256,24 @@ describe("a deep agent's task follows its snapshot", () => {
   });
 
   it.each<[string, Partial<DeepAgentSnapshot['content']>, object, boolean]>([
-    ['the list form on takes instruction and items', { listDelegation: true }, LIST, true],
+    [
+      'the list form on takes instruction and items',
+      { listDelegation: true },
+      LIST,
+      true,
+    ],
     ['the list form off refuses them', { listDelegation: false }, LIST, false],
     ['a task list takes taskId', { taskList: true }, LINKED, true],
     ['no task list refuses taskId', { taskList: false }, LINKED, false],
-    ['a key outside the schema is refused', {}, { subagentType: 'searcher', description: 'Do it', note: 'x' }, false],
+    [
+      'a key outside the schema is refused',
+      {},
+      { subagentType: 'searcher', description: 'Do it', note: 'x' },
+      false,
+    ],
   ])('%s', async (_, content, args, accepted) => {
-    expect((await taskOf(content)).inputSchema.safeParse(args).success).toBe(accepted);
+    expect((await taskOf(content)).inputSchema.safeParse(args).success).toBe(
+      accepted,
+    );
   });
 });

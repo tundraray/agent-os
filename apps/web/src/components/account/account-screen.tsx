@@ -1,13 +1,13 @@
-"use client";
+'use client';
 
-import { useEffect } from "react";
-import { useStore } from "zustand";
-import type { CurrentUserStore } from "@/lib/auth/current-user";
-import { focusShellTarget } from "@/lib/focus";
-import { ConnectionsSection } from "./connections-section";
-import { LanguageSection } from "./language-section";
-import { ModelsSection } from "./models-section";
-import { PasswordSection } from "./password-section";
+import { useEffect } from 'react';
+import { useStore } from 'zustand';
+import type { CurrentUserStore } from '@/lib/auth/current-user';
+import { focusShellTarget } from '@/lib/focus';
+import { ConnectionsSection } from './connections-section';
+import { LanguageSection } from './language-section';
+import { ModelsSection } from './models-section';
+import { PasswordSection } from './password-section';
 
 /**
  * Screen 3 «Мой доступ» (UXRD): sections one under another in the feed column (chat-shell UXRD, D-01);
@@ -15,7 +15,11 @@ import { PasswordSection } from "./password-section";
  * MA-03; the i18n section LN-01 comes last. The store comes from the shell: one read of the employee per
  * page load.
  */
-export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }) {
+export function AccountScreen({
+  currentUser,
+}: {
+  currentUser: CurrentUserStore;
+}) {
   const user = useStore(currentUser, (state) => state.user);
 
   useEffect(() => {
@@ -24,7 +28,7 @@ export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }
 
   // UXRD «Порядок фокуса»: after the move to the page, focus lands on its title.
   useEffect(() => {
-    focusShellTarget("page-title");
+    focusShellTarget('page-title');
   }, []);
 
   return (

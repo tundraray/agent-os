@@ -25,7 +25,9 @@ export const runtimeTrackers = app.table(
     /** The task whose step opened the tracker: the parent of its tasks. */
     taskId: uuid('task_id')
       .notNull()
-      .references((): AnyPgColumn => runtimeTasks.taskId, { onDelete: 'cascade' }),
+      .references((): AnyPgColumn => runtimeTasks.taskId, {
+        onDelete: 'cascade',
+      }),
     /** The employee who owns the task. */
     ownerId: text('owner_id').notNull(),
     status: text('status').notNull().default(TrackerStatusSchema.enum.open),
@@ -33,7 +35,10 @@ export const runtimeTrackers = app.table(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (t) => [
-    check('runtime_trackers_status_check', isOneOf(t.status, TrackerStatusSchema.options)),
+    check(
+      'runtime_trackers_status_check',
+      isOneOf(t.status, TrackerStatusSchema.options),
+    ),
     /** A task has at most one open tracker. */
     uniqueIndex('runtime_trackers_open_task_idx')
       .on(t.taskId)

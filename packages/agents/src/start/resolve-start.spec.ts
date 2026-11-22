@@ -37,11 +37,24 @@ const PRICE: ModelPrice = {
   cacheReadUsdPerMTok: 0.1,
 };
 
-function agentContent(model: string, agents: string[] = []): AgentContent & { model: string } {
-  return { prompt: 'You help.', servers: [], model, maxTurns: 10, agents, tools: ['start_agent'], taskList: false };
+function agentContent(
+  model: string,
+  agents: string[] = [],
+): AgentContent & { model: string } {
+  return {
+    prompt: 'You help.',
+    servers: [],
+    model,
+    maxTurns: 10,
+    agents,
+    tools: ['start_agent'],
+    taskList: false,
+  };
 }
 
-function subagent(name: string): DeepAgentSnapshot['content']['subagents'][number] {
+function subagent(
+  name: string,
+): DeepAgentSnapshot['content']['subagents'][number] {
   return {
     name,
     description: `Когда звать ${name}`,
@@ -139,7 +152,9 @@ function outcome(resolution: StartResolution): string {
   }
   const { snapshot } = resolution;
   const agents =
-    snapshot.kind === 'agent' ? ` [${snapshot.agents.map((agent) => agent.name).join(', ')}]` : '';
+    snapshot.kind === 'agent'
+      ? ` [${snapshot.agents.map((agent) => agent.name).join(', ')}]`
+      : '';
   return `${snapshot.kind} ${snapshot.name}${agents}`;
 }
 
@@ -175,31 +190,51 @@ describe('resolveStart', () => {
     },
     {
       case: "an agent by id keeps only the agents the starter sees, not the author's",
-      source: (ids) => ({ kind: 'record', recordId: ids.agent, expected: 'agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.agent,
+        expected: 'agent',
+      }),
       expected: 'agent Разбор оплат [Сверка]',
       resolved: (ids) => [ids.agent],
     },
     {
       case: 'a deep agent by id is its whole team',
-      source: (ids) => ({ kind: 'record', recordId: ids.deepAgent, expected: 'deep_agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.deepAgent,
+        expected: 'deep_agent',
+      }),
       expected: 'deep_agent Глубокий ресерч',
       resolved: (ids) => [ids.deepAgent],
     },
     {
       case: 'a record the author sees and the starter does not is unavailable',
-      source: (ids) => ({ kind: 'record', recordId: ids.hidden, expected: 'agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.hidden,
+        expected: 'agent',
+      }),
       expected: 'refused record_unavailable -',
       resolved: (ids) => [ids.hidden],
     },
     {
       case: 'a deleted record is unavailable',
-      source: () => ({ kind: 'record', recordId: DELETED_ID, expected: 'agent' }),
+      source: () => ({
+        kind: 'record',
+        recordId: DELETED_ID,
+        expected: 'agent',
+      }),
       expected: 'refused record_unavailable -',
       resolved: () => [DELETED_ID],
     },
     {
       case: 'a record of another kind is unavailable',
-      source: (ids) => ({ kind: 'record', recordId: ids.deepAgent, expected: 'agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.deepAgent,
+        expected: 'agent',
+      }),
       expected: 'refused record_unavailable -',
       resolved: (ids) => [ids.deepAgent],
     },
@@ -219,14 +254,22 @@ describe('resolveStart', () => {
     },
     {
       case: 'a model out of the catalogue is not connected',
-      source: (ids) => ({ kind: 'record', recordId: ids.unknownModel, expected: 'agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.unknownModel,
+        expected: 'agent',
+      }),
       expected: `refused model_not_connected ${UNKNOWN_MODEL}`,
       resolved: (ids) => [ids.unknownModel],
       audited: [UNKNOWN_MODEL],
     },
     {
       case: 'a spent quota does not stop the start',
-      source: (ids) => ({ kind: 'record', recordId: ids.agent, expected: 'agent' }),
+      source: (ids) => ({
+        kind: 'record',
+        recordId: ids.agent,
+        expected: 'agent',
+      }),
       gate: { refusedModels: SPENT },
       expected: 'agent Разбор оплат [Сверка]',
       resolved: (ids) => [ids.agent],
@@ -237,12 +280,18 @@ describe('resolveStart', () => {
     const entries: AuditRecord[] = [];
     const deps = {
       library,
-      access: createAccessGateDouble({ prices: { [HAIKU]: PRICE, [SONNET]: PRICE }, ...gate }),
+      access: createAccessGateDouble({
+        prices: { [HAIKU]: PRICE, [SONNET]: PRICE },
+        ...gate,
+      }),
       providers: createProviderRegistryDouble({ anthropic: 'ready' }),
       audit: async (entry: AuditRecord) => void entries.push(entry),
     };
 
-    const resolution = await resolveStart({ ownerId: STARTER, source: source(ids) }, deps);
+    const resolution = await resolveStart(
+      { ownerId: STARTER, source: source(ids) },
+      deps,
+    );
 
     expect(outcome(resolution)).toBe(expected);
     expect(library.resolveCalls).toEqual(
@@ -250,7 +299,8 @@ describe('resolveStart', () => {
     );
     // The procedure writes nothing; the caller writes the refused model's record once it is the outcome.
     expect(entries).toEqual([]);
-    if (resolution.kind === 'refused') await auditStartRefusal(deps.audit, resolution);
+    if (resolution.kind === 'refused')
+      await auditStartRefusal(deps.audit, resolution);
     expect(entries.map((entry) => `${entry.actor} ${entry.objectId}`)).toEqual(
       audited.map((model) => `${STARTER} ${model}`),
     );
@@ -261,14 +311,21 @@ describe('resolveStart', () => {
     const ids = seed(library);
     const deps = {
       library,
-      access: createAccessGateDouble({ prices: { [HAIKU]: PRICE }, refusedOwners: [STARTER] }),
+      access: createAccessGateDouble({
+        prices: { [HAIKU]: PRICE },
+        refusedOwners: [STARTER],
+      }),
       providers: createProviderRegistryDouble({ anthropic: 'ready' }),
     };
 
-    const source: StartSource = { kind: 'record', recordId: ids.agent, expected: 'agent' };
+    const source: StartSource = {
+      kind: 'record',
+      recordId: ids.agent,
+      expected: 'agent',
+    };
 
-    await expect(resolveStart({ ownerId: STARTER, source }, deps)).rejects.toBeInstanceOf(
-      OwnerDisabledError,
-    );
+    await expect(
+      resolveStart({ ownerId: STARTER, source }, deps),
+    ).rejects.toBeInstanceOf(OwnerDisabledError);
   });
 });

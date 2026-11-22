@@ -111,15 +111,17 @@ export class TaskStepContext implements StepContext {
   async guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
     const startedAt = Date.now();
     try {
-      const result = await this.deps.db.transaction(async (): Promise<GuardResult<T>> => {
-        const own = await this.deps.tasks.hold({
-          taskId: this.taskId,
-          from: [running],
-          attempt: this.attempt,
-        });
-        if (!own) return { outcome: 'fenced' };
-        return { outcome: 'committed', value: await work() };
-      });
+      const result = await this.deps.db.transaction(
+        async (): Promise<GuardResult<T>> => {
+          const own = await this.deps.tasks.hold({
+            taskId: this.taskId,
+            from: [running],
+            attempt: this.attempt,
+          });
+          if (!own) return { outcome: 'fenced' };
+          return { outcome: 'committed', value: await work() };
+        },
+      );
       const durationMs = Date.now() - startedAt;
       if (result.outcome === 'fenced') {
         this.logger.warn('guard fenced: the attempt is no longer current', {
@@ -128,7 +130,10 @@ export class TaskStepContext implements StepContext {
         });
         return result;
       }
-      this.logger.debug('guard committed', { outcome: 'committed', durationMs });
+      this.logger.debug('guard committed', {
+        outcome: 'committed',
+        durationMs,
+      });
       this.deps.crashPoints.hit('step.after-guard');
       return result;
     } catch (error) {

@@ -5,7 +5,12 @@ import {
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
 import type { SessionPatch } from '@agent-os/db';
-import { isFinished, type StepContext, type StepEffects, type StepResult } from '@agent-os/runtime';
+import {
+  isFinished,
+  type StepContext,
+  type StepEffects,
+  type StepResult,
+} from '@agent-os/runtime';
 
 import { knowledgeBlock } from '../knowledge/knowledge-block';
 import { modelErrorMessage } from '../model/model-client';
@@ -30,7 +35,11 @@ import {
   type StepPrelude,
   withStepBlocks,
 } from './step-common';
-import { type EndOfTurn, type EndOfTurnInput, noticeContent } from './turn-rules';
+import {
+  type EndOfTurn,
+  type EndOfTurnInput,
+  noticeContent,
+} from './turn-rules';
 
 /** Tasks that keep an agent from finishing its turn (design-task-list.md KD-4). */
 const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
@@ -48,10 +57,15 @@ const STEP_KIND = 'model';
  */
 function answerFields(
   tools: readonly AgentToolDefinition[],
-  answer: { readonly toolCalls: readonly AgentToolCall[]; readonly cutOff: boolean },
+  answer: {
+    readonly toolCalls: readonly AgentToolCall[];
+    readonly cutOff: boolean;
+  },
 ): Record<string, unknown> {
   const toolsChosen = answer.toolCalls.map((call) => call.toolName);
-  const runCodeCalls = toolsChosen.filter((name) => name === RUN_CODE_TOOL).length;
+  const runCodeCalls = toolsChosen.filter(
+    (name) => name === RUN_CODE_TOOL,
+  ).length;
   return {
     toolsShown: tools.length,
     toolNamesShown: tools.map((tool) => tool.name),
@@ -71,7 +85,10 @@ export interface ChildrenInFlight {
 }
 
 /** What the agent knows of the model's answer without tool calls when it ends its turn. */
-export type TurnAnswer = Pick<EndOfTurnInput, 'answerFields' | 'openTasks' | 'text' | 'cutOff'>;
+export type TurnAnswer = Pick<
+  EndOfTurnInput,
+  'answerFields' | 'openTasks' | 'text' | 'cutOff'
+>;
 
 /** How a turn ends, with the children the agent counted for it (the step log names them). */
 export interface TurnEnd {
@@ -85,11 +102,14 @@ export async function childrenInFlight(
   ctx: StepContext,
 ): Promise<ChildrenInFlight> {
   const tree = await deps.tasks.listTree(ctx.rootId, ctx.ownerId);
-  const unfinished = tree.filter((task) => task.parentId === ctx.taskId && !isFinished(task.status)).length;
+  const unfinished = tree.filter(
+    (task) => task.parentId === ctx.taskId && !isFinished(task.status),
+  ).length;
   const delivered = new Set(ctx.messages.map((message) => message.messageId));
   const pendingMessages = await deps.inbox.listPending(ctx.taskId, ctx.ownerId);
   const pending = pendingMessages.filter(
-    (message) => message.kind === CHILD_FINISHED_KIND && !delivered.has(message.messageId),
+    (message) =>
+      message.kind === CHILD_FINISHED_KIND && !delivered.has(message.messageId),
   ).length;
   return { unfinished, pending };
 }
@@ -115,7 +135,14 @@ export async function childrenInFlight(
  */
 export async function runModelStep(
   deps: AgentDeps,
-  agent: Pick<BaseAgent, 'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery' | 'endOfTurn'>,
+  agent: Pick<
+    BaseAgent,
+    | 'input'
+    | 'definition'
+    | 'offeredDeclaration'
+    | 'turnsAfterDelivery'
+    | 'endOfTurn'
+  >,
   ctx: StepContext,
   session: Session,
   /** The history the model sees, as the agent holds it. */
@@ -127,7 +154,10 @@ export async function runModelStep(
   // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
   const { snapshot, answerFields: askedFields } = agent.input;
   const { definition } = agent;
-  const turns = agent.turnsAfterDelivery(prelude?.patch.turns ?? session.turns, ctx.messages);
+  const turns = agent.turnsAfterDelivery(
+    prelude?.patch.turns ?? session.turns,
+    ctx.messages,
+  );
   const delivered = await entriesOf(deps, ctx.messages);
   const writeStepEntries = async (): Promise<NewHistoryEntry[]> => [
     ...(prelude === undefined ? [] : await prelude.write()),
@@ -137,7 +167,10 @@ export async function runModelStep(
 
   // The snapshot's `maxTurns` is spent: the step fails instead of calling the model.
   if (turns >= definition.maxTurns) {
-    logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turn_limit, turns });
+    logStep(ctx, STEP_KIND, startedAt, 'fail', {
+      reason: FAILURE_REASONS.turn_limit,
+      turns,
+    });
     return failResult({
       deps,
       ctx,
@@ -148,9 +181,16 @@ export async function runModelStep(
     });
   }
 
-  const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
+  const shown = previewEntries(view.lastSeq, [
+    ...(prelude?.entries ?? []),
+    ...delivered,
+  ]);
   // The graph is live data read beside the snapshot on every step (KD-6); a failed read fails the step.
-  const knowledge = await knowledgeBlock(deps, { snapshot, taskId: ctx.taskId, logger: ctx.logger });
+  const knowledge = await knowledgeBlock(deps, {
+    snapshot,
+    taskId: ctx.taskId,
+    logger: ctx.logger,
+  });
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
   const declaration = await agent.offeredDeclaration(ctx);
@@ -164,7 +204,10 @@ export async function runModelStep(
       taskId: ctx.taskId,
       agentName: definition.name,
       model: session.model,
-      instructions: withStepBlocks(definition.prompt, { knowledge, tasks: taskBlock(tasks) }),
+      instructions: withStepBlocks(definition.prompt, {
+        knowledge,
+        tasks: taskBlock(tasks),
+      }),
       messages: providerMessagesOf(view, shown),
       tools: sessionTools,
       streamsText: true,
@@ -263,7 +306,10 @@ export async function runModelStep(
         pendingChildNotices: inFlight.pending,
         ...answered,
       });
-      return { outcome: 'wait', commit: (effects) => writeAnswer(effects, [], callPatch) };
+      return {
+        outcome: 'wait',
+        commit: (effects) => writeAnswer(effects, [], callPatch),
+      };
     case 'notice':
       if (ending.openTasks !== undefined) {
         // Every reminder is logged, numbers only, so how often an agent answers with tasks open shows (Risks).
@@ -285,14 +331,25 @@ export async function runModelStep(
           finalSubagent: ending.missingReport,
         });
       }
-      logStep(ctx, STEP_KIND, startedAt, 'continue', { notice: true, turns: counted, ...answered });
+      logStep(ctx, STEP_KIND, startedAt, 'continue', {
+        notice: true,
+        turns: counted,
+        ...answered,
+      });
       return {
         outcome: 'continue',
         commit: (effects) =>
-          writeAnswer(effects, [{ kind: 'notice', content: noticeContent(ending) }], callPatch),
+          writeAnswer(
+            effects,
+            [{ kind: 'notice', content: noticeContent(ending) }],
+            callPatch,
+          ),
       };
     case 'complete':
-      logStep(ctx, STEP_KIND, startedAt, 'complete', { turns: counted, ...answered });
+      logStep(ctx, STEP_KIND, startedAt, 'complete', {
+        turns: counted,
+        ...answered,
+      });
       return {
         outcome: 'complete',
         result: { report: ending.report },

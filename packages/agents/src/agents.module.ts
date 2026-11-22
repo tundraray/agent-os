@@ -1,11 +1,19 @@
 import 'reflect-metadata';
 import { type CodeRunner, createCodeRunner } from '@agent-os/code-runner';
 import { createSecretMasker, LOGGER, type Logger } from '@agent-os/common';
-import { type DynamicModule, type FactoryProvider, Module, type ModuleMetadata } from '@nestjs/common';
+import {
+  type DynamicModule,
+  type FactoryProvider,
+  Module,
+  type ModuleMetadata,
+} from '@nestjs/common';
 
 import { AgentDeps } from './agent/agent-deps';
 import { AgentFactory } from './agent/agent-factory';
-import { AgentsRegistration, SystemToolsRegistration } from './agents-registration';
+import {
+  AgentsRegistration,
+  SystemToolsRegistration,
+} from './agents-registration';
 import {
   AGENT_TURN_CLIENT,
   AGENTS_CONFIG,
@@ -43,7 +51,10 @@ import { ToolRunner } from './tools/tool-runner';
  * text parts, `ON_TEXT_DELTA`), and the logger of the package when it is not the application's `LOGGER`.
  */
 type AgentsModuleOptions = Pick<ModuleMetadata, 'imports'> &
-  Pick<FactoryProvider<AgentsConfig | Promise<AgentsConfig>>, 'inject' | 'useFactory'> & {
+  Pick<
+    FactoryProvider<AgentsConfig | Promise<AgentsConfig>>,
+    'inject' | 'useFactory'
+  > & {
     readonly logger?: () => Logger;
   };
 
@@ -95,7 +106,8 @@ export class AgentsModule {
         {
           provide: AGENTS_LOGGER,
           inject: [LOGGER],
-          useFactory: (logger: Logger): Logger => (options.logger?.() ?? logger).child({ component: 'agents' }),
+          useFactory: (logger: Logger): Logger =>
+            (options.logger?.() ?? logger).child({ component: 'agents' }),
         },
         // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
         { provide: MASK_SECRETS, useFactory: () => createSecretMasker([]) },

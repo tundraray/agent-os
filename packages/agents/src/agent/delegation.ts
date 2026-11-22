@@ -11,7 +11,9 @@ import type { ToolCaller } from '../tools/tool';
  * in-commit call sees the results of the calls before it (two `start_agent` calls of one answer count each
  * other).
  */
-export type CallClosing = (effects: StepEffects) => Promise<HistoryEntry | undefined>;
+export type CallClosing = (
+  effects: StepEffects,
+) => Promise<HistoryEntry | undefined>;
 
 /** A call of the model's answer the agent delegates instead of running: its record and its checked arguments. */
 export interface DelegatedCall {
@@ -31,7 +33,10 @@ export interface DelegationInput {
 /** What the tool step does with the delegated calls of an answer. */
 export interface Delegation {
   /** The refused calls with how each closes; nothing starts for them. */
-  readonly refused: readonly { readonly call: CallState; readonly ending: CallEnding }[];
+  readonly refused: readonly {
+    readonly call: CallState;
+    readonly ending: CallEnding;
+  }[];
   /** How many calls were accepted. */
   readonly accepted: number;
   /** Starts the accepted calls' work in the step's commit, after which the step waits; `null` — none accepted. */

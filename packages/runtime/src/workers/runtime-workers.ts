@@ -21,7 +21,9 @@ import { RecoverySweeper } from './recovery.sweeper';
  * `onApplicationShutdown`.
  */
 @Injectable()
-export class RuntimeWorkers implements OnApplicationBootstrap, BeforeApplicationShutdown {
+export class RuntimeWorkers
+  implements OnApplicationBootstrap, BeforeApplicationShutdown
+{
   private started = false;
 
   constructor(
@@ -31,7 +33,8 @@ export class RuntimeWorkers implements OnApplicationBootstrap, BeforeApplication
     @Inject(OutboxRelay) private readonly relay: OutboxRelay,
     @Inject(RecoverySweeper) private readonly sweeper: RecoverySweeper,
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(EventConsumerRegistry) private readonly eventConsumers: EventConsumerRegistry,
+    @Inject(EventConsumerRegistry)
+    private readonly eventConsumers: EventConsumerRegistry,
     @Inject(LiveTasks) private readonly live: LiveTasks,
   ) {}
 
@@ -77,6 +80,8 @@ export class RuntimeWorkers implements OnApplicationBootstrap, BeforeApplication
       this.sweeper.shutdown(),
     ]);
     this.live.clear();
-    this.logger.info('runtime workers stopped', { durationMs: Date.now() - startedAt });
+    this.logger.info('runtime workers stopped', {
+      durationMs: Date.now() - startedAt,
+    });
   }
 }

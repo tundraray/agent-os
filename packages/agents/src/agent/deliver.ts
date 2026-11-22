@@ -36,8 +36,11 @@ const ChildFinishedPayloadSchema = z.object({
 });
 type ChildFinishedPayload = z.infer<typeof ChildFinishedPayloadSchema>;
 
-const { user_message: userMessage, agent_message: agentMessage, interrupt } =
-  AgentMessageKindSchema.enum;
+const {
+  user_message: userMessage,
+  agent_message: agentMessage,
+  interrupt,
+} = AgentMessageKindSchema.enum;
 
 /** The `resume` mark of a message, if it carries one; other kinds never do. */
 export function resumeMarkOf(message: StepMessage): ResumeMark | undefined {
@@ -85,7 +88,10 @@ export async function entriesOf(
   const notices = new Map<string, ChildFinishedPayload>();
   for (const message of messages) {
     if (message.kind === CHILD_FINISHED_KIND) {
-      notices.set(message.messageId, ChildFinishedPayloadSchema.parse(message.payload));
+      notices.set(
+        message.messageId,
+        ChildFinishedPayloadSchema.parse(message.payload),
+      );
     }
   }
   const children = await deps.sessions.getMany(
@@ -95,20 +101,36 @@ export async function entriesOf(
   const entries: NewHistoryEntry[] = [];
   for (const message of messages) {
     if (message.kind === userMessage) {
-      const { text, record } = MessagePayloadSchemas.user_message.parse(message.payload);
-      entries.push({ kind: 'user_message', content: { text, record: record ?? null } });
+      const { text, record } = MessagePayloadSchemas.user_message.parse(
+        message.payload,
+      );
+      entries.push({
+        kind: 'user_message',
+        content: { text, record: record ?? null },
+      });
     } else if (message.kind === agentMessage) {
-      const { text, fromAgentId } = MessagePayloadSchemas.agent_message.parse(message.payload);
-      entries.push({ kind: 'agent_message', content: { text, agentId: fromAgentId } });
+      const { text, fromAgentId } = MessagePayloadSchemas.agent_message.parse(
+        message.payload,
+      );
+      entries.push({
+        kind: 'agent_message',
+        content: { text, agentId: fromAgentId },
+      });
     } else if (message.kind === CHILD_FINISHED_KIND) {
       const notice = notices.get(message.messageId);
-      if (notice === undefined) throw new Error(`Notice ${message.messageId} was not parsed`);
+      if (notice === undefined)
+        throw new Error(`Notice ${message.messageId} was not parsed`);
       // A child started by `start` outside a step may end before its first step made its session:
       // the report still reaches the parent, without a description.
       const description = children.get(notice.taskId)?.description ?? '';
       entries.push(await childReport(deps, notice, description));
-    } else if (message.kind !== interrupt && message.kind !== TASKS_FINISHED_KIND) {
-      throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
+    } else if (
+      message.kind !== interrupt &&
+      message.kind !== TASKS_FINISHED_KIND
+    ) {
+      throw new Error(
+        `Unknown message kind "${message.kind}" in the queue of an agent`,
+      );
     }
   }
   return entries;
@@ -118,6 +140,9 @@ export async function entriesOf(
  * The turn counter of a chat after the step's messages are delivered (DC-1): every message of the employee —
  * a `user_message` — starts a new turn.
  */
-export function chatTurns(turns: number, messages: readonly StepMessage[]): number {
+export function chatTurns(
+  turns: number,
+  messages: readonly StepMessage[],
+): number {
   return messages.some((message) => message.kind === userMessage) ? 0 : turns;
 }

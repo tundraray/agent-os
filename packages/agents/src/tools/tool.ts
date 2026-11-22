@@ -48,14 +48,19 @@ export interface StartChildRequest {
   readonly prompt: string;
   readonly description: string;
   /** Set only by `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
-  readonly forkedFrom?: { readonly agentId: string; readonly throughSeq: number };
+  readonly forkedFrom?: {
+    readonly agentId: string;
+    readonly throughSeq: number;
+  };
 }
 
 /**
  * Starts a child of the calling agent inside the step's commit transaction and returns its id at once
  * (design-agents.md, `tools.register`). It is bound to the transaction, the effects and the caller.
  */
-export type StartChild = (request: StartChildRequest) => Promise<{ agentId: string }>;
+export type StartChild = (
+  request: StartChildRequest,
+) => Promise<{ agentId: string }>;
 
 /** The agent whose model called the tool. */
 export interface ToolCaller {
@@ -76,7 +81,10 @@ export interface ToolCaller {
 export type ToolRunResult =
   | {
       readonly kind: 'done';
-      readonly outcome: Extract<ToolOutcome, 'success' | 'empty' | 'tool_error'>;
+      readonly outcome: Extract<
+        ToolOutcome,
+        'success' | 'empty' | 'tool_error'
+      >;
       readonly text: string;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one (DC-14). */
       readonly output?: string | null;
@@ -122,7 +130,11 @@ export interface OutsideToolInput<Args> {
 
 /** What `review` answers: the call is refused with its reason and text, or the card shows `content`. */
 export type ToolReview =
-  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason; readonly text: string }
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      readonly text: string;
+    }
   | { readonly kind: 'card'; readonly content: unknown };
 
 /** A tool that waits for the employee's decision before it runs (KD-4). */
@@ -181,13 +193,19 @@ interface AgentToolBase<Args> {
 }
 
 /** Runs in the commit transaction of the step, with its `effects` and the spawn helper. */
-export interface InCommitAgentTool<Args, Prepared = unknown> extends AgentToolBase<Args> {
+export interface InCommitAgentTool<
+  Args,
+  Prepared = unknown,
+> extends AgentToolBase<Args> {
   readonly mode: 'in_commit';
   /**
    * Runs before the commit transaction opens and hands its answer to `execute`: what must not be asked
    * while the transaction holds a connection — the access gate (design-access.md KD-4).
    */
-  prepare?(input: { readonly args: Args; readonly caller: ToolCaller }): Promise<Prepared>;
+  prepare?(input: {
+    readonly args: Args;
+    readonly caller: ToolCaller;
+  }): Promise<Prepared>;
   execute(input: InCommitToolInput<Args, Prepared>): Promise<ToolRunResult>;
 }
 
@@ -202,4 +220,5 @@ export interface OutsideAgentTool<Args> extends AgentToolBase<Args> {
  * (`tools`)»): a system tool, or `run_code`. `execute`, `content` and `describe` are methods, so a tool with
  * concrete arguments is an `AgentTool` of the registry.
  */
-export type AgentTool<Args = unknown> = InCommitAgentTool<Args> | OutsideAgentTool<Args>;
+export type AgentTool<Args = unknown> =
+  InCommitAgentTool<Args> | OutsideAgentTool<Args>;

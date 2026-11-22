@@ -59,8 +59,12 @@ export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
 export type ErrorsTranslator = ReturnType<typeof useTranslations<'errors'>>;
 export type FormatsTranslator = ReturnType<typeof useTranslations<'formats'>>;
 export type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
-export type ModelsTranslator = ReturnType<typeof useTranslations<'admin.models'>>;
-export type ServersTranslator = ReturnType<typeof useTranslations<'admin.servers'>>;
+export type ModelsTranslator = ReturnType<
+  typeof useTranslations<'admin.models'>
+>;
+export type ServersTranslator = ReturnType<
+  typeof useTranslations<'admin.servers'>
+>;
 
 /** The key set every language shares; code reads it only to check that a key the server sent has a message. */
 export const CATALOGUE: Messages = en;
@@ -69,7 +73,10 @@ export const CATALOGUE: Messages = en;
  * A code, reason or name from the server names a message only when the catalogue table holds it
  * (design-web.md, «Отказы сервера»; KD-6). `table` is a part of `CATALOGUE` or of the page's messages.
  */
-export const hasMessage = <T extends object>(table: T, key: string | null | undefined): key is Extract<keyof T, string> =>
+export const hasMessage = <T extends object>(
+  table: T,
+  key: string | null | undefined,
+): key is Extract<keyof T, string> =>
   typeof key === 'string' && Object.hasOwn(table, key);
 
 const ru: Messages = {
@@ -95,7 +102,10 @@ function overlay(base: MessageTree, over: MessageTree): MessageTree {
   const result: MessageTree = { ...base };
   for (const [key, value] of Object.entries(over)) {
     const under = base[key];
-    result[key] = typeof value === 'object' && typeof under === 'object' ? overlay(under, value) : value;
+    result[key] =
+      typeof value === 'object' && typeof under === 'object'
+        ? overlay(under, value)
+        : value;
   }
   return result;
 }

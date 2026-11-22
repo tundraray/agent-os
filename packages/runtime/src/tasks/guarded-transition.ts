@@ -18,14 +18,14 @@ const { queued, running, waiting, completed, failed, stopped } =
   TaskStatusSchema.enum;
 
 /** Statuses that end a task; only a message with `revive` queues it again. */
-const FINISHED_STATUSES: readonly TaskStatus[] = [
-  completed,
-  failed,
-  stopped,
-];
+const FINISHED_STATUSES: readonly TaskStatus[] = [completed, failed, stopped];
 
 /** Statuses of a task that has not ended. */
-export const UNFINISHED_STATUSES: readonly TaskStatus[] = [queued, running, waiting];
+export const UNFINISHED_STATUSES: readonly TaskStatus[] = [
+  queued,
+  running,
+  waiting,
+];
 
 export const isFinished = (status: string): boolean =>
   (FINISHED_STATUSES as readonly string[]).includes(status);
@@ -69,11 +69,7 @@ type ImmutableColumn =
   | 'input'
   | 'createdAt';
 type GuardedColumn =
-  | 'status'
-  | 'waitReason'
-  | 'attempt'
-  | 'updatedAt'
-  | 'finishedAt';
+  'status' | 'waitReason' | 'attempt' | 'updatedAt' | 'finishedAt';
 
 /** Columns a guarded write may set freely (values or SQL over the row). */
 export type TaskFields = Omit<
@@ -113,7 +109,9 @@ function targetStatus(change: TaskChange): TaskStatus | undefined {
 /** Throws on a guarded write the state diagram forbids or one of a running task without its attempt. */
 export function assertAllowed(guard: TaskGuard, change: TaskChange): void {
   if (guard.from.length === 0) {
-    throw new Error(`Guarded write of task ${guard.taskId} has no source status`);
+    throw new Error(
+      `Guarded write of task ${guard.taskId} has no source status`,
+    );
   }
   if (guard.from.includes(running) && guard.attempt === undefined) {
     throw new Error(

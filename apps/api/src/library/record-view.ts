@@ -41,7 +41,10 @@ export function recordSummary(
   return { ...viewFields(record, context), kind: record.body.kind };
 }
 
-export function recordDetail(record: LibraryRecord, context: ViewContext): RecordDetail {
+export function recordDetail(
+  record: LibraryRecord,
+  context: ViewContext,
+): RecordDetail {
   return { ...viewFields(record, context), ...record.body };
 }
 
@@ -202,4 +205,3 @@ function missingRights(body: RecordBody, context: ViewContext): MissingRight[] {
       : [];
   });
 }
-

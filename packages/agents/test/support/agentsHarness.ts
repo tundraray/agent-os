@@ -23,7 +23,11 @@ import {
 import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { type AgentContent, CHAT_BUILTIN_KEY, type DeepAgentContent } from '@agent-os/contracts';
+import {
+  type AgentContent,
+  CHAT_BUILTIN_KEY,
+  type DeepAgentContent,
+} from '@agent-os/contracts';
 import {
   agentCodeCalls,
   agentModelProviders,
@@ -117,7 +121,10 @@ const TEST_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
 };
 
 /** What the access gate double answers for embeddings until a test chooses a model: none is chosen. */
-const NO_EMBEDDING_MODEL: EmbeddingVerdict = { kind: 'refused', reason: 'model_not_configured' };
+const NO_EMBEDDING_MODEL: EmbeddingVerdict = {
+  kind: 'refused',
+  reason: 'model_not_configured',
+};
 
 /** An embedding model of the harness's provider: 3 dimensions, input 0.25 USD per million tokens. */
 export const TEST_EMBEDDING_MODEL_A: EmbeddingVerdict = {
@@ -144,7 +151,10 @@ const ALL_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice', 'tracker'];
  * the held step keeps, and a sweeper that never passes again within a test. The start of a second harness
  * ("the restarted server") requeues its step as a lost one.
  */
-export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = { concurrency: 1, reaperMs: 600_000 };
+export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = {
+  concurrency: 1,
+  reaperMs: 600_000,
+};
 
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
@@ -160,14 +170,22 @@ export type TestRecord = Extract<LibraryDoubleRecord, { kind: 'agent' }>;
 
 /** What a test record may set: the agent's content and the record's id, description, owner and audience. */
 export type TestRecordOverrides = Partial<AgentContent> &
-  Partial<Pick<LibraryDoubleRecord, 'id' | 'description' | 'ownerId' | 'everyone' | 'viewers' | 'offerInChat'>>;
+  Partial<
+    Pick<
+      LibraryDoubleRecord,
+      'id' | 'description' | 'ownerId' | 'everyone' | 'viewers' | 'offerInChat'
+    >
+  >;
 
 /**
  * A test agent record: by {@link TEST_AUTHOR_ID}, seen by every employee and offered in the main chat
  * (so a root may start it), with no tools, no servers, no agents, 20 turns and the default model,
  * unless overridden.
  */
-export function testRecord(name: string, overrides: TestRecordOverrides = {}): TestRecord {
+export function testRecord(
+  name: string,
+  overrides: TestRecordOverrides = {},
+): TestRecord {
   const {
     id,
     description = `Test agent ${name}`,
@@ -200,19 +218,34 @@ export function testRecord(name: string, overrides: TestRecordOverrides = {}): T
 }
 
 /** A deep agent record of the library double. */
-export type TestDeepAgentRecord = Extract<LibraryDoubleRecord, { kind: 'deep_agent' }>;
+export type TestDeepAgentRecord = Extract<
+  LibraryDoubleRecord,
+  { kind: 'deep_agent' }
+>;
 export type TestSubagent = DeepAgentContent['subagents'][number];
 
 /** What a test deep agent record may set besides its content: its id, description, owner and audience. */
 export type TestDeepAgentOverrides = Partial<
-  Pick<TestDeepAgentRecord, 'id' | 'description' | 'ownerId' | 'ownerName' | 'everyone' | 'viewers' | 'offerInChat'>
+  Pick<
+    TestDeepAgentRecord,
+    | 'id'
+    | 'description'
+    | 'ownerId'
+    | 'ownerName'
+    | 'everyone'
+    | 'viewers'
+    | 'offerInChat'
+  >
 >;
 
 /**
  * A subagent of a test deep agent: a description line and a prompt by its name, no servers, 2 turns, one
  * run and the default model, unless overridden.
  */
-export function testSubagent(name: string, overrides: Partial<TestSubagent> = {}): TestSubagent {
+export function testSubagent(
+  name: string,
+  overrides: Partial<TestSubagent> = {},
+): TestSubagent {
   return {
     name,
     description: `The ${name} of the team`,
@@ -251,13 +284,22 @@ export function testDeepAgent(
  * employee sees) gets its name and content — added on the first call, a new version after it. A run
  * already started keeps its snapshot.
  */
-export async function setRootRecord(library: LibraryDouble, record: TestRecord): Promise<void> {
+export async function setRootRecord(
+  library: LibraryDouble,
+  record: TestRecord,
+): Promise<void> {
   const body = { kind: 'agent' as const, content: record.content };
   const chat = (await library.listVisible(TEST_AUTHOR_ID)).find(
     (header) => header.builtinKey === CHAT_BUILTIN_KEY,
   );
   if (chat === undefined) {
-    library.add({ ...body, name: record.name, ownerId: null, everyone: true, builtinKey: CHAT_BUILTIN_KEY });
+    library.add({
+      ...body,
+      name: record.name,
+      ownerId: null,
+      everyone: true,
+      builtinKey: CHAT_BUILTIN_KEY,
+    });
     return;
   }
   library.edit(chat.id, { name: record.name, body });
@@ -269,7 +311,10 @@ export function taskCall(args: {
   readonly description?: string;
   readonly instruction?: string;
   readonly items?: readonly string[];
-  readonly answerFields?: readonly { readonly name: string; readonly description: string }[];
+  readonly answerFields?: readonly {
+    readonly name: string;
+    readonly description: string;
+  }[];
   readonly taskId?: number;
 }): ScriptedToolCall {
   return { tool: 'task', args };
@@ -291,7 +336,10 @@ const StartTestDeepAgentArgsSchema = z.object({
  */
 function startTestDeepAgentTool(
   startDeps: StartDeps,
-): InCommitAgentTool<z.infer<typeof StartTestDeepAgentArgsSchema>, StartResolution> {
+): InCommitAgentTool<
+  z.infer<typeof StartTestDeepAgentArgsSchema>,
+  StartResolution
+> {
   return {
     name: START_TEST_DEEP_AGENT,
     description: 'Start a deep agent record by its id.',
@@ -300,16 +348,25 @@ function startTestDeepAgentTool(
     rootOnly: true,
     prepare: ({ args, caller }) =>
       resolveStart(
-        { ownerId: caller.ownerId, source: { kind: 'record', recordId: args.deepAgent, expected: 'deep_agent' } },
+        {
+          ownerId: caller.ownerId,
+          source: {
+            kind: 'record',
+            recordId: args.deepAgent,
+            expected: 'deep_agent',
+          },
+        },
         startDeps,
       ),
     async execute({ args, startChild, prepared }) {
-      if (prepared === undefined) throw new Error(`${START_TEST_DEEP_AGENT} runs without its prepare`);
+      if (prepared === undefined)
+        throw new Error(`${START_TEST_DEEP_AGENT} runs without its prepare`);
       if (prepared.kind === 'refused') {
         return {
           kind: 'refused',
           reason: prepared.reason,
-          refusalDetail: prepared.model === null ? null : { model: prepared.model },
+          refusalDetail:
+            prepared.model === null ? null : { model: prepared.model },
         };
       }
       const { agentId } = await startChild({
@@ -317,7 +374,12 @@ function startTestDeepAgentTool(
         prompt: args.prompt,
         description: args.description,
       });
-      return { kind: 'done', outcome: 'success', text: `Deep agent started, agentId ${agentId}`, childAgentId: agentId };
+      return {
+        kind: 'done',
+        outcome: 'success',
+        text: `Deep agent started, agentId ${agentId}`,
+        childAgentId: agentId,
+      };
     },
   };
 }
@@ -386,8 +448,21 @@ export interface HarnessAgents {
 
 /** The agent operations the tests call, over the three operation services. */
 export type HarnessSessions = Pick<StartOperations, 'start' | 'restart'> &
-  Pick<ControlOperations, 'send' | 'interrupt' | 'stop' | 'resolveConfirmation'> &
-  Pick<ViewOperations, 'snapshot' | 'get' | 'list' | 'history' | 'confirmations' | 'taskList' | 'run' | 'roots'>;
+  Pick<
+    ControlOperations,
+    'send' | 'interrupt' | 'stop' | 'resolveConfirmation'
+  > &
+  Pick<
+    ViewOperations,
+    | 'snapshot'
+    | 'get'
+    | 'list'
+    | 'history'
+    | 'confirmations'
+    | 'taskList'
+    | 'run'
+    | 'roots'
+  >;
 
 export interface AgentsHarness {
   readonly runtime: HarnessRuntime;
@@ -429,25 +504,37 @@ let openHarnesses = 0;
 async function openHarnessProvider(db: Database): Promise<void> {
   openHarnesses += 1;
   if (openHarnesses > 1) return;
-  const row = { kind: 'openai_compatible', baseUrl: null, apiKey: null, enabled: true } as const;
+  const row = {
+    kind: 'openai_compatible',
+    baseUrl: null,
+    apiKey: null,
+    enabled: true,
+  } as const;
   await db
     .insert(agentModelProviders)
     .values({ name: HARNESS_PROVIDER, ...row })
-    .onConflictDoUpdate({ target: agentModelProviders.name, set: { ...row, updatedAt: sql`now()` } });
+    .onConflictDoUpdate({
+      target: agentModelProviders.name,
+      set: { ...row, updatedAt: sql`now()` },
+    });
 }
 
 /** The last harness of the file to close deletes the row: the developer's database keeps only its own providers. */
 async function closeHarnessProvider(db: Database): Promise<void> {
   openHarnesses -= 1;
   if (openHarnesses > 0) return;
-  await db.delete(agentModelProviders).where(eq(agentModelProviders.name, HARNESS_PROVIDER));
+  await db
+    .delete(agentModelProviders)
+    .where(eq(agentModelProviders.name, HARNESS_PROVIDER));
 }
 
 /**
  * Builds runtime + agents against the test database and starts them: the scripted model (or the real turn
  * client), the scripted embeddings and the access gate double whose default chat model is {@link TEST_MODEL_DEFAULT}.
  */
-export async function createAgentsHarness(options: AgentsHarnessOptions): Promise<AgentsHarness> {
+export async function createAgentsHarness(
+  options: AgentsHarnessOptions,
+): Promise<AgentsHarness> {
   const fixture = options.fixture ?? createFixtureFiles('agents-e2e');
   const runtimeConfig: RuntimeConfig = {
     ...parseRuntimeConfig({}),
@@ -466,7 +553,11 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
   });
   const sink = memorySink();
   const auditEntries: AuditRecord[] = [];
-  const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
+  const logger = createLogger({
+    sinks: [sink],
+    secrets: [],
+    minLevel: 'debug',
+  });
   const library = options.library ?? createLibraryDouble();
   const embeddings = options.embeddings ?? createScriptedEmbeddings();
   let embeddingVerdict = NO_EMBEDDING_MODEL;
@@ -477,8 +568,12 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     prices: { ...TEST_MODEL_PRICES, ...options.prices },
     defaultChatModel: TEST_MODEL_DEFAULT,
     embedding: () => embeddingVerdict,
-    ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
-    ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
+    ...(options.refusedOwners === undefined
+      ? {}
+      : { refusedOwners: options.refusedOwners }),
+    ...(options.ownerModelRefusals === undefined
+      ? {}
+      : { ownerModelRefusals: options.ownerModelRefusals }),
   });
   let builder = Test.createTestingModule({
     imports: [
@@ -489,7 +584,9 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
           auditEntries.push(entry);
         },
         library,
-        ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
+        ...(options.onTextDelta === undefined
+          ? {}
+          : { onTextDelta: options.onTextDelta }),
       }),
     ],
   })
@@ -497,9 +594,14 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     .useValue(embeddings.client);
   // The real turn client is the package's default.
   if (options.turnClient !== 'real') {
-    builder = builder.overrideProvider(AGENT_TURN_CLIENT).useValue(options.model.turnClient);
+    builder = builder
+      .overrideProvider(AGENT_TURN_CLIENT)
+      .useValue(options.model.turnClient);
   }
-  if (options.codeRunner !== undefined) builder = builder.overrideProvider(CODE_RUNNER).useValue(options.codeRunner);
+  if (options.codeRunner !== undefined)
+    builder = builder
+      .overrideProvider(CODE_RUNNER)
+      .useValue(options.codeRunner);
   const app = await builder.compile();
   const db = app.get<Database>(DATABASE);
   const workers = app.get(RuntimeWorkers);
@@ -510,7 +612,11 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     stop: () => workers.stop(),
   };
   const providers = app.get(AgentsProviders);
-  const agents: HarnessAgents = { mcp: app.get(AgentsMcp), providers, knowledge: app.get(AgentsKnowledge) };
+  const agents: HarnessAgents = {
+    mcp: app.get(AgentsMcp),
+    providers,
+    knowledge: app.get(AgentsKnowledge),
+  };
   const starts = app.get(StartOperations);
   const control = app.get(ControlOperations);
   const views = app.get(ViewOperations);
@@ -532,7 +638,9 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
   };
   // Before `init`: the tools library closes in `onApplicationBootstrap`.
   if (options.deepAgentStarter === true) {
-    app.get(ToolRegistry).register(startTestDeepAgentTool({ library, access, providers }));
+    app
+      .get(ToolRegistry)
+      .register(startTestDeepAgentTool({ library, access, providers }));
   }
 
   const close = async () => {
@@ -556,7 +664,8 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     await openHarnessProvider(db);
     const sources = options.mcpServers ?? DEFAULT_SOURCES;
     if (sources.length === 0) {
-      for (const source of ALL_SOURCES) await removeServer(agents, runName(source));
+      for (const source of ALL_SOURCES)
+        await removeServer(agents, runName(source));
     }
     await registerFixtureServers(agents, fixtureProcess, sources, runName);
   } catch (error) {
@@ -589,10 +698,15 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
 }
 
 /** Closes every harness the test opened, also when one of them fails to close. */
-export async function closeAll(harnesses: readonly AgentsHarness[]): Promise<void> {
-  const closed = await Promise.allSettled(harnesses.map((harness) => harness.close()));
+export async function closeAll(
+  harnesses: readonly AgentsHarness[],
+): Promise<void> {
+  const closed = await Promise.allSettled(
+    harnesses.map((harness) => harness.close()),
+  );
   const failed = closed.find(
-    (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+    (outcome): outcome is PromiseRejectedResult =>
+      outcome.status === 'rejected',
   );
   if (failed) throw failed.reason;
 }
@@ -633,12 +747,17 @@ export async function deepAgentsUnder(
   ownerId: string,
 ): Promise<AgentView[]> {
   return (await harness.sessions.list(rootId, ownerId)).filter(
-    (view) => view.origin?.kind === 'deep_agent' && view.origin.subagent === null,
+    (view) =>
+      view.origin?.kind === 'deep_agent' && view.origin.subagent === null,
   );
 }
 
 /** The reports of an agent's children it received (`child_report` entries), in order. */
-export async function childReportsOf(harness: AgentsHarness, agentId: string, ownerId: string) {
+export async function childReportsOf(
+  harness: AgentsHarness,
+  agentId: string,
+  ownerId: string,
+) {
   return (await historyOf(harness, agentId, ownerId)).flatMap((entry) =>
     entry.kind === 'child_report' ? [entry.content] : [],
   );
@@ -707,9 +826,18 @@ export async function childNoticesOf(
   childId: string,
 ): Promise<ChildNotice[]> {
   const rows = await db
-    .select({ seq: runtimeInbox.seq, status: runtimeInbox.status, payload: runtimeInbox.payload })
+    .select({
+      seq: runtimeInbox.seq,
+      status: runtimeInbox.status,
+      payload: runtimeInbox.payload,
+    })
     .from(runtimeInbox)
-    .where(and(eq(runtimeInbox.recipientId, parentId), eq(runtimeInbox.kind, 'child_finished')))
+    .where(
+      and(
+        eq(runtimeInbox.recipientId, parentId),
+        eq(runtimeInbox.kind, 'child_finished'),
+      ),
+    )
     .orderBy(asc(runtimeInbox.seq));
   return rows
     .map((row) => ({ ...row, payload: row.payload as ChildNotice['payload'] }))
@@ -749,11 +877,20 @@ export function ledgerRowsOf(db: Database, ownerId: string, taskId?: string) {
 }
 
 /** The audit rows of the tool calls one `run_code` run's script made, by attempt and number. */
-export function codeCallRowsOf(db: Database, agentId: string, runCallId: string) {
+export function codeCallRowsOf(
+  db: Database,
+  agentId: string,
+  runCallId: string,
+) {
   return db
     .select()
     .from(agentCodeCalls)
-    .where(and(eq(agentCodeCalls.taskId, agentId), eq(agentCodeCalls.runCallId, runCallId)))
+    .where(
+      and(
+        eq(agentCodeCalls.taskId, agentId),
+        eq(agentCodeCalls.runCallId, runCallId),
+      ),
+    )
     .orderBy(asc(agentCodeCalls.attempt), asc(agentCodeCalls.seq));
 }
 
@@ -763,15 +900,24 @@ export function runLogsOf(harness: AgentsHarness, runId: string): LogRecord[] {
 }
 
 /** What the model got as the result of one of its earlier tool calls, as text. */
-export function toolOutputOf(messages: readonly AgentTurnMessage[], toolCallId: string | undefined): string {
+export function toolOutputOf(
+  messages: readonly AgentTurnMessage[],
+  toolCallId: string | undefined,
+): string {
   for (const message of messages) {
     if (message.role !== 'tool') continue;
-    const result = message.results.find((candidate) => candidate.toolCallId === toolCallId);
+    const result = message.results.find(
+      (candidate) => candidate.toolCallId === toolCallId,
+    );
     if (result !== undefined) {
-      return typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+      return typeof result.output === 'string'
+        ? result.output
+        : JSON.stringify(result.output);
     }
   }
-  throw new Error(`The model input holds no result of call ${String(toolCallId)}`);
+  throw new Error(
+    `The model input holds no result of call ${String(toolCallId)}`,
+  );
 }
 
 /**
@@ -780,7 +926,10 @@ export function toolOutputOf(messages: readonly AgentTurnMessage[], toolCallId: 
  * (`<table> <task id> [<key>] <version>`). Equal snapshots mean no row was written, added or removed —
  * tool calls included: a call and every change of it are `agent_messages` rows.
  */
-export async function treeRowVersionsOf(db: Database, taskIds: readonly string[]): Promise<string[]> {
+export async function treeRowVersionsOf(
+  db: Database,
+  taskIds: readonly string[],
+): Promise<string[]> {
   const ids = sql.join(
     taskIds.map((id) => sql`${id}::uuid`),
     sql`, `,
@@ -803,14 +952,20 @@ export async function historyRowVersionsOf(
   const { rows } = await db.execute(sql`
     SELECT seq, xmin::text AS version FROM app.agent_messages
      WHERE task_id = ${agentId} ORDER BY seq`);
-  return rows.map((row) => ({ seq: Number(row.seq), version: String(row.version) }));
+  return rows.map((row) => ({
+    seq: Number(row.seq),
+    version: String(row.version),
+  }));
 }
 
 /**
  * The task list of a session as `<number> <status> <subject>` lines, with `blocked by` when the task has blockers,
  * by number, read from `agent_session_tasks`.
  */
-export async function sessionTaskRowsOf(db: Database, sessionId: string): Promise<string[]> {
+export async function sessionTaskRowsOf(
+  db: Database,
+  sessionId: string,
+): Promise<string[]> {
   const rows = await db
     .select({
       number: agentSessionTasks.number,
@@ -822,7 +977,12 @@ export async function sessionTaskRowsOf(db: Database, sessionId: string): Promis
     .where(eq(agentSessionTasks.taskId, sessionId))
     .orderBy(asc(agentSessionTasks.number));
   return rows.map((row) =>
-    [`${row.number} ${row.status} ${row.subject}`, ...(row.blockedBy.length === 0 ? [] : [`blocked by ${row.blockedBy.join(',')}`])].join(' '),
+    [
+      `${row.number} ${row.status} ${row.subject}`,
+      ...(row.blockedBy.length === 0
+        ? []
+        : [`blocked by ${row.blockedBy.join(',')}`]),
+    ].join(' '),
   );
 }
 

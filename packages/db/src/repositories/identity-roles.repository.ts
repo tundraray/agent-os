@@ -36,20 +36,29 @@ export class IdentityRolesRepository {
       .select({ id: identityRoles.id })
       .from(identityRoles)
       .where(eq(identityRoles.builtin, true));
-    if (row === undefined) throw new Error('the built-in role is missing from identity_roles');
+    if (row === undefined)
+      throw new Error('the built-in role is missing from identity_roles');
     return row.id;
   }
 
   /** Assigns the role; assigning it again changes nothing. */
   async addMember(roleId: string, userId: string): Promise<void> {
-    await this.db.client.insert(identityRoleMembers).values({ roleId, userId }).onConflictDoNothing();
+    await this.db.client
+      .insert(identityRoleMembers)
+      .values({ roleId, userId })
+      .onConflictDoNothing();
   }
 
   /** Takes the role from the employee; taking it again changes nothing. */
   async removeMember(roleId: string, userId: string): Promise<void> {
     await this.db.client
       .delete(identityRoleMembers)
-      .where(and(eq(identityRoleMembers.roleId, roleId), eq(identityRoleMembers.userId, userId)));
+      .where(
+        and(
+          eq(identityRoleMembers.roleId, roleId),
+          eq(identityRoleMembers.userId, userId),
+        ),
+      );
   }
 
   /** The roles by name, then id, each with its employee count; only the given role when `roleId` is set. */
@@ -63,7 +72,10 @@ export class IdentityRolesRepository {
         memberCount: sql<number>`count(${identityRoleMembers.userId})::int`,
       })
       .from(identityRoles)
-      .leftJoin(identityRoleMembers, eq(identityRoleMembers.roleId, identityRoles.id))
+      .leftJoin(
+        identityRoleMembers,
+        eq(identityRoleMembers.roleId, identityRoles.id),
+      )
       .where(roleId === undefined ? undefined : eq(identityRoles.id, roleId))
       .groupBy(identityRoles.id)
       .orderBy(asc(identityRoles.name), asc(identityRoles.id));
@@ -90,11 +102,20 @@ export class IdentityRolesRepository {
   }
 
   /** The employees of the role by name, then id. */
-  async members(roleId: string): Promise<{ id: string; name: string; email: string }[]> {
+  async members(
+    roleId: string,
+  ): Promise<{ id: string; name: string; email: string }[]> {
     return this.db.client
-      .select({ id: identityUsers.id, name: identityUsers.name, email: identityUsers.email })
+      .select({
+        id: identityUsers.id,
+        name: identityUsers.name,
+        email: identityUsers.email,
+      })
       .from(identityRoleMembers)
-      .innerJoin(identityUsers, eq(identityUsers.id, identityRoleMembers.userId))
+      .innerJoin(
+        identityUsers,
+        eq(identityUsers.id, identityRoleMembers.userId),
+      )
       .where(eq(identityRoleMembers.roleId, roleId))
       .orderBy(asc(identityUsers.name), asc(identityUsers.id));
   }
@@ -110,14 +131,21 @@ export class IdentityRolesRepository {
         isAdmin: identityRoles.isAdmin,
       })
       .from(identityRoleMembers)
-      .innerJoin(identityRoles, eq(identityRoles.id, identityRoleMembers.roleId))
+      .innerJoin(
+        identityRoles,
+        eq(identityRoles.id, identityRoleMembers.roleId),
+      )
       .where(inArray(identityRoleMembers.userId, userIds))
       .orderBy(asc(identityRoles.name), asc(identityRoles.id));
   }
 
   async insert(name: string): Promise<IdentityRoleRow> {
-    const [row] = await this.db.client.insert(identityRoles).values({ name }).returning();
-    if (row === undefined) throw new Error('identity_roles insert returned no row');
+    const [row] = await this.db.client
+      .insert(identityRoles)
+      .values({ name })
+      .returning();
+    if (row === undefined)
+      throw new Error('identity_roles insert returned no row');
     return row;
   }
 
@@ -126,11 +154,16 @@ export class IdentityRolesRepository {
     roleId: string,
     change: { name?: string; isAdmin?: boolean },
   ): Promise<void> {
-    await this.db.client.update(identityRoles).set(change).where(eq(identityRoles.id, roleId));
+    await this.db.client
+      .update(identityRoles)
+      .set(change)
+      .where(eq(identityRoles.id, roleId));
   }
 
   /** Deletes the role; its assignments and the rows of other parts that reference it go by cascade. */
   async delete(roleId: string): Promise<void> {
-    await this.db.client.delete(identityRoles).where(eq(identityRoles.id, roleId));
+    await this.db.client
+      .delete(identityRoles)
+      .where(eq(identityRoles.id, roleId));
   }
 }

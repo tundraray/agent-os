@@ -1,4 +1,8 @@
-import { type TaskStatus, TaskStatusSchema, type WaitReason } from '@agent-os/contracts';
+import {
+  type TaskStatus,
+  TaskStatusSchema,
+  type WaitReason,
+} from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
@@ -22,7 +26,14 @@ const { queued, running } = TaskStatusSchema.enum;
 
 export type NewRuntimeTaskRow = Pick<
   typeof runtimeTasks.$inferInsert,
-  'taskId' | 'type' | 'ownerId' | 'parentId' | 'rootId' | 'depth' | 'input' | 'trackerId'
+  | 'taskId'
+  | 'type'
+  | 'ownerId'
+  | 'parentId'
+  | 'rootId'
+  | 'depth'
+  | 'input'
+  | 'trackerId'
 >;
 
 /**
@@ -124,7 +135,12 @@ export class RuntimeTasksRepository {
     const [ready] = await this.db.client
       .select({ taskId: runtimeTasks.taskId })
       .from(runtimeTasks)
-      .where(and(eq(runtimeTasks.status, queued), inArray(runtimeTasks.type, [...types])))
+      .where(
+        and(
+          eq(runtimeTasks.status, queued),
+          inArray(runtimeTasks.type, [...types]),
+        ),
+      )
       .orderBy(asc(runtimeTasks.createdAt), asc(runtimeTasks.taskId))
       .limit(1);
     return ready?.taskId;
@@ -139,18 +155,28 @@ export class RuntimeTasksRepository {
       .select()
       .from(runtimeTasks)
       .where(
-        and(inArray(runtimeTasks.status, [queued, running]), inArray(runtimeTasks.type, [...types])),
+        and(
+          inArray(runtimeTasks.status, [queued, running]),
+          inArray(runtimeTasks.type, [...types]),
+        ),
       )
       .orderBy(asc(runtimeTasks.createdAt), asc(runtimeTasks.taskId))
       .limit(limit);
   }
 
   /** Every `running` task of the given types with the attempt that claimed it. */
-  listRunning(types: readonly string[]): Promise<{ taskId: string; attempt: number }[]> {
+  listRunning(
+    types: readonly string[],
+  ): Promise<{ taskId: string; attempt: number }[]> {
     return this.db.client
       .select({ taskId: runtimeTasks.taskId, attempt: runtimeTasks.attempt })
       .from(runtimeTasks)
-      .where(and(eq(runtimeTasks.status, running), inArray(runtimeTasks.type, [...types])));
+      .where(
+        and(
+          eq(runtimeTasks.status, running),
+          inArray(runtimeTasks.type, [...types]),
+        ),
+      );
   }
 
   /**
@@ -171,7 +197,9 @@ export class RuntimeTasksRepository {
         and(
           eq(runtimeTasks.taskId, guard.taskId),
           inArray(runtimeTasks.status, [...guard.from]),
-          guard.attempt === undefined ? undefined : eq(runtimeTasks.attempt, guard.attempt),
+          guard.attempt === undefined
+            ? undefined
+            : eq(runtimeTasks.attempt, guard.attempt),
           guard.waitReason === undefined
             ? undefined
             : eq(runtimeTasks.waitReason, guard.waitReason),

@@ -52,7 +52,10 @@ export type TriggerRun = Pick<
 >;
 
 /** What the decision reads of a deep agent vector row. */
-export type TriggerEmbedding = Pick<KnowledgeEmbeddingRow, 'recordId' | 'passTaskId' | 'needsPass'>;
+export type TriggerEmbedding = Pick<
+  KnowledgeEmbeddingRow,
+  'recordId' | 'passTaskId' | 'needsPass'
+>;
 
 /** `not_learning` — no knowledge row names the task; `record_deleted` — the deep agent record is gone. */
 export type TriggerIgnoreReason = 'not_learning' | 'record_deleted';
@@ -68,13 +71,21 @@ export type TriggerDecision<
   /** Deep agent stopped: «skipped: stopped», the mark moves to the stop; no task (AC-03.2). */
   | { readonly action: 'stopped'; readonly run: R }
   /** Extraction task failed or was stopped: id released, «failed: interrupted», a new task on the mark. */
-  | { readonly action: 'interrupted'; readonly run: R; readonly nextRound: boolean }
+  | {
+      readonly action: 'interrupted';
+      readonly run: R;
+      readonly nextRound: boolean;
+    }
   /** Extraction completed, no pass in progress: a vector pass, the starter pays. */
   | { readonly action: 'queue_embed'; readonly run: R }
   /** Extraction completed while a pass is in progress: «one more pass», the starter pays. */
   | { readonly action: 'mark_pass'; readonly run: R }
   /** Pass task ended without releasing itself (failed, stopped): id released, a new pass on the mark. */
-  | { readonly action: 'release_pass'; readonly embedding: E; readonly nextPass: boolean }
+  | {
+      readonly action: 'release_pass';
+      readonly embedding: E;
+      readonly nextPass: boolean;
+    }
   | { readonly action: 'ignore'; readonly reason: TriggerIgnoreReason };
 
 /**
@@ -82,7 +93,10 @@ export type TriggerDecision<
  * (by `run_id`, or by `last_extract_task_id` on `task.completed` / `extract_task_id` otherwise);
  * `embedding` is the vector row of an ended extraction's deep agent, or the row whose pass is the task.
  */
-export function triggerDecision<R extends TriggerRun, E extends TriggerEmbedding>(
+export function triggerDecision<
+  R extends TriggerRun,
+  E extends TriggerEmbedding,
+>(
   event: TriggerEvent,
   run: R | undefined,
   embedding: E | undefined,
@@ -94,8 +108,13 @@ export function triggerDecision<R extends TriggerRun, E extends TriggerEmbedding
       ? { action: 'create_extract', run }
       : { action: 'mark_round', run };
   }
-  if (run !== undefined && type === COMPLETED && run.lastExtractTaskId === taskId) {
-    if (embedding === undefined) return { action: 'ignore', reason: 'record_deleted' };
+  if (
+    run !== undefined &&
+    type === COMPLETED &&
+    run.lastExtractTaskId === taskId
+  ) {
+    if (embedding === undefined)
+      return { action: 'ignore', reason: 'record_deleted' };
     return embedding.passTaskId === null
       ? { action: 'queue_embed', run }
       : { action: 'mark_pass', run };
@@ -120,13 +139,22 @@ export interface KnowledgeTriggerDeps {
   readonly logger: Logger;
 }
 
-export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsumer {
+export function createKnowledgeTrigger(
+  deps: KnowledgeTriggerDeps,
+): EventConsumer {
   const logger = deps.logger.child({ consumer: CONSUMER_NAME });
   const { sessionRows, knowledgeRunRows: runRows } = deps;
 
-  async function createExtract(run: KnowledgeRun, rootId: string): Promise<string> {
+  async function createExtract(
+    run: KnowledgeRun,
+    rootId: string,
+  ): Promise<string> {
     const input: KnowledgeExtractInput = { runId: run.runId, rootId };
-    return deps.tasks.create({ type: KNOWLEDGE_EXTRACT_TASK_TYPE, ownerId: run.ownerId, input });
+    return deps.tasks.create({
+      type: KNOWLEDGE_EXTRACT_TASK_TYPE,
+      ownerId: run.ownerId,
+      input,
+    });
   }
 
   async function createPass(recordId: string): Promise<string> {
@@ -150,12 +178,18 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
       case 'stopped':
         // A round in progress commits later and writes its own outcome over this one; the mark
         // never goes back (Invariant 2), so calls of the stopped stretch are never extracted.
-        await runRows.writeRoundOutcome(decision.run.runId, outcomeOf('skipped', 'stopped', event));
+        await runRows.writeRoundOutcome(
+          decision.run.runId,
+          outcomeOf('skipped', 'stopped', event),
+        );
         await runRows.advanceExtractedUpTo(decision.run.runId, event.createdAt);
         return undefined;
       case 'interrupted': {
         const { run } = decision;
-        await runRows.writeRoundOutcome(run.runId, outcomeOf('failed', 'interrupted', event));
+        await runRows.writeRoundOutcome(
+          run.runId,
+          outcomeOf('failed', 'interrupted', event),
+        );
         if (!decision.nextRound) {
           await runRows.updateRun(run.runId, { extractTaskId: null });
           return undefined;
@@ -163,15 +197,22 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
         // The failed task's event is rooted at itself; the next round needs the conversation root. It is
         // read from the run's own session: the runtime answers a deleted conversation's tree as missing.
         const rootId = await sessionRows.rootIdOf(run.runId);
-        if (rootId === undefined) throw new Error(`Learning run ${run.runId} has no session`);
+        if (rootId === undefined)
+          throw new Error(`Learning run ${run.runId} has no session`);
         const taskId = await createExtract(run, rootId);
-        await runRows.updateRun(run.runId, { extractTaskId: taskId, needsRound: false });
+        await runRows.updateRun(run.runId, {
+          extractTaskId: taskId,
+          needsRound: false,
+        });
         return taskId;
       }
       case 'queue_embed': {
         const { run } = decision;
         const taskId = await createPass(run.recordId);
-        await runRows.updateEmbeddingRow(run.recordId, { passTaskId: taskId, payerId: run.ownerId });
+        await runRows.updateEmbeddingRow(run.recordId, {
+          passTaskId: taskId,
+          payerId: run.ownerId,
+        });
         return taskId;
       }
       case 'mark_pass':
@@ -187,7 +228,10 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
           return undefined;
         }
         const taskId = await createPass(recordId);
-        await runRows.updateEmbeddingRow(recordId, { passTaskId: taskId, needsPass: false });
+        await runRows.updateEmbeddingRow(recordId, {
+          passTaskId: taskId,
+          needsPass: false,
+        });
         return taskId;
       }
       case 'ignore':
@@ -205,12 +249,23 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
       const taskId = event.taskId;
 
       const run = await findRunOfTask(runRows, event.type, taskId);
-      const embedding = await findEmbeddingOfTask(deps.db, runRows, event.type, taskId, run);
-      const decision = triggerDecision({ type: event.type, taskId }, run, embedding);
+      const embedding = await findEmbeddingOfTask(
+        deps.db,
+        runRows,
+        event.type,
+        taskId,
+        run,
+      );
+      const decision = triggerDecision(
+        { type: event.type, taskId },
+        run,
+        embedding,
+      );
       const createdTaskId = await apply(event, decision);
 
       // Every task of the platform comes here; one that no knowledge row names is logged at debug.
-      const quiet = decision.action === 'ignore' && decision.reason === 'not_learning';
+      const quiet =
+        decision.action === 'ignore' && decision.reason === 'not_learning';
       logger[quiet ? 'debug' : 'info']('knowledge trigger decided', {
         eventId: event.eventId,
         eventType: event.type,
@@ -221,8 +276,12 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
         ownerId: run?.ownerId ?? null,
         decision: decision.action,
         ...(decision.action === 'ignore' ? { reason: decision.reason } : {}),
-        ...(decision.action === 'interrupted' ? { nextRound: decision.nextRound } : {}),
-        ...(decision.action === 'release_pass' ? { nextPass: decision.nextPass } : {}),
+        ...(decision.action === 'interrupted'
+          ? { nextRound: decision.nextRound }
+          : {}),
+        ...(decision.action === 'release_pass'
+          ? { nextPass: decision.nextPass }
+          : {}),
         createdTaskId: createdTaskId ?? null,
         durationMs: Date.now() - startedAt,
       });
@@ -269,5 +328,13 @@ function outcomeOf(
   reason: 'stopped' | 'interrupted',
   event: DeliveredEvent,
 ): RoundOutcome {
-  return { status, reason, added: 0, confirmed: 0, outdated: 0, model: null, at: event.createdAt };
+  return {
+    status,
+    reason,
+    added: 0,
+    confirmed: 0,
+    outdated: 0,
+    model: null,
+    at: event.createdAt,
+  };
 }

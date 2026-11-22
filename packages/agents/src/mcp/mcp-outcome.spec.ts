@@ -26,10 +26,17 @@ describe('an MCP response becomes one outcome and read-only comes only from read
     ],
     [
       'isError is a tool error, not a success',
-      result({ isError: true, content: [{ type: 'text', text: 'unknown service' }] }),
+      result({
+        isError: true,
+        content: [{ type: 'text', text: 'unknown service' }],
+      }),
       { outcome: 'tool_error', text: 'unknown service' },
     ],
-    ['no content and no structured content is an empty result', result({}), { outcome: 'empty', text: '' }],
+    [
+      'no content and no structured content is an empty result',
+      result({}),
+      { outcome: 'empty', text: '' },
+    ],
     [
       // design-mcp-connect.md KD-5: no usable account is its own outcome, with the page to fix it on
       'no usable account of the owner is auth_required naming the server',
@@ -40,7 +47,9 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       },
     ],
   ] as const)('%s', (_case, response, expected) => {
-    expect(toOutcome(response, { server: SERVER, readOnly: false })).toEqual(expected);
+    expect(toOutcome(response, { server: SERVER, readOnly: false })).toEqual(
+      expected,
+    );
   });
 
   // agent-harness AC-03.1, AC-03.2, AC-04.2, DC-3, DC-4 (KD-4): a call with no answer names its reason; a changing
@@ -141,19 +150,35 @@ describe('an MCP response becomes one outcome and read-only comes only from read
         reason: 'client_error',
       },
     ],
-  ])('a call with no answer, readOnly %s, reason %s', (readOnly, reason, expected) => {
-    expect(toOutcome({ kind: 'failure', reason }, { server: SERVER, readOnly })).toEqual(expected);
-  });
+  ])(
+    'a call with no answer, readOnly %s, reason %s',
+    (readOnly, reason, expected) => {
+      expect(
+        toOutcome({ kind: 'failure', reason }, { server: SERVER, readOnly }),
+      ).toEqual(expected);
+    },
+  );
 
   // «API скрипта»: callTool returns structuredContent, else the text parsed as JSON, else the text.
   it.each<[string, CallToolResult, unknown]>([
     [
       'structured content is the value even beside text',
-      { content: [{ type: 'text', text: '{"count":1}' }], structuredContent: { count: 2 } },
+      {
+        content: [{ type: 'text', text: '{"count":1}' }],
+        structuredContent: { count: 2 },
+      },
       { count: 2 },
     ],
-    ['a JSON text is the parsed value', { content: [{ type: 'text', text: '[{"id":1}]' }] }, [{ id: 1 }]],
-    ['a plain text is the text', { content: [{ type: 'text', text: 'two errors' }] }, 'two errors'],
+    [
+      'a JSON text is the parsed value',
+      { content: [{ type: 'text', text: '[{"id":1}]' }] },
+      [{ id: 1 }],
+    ],
+    [
+      'a plain text is the text',
+      { content: [{ type: 'text', text: 'two errors' }] },
+      'two errors',
+    ],
   ])('the script value: %s', (_case, callResult, expected) => {
     expect(scriptValueOf(callResult)).toEqual(expected);
   });

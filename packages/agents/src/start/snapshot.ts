@@ -21,7 +21,8 @@ const snapshotModel = { model: ModelIdSchema };
 const AgentSnapshotContentSchema = AgentContentSchema.extend(snapshotModel);
 
 /** One subagent of a deep agent, as `DeepAgentContent` holds it, with its model. */
-const SubagentContentSchema = DeepAgentContentSchema.shape.subagents.element.extend(snapshotModel);
+const SubagentContentSchema =
+  DeepAgentContentSchema.shape.subagents.element.extend(snapshotModel);
 
 const DeepAgentSnapshotContentSchema = DeepAgentContentSchema.safeExtend({
   ...snapshotModel,
@@ -64,7 +65,9 @@ export const RunSnapshotSchema = z.discriminatedUnion('kind', [
      * The run learns (self-learning design-core.md KD-2): the servers of the deep agent and its whole
      * team; `null` — it does not.
      */
-    learning: z.object({ servers: SubagentContentSchema.shape.servers }).nullable(),
+    learning: z
+      .object({ servers: SubagentContentSchema.shape.servers })
+      .nullable(),
   }),
 ]);
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;

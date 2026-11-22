@@ -4,7 +4,11 @@ import { type AgentsConfig, parseAgentsConfig } from './config';
 
 describe('agents configuration refuses to start naming the variable', () => {
   it.each<[string, () => unknown, RegExp]>([
-    ['AGENT_MAX_DEPTH=0', () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }), /AGENT_MAX_DEPTH/],
+    [
+      'AGENT_MAX_DEPTH=0',
+      () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }),
+      /AGENT_MAX_DEPTH/,
+    ],
     [
       'CODE_RUN_MAX_CONCURRENT_PER_USER=0',
       () => parseAgentsConfig({ CODE_RUN_MAX_CONCURRENT_PER_USER: '0' }),

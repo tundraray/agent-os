@@ -2,7 +2,15 @@
 
 import { useRef, type MouseEvent } from 'react';
 import { usePathname } from 'next/navigation';
-import { BotIcon, DiamondIcon, HandIcon, LibraryBigIcon, SquarePenIcon, XIcon, type LucideIcon } from 'lucide-react';
+import {
+  BotIcon,
+  DiamondIcon,
+  HandIcon,
+  LibraryBigIcon,
+  SquarePenIcon,
+  XIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { pressable } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
@@ -23,7 +31,12 @@ import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useAwaitingCount } from '@/lib/agents/awaiting-count';
 import { focusShellTarget } from '@/lib/focus';
-import { AGENTS_PATH, libraryPath, parseShellRoute, type ShellRoute } from '@/lib/shell-route';
+import {
+  AGENTS_PATH,
+  libraryPath,
+  parseShellRoute,
+  type ShellRoute,
+} from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { useShellActions } from './shell-actions';
 import { ShellLink } from './shell-link';
@@ -65,7 +78,10 @@ export function AppSidebar() {
   const isStrip = !isMobile && state === 'collapsed';
   const newChatShortcut = useShortcutLabel('new-chat');
   // SB-03 shows its shortcut inline only where a keyboard is likely: ≥ 1024 px with a fine pointer.
-  const showShortcutHint = useMediaQuery('(min-width: 1024px) and (pointer: fine)') && !isMobile && !isStrip;
+  const showShortcutHint =
+    useMediaQuery('(min-width: 1024px) and (pointer: fine)') &&
+    !isMobile &&
+    !isStrip;
 
   const finalFocus = (): HTMLElement | false | null => {
     if (!actionOwnsFocus.current) return focusMenuButton();
@@ -80,14 +96,28 @@ export function AppSidebar() {
   };
 
   const onHistoryClick = (event: MouseEvent<HTMLElement>): void => {
-    if (isMobile && event.target instanceof Element && event.target.closest(`[${THREAD_LINK_ATTRIBUTE}]`) !== null) {
+    if (
+      isMobile &&
+      event.target instanceof Element &&
+      event.target.closest(`[${THREAD_LINK_ATTRIBUTE}]`) !== null
+    ) {
       actionOwnsFocus.current = true;
     }
   };
 
   return (
-    <Sidebar id={SIDEBAR_ID} collapsible="icon" initialFocus={panel ? backRef : newChatRef} finalFocus={finalFocus}>
-      <SidebarHeader className={cn('gap-1', isMobile && 'pt-[max(0.5rem,env(safe-area-inset-top))]')}>
+    <Sidebar
+      id={SIDEBAR_ID}
+      collapsible="icon"
+      initialFocus={panel ? backRef : newChatRef}
+      finalFocus={finalFocus}
+    >
+      <SidebarHeader
+        className={cn(
+          'gap-1',
+          isMobile && 'pt-[max(0.5rem,env(safe-area-inset-top))]',
+        )}
+      >
         <SidebarMenu>
           <SidebarMenuItem className="flex items-center gap-1">
             <SidebarMenuButton
@@ -116,7 +146,11 @@ export function AppSidebar() {
                 <SidebarMenuButton
                   ref={newChatRef}
                   variant="outline"
-                  tooltip={isMobile ? undefined : t('newChatTooltip', { shortcut: newChatShortcut })}
+                  tooltip={
+                    isMobile
+                      ? undefined
+                      : t('newChatTooltip', { shortcut: newChatShortcut })
+                  }
                   aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
                   className={cn(pressable, isMobile ? 'h-11' : 'h-9')}
                   onClick={() => {
@@ -127,7 +161,10 @@ export function AppSidebar() {
                   <SquarePenIcon aria-hidden />
                   <span>{t('newChat')}</span>
                   {showShortcutHint && (
-                    <span aria-hidden className="text-muted-foreground ml-auto text-xs">
+                    <span
+                      aria-hidden
+                      className="text-muted-foreground ml-auto text-xs"
+                    >
                       {newChatShortcut.replaceAll('+', ' ')}
                     </span>
                   )}
@@ -141,11 +178,19 @@ export function AppSidebar() {
       <SidebarContent>
         {panel && (
           <nav aria-label={t('panel')} className="p-2">
-            <AdminSidebarNav loading={adminRight === 'unknown'} backRef={backRef} onMobilePick={onMobilePick} />
+            <AdminSidebarNav
+              loading={adminRight === 'unknown'}
+              backRef={backRef}
+              onMobilePick={onMobilePick}
+            />
           </nav>
         )}
         {!panel && !isStrip && (
-          <nav aria-label={tCommon('chatHistory')} className="flex min-h-0 flex-1 flex-col" onClick={onHistoryClick}>
+          <nav
+            aria-label={tCommon('chatHistory')}
+            className="flex min-h-0 flex-1 flex-col"
+            onClick={onHistoryClick}
+          >
             <ThreadHistoryList />
           </nav>
         )}
@@ -159,7 +204,13 @@ export function AppSidebar() {
 }
 
 /** The employee's sections; mounted off the panel only, so the panel never reads the awaiting count. */
-function SectionNavItems({ route, onMobilePick }: { route: ShellRoute; onMobilePick: () => void }) {
+function SectionNavItems({
+  route,
+  onMobilePick,
+}: {
+  route: ShellRoute;
+  onMobilePick: () => void;
+}) {
   const t = useTranslations('shell.sidebar');
   const awaiting = useAwaitingCount();
   return (
@@ -200,11 +251,19 @@ type SectionNavItemProps = {
  * With decisions waiting: `Hand` and the number in `--approval` on the right, in the strip a 6 px dot;
  * the number swaps without animation.
  */
-function SectionNavItem({ href, label, icon: Icon, isActive, awaiting = 0, onMobilePick }: SectionNavItemProps) {
+function SectionNavItem({
+  href,
+  label,
+  icon: Icon,
+  isActive,
+  awaiting = 0,
+  onMobilePick,
+}: SectionNavItemProps) {
   const t = useTranslations('shell.sidebar');
   const { isMobile, state } = useSidebar();
   const isStrip = !isMobile && state === 'collapsed';
-  const name = awaiting > 0 ? t('awaiting', { section: label, count: awaiting }) : label;
+  const name =
+    awaiting > 0 ? t('awaiting', { section: label, count: awaiting }) : label;
 
   // As a thread link (UXRD 7.4): a tap or a pick from the drawer focuses the page h1; a fine pointer leaves focus be.
   const onClick = (): void => {
@@ -225,7 +284,13 @@ function SectionNavItem({ href, label, icon: Icon, isActive, awaiting = 0, onMob
           // Selected marker as on SB-06: the --sidebar-accent background alone is below 3:1.
           'relative data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-0.75 data-active:before:rounded-full data-active:before:bg-sidebar-primary',
         )}
-        render={<ShellLink href={href} aria-current={isActive ? 'page' : undefined} onClick={onClick} />}
+        render={
+          <ShellLink
+            href={href}
+            aria-current={isActive ? 'page' : undefined}
+            onClick={onClick}
+          />
+        }
       >
         <span aria-hidden className="relative flex shrink-0">
           <Icon />
@@ -235,7 +300,10 @@ function SectionNavItem({ href, label, icon: Icon, isActive, awaiting = 0, onMob
         </span>
         <span className="flex-1 truncate">{label}</span>
         {!isStrip && awaiting > 0 && (
-          <span aria-hidden className="flex shrink-0 items-center gap-1 text-approval tabular-nums">
+          <span
+            aria-hidden
+            className="flex shrink-0 items-center gap-1 text-approval tabular-nums"
+          >
             <HandIcon />
             {awaiting}
           </span>

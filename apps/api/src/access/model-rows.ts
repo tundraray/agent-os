@@ -9,7 +9,11 @@ type ChatModel = Extract<CatalogModel, { purpose: 'chat' }>;
 
 /** A row of `access_models` as a catalogue model, by purpose. */
 export function toCatalogModel(row: AccessModelRow): CatalogModel {
-  const common = { id: row.id, name: row.name, provider: modelProvider(row.id) };
+  const common = {
+    id: row.id,
+    name: row.name,
+    provider: modelProvider(row.id),
+  };
   if (row.purpose === 'embedding') {
     if (row.dimensions === null)
       throw new Error(`embedding model ${row.id} has no dimensions`);

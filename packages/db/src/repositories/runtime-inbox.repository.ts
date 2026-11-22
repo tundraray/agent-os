@@ -8,7 +8,14 @@ export type RuntimeInboxRow = typeof runtimeInbox.$inferSelect;
 
 export type NewRuntimeInboxRow = Pick<
   typeof runtimeInbox.$inferInsert,
-  'messageId' | 'recipientId' | 'ownerId' | 'seq' | 'kind' | 'sender' | 'payload' | 'revive'
+  | 'messageId'
+  | 'recipientId'
+  | 'ownerId'
+  | 'seq'
+  | 'kind'
+  | 'sender'
+  | 'payload'
+  | 'revive'
 >;
 
 const { pending, delivered } = MessageStatusSchema.enum;
@@ -23,7 +30,9 @@ export class RuntimeInboxRepository {
 
   /** Inserts a `pending` message. */
   async insert(message: NewRuntimeInboxRow): Promise<void> {
-    await this.db.client.insert(runtimeInbox).values({ ...message, status: pending });
+    await this.db.client
+      .insert(runtimeInbox)
+      .values({ ...message, status: pending });
   }
 
   /** The task's pending messages by `seq`. */
@@ -31,12 +40,20 @@ export class RuntimeInboxRepository {
     return this.db.client
       .select()
       .from(runtimeInbox)
-      .where(and(eq(runtimeInbox.recipientId, taskId), eq(runtimeInbox.status, pending)))
+      .where(
+        and(
+          eq(runtimeInbox.recipientId, taskId),
+          eq(runtimeInbox.status, pending),
+        ),
+      )
       .orderBy(asc(runtimeInbox.seq));
   }
 
   /** The owner's pending messages of the task by `seq`; `[]` for another owner's or a missing task. */
-  listPendingOwned(taskId: string, ownerId: string): Promise<RuntimeInboxRow[]> {
+  listPendingOwned(
+    taskId: string,
+    ownerId: string,
+  ): Promise<RuntimeInboxRow[]> {
     return this.db.client
       .select()
       .from(runtimeInbox)

@@ -42,9 +42,17 @@ export function RolePage({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [grantingAdmin, setGrantingAdmin] = useState(false);
 
-  if (isNotFound(role.error)) return <ThreadNotice variant="record-not-found" section="roles" />;
+  if (isNotFound(role.error))
+    return <ThreadNotice variant="record-not-found" section="roles" />;
   const data = role.data;
-  if (data === undefined) return <RecordPlaceholder section="roles" resource={role} loadFailed={t('loadFailed')} />;
+  if (data === undefined)
+    return (
+      <RecordPlaceholder
+        section="roles"
+        resource={role}
+        loadFailed={t('loadFailed')}
+      />
+    );
 
   const name = builtinRoleName(data.name, locale);
 
@@ -64,10 +72,15 @@ export function RolePage({ id }: { id: string }) {
 
   return (
     <>
-      <PageHeader area={titles.panel}
+      <PageHeader
+        area={titles.panel}
         parent={titles.parent('roles')}
         title={name}
-        badge={data.builtin ? <StateBadge variant="source">{t('builtin')}</StateBadge> : undefined}
+        badge={
+          data.builtin ? (
+            <StateBadge variant="source">{t('builtin')}</StateBadge>
+          ) : undefined
+        }
       >
         {data.builtin ? undefined : (
           <ActionsMenu
@@ -148,7 +161,11 @@ function MembersSection({ members }: { members: RoleDetail['members'] }) {
       <DataTable
         caption={t('roles.members')}
         columns={[{ header: t('users.employee') }]}
-        state={{ status: 'ready', rows, empty: { Icon: UsersIcon, title: t('roles.noMembers') } }}
+        state={{
+          status: 'ready',
+          rows,
+          empty: { Icon: UsersIcon, title: t('roles.noMembers') },
+        }}
       />
     </section>
   );

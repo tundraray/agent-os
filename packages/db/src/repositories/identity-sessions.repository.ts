@@ -12,13 +12,19 @@ export class IdentitySessionsRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   /** Deletes the employee's sessions created more than `absoluteMinutes` ago. */
-  async deleteOlderThan(userId: string, absoluteMinutes: number): Promise<void> {
+  async deleteOlderThan(
+    userId: string,
+    absoluteMinutes: number,
+  ): Promise<void> {
     await this.db.client
       .delete(identitySessions)
       .where(
         and(
           eq(identitySessions.userId, userId),
-          lt(identitySessions.createdAt, sql`now() - make_interval(mins => ${absoluteMinutes})`),
+          lt(
+            identitySessions.createdAt,
+            sql`now() - make_interval(mins => ${absoluteMinutes})`,
+          ),
         ),
       );
   }
@@ -29,7 +35,8 @@ export class IdentitySessionsRepository {
       .insert(identitySessions)
       .values({ tokenHash, userId })
       .returning({ id: identitySessions.id });
-    if (row === undefined) throw new Error('identity_sessions insert returned no row');
+    if (row === undefined)
+      throw new Error('identity_sessions insert returned no row');
     return row.id;
   }
 
@@ -41,12 +48,19 @@ export class IdentitySessionsRepository {
     await this.db.client
       .update(identitySessions)
       .set({ endedReason })
-      .where(and(eq(identitySessions.userId, userId), isNull(identitySessions.endedReason)));
+      .where(
+        and(
+          eq(identitySessions.userId, userId),
+          isNull(identitySessions.endedReason),
+        ),
+      );
   }
 
   /** Deletes every session of the employee (a password reset, a repair by the operator command). */
   async deleteOfUser(userId: string): Promise<void> {
-    await this.db.client.delete(identitySessions).where(eq(identitySessions.userId, userId));
+    await this.db.client
+      .delete(identitySessions)
+      .where(eq(identitySessions.userId, userId));
   }
 
   /** The session of the token hash with its employee, admin right and the current session limits, in one query. */
@@ -83,6 +97,8 @@ export class IdentitySessionsRepository {
 
   /** Deletes the session. */
   async delete(sessionId: string): Promise<void> {
-    await this.db.client.delete(identitySessions).where(eq(identitySessions.id, sessionId));
+    await this.db.client
+      .delete(identitySessions)
+      .where(eq(identitySessions.id, sessionId));
   }
 }

@@ -79,7 +79,10 @@ export class ThreadsController {
   }
 
   @Get(':threadId')
-  get(@Param('threadId') threadId: string, @Req() req: AuthedRequest): Promise<ThreadSummary> {
+  get(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<ThreadSummary> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /threads/:threadId',
@@ -99,12 +102,18 @@ export class ThreadsController {
       route: 'GET /threads/:threadId/history',
       fields: { ownerId, threadId },
       work: () => this.conversations.view(threadId, ownerId, query.afterSeq),
-      outcomeOf: (view) => ({ chatStatus: view.chat.status, entries: view.entries.length }),
+      outcomeOf: (view) => ({
+        chatStatus: view.chat.status,
+        entries: view.entries.length,
+      }),
     });
   }
 
   @Get(':threadId/agents')
-  agents(@Param('threadId') threadId: string, @Req() req: AuthedRequest): Promise<AgentNode[]> {
+  agents(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<AgentNode[]> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /threads/:threadId/agents',
@@ -117,7 +126,8 @@ export class ThreadsController {
   @Patch(':threadId')
   rename(
     @Param('threadId') threadId: string,
-    @Body(new ZodValidationPipe(RenameThreadRequestSchema)) body: RenameThreadRequest,
+    @Body(new ZodValidationPipe(RenameThreadRequestSchema))
+    body: RenameThreadRequest,
     @Req() req: AuthedRequest,
   ): Promise<ThreadSummary> {
     const ownerId = req.user.id;
@@ -130,7 +140,10 @@ export class ThreadsController {
 
   @Delete(':threadId')
   @HttpCode(204)
-  remove(@Param('threadId') threadId: string, @Req() req: AuthedRequest): Promise<void> {
+  remove(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
     const ownerId = req.user.id;
     return this.run({
       route: 'DELETE /threads/:threadId',
@@ -143,14 +156,19 @@ export class ThreadsController {
   @HttpCode(202)
   send(
     @Param('threadId') threadId: string,
-    @Body(new ZodValidationPipe(SendMessageRequestSchema)) body: SendMessageRequest,
+    @Body(new ZodValidationPipe(SendMessageRequestSchema))
+    body: SendMessageRequest,
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
     const { text, recordId } = body;
     return this.run({
       route: 'POST /threads/:threadId/messages',
-      fields: { ownerId, threadId, ...(recordId === undefined ? {} : { recordId }) },
+      fields: {
+        ownerId,
+        threadId,
+        ...(recordId === undefined ? {} : { recordId }),
+      },
       work: () => this.conversations.send(threadId, ownerId, text, recordId),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });

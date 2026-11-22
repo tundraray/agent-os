@@ -17,7 +17,9 @@ export interface ModelVerdictInput {
 }
 
 /** Catalogue prices as the token ledger takes them: `above` is the long-context tier. */
-function priceOf(model: Extract<CatalogModel, { purpose: 'chat' }>): ModelPrice {
+function priceOf(
+  model: Extract<CatalogModel, { purpose: 'chat' }>,
+): ModelPrice {
   const { longContext } = model;
   if (longContext === null) return { ...model.prices };
   return {

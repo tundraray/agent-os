@@ -70,8 +70,7 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
 
       if (savedNow === undefined)
         expect(savePublicUrlIfUnset).not.toHaveBeenCalled();
-      else
-        expect(savePublicUrlIfUnset).toHaveBeenCalledWith(savedNow);
+      else expect(savePublicUrlIfUnset).toHaveBeenCalledWith(savedNow);
     },
   );
 

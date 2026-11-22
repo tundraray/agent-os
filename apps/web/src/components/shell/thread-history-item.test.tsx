@@ -42,12 +42,21 @@ function renderItem(title: string | undefined) {
 }
 
 /** «⋯» → «Переименовать»; resolves with the focused title field. */
-async function startRename(user: User, title: string): Promise<HTMLInputElement> {
-  const trigger = screen.getByRole('button', { name: `Действия с беседой «${title}»` });
+async function startRename(
+  user: User,
+  title: string,
+): Promise<HTMLInputElement> {
+  const trigger = screen.getByRole('button', {
+    name: `Действия с беседой «${title}»`,
+  });
   await user.click(trigger);
   const menu = await screen.findByRole('menu');
-  await user.click(within(menu).getByRole('menuitem', { name: 'Переименовать' }));
-  const field = await screen.findByRole<HTMLInputElement>('textbox', { name: 'Название беседы' });
+  await user.click(
+    within(menu).getByRole('menuitem', { name: 'Переименовать' }),
+  );
+  const field = await screen.findByRole<HTMLInputElement>('textbox', {
+    name: 'Название беседы',
+  });
   await waitFor(() => expect(field).toHaveFocus());
   return field;
 }
@@ -62,15 +71,18 @@ describe('ThreadHistoryItem — «⋯» menu (SB-07)', () => {
     const user = userEvent.setup();
     renderItem('План релиза');
 
-    const trigger = screen.getByRole('button', { name: 'Действия с беседой «План релиза»' });
+    const trigger = screen.getByRole('button', {
+      name: 'Действия с беседой «План релиза»',
+    });
     expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
     await user.click(trigger);
 
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'Переименовать',
-      'Удалить',
-    ]);
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Переименовать', 'Удалить']);
   });
 });
 
@@ -87,8 +99,12 @@ describe('ThreadHistoryItem — rename field (SB-08, AC-05.1–05.3, FR-15)', ()
     await user.type(field, '  Отчёт Q3  {Enter}');
 
     expect(onRename).toHaveBeenCalledExactlyOnceWith('Отчёт Q3');
-    expect(screen.queryByRole('textbox', { name: 'Название беседы' })).toBeNull();
-    await waitFor(() => expect(screen.getByRole('link', { name: 'План релиза' })).toHaveFocus());
+    expect(
+      screen.queryByRole('textbox', { name: 'Название беседы' }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'План релиза' })).toHaveFocus(),
+    );
   });
 
   it('focuses the field before the menu popup finishes a long exit animation', async () => {
@@ -107,14 +123,27 @@ describe('ThreadHistoryItem — rename field (SB-08, AC-05.1–05.3, FR-15)', ()
       pending: false,
       playState: 'running',
     };
-    Object.defineProperty(HTMLElement.prototype, 'getAnimations', { configurable: true, value: () => [slowExit] });
+    Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+      configurable: true,
+      value: () => [slowExit],
+    });
     const user = userEvent.setup();
     renderItem('План релиза');
 
-    await user.click(screen.getByRole('button', { name: 'Действия с беседой «План релиза»' }));
-    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Переименовать' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Действия с беседой «План релиза»' }),
+    );
+    await user.click(
+      within(await screen.findByRole('menu')).getByRole('menuitem', {
+        name: 'Переименовать',
+      }),
+    );
 
-    const field = await screen.findByRole('textbox', { name: 'Название беседы' }, { timeout: 2500 });
+    const field = await screen.findByRole(
+      'textbox',
+      { name: 'Название беседы' },
+      { timeout: 2500 },
+    );
     await waitFor(() => expect(field).toHaveFocus(), { timeout: 2500 });
     expect(animationFinished).toBe(false);
   });
@@ -128,8 +157,12 @@ describe('ThreadHistoryItem — rename field (SB-08, AC-05.1–05.3, FR-15)', ()
     await user.type(field, 'Другое{Escape}');
 
     expect(onRename).not.toHaveBeenCalled();
-    expect(screen.queryByRole('textbox', { name: 'Название беседы' })).toBeNull();
-    await waitFor(() => expect(screen.getByRole('link', { name: 'План релиза' })).toHaveFocus());
+    expect(
+      screen.queryByRole('textbox', { name: 'Название беседы' }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'План релиза' })).toHaveFocus(),
+    );
   });
 
   it('empty + Enter keeps the field open with aria-invalid and «Введите название», without onRename', async () => {
@@ -160,7 +193,9 @@ describe('ThreadHistoryItem — rename field (SB-08, AC-05.1–05.3, FR-15)', ()
     await user.type(field, '{End}  {Enter}');
 
     expect(onRename).not.toHaveBeenCalled();
-    expect(screen.queryByRole('textbox', { name: 'Название беседы' })).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Название беседы' }),
+    ).toBeNull();
   });
 
   it('leaving the field saves a valid changed title', async () => {
@@ -173,7 +208,9 @@ describe('ThreadHistoryItem — rename field (SB-08, AC-05.1–05.3, FR-15)', ()
     await user.click(document.body);
 
     expect(onRename).toHaveBeenCalledExactlyOnceWith('Отчёт Q3');
-    expect(screen.queryByRole('textbox', { name: 'Название беседы' })).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Название беседы' }),
+    ).toBeNull();
   });
 
   it('accepts at most 200 characters and blocks global shortcuts inside the field', async () => {
@@ -195,14 +232,18 @@ describe('ThreadHistoryItem — title (AC-01.6, D-06)', () => {
     const user = userEvent.setup();
     renderItem(undefined);
 
-    expect(screen.getByRole('link', { name: 'Новая беседа' })).toHaveAttribute('href', '/chat/a');
+    expect(screen.getByRole('link', { name: 'Новая беседа' })).toHaveAttribute(
+      'href',
+      '/chat/a',
+    );
     const field = await startRename(user, 'Новая беседа');
 
     expect(field).toHaveValue('Новая беседа');
   });
 
   it('a truncated title shows the full title in a tooltip on hover', async () => {
-    const LONG_TITLE = 'Очень длинное название беседы, которое не помещается в строку сайдбара';
+    const LONG_TITLE =
+      'Очень длинное название беседы, которое не помещается в строку сайдбара';
     vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(200);
     const user = userEvent.setup();
@@ -210,7 +251,11 @@ describe('ThreadHistoryItem — title (AC-01.6, D-06)', () => {
 
     await user.hover(screen.getByRole('link', { name: LONG_TITLE }));
 
-    const tooltip = await screen.findByText(LONG_TITLE, { selector: '[data-slot="tooltip-content"]' }, { timeout: 2000 });
+    const tooltip = await screen.findByText(
+      LONG_TITLE,
+      { selector: '[data-slot="tooltip-content"]' },
+      { timeout: 2000 },
+    );
     expect(tooltip).toBeVisible();
   });
 

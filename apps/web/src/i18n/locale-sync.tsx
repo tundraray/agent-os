@@ -27,7 +27,10 @@ export function LocaleSync({ currentUser }: { currentUser: CurrentUserStore }) {
     if (decided.current || user === null) return;
     decided.current = true;
     if (user.language === null || user.language === locale) return;
-    logger.info('locale: profile choice differs from the page, refreshing', { page: locale, chosen: user.language });
+    logger.info('locale: profile choice differs from the page, refreshing', {
+      page: locale,
+      chosen: user.language,
+    });
     router.refresh();
   }, [user, locale, router]);
 

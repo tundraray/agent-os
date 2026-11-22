@@ -61,10 +61,16 @@ export class TitleService {
   ensure(request: EnsureTitleRequest): void {
     if (this.generating.has(request.threadId)) return;
     this.generating.add(request.threadId);
-    void this.generate(request).finally(() => this.generating.delete(request.threadId));
+    void this.generate(request).finally(() =>
+      this.generating.delete(request.threadId),
+    );
   }
 
-  private async generate({ threadId, ownerId, firstText }: EnsureTitleRequest): Promise<void> {
+  private async generate({
+    threadId,
+    ownerId,
+    firstText,
+  }: EnsureTitleRequest): Promise<void> {
     const startedAt = Date.now();
     try {
       const source = firstText ?? (await this.firstTask(threadId, ownerId));
@@ -91,7 +97,11 @@ export class TitleService {
         });
         return;
       }
-      const written = await this.control.titleRootIfEmpty(threadId, ownerId, title);
+      const written = await this.control.titleRootIfEmpty(
+        threadId,
+        ownerId,
+        title,
+      );
       this.logger.info('thread title generated', {
         threadId,
         ownerId,
@@ -127,8 +137,15 @@ export class TitleService {
   }
 
   /** The text of the root's first entry, its task (Notes 5(в)): the title follows the first message. */
-  private async firstTask(rootId: string, ownerId: string): Promise<string | undefined> {
-    const [first] = await this.views.history({ agentId: rootId, ownerId, limit: 1 });
+  private async firstTask(
+    rootId: string,
+    ownerId: string,
+  ): Promise<string | undefined> {
+    const [first] = await this.views.history({
+      agentId: rootId,
+      ownerId,
+      limit: 1,
+    });
     return first?.kind === 'task' ? first.content.text : undefined;
   }
 }

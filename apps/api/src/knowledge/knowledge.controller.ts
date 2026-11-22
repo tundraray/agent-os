@@ -60,9 +60,7 @@ export class KnowledgeController {
       route: 'GET /library/:id/knowledge',
       fields: { actorId: req.user.id, recordId: id },
       work: async () =>
-        this.knowledge.view(
-          await this.library.knowledgeTarget(req.user, id),
-        ),
+        this.knowledge.view(await this.library.knowledgeTarget(req.user, id)),
       outcomeOf: (view) => ({ items: view.items.length }),
     });
   }

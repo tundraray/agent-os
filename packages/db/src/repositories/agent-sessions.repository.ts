@@ -1,5 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  sql,
+} from 'drizzle-orm';
 import { Db } from '../db';
 import { agentMessages, agentSessions } from '../schema';
 
@@ -69,10 +79,17 @@ const NOW_MS = sql<Date>`date_trunc('milliseconds', now())`;
  * conversation's root (`deleted_at`) answers as a missing one. The condition of
  * `agent_sessions_owner_page_idx`, word for word, so the owner's list keeps its index.
  */
-const isRoot = and(isNotNull(agentSessions.updatedAt), isNull(agentSessions.deletedAt));
+const isRoot = and(
+  isNotNull(agentSessions.updatedAt),
+  isNull(agentSessions.deletedAt),
+);
 
 const ownedRoot = (rootId: string, ownerId: string) =>
-  and(eq(agentSessions.taskId, rootId), eq(agentSessions.ownerId, ownerId), isRoot);
+  and(
+    eq(agentSessions.taskId, rootId),
+    eq(agentSessions.ownerId, ownerId),
+    isRoot,
+  );
 
 const ROOT_COLUMNS = {
   rootId: agentSessions.taskId,
@@ -114,7 +131,10 @@ export class AgentSessionsRepository {
    * A root session starts with an empty title and its list time. `true` — this call created the
    * session.
    */
-  async create(session: NewAgentSessionRow, taskEntry: unknown): Promise<boolean> {
+  async create(
+    session: NewAgentSessionRow,
+    taskEntry: unknown,
+  ): Promise<boolean> {
     const created = await this.db.client
       .insert(agentSessions)
       .values({
@@ -156,7 +176,9 @@ export class AgentSessionsRepository {
    * sessions of the record itself — a subagent carries its deep agent's record id and a fork its
    * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
-  recordCounts(ownerId: string): Promise<{ recordId: string; sessions: number }[]> {
+  recordCounts(
+    ownerId: string,
+  ): Promise<{ recordId: string; sessions: number }[]> {
     return this.db.client
       .select({ recordId: agentSessions.recordId, sessions: count() })
       .from(agentSessions)
@@ -194,11 +216,17 @@ export class AgentSessionsRepository {
   /** Writes the given fields of the session; an empty patch writes nothing. */
   async update(taskId: string, patch: SessionPatch): Promise<void> {
     if (Object.values(patch).every((value) => value === undefined)) return;
-    await this.db.client.update(agentSessions).set(patch).where(eq(agentSessions.taskId, taskId));
+    await this.db.client
+      .update(agentSessions)
+      .set(patch)
+      .where(eq(agentSessions.taskId, taskId));
   }
 
   /** The owner's root session; another owner's and a session that is not a root are as absent as a missing one. */
-  async root(rootId: string, ownerId: string): Promise<RootSessionRow | undefined> {
+  async root(
+    rootId: string,
+    ownerId: string,
+  ): Promise<RootSessionRow | undefined> {
     const [row] = await this.db.client
       .select(ROOT_COLUMNS)
       .from(agentSessions)

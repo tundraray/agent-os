@@ -21,7 +21,11 @@ export function orphanGrantIds(
       continue;
     }
     const tools = toolsByServer.get(target.server);
-    if (target.kind === 'tool' && tools !== undefined && !tools.some((tool) => tool.name === target.tool)) {
+    if (
+      target.kind === 'tool' &&
+      tools !== undefined &&
+      !tools.some((tool) => tool.name === target.tool)
+    ) {
       orphans.add(id);
     }
   }
@@ -29,11 +33,15 @@ export function orphanGrantIds(
 }
 
 /** Names of the registry servers that tool grants point at: the screen reads these records for their `tools`. */
-export function serversToRead(grants: readonly Grant[], servers: readonly Named[]): string[] {
+export function serversToRead(
+  grants: readonly Grant[],
+  servers: readonly Named[],
+): string[] {
   const registered = new Set(servers.map((server) => server.name));
   const names = new Set<string>();
   for (const { target } of grants) {
-    if (target.kind === 'tool' && registered.has(target.server)) names.add(target.server);
+    if (target.kind === 'tool' && registered.has(target.server))
+      names.add(target.server);
   }
   return [...names];
 }

@@ -68,15 +68,9 @@ export class SessionStore {
   /** Opens a session of the employee and deletes his rows older than the absolute limit. */
   async open(userId: string): Promise<OpenedSession> {
     const limits = await this.settings.readSessionLimits();
-    await this.sessions.deleteOlderThan(
-      userId,
-      limits.absoluteMinutes,
-    );
+    await this.sessions.deleteOlderThan(userId, limits.absoluteMinutes);
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
-    const sessionId = await this.sessions.insert(
-      userId,
-      hashToken(token),
-    );
+    const sessionId = await this.sessions.insert(userId, hashToken(token));
     return { sessionId, token };
   }
 

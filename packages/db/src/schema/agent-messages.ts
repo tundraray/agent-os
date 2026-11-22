@@ -53,7 +53,9 @@ export const agentMessages = app.table(
     /** The results of a task by end time: the extraction window and the count of started runs. */
     index('agent_messages_result_idx')
       .on(t.taskId, t.finishedAt)
-      .where(sql`${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)}`),
+      .where(
+        sql`${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)}`,
+      ),
     check(
       'agent_messages_kind_check',
       isOneOf(t.kind, HistoryEntryKindSchema.options),

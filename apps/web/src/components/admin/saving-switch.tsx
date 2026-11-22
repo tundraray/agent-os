@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
-import { useId, useState, type ReactNode } from "react";
-import { useTranslations } from "next-intl";
-import { cn } from "cn";
-import { Switch } from "@/components/ui/switch";
-import { CAPTION, describeRefusal } from "./admin-form";
+import { useId, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
+import { cn } from 'cn';
+import { Switch } from '@/components/ui/switch';
+import { CAPTION, describeRefusal } from './admin-form';
 
 export type SavingSwitchProps = {
   /** The switch's accessible name, e.g. «Включено: {название}» in a table row. */
@@ -49,7 +49,7 @@ export function SavingSwitch({
   confirmOff,
   disabled = false,
 }: SavingSwitchProps) {
-  const tErrors = useTranslations("errors");
+  const tErrors = useTranslations('errors');
   const id = useId();
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
@@ -100,13 +100,23 @@ export function SavingSwitch({
           className="pointer-coarse:after:-inset-3"
         />
         {!labelHidden && (
-          <span id={labelId} className={cn("text-data font-medium text-foreground", (saving || disabled) && "opacity-50")}>
+          <span
+            id={labelId}
+            className={cn(
+              'text-data font-medium text-foreground',
+              (saving || disabled) && 'opacity-50',
+            )}
+          >
             {shown ? label : labelOff}
           </span>
         )}
       </label>
       {error !== null && (
-        <p id={errorId} role="alert" className={cn(CAPTION, "text-destructive")}>
+        <p
+          id={errorId}
+          role="alert"
+          className={cn(CAPTION, 'text-destructive')}
+        >
           {error}
         </p>
       )}

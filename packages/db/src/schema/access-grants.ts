@@ -12,13 +12,19 @@ export const accessGrants = app.table(
   'access_grants',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id').references(() => identityRoles.id, {
+      onDelete: 'cascade',
+    }),
+    userId: uuid('user_id').references(() => identityUsers.id, {
+      onDelete: 'cascade',
+    }),
     effect: text('effect').notNull(),
     targetKind: text('target_kind').notNull(),
     server: text('server'),
     tool: text('tool'),
-    model: text('model').references(() => accessModels.id, { onDelete: 'cascade' }),
+    model: text('model').references(() => accessModels.id, {
+      onDelete: 'cascade',
+    }),
     /** Monthly quota of a model allow; null — no quota. */
     quotaUsd: numeric('quota_usd', { precision: 12, scale: 2, mode: 'number' }),
     createdAt: createdAt(),
@@ -29,9 +35,18 @@ export const accessGrants = app.table(
       .nullsNotDistinct(),
     /** The cascade from a role is served by the unique key above: `role_id` is its first column. */
     index('access_grants_user_idx').on(t.userId),
-    check('access_grants_effect_check', isOneOf(t.effect, GrantEffectSchema.options)),
-    check('access_grants_target_kind_check', isOneOf(t.targetKind, GrantTargetKindSchema.options)),
-    check('access_grants_holder_check', sql`num_nonnulls(${t.roleId}, ${t.userId}) = 1`),
+    check(
+      'access_grants_effect_check',
+      isOneOf(t.effect, GrantEffectSchema.options),
+    ),
+    check(
+      'access_grants_target_kind_check',
+      isOneOf(t.targetKind, GrantTargetKindSchema.options),
+    ),
+    check(
+      'access_grants_holder_check',
+      sql`num_nonnulls(${t.roleId}, ${t.userId}) = 1`,
+    ),
     check(
       'access_grants_target_check',
       sql`(${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server)}

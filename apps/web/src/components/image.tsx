@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   memo,
@@ -7,9 +7,9 @@ import {
   useCallback,
   useRef,
   type PropsWithChildren,
-} from "react";
-import { createPortal } from "react-dom";
-import { cva, type VariantProps } from "class-variance-authority";
+} from 'react';
+import { createPortal } from 'react-dom';
+import { cva, type VariantProps } from 'class-variance-authority';
 import {
   CopyIcon,
   DownloadIcon,
@@ -19,40 +19,40 @@ import {
   RefreshCwIcon,
   ShieldAlertIcon,
   XIcon,
-} from "lucide-react";
+} from 'lucide-react';
 import type {
   ImageMessagePart,
   ImageMessagePartComponent,
-} from "@assistant-ui/react";
-import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
-import { hostOf, safeHref } from "@/utils/href";
+} from '@assistant-ui/react';
+import { useTranslations } from 'next-intl';
+import { cn } from '@/lib/utils';
+import { hostOf, safeHref } from '@/utils/href';
 
 const extensionForMimeType = (mimeType?: string): string => {
   switch (mimeType) {
-    case "image/png":
-      return "png";
-    case "image/jpeg":
-    case "image/jpg":
-      return "jpg";
-    case "image/webp":
-      return "webp";
-    case "image/gif":
-      return "gif";
-    case "image/svg+xml":
-      return "svg";
+    case 'image/png':
+      return 'png';
+    case 'image/jpeg':
+    case 'image/jpg':
+      return 'jpg';
+    case 'image/webp':
+      return 'webp';
+    case 'image/gif':
+      return 'gif';
+    case 'image/svg+xml':
+      return 'svg';
     default:
-      return "png";
+      return 'png';
   }
 };
 
 const dataUriToBlob = (dataUri: string): Blob | null => {
-  const commaIndex = dataUri.indexOf(",");
+  const commaIndex = dataUri.indexOf(',');
   const meta = commaIndex >= 0 ? dataUri.slice(0, commaIndex) : dataUri;
-  const data = commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : "";
+  const data = commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : '';
   const mime =
     meta.match(/data:([^;]+)/i)?.[1]?.toLowerCase() ??
-    "application/octet-stream";
+    'application/octet-stream';
   if (!/;base64/i.test(meta)) {
     const parts: BlobPart[] = [];
     let last = 0;
@@ -94,22 +94,22 @@ const defaultFilenameFromImage = (image: string): string => {
   if (mime) return `image.${extensionForMimeType(mime)}`;
   try {
     const path = new URL(image, document.baseURI).pathname;
-    const encodedBasename = path.split("/").pop() ?? "";
+    const encodedBasename = path.split('/').pop() ?? '';
     let basename = encodedBasename;
     try {
       basename = decodeURIComponent(encodedBasename);
     } catch {}
     if (/\.(png|jpe?g|webp|gif|svg)$/i.test(basename)) return basename;
   } catch {}
-  return "image.png";
+  return 'image.png';
 };
 
 const safeImageDownloadHref = (image: string): string | null => {
   try {
     const url = new URL(image, document.baseURI);
-    return url.protocol === "http:" ||
-      url.protocol === "https:" ||
-      url.protocol === "blob:"
+    return url.protocol === 'http:' ||
+      url.protocol === 'https:' ||
+      url.protocol === 'blob:'
       ? image
       : null;
   } catch {
@@ -118,9 +118,9 @@ const safeImageDownloadHref = (image: string): string | null => {
 };
 
 const downloadImagePart = (
-  part: Pick<ImageMessagePart, "image" | "filename">,
+  part: Pick<ImageMessagePart, 'image' | 'filename'>,
 ): void => {
-  if (typeof document === "undefined") return;
+  if (typeof document === 'undefined') return;
   const filename = part.filename ?? defaultFilenameFromImage(part.image);
   const isDataUri = /^data:/i.test(part.image);
   const blob = isDataUri ? dataUriToBlob(part.image) : null;
@@ -128,10 +128,10 @@ const downloadImagePart = (
   const objectUrl = blob ? URL.createObjectURL(blob) : null;
   const href = objectUrl ?? safeImageDownloadHref(part.image);
   if (!href) return;
-  const a = document.createElement("a");
+  const a = document.createElement('a');
   a.href = href;
   a.download = filename;
-  a.rel = "noopener";
+  a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -139,47 +139,47 @@ const downloadImagePart = (
 };
 
 const copyImagePart = async (
-  part: Pick<ImageMessagePart, "image">,
+  part: Pick<ImageMessagePart, 'image'>,
 ): Promise<void> => {
   if (
-    typeof navigator === "undefined" ||
+    typeof navigator === 'undefined' ||
     !navigator.clipboard ||
-    typeof ClipboardItem === "undefined"
+    typeof ClipboardItem === 'undefined'
   ) {
-    throw new Error("Clipboard API is not available in this environment.");
+    throw new Error('Clipboard API is not available in this environment.');
   }
   const blob = /^data:/i.test(part.image)
     ? dataUriToBlob(part.image)
     : await fetch(part.image).then((r) => r.blob());
   if (!blob) return;
-  const mime = mimeFromImage(part.image) ?? blob.type ?? "image/png";
+  const mime = mimeFromImage(part.image) ?? blob.type ?? 'image/png';
   await navigator.clipboard.write([new ClipboardItem({ [mime]: blob })]);
 };
 
 const imageVariants = cva(
-  "aui-image-root relative overflow-hidden rounded-lg",
+  'aui-image-root relative overflow-hidden rounded-lg',
   {
     variants: {
       variant: {
-        outline: "border-border border",
-        ghost: "",
-        muted: "bg-muted/50",
+        outline: 'border-border border',
+        ghost: '',
+        muted: 'bg-muted/50',
       },
       size: {
-        sm: "max-w-64",
-        default: "max-w-96",
-        lg: "max-w-[512px]",
-        full: "w-full",
+        sm: 'max-w-64',
+        default: 'max-w-96',
+        lg: 'max-w-[512px]',
+        full: 'w-full',
       },
     },
     defaultVariants: {
-      variant: "outline",
-      size: "default",
+      variant: 'outline',
+      size: 'default',
     },
   },
 );
 
-export type ImageRootProps = React.ComponentProps<"div"> &
+export type ImageRootProps = React.ComponentProps<'div'> &
   VariantProps<typeof imageVariants>;
 
 function ImageRoot({
@@ -202,45 +202,45 @@ function ImageRoot({
   );
 }
 
-type ImagePreviewProps = Omit<React.ComponentProps<"img">, "children"> & {
+type ImagePreviewProps = Omit<React.ComponentProps<'img'>, 'children'> & {
   containerClassName?: string | undefined;
-  ratio?: "auto" | "1:1" | "4:3" | "16:9" | "9:16" | undefined;
-  fit?: "cover" | "contain" | undefined;
+  ratio?: 'auto' | '1:1' | '4:3' | '16:9' | '9:16' | undefined;
+  fit?: 'cover' | 'contain' | undefined;
 };
 
 function ImagePreview({
   className,
   containerClassName,
-  ratio = "auto",
-  fit = "contain",
+  ratio = 'auto',
+  fit = 'contain',
   onLoad,
   onError,
   alt,
   src,
   ...props
 }: ImagePreviewProps) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   const imgRef = useRef<HTMLImageElement>(null);
   const [loadedSrc, setLoadedSrc] = useState<string | undefined>(undefined);
   const [errorSrc, setErrorSrc] = useState<string | undefined>(undefined);
 
   const loaded = loadedSrc === src;
   const error = errorSrc === src;
-  const fixedRatio = ratio !== "auto";
+  const fixedRatio = ratio !== 'auto';
   const ratioClassName =
-    ratio === "1:1"
-      ? "aspect-square"
-      : ratio === "4:3"
-        ? "aspect-[4/3]"
-        : ratio === "16:9"
-          ? "aspect-video"
-          : ratio === "9:16"
-            ? "aspect-[9/16]"
+    ratio === '1:1'
+      ? 'aspect-square'
+      : ratio === '4:3'
+        ? 'aspect-[4/3]'
+        : ratio === '16:9'
+          ? 'aspect-video'
+          : ratio === '9:16'
+            ? 'aspect-[9/16]'
             : undefined;
 
   useEffect(() => {
     const image = imgRef.current;
-    if (typeof src !== "string" || !image?.complete) return;
+    if (typeof src !== 'string' || !image?.complete) return;
     if (image.naturalWidth > 0) setLoadedSrc(src);
     else setErrorSrc(src);
   }, [src]);
@@ -249,8 +249,8 @@ function ImagePreview({
     <div
       data-slot="image-preview"
       className={cn(
-        "relative",
-        fixedRatio ? ratioClassName : "min-h-32",
+        'relative',
+        fixedRatio ? ratioClassName : 'min-h-32',
         containerClassName,
       )}
     >
@@ -266,8 +266,8 @@ function ImagePreview({
         <div
           data-slot="image-preview-error"
           className={cn(
-            "bg-muted/50 flex min-h-32 items-center justify-center p-4",
-            fixedRatio && "absolute inset-0",
+            'bg-muted/50 flex min-h-32 items-center justify-center p-4',
+            fixedRatio && 'absolute inset-0',
           )}
         >
           <ImageOffIcon className="text-muted-foreground size-8" />
@@ -276,23 +276,23 @@ function ImagePreview({
         <img
           ref={imgRef}
           src={src}
-          alt={alt ?? t("alt")}
+          alt={alt ?? t('alt')}
           className={cn(
             fixedRatio
-              ? cn("block h-full w-full", {
-                  "object-cover": fit === "cover",
-                  "object-contain": fit === "contain",
+              ? cn('block h-full w-full', {
+                  'object-cover': fit === 'cover',
+                  'object-contain': fit === 'contain',
                 })
-              : "block h-auto w-full object-contain",
-            !loaded && "invisible",
+              : 'block h-auto w-full object-contain',
+            !loaded && 'invisible',
             className,
           )}
           onLoad={(e) => {
-            if (typeof src === "string") setLoadedSrc(src);
+            if (typeof src === 'string') setLoadedSrc(src);
             onLoad?.(e);
           }}
           onError={(e) => {
-            if (typeof src === "string") setErrorSrc(src);
+            if (typeof src === 'string') setErrorSrc(src);
             onError?.(e);
           }}
           {...props}
@@ -306,7 +306,7 @@ export type ImageSourceProps = {
   label?: string | undefined;
   url?: string | undefined;
   iconUrl?: string | undefined;
-} & React.ComponentProps<"div">;
+} & React.ComponentProps<'div'>;
 
 function ImageSource({
   className,
@@ -315,7 +315,7 @@ function ImageSource({
   iconUrl,
   ...props
 }: ImageSourceProps) {
-  const t = useTranslations("chat");
+  const t = useTranslations('chat');
   const href = safeHref(url);
   const host = hostOf(url);
   const displayLabel = label || host;
@@ -329,7 +329,7 @@ function ImageSource({
     <div
       data-slot="image-source"
       className={cn(
-        "text-muted-foreground flex items-center gap-2 border-t px-2 py-1.5 text-xs",
+        'text-muted-foreground flex items-center gap-2 border-t px-2 py-1.5 text-xs',
         className,
       )}
       {...props}
@@ -360,7 +360,7 @@ function ImageSource({
           className="hover:text-foreground truncate"
         >
           {displayLabel}
-          <span className="sr-only"> {t("newTab")}</span>
+          <span className="sr-only"> {t('newTab')}</span>
         </a>
       ) : (
         <span data-slot="image-source-label" className="truncate">
@@ -375,14 +375,14 @@ function ImageFilename({
   className,
   children,
   ...props
-}: React.ComponentProps<"span">) {
+}: React.ComponentProps<'span'>) {
   if (!children) return null;
 
   return (
     <span
       data-slot="image-filename"
       className={cn(
-        "text-muted-foreground block truncate px-2 py-1.5 text-xs",
+        'text-muted-foreground block truncate px-2 py-1.5 text-xs',
         className,
       )}
       {...props}
@@ -398,7 +398,7 @@ type ImageZoomProps = PropsWithChildren<{
 }>;
 
 function ImageZoom({ src, alt, children }: ImageZoomProps) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -413,11 +413,11 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === 'Escape') {
         handleClose();
         return;
       }
-      if (e.key !== "Tab") return;
+      if (e.key !== 'Tab') return;
       const focusables = overlayRef.current?.querySelectorAll<HTMLElement>(
         'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
       );
@@ -432,14 +432,14 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
         first.focus();
       }
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, handleClose]);
 
   useEffect(() => {
     if (!isOpen) return;
     const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = originalOverflow;
     };
@@ -455,20 +455,20 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
         ref={triggerRef}
         onClick={handleOpen}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (e.key === 'Enter') {
             e.preventDefault();
             e.currentTarget.click();
-          } else if (e.key === " ") {
+          } else if (e.key === ' ') {
             e.preventDefault();
           }
         }}
         onKeyUp={(e) => {
-          if (e.key === " ") e.currentTarget.click();
+          if (e.key === ' ') e.currentTarget.click();
         }}
         role="button"
         tabIndex={0}
         className="aui-image-zoom-trigger cursor-zoom-in"
-        aria-label={t("zoom")}
+        aria-label={t('zoom')}
       >
         {children}
       </div>
@@ -481,12 +481,12 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
             aria-modal="true"
             className="aui-image-zoom-overlay fade-in animate-in fixed inset-0 z-50 flex items-center justify-center bg-black/80 duration-200 motion-reduce:animate-none"
             onClick={handleClose}
-            aria-label={t("zoomed")}
+            aria-label={t('zoomed')}
           >
             <img
               data-slot="image-zoom-content"
               src={src}
-              alt={alt ?? t("zoomAlt")}
+              alt={alt ?? t('zoomAlt')}
               className="aui-image-zoom-content fade-in zoom-in-95 animate-in max-h-[90%] max-w-[90%] cursor-zoom-out object-contain duration-200 motion-reduce:animate-none"
               onClick={(e) => {
                 e.stopPropagation();
@@ -496,7 +496,7 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
             <button
               ref={closeRef}
               type="button"
-              aria-label={t("closeZoom")}
+              aria-label={t('closeZoom')}
               onClick={(e) => {
                 e.stopPropagation();
                 handleClose();
@@ -513,17 +513,17 @@ function ImageZoom({ src, alt, children }: ImageZoomProps) {
 }
 
 function ImageGenerating({ className }: { className?: string }) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   return (
     <div
       data-slot="image-generating"
       className={cn(
-        "bg-muted/50 flex min-h-32 items-center justify-center p-4",
+        'bg-muted/50 flex min-h-32 items-center justify-center p-4',
         className,
       )}
     >
       <Loader2Icon className="text-muted-foreground size-8 animate-spin motion-reduce:animate-none" />
-      <span className="sr-only">{t("generating")}</span>
+      <span className="sr-only">{t('generating')}</span>
     </div>
   );
 }
@@ -535,17 +535,17 @@ function ImageContentFilterError({
   className?: string;
   reason?: string;
 }) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   return (
     <div
       data-slot="image-content-filter-error"
       className={cn(
-        "bg-muted/50 flex min-h-32 flex-col items-center justify-center gap-2 p-4 text-center",
+        'bg-muted/50 flex min-h-32 flex-col items-center justify-center gap-2 p-4 text-center',
         className,
       )}
     >
       <ShieldAlertIcon className="text-muted-foreground size-8" />
-      <p className="text-sm font-medium">{t("generateFailed")}</p>
+      <p className="text-sm font-medium">{t('generateFailed')}</p>
       {reason && <p className="text-muted-foreground text-xs">{reason}</p>}
     </div>
   );
@@ -566,7 +566,7 @@ function RegenerateButton({
 }: {
   onRegenerate: () => void | Promise<void>;
 }) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   const [isRegenerating, setIsRegenerating] = useState(false);
   return (
     <button
@@ -582,28 +582,31 @@ function RegenerateButton({
       }}
       disabled={isRegenerating}
       data-slot="image-regenerate"
-      aria-label={t("regenerate")}
+      aria-label={t('regenerate')}
       className="hover:bg-muted inline-flex size-7 items-center justify-center rounded disabled:opacity-50"
     >
       <RefreshCwIcon
-        className={cn("size-4", isRegenerating && "animate-spin motion-reduce:animate-none")}
+        className={cn(
+          'size-4',
+          isRegenerating && 'animate-spin motion-reduce:animate-none',
+        )}
       />
     </button>
   );
 }
 
 function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
   return (
     <div
       data-slot="image-actions"
-      className={cn("flex items-center gap-1 p-1", className)}
+      className={cn('flex items-center gap-1 p-1', className)}
     >
       <button
         type="button"
         onClick={() => downloadImagePart(part)}
         data-slot="image-download"
-        aria-label={t("download")}
+        aria-label={t('download')}
         className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
       >
         <DownloadIcon className="size-4" />
@@ -614,7 +617,7 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
           copyImagePart(part).catch(() => {});
         }}
         data-slot="image-copy"
-        aria-label={t("copy")}
+        aria-label={t('copy')}
         className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
       >
         <CopyIcon className="size-4" />
@@ -626,9 +629,9 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
 
 const ImageImpl: ImageMessagePartComponent = (props) => {
   const { image, filename, status } = props;
-  const t = useTranslations("chat.image");
+  const t = useTranslations('chat.image');
 
-  if (status?.type === "running") {
+  if (status?.type === 'running') {
     return (
       <ImageRoot>
         <ImageGenerating />
@@ -637,18 +640,18 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
     );
   }
 
-  if (status?.type === "incomplete" && status.reason === "content-filter") {
+  if (status?.type === 'incomplete' && status.reason === 'content-filter') {
     return (
       <ImageRoot>
-        <ImageContentFilterError reason={t("blocked")} />
+        <ImageContentFilterError reason={t('blocked')} />
       </ImageRoot>
     );
   }
 
   return (
     <ImageRoot>
-      <ImageZoom src={image} alt={filename || t("alt")}>
-        <ImagePreview src={image} alt={filename || t("alt")} />
+      <ImageZoom src={image} alt={filename || t('alt')}>
+        <ImagePreview src={image} alt={filename || t('alt')} />
       </ImageZoom>
       <ImageFilename>{filename}</ImageFilename>
     </ImageRoot>
@@ -666,7 +669,7 @@ const Image = memo(ImageImpl) as unknown as ImageMessagePartComponent & {
   ContentFilterError: typeof ImageContentFilterError;
 };
 
-Image.displayName = "Image";
+Image.displayName = 'Image';
 Image.Root = ImageRoot;
 Image.Preview = ImagePreview;
 Image.Source = ImageSource;

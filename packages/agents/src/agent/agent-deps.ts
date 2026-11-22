@@ -35,25 +35,33 @@ export class AgentDeps {
     @Inject(Db) readonly db: Db,
     /** The session of the agent, made from its snapshot and read back; `sessionRows` — its other reads and writes. */
     @Inject(Sessions) readonly sessions: Sessions,
-    @Inject(AgentSessionsRepository) readonly sessionRows: AgentSessionsRepository,
+    @Inject(AgentSessionsRepository)
+    readonly sessionRows: AgentSessionsRepository,
     /** The session's history as entries; `messageRows` — the reads that give no entry. */
     @Inject(History) readonly history: History,
-    @Inject(AgentMessagesRepository) readonly messageRows: AgentMessagesRepository,
+    @Inject(AgentMessagesRepository)
+    readonly messageRows: AgentMessagesRepository,
     /** The closings of the step's calls. */
     @Inject(CallRecords) readonly callRecords: CallRecords,
     /** The full result of a direct MCP call, written with its closing. */
-    @Inject(AgentToolResultsRepository) readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(AgentToolResultsRepository)
+    readonly toolResultRows: AgentToolResultsRepository,
     /** The session's task list, read for the task block of every model call. */
-    @Inject(AgentSessionTasksRepository) readonly sessionTaskRows: AgentSessionTasksRepository,
+    @Inject(AgentSessionTasksRepository)
+    readonly sessionTaskRows: AgentSessionTasksRepository,
     /** The graph, its settings, the question row and the registry of a session that learns (self-learning KD-6). */
-    @Inject(AgentKnowledgeRepository) readonly knowledgeRows: AgentKnowledgeRepository,
-    @Inject(AgentKnowledgeRunsRepository) readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
-    @Inject(AgentMcpServersRepository) readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentKnowledgeRepository)
+    readonly knowledgeRows: AgentKnowledgeRepository,
+    @Inject(AgentKnowledgeRunsRepository)
+    readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
+    @Inject(AgentMcpServersRepository)
+    readonly mcpServerRows: AgentMcpServersRepository,
     /**
      * The tools library: the session's tools for the task's owner and the agent's declaration — for the model call
      * and for the check of its calls; `toolOf` keeps the log rule of a tool the session was not offered.
      */
-    @Inject(ToolRegistry) readonly registry: Pick<ToolRegistry, 'toolsFor' | 'checkTools' | 'toolOf'>,
+    @Inject(ToolRegistry)
+    readonly registry: Pick<ToolRegistry, 'toolsFor' | 'checkTools' | 'toolOf'>,
     @Inject(ToolRunner) readonly runner: ToolRunner,
     /** Asked once per tool step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
     @Inject(ACCESS_GATE) readonly access: Pick<AccessGate, 'tools'>,
@@ -68,9 +76,11 @@ export class AgentDeps {
     /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
     @Inject(Inbox) readonly inbox: Pick<Inbox, 'listPending'>,
     /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
-    @Inject(AgentKnowledgeVectorsRepository) readonly vectorStore: KnowledgeVectorStore,
+    @Inject(AgentKnowledgeVectorsRepository)
+    readonly vectorStore: KnowledgeVectorStore,
     /** The question vector of a session that learns (self-learning KD-6); the only caller in a run. */
-    @Inject(AgentsEmbeddings) readonly embeddings: Pick<AgentsEmbeddings, 'embed'>,
+    @Inject(AgentsEmbeddings)
+    readonly embeddings: Pick<AgentsEmbeddings, 'embed'>,
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'compactAtTokens'>,
   ) {
     this.compactAtTokens = config.compactAtTokens;

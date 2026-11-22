@@ -19,7 +19,8 @@ export interface FinishedMcpCall<O extends ToolOutcome> {
 
 /** `finished_at` within the window, for either table of calls. */
 export function finishedIn(
-  finishedAt: typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
+  finishedAt:
+    typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
   window: FinishedWindow,
 ): SQL | undefined {
   return and(

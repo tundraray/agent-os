@@ -2,7 +2,13 @@
 
 import { useFormatter, useTranslations } from 'next-intl';
 import type { Grant } from '@agent-os/contracts';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { quotaRules, quotaUsdOf } from '@/lib/admin/form-rules';
 import { grantTargetText } from '@/lib/admin/grants';
@@ -11,7 +17,9 @@ import { AdminForm, AdminTextField } from '../admin-form';
 
 /** The quota as the field shows it: the dollars the admin set, the page's decimal mark, no grouping; none → empty. */
 const quotaText = (format: Formatter, quotaUsd: number | null): string =>
-  quotaUsd === null ? '' : format.number(quotaUsd, { useGrouping: false, maximumFractionDigits: 2 });
+  quotaUsd === null
+    ? ''
+    : format.number(quotaUsd, { useGrouping: false, maximumFractionDigits: 2 });
 
 type QuotaDialogProps = {
   open: boolean;
@@ -23,7 +31,12 @@ type QuotaDialogProps = {
 };
 
 /** DC-14: «Изменить квоту» of a model allow — the same field as GR-01; empty removes the quota. */
-export function QuotaDialog({ open, onOpenChange, grant, onSaved }: QuotaDialogProps) {
+export function QuotaDialog({
+  open,
+  onOpenChange,
+  grant,
+  onSaved,
+}: QuotaDialogProps) {
   const t = useTranslations('admin.grants');
   const format = useFormatter();
   return (
@@ -31,7 +44,11 @@ export function QuotaDialog({ open, onOpenChange, grant, onSaved }: QuotaDialogP
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('changeQuota')}</DialogTitle>
-          {grant !== null && <DialogDescription>{grantTargetText(grant.target)}</DialogDescription>}
+          {grant !== null && (
+            <DialogDescription>
+              {grantTargetText(grant.target)}
+            </DialogDescription>
+          )}
         </DialogHeader>
         {grant !== null && (
           <AdminForm

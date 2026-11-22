@@ -4,7 +4,13 @@ import { useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { PasswordField } from '@/components/password-field';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { accountRules, type AccountValues } from '@/lib/admin/form-rules';
 import { AdminForm, AdminTextField } from '../admin-form';
@@ -22,19 +28,34 @@ type AccountDialogProps = {
  * UXRD AD-16: a local account with its starting password. The form mounts with the dialog's content, so the
  * password lives only in the open dialog's state and is gone once it closes (Invariant 3).
  */
-export function AccountDialog({ open, onOpenChange, onCreated }: AccountDialogProps) {
+export function AccountDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: AccountDialogProps) {
   const t = useTranslations('admin.users.account');
   const createdLogin = useRef<string | null>(null);
 
-  const submit = async ({ login, name, email, password }: AccountValues): Promise<void> => {
-    const user = await adminApi.users.create({ login: login.trim(), name: name.trim(), email: email.trim(), password });
+  const submit = async ({
+    login,
+    name,
+    email,
+    password,
+  }: AccountValues): Promise<void> => {
+    const user = await adminApi.users.create({
+      login: login.trim(),
+      name: name.trim(),
+      email: email.trim(),
+      password,
+    });
     createdLogin.current = user.login ?? login.trim();
   };
 
   const created = (): void => {
     onOpenChange(false);
     // DC-4: the notice names the login only, never the password.
-    if (createdLogin.current !== null) toast.success(t('created', { login: createdLogin.current }));
+    if (createdLogin.current !== null)
+      toast.success(t('created', { login: createdLogin.current }));
     createdLogin.current = null;
     onCreated();
   };

@@ -32,8 +32,12 @@ function Harness({ onConfirm = vi.fn() }: HarnessProps) {
 async function openDialog(props: HarnessProps = {}) {
   const user = userEvent.setup();
   render(<Harness {...props} />);
-  await user.click(screen.getByRole('button', { name: 'Действия с беседой «Отчёт Q3»' }));
-  const dialog = await screen.findByRole('alertdialog', { name: 'Удалить беседу?' });
+  await user.click(
+    screen.getByRole('button', { name: 'Действия с беседой «Отчёт Q3»' }),
+  );
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Удалить беседу?',
+  });
   return { user, dialog };
 }
 
@@ -44,8 +48,16 @@ describe('DeleteThreadDialog — DLG-01 (AC-06.1)', () => {
     expect(dialog).toHaveAccessibleDescription(
       'Беседа «Отчёт Q3» и все её сообщения будут удалены. Это действие нельзя отменить.',
     );
-    expect(within(dialog).getAllByRole('button').map((button) => button.textContent)).toEqual(['Отмена', 'Удалить']);
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Отмена' })).toHaveFocus());
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Отмена', 'Удалить']);
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Отмена' }),
+      ).toHaveFocus(),
+    );
   });
 
   it('«Удалить» confirms once and closes the dialog at once', async () => {
@@ -66,6 +78,10 @@ describe('DeleteThreadDialog — DLG-01 (AC-06.1)', () => {
 
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(onConfirm).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Действия с беседой «Отчёт Q3»' })).toHaveFocus());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Действия с беседой «Отчёт Q3»' }),
+      ).toHaveFocus(),
+    );
   });
 });

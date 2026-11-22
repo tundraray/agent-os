@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { LibraryDoubleRecord, ScriptedToolCall } from '@agent-os/agents/testing';
+import type {
+  LibraryDoubleRecord,
+  ScriptedToolCall,
+} from '@agent-os/agents/testing';
 import type { DeepAgentContent, KnowledgeView } from '@agent-os/contracts';
 import {
   agentKnowledgeEntities,
@@ -18,14 +21,24 @@ import {
 import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { waitFor } from '@agent-os/db/testing';
-import { type KnowledgeRun, knowledgeRunOf } from '../../src/knowledge/knowledge-runs';
+import {
+  type KnowledgeRun,
+  knowledgeRunOf,
+} from '../../src/knowledge/knowledge-runs';
 import {
   KNOWLEDGE_EMBED_TASK_TYPE,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
 } from '../../src/knowledge/knowledge-tasks';
 import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations';
-import type { KnowledgeVector, KnowledgeVectorStore } from '../../src/knowledge/vector-store';
-import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT } from './agentsHarness';
+import type {
+  KnowledgeVector,
+  KnowledgeVectorStore,
+} from '../../src/knowledge/vector-store';
+import {
+  type AgentsHarness,
+  TEST_AUTHOR_ID,
+  TEST_MODEL_DEFAULT,
+} from './agentsHarness';
 
 /**
  * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.library_records` row the
@@ -33,15 +46,19 @@ import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT } from './agents
  * the background work, and the reads the cases assert on. The reads are the queries of the `@agent-os/db`
  * repositories and the store the package itself uses, so a case has one import place.
  */
-const knowledgeRows = (db: Database) => new AgentKnowledgeRepository(new Db(db));
-const knowledgeRunRows = (db: Database) => new AgentKnowledgeRunsRepository(new Db(db));
+const knowledgeRows = (db: Database) =>
+  new AgentKnowledgeRepository(new Db(db));
+const knowledgeRunRows = (db: Database) =>
+  new AgentKnowledgeRunsRepository(new Db(db));
 
-export const readGraph = (db: Database, recordId: string) => knowledgeRows(db).readGraph(recordId);
+export const readGraph = (db: Database, recordId: string) =>
+  knowledgeRows(db).readGraph(recordId);
 export const findRunById = async (db: Database, runId: string) =>
   knowledgeRunOf(await knowledgeRunRows(db).findRunById(runId));
 export const findEmbeddingRow = (db: Database, recordId: string) =>
   knowledgeRunRows(db).findEmbeddingRow(recordId);
-export const readQuestion = (db: Database, taskId: string) => knowledgeRunRows(db).readQuestion(taskId);
+export const readQuestion = (db: Database, taskId: string) =>
+  knowledgeRunRows(db).readQuestion(taskId);
 export const createPgvectorStore = (db: Database): KnowledgeVectorStore =>
   new AgentKnowledgeVectorsRepository(new Db(db));
 
@@ -49,7 +66,9 @@ export const createPgvectorStore = (db: Database): KnowledgeVectorStore =>
 export const KNOWLEDGE_EXTRACT_AGENT = 'knowledge-extract';
 
 /** The extraction answer's tool call with these operations (`record_knowledge`). */
-export function recordKnowledge(operations: readonly unknown[]): ScriptedToolCall {
+export function recordKnowledge(
+  operations: readonly unknown[],
+): ScriptedToolCall {
   return { tool: RECORD_KNOWLEDGE_TOOL, args: { operations } };
 }
 
@@ -112,7 +131,9 @@ export async function withLibraryRow<T>(
         UNION
         SELECT task.task_id FROM app.runtime_tasks task JOIN tree ON task.parent_id = tree.task_id)
       DELETE FROM app.agent_knowledge_questions WHERE task_id IN (SELECT task_id FROM tree)`);
-    await db.delete(agentKnowledgeRuns).where(eq(agentKnowledgeRuns.recordId, recordId));
+    await db
+      .delete(agentKnowledgeRuns)
+      .where(eq(agentKnowledgeRuns.recordId, recordId));
     await db.delete(libraryRecords).where(eq(libraryRecords.id, recordId));
   }
 }
@@ -127,7 +148,8 @@ export async function withKnowledgeLimit<T>(
   body: () => Promise<T>,
 ): Promise<T> {
   const [before] = await db.select().from(agentKnowledgeSettings);
-  if (before === undefined) throw new Error('The knowledge settings row is missing');
+  if (before === undefined)
+    throw new Error('The knowledge settings row is missing');
   await db.update(agentKnowledgeSettings).set({ limitTokens });
   try {
     return await body();
@@ -157,8 +179,18 @@ interface SeedStanding {
 /** A graph record to seed; a fact names its ends by the `ref` of seeded entities. */
 export type SeedItem = SeedStanding &
   (
-    | { readonly kind: 'entity'; readonly ref: string; readonly name: string; readonly description: string }
-    | { readonly kind: 'fact'; readonly from: string; readonly to: string; readonly label: string }
+    | {
+        readonly kind: 'entity';
+        readonly ref: string;
+        readonly name: string;
+        readonly description: string;
+      }
+    | {
+        readonly kind: 'fact';
+        readonly from: string;
+        readonly to: string;
+        readonly label: string;
+      }
     | {
         readonly kind: 'lesson';
         readonly server: string;
@@ -198,7 +230,9 @@ export async function seedGraph(
     outdated: item.outdated ?? false,
     sourceRunId: runId,
     confirmedByRunId: runId,
-    ...(item.confirmedAt === undefined ? {} : { createdAt: item.confirmedAt, confirmedAt: item.confirmedAt }),
+    ...(item.confirmedAt === undefined
+      ? {}
+      : { createdAt: item.confirmedAt, confirmedAt: item.confirmedAt }),
   });
   const seeded = new Map<SeedItem, SeededItem>();
   const entityIds = new Map<string, number>();
@@ -206,7 +240,11 @@ export async function seedGraph(
     if (item.kind !== 'entity') continue;
     const [row] = await db
       .insert(agentKnowledgeEntities)
-      .values({ ...standing(item), name: item.name, description: item.description })
+      .values({
+        ...standing(item),
+        name: item.name,
+        description: item.description,
+      })
       .returning({ id: agentKnowledgeEntities.id });
     if (row === undefined) throw new Error(`Entity ${item.ref} was not seeded`);
     entityIds.set(item.ref, row.id);
@@ -221,7 +259,12 @@ export async function seedGraph(
     if (item.kind === 'entity') continue;
     const shape =
       item.kind === 'fact'
-        ? { kind: item.kind, fromEntityId: entityId(item.from), toEntityId: entityId(item.to), label: item.label }
+        ? {
+            kind: item.kind,
+            fromEntityId: entityId(item.from),
+            toEntityId: entityId(item.to),
+            label: item.label,
+          }
         : item.kind === 'lesson'
           ? {
               kind: item.kind,
@@ -231,12 +274,18 @@ export async function seedGraph(
               hint: item.hint,
               outcome: item.outcome,
             }
-          : { kind: item.kind, server: item.server, tool: item.tool, question: item.question };
+          : {
+              kind: item.kind,
+              server: item.server,
+              tool: item.tool,
+              question: item.question,
+            };
     const [row] = await db
       .insert(agentKnowledgeRelations)
       .values({ ...standing(item), ...shape })
       .returning({ id: agentKnowledgeRelations.id });
-    if (row === undefined) throw new Error(`Relation ${item.kind} was not seeded`);
+    if (row === undefined)
+      throw new Error(`Relation ${item.kind} was not seeded`);
     seeded.set(item, { id: row.id, key: `r${row.id}` });
   }
   const result: SeededItem[] = [];
@@ -247,9 +296,15 @@ export async function seedGraph(
     result.push(done);
     if (item.vector === undefined) continue;
     const kind = item.kind === 'entity' ? 'entity' : 'relation';
-    vectors.push({ key: done.key, kind, model: item.vector.model, vector: item.vector.values });
+    vectors.push({
+      key: done.key,
+      kind,
+      model: item.vector.model,
+      vector: item.vector.values,
+    });
   }
-  if (vectors.length > 0) await createPgvectorStore(db).upsert(recordId, vectors);
+  if (vectors.length > 0)
+    await createPgvectorStore(db).upsert(recordId, vectors);
   return result;
 }
 
@@ -262,7 +317,8 @@ export function vectorsByTopic(
   topics: readonly (readonly [marker: string, vector: readonly number[]])[],
   otherwise: readonly number[],
 ): (text: string) => readonly number[] {
-  return (text) => topics.find(([marker]) => text.includes(marker))?.[1] ?? otherwise;
+  return (text) =>
+    topics.find(([marker]) => text.includes(marker))?.[1] ?? otherwise;
 }
 
 /**
@@ -270,7 +326,11 @@ export function vectorsByTopic(
  * written after `after` (any outcome when `null`: the first round, or the `stopped` the trigger writes), and
  * returns the run row: `lastStatus`, `lastReason`, counts, `lastModel`, `extractedUpTo`, `lastExtractTaskId`.
  */
-export function waitForRound(db: Database, runId: string, after: Date | null = null): Promise<KnowledgeRun> {
+export function waitForRound(
+  db: Database,
+  runId: string,
+  after: Date | null = null,
+): Promise<KnowledgeRun> {
   return waitFor(
     () => findRunById(db, runId),
     (run) =>
@@ -322,7 +382,8 @@ export async function knowledgeTasksOf(
   db: Database,
   of: { readonly runId: string } | { readonly recordId: string },
 ): Promise<KnowledgeTask[]> {
-  const type = 'runId' in of ? KNOWLEDGE_EXTRACT_TASK_TYPE : KNOWLEDGE_EMBED_TASK_TYPE;
+  const type =
+    'runId' in of ? KNOWLEDGE_EXTRACT_TASK_TYPE : KNOWLEDGE_EMBED_TASK_TYPE;
   return db
     .select({
       taskId: runtimeTasks.taskId,
@@ -333,7 +394,10 @@ export async function knowledgeTasksOf(
     })
     .from(runtimeTasks)
     .where(
-      and(eq(runtimeTasks.type, type), sql`${runtimeTasks.input} @> ${JSON.stringify(of)}::jsonb`),
+      and(
+        eq(runtimeTasks.type, type),
+        sql`${runtimeTasks.input} @> ${JSON.stringify(of)}::jsonb`,
+      ),
     )
     .orderBy(asc(runtimeTasks.createdSeq));
 }
@@ -344,5 +408,9 @@ export function knowledgeView(
   recordId: string,
   servers: readonly string[],
 ): Promise<KnowledgeView> {
-  return harness.agents.knowledge.view({ recordId, selfLearning: true, servers });
+  return harness.agents.knowledge.view({
+    recordId,
+    selfLearning: true,
+    servers,
+  });
 }

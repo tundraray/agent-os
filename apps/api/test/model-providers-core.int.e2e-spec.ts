@@ -1015,7 +1015,11 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const monthSpend = async (session: Session) =>
         (await chatApi(app, session).spend()).costUsd;
       /** One ledger row of an embedding batch on the case's model: input tokens only, at 1 USD per million. */
-      const batchRow = (ownerId: string, inputTokens: number, costUsd: number) => ({
+      const batchRow = (
+        ownerId: string,
+        inputTokens: number,
+        costUsd: number,
+      ) => ({
         ownerId,
         taskId: null,
         model: INT5_EMBEDDING_MODEL,
@@ -1119,9 +1123,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       expect(requestsSince(requestsBeforeC)).toEqual([
         [INT5_EMBEDDING_MODEL, 3, 4],
       ]);
-      expect(
-        await ledgerRows(PLATFORM_OWNER_ID, INT5_EMBEDDING_MODEL),
-      ).toEqual([batchRow('platform', 30, 0.00003)]);
+      expect(await ledgerRows(PLATFORM_OWNER_ID, INT5_EMBEDDING_MODEL)).toEqual(
+        [batchRow('platform', 30, 0.00003)],
+      );
       // And: no employee's month changed - Аня's nor Борис's
       expect([await monthSpend(anya), await monthSpend(boris)]).toEqual(
         monthsBeforeC,
@@ -1363,12 +1367,14 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
           `the brief of "${text}"`,
         );
         const brief = view.decisions.find(isOpenBrief);
-        if (brief === undefined) throw new Error(`INT-7: no brief for "${text}"`);
+        if (brief === undefined)
+          throw new Error(`INT-7: no brief for "${text}"`);
         await veraApi.decide(brief.decisionId, { approve: true });
       };
 
       // Row 1 - When: Вера's chat (the built-in `chat` record on `null`) starts her deep agent; its first call is held
-      const firstText = 'INT-7 row 1: Вера запускает глубокого агента без своей модели';
+      const firstText =
+        'INT-7 row 1: Вера запускает глубокого агента без своей модели';
       const firstQuestion = 'INT-7 row 1: вопрос первого запуска';
       const subagentTask = 'INT-7 row 2: задача сабагента после смены';
       const latch = createLatch();

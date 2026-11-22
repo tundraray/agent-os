@@ -1,7 +1,24 @@
-import { blockSeed, mulberry32, randomHex, randomInt, type Random } from './prng';
-import { DATASET_PARAMS, snapshotOf, type DatasetParams, type DatasetVersion } from './versions';
+import {
+  blockSeed,
+  mulberry32,
+  randomHex,
+  randomInt,
+  type Random,
+} from './prng';
+import {
+  DATASET_PARAMS,
+  snapshotOf,
+  type DatasetParams,
+  type DatasetVersion,
+} from './versions';
 
-export const LOG_SERVICES = ['checkout-web', 'payment-api', 'provider-adapter', 'fraud-check', 'ledger'] as const;
+export const LOG_SERVICES = [
+  'checkout-web',
+  'payment-api',
+  'provider-adapter',
+  'fraud-check',
+  'ledger',
+] as const;
 type LogService = (typeof LOG_SERVICES)[number];
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
@@ -97,16 +114,28 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
   const params = DATASET_PARAMS[version];
   const releaseMs = Date.parse(params.releaseAt);
   const { beforeRelease, afterRelease } = params.providerTimeoutMs;
-  const timeoutAt: TimeoutAt = (requestMs) => (requestMs >= releaseMs ? afterRelease : beforeRelease);
+  const timeoutAt: TimeoutAt = (requestMs) =>
+    requestMs >= releaseMs ? afterRelease : beforeRelease;
   const layouts = blockLayouts(params);
-  const blockCount = layouts.reduce((sum, layout) => sum + layout.blockCount, 0);
+  const blockCount = layouts.reduce(
+    (sum, layout) => sum + layout.blockCount,
+    0,
+  );
   const recordCount = blockCount * params.recordsPerBlock;
   let cached: ({ blockIndex: number } & GeneratedBlock) | undefined;
   let traceIndex: Map<string, number> | undefined;
 
   function generated(blockIndex: number): GeneratedBlock {
     if (cached?.blockIndex !== blockIndex) {
-      cached = { blockIndex, ...generateBlock(params, layoutOf(layouts, blockIndex), blockIndex, timeoutAt) };
+      cached = {
+        blockIndex,
+        ...generateBlock(
+          params,
+          layoutOf(layouts, blockIndex),
+          blockIndex,
+          timeoutAt,
+        ),
+      };
     }
     return cached;
   }
@@ -117,16 +146,22 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
 
   function orderAt(index: number): PaymentOrder {
     if (!Number.isInteger(index) || index < 0 || index >= blockCount) {
-      throw new RangeError(`order index ${index} is outside [0, ${blockCount})`);
+      throw new RangeError(
+        `order index ${index} is outside [0, ${blockCount})`,
+      );
     }
     return generated(index).order;
   }
 
   function recordAt(index: number): LogRecord {
     if (!Number.isInteger(index) || index < 0 || index >= recordCount) {
-      throw new RangeError(`record index ${index} is outside [0, ${recordCount})`);
+      throw new RangeError(
+        `record index ${index} is outside [0, ${recordCount})`,
+      );
     }
-    return block(Math.floor(index / params.recordsPerBlock))[index % params.recordsPerBlock];
+    return block(Math.floor(index / params.recordsPerBlock))[
+      index % params.recordsPerBlock
+    ];
   }
 
   function firstIndexAtOrAfter(timeMs: number): number {
@@ -146,7 +181,9 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
   function traceRecords(traceId: string): LogRecord[] {
     traceIndex ??= buildTraceIndex(blockCount, block);
     const blockIndex = traceIndex.get(traceId);
-    return blockIndex === undefined ? [] : block(blockIndex).filter((record) => record.traceId === traceId);
+    return blockIndex === undefined
+      ? []
+      : block(blockIndex).filter((record) => record.traceId === traceId);
   }
 
   return {
@@ -156,7 +193,10 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
     recordAt,
     indexRange: (from, to) => {
       const start = firstIndexAtOrAfter(Date.parse(from));
-      return { start, end: Math.max(start, firstIndexAtOrAfter(Date.parse(to))) };
+      return {
+        start,
+        end: Math.max(start, firstIndexAtOrAfter(Date.parse(to))),
+      };
     },
     traceRecords,
     orderCount: blockCount,
@@ -168,13 +208,17 @@ function blockLayouts(params: DatasetParams): BlockLayout[] {
   let firstBlock = 0;
   return params.segments.map((segment) => {
     if (segment.records % params.recordsPerBlock !== 0) {
-      throw new Error(`segment ${segment.start}: ${segment.records} records do not fill whole blocks`);
+      throw new Error(
+        `segment ${segment.start}: ${segment.records} records do not fill whole blocks`,
+      );
     }
     const startMs = Date.parse(segment.start);
     const blockCount = segment.records / params.recordsPerBlock;
     const blockSpanMs = (Date.parse(segment.end) - startMs) / blockCount;
     if (blockSpanMs <= MAX_TRACE_SPAN_MS) {
-      throw new Error(`segment ${segment.start}: block span ${blockSpanMs} ms cannot hold a trace`);
+      throw new Error(
+        `segment ${segment.start}: block span ${blockSpanMs} ms cannot hold a trace`,
+      );
     }
     const layout = { firstBlock, blockCount, startMs, blockSpanMs };
     firstBlock += blockCount;
@@ -184,7 +228,9 @@ function blockLayouts(params: DatasetParams): BlockLayout[] {
 
 function layoutOf(layouts: BlockLayout[], blockIndex: number): BlockLayout {
   const layout = layouts.find(
-    (candidate) => blockIndex >= candidate.firstBlock && blockIndex < candidate.firstBlock + candidate.blockCount,
+    (candidate) =>
+      blockIndex >= candidate.firstBlock &&
+      blockIndex < candidate.firstBlock + candidate.blockCount,
   );
   if (layout === undefined) {
     throw new RangeError(`block ${blockIndex} is outside the dataset`);
@@ -192,7 +238,10 @@ function layoutOf(layouts: BlockLayout[], blockIndex: number): BlockLayout {
   return layout;
 }
 
-function buildTraceIndex(blockCount: number, block: (blockIndex: number) => LogRecord[]): Map<string, number> {
+function buildTraceIndex(
+  blockCount: number,
+  block: (blockIndex: number) => LogRecord[],
+): Map<string, number> {
   const index = new Map<string, number>();
   for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
     for (const record of block(blockIndex)) {
@@ -215,12 +264,15 @@ function generateBlock(
 ): GeneratedBlock {
   const context: BlockContext = {
     random: mulberry32(blockSeed(params.seed, blockIndex)),
-    startMs: Math.floor(layout.startMs + (blockIndex - layout.firstBlock) * layout.blockSpanMs),
+    startMs: Math.floor(
+      layout.startMs + (blockIndex - layout.firstBlock) * layout.blockSpanMs,
+    ),
     spanMs: Math.floor(layout.blockSpanMs),
     timeoutAt,
   };
   const { drafts, order } = paymentTrace(context);
-  const at = (offsetMs: number): string => new Date(context.startMs + offsetMs).toISOString();
+  const at = (offsetMs: number): string =>
+    new Date(context.startMs + offsetMs).toISOString();
   while (drafts.length < params.recordsPerBlock) {
     drafts.push(backgroundRecord(context));
   }
@@ -234,7 +286,12 @@ function generateBlock(
   const { submitAt, requestAt, resultAt, ...drawn } = order;
   return {
     records,
-    order: { ...drawn, submittedAt: at(submitAt), requestedAt: at(requestAt), resolvedAt: at(resultAt) },
+    order: {
+      ...drawn,
+      submittedAt: at(submitAt),
+      requestedAt: at(requestAt),
+      resolvedAt: at(resultAt),
+    },
   };
 }
 
@@ -242,7 +299,10 @@ function generateBlock(
  * checkout-web -> payment-api -> provider-adapter -> provider. Each request gets its provider latency and local
  * timeout; a reply slower than the timeout becomes `provider.timeout` + late `provider.response`.
  */
-function paymentTrace(context: BlockContext): { drafts: RecordDraft[]; order: OrderDraft } {
+function paymentTrace(context: BlockContext): {
+  drafts: RecordDraft[];
+  order: OrderDraft;
+} {
   const { random } = context;
   const traceId = randomHex(random, 16);
   const orderId = `ord-${randomHex(random, 4)}`;
@@ -258,7 +318,10 @@ function paymentTrace(context: BlockContext): { drafts: RecordDraft[]; order: Or
   const outcome: PaymentOutcome = timedOut ? 'provider_timeout' : 'ok';
   const failed = outcome !== 'ok';
 
-  const span = (seq: number, draft: Omit<RecordDraft, 'traceId' | 'spanSeq'>): RecordDraft => ({
+  const span = (
+    seq: number,
+    draft: Omit<RecordDraft, 'traceId' | 'spanSeq'>,
+  ): RecordDraft => ({
     ...draft,
     traceId,
     spanSeq: seq,
@@ -339,11 +402,17 @@ function paymentTrace(context: BlockContext): { drafts: RecordDraft[]; order: Or
         : `payment authorized for order ${orderId}`,
     }),
   );
-  return { drafts, order: { orderId, traceId, amount, submitAt, requestAt, resultAt, outcome } };
+  return {
+    drafts,
+    order: { orderId, traceId, amount, submitAt, requestAt, resultAt, outcome },
+  };
 }
 
 /** A payment order before it is placed in time: offsets count from the start of its block. */
-interface OrderDraft extends Omit<PaymentOrder, 'submittedAt' | 'requestedAt' | 'resolvedAt'> {
+interface OrderDraft extends Omit<
+  PaymentOrder,
+  'submittedAt' | 'requestedAt' | 'resolvedAt'
+> {
   submitAt: number;
   requestAt: number;
   resultAt: number;
@@ -351,7 +420,9 @@ interface OrderDraft extends Omit<PaymentOrder, 'submittedAt' | 'requestedAt' | 
 
 /** Shifted exponential, capped so a trace always fits in its block. */
 function providerLatency(random: Random): number {
-  const excess = Math.floor(-Math.log(1 - random()) * PROVIDER_LATENCY_MEAN_EXCESS_MS);
+  const excess = Math.floor(
+    -Math.log(1 - random()) * PROVIDER_LATENCY_MEAN_EXCESS_MS,
+  );
   return Math.min(PROVIDER_LATENCY_MAX_MS, PROVIDER_LATENCY_MIN_MS + excess);
 }
 
@@ -385,7 +456,9 @@ function backgroundRecord(context: BlockContext): RecordDraft {
       event: 'ledger.write',
       status: failed ? 'error' : 'ok',
       durationMs: randomInt(random, 2, 40),
-      message: failed ? 'ledger write failed: row lock not acquired' : `ledger entry written for batch b-${randomHex(random, 3)}`,
+      message: failed
+        ? 'ledger write failed: row lock not acquired'
+        : `ledger entry written for batch b-${randomHex(random, 3)}`,
     };
   }
   return {

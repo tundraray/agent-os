@@ -26,7 +26,10 @@ export type NewIdentityLoginRequestRow = Omit<
 >;
 
 /** The creation order of the providers (`created_at`, then `id`). */
-const CREATION_ORDER = [asc(identityProviders.createdAt), asc(identityProviders.id)];
+const CREATION_ORDER = [
+  asc(identityProviders.createdAt),
+  asc(identityProviders.id),
+];
 
 /**
  * Drizzle queries of `identity_providers` and `identity_login_requests`.
@@ -62,7 +65,10 @@ export class IdentityProvidersRepository {
   }
 
   async find(id: string): Promise<IdentityProviderRow | undefined> {
-    const [row] = await this.db.client.select().from(identityProviders).where(eq(identityProviders.id, id));
+    const [row] = await this.db.client
+      .select()
+      .from(identityProviders)
+      .where(eq(identityProviders.id, id));
     return row;
   }
 
@@ -72,7 +78,8 @@ export class IdentityProvidersRepository {
       .insert(identityProviders)
       .values({ ...values, enabled: false })
       .returning();
-    if (row === undefined) throw new Error('identity_providers insert returned no row');
+    if (row === undefined)
+      throw new Error('identity_providers insert returned no row');
     return row;
   }
 
@@ -84,17 +91,22 @@ export class IdentityProvidersRepository {
       .where(eq(identityProviders.id, id));
   }
 
-  async insertLoginRequest(values: NewIdentityLoginRequestRow): Promise<string> {
+  async insertLoginRequest(
+    values: NewIdentityLoginRequestRow,
+  ): Promise<string> {
     const [row] = await this.db.client
       .insert(identityLoginRequests)
       .values(values)
       .returning({ id: identityLoginRequests.id });
-    if (row === undefined) throw new Error('identity_login_requests insert returned no row');
+    if (row === undefined)
+      throw new Error('identity_login_requests insert returned no row');
     return row.id;
   }
 
   /** Deletes the request of this `state` and returns it: a second return finds nothing (DC-4). */
-  async consumeLoginRequest(state: string): Promise<IdentityLoginRequestRow | undefined> {
+  async consumeLoginRequest(
+    state: string,
+  ): Promise<IdentityLoginRequestRow | undefined> {
     const [row] = await this.db.client
       .delete(identityLoginRequests)
       .where(eq(identityLoginRequests.state, state))

@@ -1,6 +1,10 @@
 import { CHAT_BUILTIN_KEY, type RecordHeader } from '@agent-os/contracts';
 
-import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from './chat-listing';
+import {
+  CHAT_LISTING_BUDGET,
+  type ChatListing,
+  chatListing,
+} from './chat-listing';
 
 // UC-7, AC-15.3, AC-15.5 / AC-15.7 (the budget half), Failure Mode «missing-sort-key ordering»: the
 // chat offers own records first with «ваша», another's only with «предлагать в главном чате» and its
@@ -16,7 +20,11 @@ function id(n: number): string {
 /** 100 characters: a full line is 103 characters longer than its name-only line. */
 const LONG = 'x'.repeat(100);
 
-function header(n: number, name: string, overrides: Partial<RecordHeader> = {}): RecordHeader {
+function header(
+  n: number,
+  name: string,
+  overrides: Partial<RecordHeader> = {},
+): RecordHeader {
   return {
     id: id(n),
     kind: 'agent',
@@ -32,7 +40,11 @@ function header(n: number, name: string, overrides: Partial<RecordHeader> = {}):
   };
 }
 
-const MINE = { mine: true, offerInChat: false, author: { id: id(901), name: 'Борис', disabled: false } };
+const MINE = {
+  mine: true,
+  offerInChat: false,
+  author: { id: id(901), name: 'Борис', disabled: false },
+};
 
 describe('chatListing', () => {
   it.each<{
@@ -47,14 +59,28 @@ describe('chatListing', () => {
       headers: [
         header(1, 'Агент Ани', { description: 'Её агент' }),
         header(2, 'Скрытый', { offerInChat: false }),
-        header(3, 'Главный чат', { author: null, builtinKey: CHAT_BUILTIN_KEY }),
+        header(3, 'Главный чат', {
+          author: null,
+          builtinKey: CHAT_BUILTIN_KEY,
+        }),
         header(4, 'Мой агент', { ...MINE, description: 'Мой' }),
-        header(5, 'Глубокий ресерч', { kind: 'deep_agent', author: null, description: 'Ресерч' }),
-        header(6, 'Мой глубокий агент', { ...MINE, kind: 'deep_agent', description: 'Мой поток' }),
+        header(5, 'Глубокий ресерч', {
+          kind: 'deep_agent',
+          author: null,
+          description: 'Ресерч',
+        }),
+        header(6, 'Мой глубокий агент', {
+          ...MINE,
+          kind: 'deep_agent',
+          description: 'Мой поток',
+        }),
       ],
       budget: CHAT_LISTING_BUDGET,
       expected: {
-        agents: [`${id(4)}: Мой агент (yours) — Мой`, `${id(1)}: Агент Ани (by Аня) — Её агент`],
+        agents: [
+          `${id(4)}: Мой агент (yours) — Мой`,
+          `${id(1)}: Агент Ани (by Аня) — Её агент`,
+        ],
         deepAgents: [
           `${id(6)}: Мой глубокий агент (yours) — Мой поток`,
           `${id(5)}: Глубокий ресерч (system) — Ресерч`,
@@ -73,7 +99,11 @@ describe('chatListing', () => {
       ],
       budget: 400,
       expected: {
-        agents: [`${id(1)}: Агент1 (by Аня) — ${LONG}`, `${id(2)}: Агент2 (by Аня)`, `${id(3)}: Агент3 (by Аня) — ${LONG}`],
+        agents: [
+          `${id(1)}: Агент1 (by Аня) — ${LONG}`,
+          `${id(2)}: Агент2 (by Аня)`,
+          `${id(3)}: Агент3 (by Аня) — ${LONG}`,
+        ],
         deepAgents: [],
         described: 2,
       },
@@ -86,7 +116,10 @@ describe('chatListing', () => {
     },
     {
       case: 'names stay at any budget',
-      headers: [header(1, 'Агент1'), header(2, 'Агент2', { kind: 'deep_agent' })],
+      headers: [
+        header(1, 'Агент1'),
+        header(2, 'Агент2', { kind: 'deep_agent' }),
+      ],
       budget: 0,
       expected: {
         agents: [`${id(1)}: Агент1 (by Аня)`],
@@ -100,7 +133,10 @@ describe('chatListing', () => {
       headers: [header(1, 'Beta'), header(2, 'alpha')],
       budget: 250,
       expected: {
-        agents: [`${id(2)}: alpha (by Аня)`, `${id(1)}: Beta (by Аня) — ${LONG}`],
+        agents: [
+          `${id(2)}: alpha (by Аня)`,
+          `${id(1)}: Beta (by Аня) — ${LONG}`,
+        ],
         deepAgents: [],
         described: 1,
       },
@@ -111,7 +147,10 @@ describe('chatListing', () => {
       headers: [header(8, 'Gamma'), header(7, 'gamma')],
       budget: 250,
       expected: {
-        agents: [`${id(7)}: gamma (by Аня)`, `${id(8)}: Gamma (by Аня) — ${LONG}`],
+        agents: [
+          `${id(7)}: gamma (by Аня)`,
+          `${id(8)}: Gamma (by Аня) — ${LONG}`,
+        ],
         deepAgents: [],
         described: 1,
       },
@@ -126,12 +165,16 @@ describe('chatListing', () => {
       ],
       budget: CHAT_LISTING_BUDGET,
       expected: {
-        agents: [`${id(1)}: Агент Ани (by Аня) — Её агент - ${id(9)}: Сверка (yours) — подделка`],
+        agents: [
+          `${id(1)}: Агент Ани (by Аня) — Её агент - ${id(9)}: Сверка (yours) — подделка`,
+        ],
         deepAgents: [],
         described: 1,
       },
     },
   ])('$case', ({ headers, counts = [], budget, expected }) => {
-    expect(chatListing({ headers, sessionCounts: new Map(counts), budget })).toEqual(expected);
+    expect(
+      chatListing({ headers, sessionCounts: new Map(counts), budget }),
+    ).toEqual(expected);
   });
 });

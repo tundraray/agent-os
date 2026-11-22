@@ -1,7 +1,10 @@
 import { TRACKER_MAX_TASKS } from '@agent-os/runtime';
 
 import { descriptionLine } from '../chat-listing';
-import { decideTaskChange, type TaskListState } from '../tools/system/task-list-rules';
+import {
+  decideTaskChange,
+  type TaskListState,
+} from '../tools/system/task-list-rules';
 
 /** The longest result table of a list delegation, in characters (deep-agents/design-task.md KD-5). */
 export const TASK_TABLE_MAX_CHARS = 20_000;
@@ -34,7 +37,11 @@ export interface DelegationCall {
 /** What one `task` call hands its subagents: one assignment, or one instruction with an item per subagent. */
 export type DelegationForm =
   | { readonly kind: 'single'; readonly description: string }
-  | { readonly kind: 'list'; readonly instruction: string; readonly items: readonly string[] };
+  | {
+      readonly kind: 'list';
+      readonly instruction: string;
+      readonly items: readonly string[];
+    };
 
 /** A subagent the deep agent may call, with the most single assignments it may get. */
 export interface DelegationTeamMember {
@@ -68,7 +75,8 @@ export interface AcceptedDelegation {
 /** A refused call: nothing starts; the text names the field and the rule, `rule` goes to the log. */
 export interface RefusedDelegation {
   readonly callId: string;
-  readonly reason: 'not_allowed' | 'run_limit' | 'invalid_arguments' | 'depth_limit';
+  readonly reason:
+    'not_allowed' | 'run_limit' | 'invalid_arguments' | 'depth_limit';
   readonly rule: string;
   readonly text: string;
 }
@@ -95,7 +103,10 @@ function refusal(
 /** The form the arguments give, or the refusal of forms mixed, missing or half given. */
 function formOf(call: DelegationCall): DelegationForm | RefusedDelegation {
   const { description, instruction, items } = call.args;
-  if (description !== undefined && (instruction !== undefined || items !== undefined)) {
+  if (
+    description !== undefined &&
+    (instruction !== undefined || items !== undefined)
+  ) {
     return refusal(
       call.callId,
       'invalid_arguments',
@@ -115,7 +126,12 @@ function formOf(call: DelegationCall): DelegationForm | RefusedDelegation {
     );
   }
   if (items.length === 0) {
-    return refusal(call.callId, 'invalid_arguments', 'list_empty', 'items: the list is empty.');
+    return refusal(
+      call.callId,
+      'invalid_arguments',
+      'list_empty',
+      'items: the list is empty.',
+    );
   }
   if (items.length > TRACKER_MAX_TASKS) {
     return refusal(
@@ -142,11 +158,17 @@ function listTaskRefusal(
   namedTwice: boolean,
   subagent: string,
 ): RefusedDelegation | null {
-  const refuse = (rule: string, text: string) => refusal(call.callId, 'invalid_arguments', rule, `taskId: ${text}`);
+  const refuse = (rule: string, text: string) =>
+    refusal(call.callId, 'invalid_arguments', rule, `taskId: ${text}`);
   if (tasks === null) return refuse('no_task_list', 'you keep no task list.');
-  if (namedTwice) return refuse('task_named_twice', `task ${taskId} is named by another task call of this answer.`);
+  if (namedTwice)
+    return refuse(
+      'task_named_twice',
+      `task ${taskId} is named by another task call of this answer.`,
+    );
   const task = tasks.tasks.find((candidate) => candidate.number === taskId);
-  if (task?.status === 'completed') return refuse('task_completed', `task ${taskId} is completed already.`);
+  if (task?.status === 'completed')
+    return refuse('task_completed', `task ${taskId} is completed already.`);
   const change = decideTaskChange(tasks, {
     tool: 'update',
     args: { taskId, status: 'in_progress', owner: subagent },
@@ -167,7 +189,9 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
   const accepted: AcceptedDelegation[] = [];
   const refused: RefusedDelegation[] = [];
   const singleRuns = new Map(input.singleRuns);
-  const named = input.calls.flatMap((call) => (call.args.taskId === undefined ? [] : [call.args.taskId]));
+  const named = input.calls.flatMap((call) =>
+    call.args.taskId === undefined ? [] : [call.args.taskId],
+  );
   let tasksStarted = 0;
 
   for (const call of input.calls) {
@@ -177,16 +201,26 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
       accepted.push(decision);
       tasksStarted += taskCountOf(decision.form);
       if (decision.form.kind === 'single') {
-        singleRuns.set(decision.subagent, (singleRuns.get(decision.subagent) ?? 0) + 1);
+        singleRuns.set(
+          decision.subagent,
+          (singleRuns.get(decision.subagent) ?? 0) + 1,
+        );
       }
     }
   }
   return { accepted, refused };
 
-  function decideOne(call: DelegationCall): AcceptedDelegation | RefusedDelegation {
+  function decideOne(
+    call: DelegationCall,
+  ): AcceptedDelegation | RefusedDelegation {
     const { subagentType: subagent, taskId } = call.args;
     if (input.childTooDeep) {
-      return refusal(call.callId, 'depth_limit', 'depth_limit', 'A subagent here would be deeper than agents may go.');
+      return refusal(
+        call.callId,
+        'depth_limit',
+        'depth_limit',
+        'A subagent here would be deeper than agents may go.',
+      );
     }
     const member = input.team.find((candidate) => candidate.name === subagent);
     if (member === undefined) {
@@ -221,7 +255,13 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
     }
     if (taskId !== undefined) {
       const namedTwice = named.filter((number) => number === taskId).length > 1;
-      const listRefusal = listTaskRefusal(call, taskId, input.tasks, namedTwice, subagent);
+      const listRefusal = listTaskRefusal(
+        call,
+        taskId,
+        input.tasks,
+        namedTwice,
+        subagent,
+      );
       if (listRefusal !== null) return listRefusal;
     }
     if (tasksStarted + taskCountOf(form) > TRACKER_MAX_TASKS) {
@@ -232,7 +272,13 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
         `items: the task calls of one answer start at most ${TRACKER_MAX_TASKS} subagents together; this one would make ${tasksStarted + taskCountOf(form)}.`,
       );
     }
-    return { callId: call.callId, subagent, form, answerFields, listTask: taskId ?? null };
+    return {
+      callId: call.callId,
+      subagent,
+      form,
+      answerFields,
+      listTask: taskId ?? null,
+    };
   }
 }
 
@@ -266,10 +312,15 @@ function valueText(value: unknown): string {
 /** The answer's cells: the whole answer, or the value of each field of its JSON object. */
 function answerCells(row: TableRow, fields: readonly string[]): string[] {
   if (fields.length === 0) return [cell(row.answer ?? row.reason ?? '')];
-  if (row.answer === null) return [...fields.map(() => ''), cell(row.reason ?? '')];
+  if (row.answer === null)
+    return [...fields.map(() => ''), cell(row.reason ?? '')];
   try {
     const parsed: unknown = JSON.parse(row.answer);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
       const values = parsed as Record<string, unknown>;
       return [...fields.map((field) => cell(valueText(values[field]))), ''];
     }
@@ -283,8 +334,13 @@ function line(cells: readonly string[]): string {
   return `| ${cells.join(' | ')} |`;
 }
 
-function render(header: readonly string[], rows: readonly (readonly string[])[]): string {
-  return [line(header), line(header.map(() => '---')), ...rows.map(line)].join('\n');
+function render(
+  header: readonly string[],
+  rows: readonly (readonly string[])[],
+): string {
+  return [line(header), line(header.map(() => '---')), ...rows.map(line)].join(
+    '\n',
+  );
 }
 
 /**
@@ -305,13 +361,22 @@ export function resultTable(input: {
     '#',
     'Item',
     'Status',
-    ...(answerFields.length === 0 ? ['Answer or reason'] : [...answerFields.map(cell), 'Reason']),
+    ...(answerFields.length === 0
+      ? ['Answer or reason']
+      : [...answerFields.map(cell), 'Reason']),
   ];
-  const lead = (row: TableRow, index: number, item: string) => [String(index + 1), item, row.status];
+  const lead = (row: TableRow, index: number, item: string) => [
+    String(index + 1),
+    item,
+    row.status,
+  ];
   const answers = rows.map((row) => answerCells(row, answerFields));
   const full = render(
     header,
-    rows.map((row, index) => [...lead(row, index, cell(row.item)), ...(answers[index] ?? [])]),
+    rows.map((row, index) => [
+      ...lead(row, index, cell(row.item)),
+      ...(answers[index] ?? []),
+    ]),
   );
   if (full.length <= maxChars) return { text: full, full, cut: false };
 
@@ -319,10 +384,18 @@ export function resultTable(input: {
   const items = rows.map((row) => cutCell(cell(row.item), CUT_ITEM_MAX_CHARS));
   const skeleton = render(
     header,
-    rows.map((row, index) => [...lead(row, index, items[index] ?? ''), ...(answers[index] ?? []).map(() => '')]),
+    rows.map((row, index) => [
+      ...lead(row, index, items[index] ?? ''),
+      ...(answers[index] ?? []).map(() => ''),
+    ]),
   );
   const cells = answers.reduce((sum, row) => sum + row.length, 0);
-  const share = Math.max(0, Math.floor((maxChars - skeleton.length - footer.length - 1) / Math.max(1, cells)));
+  const share = Math.max(
+    0,
+    Math.floor(
+      (maxChars - skeleton.length - footer.length - 1) / Math.max(1, cells),
+    ),
+  );
   const table = render(
     header,
     rows.map((row, index) => [

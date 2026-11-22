@@ -3,7 +3,11 @@
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { useTranslations } from 'next-intl';
-import { APP_NAME, pageTitle, useDocumentTitle } from '@/hooks/use-document-title';
+import {
+  APP_NAME,
+  pageTitle,
+  useDocumentTitle,
+} from '@/hooks/use-document-title';
 import { useFeedSelector } from '@/lib/feed/feed-context';
 import { selectAgent } from '@/lib/feed/to-feed';
 import { parseShellRoute } from '@/lib/shell-route';
@@ -24,9 +28,11 @@ export function DocumentTitle() {
   const t = useTranslations('shell');
   const route = parseShellRoute(usePathname());
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
-  const mainTitle = useAuiState(
-    (s) => selectMainItem(s)?.title);
-  const agentName = useFeedSelector((state) => selectAgent(state.view)?.description, undefined);
+  const mainTitle = useAuiState((s) => selectMainItem(s)?.title);
+  const agentName = useFeedSelector(
+    (state) => selectAgent(state.view)?.description,
+    undefined,
+  );
   const agentLoadError = useFeedSelector((state) => state.loadError, null);
 
   const title = ((): string | undefined => {
@@ -34,14 +40,16 @@ export function DocumentTitle() {
     if (route.kind === 'account') return pageTitle(t('page.account'));
     if (route.kind === 'admin' || route.kind === 'library') return undefined;
     if (route.kind === 'agent') {
-      if (agentLoadError === 'not_found') return pageTitle(t('notice.agentNotFound.title'));
+      if (agentLoadError === 'not_found')
+        return pageTitle(t('notice.agentNotFound.title'));
       if (agentLoadError !== null) return APP_NAME;
       return agentName === undefined ? undefined : pageTitle(agentName);
     }
     if (routeThreadId === undefined) return pageTitle(t('sidebar.newChat'));
     if (view.kind === 'not-found') return pageTitle(t('notice.notFound.title'));
     if (view.kind === 'load-error') return APP_NAME;
-    if (view.kind === 'switching' || mainRemoteId !== routeThreadId) return undefined;
+    if (view.kind === 'switching' || mainRemoteId !== routeThreadId)
+      return undefined;
     const text = mainTitle?.trim() ?? '';
     return pageTitle(text === '' ? t('thread.untitled') : text);
   })();

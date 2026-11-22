@@ -8,10 +8,7 @@ import {
   type ProviderView,
   type UpdateProviderBody,
 } from '@agent-os/contracts';
-import {
-  IdentityProvidersRepository,
-  Db,
-} from '@agent-os/db';
+import { IdentityProvidersRepository, Db } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { identityError } from './identity.errors';

@@ -82,7 +82,8 @@ const TITLE = 'Записи из чата';
 const DONE = 'Готово.';
 
 /** The one text of a missing record and of one the employee does not see (record-tools.ts). */
-const UNAVAILABLE = 'recordId: there is no record with this id among the records you see';
+const UNAVAILABLE =
+  'recordId: there is no record with this id among the records you see';
 
 let harness: TestApp;
 let admin: Session;
@@ -92,7 +93,11 @@ let restoreBuiltins: (() => Promise<void>) | undefined;
 let researchBefore: RecordDetail | undefined;
 /** The role that gives the administrator the chat's model. */
 let adminRole: RunRole;
-const made = { users: [] as string[], roles: [] as string[], systemRecords: [] as string[] };
+const made = {
+  users: [] as string[],
+  roles: [] as string[],
+  systemRecords: [] as string[],
+};
 
 // ---------------------------------------------------------------------------------------------------------------
 // Helpers
@@ -100,7 +105,11 @@ const made = { users: [] as string[], roles: [] as string[], systemRecords: [] a
 
 /** A role of the run allowed the chat's model, remembered for the cleanup. */
 async function newRole(name: string): Promise<RunRole> {
-  const role = await allowRole(harness.app, admin, { name, models: [MODEL], servers: [] });
+  const role = await allowRole(harness.app, admin, {
+    name,
+    models: [MODEL],
+    servers: [],
+  });
   made.roles.push(role.id);
   return role;
 }
@@ -115,12 +124,23 @@ async function newEmployee(roles: readonly RunRole[]): Promise<Session> {
 
 /** `GET /api/admin/library/:id`. */
 function panelRecord(id: string): Promise<RecordDetail> {
-  return expectBody(apiRequest(harness.app, admin, 'get', `/admin/library/${id}`), 200, RecordDetailSchema);
+  return expectBody(
+    apiRequest(harness.app, admin, 'get', `/admin/library/${id}`),
+    200,
+    RecordDetailSchema,
+  );
 }
 
 /** `PUT /api/admin/library/:id`. */
-function putPanelRecord(id: string, body: UpdateRecordBody): Promise<RecordDetail> {
-  return expectBody(apiRequest(harness.app, admin, 'put', `/admin/library/${id}`, body), 200, RecordDetailSchema);
+function putPanelRecord(
+  id: string,
+  body: UpdateRecordBody,
+): Promise<RecordDetail> {
+  return expectBody(
+    apiRequest(harness.app, admin, 'put', `/admin/library/${id}`, body),
+    200,
+    RecordDetailSchema,
+  );
 }
 
 /** The update body of a deep agent at its version, with the prompt and the flag given. */
@@ -128,7 +148,8 @@ function deepAgentUpdate(
   record: RecordDetail,
   change: { readonly prompt?: string; readonly selfLearning?: boolean },
 ): UpdateRecordBody {
-  if (record.kind !== 'deep_agent') throw new Error(`${record.name} is not a deep agent`);
+  if (record.kind !== 'deep_agent')
+    throw new Error(`${record.name} is not a deep agent`);
   return {
     kind: 'deep_agent',
     name: record.name,
@@ -145,15 +166,22 @@ function deepAgentUpdate(
 /** The built-in research with its self-learning flag on, turned on by the administrator through the panel. */
 async function researchLearning(): Promise<RecordDetail> {
   const research = await panelRecord(BUILTIN.deepResearch.id);
-  if (research.kind === 'deep_agent' && research.content.selfLearning) return research;
-  return putPanelRecord(research.id, deepAgentUpdate(research, { selfLearning: true }));
+  if (research.kind === 'deep_agent' && research.content.selfLearning)
+    return research;
+  return putPanelRecord(
+    research.id,
+    deepAgentUpdate(research, { selfLearning: true }),
+  );
 }
 
 /**
  * A new conversation of `session` whose chat answers with `replies`, then {@link DONE}. The script is keyed by the first
  * message, so a later message of the same conversation takes the next reply.
  */
-async function chat(session: Session, replies: readonly ScriptedReply[]): Promise<string> {
+async function chat(
+  session: Session,
+  replies: readonly ScriptedReply[],
+): Promise<string> {
   const task = `Записи из чата ${randomUUID()}`;
   harness.model.script({ task }, replies, { thereafter: { text: DONE } });
   const api = chatApi(harness.app, session);
@@ -163,11 +191,17 @@ async function chat(session: Session, replies: readonly ScriptedReply[]): Promis
 }
 
 /** Waits until the chat is free, nothing waits in its queue and its last answer is `text`. */
-function untilAnswered(session: Session, threadId: string, text = DONE): Promise<ConversationView> {
+function untilAnswered(
+  session: Session,
+  threadId: string,
+  text = DONE,
+): Promise<ConversationView> {
   return waitFor(
     () => chatApi(harness.app, session).history(threadId),
     (view) => {
-      const answers = view.entries.filter((entry) => entry.kind === 'model_answer');
+      const answers = view.entries.filter(
+        (entry) => entry.kind === 'model_answer',
+      );
       const last = answers.at(-1);
       return (
         view.chat.status === 'idle' &&
@@ -199,16 +233,28 @@ function reasonsOf(view: ConversationView, tool: string): (string | null)[] {
 
 /** What a chat refusal must leave as it was: the version and the content. */
 function stateOf(record: RecordDetail): unknown {
-  return { version: record.version, name: record.name, content: record.content };
+  return {
+    version: record.version,
+    name: record.name,
+    content: record.content,
+  };
 }
 
 describe('deep-agents / agent-types - the chat is a second door into the library and opens it only as far as the employee could', () => {
   beforeAll(async () => {
-    harness = await createTestApp({ workers: true, mcpServers: ['logs', 'backoffice'] });
+    harness = await createTestApp({
+      workers: true,
+      mcpServers: ['logs', 'backoffice'],
+    });
     harness.model.completeText({ text: TITLE });
-    admin = await seedSuperAdmin(harness.app, `e2e-records-admin-${randomUUID()}`);
+    admin = await seedSuperAdmin(
+      harness.app,
+      `e2e-records-admin-${randomUUID()}`,
+    );
     made.users.push(admin.id);
-    restoreModels = await useRunModels(harness.app, admin, { chat: { id: MODEL, ...HAIKU_TEST_PRICES } });
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: MODEL, ...HAIKU_TEST_PRICES },
+    });
     restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL);
     researchBefore = await panelRecord(BUILTIN.deepResearch.id);
     adminRole = await newRole('records-admin');
@@ -232,8 +278,15 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       } finally {
         await restoreBuiltins?.();
         await restoreModels?.();
-        await harness.pool.query('DELETE FROM app.library_records WHERE id = ANY($1::uuid[])', [made.systemRecords]);
-        await removeRunRows(harness.pool, { models: [MODEL], roles: made.roles, users: made.users });
+        await harness.pool.query(
+          'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+          [made.systemRecords],
+        );
+        await removeRunRows(harness.pool, {
+          models: [MODEL],
+          roles: made.roles,
+          users: made.users,
+        });
       }
     } finally {
       await harness.close();
@@ -257,23 +310,43 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const sre = await newRole('records-int1a-sre');
       const a = await newEmployee([roleA, sre]);
       const b = await newEmployee([roleA]);
-      const r1 = await createRecord(harness.app, b, deepAgentBody(recordName('INT-1 A R1'), MODEL));
+      const r1 = await createRecord(
+        harness.app,
+        b,
+        deepAgentBody(recordName('INT-1 A R1'), MODEL),
+      );
       await shareWith(harness.app, b, r1.id, [roleA.id]);
-      const r2 = await createRecord(harness.app, a, deepAgentBody(recordName('INT-1 A R2'), MODEL));
+      const r2 = await createRecord(
+        harness.app,
+        a,
+        deepAgentBody(recordName('INT-1 A R2'), MODEL),
+      );
       await shareWith(harness.app, a, r2.id, [sre.id]);
-      const system = await createSystemRecord(harness.app, admin, deepAgentBody(recordName('INT-1 A S'), MODEL));
+      const system = await createSystemRecord(
+        harness.app,
+        admin,
+        deepAgentBody(recordName('INT-1 A S'), MODEL),
+      );
       made.systemRecords.push(system.id);
-      await setSystemAudience(harness.app, admin, system.id, { everyone: false, roleIds: [roleA.id] });
+      await setSystemAudience(harness.app, admin, system.id, {
+        everyone: false,
+        roleIds: [roleA.id],
+      });
       await researchLearning();
       const ids = [r1.id, r2.id, system.id, BUILTIN.deepResearch.id];
       const before = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
-      const auditBefore = await Promise.all(ids.map((id) => auditOfRecord(harness.pool, id)));
+      const auditBefore = await Promise.all(
+        ids.map((id) => auditOfRecord(harness.pool, id)),
+      );
 
       // When: A's chat edits and deletes each of them in one answer
       const aThread = await chat(a, [
         {
           calls: before.flatMap((record) => [
-            recordToolCall('edit_record', editArgs(record, { prompt: 'Чужая инструкция' })),
+            recordToolCall(
+              'edit_record',
+              editArgs(record, { prompt: 'Чужая инструкция' }),
+            ),
             recordToolCall('delete_record', { recordId: record.id }),
           ]),
         },
@@ -281,9 +354,22 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const aView = await untilAnswered(a, aThread);
 
       // Then: refusals with a text naming the record, in call order, and no card was asked
-      expect(reasonsOf(aView, 'edit_record')).toEqual(['read_only', 'shared', 'admin_only', 'admin_only']);
-      expect(reasonsOf(aView, 'delete_record')).toEqual(['read_only', 'shared', 'admin_only', 'admin_only']);
-      for (const result of [...toolResultsOf(aView, 'edit_record'), ...toolResultsOf(aView, 'delete_record')]) {
+      expect(reasonsOf(aView, 'edit_record')).toEqual([
+        'read_only',
+        'shared',
+        'admin_only',
+        'admin_only',
+      ]);
+      expect(reasonsOf(aView, 'delete_record')).toEqual([
+        'read_only',
+        'shared',
+        'admin_only',
+        'admin_only',
+      ]);
+      for (const result of [
+        ...toolResultsOf(aView, 'edit_record'),
+        ...toolResultsOf(aView, 'delete_record'),
+      ]) {
         expect(result.outcome).toBe('refused');
         expect(result.text).toMatch(/^recordId: /);
       }
@@ -291,7 +377,13 @@ describe('deep-agents / agent-types - the chat is a second door into the library
 
       // When: the administrator's chat deletes the built-in research; Then: `builtin` before any card
       const cThread = await chat(admin, [
-        { calls: [recordToolCall('delete_record', { recordId: BUILTIN.deepResearch.id })] },
+        {
+          calls: [
+            recordToolCall('delete_record', {
+              recordId: BUILTIN.deepResearch.id,
+            }),
+          ],
+        },
       ]);
       const cView = await untilAnswered(admin, cThread);
       expect(reasonsOf(cView, 'delete_record')).toEqual(['builtin']);
@@ -301,9 +393,15 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const after = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
       expect(after.map(stateOf)).toEqual(before.map(stateOf));
       const research = after[3];
-      expect(research?.kind === 'deep_agent' && research.content.selfLearning).toBe(true);
-      const auditAfter = await Promise.all(ids.map((id) => auditOfRecord(harness.pool, id)));
-      expect(auditAfter.map((events) => events.length)).toEqual(auditBefore.map((events) => events.length));
+      expect(
+        research?.kind === 'deep_agent' && research.content.selfLearning,
+      ).toBe(true);
+      const auditAfter = await Promise.all(
+        ids.map((id) => auditOfRecord(harness.pool, id)),
+      );
+      expect(auditAfter.map((events) => events.length)).toEqual(
+        auditBefore.map((events) => events.length),
+      );
     },
     TEST_TIMEOUT_MS,
   );
@@ -315,11 +413,27 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const roleB = await newRole('records-int1b');
       const a = await newEmployee([roleB]);
       const b = await newEmployee([roleB]);
-      const privateRecord = await createRecord(harness.app, b, deepAgentBody(recordName('INT-1 B private'), MODEL));
-      const opened = await createRecord(harness.app, b, deepAgentBody(recordName('INT-1 B opened'), MODEL));
+      const privateRecord = await createRecord(
+        harness.app,
+        b,
+        deepAgentBody(recordName('INT-1 B private'), MODEL),
+      );
+      const opened = await createRecord(
+        harness.app,
+        b,
+        deepAgentBody(recordName('INT-1 B opened'), MODEL),
+      );
       await shareWith(harness.app, b, opened.id, [roleB.id]);
-      const own = await createRecord(harness.app, a, deepAgentBody(recordName('INT-1 B own'), MODEL));
-      const hidden = await createSystemRecord(harness.app, admin, deepAgentBody(recordName('INT-1 B S'), MODEL));
+      const own = await createRecord(
+        harness.app,
+        a,
+        deepAgentBody(recordName('INT-1 B own'), MODEL),
+      );
+      const hidden = await createSystemRecord(
+        harness.app,
+        admin,
+        deepAgentBody(recordName('INT-1 B S'), MODEL),
+      );
       made.systemRecords.push(hidden.id);
 
       // When: A's chat reads the private record and a random id, edits the private record and lists the records
@@ -337,29 +451,45 @@ describe('deep-agents / agent-types - the chat is a second door into the library
 
       // Then: the private record answers exactly as a missing one, to the read and to the edit
       const reads = toolResultsOf(aView, 'read_record');
-      expect(reads.map((result) => [result.refusalReason, result.text])).toEqual([
+      expect(
+        reads.map((result) => [result.refusalReason, result.text]),
+      ).toEqual([
         ['record_unavailable', UNAVAILABLE],
         ['record_unavailable', UNAVAILABLE],
       ]);
-      expect(toolResultsOf(aView, 'edit_record').map((result) => [result.refusalReason, result.text])).toEqual([
-        ['record_unavailable', UNAVAILABLE],
-      ]);
+      expect(
+        toolResultsOf(aView, 'edit_record').map((result) => [
+          result.refusalReason,
+          result.text,
+        ]),
+      ).toEqual([['record_unavailable', UNAVAILABLE]]);
       expect(recordCardsOf(aView)).toEqual([]);
 
       // Then: the list holds A's own, the one opened to A's role and the built-in research; not the private one, not S
       const [list] = toolResultsOf(aView, 'list_records');
       expect(list?.outcome).toBe('success');
       const text = list?.text ?? '';
-      expect(text).toContain(`- ${own.id} | deep_agent | ${own.name} | yours | not shared |`);
-      expect(text).toContain(`- ${opened.id} | deep_agent | ${opened.name} | opened to your role | shared |`);
+      expect(text).toContain(
+        `- ${own.id} | deep_agent | ${own.name} | yours | not shared |`,
+      );
+      expect(text).toContain(
+        `- ${opened.id} | deep_agent | ${opened.name} | opened to your role | shared |`,
+      );
       expect(text).toContain(`- ${BUILTIN.deepResearch.id} | deep_agent |`);
       expect(text).not.toContain(privateRecord.id);
       expect(text).not.toContain(hidden.id);
 
       // When: the administrator's chat lists the records; Then: S is there, marked as a system record
-      const cThread = await chat(admin, [{ calls: [recordToolCall('list_records')] }]);
-      const [adminList] = toolResultsOf(await untilAnswered(admin, cThread), 'list_records');
-      expect(adminList?.text).toContain(`- ${hidden.id} | deep_agent | ${hidden.name} | system | not shared |`);
+      const cThread = await chat(admin, [
+        { calls: [recordToolCall('list_records')] },
+      ]);
+      const [adminList] = toolResultsOf(
+        await untilAnswered(admin, cThread),
+        'list_records',
+      );
+      expect(adminList?.text).toContain(
+        `- ${hidden.id} | deep_agent | ${hidden.name} | system | not shared |`,
+      );
     },
     TEST_TIMEOUT_MS,
   );
@@ -369,10 +499,15 @@ describe('deep-agents / agent-types - the chat is a second door into the library
     async () => {
       // Given: A's role may call only `search_logs` of the logs server and has no grant on the back office
       const roleC = await newRole('records-int1c');
-      await grantTo(harness.app, admin, { roleId: roleC.id }, {
-        effect: 'allow',
-        target: { kind: 'tool', server: LOGS_SERVER, tool: 'search_logs' },
-      });
+      await grantTo(
+        harness.app,
+        admin,
+        { roleId: roleC.id },
+        {
+          effect: 'allow',
+          target: { kind: 'tool', server: LOGS_SERVER, tool: 'search_logs' },
+        },
+      );
       const a = await newEmployee([roleC]);
       const second = 'Второй список';
       const thread = await chat(a, [
@@ -392,15 +527,26 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       expect(firstText).not.toContain(BACKOFFICE_SERVER);
 
       // When: A gets `get_trace` too and writes again; Then: the next list names both tools
-      await grantTo(harness.app, admin, { userId: a.id }, {
-        effect: 'allow',
-        target: { kind: 'tool', server: LOGS_SERVER, tool: 'get_trace' },
-      });
+      await grantTo(
+        harness.app,
+        admin,
+        { userId: a.id },
+        {
+          effect: 'allow',
+          target: { kind: 'tool', server: LOGS_SERVER, tool: 'get_trace' },
+        },
+      );
       await chatApi(harness.app, a).send(thread, 'Покажи список ещё раз');
       const again = await untilAnswered(a, thread, second);
       const secondList = toolResultsOf(again, 'list_records')[1];
-      const serverLine = (secondList?.text ?? '').split('\n').find((line) => line.startsWith(`- ${LOGS_SERVER}: `)) ?? '';
-      expect(serverLine.split(': ')[1]?.split(', ').sort()).toEqual(['get_trace', 'search_logs']);
+      const serverLine =
+        (secondList?.text ?? '')
+          .split('\n')
+          .find((line) => line.startsWith(`- ${LOGS_SERVER}: `)) ?? '';
+      expect(serverLine.split(': ')[1]?.split(', ').sort()).toEqual([
+        'get_trace',
+        'search_logs',
+      ]);
       expect(secondList?.text).not.toContain(BACKOFFICE_SERVER);
     },
     TEST_TIMEOUT_MS,
@@ -412,10 +558,15 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       // Given: A without any right on the back office
       const roleD = await newRole('records-int1d');
       const a = await newEmployee([roleD]);
-      const body = deepAgentBody(recordName('INT-1 D'), MODEL, [{}, { servers: [BACKOFFICE_SERVER] }]);
+      const body = deepAgentBody(recordName('INT-1 D'), MODEL, [
+        {},
+        { servers: [BACKOFFICE_SERVER] },
+      ]);
 
       // When: A's chat creates a deep agent whose second subagent holds the back office
-      const thread = await chat(a, [{ calls: [recordToolCall('create_record', createArgs(body))] }]);
+      const thread = await chat(a, [
+        { calls: [recordToolCall('create_record', createArgs(body))] },
+      ]);
       const view = await untilAnswered(a, thread);
 
       // Then: `server_not_allowed` naming `subagents.1.servers` and the server, no card, no record
@@ -424,7 +575,9 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       expect(result?.text).toContain('subagents.1.servers');
       expect(result?.text).toContain(BACKOFFICE_SERVER);
       expect(recordCardsOf(view)).toEqual([]);
-      expect((await listLibrary(harness.app, a)).map((record) => record.name)).not.toContain(body.name);
+      expect(
+        (await listLibrary(harness.app, a)).map((record) => record.name),
+      ).not.toContain(body.name);
     },
     TEST_TIMEOUT_MS,
   );
@@ -442,8 +595,16 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const role = await newRole('records-int2a');
       const a = await newEmployee([role]);
       const api = chatApi(harness.app, a);
-      const rejectedBody = deepAgentBody(recordName('INT-2 A rejected'), MODEL, [{}, {}]);
-      const approvedBody = deepAgentBody(recordName('INT-2 A approved'), MODEL, [{}, {}]);
+      const rejectedBody = deepAgentBody(
+        recordName('INT-2 A rejected'),
+        MODEL,
+        [{}, {}],
+      );
+      const approvedBody = deepAgentBody(
+        recordName('INT-2 A approved'),
+        MODEL,
+        [{}, {}],
+      );
       const thread = await chat(a, [
         { calls: [recordToolCall('create_record', createArgs(rejectedBody))] },
         { calls: [recordToolCall('create_record', createArgs(approvedBody))] },
@@ -451,39 +612,67 @@ describe('deep-agents / agent-types - the chat is a second door into the library
 
       // When: the first card waits; Then: nothing is saved, and the card is a create with a chosen id
       const first = await untilCard(a, thread);
-      expect(first.card).toMatchObject({ action: 'create', kind: 'deep_agent', system: false, previous: null });
-      expect((await listLibrary(harness.app, a)).map((record) => record.name)).not.toContain(rejectedBody.name);
+      expect(first.card).toMatchObject({
+        action: 'create',
+        kind: 'deep_agent',
+        system: false,
+        previous: null,
+      });
+      expect(
+        (await listLibrary(harness.app, a)).map((record) => record.name),
+      ).not.toContain(rejectedBody.name);
 
       // When: A rejects it; Then: no record, no audit event, the call reads `rejected`
-      expect(await api.decide(first.decision.decisionId, { approve: false })).toEqual({ outcome: 'resolved' });
+      expect(
+        await api.decide(first.decision.decisionId, { approve: false }),
+      ).toEqual({ outcome: 'resolved' });
       const second = await waitFor(
         () => api.history(thread),
         (view) => pendingCardOf(view) !== undefined,
         'the second card',
       );
-      expect(toolResultsOf(second, 'create_record').map((result) => result.outcome)).toEqual(['rejected']);
+      expect(
+        toolResultsOf(second, 'create_record').map((result) => result.outcome),
+      ).toEqual(['rejected']);
       await expectError(api.raw('get', `/library/${first.card.recordId}`), 404);
-      expect(await auditOfRecord(harness.pool, first.card.recordId)).toEqual([]);
+      expect(await auditOfRecord(harness.pool, first.card.recordId)).toEqual(
+        [],
+      );
 
       // When: the chat calls again and A approves the second card
       const pending = pendingCardOf(second);
       if (pending === undefined) throw new Error('no second card');
-      expect(await api.decide(pending.decision.decisionId, { approve: true })).toEqual({ outcome: 'resolved' });
+      expect(
+        await api.decide(pending.decision.decisionId, { approve: true }),
+      ).toEqual({ outcome: 'resolved' });
       await untilAnswered(a, thread);
 
       // Then: exactly one record, the second card's id, version 1, A's, the flag off; the first card's id does not exist
-      const names = (await listLibrary(harness.app, a)).map((record) => record.name);
-      expect(names.filter((name) => name === approvedBody.name || name === rejectedBody.name)).toEqual([approvedBody.name]);
+      const names = (await listLibrary(harness.app, a)).map(
+        (record) => record.name,
+      );
+      expect(
+        names.filter(
+          (name) => name === approvedBody.name || name === rejectedBody.name,
+        ),
+      ).toEqual([approvedBody.name]);
       const saved = await getRecord(harness.app, a, pending.card.recordId);
-      expect(saved).toMatchObject({ kind: 'deep_agent', version: 1, mine: true, author: { id: a.id } });
-      expect(saved.kind === 'deep_agent' && saved.content.selfLearning).toBe(false);
+      expect(saved).toMatchObject({
+        kind: 'deep_agent',
+        version: 1,
+        mine: true,
+        author: { id: a.id },
+      });
+      expect(saved.kind === 'deep_agent' && saved.content.selfLearning).toBe(
+        false,
+      );
       await expectError(api.raw('get', `/library/${first.card.recordId}`), 404);
     },
     TEST_TIMEOUT_MS,
   );
 
   it(
-    "INT-2 B \"administrator edit\": the administrator's approved edit of the built-in research bumps its version once, keeps its self-learning flag, writes one prompt-free audit event and is what an employee reads next",
+    'INT-2 B "administrator edit": the administrator\'s approved edit of the built-in research bumps its version once, keeps its self-learning flag, writes one prompt-free audit event and is what an employee reads next',
     async () => {
       const role = await newRole('records-int2b');
       const b = await newEmployee([role]);
@@ -493,7 +682,11 @@ describe('deep-agents / agent-types - the chat is a second door into the library
 
       // When: the administrator's chat edits the research with a new prompt (the whole content, no flag)
       const thread = await chat(admin, [
-        { calls: [recordToolCall('edit_record', editArgs(research, { prompt }))] },
+        {
+          calls: [
+            recordToolCall('edit_record', editArgs(research, { prompt })),
+          ],
+        },
       ]);
       const pending = await untilCard(admin, thread);
       expect(pending.card).toMatchObject({
@@ -503,7 +696,11 @@ describe('deep-agents / agent-types - the chat is a second door into the library
         previous: { version: research.version },
         next: { content: { prompt } },
       });
-      expect(await chatApi(harness.app, admin).decide(pending.decision.decisionId, { approve: true })).toEqual({
+      expect(
+        await chatApi(harness.app, admin).decide(pending.decision.decisionId, {
+          approve: true,
+        }),
+      ).toEqual({
         outcome: 'resolved',
       });
       await untilAnswered(admin, thread);
@@ -512,13 +709,17 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       const saved = await panelRecord(research.id);
       expect(saved.version).toBe(research.version + 1);
       expect(saved.kind === 'deep_agent' && saved.content.prompt).toBe(prompt);
-      expect(saved.kind === 'deep_agent' && saved.content.selfLearning).toBe(true);
+      expect(saved.kind === 'deep_agent' && saved.content.selfLearning).toBe(
+        true,
+      );
 
       // Then: one audit event of the update by the administrator, without the prompt
-      const added = (await auditOfRecord(harness.pool, research.id)).slice(auditBefore.length);
-      expect(added.map(({ kind, actor, outcome }) => ({ kind, actor, outcome }))).toEqual([
-        { kind: 'library_update', actor: admin.id, outcome: 'ok' },
-      ]);
+      const added = (await auditOfRecord(harness.pool, research.id)).slice(
+        auditBefore.length,
+      );
+      expect(
+        added.map(({ kind, actor, outcome }) => ({ kind, actor, outcome })),
+      ).toEqual([{ kind: 'library_update', actor: admin.id, outcome: 'ok' }]);
       expect(JSON.stringify(added)).not.toContain(prompt);
 
       // Then: an employee who sees the built-in research reads the new version
@@ -535,19 +736,49 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       // Given: A's own deep agent R in version 3
       const role = await newRole('records-int2c');
       const a = await newEmployee([role]);
-      const created = await createRecord(harness.app, a, deepAgentBody(recordName('INT-2 C'), MODEL));
-      const v2 = await putRecord(harness.app, a, created.id, deepAgentUpdate(created, { prompt: 'Версия 2' }));
-      const v3 = await putRecord(harness.app, a, created.id, deepAgentUpdate(v2, { prompt: 'Версия 3' }));
+      const created = await createRecord(
+        harness.app,
+        a,
+        deepAgentBody(recordName('INT-2 C'), MODEL),
+      );
+      const v2 = await putRecord(
+        harness.app,
+        a,
+        created.id,
+        deepAgentUpdate(created, { prompt: 'Версия 2' }),
+      );
+      const v3 = await putRecord(
+        harness.app,
+        a,
+        created.id,
+        deepAgentUpdate(v2, { prompt: 'Версия 3' }),
+      );
       expect(v3.version).toBe(3);
 
       // When: the chat's edit waits on a card of version 3, A saves another change through the library, then approves the card
       const thread = await chat(a, [
-        { calls: [recordToolCall('edit_record', editArgs(v3, { prompt: 'Правка из чата' }))] },
+        {
+          calls: [
+            recordToolCall(
+              'edit_record',
+              editArgs(v3, { prompt: 'Правка из чата' }),
+            ),
+          ],
+        },
       ]);
       const pending = await untilCard(a, thread);
       expect(pending.card.previous?.version).toBe(3);
-      const v4 = await putRecord(harness.app, a, created.id, deepAgentUpdate(v3, { prompt: 'Правка из библиотеки' }));
-      expect(await chatApi(harness.app, a).decide(pending.decision.decisionId, { approve: true })).toEqual({
+      const v4 = await putRecord(
+        harness.app,
+        a,
+        created.id,
+        deepAgentUpdate(v3, { prompt: 'Правка из библиотеки' }),
+      );
+      expect(
+        await chatApi(harness.app, a).decide(pending.decision.decisionId, {
+          approve: true,
+        }),
+      ).toEqual({
         outcome: 'resolved',
       });
       const view = await untilAnswered(a, thread);
@@ -558,7 +789,11 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       expect(result?.text).toMatch(/^recordId: /);
       const stored = await getRecord(harness.app, a, created.id);
       expect(stateOf(stored)).toEqual(stateOf(v4));
-      expect((await auditOfRecord(harness.pool, created.id)).map((event) => event.kind)).toEqual([
+      expect(
+        (await auditOfRecord(harness.pool, created.id)).map(
+          (event) => event.kind,
+        ),
+      ).toEqual([
         'library_create',
         'library_update',
         'library_update',
@@ -570,7 +805,10 @@ describe('deep-agents / agent-types - the chat is a second door into the library
 });
 
 /** A record as its reader sees it: the panel for a system record, the employee's library otherwise. */
-async function panelOrOwner(id: string, reader: Session): Promise<RecordDetail> {
+async function panelOrOwner(
+  id: string,
+  reader: Session,
+): Promise<RecordDetail> {
   const record = await getRecord(harness.app, reader, id);
   return record.author === null ? panelRecord(id) : record;
 }

@@ -9,7 +9,13 @@ import type {
 } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolResultSettings } from './fixtures';
+import {
+  currentUser,
+  knowledgeSettings,
+  modelDefaults,
+  modelProviderView,
+  toolResultSettings,
+} from './fixtures';
 
 /**
  * Reads the shell makes on every mount whatever the test is about: the signed-in employee (UM-01, also
@@ -27,23 +33,39 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolR
  */
 const shellDefaults = [
   http.get('/api/auth/me', () => HttpResponse.json(currentUser())),
-  http.get('/api/agents/awaiting', () => HttpResponse.json({ count: 0 } satisfies AwaitingCount)),
+  http.get('/api/agents/awaiting', () =>
+    HttpResponse.json({ count: 0 } satisfies AwaitingCount),
+  ),
   http.get('/api/spend', () =>
     HttpResponse.json({ month: '2026-11', costUsd: 0 } satisfies SpendResponse),
   ),
-  http.get('/api/mcp/connections', () => HttpResponse.json([] satisfies McpConnection[])),
-  http.get('/api/threads/:threadId/agents', () => HttpResponse.json([] satisfies AgentNode[])),
+  http.get('/api/mcp/connections', () =>
+    HttpResponse.json([] satisfies McpConnection[]),
+  ),
+  http.get('/api/threads/:threadId/agents', () =>
+    HttpResponse.json([] satisfies AgentNode[]),
+  ),
   http.get('/api/agents/:agentId/tasks', () =>
     HttpResponse.json({ tasks: [], delegations: [] } satisfies AgentTasksView),
   ),
   http.get('/api/access/models', () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),
-  http.get('/api/library', () => HttpResponse.json([] satisfies RecordSummary[])),
-  http.get('/api/admin/model-providers', () => HttpResponse.json([modelProviderView()])),
-  http.get('/api/admin/model-defaults', () => HttpResponse.json(modelDefaults())),
-  http.get('/api/admin/knowledge/settings', () => HttpResponse.json(knowledgeSettings())),
-  http.get('/api/admin/tool-results/settings', () => HttpResponse.json(toolResultSettings())),
+  http.get('/api/library', () =>
+    HttpResponse.json([] satisfies RecordSummary[]),
+  ),
+  http.get('/api/admin/model-providers', () =>
+    HttpResponse.json([modelProviderView()]),
+  ),
+  http.get('/api/admin/model-defaults', () =>
+    HttpResponse.json(modelDefaults()),
+  ),
+  http.get('/api/admin/knowledge/settings', () =>
+    HttpResponse.json(knowledgeSettings()),
+  ),
+  http.get('/api/admin/tool-results/settings', () =>
+    HttpResponse.json(toolResultSettings()),
+  ),
 ];
 
 /**

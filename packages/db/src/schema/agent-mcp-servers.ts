@@ -27,13 +27,19 @@ export const agentMcpServers = app.table(
       .defaultNow(),
   },
   (t) => [
-    check('agent_mcp_servers_mode_check', isOneOf(t.mode, McpServerModeSchema.options)),
+    check(
+      'agent_mcp_servers_mode_check',
+      isOneOf(t.mode, McpServerModeSchema.options),
+    ),
     check(
       'agent_mcp_servers_shared_token_check',
       sql`(${t.mode} = ${literal(McpServerModeSchema.enum.shared)}) = (${t.sharedToken} is not null)`,
     ),
     /** Invariant 2: an enabled server always has its tool list. */
-    check('agent_mcp_servers_enabled_tools_check', sql`not ${t.enabled} or ${t.tools} is not null`),
+    check(
+      'agent_mcp_servers_enabled_tools_check',
+      sql`not ${t.enabled} or ${t.tools} is not null`,
+    ),
     check(
       'agent_mcp_servers_oauth_client_check',
       sql`${t.mode} <> ${literal(McpServerModeSchema.enum.oauth)} or ${t.oauthClientId} is not null`,

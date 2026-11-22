@@ -11,7 +11,10 @@ const { stopped } = TaskStatusSchema.enum;
  * it writes the stop entries and `continued` (Flow 6, Flow 7). `withParent` — the same command
  * stopped the agent's parent.
  */
-export const ResumeMarkSchema = z.object({ stopped: z.literal(true), withParent: z.boolean() });
+export const ResumeMarkSchema = z.object({
+  stopped: z.literal(true),
+  withParent: z.boolean(),
+});
 export type ResumeMark = z.infer<typeof ResumeMarkSchema>;
 
 /** The payload of a `user_message` or, with `fromAgentId` added by the caller, an `agent_message`. */
@@ -34,11 +37,20 @@ export function messagePayload(
   targetParent?: Task | null,
 ): MessagePayload {
   if (target.status !== stopped) return { text };
-  return { text, resume: { stopped: true, withParent: stoppedTogether(target, targetParent) } };
+  return {
+    text,
+    resume: {
+      stopped: true,
+      withParent: stoppedTogether(target, targetParent),
+    },
+  };
 }
 
 /** Whether the command that stopped `target` stopped its `parent` too. */
-export function stoppedTogether(target: Task, parent: Task | null | undefined): boolean {
+export function stoppedTogether(
+  target: Task,
+  parent: Task | null | undefined,
+): boolean {
   if (parent?.status !== stopped) return false;
   return (
     parent.finishedAt !== null &&
@@ -51,7 +63,9 @@ export function stoppedTogether(target: Task, parent: Task | null | undefined): 
  * The stop event of an agent the runtime stopped (Flow 7), which follows the results of its open calls:
  * `stopped`, or `stopped_with_parent` when the same command stopped its parent.
  */
-export function stopEvent(withParent: boolean): Extract<NewHistoryEntry, { kind: 'event' }> {
+export function stopEvent(
+  withParent: boolean,
+): Extract<NewHistoryEntry, { kind: 'event' }> {
   const event = withParent
     ? HistoryEventSchema.enum.stopped_with_parent
     : HistoryEventSchema.enum.stopped;

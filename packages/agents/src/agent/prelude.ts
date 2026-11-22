@@ -68,7 +68,10 @@ export function preludeOf(
 ): StepPrelude | undefined {
   const closes = closesOpen(plan);
   const events = preludeEvents(plan);
-  const entries = [...(closes ? interruptedResults(plan.open, new Date()) : []), ...events];
+  const entries = [
+    ...(closes ? interruptedResults(plan.open, new Date()) : []),
+    ...events,
+  ];
 
   const clearsMark = session.interrupted && plan.otherMessages;
   const patch: SessionPatch = {

@@ -10,7 +10,10 @@ export interface ServerUrlRule {
  * The rule for an MCP server address and the addresses from its authorization-server metadata
  * (Security Considerations): `https` always, `http` only when allowed, anything else never.
  */
-export function checkServerUrl(url: string | URL, rule: ServerUrlRule): ServerUrlCheck {
+export function checkServerUrl(
+  url: string | URL,
+  rule: ServerUrlRule,
+): ServerUrlCheck {
   if (!URL.canParse(url)) {
     return 'insecure_url';
   }

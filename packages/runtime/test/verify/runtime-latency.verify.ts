@@ -8,10 +8,17 @@
 import { consoleSink, createLogger } from '@agent-os/common';
 import { afterAll, describe, expect, it } from 'vitest';
 import { newUser, waitFor } from '@agent-os/db/testing';
-import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild';
+import {
+  Children,
+  DEFAULT_SETTINGS,
+  type RuntimeChild,
+} from '../support/runtimeChild';
 import { handlersFor } from '../support/runtimeChildHandlers';
 import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb';
-import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness';
+import {
+  createRuntimeHarness,
+  type RuntimeHarness,
+} from '../support/runtimeHarness';
 import { uniqueType } from '../support/testHandlers';
 
 /** NFR-05: the step is started again within 60 s of the kill. */
@@ -23,7 +30,11 @@ const SAMPLES = 20;
 const WAIT_MS = 120_000;
 const MEASUREMENT_MS = 900_000;
 
-const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
+const logger = createLogger({
+  sinks: [consoleSink()],
+  secrets: [],
+  minLevel: 'info',
+});
 
 /** The nearest-rank 95th percentile. */
 function p95(values: readonly number[]): number {
@@ -32,7 +43,10 @@ function p95(values: readonly number[]): number {
 }
 
 async function holdRuntime(holdType: string): Promise<RuntimeHarness> {
-  const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
+  const control = await createRuntimeHarness({
+    handlers: [],
+    config: { workers: false },
+  });
   for (const handler of handlersFor({ hold: holdType }, control.runtimeDb)) {
     control.handlers.register(handler);
   }
@@ -55,7 +69,11 @@ async function runningHold(
   holdType: string,
   ownerId: string,
 ): Promise<string> {
-  const taskId = await control.tasks.create({ type: holdType, ownerId, input: {} });
+  const taskId = await control.tasks.create({
+    type: holdType,
+    ownerId,
+    input: {},
+  });
   await child.until(async () => (await statusOf(taskId)) === 'running', {
     what: `task ${taskId} to run`,
     timeoutMs: WAIT_MS,
@@ -64,8 +82,16 @@ async function runningHold(
 }
 
 /** Creates a root task of the hold type in a runtime that runs steps and waits until its step runs. */
-async function heldHere(runtime: RuntimeHarness, holdType: string, ownerId: string): Promise<string> {
-  const taskId = await runtime.tasks.create({ type: holdType, ownerId, input: {} });
+async function heldHere(
+  runtime: RuntimeHarness,
+  holdType: string,
+  ownerId: string,
+): Promise<string> {
+  const taskId = await runtime.tasks.create({
+    type: holdType,
+    ownerId,
+    input: {},
+  });
   await waitFor(
     () => statusOf(taskId),
     (status) => status === 'running',
@@ -102,7 +128,9 @@ describe('UC-N1: a step killed with its process starts again within 60 s', () =>
           timeoutMs: WAIT_MS,
         });
         const resumedMs = Date.now() - killedAt;
-        logger.info('UC-N1: step started again after the kill', { durationMs: resumedMs });
+        logger.info('UC-N1: step started again after the kill', {
+          durationMs: resumedMs,
+        });
 
         await control.tasks.stop(taskId, ownerId);
         await second.stop();
@@ -121,11 +149,17 @@ describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', 
     'measures from the command to the read of the new status while the step holds',
     async () => {
       const holdType = uniqueType('n2-hold');
-      const control = await createRuntimeHarness({ handlers: [], startWorkers: false });
+      const control = await createRuntimeHarness({
+        handlers: [],
+        startWorkers: false,
+      });
       const ownerId = newUser();
       const interrupted: string[] = [];
       try {
-        for (const handler of handlersFor({ hold: holdType }, control.runtimeDb)) {
+        for (const handler of handlersFor(
+          { hold: holdType },
+          control.runtimeDb,
+        )) {
           control.handlers.register(handler);
         }
         control.start();
@@ -134,7 +168,9 @@ describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', 
         for (let sample = 0; sample < SAMPLES; sample += 1) {
           const toInterrupt = await heldHere(control, holdType, ownerId);
           const interruptAt = Date.now();
-          expect(await control.tasks.interrupt(toInterrupt, ownerId)).toBe('interrupted');
+          expect(await control.tasks.interrupt(toInterrupt, ownerId)).toBe(
+            'interrupted',
+          );
           await waitFor(
             () => statusOf(toInterrupt),
             (status) => status === 'waiting',
@@ -159,7 +195,8 @@ describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', 
           samples: SAMPLES,
         });
 
-        for (const taskId of interrupted) await control.tasks.stop(taskId, ownerId);
+        for (const taskId of interrupted)
+          await control.tasks.stop(taskId, ownerId);
         expect(p95(interruptMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
         expect(p95(stopMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
       } finally {

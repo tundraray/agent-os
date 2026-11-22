@@ -23,8 +23,14 @@ export type LeaveGuard = StoreApi<LeaveGuardState> & {
 };
 
 export function createLeaveGuard(): LeaveGuard {
-  const store = createStore<LeaveGuardState>()(() => ({ held: null, question: null }));
-  let pending: { promise: Promise<boolean>; resolve: (leave: boolean) => void } | null = null;
+  const store = createStore<LeaveGuardState>()(() => ({
+    held: null,
+    question: null,
+  }));
+  let pending: {
+    promise: Promise<boolean>;
+    resolve: (leave: boolean) => void;
+  } | null = null;
 
   function settle(leave: boolean): void {
     const open = pending;

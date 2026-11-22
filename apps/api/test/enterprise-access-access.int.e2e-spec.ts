@@ -106,12 +106,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import {
-  type ChatApi,
-  chatApi,
-  expectBody,
-  expectError,
-} from './support/api';
+import { type ChatApi, chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
@@ -122,11 +117,7 @@ import {
   recordName,
   setSystemAudience,
 } from './support/library';
-import {
-  BACKOFFICE_SERVER,
-  LOGS_SERVER,
-  runName,
-} from './support/mcp-servers';
+import { BACKOFFICE_SERVER, LOGS_SERVER, runName } from './support/mcp-servers';
 import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   apiRequest,
@@ -200,7 +191,10 @@ const ACCESS_SUBAGENT = 'access-subagent';
  * The INT-1 deep agent record: the deep agent on `A` without servers and one subagent on `A` that names the run's
  * `backoffice`. Every session has `run_code` without naming it, and a record never holds it.
  */
-function accessCheckDeepAgent(): Extract<CreateRecordBody, { kind: 'deep_agent' }> {
+function accessCheckDeepAgent(): Extract<
+  CreateRecordBody,
+  { kind: 'deep_agent' }
+> {
   return {
     kind: 'deep_agent',
     name: recordName('access-check'),
@@ -841,7 +835,10 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
             calls: [
               {
                 tool: 'task',
-                args: { subagentType: ACCESS_SUBAGENT, description: subagentTask },
+                args: {
+                  subagentType: ACCESS_SUBAGENT,
+                  description: subagentTask,
+                },
               },
             ],
           },
@@ -849,24 +846,27 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         { thereafter: { text: 'the subagent reported' } },
       );
       // The subagent's one `task` entry: the question of the brief as its labelled line, then the assignment.
-      const subagent = harness.model.script({ task: `Question: ${question}\n\n${subagentTask}` }, [
-        {
-          calls: [
-            {
-              tool: CREATE_NOTE,
-              args: {
-                orderId: 'ord-0000a002',
-                text: 'INT-1: from the deep agent',
+      const subagent = harness.model.script(
+        { task: `Question: ${question}\n\n${subagentTask}` },
+        [
+          {
+            calls: [
+              {
+                tool: CREATE_NOTE,
+                args: {
+                  orderId: 'ord-0000a002',
+                  text: 'INT-1: from the deep agent',
+                },
               },
-            },
-            refusedFromCode('Заметка из скрипта', CREATE_NOTE, {
-              orderId: 'ord-0000a003',
-              text: 'INT-1: from code',
-            }),
-          ],
-        },
-        { text: 'the note was refused' },
-      ]);
+              refusedFromCode('Заметка из скрипта', CREATE_NOTE, {
+                orderId: 'ord-0000a003',
+                text: 'INT-1: from code',
+              }),
+            ],
+          },
+          { text: 'the note was refused' },
+        ],
+      );
       const borisChat = harness.model.script({ task: borisTask }, [
         {
           calls: [
@@ -927,8 +927,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         () => anyaApi.history(anyaThread),
         (view) =>
           view.decisions.some(
-            (d) =>
-              d.kind === AGENTS_BRIEF_CONFIRMATION && d.status === 'open',
+            (d) => d.kind === AGENTS_BRIEF_CONFIRMATION && d.status === 'open',
           ),
         "the brief of Аня's deep agent",
       );
@@ -1685,7 +1684,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(agentNamed(other.agents, 'agent on B').status).toBe('completed');
       expect(bScript.calls).toHaveLength(2);
       expect(harness.model.calls.length).toBe(callsInFlight + 1);
-      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([0.000003, 0.0045]);
+      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([
+        0.000003, 0.0045,
+      ]);
       expect(await paidCalls()).toEqual([0.015, 0.015]);
       expect(await deniedAudit('model', { anya })).toEqual([
         `anya ${MODEL_A} rejected quota_exhausted`,

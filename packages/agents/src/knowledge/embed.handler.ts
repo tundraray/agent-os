@@ -13,7 +13,10 @@ import {
   EMBEDDING_BATCH_SIZE,
   type EmbedUnavailable,
 } from '../embeddings/embeddings';
-import { KNOWLEDGE_EMBED_TASK_TYPE, KnowledgeEmbedInputSchema } from './knowledge-tasks';
+import {
+  KNOWLEDGE_EMBED_TASK_TYPE,
+  KnowledgeEmbedInputSchema,
+} from './knowledge-tasks';
 import { knowledgeKey } from './knowledge-text';
 import type { KnowledgeVectorKey, KnowledgeVectorStore } from './vector-store';
 
@@ -64,9 +67,15 @@ interface PassStats {
  * a lesson's tool, kind of question and hint; «searched — found nothing»'s tool and kind of question —
  * after masking.
  */
-function passItems(graph: KnowledgeGraph, mask: (text: string) => string): PassItem[] {
-  const names = new Map(graph.entities.map((entity) => [entity.id, entity.name]));
-  const nameOf = (id: number | null) => (id === null ? '' : (names.get(id) ?? ''));
+function passItems(
+  graph: KnowledgeGraph,
+  mask: (text: string) => string,
+): PassItem[] {
+  const names = new Map(
+    graph.entities.map((entity) => [entity.id, entity.name]),
+  );
+  const nameOf = (id: number | null) =>
+    id === null ? '' : (names.get(id) ?? '');
   const entityItems = graph.entities.map((entity) => ({
     key: knowledgeKey({ type: 'entity', id: entity.id }),
     kind: 'entity' as const,
@@ -81,14 +90,24 @@ function passItems(graph: KnowledgeGraph, mask: (text: string) => string): PassI
         : relation.kind === 'lesson'
           ? `${tool} for ${question}: ${relation.hint ?? ''}`
           : `${tool} for ${question}`;
-    return { key: knowledgeKey({ type: 'relation', id: relation.id }), kind: 'relation' as const, text: mask(text) };
+    return {
+      key: knowledgeKey({ type: 'relation', id: relation.id }),
+      kind: 'relation' as const,
+      text: mask(text),
+    };
   });
   return [...entityItems, ...relationItems];
 }
 
 /** Compares the store with the graph (Invariants 10, 11): the graph is the source of truth. */
-function passPlan(items: readonly PassItem[], stored: readonly KnowledgeVectorKey[], model: string): PassPlan {
-  const storedModel = new Map(stored.map((vector) => [vector.key, vector.model]));
+function passPlan(
+  items: readonly PassItem[],
+  stored: readonly KnowledgeVectorKey[],
+  model: string,
+): PassPlan {
+  const storedModel = new Map(
+    stored.map((vector) => [vector.key, vector.model]),
+  );
   return {
     fresh: items.filter((item) => !storedModel.has(item.key)),
     stale: items.filter((item) => {
@@ -99,14 +118,21 @@ function passPlan(items: readonly PassItem[], stored: readonly KnowledgeVectorKe
 }
 
 /** Keys of the store with no record in the graph. */
-function danglingKeys(items: readonly PassItem[], stored: readonly KnowledgeVectorKey[]): string[] {
+function danglingKeys(
+  items: readonly PassItem[],
+  stored: readonly KnowledgeVectorKey[],
+): string[] {
   const keys = new Set(items.map((item) => item.key));
-  return stored.filter((vector) => !keys.has(vector.key)).map((vector) => vector.key);
+  return stored
+    .filter((vector) => !keys.has(vector.key))
+    .map((vector) => vector.key);
 }
 
 /** The reason kept on the row; `owner_disabled` is one employee's refusal and goes to the log only (Flow 4). */
 function recordedOutcome(result: EmbedUnavailable): EmbeddingOutcome | null {
-  return result.reason === 'owner_disabled' ? null : { reason: result.reason, model: result.model };
+  return result.reason === 'owner_disabled'
+    ? null
+    : { reason: result.reason, model: result.model };
 }
 
 /**
@@ -120,7 +146,9 @@ function recordedOutcome(result: EmbedUnavailable): EmbeddingOutcome | null {
  * A lost step repeats from the start and pays again at most for the one call whose vectors were not written.
  * The step never returns `fail`: unavailable embeddings end the pass as completed with the reason on the row.
  */
-export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): TaskHandler {
+export function createKnowledgeEmbedHandler(
+  deps: KnowledgeEmbedHandlerDeps,
+): TaskHandler {
   const { embeddings, store, knowledgeRows, knowledgeRunRows } = deps;
 
   /** The pass is not this task's any more: the record was deleted (its row with it) or the row moved on. */
@@ -145,13 +173,20 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     const settled = await ctx.guard(async () => {
       const row = await knowledgeRunRows.findEmbeddingByPassTask(ctx.taskId);
       if (row?.recordId !== recordId) return 'not_current' as const;
-      if (outcome !== null) await knowledgeRunRows.writeEmbeddingOutcome(recordId, outcome);
+      if (outcome !== null)
+        await knowledgeRunRows.writeEmbeddingOutcome(recordId, outcome);
       if (next === 'more') return 'continue' as const;
       if (next === 'end' && row.needsPass) {
-        await knowledgeRunRows.updateEmbeddingRow(recordId, { needsPass: false });
+        await knowledgeRunRows.updateEmbeddingRow(recordId, {
+          needsPass: false,
+        });
         return 'continue' as const;
       }
-      await knowledgeRunRows.updateEmbeddingRow(recordId, { passTaskId: null, payerId: null, needsPass: false });
+      await knowledgeRunRows.updateEmbeddingRow(recordId, {
+        passTaskId: null,
+        payerId: null,
+        needsPass: false,
+      });
       return 'complete' as const;
     });
     return settled.outcome === 'fenced' ? 'fenced' : settled.value;
@@ -161,20 +196,38 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
   async function finish(
     ctx: StepContext,
     logger: Logger,
-    end: { recordId: string; outcome: EmbeddingOutcome | null; next: PassNext; stats: PassStats; startedAt: number },
+    end: {
+      recordId: string;
+      outcome: EmbeddingOutcome | null;
+      next: PassNext;
+      stats: PassStats;
+      startedAt: number;
+    },
     reason: string | null,
   ): Promise<StepResult> {
     const settled = await settle(ctx, end.recordId, end.outcome, end.next);
     if (settled === 'not_current') return notCurrent(logger, end.startedAt);
-    const fields = { ...end.stats, outcome: settled, reason, durationMs: Date.now() - end.startedAt };
+    const fields = {
+      ...end.stats,
+      outcome: settled,
+      reason,
+      durationMs: Date.now() - end.startedAt,
+    };
     if (settled === 'fenced') {
       logger.info('knowledge embed step abandoned without writes', fields);
       return { outcome: 'continue' };
     }
     if (reason === null) logger.info('knowledge embed step done', fields);
-    else logger.warn('knowledge embed pass stopped: embeddings unavailable', fields);
+    else
+      logger.warn(
+        'knowledge embed pass stopped: embeddings unavailable',
+        fields,
+      );
     if (settled === 'continue') return { outcome: 'continue' };
-    return { outcome: 'complete', result: { outcome: reason === null ? 'done' : 'unavailable', reason } };
+    return {
+      outcome: 'complete',
+      result: { outcome: reason === null ? 'done' : 'unavailable', reason },
+    };
   }
 
   /**
@@ -189,7 +242,10 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
   ): Promise<boolean> {
     const vectors = items.map((item, index) => {
       const vector = result.vectors[index];
-      if (vector === undefined) throw new Error(`Embeddings gave no vector for knowledge key ${item.key}`);
+      if (vector === undefined)
+        throw new Error(
+          `Embeddings gave no vector for knowledge key ${item.key}`,
+        );
       return { key: item.key, kind: item.kind, model: result.model, vector };
     });
     try {
@@ -208,7 +264,8 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     const logger = ctx.logger.child({ recordId });
 
     const row = await knowledgeRunRows.findEmbeddingRow(recordId);
-    if (row === undefined || row.passTaskId !== ctx.taskId) return notCurrent(logger, startedAt);
+    if (row === undefined || row.passTaskId !== ctx.taskId)
+      return notCurrent(logger, startedAt);
     const payerId = row.payerId;
     const stats: PassStats = {
       payer: payerId === null ? 'platform' : 'starter',
@@ -219,9 +276,18 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
       embedded: 0,
       deleted: 0,
     };
-    const end = (outcome: EmbeddingOutcome | null, next: PassNext) => ({ recordId, outcome, next, stats, startedAt });
+    const end = (outcome: EmbeddingOutcome | null, next: PassNext) => ({
+      recordId,
+      outcome,
+      next,
+      stats,
+      startedAt,
+    });
 
-    const items = passItems(await knowledgeRows.readGraph(recordId), createSecretMasker([]));
+    const items = passItems(
+      await knowledgeRows.readGraph(recordId),
+      createSecretMasker([]),
+    );
     const stored = await store.list(recordId);
     // Deleted first: the pass removes vectors of deleted records even when embeddings are unavailable (AC-19.1).
     const dangling = danglingKeys(items, stored);
@@ -232,7 +298,12 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
 
     const choice = await embeddings.model();
     if (choice.kind === 'unavailable') {
-      return finish(ctx, logger, end({ reason: choice.reason, model: null }, 'stop'), choice.reason);
+      return finish(
+        ctx,
+        logger,
+        end({ reason: choice.reason, model: null }, 'stop'),
+        choice.reason,
+      );
     }
     stats.model = choice.model;
 
@@ -243,7 +314,10 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     const fresh = plan.fresh.slice(0, EMBEDDING_BATCH_SIZE);
     const calls = [
       { items: fresh, ownerId: payerId },
-      { items: plan.stale.slice(0, EMBEDDING_BATCH_SIZE - fresh.length), ownerId: null },
+      {
+        items: plan.stale.slice(0, EMBEDDING_BATCH_SIZE - fresh.length),
+        ownerId: null,
+      },
     ];
     for (const call of calls) {
       if (call.items.length === 0) continue;
@@ -256,15 +330,30 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
         logger,
       });
       if (result.kind === 'unavailable') {
-        return finish(ctx, logger, end(recordedOutcome(result), 'stop'), result.reason);
+        return finish(
+          ctx,
+          logger,
+          end(recordedOutcome(result), 'stop'),
+          result.reason,
+        );
       }
-      if (!(await writeVectors(ctx, recordId, call.items, result))) return notCurrent(logger, startedAt);
+      if (!(await writeVectors(ctx, recordId, call.items, result)))
+        return notCurrent(logger, startedAt);
       stats.embedded += call.items.length;
     }
 
     const more = stats.embedded < plan.fresh.length + plan.stale.length;
-    return finish(ctx, logger, end({ reason: null, model: choice.model }, more ? 'more' : 'end'), null);
+    return finish(
+      ctx,
+      logger,
+      end({ reason: null, model: choice.model }, more ? 'more' : 'end'),
+      null,
+    );
   }
 
-  return { type: KNOWLEDGE_EMBED_TASK_TYPE, inputSchema: KnowledgeEmbedInputSchema, step };
+  return {
+    type: KNOWLEDGE_EMBED_TASK_TYPE,
+    inputSchema: KnowledgeEmbedInputSchema,
+    step,
+  };
 }

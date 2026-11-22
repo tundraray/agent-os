@@ -19,8 +19,12 @@ export const identitySettings = app.table(
     id: boolean('id').primaryKey().default(true),
     /** Public address without `/api`; null until saved. */
     publicUrl: text('public_url'),
-    idleMinutes: integer('idle_minutes').notNull().default(IDLE_MINUTES_DEFAULT),
-    absoluteMinutes: integer('absolute_minutes').notNull().default(ABSOLUTE_MINUTES_DEFAULT),
+    idleMinutes: integer('idle_minutes')
+      .notNull()
+      .default(IDLE_MINUTES_DEFAULT),
+    absoluteMinutes: integer('absolute_minutes')
+      .notNull()
+      .default(ABSOLUTE_MINUTES_DEFAULT),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
   },

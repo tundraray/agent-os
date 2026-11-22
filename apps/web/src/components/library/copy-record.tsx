@@ -1,31 +1,38 @@
-"use client";
+'use client';
 
-import { useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
-import { LoaderCircle } from "lucide-react";
-import { toast } from "sonner";
+import { useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { useLocale, useTranslations } from 'next-intl';
+import { LoaderCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   ALL_SERVERS,
   type CopyResult,
   type MissingRight,
   type RecordDetail,
   type RecordSummary,
-} from "@agent-os/contracts";
-import { FormError } from "@/components/admin/admin-form";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { formatModel } from "@/lib/agents/format";
-import { describeApiError } from "@/lib/api/api-request";
-import { builtinName } from "@/i18n/builtin-name";
-import type { LibraryTranslator } from "@/i18n/catalog";
-import { libraryApi } from "@/lib/library/library-api";
-import { copyFailed } from "@/lib/library/library-errors";
-import { recordAction } from "@/lib/library/record-action";
-import { logger } from "@/lib/logger";
-import { recordPath } from "@/lib/shell-route";
-import { useLeaveThenGo } from "./use-in-chat";
+} from '@agent-os/contracts';
+import { FormError } from '@/components/admin/admin-form';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { formatModel } from '@/lib/agents/format';
+import { describeApiError } from '@/lib/api/api-request';
+import { builtinName } from '@/i18n/builtin-name';
+import type { LibraryTranslator } from '@/i18n/catalog';
+import { libraryApi } from '@/lib/library/library-api';
+import { copyFailed } from '@/lib/library/library-errors';
+import { recordAction } from '@/lib/library/record-action';
+import { logger } from '@/lib/logger';
+import { recordPath } from '@/lib/shell-route';
+import { useLeaveThenGo } from './use-in-chat';
 
 /** What a copy reads of a record: a library row, or a record page with its content. */
 export type CopySource = RecordSummary | RecordDetail;
@@ -42,11 +49,16 @@ type CopyPlan = {
 };
 
 const droppedOf = (rights: readonly MissingRight[]): PartServers[] =>
-  rights.filter((right) => right.servers.length > 0).map(({ subagent, servers }) => ({ subagent, servers }));
+  rights
+    .filter((right) => right.servers.length > 0)
+    .map(({ subagent, servers }) => ({ subagent, servers }));
 
 const hasAllServers = (record: RecordDetail): boolean =>
   record.content.servers.includes(ALL_SERVERS) ||
-  (record.kind === "deep_agent" && record.content.subagents.some((subagent) => subagent.servers.includes(ALL_SERVERS)));
+  (record.kind === 'deep_agent' &&
+    record.content.subagents.some((subagent) =>
+      subagent.servers.includes(ALL_SERVERS),
+    ));
 
 /**
  * What the dialog must name before the copy. Only a company record can hold «Все системы»; a library row
@@ -55,35 +67,54 @@ const hasAllServers = (record: RecordDetail): boolean =>
 async function planCopy(record: CopySource): Promise<CopyPlan> {
   const dropped = droppedOf(record.missingRights);
   if (record.author !== null) return { record, dropped, allServers: null };
-  const detail = "content" in record ? record : await libraryApi.get(record.id);
+  const detail = 'content' in record ? record : await libraryApi.get(record.id);
   if (!hasAllServers(detail)) return { record, dropped, allServers: null };
   return { record, dropped, allServers: (await libraryApi.choices()).servers };
 }
 
-const partLine = (t: LibraryTranslator, { subagent, servers }: PartServers): string =>
-  subagent === null ? servers.join(", ") : t("subagentLine", { subagent, text: servers.join(", ") });
+const partLine = (
+  t: LibraryTranslator,
+  { subagent, servers }: PartServers,
+): string =>
+  subagent === null
+    ? servers.join(', ')
+    : t('subagentLine', { subagent, text: servers.join(', ') });
 
 /**
  * The notice of MC-4 (and MC-19): the copy's name, then the dropped systems in the wording of MC-13 and both
  * models of every replacement.
  */
-function copiedNotice(t: LibraryTranslator, result: CopyResult): { title: string; description: string | undefined } {
+function copiedNotice(
+  t: LibraryTranslator,
+  result: CopyResult,
+): { title: string; description: string | undefined } {
   const { name } = result.record;
   const runsNowhere =
-    result.replacedModels.length === 0 && result.record.missingRights.some((right) => right.model !== null);
+    result.replacedModels.length === 0 &&
+    result.record.missingRights.some((right) => right.model !== null);
   const replaced = (from: string, to: string): string =>
-    t("copy.replaced", { from: formatModel(from), to: formatModel(to) });
+    t('copy.replaced', { from: formatModel(from), to: formatModel(to) });
   const details = [
     ...(result.removedServers.length === 0
       ? []
-      : [t("droppedServers", { servers: result.removedServers.map((part) => partLine(t, part)).join("; ") })]),
+      : [
+          t('droppedServers', {
+            servers: result.removedServers
+              .map((part) => partLine(t, part))
+              .join('; '),
+          }),
+        ]),
     ...result.replacedModels.map(({ subagent, from, to }) =>
-      subagent === null ? replaced(from, to) : t("subagentLine", { subagent, text: replaced(from, to) }),
+      subagent === null
+        ? replaced(from, to)
+        : t('subagentLine', { subagent, text: replaced(from, to) }),
     ),
   ];
   return {
-    title: runsNowhere ? t("copy.noModels", { name }) : t("copy.saved", { name }),
-    description: details.length === 0 ? undefined : `${details.join(". ")}.`,
+    title: runsNowhere
+      ? t('copy.noModels', { name })
+      : t('copy.saved', { name }),
+    description: details.length === 0 ? undefined : `${details.join('. ')}.`,
   };
 }
 
@@ -107,8 +138,8 @@ export function useCopyRecord(): CopyRecord {
   const { libraryIndex, announcer } = useShellServices();
   const router = useRouter();
   const locale = useLocale();
-  const t = useTranslations("errors");
-  const tLibrary = useTranslations("library");
+  const t = useTranslations('errors');
+  const tLibrary = useTranslations('library');
   const leaveThenGo = useLeaveThenGo();
   const [plan, setPlan] = useState<CopyPlan | null>(null);
   const [pending, setPending] = useState(false);
@@ -116,16 +147,22 @@ export function useCopyRecord(): CopyRecord {
 
   async function run(record: CopySource): Promise<void> {
     const result = await recordAction(
-      { recordId: record.id, kind: record.kind, action: "copy", version: null },
+      { recordId: record.id, kind: record.kind, action: 'copy', version: null },
       () => libraryApi.copy(record.id, locale),
     );
     void libraryIndex.refresh();
     const notice = copiedNotice(tLibrary, result);
     toast.success(notice.title, {
       description: notice.description,
-      action: { label: tLibrary("open"), onClick: () => leaveThenGo(() => router.push(recordPath(result.record.id))) },
+      action: {
+        label: tLibrary('open'),
+        onClick: () =>
+          leaveThenGo(() => router.push(recordPath(result.record.id))),
+      },
     });
-    announcer.getState().announce("announce.copySaved", { name: result.record.name });
+    announcer
+      .getState()
+      .announce('announce.copySaved', { name: result.record.name });
   }
 
   async function copy(record: CopySource): Promise<void> {
@@ -136,7 +173,10 @@ export function useCopyRecord(): CopyRecord {
     try {
       next = await planCopy(record);
     } catch (cause) {
-      logger.warn("library: copy preparation read failed", { recordId: record.id, ...describeApiError(cause) });
+      logger.warn('library: copy preparation read failed', {
+        recordId: record.id,
+        ...describeApiError(cause),
+      });
       setError(copyFailed(t, cause));
       setPending(false);
       return;
@@ -181,23 +221,46 @@ export function useCopyRecord(): CopyRecord {
       {plan !== null && (
         <DialogContent size="full-narrow">
           <DialogHeader>
-            <DialogTitle>{tLibrary("copy.title", { name: builtinName(plan.record, locale) })}</DialogTitle>
+            <DialogTitle>
+              {tLibrary('copy.title', {
+                name: builtinName(plan.record, locale),
+              })}
+            </DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-3 text-sm leading-5">
-            <p>{tLibrary("copy.onlyYou")}</p>
-            <CopyLines heading={tLibrary("copy.dropped")} parts={plan.dropped} />
+            <p>{tLibrary('copy.onlyYou')}</p>
+            <CopyLines
+              heading={tLibrary('copy.dropped')}
+              parts={plan.dropped}
+            />
             {plan.allServers !== null && (
-              <CopyLines heading={tLibrary("copy.allServers")} parts={[{ subagent: null, servers: plan.allServers }]} />
+              <CopyLines
+                heading={tLibrary('copy.allServers')}
+                parts={[{ subagent: null, servers: plan.allServers }]}
+              />
             )}
             {error !== null && <FormError>{error}</FormError>}
           </div>
           <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" size="sm" />} disabled={pending}>
-              {tLibrary("cancel")}
+            <DialogClose
+              render={<Button type="button" variant="outline" size="sm" />}
+              disabled={pending}
+            >
+              {tLibrary('cancel')}
             </DialogClose>
-            <Button type="button" size="sm" disabled={pending} onClick={() => void confirm()}>
-              {pending && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-              {tLibrary("copy.confirm")}
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending}
+              onClick={() => void confirm()}
+            >
+              {pending && (
+                <LoaderCircle
+                  className="animate-spin motion-reduce:animate-none"
+                  aria-hidden
+                />
+              )}
+              {tLibrary('copy.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -205,21 +268,34 @@ export function useCopyRecord(): CopyRecord {
     </Dialog>
   );
 
-  return { copy: (record) => void copy(record), pending, error: plan === null ? error : null, dialog };
+  return {
+    copy: (record) => void copy(record),
+    pending,
+    error: plan === null ? error : null,
+    dialog,
+  };
 }
 
 /** «{системы}» of the agent itself in one line; a deep agent's parts one line each. */
-function CopyLines({ heading, parts }: { heading: string; parts: readonly PartServers[] }) {
-  const t = useTranslations("library");
+function CopyLines({
+  heading,
+  parts,
+}: {
+  heading: string;
+  parts: readonly PartServers[];
+}) {
+  const t = useTranslations('library');
   if (parts.length === 0) return null;
-  const single = parts.length === 1 && parts[0]?.subagent === null ? parts[0] : null;
-  if (single !== null) return <p>{`${heading} ${single.servers.join(", ")}`}</p>;
+  const single =
+    parts.length === 1 && parts[0]?.subagent === null ? parts[0] : null;
+  if (single !== null)
+    return <p>{`${heading} ${single.servers.join(', ')}`}</p>;
   return (
     <div className="flex flex-col gap-1">
       <p>{heading}</p>
       <ul className="flex flex-col gap-1 pl-4">
         {parts.map((part) => (
-          <li key={part.subagent ?? ""} className="list-disc">
+          <li key={part.subagent ?? ''} className="list-disc">
             {partLine(t, part)}
           </li>
         ))}

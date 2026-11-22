@@ -202,7 +202,10 @@ export class AgentControlService {
   }
 
   /** As the conversation's interrupt (FR-16). */
-  async interrupt(agentId: string, ownerId: string): Promise<InterruptResponse> {
+  async interrupt(
+    agentId: string,
+    ownerId: string,
+  ): Promise<InterruptResponse> {
     await this.agent(agentId, ownerId);
     return { outcome: await this.control.interrupt({ agentId, ownerId }) };
   }
@@ -263,9 +266,7 @@ export class AgentControlService {
     root: RootSession,
     ownerId: string,
   ): Promise<ListedAgent[]> {
-    const views = await unlessDeleted(
-      this.views.list(root.rootId, ownerId),
-    );
+    const views = await unlessDeleted(this.views.list(root.rootId, ownerId));
     const threadTitle = toThreadSummary(root).title;
     return toAgentTree(views, root.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),

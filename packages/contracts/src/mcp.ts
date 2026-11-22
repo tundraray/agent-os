@@ -39,14 +39,20 @@ export const McpServerNameSchema = z
  * Server address. `http` passes here: outside development the server check answers 422
  * `insecure_url`, which carries a reason, unlike the pipe's 400.
  */
-const McpServerUrlSchema = z.url({ protocol: /^https?$/ }).max(MCP_SERVER_URL_MAX_LENGTH);
+const McpServerUrlSchema = z
+  .url({ protocol: /^https?$/ })
+  .max(MCP_SERVER_URL_MAX_LENGTH);
 
 const SharedTokenSchema = z.string().min(1).max(MCP_SHARED_TOKEN_MAX_LENGTH);
 
 export const McpServerModeSchema = z.enum(['shared', 'oauth']);
 export type McpServerMode = z.infer<typeof McpServerModeSchema>;
 
-export const McpServerStatusSchema = z.enum(['enabled', 'disabled', 'awaiting_admin_account']);
+export const McpServerStatusSchema = z.enum([
+  'enabled',
+  'disabled',
+  'awaiting_admin_account',
+]);
 export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
 
 // ---------- Admin: registry ----------
@@ -82,17 +88,31 @@ const registerFields = { name: McpServerNameSchema, url: McpServerUrlSchema };
 
 /** Body of POST /api/admin/mcp-servers: the shared token is required for `shared` and absent for `oauth`. */
 export const RegisterMcpServerBodySchema = z.discriminatedUnion('mode', [
-  z.object({ ...registerFields, mode: z.literal('shared'), sharedToken: SharedTokenSchema }),
-  z.object({ ...registerFields, mode: z.literal('oauth'), sharedToken: z.never().optional() }),
+  z.object({
+    ...registerFields,
+    mode: z.literal('shared'),
+    sharedToken: SharedTokenSchema,
+  }),
+  z.object({
+    ...registerFields,
+    mode: z.literal('oauth'),
+    sharedToken: z.never().optional(),
+  }),
 ]);
 export type RegisterMcpServerBody = z.infer<typeof RegisterMcpServerBodySchema>;
 
 /** Body of PATCH /api/admin/mcp-servers/:name. Name, address and mode never change. */
 export const UpdateMcpServerBodySchema = z
-  .strictObject({ enabled: z.boolean().optional(), sharedToken: SharedTokenSchema.optional() })
-  .refine((body) => body.enabled !== undefined || body.sharedToken !== undefined, {
-    message: 'enabled or sharedToken is required',
-  });
+  .strictObject({
+    enabled: z.boolean().optional(),
+    sharedToken: SharedTokenSchema.optional(),
+  })
+  .refine(
+    (body) => body.enabled !== undefined || body.sharedToken !== undefined,
+    {
+      message: 'enabled or sharedToken is required',
+    },
+  );
 export type UpdateMcpServerBody = z.infer<typeof UpdateMcpServerBodySchema>;
 
 /** Response of POST /api/admin/mcp-servers/:name/tools/refresh: names of new and removed tools. */
@@ -101,7 +121,9 @@ export const RefreshMcpToolsResponseSchema = z.object({
   added: z.array(z.string()),
   removed: z.array(z.string()),
 });
-export type RefreshMcpToolsResponse = z.infer<typeof RefreshMcpToolsResponseSchema>;
+export type RefreshMcpToolsResponse = z.infer<
+  typeof RefreshMcpToolsResponseSchema
+>;
 
 // ---------- Employee: connections ----------
 

@@ -15,7 +15,14 @@ import {
   AgentSessionsRepository,
   AgentSessionTasksRepository,
 } from '@agent-os/db';
-import { Decisions, Inbox, type Task, TaskControl, Trackers, type TrackerTask } from '@agent-os/runtime';
+import {
+  Decisions,
+  Inbox,
+  type Task,
+  TaskControl,
+  Trackers,
+  type TrackerTask,
+} from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -26,7 +33,13 @@ import { type DeepAgentRun, readDeepAgentRun } from '../deep/deep-agent-run';
 import { foldCalls } from '../history/call-state';
 import type { RunSnapshot } from '../start/snapshot';
 import { History, type PageEntry } from '../store/history';
-import { type RootSession, type Session, sessionInputOf, Sessions, toRootSession } from '../store/sessions';
+import {
+  type RootSession,
+  type Session,
+  sessionInputOf,
+  Sessions,
+  toRootSession,
+} from '../store/sessions';
 import { ToolRegistry } from '../tools/tool-registry';
 import type {
   AgentConfirmation,
@@ -37,7 +50,13 @@ import type {
   ShownResult,
   StoredResult,
 } from './agent-sessions';
-import { agentNotFound, agentTask, ConfirmationPayloadSchema, createLogged, parentOf } from './operation-support';
+import {
+  agentNotFound,
+  agentTask,
+  ConfirmationPayloadSchema,
+  createLogged,
+  parentOf,
+} from './operation-support';
 import { stopEntries } from './stop-entries';
 
 const { queued, running, stopped, completed, failed } = TaskStatusSchema.enum;
@@ -66,7 +85,11 @@ function delegationStatus(status: TrackerTask['status']): DelegationStatus {
 }
 
 /** A delegation row: the tracker task, its subagent's session and the task of the list its call named. */
-function delegationView(task: TrackerTask, session: Session, listTask: number | null): DelegationView {
+function delegationView(
+  task: TrackerTask,
+  session: Session,
+  listTask: number | null,
+): DelegationView {
   const status = delegationStatus(task.status);
   return {
     agentId: task.taskId,
@@ -75,7 +98,12 @@ function delegationView(task: TrackerTask, session: Session, listTask: number | 
     taskId: listTask,
     status,
     answer:
-      status === 'completed' ? ReportSchema.parse(task.result).report.slice(0, DELEGATION_ANSWER_MAX_CHARS) : null,
+      status === 'completed'
+        ? ReportSchema.parse(task.result).report.slice(
+            0,
+            DELEGATION_ANSWER_MAX_CHARS,
+          )
+        : null,
     reason: status === 'failed' ? (task.failure?.reason ?? null) : null,
   };
 }
@@ -91,15 +119,20 @@ export class ViewOperations {
   constructor(
     /** The sessions, the history and the task lists the operations read after the runtime's owner check. */
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
+    @Inject(AgentSessionsRepository)
+    private readonly sessionRows: AgentSessionsRepository,
     @Inject(History) private readonly entries: History,
-    @Inject(AgentMessagesRepository) private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentSessionTasksRepository) private readonly sessionTaskRows: AgentSessionTasksRepository,
-    @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
+    @Inject(AgentMessagesRepository)
+    private readonly messageRows: AgentMessagesRepository,
+    @Inject(AgentSessionTasksRepository)
+    private readonly sessionTaskRows: AgentSessionTasksRepository,
+    @Inject(TaskControl)
+    private readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     @Inject(Inbox) private readonly inbox: Pick<Inbox, 'listPending'>,
     @Inject(Decisions) private readonly decisions: Pick<Decisions, 'listTree'>,
     @Inject(Trackers) private readonly trackers: Pick<Trackers, 'list'>,
-    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'displays'>,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, 'displays'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logged = createLogged(logger.child({ service: 'agents.sessions' }));
@@ -112,7 +145,9 @@ export class ViewOperations {
       { agentId, ownerId },
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
-        return AGENT_TASK_TYPES.includes(task.type) ? sessionInputOf(task.input).snapshot : null;
+        return AGENT_TASK_TYPES.includes(task.type)
+          ? sessionInputOf(task.input).snapshot
+          : null;
       },
       (snapshot) => ({ kind: snapshot?.kind ?? null }),
     );
@@ -153,7 +188,12 @@ export class ViewOperations {
     );
   }
 
-  history({ agentId, ownerId, afterSeq = 0, limit }: HistoryRequest): Promise<AgentHistoryEntry[]> {
+  history({
+    agentId,
+    ownerId,
+    afterSeq = 0,
+    limit,
+  }: HistoryRequest): Promise<AgentHistoryEntry[]> {
     return this.logged(
       'history',
       { agentId, ownerId, afterSeq, limit },
@@ -161,10 +201,13 @@ export class ViewOperations {
         const task = await agentTask(this.tasks, agentId, ownerId);
         const isStopped = task.status === stopped;
         const derived = isStopped
-          ? await stopEntries({ history: this.entries, messageRows: this.messageRows }, {
-              task,
-              parent: await parentOf(this.tasks, task, ownerId),
-            })
+          ? await stopEntries(
+              { history: this.entries, messageRows: this.messageRows },
+              {
+                task,
+                parent: await parentOf(this.tasks, task, ownerId),
+              },
+            )
           : [];
         // The page is cut by the query after the call records are left out, so a page shorter than
         // `limit` is the end of the history.
@@ -174,7 +217,13 @@ export class ViewOperations {
         const page: AgentHistoryEntry[] = stored.map((entry) => {
           if (entry.kind === 'tool_result') return shownResult(entry);
           return entry.kind === 'model_answer'
-            ? { ...entry, content: { text: entry.content.text, toolCalls: calls.get(entry.seq) ?? [] } }
+            ? {
+                ...entry,
+                content: {
+                  text: entry.content.text,
+                  toolCalls: calls.get(entry.seq) ?? [],
+                },
+              }
             : entry;
         });
         page.push(...derived.filter((entry) => entry.seq > afterSeq));
@@ -196,27 +245,38 @@ export class ViewOperations {
           decision,
           payload: ConfirmationPayloadSchema.parse(decision.payload),
         }));
-        const displays = await this.registry.displays(requests.map(({ payload }) => payload));
-        return requests.map(({ decision, payload }, index): AgentConfirmation => {
-          const resolved =
-            decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
-          return {
-            decisionId: decision.decisionId,
-            agentId: decision.taskId,
-            description: payload.description,
-            kind: decision.kind,
-            tool: payload.tool,
-            server: payload.server,
-            args: payload.args,
-            content: payload.content,
-            status: decision.status,
-            resolution:
-              resolved === null ? null : { approve: resolved.approve, args: resolved.args ?? payload.args },
-            createdAt: decision.createdAt,
-            resolvedAt: decision.resolvedAt,
-            ...displays[index],
-          };
-        });
+        const displays = await this.registry.displays(
+          requests.map(({ payload }) => payload),
+        );
+        return requests.map(
+          ({ decision, payload }, index): AgentConfirmation => {
+            const resolved =
+              decision.status === 'resolved'
+                ? ConfirmationResolutionSchema.parse(decision.resolution)
+                : null;
+            return {
+              decisionId: decision.decisionId,
+              agentId: decision.taskId,
+              description: payload.description,
+              kind: decision.kind,
+              tool: payload.tool,
+              server: payload.server,
+              args: payload.args,
+              content: payload.content,
+              status: decision.status,
+              resolution:
+                resolved === null
+                  ? null
+                  : {
+                      approve: resolved.approve,
+                      args: resolved.args ?? payload.args,
+                    },
+              createdAt: decision.createdAt,
+              resolvedAt: decision.resolvedAt,
+              ...displays[index],
+            };
+          },
+        );
       },
       (confirmations) => ({ confirmations: confirmations.length }),
     );
@@ -251,7 +311,10 @@ export class ViewOperations {
           })),
         };
       },
-      (view) => ({ tasks: view.tasks.length, delegations: view.delegations.length }),
+      (view) => ({
+        tasks: view.tasks.length,
+        delegations: view.delegations.length,
+      }),
     );
   }
 
@@ -264,7 +327,10 @@ export class ViewOperations {
       'run',
       { agentId, ownerId },
       () => readDeepAgentRun(this, agentId, ownerId),
-      (run) => ({ steps: run.steps.length, limitRefusals: run.limitRefusals.length }),
+      (run) => ({
+        steps: run.steps.length,
+        limitRefusals: run.limitRefusals.length,
+      }),
     );
   }
 
@@ -323,24 +389,28 @@ export class ViewOperations {
    * The tasks of the agent's trackers in order, each with its subagent's session and the task of the list its
    * `task` call named (the call's `tool_sent`). A task whose session is not written yet is left out.
    */
-  private async delegationsOf(agentId: string, ownerId: string): Promise<DelegationView[]> {
+  private async delegationsOf(
+    agentId: string,
+    ownerId: string,
+  ): Promise<DelegationView[]> {
     const trackers = await this.trackers.list(agentId, ownerId);
     const tasks = trackers.flatMap((tracker) => tracker.tasks);
     if (tasks.length === 0) return [];
     const [found, sent] = await Promise.all([
-      this.sessions.getMany(
-        tasks.map((task) => task.taskId),
-      ),
+      this.sessions.getMany(tasks.map((task) => task.taskId)),
       this.entries.sentForListTask(agentId),
     ]);
     const listTaskOf = new Map<string, number>();
     for (const { content } of sent) {
       if (content.taskId === undefined) continue;
-      for (const taskId of content.taskIds ?? []) listTaskOf.set(taskId, content.taskId);
+      for (const taskId of content.taskIds ?? [])
+        listTaskOf.set(taskId, content.taskId);
     }
     return tasks.flatMap((task) => {
       const session = found.get(task.taskId);
-      return session === undefined ? [] : [delegationView(task, session, listTaskOf.get(task.taskId) ?? null)];
+      return session === undefined
+        ? []
+        : [delegationView(task, session, listTaskOf.get(task.taskId) ?? null)];
     });
   }
 
@@ -362,9 +432,14 @@ export class ViewOperations {
     shownClosed: boolean,
   ): Promise<Map<number, AnswerToolCall[]>> {
     const byAnswer = new Map<number, AnswerToolCall[]>();
-    const callIds = answers.flatMap((answer) => answer.content.toolCalls.map((call) => call.callId));
+    const callIds = answers.flatMap((answer) =>
+      answer.content.toolCalls.map((call) => call.callId),
+    );
     // Only the records of the page's calls are read, by `(task_id, call_id)`; the answers go first.
-    const calls = foldCalls([...answers, ...(await this.entries.callRecords(agentId, callIds))]);
+    const calls = foldCalls([
+      ...answers,
+      ...(await this.entries.callRecords(agentId, callIds)),
+    ]);
     const displays = await this.registry.displays(calls);
     for (const [index, call] of calls.entries()) {
       const ofAnswer = byAnswer.get(call.answerSeq) ?? [];

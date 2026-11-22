@@ -12,15 +12,18 @@ describe('lib/threads/url-sync: syncUrlWithThread', () => {
     { from: '/', remoteId: 't-1', to: '/chat/t-1' },
     { from: '/chat/t-old', remoteId: 't-new', to: '/chat/t-new' },
     { from: '/', remoteId: 'a/b', to: '/chat/a%2Fb' },
-  ])('replaces the entry $from with $to for a settled thread, without navigation', ({ from, remoteId, to }) => {
-    const deps = setup(from);
+  ])(
+    'replaces the entry $from with $to for a settled thread, without navigation',
+    ({ from, remoteId, to }) => {
+      const deps = setup(from);
 
-    syncUrlWithThread({ remoteId, ...deps });
+      syncUrlWithThread({ remoteId, ...deps });
 
-    expect(deps.history.replaceState).toHaveBeenCalledOnce();
-    expect(deps.history.replaceState).toHaveBeenCalledWith(null, '', to);
-    expect(deps.router.replace).not.toHaveBeenCalled();
-  });
+      expect(deps.history.replaceState).toHaveBeenCalledOnce();
+      expect(deps.history.replaceState).toHaveBeenCalledWith(null, '', to);
+      expect(deps.router.replace).not.toHaveBeenCalled();
+    },
+  );
 
   it('replaces /chat/… with / through the router when the thread is gone', () => {
     const deps = setup('/chat/t-1');
@@ -36,12 +39,15 @@ describe('lib/threads/url-sync: syncUrlWithThread', () => {
     { pathname: '/chat/t-1', remoteId: 't-1' },
     { pathname: '/chat/a%2Fb', remoteId: 'a/b' },
     { pathname: '/', remoteId: undefined },
-  ])('does nothing on $pathname when it already matches thread $remoteId', ({ pathname, remoteId }) => {
-    const deps = setup(pathname);
+  ])(
+    'does nothing on $pathname when it already matches thread $remoteId',
+    ({ pathname, remoteId }) => {
+      const deps = setup(pathname);
 
-    syncUrlWithThread({ remoteId, ...deps });
+      syncUrlWithThread({ remoteId, ...deps });
 
-    expect(deps.history.replaceState).not.toHaveBeenCalled();
-    expect(deps.router.replace).not.toHaveBeenCalled();
-  });
+      expect(deps.history.replaceState).not.toHaveBeenCalled();
+      expect(deps.router.replace).not.toHaveBeenCalled();
+    },
+  );
 });

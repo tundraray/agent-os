@@ -43,9 +43,24 @@ import {
 } from './support/access';
 import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
-import { deepAgentBody, getRecord, listLibrary, pointBuiltinsAt, recordName } from './support/library';
-import { createArgs, pendingCardOf, recordToolCall, toolResultsOf } from './support/record-tools';
-import { createEmployee, seedSuperAdmin, type Session } from './support/session';
+import {
+  deepAgentBody,
+  getRecord,
+  listLibrary,
+  pointBuiltinsAt,
+  recordName,
+} from './support/library';
+import {
+  createArgs,
+  pendingCardOf,
+  recordToolCall,
+  toolResultsOf,
+} from './support/record-tools';
+import {
+  createEmployee,
+  seedSuperAdmin,
+  type Session,
+} from './support/session';
 
 const TEST_TIMEOUT_MS = 300_000;
 
@@ -58,7 +73,11 @@ const RUN_REQUEST = 'запусти его по логам за ночь';
 const STARTED = 'Запустил разбор.';
 const QUESTION = 'Что было в логах за ночь?';
 /** The chat's own tasks: three created, the first started with its `activeForm`. */
-const CHAT_TASKS = ['Описать глубокого агента', 'Создать запись', 'Запустить разбор'] as const;
+const CHAT_TASKS = [
+  'Описать глубокого агента',
+  'Создать запись',
+  'Запустить разбор',
+] as const;
 const CHAT_ACTIVE = 'Описываю глубокого агента';
 /** The deep agent's tasks, one per subagent. */
 const DEEP_TASKS = ['Собрать логи за ночь', 'Написать ответ'] as const;
@@ -67,7 +86,8 @@ const ANSWER = 'ответ';
 const GATHER_TASK = 'Собери логи за ночь и перечисли ошибки';
 const ANSWER_TASK = 'Напиши ответ по собранным логам';
 const GATHER_REPORT = 'Ночью было три ошибки оплаты.';
-const ANSWER_REPORT = 'Ночью было три ошибки оплаты, все в 03:10 UTC; причина — таймаут шлюза.';
+const ANSWER_REPORT =
+  'Ночью было три ошибки оплаты, все в 03:10 UTC; причина — таймаут шлюза.';
 
 let harness: TestApp;
 let admin: Session;
@@ -84,7 +104,11 @@ function briefTask(question: string): string {
 function taskCreate(subject: string, activeForm?: string): ScriptedToolCall {
   return {
     tool: 'task_create',
-    args: { subject, description: `Описание: ${subject}`, ...(activeForm === undefined ? {} : { activeForm }) },
+    args: {
+      subject,
+      description: `Описание: ${subject}`,
+      ...(activeForm === undefined ? {} : { activeForm }),
+    },
   };
 }
 
@@ -92,8 +116,19 @@ function taskUpdate(taskId: number, status: string): ScriptedToolCall {
   return { tool: 'task_update', args: { taskId, status } };
 }
 
-function delegate(subagentType: string, description: string, taskId?: number): ScriptedToolCall {
-  return { tool: 'task', args: { subagentType, description, ...(taskId === undefined ? {} : { taskId }) } };
+function delegate(
+  subagentType: string,
+  description: string,
+  taskId?: number,
+): ScriptedToolCall {
+  return {
+    tool: 'task',
+    args: {
+      subagentType,
+      description,
+      ...(taskId === undefined ? {} : { taskId }),
+    },
+  };
 }
 
 /** A subagent's one `task` entry: the brief of the deep agent's start as labelled lines, then the description. */
@@ -129,11 +164,20 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
   beforeAll(async () => {
     harness = await createTestApp({ workers: true });
     harness.model.completeText({ text: TITLE });
-    admin = await seedSuperAdmin(harness.app, `e2e-journey-admin-${randomUUID()}`);
+    admin = await seedSuperAdmin(
+      harness.app,
+      `e2e-journey-admin-${randomUUID()}`,
+    );
     made.users.push(admin.id);
-    restoreModels = await useRunModels(harness.app, admin, { chat: { id: MODEL, ...HAIKU_TEST_PRICES } });
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: MODEL, ...HAIKU_TEST_PRICES },
+    });
     restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL);
-    role = await allowRole(harness.app, admin, { name: 'records-journey', models: [MODEL], servers: [] });
+    role = await allowRole(harness.app, admin, {
+      name: 'records-journey',
+      models: [MODEL],
+      servers: [],
+    });
     made.roles.push(role.id);
   }, TEST_TIMEOUT_MS);
 
@@ -144,7 +188,11 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
         await restoreBuiltins?.();
         await restoreModels?.();
       } finally {
-        await removeRunRows(harness.pool, { models: [MODEL], roles: made.roles, users: made.users });
+        await removeRunRows(harness.pool, {
+          models: [MODEL],
+          roles: made.roles,
+          users: made.users,
+        });
       }
     } finally {
       await harness.close();
@@ -177,14 +225,30 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
             ],
           },
           { calls: [taskUpdate(1, 'in_progress')] },
-          { calls: [recordToolCall('create_record', createArgs(journeyBody(name, 11)))] },
-          { calls: [recordToolCall('create_record', createArgs(journeyBody(name)))] },
+          {
+            calls: [
+              recordToolCall(
+                'create_record',
+                createArgs(journeyBody(name, 11)),
+              ),
+            ],
+          },
+          {
+            calls: [
+              recordToolCall('create_record', createArgs(journeyBody(name))),
+            ],
+          },
           { text: CREATED },
           () => ({
             calls: [
               {
                 tool: 'start_deep_agent',
-                args: { deepAgent: createdId, question: QUESTION, boundaries: '', result: '' },
+                args: {
+                  deepAgent: createdId,
+                  question: QUESTION,
+                  boundaries: '',
+                  result: '',
+                },
               },
             ],
           }),
@@ -198,15 +262,24 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
           { calls: [taskCreate(DEEP_TASKS[0]), taskCreate(DEEP_TASKS[1])] },
           // «сбор» works for task 1: the call makes it in_progress with the subagent as its owner, its answer completes it.
           { calls: [delegate(GATHER, GATHER_TASK, 1)] },
-          { calls: [taskUpdate(2, 'in_progress'), delegate(ANSWER, ANSWER_TASK)] },
+          {
+            calls: [
+              taskUpdate(2, 'in_progress'),
+              delegate(ANSWER, ANSWER_TASK),
+            ],
+          },
           // Task 2 is still in progress: this answer is refused with a notice naming it.
           { text: 'Ответ готов.' },
           { calls: [taskUpdate(2, 'completed')] },
         ],
         { thereafter: { text: 'Готово.' } },
       );
-      harness.model.script({ task: assignment(GATHER_TASK) }, [{ latch: gatherHeld, text: GATHER_REPORT }]);
-      harness.model.script({ task: assignment(ANSWER_TASK) }, [{ text: ANSWER_REPORT }]);
+      harness.model.script({ task: assignment(GATHER_TASK) }, [
+        { latch: gatherHeld, text: GATHER_REPORT },
+      ]);
+      harness.model.script({ task: assignment(ANSWER_TASK) }, [
+        { text: ANSWER_REPORT },
+      ]);
 
       try {
         const { id: threadId } = await api.createThread();
@@ -239,7 +312,11 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
             },
           },
         });
-        expect((await listLibrary(harness.app, employee)).map((record) => record.name)).not.toContain(name);
+        expect(
+          (await listLibrary(harness.app, employee)).map(
+            (record) => record.name,
+          ),
+        ).not.toContain(name);
         // (AC-12.1, AC-15.1) the route of the conversation's root gives the chat's own tasks, the started one with its `activeForm`
         const chatTasks = await expectBody(
           api.raw('get', `/agents/${waiting.chat.rootAgentId}/tasks`),
@@ -247,15 +324,39 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
           AgentTasksViewSchema,
         );
         expect(chatTasks.delegations).toEqual([]);
-        expect(chatTasks.tasks.map(({ id, subject, status, activeForm }) => ({ id, subject, status, activeForm }))).toEqual([
-          { id: 1, subject: CHAT_TASKS[0], status: 'in_progress', activeForm: CHAT_ACTIVE },
-          { id: 2, subject: CHAT_TASKS[1], status: 'pending', activeForm: null },
-          { id: 3, subject: CHAT_TASKS[2], status: 'pending', activeForm: null },
+        expect(
+          chatTasks.tasks.map(({ id, subject, status, activeForm }) => ({
+            id,
+            subject,
+            status,
+            activeForm,
+          })),
+        ).toEqual([
+          {
+            id: 1,
+            subject: CHAT_TASKS[0],
+            status: 'in_progress',
+            activeForm: CHAT_ACTIVE,
+          },
+          {
+            id: 2,
+            subject: CHAT_TASKS[1],
+            status: 'pending',
+            activeForm: null,
+          },
+          {
+            id: 3,
+            subject: CHAT_TASKS[2],
+            status: 'pending',
+            activeForm: null,
+          },
         ]);
 
         // 3. (AC-01.2, AC-28.1) approved: the record is in the library with the card's id, and in focus as `created`
         const approvedAt = new Date().toISOString();
-        expect(await api.decide(pending.decision.decisionId, { approve: true })).toEqual({ outcome: 'resolved' });
+        expect(
+          await api.decide(pending.decision.decisionId, { approve: true }),
+        ).toEqual({ outcome: 'resolved' });
         const created = await waitFor(
           () => api.history(threadId),
           (view) => view.focus !== null && view.chat.status === 'idle',
@@ -263,9 +364,19 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
         );
         createdId = pending.card.recordId;
         const record = await getRecord(harness.app, employee, createdId);
-        expect(record).toMatchObject({ id: createdId, kind: 'deep_agent', version: 1, name });
-        expect(record.kind === 'deep_agent' && record.content.selfLearning).toBe(false);
-        expect(created.focus).toMatchObject({ recordId: createdId, action: 'created' });
+        expect(record).toMatchObject({
+          id: createdId,
+          kind: 'deep_agent',
+          version: 1,
+          name,
+        });
+        expect(
+          record.kind === 'deep_agent' && record.content.selfLearning,
+        ).toBe(false);
+        expect(created.focus).toMatchObject({
+          recordId: createdId,
+          action: 'created',
+        });
         expect((created.focus?.at ?? '') >= approvedAt).toBe(true);
 
         // 4. (AC-03.1) the brief waits and no deep agent exists; confirmed, exactly one deep agent of the record's version with the brief as its first task
@@ -274,38 +385,63 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
           () => api.history(threadId),
           (view) =>
             view.decisions.some(
-              (decision) => decision.kind === AGENTS_BRIEF_CONFIRMATION && decision.status === 'open',
+              (decision) =>
+                decision.kind === AGENTS_BRIEF_CONFIRMATION &&
+                decision.status === 'open',
             ),
           'the brief',
         );
         expect(briefWaiting.agents).toEqual([]);
-        const brief = briefWaiting.decisions.find((decision) => decision.kind === AGENTS_BRIEF_CONFIRMATION);
+        const brief = briefWaiting.decisions.find(
+          (decision) => decision.kind === AGENTS_BRIEF_CONFIRMATION,
+        );
         if (brief === undefined) throw new Error('no brief');
-        expect(await api.decide(brief.decisionId, { approve: true })).toEqual({ outcome: 'resolved' });
+        expect(await api.decide(brief.decisionId, { approve: true })).toEqual({
+          outcome: 'resolved',
+        });
         const running = await waitFor(
           () => api.history(threadId),
-          (view: ConversationView) => treeOf(view.agents).some((agent) => agent.origin?.recordId === createdId),
+          (view: ConversationView) =>
+            treeOf(view.agents).some(
+              (agent) => agent.origin?.recordId === createdId,
+            ),
           'the deep agent',
         );
         const deepAgents = treeOf(running.agents).filter(
-          (agent) => agent.origin?.recordId === createdId && agent.origin?.subagent === null,
+          (agent) =>
+            agent.origin?.recordId === createdId &&
+            agent.origin?.subagent === null,
         );
         expect(deepAgents.map((agent) => agent.origin?.version)).toEqual([1]);
         const deepAgent = deepAgents[0];
         if (deepAgent === undefined) throw new Error('no deep agent');
         const [firstEntry] = (await api.agentPage(deepAgent.agentId)).entries;
-        expect(firstEntry?.kind === 'task' && firstEntry.content.text).toBe(briefTask(QUESTION));
+        expect(firstEntry?.kind === 'task' && firstEntry.content.text).toBe(
+          briefTask(QUESTION),
+        );
 
         // 5. (AC-04.1, AC-12.1, AC-28.3, AC-23.3) the deep agent's tasks and its delegation while «сбор» works, the focus `started`, 404 to another employee
         //   (AC-23.2); then both tasks and both delegations completed, «сбор» with its answer
         const tasksOf = () =>
-          expectBody(api.raw('get', `/agents/${deepAgent.agentId}/tasks`), 200, AgentTasksViewSchema);
+          expectBody(
+            api.raw('get', `/agents/${deepAgent.agentId}/tasks`),
+            200,
+            AgentTasksViewSchema,
+          );
         const working = await waitFor(
           tasksOf,
-          (list) => list.tasks.map((task) => task.status).join() === 'in_progress,pending' && list.delegations.length === 1,
+          (list) =>
+            list.tasks.map((task) => task.status).join() ===
+              'in_progress,pending' && list.delegations.length === 1,
           'the task list and the delegation while the gather subagent works',
         );
-        expect(working.tasks.map(({ id, subject, owner }) => ({ id, subject, owner }))).toEqual([
+        expect(
+          working.tasks.map(({ id, subject, owner }) => ({
+            id,
+            subject,
+            owner,
+          })),
+        ).toEqual([
           { id: 1, subject: DEEP_TASKS[0], owner: GATHER },
           { id: 2, subject: DEEP_TASKS[1], owner: null },
         ]);
@@ -321,11 +457,19 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
         });
         // The row's agent is the subagent of the deep agent's tree, not the deep agent itself
         expect(
-          treeOf((await api.history(threadId)).agents).find((agent) => agent.agentId === gathering?.agentId)?.origin?.subagent,
+          treeOf((await api.history(threadId)).agents).find(
+            (agent) => agent.agentId === gathering?.agentId,
+          )?.origin?.subagent,
         ).toBe(GATHER);
-        expect((await api.history(threadId)).focus).toMatchObject({ recordId: createdId, action: 'started' });
+        expect((await api.history(threadId)).focus).toMatchObject({
+          recordId: createdId,
+          action: 'started',
+        });
         const foreign = await expectError(
-          chatApi(harness.app, other).raw('get', `/agents/${deepAgent.agentId}/tasks`),
+          chatApi(harness.app, other).raw(
+            'get',
+            `/agents/${deepAgent.agentId}/tasks`,
+          ),
           404,
         );
         expect(foreign.errorCode).toBe('AGENT_NOT_FOUND');
@@ -333,33 +477,68 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
         const done = await waitFor(
           tasksOf,
           (list) =>
-            list.tasks.map((task) => task.status).join() === 'completed,completed' &&
-            list.delegations.map((delegation) => delegation.status).join() === 'completed,completed',
+            list.tasks.map((task) => task.status).join() ===
+              'completed,completed' &&
+            list.delegations.map((delegation) => delegation.status).join() ===
+              'completed,completed',
           'both tasks and both delegations completed',
         );
-        expect(done.delegations.map(({ subagent, item, taskId, answer }) => ({ subagent, item, taskId, answer }))).toEqual([
-          { subagent: GATHER, item: GATHER_TASK, taskId: 1, answer: GATHER_REPORT },
-          { subagent: ANSWER, item: ANSWER_TASK, taskId: null, answer: ANSWER_REPORT },
+        expect(
+          done.delegations.map(({ subagent, item, taskId, answer }) => ({
+            subagent,
+            item,
+            taskId,
+            answer,
+          })),
+        ).toEqual([
+          {
+            subagent: GATHER,
+            item: GATHER_TASK,
+            taskId: 1,
+            answer: GATHER_REPORT,
+          },
+          {
+            subagent: ANSWER,
+            item: ANSWER_TASK,
+            taskId: null,
+            answer: ANSWER_REPORT,
+          },
         ]);
 
         // 6. (AC-05.2) the conversation's answer is the final subagent's report, literally, and the deep agent finished
         const answered = await waitFor(
           () => api.history(threadId),
           (view) =>
-            view.entries.some((entry) => entry.kind === 'child_report' && entry.content.agentId === deepAgent.agentId),
+            view.entries.some(
+              (entry) =>
+                entry.kind === 'child_report' &&
+                entry.content.agentId === deepAgent.agentId,
+            ),
           'the report of the deep agent',
         );
         const report = answered.entries.find(
-          (entry) => entry.kind === 'child_report' && entry.content.agentId === deepAgent.agentId,
+          (entry) =>
+            entry.kind === 'child_report' &&
+            entry.content.agentId === deepAgent.agentId,
         );
-        expect(report?.kind === 'child_report' && report.content).toMatchObject({
-          status: 'completed',
-          text: ANSWER_REPORT,
-        });
-        expect(treeOf(answered.agents).find((agent) => agent.agentId === deepAgent.agentId)?.status).toBe('completed');
+        expect(report?.kind === 'child_report' && report.content).toMatchObject(
+          {
+            status: 'completed',
+            text: ANSWER_REPORT,
+          },
+        );
+        expect(
+          treeOf(answered.agents).find(
+            (agent) => agent.agentId === deepAgent.agentId,
+          )?.status,
+        ).toBe('completed');
         // (AC-14.4) the answer given while task 2 was in progress met a notice naming it
-        const notices = (await api.agentPage(deepAgent.agentId)).entries.flatMap((entry) =>
-          entry.kind === 'notice' && entry.content.openTasks !== undefined ? [entry.content.openTasks] : [],
+        const notices = (
+          await api.agentPage(deepAgent.agentId)
+        ).entries.flatMap((entry) =>
+          entry.kind === 'notice' && entry.content.openTasks !== undefined
+            ? [entry.content.openTasks]
+            : [],
         );
         expect(notices).toContainEqual([2]);
       } finally {

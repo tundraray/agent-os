@@ -4,8 +4,18 @@
 // cancel or failed after its answer began is one with an estimate from UTF-8 bytes. The port, the gate, the
 // provider registry and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
-import { type Clock, type ModelCallRecord, type ModelPrice, systemClock } from '@agent-os/runtime';
-import type { AccessDeniedEntry, AccessGate, AuditRecord, ModelVerdict } from '../access-gate';
+import {
+  type Clock,
+  type ModelCallRecord,
+  type ModelPrice,
+  systemClock,
+} from '@agent-os/runtime';
+import type {
+  AccessDeniedEntry,
+  AccessGate,
+  AuditRecord,
+  ModelVerdict,
+} from '../access-gate';
 import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn';
 import { createProviderRegistryDouble } from '../testing';
 import { CODE_RULE, ModelClient, type TextDelta } from './model-client';
@@ -18,7 +28,12 @@ interface PortAttempt {
   readonly cancelled?: true;
 }
 
-const LEDGER_USAGE = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 };
+const LEDGER_USAGE = {
+  inputTokens: 10,
+  outputTokens: 2,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+};
 
 /** The price the allowing gate double answers with; the ledger row must carry it unchanged. */
 const VERDICT_PRICE: ModelPrice = {
@@ -38,13 +53,17 @@ const ALLOWING_GATE: Pick<AccessGate, 'model' | 'defaultChatModel'> = {
 const READY_PROVIDERS = createProviderRegistryDouble({ anthropic: 'ready' });
 
 /** `cancel` aborts the call's signal: a `cancelled` attempt calls it after its parts and rejects as the port does. */
-function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () => {}): AgentTurnModelClient {
+function portDouble(
+  attempts: readonly PortAttempt[],
+  cancel: () => void = () => {},
+): AgentTurnModelClient {
   let calls = 0;
   return {
     async streamTurn(_call, { onText, signal }) {
       const attempt = attempts[calls];
       calls += 1;
-      if (attempt === undefined) throw new Error(`No attempt ${calls} in the port double`);
+      if (attempt === undefined)
+        throw new Error(`No attempt ${calls} in the port double`);
       for (const part of attempt.parts) onText(part);
       if (attempt.cancelled) {
         cancel();
@@ -55,7 +74,12 @@ function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () =>
         error.name = 'AI_APICallError';
         throw Object.assign(error, { statusCode: attempt.failWith });
       }
-      return { finishReason: 'stop', text: attempt.parts.join(''), toolCalls: [], usage: LEDGER_USAGE };
+      return {
+        finishReason: 'stop',
+        text: attempt.parts.join(''),
+        toolCalls: [],
+        usage: LEDGER_USAGE,
+      };
     },
   };
 }
@@ -109,7 +133,12 @@ interface Row {
   readonly hookWarnings: number;
 }
 
-const TURN_ROW = { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', price: VERDICT_PRICE };
+const TURN_ROW = {
+  ownerId: 'owner-1',
+  taskId: 'agent-1',
+  model: 'anthropic/claude-turn',
+  price: VERDICT_PRICE,
+};
 
 describe('ModelClient streams text parts with running offsets, restarts them on a retry, and survives a failing hook', () => {
   it.each<[string, Row]>([
@@ -134,7 +163,10 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       'an attempt that streamed a part and failed is retried after the pause from offset 0, and both attempts are ledger rows',
       {
         act: 'call',
-        attempts: [{ parts: ['Старт'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
+        attempts: [
+          { parts: ['Старт'], failWith: 503 },
+          { parts: ['Fresh', ' answer'] },
+        ],
         hookFails: false,
         text: 'Fresh answer',
         deltas: [
@@ -148,7 +180,12 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         ledgerRows: [
           {
             ...TURN_ROW,
-            usage: { inputTokens: expect.any(Number), outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            usage: {
+              inputTokens: expect.any(Number),
+              outputTokens: 3,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
           },
           { ...TURN_ROW, usage: LEDGER_USAGE },
         ],
@@ -181,7 +218,12 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         deltas: [],
         pauses: [],
         ledgerRows: [
-          { ownerId: 'owner-1', model: 'anthropic/claude-default', price: VERDICT_PRICE, usage: LEDGER_USAGE },
+          {
+            ownerId: 'owner-1',
+            model: 'anthropic/claude-default',
+            price: VERDICT_PRICE,
+            usage: LEDGER_USAGE,
+          },
         ],
         hookWarnings: 0,
       },
@@ -238,7 +280,9 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
             })
             .then((result) => {
               if (result.kind === 'answer') return result.text;
-              return result.kind === 'model_error' ? `model_error ${result.statusCode}` : result.kind;
+              return result.kind === 'model_error'
+                ? `model_error ${result.statusCode}`
+                : result.kind;
             })
         : await client.completeText({
             ownerId: 'owner-1',
@@ -249,13 +293,21 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           });
 
     expect(text).toBe(row.text);
-    expect(deltas.map(({ offset, text: part }) => ({ offset, text: part }))).toEqual(row.deltas);
+    expect(
+      deltas.map(({ offset, text: part }) => ({ offset, text: part })),
+    ).toEqual(row.deltas);
     for (const delta of deltas) {
-      expect(delta).toMatchObject({ ownerId: 'owner-1', rootId: 'root-1', agentId: 'agent-1' });
+      expect(delta).toMatchObject({
+        ownerId: 'owner-1',
+        rootId: 'root-1',
+        agentId: 'agent-1',
+      });
     }
     expect(pauses).toEqual(row.pauses);
     expect(ledgerRows).toStrictEqual(row.ledgerRows);
-    const hookWarnings = logger.warn.mock.calls.filter(([message]) => message === 'text delta hook failed');
+    const hookWarnings = logger.warn.mock.calls.filter(
+      ([message]) => message === 'text delta hook failed',
+    );
     expect(hookWarnings).toHaveLength(row.hookWarnings);
     for (const [, fields] of hookWarnings) {
       expect(fields).toEqual({ agentId: 'agent-1', error: 'notify is down' });
@@ -272,7 +324,12 @@ describe('ModelClient instructions', () => {
       turnClient: {
         async streamTurn(call) {
           sent.push(call.instructions);
-          return { finishReason: 'stop', text: 'ok', toolCalls: [], usage: LEDGER_USAGE };
+          return {
+            finishReason: 'stop',
+            text: 'ok',
+            toolCalls: [],
+            usage: LEDGER_USAGE,
+          };
         },
       },
       ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
@@ -300,7 +357,12 @@ describe('ModelClient instructions', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBe(`You are a chat.\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`);
     // The rule names the tools a stored result is read with, as the wrapper and their descriptions do.
-    for (const name of ['read_tool_result', 'search_tool_result', 'run_code', 'readResult']) {
+    for (const name of [
+      'read_tool_result',
+      'search_tool_result',
+      'run_code',
+      'readResult',
+    ]) {
       expect(CODE_RULE).toContain(name);
     }
   });
@@ -318,7 +380,10 @@ interface VerdictRow {
    * The ledger rows: the price and the usage — the provider's (`LEDGER_USAGE`), or for an unfinished attempt
    * the output tokens of its estimate; the input tokens of an estimate are counted from the sent request.
    */
-  readonly ledgerRows: readonly { readonly price: ModelPrice; readonly estimatedOutputTokens?: number }[];
+  readonly ledgerRows: readonly {
+    readonly price: ModelPrice;
+    readonly estimatedOutputTokens?: number;
+  }[];
   readonly audits: readonly AuditRecord[];
 }
 
@@ -349,7 +414,7 @@ function deniedTitle(reason: string): AccessDeniedEntry {
 }
 
 // UC-6, DC-7, KD-3, KD-4. Provider rejections, their retries and ledger rows: retry-policy.spec.ts.
-describe('the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict\'s price, and a refused title calls the audit hook once', () => {
+describe("the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict's price, and a refused title calls the audit hook once", () => {
   it.each<[string, VerdictRow]>([
     [
       'a refused call does not start: no provider call and no ledger row',
@@ -419,7 +484,9 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
     const audits: AuditRecord[] = [];
     let providerCalls = 0;
     const cancel = new AbortController();
-    const port = portDouble(row.attempts, () => cancel.abort(new Error('the step was cancelled')));
+    const port = portDouble(row.attempts, () =>
+      cancel.abort(new Error('the step was cancelled')),
+    );
     const logger = loggerDouble();
     const client = createModelClient({
       turnClient: {
@@ -475,7 +542,10 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
               logger,
             })
             .then(
-              (result) => (result.kind === 'not_started' ? `not_started ${result.verdict.reason}` : result.kind),
+              (result) =>
+                result.kind === 'not_started'
+                  ? `not_started ${result.verdict.reason}`
+                  : result.kind,
               () => 'rejects',
             )
         : await client
@@ -490,14 +560,17 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
 
     expect(outcome).toBe(row.outcome);
     expect(verdictAsks).toEqual([
-      row.act === 'call' ? 'owner-1 anthropic/claude-turn' : 'owner-1 anthropic/claude-default',
+      row.act === 'call'
+        ? 'owner-1 anthropic/claude-turn'
+        : 'owner-1 anthropic/claude-default',
     ]);
     expect(providerCalls).toBe(row.providerCalls);
     // The input of an estimate is the sent request in UTF-8 bytes, four to a token (these calls have no tools).
     const sentBytes =
       sent === undefined
         ? 0
-        : Buffer.byteLength(sent.instructions, 'utf8') + Buffer.byteLength(JSON.stringify([sent.messages, []]), 'utf8');
+        : Buffer.byteLength(sent.instructions, 'utf8') +
+          Buffer.byteLength(JSON.stringify([sent.messages, []]), 'utf8');
     expect(ledgerRows.map(({ price, usage }) => ({ price, usage }))).toEqual(
       row.ledgerRows.map(({ price, estimatedOutputTokens }) => ({
         price,
@@ -529,7 +602,12 @@ describe('ModelClient marks an answer cut off at the length limit', () => {
     const client = createModelClient({
       turnClient: {
         async streamTurn() {
-          return { finishReason, text: 'a text', toolCalls: [], usage: LEDGER_USAGE };
+          return {
+            finishReason,
+            text: 'a text',
+            toolCalls: [],
+            usage: LEDGER_USAGE,
+          };
         },
       },
       ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },

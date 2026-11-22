@@ -8,7 +8,12 @@ import { IdentityErrorCode, type AdminUserDetail } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
@@ -35,7 +40,13 @@ function adminRightText(
   { t, locale }: { t: PageTranslator; locale: Locale },
 ): string {
   if (personal) return t('adminPersonal');
-  if (roles.length > 0) return t('adminByRole', { count: roles.length, roles: roles.map((role) => builtinRoleName(role.name, locale)).join(' · ') });
+  if (roles.length > 0)
+    return t('adminByRole', {
+      count: roles.length,
+      roles: roles
+        .map((role) => builtinRoleName(role.name, locale))
+        .join(' · '),
+    });
   return t('adminNone');
 }
 
@@ -75,7 +86,11 @@ export function UserPage({ id }: UserPageProps) {
    */
   const showsText = (error: unknown): boolean => {
     if (!isNotFound(error)) return true;
-    if (isApiRequestError(error) && error.code === IdentityErrorCode.USER_NOT_FOUND) setGone(true);
+    if (
+      isApiRequestError(error) &&
+      error.code === IdentityErrorCode.USER_NOT_FOUND
+    )
+      setGone(true);
     else roles.reload();
     return false;
   };
@@ -95,7 +110,8 @@ export function UserPage({ id }: UserPageProps) {
       if (doneText !== undefined) toast.success(doneText);
     } catch (error) {
       const refusal = describeRefusal(tErrors, error, { logEvent });
-      if (showsText(error) && refusal !== null) setFailure({ place, text: refusal.text });
+      if (showsText(error) && refusal !== null)
+        setFailure({ place, text: refusal.text });
     } finally {
       setPending(null);
       user.reload();
@@ -118,16 +134,25 @@ export function UserPage({ id }: UserPageProps) {
     }
   };
 
-  if (gone || isNotFound(user.error)) return <ThreadNotice variant="record-not-found" section="users" />;
+  if (gone || isNotFound(user.error))
+    return <ThreadNotice variant="record-not-found" section="users" />;
 
-  if (user.data === undefined) return <RecordPlaceholder section="users" resource={user} loadFailed={t('loadFailed')} />;
+  if (user.data === undefined)
+    return (
+      <RecordPlaceholder
+        section="users"
+        resource={user}
+        loadFailed={t('loadFailed')}
+      />
+    );
 
   const detail = user.data;
   const active = detail.status === 'active';
   const personalAdmin = detail.adminRight.personal;
   const held = new Set(detail.roles.map((role) => role.id));
   const assignable = (roles.data ?? []).filter((role) => !held.has(role.id));
-  const errorAt = (place: ActionPlace): ReactNode => (failure?.place === place ? failure.text : undefined);
+  const errorAt = (place: ActionPlace): ReactNode =>
+    failure?.place === place ? failure.text : undefined;
   const busy = pending !== null;
 
   const roleRow = (role: AdminUserDetail['roles'][number]): DataTableRow => {
@@ -144,7 +169,10 @@ export function UserPage({ id }: UserPageProps) {
       actions: [
         {
           label: t('removeRole'),
-          onSelect: () => void act(place, 'admin: user role remove', () => adminApi.users.removeRole(id, role.id)),
+          onSelect: () =>
+            void act(place, 'admin: user role remove', () =>
+              adminApi.users.removeRole(id, role.id),
+            ),
           pending: pending === place,
           // One page action at a time: the other rows wait for the read that follows it.
           disabled: busy,
@@ -156,13 +184,17 @@ export function UserPage({ id }: UserPageProps) {
 
   return (
     <>
-      <PageHeader area={titles.panel}
+      <PageHeader
+        area={titles.panel}
         title={detail.name}
         parent={titles.parent('users')}
         badge={
           <>
             {/* The email gives way before the name does: the title stays readable in a narrow header. */}
-            <span className="min-w-0 shrink-[100] truncate text-xs leading-4 text-muted-foreground" title={detail.email}>
+            <span
+              className="min-w-0 shrink-[100] truncate text-xs leading-4 text-muted-foreground"
+              title={detail.email}
+            >
               {detail.email}
             </span>
             <UserStatusBadge status={detail.status} />
@@ -181,7 +213,13 @@ export function UserPage({ id }: UserPageProps) {
           onClick={
             active
               ? () => setBlocking(true)
-              : () => void act('status', 'admin: user unblock', () => adminApi.users.unblock(id), t('unblocked'))
+              : () =>
+                  void act(
+                    'status',
+                    'admin: user unblock',
+                    () => adminApi.users.unblock(id),
+                    t('unblocked'),
+                  )
           }
         >
           {active ? t('block') : t('unblock')}
@@ -189,9 +227,14 @@ export function UserPage({ id }: UserPageProps) {
       </PageHeader>
 
       <div className="flex max-w-240 flex-col gap-8">
-        {errorAt('status') !== undefined && <ActionError>{errorAt('status')}</ActionError>}
+        {errorAt('status') !== undefined && (
+          <ActionError>{errorAt('status')}</ActionError>
+        )}
 
-        <section aria-labelledby={rolesHeadingId} className="flex flex-col gap-3">
+        <section
+          aria-labelledby={rolesHeadingId}
+          className="flex flex-col gap-3"
+        >
           <h2 id={rolesHeadingId} className="text-base leading-6 font-semibold">
             {tAdmin('users.roles')}
           </h2>
@@ -207,8 +250,16 @@ export function UserPage({ id }: UserPageProps) {
           <div className="flex flex-col items-start gap-1.5">
             <DropdownMenu>
               <DropdownMenuTrigger
-                disabled={busy || roles.status !== 'ready' || assignable.length === 0}
-                render={<Button variant="outline" size="sm" className={CONTROL_SIZE} />}
+                disabled={
+                  busy || roles.status !== 'ready' || assignable.length === 0
+                }
+                render={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={CONTROL_SIZE}
+                  />
+                }
               >
                 {pending === 'assign' && <Spinner />}
                 {t('assignRole')}
@@ -219,7 +270,9 @@ export function UserPage({ id }: UserPageProps) {
                     key={role.id}
                     className="pointer-coarse:min-h-11"
                     onClick={() =>
-                      void act('assign', 'admin: user role assign', () => adminApi.users.assignRole(id, role.id))
+                      void act('assign', 'admin: user role assign', () =>
+                        adminApi.users.assignRole(id, role.id),
+                      )
                     }
                   >
                     {builtinRoleName(role.name, locale)}
@@ -227,31 +280,46 @@ export function UserPage({ id }: UserPageProps) {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            {errorAt('assign') !== undefined && <ActionError>{errorAt('assign')}</ActionError>}
+            {errorAt('assign') !== undefined && (
+              <ActionError>{errorAt('assign')}</ActionError>
+            )}
           </div>
         </section>
 
         <GrantsSection holder={{ kind: 'user', id }} />
 
-        <section aria-labelledby={adminHeadingId} className="flex flex-col gap-1.5">
+        <section
+          aria-labelledby={adminHeadingId}
+          className="flex flex-col gap-1.5"
+        >
           <div className="flex items-center gap-3">
-            <h2 id={adminHeadingId} className="text-base leading-6 font-semibold">
+            <h2
+              id={adminHeadingId}
+              className="text-base leading-6 font-semibold"
+            >
               {tAdmin('roles.adminRight')}
             </h2>
-            <span className="text-data">{adminRightText(detail.adminRight, { t, locale })}</span>
+            <span className="text-data">
+              {adminRightText(detail.adminRight, { t, locale })}
+            </span>
             <ActionButton
               disabled={busy}
               pending={pending === 'admin'}
               onClick={
                 personalAdmin
-                  ? () => void act('admin', PERSONAL_ADMIN_LOG_EVENT, () => adminApi.users.setPersonalAdmin(id, false))
+                  ? () =>
+                      void act('admin', PERSONAL_ADMIN_LOG_EVENT, () =>
+                        adminApi.users.setPersonalAdmin(id, false),
+                      )
                   : () => setGranting(true)
               }
             >
               {personalAdmin ? t('revokePersonal') : t('grantPersonal')}
             </ActionButton>
           </div>
-          {errorAt('admin') !== undefined && <ActionError>{errorAt('admin')}</ActionError>}
+          {errorAt('admin') !== undefined && (
+            <ActionError>{errorAt('admin')}</ActionError>
+          )}
         </section>
       </div>
 
@@ -289,14 +357,35 @@ export function UserPage({ id }: UserPageProps) {
 }
 
 function Spinner() {
-  return <LoaderCircleIcon aria-hidden className="animate-spin motion-reduce:animate-none" />;
+  return (
+    <LoaderCircleIcon
+      aria-hidden
+      className="animate-spin motion-reduce:animate-none"
+    />
+  );
 }
 
-type ActionButtonProps = { disabled: boolean; pending?: boolean; onClick: () => void; children: string };
+type ActionButtonProps = {
+  disabled: boolean;
+  pending?: boolean;
+  onClick: () => void;
+  children: string;
+};
 
-function ActionButton({ disabled, pending = false, onClick, children }: ActionButtonProps) {
+function ActionButton({
+  disabled,
+  pending = false,
+  onClick,
+  children,
+}: ActionButtonProps) {
   return (
-    <Button variant="outline" size="sm" className={CONTROL_SIZE} disabled={disabled} onClick={onClick}>
+    <Button
+      variant="outline"
+      size="sm"
+      className={CONTROL_SIZE}
+      disabled={disabled}
+      onClick={onClick}
+    >
       {pending && <Spinner />}
       {children}
     </Button>

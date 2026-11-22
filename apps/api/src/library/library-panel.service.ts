@@ -96,7 +96,13 @@ export class LibraryPanelService {
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
         const record = await this.records.panelOr404(id);
-        return this.records.detail(record, viewer, actor.isAdmin, 'panel', facts);
+        return this.records.detail(
+          record,
+          viewer,
+          actor.isAdmin,
+          'panel',
+          facts,
+        );
       },
       recordFields,
     );
@@ -120,7 +126,13 @@ export class LibraryPanelService {
           body,
           servers: facts.registryServers,
         });
-        return this.saving.savedDetail(result, author, actor.isAdmin, 'panel', facts);
+        return this.saving.savedDetail(
+          result,
+          author,
+          actor.isAdmin,
+          'panel',
+          facts,
+        );
       },
       recordFields,
     );
@@ -145,7 +157,13 @@ export class LibraryPanelService {
           body,
           servers: facts.registryServers,
         });
-        return this.saving.savedDetail(result, author, actor.isAdmin, 'panel', facts);
+        return this.saving.savedDetail(
+          result,
+          author,
+          actor.isAdmin,
+          'panel',
+          facts,
+        );
       },
       recordFields,
     );
@@ -190,7 +208,13 @@ export class LibraryPanelService {
           return after;
         });
         const viewer = await this.records.viewerOf(actor.id);
-        return this.records.detail(record, viewer, actor.isAdmin, 'panel', facts);
+        return this.records.detail(
+          record,
+          viewer,
+          actor.isAdmin,
+          'panel',
+          facts,
+        );
       },
       recordFields,
     );
@@ -242,7 +266,8 @@ export class LibraryPanelService {
         await this.db.transaction(async () => {
           if (!(await this.repository.exists(id))) throw notFound();
           const ban = await this.records.ban(id);
-          if (ban === undefined || !(await this.repository.liftBan(id))) throw notFound();
+          if (ban === undefined || !(await this.repository.liftBan(id)))
+            throw notFound();
           await this.auditLog.record({
             kind: 'library_unban',
             actor: actor.id,

@@ -99,10 +99,12 @@ export function upperEventProblem(
 export class EventLog {
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(RuntimeEventsRepository) private readonly rows: RuntimeEventsRepository,
+    @Inject(RuntimeEventsRepository)
+    private readonly rows: RuntimeEventsRepository,
     @Inject(RuntimeEventDeliveriesRepository)
     private readonly deliveries: RuntimeEventDeliveriesRepository,
-    @Inject(EventConsumerRegistry) private readonly consumers: EventConsumerRegistry,
+    @Inject(EventConsumerRegistry)
+    private readonly consumers: EventConsumerRegistry,
   ) {}
 
   /** Writes an event of the runtime itself. */
@@ -127,7 +129,10 @@ export class EventLog {
     afterSeq: number,
     limit: number,
   ): Promise<TreeEvent[]> {
-    const cappedLimit = Math.min(Math.max(Math.trunc(limit), 0), LIST_AFTER_MAX_LIMIT);
+    const cappedLimit = Math.min(
+      Math.max(Math.trunc(limit), 0),
+      LIST_AFTER_MAX_LIMIT,
+    );
     if (cappedLimit === 0) return [];
     return this.rows.listAfter(rootId, ownerId, afterSeq, cappedLimit);
   }
@@ -158,7 +163,9 @@ export class EventLog {
       await this.deliveries.insert(eventId, consumerNames);
     }
     const notice = JSON.stringify({ rootId, taskId, type: event.type });
-    await this.db.client.execute(sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`);
+    await this.db.client.execute(
+      sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`,
+    );
 
     return {
       eventId,

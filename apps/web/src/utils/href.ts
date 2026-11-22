@@ -1,6 +1,6 @@
 const RELATIVE = /^(?:[/?#]|\.{1,2}\/)/;
 
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+const ALLOWED_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
 const parse = (url: string) => {
   try {
@@ -16,9 +16,9 @@ const parse = (url: string) => {
  * string that is not a URL at all, is `undefined`.
  */
 export function safeHref(url: string | undefined): string | undefined {
-  if (typeof url !== "string") return undefined;
+  if (typeof url !== 'string') return undefined;
   const trimmed = url.trim();
-  if (trimmed === "") return undefined;
+  if (trimmed === '') return undefined;
   const parsed = parse(trimmed);
   if (parsed) {
     return ALLOWED_PROTOCOLS.has(parsed.protocol) ? trimmed : undefined;
@@ -29,6 +29,6 @@ export function safeHref(url: string | undefined): string | undefined {
 /** The host `url` points at, without a leading `www.`, or `undefined`. */
 export function hostOf(url: string | undefined): string | undefined {
   const href = safeHref(url);
-  const hostname = href === undefined ? "" : (parse(href)?.hostname ?? "");
-  return hostname.replace(/^www\./, "") || undefined;
+  const hostname = href === undefined ? '' : (parse(href)?.hostname ?? '');
+  return hostname.replace(/^www\./, '') || undefined;
 }

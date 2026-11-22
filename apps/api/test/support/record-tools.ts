@@ -64,17 +64,23 @@ export function editArgs(
     kind: record.kind,
     name: record.name,
     description: record.description,
-    content: change.prompt === undefined ? content : { ...content, prompt: change.prompt },
+    content:
+      change.prompt === undefined
+        ? content
+        : { ...content, prompt: change.prompt },
   };
 }
 
 /** The open `library.record` request of the conversation with its card, or `undefined`. */
 export function pendingCardOf(
   view: ConversationView,
-): { readonly decision: Confirmation; readonly card: LibraryRecordCard } | undefined {
+):
+  | { readonly decision: Confirmation; readonly card: LibraryRecordCard }
+  | undefined {
   const decision = view.decisions.find(
     (candidate) =>
-      candidate.kind === LIBRARY_RECORD_CONFIRMATION && candidate.status === 'open',
+      candidate.kind === LIBRARY_RECORD_CONFIRMATION &&
+      candidate.status === 'open',
   );
   return decision === undefined
     ? undefined
@@ -83,14 +89,24 @@ export function pendingCardOf(
 
 /** The `library.record` requests of the conversation in any status. */
 export function recordCardsOf(view: ConversationView): Confirmation[] {
-  return view.decisions.filter((decision) => decision.kind === LIBRARY_RECORD_CONFIRMATION);
+  return view.decisions.filter(
+    (decision) => decision.kind === LIBRARY_RECORD_CONFIRMATION,
+  );
 }
 
-export type ToolResult = Extract<HistoryEntry, { kind: 'tool_result' }>['content'];
+export type ToolResult = Extract<
+  HistoryEntry,
+  { kind: 'tool_result' }
+>['content'];
 
 /** The results of the root's calls of `tool`, in order. */
-export function toolResultsOf(view: ConversationView, tool: string): ToolResult[] {
+export function toolResultsOf(
+  view: ConversationView,
+  tool: string,
+): ToolResult[] {
   return view.entries.flatMap((entry) =>
-    entry.kind === 'tool_result' && entry.content.tool === tool ? [entry.content] : [],
+    entry.kind === 'tool_result' && entry.content.tool === tool
+      ? [entry.content]
+      : [],
   );
 }

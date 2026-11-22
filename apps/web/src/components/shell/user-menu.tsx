@@ -26,7 +26,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { describeApiError } from '@/lib/api/api-request';
 import { displayName, initialsOf } from '@/lib/auth/current-user';
@@ -45,20 +50,32 @@ const THEMES = [
   { value: 'light', label: 'userMenu.themeLight', icon: SunIcon },
   { value: 'dark', label: 'userMenu.themeDark', icon: MoonIcon },
   { value: 'system', label: 'userMenu.themeSystem', icon: MonitorIcon },
-] as const satisfies ReadonlyArray<{ value: string; label: Parameters<ShellTranslator>[0]; icon: LucideIcon }>;
+] as const satisfies ReadonlyArray<{
+  value: string;
+  label: Parameters<ShellTranslator>[0];
+  icon: LucideIcon;
+}>;
 
 type ThemeValue = (typeof THEMES)[number]['value'];
 
-const isThemeValue = (value: unknown): value is ThemeValue => THEMES.some((theme) => theme.value === value);
+const isThemeValue = (value: unknown): value is ThemeValue =>
+  THEMES.some((theme) => theme.value === value);
 
 /**
  * MC-2 text of SP-01 for the visible line once read, and for the strip's avatar tooltip in every state:
  * «Расход за {месяц}: {сумма}» — «Расход за ноябрь: 3,42 $».
  */
-function spendText(spend: SpendState, t: ShellTranslator, format: Formatter): string {
+function spendText(
+  spend: SpendState,
+  t: ShellTranslator,
+  format: Formatter,
+): string {
   if (spend.kind === 'ready') {
     const { month, costUsd } = spend.spend;
-    return t('spend.ready', { month: formatMonth(format, month), amount: format.number(costUsd, 'usd') });
+    return t('spend.ready', {
+      month: formatMonth(format, month),
+      amount: format.number(costUsd, 'usd'),
+    });
   }
   return spend.kind === 'error' ? t('spend.unavailable') : t('spend.loading');
 }
@@ -71,15 +88,26 @@ function spendText(spend: SpendState, t: ShellTranslator, format: Formatter): st
 function useNeedsAuthCount(): number {
   const [count, setCount] = useState(0);
   const [version, setVersion] = useState(0);
-  useEffect(() => mcpApi.onConnectionsChanged(() => setVersion((current) => current + 1)), []);
+  useEffect(
+    () =>
+      mcpApi.onConnectionsChanged(() => setVersion((current) => current + 1)),
+    [],
+  );
   useEffect(() => {
     let current = true;
     mcpApi.connections().then(
       (connections) => {
-        if (current) setCount(connections.filter((row) => row.status === 'needs_auth').length);
+        if (current)
+          setCount(
+            connections.filter((row) => row.status === 'needs_auth').length,
+          );
       },
       (error: unknown) => {
-        if (current) logger.error('user menu: mcp connections read failed', describeApiError(error));
+        if (current)
+          logger.error(
+            'user menu: mcp connections read failed',
+            describeApiError(error),
+          );
       },
     );
     return () => {
@@ -90,8 +118,16 @@ function useNeedsAuthCount(): number {
 }
 
 /** MC-6: the trigger's name for a screen reader. */
-function menuLabel(t: ShellTranslator, name: string | null, needsAuth: number): string {
-  return t('userMenu.label', { named: name === null ? 'no' : 'yes', name: name ?? '', needsAuth });
+function menuLabel(
+  t: ShellTranslator,
+  name: string | null,
+  needsAuth: number,
+): string {
+  return t('userMenu.label', {
+    named: name === null ? 'no' : 'yes',
+    name: name ?? '',
+    needsAuth,
+  });
 }
 
 /**
@@ -161,24 +197,40 @@ export function UserMenu() {
               />
             }
           >
-            <Avatar aria-hidden className={cn('ml-0.5', isStrip ? 'size-8' : 'size-7')}>
-              <AvatarFallback className="text-xs font-medium">{name === null ? '' : initialsOf(name)}</AvatarFallback>
-              {needsAuth > 0 && <span className="absolute top-0 right-0 size-1.5 rounded-full bg-warning" />}
+            <Avatar
+              aria-hidden
+              className={cn('ml-0.5', isStrip ? 'size-8' : 'size-7')}
+            >
+              <AvatarFallback className="text-xs font-medium">
+                {name === null ? '' : initialsOf(name)}
+              </AvatarFallback>
+              {needsAuth > 0 && (
+                <span className="absolute top-0 right-0 size-1.5 rounded-full bg-warning" />
+              )}
             </Avatar>
             <span className="flex min-w-0 flex-1 flex-col">
               {/* Same fixed-height box for the skeleton and the name: the block does not shift once read. */}
               <span className="flex h-5 items-center">
                 {name === null ? (
-                  <Skeleton aria-hidden className="h-3.5 w-24 motion-reduce:animate-none" />
+                  <Skeleton
+                    aria-hidden
+                    className="h-3.5 w-24 motion-reduce:animate-none"
+                  />
                 ) : (
                   <span className="truncate">{name}</span>
                 )}
               </span>
               {/* Fixed line height: the skeleton and the text occupy the same box, so nothing shifts. */}
-              <span id={spendId} className="flex h-4 items-center text-xs text-muted-foreground tabular-nums">
+              <span
+                id={spendId}
+                className="flex h-4 items-center text-xs text-muted-foreground tabular-nums"
+              >
                 {spend.kind === 'loading' ? (
                   <>
-                    <Skeleton aria-hidden className="h-3 w-30 motion-reduce:animate-none" />
+                    <Skeleton
+                      aria-hidden
+                      className="h-3 w-30 motion-reduce:animate-none"
+                    />
                     <span className="sr-only">{spendLine}</span>
                   </>
                 ) : (
@@ -186,7 +238,10 @@ export function UserMenu() {
                 )}
               </span>
             </span>
-            <ChevronUpIcon aria-hidden className="ml-auto text-muted-foreground" />
+            <ChevronUpIcon
+              aria-hidden
+              className="ml-auto text-muted-foreground"
+            />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side={isStrip ? 'right' : 'top'}
@@ -202,8 +257,12 @@ export function UserMenu() {
                 </div>
               ) : (
                 <>
-                  <p className="truncate text-sm font-medium">{displayName(user)}</p>
-                  <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+                  <p className="truncate text-sm font-medium">
+                    {displayName(user)}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {user.email}
+                  </p>
                 </>
               )}
             </div>
@@ -213,14 +272,19 @@ export function UserMenu() {
               {t('userMenu.myAccess')}
               {/* The trigger's name already tells a screen reader the count. */}
               {needsAuth > 0 && (
-                <span aria-hidden className="ml-auto flex items-center gap-1.5 text-warning tabular-nums">
+                <span
+                  aria-hidden
+                  className="ml-auto flex items-center gap-1.5 text-warning tabular-nums"
+                >
                   <span className="size-1.5 rounded-full bg-warning" />
                   {needsAuth}
                 </span>
               )}
             </DropdownMenuItem>
             {user?.isAdmin === true && (
-              <DropdownMenuItem render={<ShellLink href={adminPath('users')} />}>
+              <DropdownMenuItem
+                render={<ShellLink href={adminPath('users')} />}
+              >
                 <ShieldCheckIcon aria-hidden />
                 {t('userMenu.adminPanel')}
               </DropdownMenuItem>

@@ -57,7 +57,9 @@ export interface AppliedChoices {
  * The new entities of an answer: each well-formed `add_entity` among the operations `checkOperations`
  * would look at, the first one per `ref`. Their texts are what the caller masks and embeds.
  */
-export function proposedEntities(operations: readonly unknown[]): ProposedEntity[] {
+export function proposedEntities(
+  operations: readonly unknown[],
+): ProposedEntity[] {
   const byRef = new Map<string, ProposedEntity>();
   for (const raw of operations.slice(0, KNOWLEDGE_OPERATIONS_MAX)) {
     const parsed = KnowledgeOperationSchema.safeParse(raw);
@@ -80,7 +82,8 @@ export function similarCandidates(
   graph: readonly GraphItem[],
 ): SimilarEntity[] {
   const entitiesByKey = new Map<string, GraphEntityItem>();
-  for (const item of graph) if (item.type === 'entity') entitiesByKey.set(knowledgeKey(item), item);
+  for (const item of graph)
+    if (item.type === 'entity') entitiesByKey.set(knowledgeKey(item), item);
 
   return newEntities.flatMap((proposed) => {
     const candidates = (pairsByRef.get(proposed.ref) ?? [])
@@ -112,7 +115,9 @@ export function similarEntitiesText(similar: readonly SimilarEntity[]): string {
   const blocks = similar.map((entity) =>
     [
       `new entity ref=${entity.ref}: ${entity.name}: ${entity.description}`,
-      ...entity.candidates.map((candidate) => `  candidate ${knowledgeLineWithKey(candidate.entity)}`),
+      ...entity.candidates.map(
+        (candidate) => `  candidate ${knowledgeLineWithKey(candidate.entity)}`,
+      ),
     ].join('\n'),
   );
   return `${CHOOSE_ENTITIES_RULE}\n${envelope('similar entities', SIMILAR_ENTITIES_AUTHOR, blocks.join('\n\n'))}`;
@@ -129,7 +134,12 @@ export function applyChoices(
   similar: readonly SimilarEntity[],
   choices: ChooseEntitiesArgs['choices'],
 ): AppliedChoices {
-  const offered = new Map(similar.map((entity) => [entity.ref, entity.candidates.map(({ id }) => id)]));
+  const offered = new Map(
+    similar.map((entity) => [
+      entity.ref,
+      entity.candidates.map(({ id }) => id),
+    ]),
+  );
   const chosen = new Map<string, string>();
   const accepted: EntityChoice[] = [];
   const rejected: EntityChoice[] = [];
@@ -143,14 +153,23 @@ export function applyChoices(
       rejected.push(choice);
     }
   }
-  if (chosen.size === 0) return { operations: [...operations], accepted, rejected };
-  return { operations: operations.map((op) => withChoices(op, chosen)), accepted, rejected };
+  if (chosen.size === 0)
+    return { operations: [...operations], accepted, rejected };
+  return {
+    operations: operations.map((op) => withChoices(op, chosen)),
+    accepted,
+    rejected,
+  };
 }
 
-function withChoices(op: unknown, chosen: ReadonlyMap<string, string>): unknown {
+function withChoices(
+  op: unknown,
+  chosen: ReadonlyMap<string, string>,
+): unknown {
   if (typeof op !== 'object' || op === null) return op;
   const fields = op as Record<string, unknown>;
-  const chosenId = (value: unknown) => (typeof value === 'string' ? chosen.get(value.trim()) : undefined);
+  const chosenId = (value: unknown) =>
+    typeof value === 'string' ? chosen.get(value.trim()) : undefined;
 
   if (fields.op === 'add_entity') {
     const id = chosenId(fields.ref);

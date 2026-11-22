@@ -1,4 +1,7 @@
-import type { AgentCodeCallsRepository, AgentMessagesRepository } from '@agent-os/db';
+import type {
+  AgentCodeCallsRepository,
+  AgentMessagesRepository,
+} from '@agent-os/db';
 import type { TaskControl } from '@agent-os/runtime';
 
 import { envelope } from '../model/provider-messages';
@@ -22,13 +25,20 @@ const EXTRACTION_ARGS_BYTES = 500;
 const EXTRACTION_INPUT_BYTES = 48_000;
 
 /** The only outcomes taken: refused, rejected, interrupted and the other outcomes are left out (F12). */
-const ROUND_OUTCOMES: readonly RoundCallOutcome[] = ['success', 'empty', 'tool_error'];
+const ROUND_OUTCOMES: readonly RoundCallOutcome[] = [
+  'success',
+  'empty',
+  'tool_error',
+];
 
 const ENVELOPE_SOURCE = 'tool calls';
 const ENVELOPE_AUTHOR = 'this run of the deep agent';
 
 /** What the round knows of its run: the row of `agent_knowledge_runs` with the deep agent's owner. */
-export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedUpTo'>;
+export type ExtractionRun = Pick<
+  KnowledgeRun,
+  'runId' | 'ownerId' | 'extractedUpTo'
+>;
 
 export interface ExtractionInputDeps {
   readonly messageRows: AgentMessagesRepository;
@@ -96,20 +106,30 @@ function cutToBytes(text: string, maxBytes: number): CutText {
  * The tasks whose calls the round may read: the deep agent and its descendants in its own tree and
  * of its owner — never sibling runs of the same conversation, another tree or another owner.
  */
-async function subtreeTaskIds(deps: ExtractionInputDeps, run: ExtractionRun): Promise<string[]> {
+async function subtreeTaskIds(
+  deps: ExtractionInputDeps,
+  run: ExtractionRun,
+): Promise<string[]> {
   const deepAgent = await deps.tasks.get(run.runId, run.ownerId);
   const tree = await deps.tasks.listTree(deepAgent.rootId, run.ownerId);
-  return [run.runId, ...descendantsOf(tree, run.runId).map((task) => task.taskId)];
+  return [
+    run.runId,
+    ...descendantsOf(tree, run.runId).map((task) => task.taskId),
+  ];
 }
 
 /** The head of a call: number, server, tool, outcome and the cut arguments. */
 function callHead(key: string, call: InputCall, args: string): string {
-  const where = call.inCode ? ' (inside run_code; its result is not stored)' : '';
+  const where = call.inCode
+    ? ' (inside run_code; its result is not stored)'
+    : '';
   return `${key} server=${call.server} tool=${call.tool} outcome=${call.outcome}${where}\nargs: ${args}`;
 }
 
 /** Numbers the calls by end time and writes them, the results only while the input fits its limit. */
-function writeInput(ordered: readonly InputCall[]): Omit<ExtractionInput, 'readAt'> {
+function writeInput(
+  ordered: readonly InputCall[],
+): Omit<ExtractionInput, 'readAt'> {
   const calls = new Map<string, RoundCall>();
   const blocks: string[] = [];
   let dataBytes = 0;
@@ -119,7 +139,11 @@ function writeInput(ordered: readonly InputCall[]): Omit<ExtractionInput, 'readA
   let withoutResult = 0;
   ordered.forEach((call, index) => {
     const key = `c${index + 1}`;
-    calls.set(key, { server: call.server, tool: call.tool, outcome: call.outcome });
+    calls.set(key, {
+      server: call.server,
+      tool: call.tool,
+      outcome: call.outcome,
+    });
     const args = cutToBytes(JSON.stringify(call.args), EXTRACTION_ARGS_BYTES);
     if (args.cut) cutArgs += 1;
     const head = callHead(key, call, args.text);
@@ -168,15 +192,27 @@ export async function readExtractionInput(
   const taskIds = await subtreeTaskIds(deps, run);
   // `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round.
   const window = { after: run.extractedUpTo, through: readAt };
-  const results = await deps.messageRows.mcpResults(taskIds, ROUND_OUTCOMES, window);
-  const direct: InputCall[] = results.map(({ text, ...call }) => ({ ...call, resultText: text, inCode: false }));
+  const results = await deps.messageRows.mcpResults(
+    taskIds,
+    ROUND_OUTCOMES,
+    window,
+  );
+  const direct: InputCall[] = results.map(({ text, ...call }) => ({
+    ...call,
+    resultText: text,
+    inCode: false,
+  }));
   // Calls a `run_code` script made, of its latest attempt only (Invariant 3).
   const scripted = await deps.codeCallRows.mcpCallsOfLatestAttempts(
     taskIds,
     ROUND_OUTCOMES,
     window,
   );
-  const inCode: InputCall[] = scripted.map((call) => ({ ...call, resultText: null, inCode: true }));
+  const inCode: InputCall[] = scripted.map((call) => ({
+    ...call,
+    resultText: null,
+    inCode: true,
+  }));
   // A stable sort: calls ending at the same moment keep their order within each table.
   const ordered = [...direct, ...inCode].sort(
     (a, b) => a.finishedAt.getTime() - b.finishedAt.getTime(),

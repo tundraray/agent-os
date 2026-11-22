@@ -2,14 +2,38 @@
 
 import type { ReactNode } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import type { CreateGrantBody, Grant, GrantEffect, GrantTargetBody, McpServerSummary } from '@agent-os/contracts';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import type {
+  CreateGrantBody,
+  Grant,
+  GrantEffect,
+  GrantTargetBody,
+  McpServerSummary,
+} from '@agent-os/contracts';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { grantRules, quotaUsdOf, type GrantValues } from '@/lib/admin/form-rules';
-import { modelOptions, modelUnavailableReason } from '@/lib/admin/model-providers';
+import {
+  grantRules,
+  quotaUsdOf,
+  type GrantValues,
+} from '@/lib/admin/form-rules';
+import {
+  modelOptions,
+  modelUnavailableReason,
+} from '@/lib/admin/model-providers';
 import { cn } from '@/lib/utils';
 import {
   AdminForm,
@@ -21,7 +45,8 @@ import {
   type AdminRadioOption,
 } from '../admin-form';
 
-export type GrantHolderRef = { kind: 'role'; id: string } | { kind: 'user'; id: string };
+export type GrantHolderRef =
+  { kind: 'role'; id: string } | { kind: 'user'; id: string };
 
 const KINDS: readonly GrantValues['kind'][] = ['server', 'tool', 'model'];
 
@@ -45,8 +70,15 @@ function targetKey(target: GrantTargetBody): string {
 }
 
 /** DC-12: the targets the holder already has with this effect; the dialog offers them as «уже есть» (MC-20). */
-function heldTargets(grants: readonly Grant[], effect: GrantEffect): ReadonlySet<string> {
-  return new Set(grants.filter((grant) => grant.effect === effect).map((grant) => targetKey(grant.target)));
+function heldTargets(
+  grants: readonly Grant[],
+  effect: GrantEffect,
+): ReadonlySet<string> {
+  return new Set(
+    grants
+      .filter((grant) => grant.effect === effect)
+      .map((grant) => targetKey(grant.target)),
+  );
 }
 
 function targetOf({ kind, server, tool, model }: GrantValues): GrantTargetBody {
@@ -61,10 +93,23 @@ function targetOf({ kind, server, tool, model }: GrantValues): GrantTargetBody {
 }
 
 /** The body exactly as `CreateGrantBody` takes it: one holder, and `quotaUsd` only on a model allow with a quota. */
-function grantBody(holder: GrantHolderRef, effect: GrantEffect, values: GrantValues): CreateGrantBody {
-  const holderId = holder.kind === 'role' ? { roleId: holder.id } : { userId: holder.id };
-  const quotaUsd = values.kind === 'model' && values.quota !== null ? quotaUsdOf(values.quota) : null;
-  return { ...holderId, effect, target: targetOf(values), ...(quotaUsd === null ? {} : { quotaUsd }) };
+function grantBody(
+  holder: GrantHolderRef,
+  effect: GrantEffect,
+  values: GrantValues,
+): CreateGrantBody {
+  const holderId =
+    holder.kind === 'role' ? { roleId: holder.id } : { userId: holder.id };
+  const quotaUsd =
+    values.kind === 'model' && values.quota !== null
+      ? quotaUsdOf(values.quota)
+      : null;
+  return {
+    ...holderId,
+    effect,
+    target: targetOf(values),
+    ...(quotaUsd === null ? {} : { quotaUsd }),
+  };
 }
 
 type GrantDialogProps = {
@@ -81,13 +126,20 @@ type GrantDialogProps = {
 };
 
 /** UXRD GR-01: one dialog for a role's grant, a personal grant and a personal deny. */
-export function GrantDialog({ open, onOpenChange, effect, ...form }: GrantDialogProps) {
+export function GrantDialog({
+  open,
+  onOpenChange,
+  effect,
+  ...form
+}: GrantDialogProps) {
   const t = useTranslations('admin.grants');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{effect === 'allow' ? t('addAllow') : t('addDeny')}</DialogTitle>
+          <DialogTitle>
+            {effect === 'allow' ? t('addAllow') : t('addDeny')}
+          </DialogTitle>
         </DialogHeader>
         <GrantForm effect={effect} {...form} />
       </DialogContent>
@@ -96,23 +148,35 @@ export function GrantDialog({ open, onOpenChange, effect, ...form }: GrantDialog
 }
 
 /** Mounted with the dialog's content, so the catalogue is read on every opening (read-on-open). */
-function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialogProps, 'open' | 'onOpenChange'>) {
+function GrantForm({
+  holder,
+  effect,
+  grants,
+  servers,
+  onSaved,
+}: Omit<GrantDialogProps, 'open' | 'onOpenChange'>) {
   const t = useTranslations('admin.grants');
   const locale = useLocale();
   const models = useResource(adminApi.models.list, 'models');
-  const providers = useResource(adminApi.modelProviders.list, 'model-providers');
+  const providers = useResource(
+    adminApi.modelProviders.list,
+    'model-providers',
+  );
   const held = heldTargets(grants, effect);
   // UXRD MP-08: only chat models whose provider works; until the providers are read, none.
   const modelChoices = modelOptions({
     models: models.data ?? [],
     purpose: 'chat',
-    readinessOf: (modelId) => modelUnavailableReason(modelId, providers.data ?? []),
+    readinessOf: (modelId) =>
+      modelUnavailableReason(modelId, providers.data ?? []),
     locale,
   }).filter((option) => option.unavailableReason === null);
-  const kinds: readonly AdminRadioOption<GrantValues['kind']>[] = KINDS.map((kind) => ({
-    value: kind,
-    label: t(KIND_LABEL[kind]),
-  }));
+  const kinds: readonly AdminRadioOption<GrantValues['kind']>[] = KINDS.map(
+    (kind) => ({
+      value: kind,
+      label: t(KIND_LABEL[kind]),
+    }),
+  );
   const initialValues: GrantValues = {
     kind: 'server',
     server: '',
@@ -142,8 +206,12 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
             options={kinds}
             onChange={(kind) => form.set('kind', kind)}
           />
-          {form.values.kind !== 'model' && <ServerField form={form} servers={servers} held={held} />}
-          {form.values.kind === 'tool' && form.values.server !== '' && <ToolField form={form} held={held} />}
+          {form.values.kind !== 'model' && (
+            <ServerField form={form} servers={servers} held={held} />
+          )}
+          {form.values.kind === 'tool' && form.values.server !== '' && (
+            <ToolField form={form} held={held} />
+          )}
           {form.values.kind === 'model' && (
             <SelectField
               {...form.field('model')}
@@ -153,7 +221,9 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
               options={modelChoices.map((option) => ({
                 value: option.value,
                 label: option.label,
-                held: held.has(targetKey({ kind: 'model', model: option.value })),
+                held: held.has(
+                  targetKey({ kind: 'model', model: option.value }),
+                ),
               }))}
             />
           )}
@@ -176,7 +246,14 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
 type FormProps = { form: AdminFormApi<GrantValues> };
 
 /** DC-12: a server without tools (always so while it awaits the admin's account) cannot be chosen. */
-function ServerField({ form, servers, held }: FormProps & { servers: readonly McpServerSummary[]; held: ReadonlySet<string> }) {
+function ServerField({
+  form,
+  servers,
+  held,
+}: FormProps & {
+  servers: readonly McpServerSummary[];
+  held: ReadonlySet<string>;
+}) {
   const t = useTranslations('admin.grants');
   const wholeServer = form.values.kind === 'server';
   return (
@@ -193,7 +270,9 @@ function ServerField({ form, servers, held }: FormProps & { servers: readonly Mc
         value: server.name,
         label: server.name,
         unavailable: server.toolCount === 0,
-        held: wholeServer && held.has(targetKey({ kind: 'server', server: server.name })),
+        held:
+          wholeServer &&
+          held.has(targetKey({ kind: 'server', server: server.name })),
       }))}
     />
   );
@@ -203,7 +282,10 @@ function ServerField({ form, servers, held }: FormProps & { servers: readonly Mc
 function ToolField({ form, held }: FormProps & { held: ReadonlySet<string> }) {
   const t = useTranslations('admin.grants');
   const { server } = form.values;
-  const record = useResource(() => adminApi.servers.get(server), `server:${server}`);
+  const record = useResource(
+    () => adminApi.servers.get(server),
+    `server:${server}`,
+  );
   return (
     <SelectField
       {...form.field('tool')}
@@ -244,19 +326,33 @@ type SelectFieldProps = {
 };
 
 /** A drop-down field of the form (settings-form, shadcn `select`): label, 28 px trigger, field error. */
-function SelectField({ id, label, error, value, onChange, options, mono = false }: SelectFieldProps) {
+function SelectField({
+  id,
+  label,
+  error,
+  value,
+  onChange,
+  options,
+  mono = false,
+}: SelectFieldProps) {
   const t = useTranslations('admin.grants');
   const errorId = `${id}-error`;
   const textClass = mono ? 'font-mono text-mono-compact' : 'text-data';
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
-      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
+      <FieldLabel
+        htmlFor={id}
+        className="text-data font-medium text-foreground"
+      >
         {label}
       </FieldLabel>
       <Select
         value={value === '' ? null : value}
         onValueChange={(next) => onChange(next ?? '')}
-        items={options.map((option) => ({ value: option.value, label: option.label }))}
+        items={options.map((option) => ({
+          value: option.value,
+          label: option.label,
+        }))}
       >
         <SelectTrigger
           id={id}
@@ -276,8 +372,12 @@ function SelectField({ id, label, error, value, onChange, options, mono = false 
               className="pointer-coarse:min-h-11"
             >
               <span className={textClass}>{option.label}</span>
-              {option.note !== undefined && <OptionCaption>{option.note}</OptionCaption>}
-              {option.held === true && <OptionCaption>{t('dialog.held')}</OptionCaption>}
+              {option.note !== undefined && (
+                <OptionCaption>{option.note}</OptionCaption>
+              )}
+              {option.held === true && (
+                <OptionCaption>{t('dialog.held')}</OptionCaption>
+              )}
             </SelectItem>
           ))}
         </SelectContent>
@@ -290,5 +390,7 @@ function SelectField({ id, label, error, value, onChange, options, mono = false 
 }
 
 function OptionCaption({ children }: { children: ReactNode }) {
-  return <span className={cn(CAPTION, 'text-muted-foreground')}>{children}</span>;
+  return (
+    <span className={cn(CAPTION, 'text-muted-foreground')}>{children}</span>
+  );
 }

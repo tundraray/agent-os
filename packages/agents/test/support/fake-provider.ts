@@ -1,4 +1,8 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ModelProviderKind } from '@agent-os/contracts';
 
@@ -11,7 +15,11 @@ import type { ModelProviderKind } from '@agent-os/contracts';
  */
 
 /** The usage every answer reports: 10 000 input tokens, 8 000 of them read from the cache, 20 output tokens. */
-export const FAKE_USAGE = { inputTokens: 10_000, cacheReadTokens: 8_000, outputTokens: 20 } as const;
+export const FAKE_USAGE = {
+  inputTokens: 10_000,
+  cacheReadTokens: 8_000,
+  outputTokens: 20,
+} as const;
 
 export interface FakeToolCall {
   /** The tool's name as the request listed it. */
@@ -24,7 +32,11 @@ export interface FakeToolCall {
  * the finish with {@link FAKE_USAGE}; `hold` streams one text part and leaves the stream open until the client aborts.
  */
 export type FakeReply =
-  | { readonly kind: 'answer'; readonly text: readonly string[]; readonly toolCall?: FakeToolCall }
+  | {
+      readonly kind: 'answer';
+      readonly text: readonly string[];
+      readonly toolCall?: FakeToolCall;
+    }
   | { readonly kind: 'hold'; readonly text: string };
 
 /** One request as the fake got it. */
@@ -97,9 +109,17 @@ function anthropicEvents(reply: FakeReply, callId: string): string[] {
         },
       },
     }),
-    event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+    event({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    }),
     ...textParts(reply).map((text) =>
-      event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
+      event({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text },
+      }),
     ),
   ];
   if (reply.kind === 'hold') return opening;
@@ -111,12 +131,20 @@ function anthropicEvents(reply: FakeReply, callId: string): string[] {
           event({
             type: 'content_block_start',
             index: 1,
-            content_block: { type: 'tool_use', id: `toolu_${callId}`, name: toolCall.name, input: {} },
+            content_block: {
+              type: 'tool_use',
+              id: `toolu_${callId}`,
+              name: toolCall.name,
+              input: {},
+            },
           }),
           event({
             type: 'content_block_delta',
             index: 1,
-            delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolCall.args) },
+            delta: {
+              type: 'input_json_delta',
+              partial_json: JSON.stringify(toolCall.args),
+            },
           }),
           event({ type: 'content_block_stop', index: 1 }),
         ];
@@ -126,7 +154,10 @@ function anthropicEvents(reply: FakeReply, callId: string): string[] {
     ...tool,
     event({
       type: 'message_delta',
-      delta: { stop_reason: toolCall === undefined ? 'end_turn' : 'tool_use', stop_sequence: null },
+      delta: {
+        stop_reason: toolCall === undefined ? 'end_turn' : 'tool_use',
+        stop_sequence: null,
+      },
       usage: { output_tokens: FAKE_USAGE.outputTokens },
     }),
     event({ type: 'message_stop' }),
@@ -135,14 +166,26 @@ function anthropicEvents(reply: FakeReply, callId: string): string[] {
 
 /** Gemini reports the whole prompt and its cached part. */
 function geminiEvents(reply: FakeReply): string[] {
-  const candidate = (fields: Record<string, unknown>) => sseData({ candidates: [{ index: 0, ...fields }] });
-  const opening = textParts(reply).map((text) => candidate({ content: { role: 'model', parts: [{ text }] } }));
+  const candidate = (fields: Record<string, unknown>) =>
+    sseData({ candidates: [{ index: 0, ...fields }] });
+  const opening = textParts(reply).map((text) =>
+    candidate({ content: { role: 'model', parts: [{ text }] } }),
+  );
   if (reply.kind === 'hold') return opening;
   const { toolCall } = reply;
   const tool =
     toolCall === undefined
       ? []
-      : [candidate({ content: { role: 'model', parts: [{ functionCall: { name: toolCall.name, args: toolCall.args } }] } })];
+      : [
+          candidate({
+            content: {
+              role: 'model',
+              parts: [
+                { functionCall: { name: toolCall.name, args: toolCall.args } },
+              ],
+            },
+          }),
+        ];
   return [
     ...opening,
     ...tool,
@@ -161,11 +204,21 @@ function geminiEvents(reply: FakeReply): string[] {
 /** OpenAI streams the usage in a last chunk without choices (`stream_options.include_usage`). */
 function openAIEvents(reply: FakeReply, callId: string): string[] {
   const chunk = (fields: Record<string, unknown>) =>
-    sseData({ id: 'chatcmpl-fake', object: 'chat.completion.chunk', created: 0, model: 'fake', ...fields });
-  const choice = (delta: Record<string, unknown>, finishReason: string | null = null) =>
-    chunk({ choices: [{ index: 0, delta, finish_reason: finishReason }] });
+    sseData({
+      id: 'chatcmpl-fake',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: 'fake',
+      ...fields,
+    });
+  const choice = (
+    delta: Record<string, unknown>,
+    finishReason: string | null = null,
+  ) => chunk({ choices: [{ index: 0, delta, finish_reason: finishReason }] });
   const opening = textParts(reply).map((text, index) =>
-    choice(index === 0 ? { role: 'assistant', content: text } : { content: text }),
+    choice(
+      index === 0 ? { role: 'assistant', content: text } : { content: text },
+    ),
   );
   if (reply.kind === 'hold') return opening;
   const { toolCall } = reply;
@@ -179,7 +232,10 @@ function openAIEvents(reply: FakeReply, callId: string): string[] {
                 index: 0,
                 id: `call_${callId}`,
                 type: 'function',
-                function: { name: toolCall.name, arguments: JSON.stringify(toolCall.args) },
+                function: {
+                  name: toolCall.name,
+                  arguments: JSON.stringify(toolCall.args),
+                },
               },
             ],
           }),
@@ -211,7 +267,9 @@ const WIRE_FORMATS: Readonly<Record<ModelProviderKind, WireFormat>> = {
   gemini: {
     basePath: '/v1beta',
     keyHeader: 'x-goog-api-key',
-    isTurn: (url) => url.startsWith('/v1beta/models/') && url.includes(':streamGenerateContent'),
+    isTurn: (url) =>
+      url.startsWith('/v1beta/models/') &&
+      url.includes(':streamGenerateContent'),
     events: geminiEvents,
   },
   openai_compatible: {
@@ -225,7 +283,8 @@ const WIRE_FORMATS: Readonly<Record<ModelProviderKind, WireFormat>> = {
 /** The whole body of a request as text. */
 export async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(Buffer.from(chunk as Uint8Array));
+  for await (const chunk of request)
+    chunks.push(Buffer.from(chunk as Uint8Array));
   return Buffer.concat(chunks).toString('utf8');
 }
 
@@ -233,21 +292,30 @@ export async function readBody(request: IncomingMessage): Promise<string> {
 export function headersOf(request: IncomingMessage): Record<string, string> {
   return Object.fromEntries(
     Object.entries(request.headers).flatMap(([name, value]) =>
-      value === undefined ? [] : [[name, Array.isArray(value) ? value.join(', ') : value]],
+      value === undefined
+        ? []
+        : [[name, Array.isArray(value) ? value.join(', ') : value]],
     ),
   );
 }
 
-type RecordedRequest = { -readonly [Field in keyof FakeProviderRequest]: FakeProviderRequest[Field] };
+type RecordedRequest = {
+  -readonly [Field in keyof FakeProviderRequest]: FakeProviderRequest[Field];
+};
 
 /** Starts the fake of `kind` on a free port of 127.0.0.1. */
-export async function startFakeProvider(kind: ModelProviderKind): Promise<FakeProvider> {
+export async function startFakeProvider(
+  kind: ModelProviderKind,
+): Promise<FakeProvider> {
   const wire = WIRE_FORMATS[kind];
   const requests: RecordedRequest[] = [];
   const replies: FakeReply[] = [];
   let answered = 0;
 
-  async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function handle(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     const bodyText = await readBody(request);
     const headers = headersOf(request);
     const recorded: RecordedRequest = {
@@ -262,21 +330,36 @@ export async function startFakeProvider(kind: ModelProviderKind): Promise<FakePr
     response.on('close', () => {
       if (!response.writableEnded) recorded.aborted = true;
     });
-    const reply = request.method === 'POST' && wire.isTurn(recorded.url) ? replies.shift() : undefined;
+    const reply =
+      request.method === 'POST' && wire.isTurn(recorded.url)
+        ? replies.shift()
+        : undefined;
     if (reply === undefined) {
       response.writeHead(400, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { message: `fake ${kind} provider has no reply for ${request.method} ${recorded.url}` } }));
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `fake ${kind} provider has no reply for ${request.method} ${recorded.url}`,
+          },
+        }),
+      );
       return;
     }
     answered += 1;
-    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-    for (const event of wire.events(reply, `fake_${answered}`)) response.write(event);
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+    });
+    for (const event of wire.events(reply, `fake_${answered}`))
+      response.write(event);
     if (reply.kind === 'answer') response.end();
   }
 
   const server = createServer((request, response) => {
     handle(request, response).catch((error: unknown) => {
-      response.destroy(error instanceof Error ? error : new Error(String(error)));
+      response.destroy(
+        error instanceof Error ? error : new Error(String(error)),
+      );
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -290,7 +373,9 @@ export async function startFakeProvider(kind: ModelProviderKind): Promise<FakePr
     },
     close() {
       server.closeAllConnections();
-      return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      return new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     },
   };
 }

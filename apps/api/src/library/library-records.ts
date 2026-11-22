@@ -136,20 +136,14 @@ export class LibraryRecords {
     key?: LibraryRecordKey,
   ): Promise<LibraryRecord[]> {
     return this.named(
-      await this.stored(
-        await this.repository.findVisible(viewer, key),
-      ),
+      await this.stored(await this.repository.findVisible(viewer, key)),
     );
   }
 
   /** The records of the admin panel: all of them, one list, or one by id when the panel shows it. */
-  async panel(
-    query?: LibraryPanelQuery,
-  ): Promise<LibraryRecord[]> {
+  async panel(query?: LibraryPanelQuery): Promise<LibraryRecord[]> {
     return this.named(
-      await this.stored(
-        await this.repository.findInPanel(query),
-      ),
+      await this.stored(await this.repository.findInPanel(query)),
     );
   }
 
@@ -160,13 +154,9 @@ export class LibraryRecords {
   }
 
   /** The ban of one record; `undefined` — the record has none (or is gone). */
-  async ban(
-    id: string,
-  ): Promise<BannedRecordRow | undefined> {
+  async ban(id: string): Promise<BannedRecordRow | undefined> {
     const row = await this.repository.findBan(id);
-    const [ban] = await this.namedBans(
-      row ? [toStoredBan(row)] : [],
-    );
+    const [ban] = await this.namedBans(row ? [toStoredBan(row)] : []);
     return ban;
   }
 
@@ -230,9 +220,7 @@ export class LibraryRecords {
     return record;
   }
 
-  async panelOne(
-    id: string,
-  ): Promise<LibraryRecord | undefined> {
+  async panelOne(id: string): Promise<LibraryRecord | undefined> {
     const [record] = await this.panel({ id });
     return record;
   }
@@ -242,9 +230,7 @@ export class LibraryRecords {
     viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord> {
-    const record = isUuid(id)
-      ? await this.visibleOne(viewer, id)
-      : undefined;
+    const record = isUuid(id) ? await this.visibleOne(viewer, id) : undefined;
     if (record === undefined) throw notFound();
     return record;
   }
@@ -327,10 +313,7 @@ export class LibraryRecords {
   // ---------- Writes ----------
 
   /** Deletes the record unless it is built-in (AC-12.2); its holders go by cascade. */
-  async deleteChecked(
-    actorId: string,
-    record: LibraryRecord,
-  ): Promise<void> {
+  async deleteChecked(actorId: string, record: LibraryRecord): Promise<void> {
     if (record.builtinKey !== null)
       throw libraryError('RECORD_REJECTED', 'builtin');
     await this.repository.delete(record.id);

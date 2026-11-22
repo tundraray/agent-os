@@ -7,18 +7,31 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { prepareProcess } from '#executor/prepare-process';
-import { type ExecutorMessage, type HostMessage, type ReplyMessage, createFrameDecoder, encodeFrame } from '#executor/protocol';
+import {
+  type ExecutorMessage,
+  type HostMessage,
+  type ReplyMessage,
+  createFrameDecoder,
+  encodeFrame,
+} from '#executor/protocol';
 import { runScript } from '#executor/sandbox';
 
 prepareProcess();
 
 const [coreRoot, variantRoot] = process.argv.slice(2);
 if (coreRoot === undefined || variantRoot === undefined) {
-  throw new Error('The executor needs the QuickJS core and variant roots as arguments');
+  throw new Error(
+    'The executor needs the QuickJS core and variant roots as arguments',
+  );
 }
-const entryOf = (root: string): string => pathToFileURL(path.join(root, 'dist', 'index.mjs')).href;
-const core = (await import(/* webpackIgnore: true */ entryOf(coreRoot))) as typeof import('quickjs-emscripten-core');
-const quickJs = await core.newQuickJSWASMModuleFromVariant(import(/* webpackIgnore: true */ entryOf(variantRoot)));
+const entryOf = (root: string): string =>
+  pathToFileURL(path.join(root, 'dist', 'index.mjs')).href;
+const core = (await import(
+  /* webpackIgnore: true */ entryOf(coreRoot)
+)) as typeof import('quickjs-emscripten-core');
+const quickJs = await core.newQuickJSWASMModuleFromVariant(
+  import(/* webpackIgnore: true */ entryOf(variantRoot)),
+);
 
 const send = (message: ExecutorMessage): void => {
   process.stdout.write(encodeFrame(message));
@@ -53,7 +66,9 @@ const take = (message: HostMessage): void => {
         }),
       output: (line) => send({ op: 'output', line }),
     },
-  }).then((end) => process.stdout.write(encodeFrame(end), () => process.exit(0)));
+  }).then((end) =>
+    process.stdout.write(encodeFrame(end), () => process.exit(0)),
+  );
 };
 
 process.stdin.on('data', (chunk: Buffer) => {

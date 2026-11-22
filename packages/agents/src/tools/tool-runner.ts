@@ -5,7 +5,12 @@ import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { AccessAudit, AccessGate } from '../access-gate';
-import { ACCESS_AUDIT, ACCESS_GATE, AGENTS_CONFIG, MASK_SECRETS } from '../agents.tokens';
+import {
+  ACCESS_AUDIT,
+  ACCESS_GATE,
+  AGENTS_CONFIG,
+  MASK_SECRETS,
+} from '../agents.tokens';
 import type { AgentsConfig } from '../config';
 import { McpAccounts } from '../mcp/mcp-accounts';
 import { McpClient } from '../mcp/mcp-client';
@@ -21,7 +26,12 @@ import {
   type RequestedCall,
   type ResolvedCall,
 } from './call-check';
-import { type CodeCallExecution, type CodeCallRequest, type CodeCallScope, createCodeCall } from './code-call';
+import {
+  type CodeCallExecution,
+  type CodeCallRequest,
+  type CodeCallScope,
+  createCodeCall,
+} from './code-call';
 import type { StartChild, ToolCaller, ToolReview } from './tool';
 import {
   type AbortedExecution,
@@ -38,12 +48,17 @@ import { callTarget, isMcp, type SessionTool } from './tool-registry';
 export type InCommitPlan = (effects: StepEffects) => Promise<ToolExecution>;
 
 export type ConfirmedSend =
-  | { readonly kind: 'sent'; readonly execution: ToolExecution | AbortedExecution }
+  | {
+      readonly kind: 'sent';
+      readonly execution: ToolExecution | AbortedExecution;
+    }
   | NotSent
   /** An in-commit tool: the intent and the call happen in the step's commit transaction. */
   | {
       readonly kind: 'in_commit';
-      readonly commit: (effects: StepEffects) => Promise<ToolExecution | NotSent>;
+      readonly commit: (
+        effects: StepEffects,
+      ) => Promise<ToolExecution | NotSent>;
     };
 
 /** The decision request of a tool with confirmation (design-agents.md, «Сообщения и события»). */
@@ -75,13 +90,19 @@ export interface StartChildScope {
 export type OutsideContext = Pick<StepContext, 'signal' | 'logger' | 'guard'>;
 
 /** The step context of a confirmed call: the intent goes through `guard`. */
-export type ConfirmContext = Pick<StepContext, 'taskId' | 'signal' | 'logger' | 'guard'>;
+export type ConfirmContext = Pick<
+  StepContext,
+  'taskId' | 'signal' | 'logger' | 'guard'
+>;
 
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 @Injectable()
 export class ToolRunner {
   private readonly mcpCalls: McpCalls;
-  private readonly codeCall: (request: CodeCallRequest, scope: CodeCallScope) => Promise<CodeCallExecution>;
+  private readonly codeCall: (
+    request: CodeCallRequest,
+    scope: CodeCallScope,
+  ) => Promise<CodeCallExecution>;
   /** Binds the spawn helper to the commit transaction and the caller; `useStartChild` sets it. */
   private startChildFor: ((scope: StartChildScope) => StartChild) | undefined;
 
@@ -106,7 +127,8 @@ export class ToolRunner {
     /** `mcpCallTimeoutMs` bounds one MCP call, the handshake included. */
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs'>,
     /** The settings row of large results (tool-result-reading R-5), read on every direct MCP call. */
-    @Inject(AgentToolResultsRepository) toolResultRows: Pick<AgentToolResultsRepository, 'readSettings'>,
+    @Inject(AgentToolResultsRepository)
+    toolResultRows: Pick<AgentToolResultsRepository, 'readSettings'>,
     /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
     @Inject(MASK_SECRETS) maskSecrets: (text: string) => string,
   ) {
@@ -117,7 +139,11 @@ export class ToolRunner {
       resultSettings: () => toolResultRows.readSettings(),
       maskSecrets,
     });
-    this.codeCall = createCodeCall({ access, audit, callMcp: this.mcpCalls.fromCode });
+    this.codeCall = createCodeCall({
+      access,
+      audit,
+      callMcp: this.mcpCalls.fromCode,
+    });
   }
 
   /**
@@ -156,7 +182,9 @@ export class ToolRunner {
     if (isMcp(call.tool)) return !call.tool.mcp.readOnly;
     const { confirmation } = call.tool.tool;
     if (confirmation === undefined) return false;
-    return confirmation.required === undefined || confirmation.required(call.args);
+    return (
+      confirmation.required === undefined || confirmation.required(call.args)
+    );
   }
 
   /**
@@ -171,7 +199,9 @@ export class ToolRunner {
     tools: readonly SessionTool[],
   ): Promise<ConfirmationCard> {
     const { tool, server } = callTarget(call.tool);
-    const confirmation = isMcp(call.tool) ? undefined : call.tool.tool.confirmation;
+    const confirmation = isMcp(call.tool)
+      ? undefined
+      : call.tool.tool.confirmation;
     const review: ToolReview =
       confirmation?.review === undefined
         ? {
@@ -201,10 +231,14 @@ export class ToolRunner {
   }
 
   /** Runs an MCP tool or an `outside` tool, outside any transaction, under the step's signal. */
-  async runOutside(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution> {
+  async runOutside(
+    call: ResolvedCall,
+    ctx: OutsideContext,
+  ): Promise<ToolExecution | AbortedExecution> {
     const startedAt = Date.now();
     const execution =
-      (await admit(this.access, this.audit, call, ctx.logger)) ?? (await this.execute(call, ctx));
+      (await admit(this.access, this.audit, call, ctx.logger)) ??
+      (await this.execute(call, ctx));
     logCall(ctx.logger, loggedCall(call), execution, startedAt);
     return execution;
   }
@@ -218,7 +252,10 @@ export class ToolRunner {
    * An allowed call goes to its server on behalf of the caller's owner; a value is not cut, a server's error
    * text is not returned.
    */
-  callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution> {
+  callFromCode(
+    request: CodeCallRequest,
+    scope: CodeCallScope,
+  ): Promise<CodeCallExecution> {
     return this.codeCall(request, scope);
   }
 
@@ -226,12 +263,17 @@ export class ToolRunner {
    * The closure an `in_commit` tool runs in `commit(effects)`, with the spawn helper. The gate is asked and
    * the tool's `prepare` runs first, outside the transaction.
    */
-  async planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan> {
+  async planInCommit(
+    call: InCommitCall,
+    logger: Logger,
+  ): Promise<InCommitPlan> {
     const refusal = await admit(this.access, this.audit, call, logger);
-    const prepared = refusal === undefined ? await prepareInCommit(call) : undefined;
+    const prepared =
+      refusal === undefined ? await prepareInCommit(call) : undefined;
     return async (effects) => {
       const startedAt = Date.now();
-      const execution = refusal ?? (await this.runInCommit(call, prepared, effects));
+      const execution =
+        refusal ?? (await this.runInCommit(call, prepared, effects));
       logCall(logger, loggedCall(call), execution, startedAt);
       return execution;
     };
@@ -249,7 +291,8 @@ export class ToolRunner {
     editedArgs?: unknown,
     confirmed?: unknown,
   ): Promise<ConfirmedSend> {
-    const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
+    const sent: ResolvedCall =
+      editedArgs === undefined ? call : { ...call, args: editedArgs };
     const refusal = await admit(this.access, this.audit, call, ctx.logger);
     if (refusal !== undefined) {
       // The right went away while the confirmation waited: no intent and no request (INT-1 steps 5–6).
@@ -268,9 +311,10 @@ export class ToolRunner {
         kind: 'in_commit',
         commit: async (effects) => {
           const startedAt = Date.now();
-          const execution: ToolExecution | NotSent = (await this.callRecords.markSent(key))
-            ? await this.runInCommit(inCommit, prepared, effects, confirmed)
-            : { kind: 'not_sent', reason: 'not_awaiting' };
+          const execution: ToolExecution | NotSent =
+            (await this.callRecords.markSent(key))
+              ? await this.runInCommit(inCommit, prepared, effects, confirmed)
+              : { kind: 'not_sent', reason: 'not_awaiting' };
           logCall(ctx.logger, loggedCall(sent), execution, startedAt);
           return execution;
         },
@@ -298,9 +342,12 @@ export class ToolRunner {
     confirmed?: unknown,
   ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
-    if (isMcp(tool)) return this.mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger);
+    if (isMcp(tool))
+      return this.mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger);
     if (tool.tool.mode !== 'outside') {
-      throw new Error(`Tool ${tool.name} runs in the commit transaction, not outside it`);
+      throw new Error(
+        `Tool ${tool.name} runs in the commit transaction, not outside it`,
+      );
     }
     if (ctx.signal.aborted) return { kind: 'aborted' };
     const result = await tool.tool.execute({
@@ -322,7 +369,9 @@ export class ToolRunner {
     confirmed?: unknown,
   ): Promise<ToolExecution> {
     if (this.startChildFor === undefined) {
-      throw new Error('The tool runner runs an in-commit tool before useStartChild() was called');
+      throw new Error(
+        'The tool runner runs an in-commit tool before useStartChild() was called',
+      );
     }
     return call.tool.tool.execute({
       callId: call.callId,
@@ -338,5 +387,8 @@ export class ToolRunner {
 
 /** The tool's `prepare`, run before the commit transaction opens. */
 function prepareInCommit(call: InCommitCall): Promise<unknown> {
-  return call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ?? Promise.resolve(undefined);
+  return (
+    call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ??
+    Promise.resolve(undefined)
+  );
 }

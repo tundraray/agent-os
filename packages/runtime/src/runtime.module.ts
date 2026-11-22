@@ -30,7 +30,10 @@ import { RuntimeWorkers } from './workers/runtime-workers';
 
 /** Where the composition root gets the runtime settings from (parsed by `parseRuntimeConfig`). */
 type RuntimeModuleOptions = Pick<ModuleMetadata, 'imports'> &
-  Pick<FactoryProvider<RuntimeConfig | Promise<RuntimeConfig>>, 'inject' | 'useFactory'>;
+  Pick<
+    FactoryProvider<RuntimeConfig | Promise<RuntimeConfig>>,
+    'inject' | 'useFactory'
+  >;
 
 /** What the modules above the runtime inject. */
 const PUBLIC_SERVICES = [
@@ -73,12 +76,14 @@ export class RuntimeModule {
         {
           provide: RUNTIME_LOGGER,
           inject: [LOGGER],
-          useFactory: (logger: Logger): Logger => logger.child({ component: 'runtime' }),
+          useFactory: (logger: Logger): Logger =>
+            logger.child({ component: 'runtime' }),
         },
         {
           provide: CrashPoints,
           inject: [RUNTIME_CONFIG],
-          useFactory: (config: RuntimeConfig): CrashPoints => CrashPoints.fromConfig(config),
+          useFactory: (config: RuntimeConfig): CrashPoints =>
+            CrashPoints.fromConfig(config),
         },
         RunningTaskRegistry,
         Tasks,

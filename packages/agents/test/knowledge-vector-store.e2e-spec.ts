@@ -9,7 +9,10 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { KnowledgeVector, KnowledgeVectorStore } from '../src/knowledge/vector-store';
+import type {
+  KnowledgeVector,
+  KnowledgeVectorStore,
+} from '../src/knowledge/vector-store';
 import { databaseUrl } from '@agent-os/db/testing';
 import { createPgvectorStore, withLibraryRow } from './support/knowledge';
 
@@ -29,7 +32,11 @@ const QUESTION = [1, 0, 0];
 interface ContractRow {
   readonly name: string;
   /** Arranges and acts through the port on deep agents `a` and `b`; returns what is asserted. */
-  readonly act: (store: KnowledgeVectorStore, a: string, b: string) => Promise<unknown>;
+  readonly act: (
+    store: KnowledgeVectorStore,
+    a: string,
+    b: string,
+  ) => Promise<unknown>;
   readonly expected: unknown;
 }
 
@@ -38,8 +45,12 @@ const ROWS: readonly ContractRow[] = [
     // Catches: a second row per key, or the old model kept with the new vector (Invariant 11).
     name: 'upsert of the same key replaces vector and model, the key stays one',
     act: async (store, a) => {
-      await store.upsert(a, [{ key: 'e1', kind: 'entity', model: MODEL_A, vector: [1, 0, 0] }]);
-      await store.upsert(a, [{ key: 'e1', kind: 'entity', model: MODEL_B, vector: [0, 1] }]);
+      await store.upsert(a, [
+        { key: 'e1', kind: 'entity', model: MODEL_A, vector: [1, 0, 0] },
+      ]);
+      await store.upsert(a, [
+        { key: 'e1', kind: 'entity', model: MODEL_B, vector: [0, 1] },
+      ]);
       return {
         list: await store.list(a),
         newModel: await store.query(a, [0, 1], MODEL_B, 10),
@@ -121,7 +132,9 @@ const ROWS: readonly ContractRow[] = [
     name: "another deep agent's collection is not visible",
     act: async (store, a, b) => {
       await store.upsert(b, GRAPH);
-      await store.upsert(a, [{ key: 'e1', kind: 'entity', model: MODEL_A, vector: [0, 1, 0] }]);
+      await store.upsert(a, [
+        { key: 'e1', kind: 'entity', model: MODEL_A, vector: [0, 1, 0] },
+      ]);
       await store.delete(a, ['e2', 'r3']);
       return {
         listA: await store.list(a),
@@ -142,7 +155,9 @@ function rounded(value: unknown): unknown {
   if (typeof value === 'number') return Math.round(value * 1e5) / 1e5 + 0;
   if (Array.isArray(value)) return value.map(rounded);
   if (value !== null && typeof value === 'object')
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rounded(item)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, rounded(item)]),
+    );
   return value;
 }
 

@@ -1,8 +1,20 @@
-"use client";
+'use client';
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import Link from "next/link";
-import { useFormatter, useLocale, useMessages, useTranslations } from "next-intl";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import Link from 'next/link';
+import {
+  useFormatter,
+  useLocale,
+  useMessages,
+  useTranslations,
+} from 'next-intl';
 import {
   RunCodeConfirmationContentSchema,
   AGENTS_BRIEF_CONFIRMATION,
@@ -10,7 +22,7 @@ import {
   type Confirmation,
   type LibraryRecordCard,
   type RunCodeConfirmationContent,
-} from "@agent-os/contracts";
+} from '@agent-os/contracts';
 import {
   CircleCheckIcon,
   CircleMinusIcon,
@@ -19,35 +31,43 @@ import {
   InfoIcon,
   LoaderCircleIcon,
   type LucideIcon,
-} from "lucide-react";
-import { z } from "zod";
-import { useStore } from "zustand";
-import { AgentStatus, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
-import { useCardThread } from "@/components/agents/run-card";
-import { ValueRows } from "@/components/agents/value-rows";
-import { DefinitionView } from "@/components/library/definition-view";
-import { RecordLabel } from "@/components/library/record-label";
-import { useInChat } from "@/components/library/use-in-chat";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { ShellLink } from "@/components/shell/shell-link";
-import { StateBadge } from "@/components/state-badge";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { useResource } from "@/hooks/use-resource";
-import { BRIEF_PARTS } from "@/lib/agents/format";
-import { builtinName, toolCallLabels } from "@/i18n/builtin-name";
-import { formatListTime, type Formatter } from "@/i18n/formats";
-import { isRunCode, runCodeView } from "@/lib/agents/run-code";
-import { valueRows } from "@/lib/agents/value-rows";
-import { recordCardOf, type RecordSave } from "@/lib/feed/to-feed";
-import { libraryApi } from "@/lib/library/library-api";
-import { briefTitleName, changedFields, type RecordDefinition } from "@/lib/library/record-rules";
-import { logger } from "@/lib/logger";
-import { agentPath, recordPath } from "@/lib/shell-route";
-import { cn } from "@/lib/utils";
-import type { AgentsTranslator, ChatTranslator } from "@/i18n/catalog";
+} from 'lucide-react';
+import { z } from 'zod';
+import { useStore } from 'zustand';
+import {
+  AgentStatus,
+  FadeSlot,
+  StatusGlyph,
+} from '@/components/agents/agent-status';
+import { useCardThread } from '@/components/agents/run-card';
+import { ValueRows } from '@/components/agents/value-rows';
+import { DefinitionView } from '@/components/library/definition-view';
+import { RecordLabel } from '@/components/library/record-label';
+import { useInChat } from '@/components/library/use-in-chat';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { ShellLink } from '@/components/shell/shell-link';
+import { StateBadge } from '@/components/state-badge';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { useResource } from '@/hooks/use-resource';
+import { BRIEF_PARTS } from '@/lib/agents/format';
+import { builtinName, toolCallLabels } from '@/i18n/builtin-name';
+import { formatListTime, type Formatter } from '@/i18n/formats';
+import { isRunCode, runCodeView } from '@/lib/agents/run-code';
+import { valueRows } from '@/lib/agents/value-rows';
+import { recordCardOf, type RecordSave } from '@/lib/feed/to-feed';
+import { libraryApi } from '@/lib/library/library-api';
+import {
+  briefTitleName,
+  changedFields,
+  type RecordDefinition,
+} from '@/lib/library/record-rules';
+import { logger } from '@/lib/logger';
+import { agentPath, recordPath } from '@/lib/shell-route';
+import { cn } from '@/lib/utils';
+import type { AgentsTranslator, ChatTranslator } from '@/i18n/catalog';
 
-type CanCall = RunCodeConfirmationContent["canCall"];
+type CanCall = RunCodeConfirmationContent['canCall'];
 
 /**
  * The «Может вызвать» list of a code run's request, in the order the platform gave it (KD-6); null for
@@ -55,9 +75,13 @@ type CanCall = RunCodeConfirmationContent["canCall"];
  */
 function canCallOf(confirmation: Confirmation): CanCall | null {
   if (!isRunCode(confirmation.tool, confirmation.server)) return null;
-  const content = RunCodeConfirmationContentSchema.safeParse(confirmation.content);
+  const content = RunCodeConfirmationContentSchema.safeParse(
+    confirmation.content,
+  );
   if (!content.success) {
-    logger.warn("[web-feed] code run confirmation outside the contract", { decisionId: confirmation.decisionId });
+    logger.warn('[web-feed] code run confirmation outside the contract', {
+      decisionId: confirmation.decisionId,
+    });
     return null;
   }
   return content.data.canCall;
@@ -68,29 +92,42 @@ function canCallOf(confirmation: Confirmation): CanCall | null {
  * «— читает»; the mark is a word, weight only helps. The same in every state of the card (KD-7).
  */
 function CanCallList({ items }: { items: CanCall }) {
-  const t = useTranslations("agents.runCode.canCall");
+  const t = useTranslations('agents.runCode.canCall');
   const titleId = useId();
   return (
     <div data-slot="can-call" className="flex flex-col gap-1">
-      <p id={titleId} className="text-muted-foreground text-xs leading-4 font-medium">
-        {t("title")}
+      <p
+        id={titleId}
+        className="text-muted-foreground text-xs leading-4 font-medium"
+      >
+        {t('title')}
       </p>
       {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm leading-5">{t("none")}</p>
+        <p className="text-muted-foreground text-sm leading-5">{t('none')}</p>
       ) : (
         <>
           <ul aria-labelledby={titleId} className="flex flex-col gap-0.5">
             {items.map(({ name, changes }) => (
               <li key={name} className="text-sm leading-5">
-                <span className="text-foreground font-mono text-[13px] leading-5 break-all">{name}</span>
-                {" — "}
-                <span className={changes ? "text-foreground font-medium" : "text-muted-foreground"}>
-                  {t(changes ? "changes" : "reads")}
+                <span className="text-foreground font-mono text-[13px] leading-5 break-all">
+                  {name}
+                </span>
+                {' — '}
+                <span
+                  className={
+                    changes
+                      ? 'text-foreground font-medium'
+                      : 'text-muted-foreground'
+                  }
+                >
+                  {t(changes ? 'changes' : 'reads')}
                 </span>
               </li>
             ))}
           </ul>
-          <p className="text-muted-foreground text-xs leading-4 font-medium">{t("note")}</p>
+          <p className="text-muted-foreground text-xs leading-4 font-medium">
+            {t('note')}
+          </p>
         </>
       )}
     </div>
@@ -129,7 +166,7 @@ function briefOf(confirmation: Confirmation): Brief | null {
   const args = BriefSchema.safeParse(confirmation.args);
   const content = BriefSchema.safeParse(confirmation.content);
   if (!args.success || !content.success) {
-    logger.warn("[web-feed] brief confirmation outside the contract", {
+    logger.warn('[web-feed] brief confirmation outside the contract', {
       decisionId: confirmation.decisionId,
       argsValid: args.success,
       contentValid: content.success,
@@ -138,7 +175,9 @@ function briefOf(confirmation: Confirmation): Brief | null {
   }
   // A confirmed brief shows the text it ran with, edits included (decision-card.md, States).
   const ran =
-    confirmation.resolution?.approve === true ? BriefSchema.safeParse(confirmation.resolution.args) : null;
+    confirmation.resolution?.approve === true
+      ? BriefSchema.safeParse(confirmation.resolution.args)
+      : null;
   return {
     deepAgent: args.data.deepAgent,
     text: pickText(ran?.success === true ? ran.data : content.data),
@@ -150,7 +189,7 @@ function briefOf(confirmation: Confirmation): Brief | null {
  * is the platform's text, shown whole (the line wraps), with the icon alone in `--destructive`.
  */
 type Outcome = {
-  kind: "approved" | "rejected" | "cancelled" | "failed";
+  kind: 'approved' | 'rejected' | 'cancelled' | 'failed';
   text: string;
   Icon: LucideIcon;
   tone: string;
@@ -158,33 +197,82 @@ type Outcome = {
 };
 
 /** The final line of a decided request (MC-19, MC-20); null while it is open. */
-function outcomeOf(t: AgentsTranslator, confirmation: Confirmation, isBrief: boolean, format: Formatter): Outcome | null {
-  if (confirmation.status === "open") return null;
-  if (confirmation.status === "cancelled") {
-    return { kind: "cancelled", text: t("decision.cancelled"), Icon: CircleStopIcon, tone: "text-muted-foreground" };
+function outcomeOf(
+  t: AgentsTranslator,
+  confirmation: Confirmation,
+  isBrief: boolean,
+  format: Formatter,
+): Outcome | null {
+  if (confirmation.status === 'open') return null;
+  if (confirmation.status === 'cancelled') {
+    return {
+      kind: 'cancelled',
+      text: t('decision.cancelled'),
+      Icon: CircleStopIcon,
+      tone: 'text-muted-foreground',
+    };
   }
-  const time = formatListTime(format, confirmation.resolvedAt ?? confirmation.createdAt);
+  const time = formatListTime(
+    format,
+    confirmation.resolvedAt ?? confirmation.createdAt,
+  );
   if (confirmation.resolution?.approve === true) {
-    const text = t(isBrief ? "decision.briefApproved" : "decision.approved", { time });
-    return { kind: "approved", text, Icon: CircleCheckIcon, tone: "text-success" };
+    const text = t(isBrief ? 'decision.briefApproved' : 'decision.approved', {
+      time,
+    });
+    return {
+      kind: 'approved',
+      text,
+      Icon: CircleCheckIcon,
+      tone: 'text-success',
+    };
   }
-  const text = t(isBrief ? "decision.briefRejected" : "decision.rejected", { time });
-  return { kind: "rejected", text, Icon: CircleMinusIcon, tone: "text-muted-foreground" };
+  const text = t(isBrief ? 'decision.briefRejected' : 'decision.rejected', {
+    time,
+  });
+  return {
+    kind: 'rejected',
+    text,
+    Icon: CircleMinusIcon,
+    tone: 'text-muted-foreground',
+  };
 }
 
 /** A record card as it reads: the definition after a create or an edit, the saved one before an edit or a delete. */
 type RecordView =
-  | { action: "create"; card: LibraryRecordCard; next: RecordDefinition }
-  | { action: "edit"; card: LibraryRecordCard; previous: RecordDefinition; next: RecordDefinition }
-  | { action: "delete"; card: LibraryRecordCard; previous: RecordDefinition };
+  | { action: 'create'; card: LibraryRecordCard; next: RecordDefinition }
+  | {
+      action: 'edit';
+      card: LibraryRecordCard;
+      previous: RecordDefinition;
+      next: RecordDefinition;
+    }
+  | { action: 'delete'; card: LibraryRecordCard; previous: RecordDefinition };
 
-function definitionOf(card: LibraryRecordCard, side: "next" | "previous"): RecordDefinition | null {
-  if (card.kind === "agent") {
+function definitionOf(
+  card: LibraryRecordCard,
+  side: 'next' | 'previous',
+): RecordDefinition | null {
+  if (card.kind === 'agent') {
     const text = card[side];
-    return text === null ? null : { name: text.name, description: text.description, kind: "agent", content: text.content };
+    return text === null
+      ? null
+      : {
+          name: text.name,
+          description: text.description,
+          kind: 'agent',
+          content: text.content,
+        };
   }
   const text = card[side];
-  return text === null ? null : { name: text.name, description: text.description, kind: "deep_agent", content: text.content };
+  return text === null
+    ? null
+    : {
+        name: text.name,
+        description: text.description,
+        kind: 'deep_agent',
+        content: text.content,
+      };
 }
 
 /**
@@ -194,25 +282,33 @@ function definitionOf(card: LibraryRecordCard, side: "next" | "previous"): Recor
 function recordViewOf(confirmation: Confirmation): RecordView | null {
   if (confirmation.kind !== LIBRARY_RECORD_CONFIRMATION) return null;
   const card = recordCardOf(confirmation);
-  const next = card === null ? null : definitionOf(card, "next");
-  const previous = card === null ? null : definitionOf(card, "previous");
-  if (card?.action === "create" && next !== null) return { action: "create", card, next };
-  if (card?.action === "edit" && next !== null && previous !== null) return { action: "edit", card, previous, next };
-  if (card?.action === "delete" && previous !== null) return { action: "delete", card, previous };
-  logger.warn("[web-feed] record confirmation outside the contract", { decisionId: confirmation.decisionId });
+  const next = card === null ? null : definitionOf(card, 'next');
+  const previous = card === null ? null : definitionOf(card, 'previous');
+  if (card?.action === 'create' && next !== null)
+    return { action: 'create', card, next };
+  if (card?.action === 'edit' && next !== null && previous !== null)
+    return { action: 'edit', card, previous, next };
+  if (card?.action === 'delete' && previous !== null)
+    return { action: 'delete', card, previous };
+  logger.warn('[web-feed] record confirmation outside the contract', {
+    decisionId: confirmation.decisionId,
+  });
   return null;
 }
 
 /** MC-24: «Создать агента», «Изменить «{имя}»», «Удалить «{имя}»» — the action in words, the saved name. */
 function recordHeading(t: AgentsTranslator, view: RecordView): string {
-  if (view.action === "create") return t("recordCard.create", { kind: view.card.kind });
-  return t(view.action === "edit" ? "recordCard.edit" : "recordCard.delete", { name: view.previous.name });
+  if (view.action === 'create')
+    return t('recordCard.create', { kind: view.card.kind });
+  return t(view.action === 'edit' ? 'recordCard.edit' : 'recordCard.delete', {
+    name: view.previous.name,
+  });
 }
 
 const RECORD_DONE = {
-  create: "recordCard.created",
-  edit: "recordCard.changedOutcome",
-  delete: "recordCard.deleted",
+  create: 'recordCard.created',
+  edit: 'recordCard.changedOutcome',
+  delete: 'recordCard.deleted',
 } as const;
 
 /**
@@ -221,24 +317,39 @@ const RECORD_DONE = {
  * general «Подтверждено». Rejected and cancelled read as any request.
  */
 function recordOutcomeOf(
-  { t, tChat, format }: { t: AgentsTranslator; tChat: ChatTranslator; format: Formatter },
+  {
+    t,
+    tChat,
+    format,
+  }: { t: AgentsTranslator; tChat: ChatTranslator; format: Formatter },
   confirmation: Confirmation,
   view: RecordView,
   saved: RecordSave | null,
 ): Outcome | null {
   const outcome = outcomeOf(t, confirmation, false, format);
-  if (outcome?.kind !== "approved" || saved === null) return outcome;
-  const time = formatListTime(format, confirmation.resolvedAt ?? confirmation.createdAt);
-  if (saved.outcome === "success") {
-    return { kind: "approved", text: t(RECORD_DONE[view.action], { time }), Icon: CircleCheckIcon, tone: "text-success" };
+  if (outcome?.kind !== 'approved' || saved === null) return outcome;
+  const time = formatListTime(
+    format,
+    confirmation.resolvedAt ?? confirmation.createdAt,
+  );
+  if (saved.outcome === 'success') {
+    return {
+      kind: 'approved',
+      text: t(RECORD_DONE[view.action], { time }),
+      Icon: CircleCheckIcon,
+      tone: 'text-success',
+    };
   }
-  const reason = saved.text !== null && saved.text !== "" ? saved.text : tChat(`tool.outcome.${saved.outcome}`);
+  const reason =
+    saved.text !== null && saved.text !== ''
+      ? saved.text
+      : tChat(`tool.outcome.${saved.outcome}`);
   return {
-    kind: "failed",
-    text: t("recordCard.notSaved", { reason }),
+    kind: 'failed',
+    text: t('recordCard.notSaved', { reason }),
     Icon: CircleXIcon,
-    tone: "text-foreground",
-    iconTone: "text-destructive",
+    tone: 'text-foreground',
+    iconTone: 'text-destructive',
   };
 }
 
@@ -248,22 +359,28 @@ function recordOutcomeOf(
  * definition has no name row; the record label, its description and the phrase on a delete.
  */
 function RecordBody({ view }: { view: RecordView }) {
-  const t = useTranslations("agents.recordCard");
-  if (view.action === "create") {
+  const t = useTranslations('agents.recordCard');
+  if (view.action === 'create') {
     return (
       <>
-        <p className="text-foreground text-sm leading-5 font-medium break-words">{view.next.name}</p>
-        <DefinitionView definition={view.next} missingRights={[]} variant="card" />
+        <p className="text-foreground text-sm leading-5 font-medium break-words">
+          {view.next.name}
+        </p>
+        <DefinitionView
+          definition={view.next}
+          missingRights={[]}
+          variant="card"
+        />
       </>
     );
   }
-  if (view.action === "edit") {
+  if (view.action === 'edit') {
     return (
       <>
         {view.previous.name !== view.next.name && (
           <p className="text-foreground flex flex-wrap items-center gap-1.5 text-sm leading-5 font-medium break-words">
             {view.next.name}
-            <StateBadge variant="source">{t("changed")}</StateBadge>
+            <StateBadge variant="source">{t('changed')}</StateBadge>
           </p>
         )}
         <DefinitionView
@@ -277,9 +394,20 @@ function RecordBody({ view }: { view: RecordView }) {
   }
   return (
     <>
-      <RecordLabel chip={{ id: view.card.recordId, kind: view.card.kind, name: view.previous.name }} variant="under" />
-      <p className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">{view.previous.description}</p>
-      <p className="text-muted-foreground text-xs leading-4 font-medium">{t("deleteNote", { kind: view.card.kind })}</p>
+      <RecordLabel
+        chip={{
+          id: view.card.recordId,
+          kind: view.card.kind,
+          name: view.previous.name,
+        }}
+        variant="under"
+      />
+      <p className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">
+        {view.previous.description}
+      </p>
+      <p className="text-muted-foreground text-xs leading-4 font-medium">
+        {t('deleteNote', { kind: view.card.kind })}
+      </p>
     </>
   );
 }
@@ -289,38 +417,47 @@ function RecordBody({ view }: { view: RecordView }) {
  * conversation's field; «Показать схему» opens the diagram panel (the drawer below 1024 px) with focus on its
  * heading; «Открыть» goes to the record's page.
  */
-function RecordDoneActions({ view }: { view: Exclude<RecordView, { action: "delete" }> }) {
-  const tLibrary = useTranslations("library");
-  const t = useTranslations("agents.recordCard");
+function RecordDoneActions({
+  view,
+}: {
+  view: Exclude<RecordView, { action: 'delete' }>;
+}) {
+  const tLibrary = useTranslations('library');
+  const t = useTranslations('agents.recordCard');
   const inChat = useInChat();
   const thread = useCardThread();
   const { workspace } = useShellServices();
   const { recordId, kind } = view.card;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {view.action === "create" && (
+      {view.action === 'create' && (
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="pointer-coarse:h-11"
-          onClick={() => inChat({ record: { id: recordId, kind, name: view.next.name } }, thread)}
+          onClick={() =>
+            inChat(
+              { record: { id: recordId, kind, name: view.next.name } },
+              thread,
+            )
+          }
         >
-          {tLibrary("row.useInChat")}
+          {tLibrary('row.useInChat')}
         </Button>
       )}
       <button
         type="button"
-        onClick={() => workspace.show({ tab: "schema", focusHeading: true })}
+        onClick={() => workspace.show({ tab: 'schema', focusHeading: true })}
         className="text-foreground focus-visible:ring-ring rounded-sm text-sm leading-5 underline underline-offset-2 outline-none focus-visible:ring-2"
       >
-        {t("showDiagram")}
+        {t('showDiagram')}
       </button>
       <ShellLink
         href={recordPath(recordId)}
         className="text-foreground focus-visible:ring-ring rounded-sm text-sm leading-5 underline underline-offset-2 outline-none focus-visible:ring-2"
       >
-        {tLibrary("open")}
+        {tLibrary('open')}
       </ShellLink>
     </div>
   );
@@ -344,19 +481,21 @@ function useBriefEdit() {
       setEmptyQuestion(false);
     },
     change: (field: BriefField, value: string) => {
-      setDraft((current) => (current === null ? null : { ...current, [field]: value }));
-      if (field === "question") setEmptyQuestion(false);
+      setDraft((current) =>
+        current === null ? null : { ...current, [field]: value },
+      );
+      if (field === 'question') setEmptyQuestion(false);
     },
     /** True when the question is empty: the request must not go out (state «Пустой вопрос»). */
     rejectEmpty: (): boolean => {
-      const empty = draft !== null && draft.question.trim() === "";
+      const empty = draft !== null && draft.question.trim() === '';
       setEmptyQuestion(empty);
       return empty;
     },
   };
 }
 
-type Pressed = "approve" | "reject" | "launch" | "launchEdited";
+type Pressed = 'approve' | 'reject' | 'launch' | 'launchEdited';
 
 /** A row button: in «Отправка» the pressed one shows the spinner in place of its label, at the same width. */
 function DecisionButton({
@@ -368,7 +507,7 @@ function DecisionButton({
   buttonRef,
 }: {
   label: string;
-  variant: "default" | "destructive" | "outline" | "ghost";
+  variant: 'default' | 'destructive' | 'outline' | 'ghost';
   pressed: boolean;
   busy: boolean;
   onClick: () => void;
@@ -385,9 +524,12 @@ function DecisionButton({
       onClick={onClick}
       className="relative pointer-coarse:h-11"
     >
-      <span className={cn(pressed && "opacity-0")}>{label}</span>
+      <span className={cn(pressed && 'opacity-0')}>{label}</span>
       {pressed && (
-        <span aria-hidden className="absolute inset-0 flex items-center justify-center">
+        <span
+          aria-hidden
+          className="absolute inset-0 flex items-center justify-center"
+        >
           <StatusGlyph Icon={LoaderCircleIcon} spinning />
         </span>
       )}
@@ -403,17 +545,24 @@ function DecisionButton({
 function BriefHeading({ deepAgentId }: { deepAgentId: string }) {
   const { libraryIndex } = useShellServices();
   const locale = useLocale();
-  const tLibrary = useTranslations("library");
+  const tLibrary = useTranslations('library');
   // Subscribes to the list: the title follows a read that lands after the card.
   useStore(libraryIndex, (state) => state.records);
   const found = libraryIndex.summaryOf(deepAgentId);
-  const live = found == null ? found : { ...found, name: builtinName(found, locale) };
+  const live =
+    found == null ? found : { ...found, name: builtinName(found, locale) };
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <h3 className="text-base leading-6 font-semibold break-words">
         {briefTitleName(tLibrary, deepAgentId, { summaryOf: () => live })}
       </h3>
-      {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
+      {live != null && (
+        <RecordLabel
+          summary={live}
+          variant="under"
+          href={recordPath(live.id)}
+        />
+      )}
     </div>
   );
 }
@@ -424,14 +573,19 @@ function BriefHeading({ deepAgentId }: { deepAgentId: string }) {
  * `useResource`'s) and when the flag is off there is no line, and the card decides as before (DC-4).
  */
 function SelfLearningNote({ deepAgentId }: { deepAgentId: string }) {
-  const t = useTranslations("agents");
-  const record = useResource(() => libraryApi.get(deepAgentId), deepAgentId, "library");
-  const learns = record.data?.kind === "deep_agent" && record.data.content.selfLearning;
+  const t = useTranslations('agents');
+  const record = useResource(
+    () => libraryApi.get(deepAgentId),
+    deepAgentId,
+    'library',
+  );
+  const learns =
+    record.data?.kind === 'deep_agent' && record.data.content.selfLearning;
   if (!learns) return null;
   return (
     <p className="text-foreground flex items-start gap-1.5 text-xs leading-4 font-medium">
       <InfoIcon aria-hidden className="text-info mt-px size-3.5 shrink-0" />
-      {t("decision.selfLearning")}
+      {t('decision.selfLearning')}
     </p>
   );
 }
@@ -452,18 +606,28 @@ export type DecisionCardProps = {
  * `Confirmation` status, so a decision taken in another copy shows its outcome with no error line.
  * The container is focusable (`tabIndex` −1) and found by `data-decision-id` («К запросу»).
  */
-export function DecisionCard({ confirmation, byChat, saved, onDecide }: DecisionCardProps) {
+export function DecisionCard({
+  confirmation,
+  byChat,
+  saved,
+  onDecide,
+}: DecisionCardProps) {
   const brief = briefOf(confirmation);
   const record = brief === null ? recordViewOf(confirmation) : null;
   const format = useFormatter();
   const locale = useLocale();
-  const tAgents = useTranslations("agents");
-  const tChat = useTranslations("chat");
+  const tAgents = useTranslations('agents');
+  const tChat = useTranslations('chat');
   const { tools } = useMessages();
   const outcome =
     record === null
       ? outcomeOf(tAgents, confirmation, brief !== null, format)
-      : recordOutcomeOf({ t: tAgents, tChat, format }, confirmation, record, saved);
+      : recordOutcomeOf(
+          { t: tAgents, tChat, format },
+          confirmation,
+          record,
+          saved,
+        );
   const edit = useBriefEdit();
   const editing = edit.draft !== null && outcome === null;
   const [pressed, setPressed] = useState<Pressed | null>(null);
@@ -473,7 +637,7 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const decidedHere = useRef(false);
-  const pendingFocus = useRef<"question" | "edit" | null>(null);
+  const pendingFocus = useRef<'question' | 'edit' | null>(null);
   const fieldId = useId();
 
   // After a decision taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
@@ -487,13 +651,17 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
   useEffect(() => {
     const target = pendingFocus.current;
     pendingFocus.current = null;
-    if (target === "question") questionRef.current?.focus();
-    if (target === "edit") editButtonRef.current?.focus();
+    if (target === 'question') questionRef.current?.focus();
+    if (target === 'edit') editButtonRef.current?.focus();
   }, [editing]);
 
   const busy = pressed !== null;
 
-  async function decide(which: Pressed, approve: boolean, args?: Record<string, unknown>): Promise<void> {
+  async function decide(
+    which: Pressed,
+    approve: boolean,
+    args?: Record<string, unknown>,
+  ): Promise<void> {
     if (busy) return;
     setPressed(which);
     setFailed(false);
@@ -511,25 +679,27 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
   }
 
   const briefArgs = (text: BriefText): Record<string, unknown> | undefined =>
-    brief === null ? undefined : { deepAgent: brief.deepAgent, ...pickText(text) };
+    brief === null
+      ? undefined
+      : { deepAgent: brief.deepAgent, ...pickText(text) };
 
   const startEdit = (): void => {
     if (brief === null) return;
-    pendingFocus.current = "question";
+    pendingFocus.current = 'question';
     setFailed(false);
     edit.start(brief.text);
   };
   const cancelEdit = (): void => {
-    pendingFocus.current = "edit";
+    pendingFocus.current = 'edit';
     setFailed(false);
     edit.cancel();
   };
   const launchEdited = (): void => {
     if (busy || edit.draft === null || edit.rejectEmpty()) return;
-    void decide("launchEdited", true, briefArgs(edit.draft));
+    void decide('launchEdited', true, briefArgs(edit.draft));
   };
   const onEditKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== "Escape" || busy) return;
+    if (event.key !== 'Escape' || busy) return;
     event.preventDefault();
     cancelEdit();
   };
@@ -542,18 +712,28 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
     toolTitle,
     argLabels: confirmation.argLabels,
   });
-  const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, argLabels) : null;
+  const runCode =
+    brief === null && isRunCode(tool, server)
+      ? runCodeView(args, argLabels)
+      : null;
   const canCall = canCallOf(confirmation);
-  const recordHeadingText = record === null ? null : recordHeading(tAgents, record);
+  const recordHeadingText =
+    record === null ? null : recordHeading(tAgents, record);
   const groupName =
     brief !== null
-      ? tAgents("decision.groupBrief", { question: brief.text.question })
-      : tAgents("decision.groupAction", { tool: recordHeadingText ?? toolName });
+      ? tAgents('decision.groupBrief', { question: brief.text.question })
+      : tAgents('decision.groupAction', {
+          tool: recordHeadingText ?? toolName,
+        });
 
   const header =
     outcome === null ? (
       <div className="flex h-5 min-w-0 items-center justify-between gap-3">
-        <AgentStatus variant="label" status="awaiting_confirmation" className="shrink-0" />
+        <AgentStatus
+          variant="label"
+          status="awaiting_confirmation"
+          className="shrink-0"
+        />
         <time
           dateTime={confirmation.createdAt}
           className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
@@ -564,8 +744,8 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
     ) : (
       <p
         className={cn(
-          "flex min-w-0 gap-1 text-xs leading-4 font-medium tabular-nums",
-          outcome.kind === "failed" ? "items-start" : "h-5 items-center",
+          'flex min-w-0 gap-1 text-xs leading-4 font-medium tabular-nums',
+          outcome.kind === 'failed' ? 'items-start' : 'h-5 items-center',
           outcome.tone,
         )}
       >
@@ -574,8 +754,10 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
         </FadeSlot>
         <span
           className={cn(
-            "min-w-0 animate-in fade-in-0 duration-(--duration-fast) motion-reduce:animate-none",
-            outcome.kind === "failed" ? "break-words whitespace-pre-wrap" : "truncate",
+            'min-w-0 animate-in fade-in-0 duration-(--duration-fast) motion-reduce:animate-none',
+            outcome.kind === 'failed'
+              ? 'break-words whitespace-pre-wrap'
+              : 'truncate',
           )}
         >
           {outcome.text}
@@ -584,9 +766,15 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
     );
 
   const errorLine = failed && outcome === null && (
-    <p role="alert" className="text-foreground flex items-start gap-1.5 text-sm leading-5">
-      <CircleXIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-      {tAgents("decision.sendFailed")}
+    <p
+      role="alert"
+      className="text-foreground flex items-start gap-1.5 text-sm leading-5"
+    >
+      <CircleXIcon
+        aria-hidden
+        className="text-destructive mt-0.5 size-4 shrink-0"
+      />
+      {tAgents('decision.sendFailed')}
     </p>
   );
 
@@ -596,34 +784,36 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
   if (record !== null) {
     body = (
       <>
-        <h3 className="text-base leading-6 font-semibold break-words">{recordHeadingText}</h3>
+        <h3 className="text-base leading-6 font-semibold break-words">
+          {recordHeadingText}
+        </h3>
         <RecordBody view={record} />
-        {record.action !== "delete" && outcome?.kind === "approved" && saved?.outcome === "success" && (
-          <RecordDoneActions view={record} />
-        )}
+        {record.action !== 'delete' &&
+          outcome?.kind === 'approved' &&
+          saved?.outcome === 'success' && <RecordDoneActions view={record} />}
       </>
     );
     if (outcome === null) {
       const primary = {
-        create: "recordCard.createButton",
-        edit: "recordCard.saveButton",
-        delete: "recordCard.deleteButton",
+        create: 'recordCard.createButton',
+        edit: 'recordCard.saveButton',
+        delete: 'recordCard.deleteButton',
       } as const;
       actions = (
         <>
           <DecisionButton
             label={tAgents(primary[record.action])}
-            variant={record.action === "delete" ? "destructive" : "default"}
-            pressed={pressed === "approve"}
+            variant={record.action === 'delete' ? 'destructive' : 'default'}
+            pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide("approve", true)}
+            onClick={() => void decide('approve', true)}
           />
           <DecisionButton
-            label={tAgents("decision.reject")}
+            label={tAgents('decision.reject')}
             variant="outline"
-            pressed={pressed === "reject"}
+            pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide("reject", false)}
+            onClick={() => void decide('reject', false)}
           />
         </>
       );
@@ -634,8 +824,8 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
         <div className="flex min-w-0 flex-col gap-0.5">
           <p className="text-foreground text-sm leading-5">
             {byChat
-              ? tAgents("decision.byChat")
-              : tAgents.rich("decision.byAgent", {
+              ? tAgents('decision.byChat')
+              : tAgents.rich('decision.byAgent', {
                   description: confirmation.description,
                   link: (chunks) => (
                     <Link
@@ -650,7 +840,10 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
           {/* RN-04: the asking agent's record; the chat's own request has none. */}
           {!byChat && confirmation.origin !== null && (
             <RecordLabel
-              origin={{ ...confirmation.origin, name: builtinName(confirmation.origin, locale) }}
+              origin={{
+                ...confirmation.origin,
+                name: builtinName(confirmation.origin, locale),
+              }}
               variant="under"
               href={recordPath(confirmation.origin.recordId)}
             />
@@ -658,9 +851,13 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
         </div>
         <div className="flex min-w-0 flex-col">
           <p className="flex min-w-0 items-baseline gap-1.5">
-            <span className="text-foreground min-w-0 text-sm leading-5 font-medium break-words">{toolName}</span>
+            <span className="text-foreground min-w-0 text-sm leading-5 font-medium break-words">
+              {toolName}
+            </span>
             {toolTitle === undefined && server !== null && (
-              <span className="text-muted-foreground shrink-0 text-xs leading-4 font-medium">· {server}</span>
+              <span className="text-muted-foreground shrink-0 text-xs leading-4 font-medium">
+                · {server}
+              </span>
             )}
           </p>
           {/* A built-in tool's title stands alone, without the technical line (decision-card.md, part 4). */}
@@ -669,10 +866,10 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
           )}
         </div>
         <ValueRows
-          label={tChat("tool.arguments")}
+          label={tChat('tool.arguments')}
           rows={runCode?.rows ?? valueRows(args, argLabels)}
           script={runCode?.script}
-          raw={typeof args === "string" ? args : JSON.stringify(args, null, 2)}
+          raw={typeof args === 'string' ? args : JSON.stringify(args, null, 2)}
           disclosure
           density="ui"
         />
@@ -683,18 +880,18 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
       actions = (
         <>
           <DecisionButton
-            label={tAgents("decision.approve")}
+            label={tAgents('decision.approve')}
             variant="default"
-            pressed={pressed === "approve"}
+            pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide("approve", true)}
+            onClick={() => void decide('approve', true)}
           />
           <DecisionButton
-            label={tAgents("decision.reject")}
+            label={tAgents('decision.reject')}
             variant="outline"
-            pressed={pressed === "reject"}
+            pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide("reject", false)}
+            onClick={() => void decide('reject', false)}
           />
         </>
       );
@@ -708,15 +905,18 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
           {BRIEF_PARTS.map((field) => {
             const id = `${fieldId}-${field}`;
-            const invalid = field === "question" && edit.emptyQuestion;
+            const invalid = field === 'question' && edit.emptyQuestion;
             return (
               <div key={field} className="flex flex-col gap-1">
-                <label htmlFor={id} className="text-muted-foreground text-xs leading-4 font-medium">
+                <label
+                  htmlFor={id}
+                  className="text-muted-foreground text-xs leading-4 font-medium"
+                >
                   {tAgents(`brief.${field}`)}
                 </label>
                 <Textarea
                   id={id}
-                  ref={field === "question" ? questionRef : undefined}
+                  ref={field === 'question' ? questionRef : undefined}
                   value={values[field]}
                   disabled={busy}
                   aria-invalid={invalid || undefined}
@@ -725,8 +925,11 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
                   className="min-h-0 text-sm leading-5 md:text-sm"
                 />
                 {invalid && (
-                  <p id={errorId} className="text-destructive text-xs leading-4 font-medium">
-                    {tAgents("decision.emptyQuestion")}
+                  <p
+                    id={errorId}
+                    className="text-destructive text-xs leading-4 font-medium"
+                  >
+                    {tAgents('decision.emptyQuestion')}
                   </p>
                 )}
               </div>
@@ -738,13 +941,19 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
     actions = (
       <>
         <DecisionButton
-          label={tAgents("decision.launchEdited")}
+          label={tAgents('decision.launchEdited')}
           variant="default"
-          pressed={pressed === "launchEdited"}
+          pressed={pressed === 'launchEdited'}
           busy={busy}
           onClick={launchEdited}
         />
-        <DecisionButton label={tAgents("decision.cancelEdit")} variant="outline" pressed={false} busy={busy} onClick={cancelEdit} />
+        <DecisionButton
+          label={tAgents('decision.cancelEdit')}
+          variant="outline"
+          pressed={false}
+          busy={busy}
+          onClick={cancelEdit}
+        />
       </>
     );
   } else {
@@ -754,8 +963,12 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           {BRIEF_PARTS.map((field) => (
             <div key={field} className="contents">
-              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{tAgents(`brief.${field}`)}</dt>
-              <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">{brief.text[field]}</dd>
+              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">
+                {tAgents(`brief.${field}`)}
+              </dt>
+              <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">
+                {brief.text[field]}
+              </dd>
             </div>
           ))}
         </dl>
@@ -765,14 +978,14 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
       actions = (
         <>
           <DecisionButton
-            label={tAgents("decision.launch")}
+            label={tAgents('decision.launch')}
             variant="default"
-            pressed={pressed === "launch"}
+            pressed={pressed === 'launch'}
             busy={busy}
-            onClick={() => void decide("launch", true, briefArgs(brief.text))}
+            onClick={() => void decide('launch', true, briefArgs(brief.text))}
           />
           <DecisionButton
-            label={tAgents("decision.edit")}
+            label={tAgents('decision.edit')}
             variant="outline"
             pressed={false}
             busy={busy}
@@ -782,11 +995,11 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
             }}
           />
           <DecisionButton
-            label={tAgents("decision.reject")}
+            label={tAgents('decision.reject')}
             variant="ghost"
-            pressed={pressed === "reject"}
+            pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide("reject", false)}
+            onClick={() => void decide('reject', false)}
           />
         </>
       );
@@ -801,24 +1014,28 @@ export function DecisionCard({ confirmation, byChat, saved, onDecide }: Decision
       tabIndex={-1}
       data-slot="decision-card"
       data-decision-id={confirmation.decisionId}
-      data-state={outcome?.kind ?? (editing ? "editing" : "open")}
+      data-state={outcome?.kind ?? (editing ? 'editing' : 'open')}
       className={cn(
-        "mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-2 rounded-lg border p-3 outline-none",
-        "focus-visible:ring-ring transition-colors duration-(--duration-fast) focus-visible:ring-2 motion-reduce:transition-none",
-        outcome === null ? "bg-approval-subtle border-approval-border" : "bg-card text-card-foreground border-border",
+        'mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-2 rounded-lg border p-3 outline-none',
+        'focus-visible:ring-ring transition-colors duration-(--duration-fast) focus-visible:ring-2 motion-reduce:transition-none',
+        outcome === null
+          ? 'bg-approval-subtle border-approval-border'
+          : 'bg-card text-card-foreground border-border',
       )}
     >
       {header}
       {body}
       {/* Mounted here, outside the branches, so «Правка» and back keep the one read; a decided card drops it. */}
-      {brief !== null && outcome === null && <SelfLearningNote deepAgentId={brief.deepAgent} />}
+      {brief !== null && outcome === null && (
+        <SelfLearningNote deepAgentId={brief.deepAgent} />
+      )}
       {errorLine}
       {actions !== null && (
         <div
           className={cn(
-            "flex flex-wrap items-center gap-2",
+            'flex flex-wrap items-center gap-2',
             // A record's buttons stand in a full-width column below 480 px (decision-card.md, Sizes).
-            record !== null && "max-[30rem]:flex-col max-[30rem]:items-stretch",
+            record !== null && 'max-[30rem]:flex-col max-[30rem]:items-stretch',
           )}
         >
           {actions}

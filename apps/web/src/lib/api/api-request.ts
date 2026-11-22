@@ -1,8 +1,9 @@
-import { z, type ZodType } from "zod";
-import { ApiErrorSchema, IdentityErrorCode } from "@agent-os/contracts";
+import { z, type ZodType } from 'zod';
+import { ApiErrorSchema, IdentityErrorCode } from '@agent-os/contracts';
 
-export type ApiMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export type ApiRequestErrorKind = "not_found" | "invalid_response" | "http" | "network";
+export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type ApiRequestErrorKind =
+  'not_found' | 'invalid_response' | 'http' | 'network';
 
 type ApiRequestErrorInit = {
   kind: ApiRequestErrorKind;
@@ -29,12 +30,21 @@ export class ApiRequestError extends Error {
   readonly reason?: string;
   readonly model?: string | null;
 
-  constructor({ kind, method, path, status, code, reason, bodyMessage, model }: ApiRequestErrorInit) {
+  constructor({
+    kind,
+    method,
+    path,
+    status,
+    code,
+    reason,
+    bodyMessage,
+    model,
+  }: ApiRequestErrorInit) {
     super(
       bodyMessage ??
-        `API request failed: ${kind}${status === undefined ? "" : ` (${status})`}${code === undefined ? "" : ` ${code}`}`,
+        `API request failed: ${kind}${status === undefined ? '' : ` (${status})`}${code === undefined ? '' : ` ${code}`}`,
     );
-    this.name = "ApiRequestError";
+    this.name = 'ApiRequestError';
     this.kind = kind;
     this.method = method;
     this.path = path;
@@ -52,7 +62,7 @@ export const isApiRequestError = (value: unknown): value is ApiRequestError =>
 export const describeApiError = (
   error: unknown,
 ): {
-  kind: ApiRequestErrorKind | "unknown";
+  kind: ApiRequestErrorKind | 'unknown';
   method: ApiMethod | undefined;
   path: string | undefined;
   status: number | undefined;
@@ -68,7 +78,14 @@ export const describeApiError = (
         code: error.code,
         reason: error.reason,
       }
-    : { kind: "unknown", method: undefined, path: undefined, status: undefined, code: undefined, reason: undefined };
+    : {
+        kind: 'unknown',
+        method: undefined,
+        path: undefined,
+        status: undefined,
+        code: undefined,
+        reason: undefined,
+      };
 
 export type UnauthorizedHandler = (code: string | undefined) => void;
 export type AdminRequiredHandler = () => void;
@@ -77,19 +94,24 @@ let unauthorizedHandler: UnauthorizedHandler | null = null;
 let adminRequiredHandler: AdminRequiredHandler | null = null;
 
 /** Every 401 goes to this handler with its `errorCode` before the caller gets the error; `null` removes it. */
-export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+export function setUnauthorizedHandler(
+  handler: UnauthorizedHandler | null,
+): void {
   unauthorizedHandler = handler;
 }
 
 /** Every 403 `ADMIN_REQUIRED` goes to this handler before the caller gets the error; `null` removes it. */
-export function setAdminRequiredHandler(handler: AdminRequiredHandler | null): void {
+export function setAdminRequiredHandler(
+  handler: AdminRequiredHandler | null,
+): void {
   adminRequiredHandler = handler;
 }
 
 /** One handler per web for the answers every caller shares: 401 and 403 `ADMIN_REQUIRED`. */
 function notifySharedHandlers(status: number, code: string | undefined): void {
   if (status === 401) unauthorizedHandler?.(code);
-  else if (status === 403 && code === IdentityErrorCode.ADMIN_REQUIRED) adminRequiredHandler?.();
+  else if (status === 403 && code === IdentityErrorCode.ADMIN_REQUIRED)
+    adminRequiredHandler?.();
 }
 
 type ApiRequestInput<T> = {
@@ -101,31 +123,36 @@ type ApiRequestInput<T> = {
 };
 
 /** The web's only `fetch` to the API: session cookie, JSON body, schema-checked answer. */
-export function apiRequest<T>(input: ApiRequestInput<T> & { schema: ZodType<T> }): Promise<T>;
-export function apiRequest(input: ApiRequestInput<never> & { schema?: undefined }): Promise<void>;
+export function apiRequest<T>(
+  input: ApiRequestInput<T> & { schema: ZodType<T> },
+): Promise<T>;
+export function apiRequest(
+  input: ApiRequestInput<never> & { schema?: undefined },
+): Promise<void>;
 export async function apiRequest<T>({
   path,
-  method = "GET",
+  method = 'GET',
   body,
   schema,
 }: ApiRequestInput<T>): Promise<T | void> {
-  const where = { method, path: path.split("?")[0] };
+  const where = { method, path: path.split('?')[0] };
   let response: Response;
   try {
     response = await fetch(path, {
       method,
-      credentials: "include",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      credentials: 'include',
+      headers:
+        body === undefined ? undefined : { 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiRequestError({ kind: "network", ...where });
+    throw new ApiRequestError({ kind: 'network', ...where });
   }
   if (!response.ok) {
     const details = await errorDetailsOf(response);
     notifySharedHandlers(response.status, details.code);
     throw new ApiRequestError({
-      kind: response.status === 404 ? "not_found" : "http",
+      kind: response.status === 404 ? 'not_found' : 'http',
       ...where,
       status: response.status,
       ...details,
@@ -136,11 +163,19 @@ export async function apiRequest<T>({
   try {
     data = await response.json();
   } catch {
-    throw new ApiRequestError({ kind: "invalid_response", ...where, status: response.status });
+    throw new ApiRequestError({
+      kind: 'invalid_response',
+      ...where,
+      status: response.status,
+    });
   }
   const result = schema.safeParse(data);
   if (!result.success) {
-    throw new ApiRequestError({ kind: "invalid_response", ...where, status: response.status });
+    throw new ApiRequestError({
+      kind: 'invalid_response',
+      ...where,
+      status: response.status,
+    });
   }
   return result.data;
 }
@@ -152,9 +187,12 @@ const ErrorModelSchema = z.object({ model: z.string().nullable() });
  * Code, reason and message of an ApiError body, and its `model` when the body has one; a body that is
  * not JSON or not an ApiError has none.
  */
-async function errorDetailsOf(
-  response: Response,
-): Promise<{ code?: string; reason?: string; bodyMessage?: string; model?: string | null }> {
+async function errorDetailsOf(response: Response): Promise<{
+  code?: string;
+  reason?: string;
+  bodyMessage?: string;
+  model?: string | null;
+}> {
   let data: unknown;
   try {
     data = await response.json();
@@ -168,7 +206,7 @@ async function errorDetailsOf(
   return {
     code: errorCode,
     reason,
-    bodyMessage: Array.isArray(message) ? message.join("; ") : message,
+    bodyMessage: Array.isArray(message) ? message.join('; ') : message,
     ...(model.success ? { model: model.data.model } : {}),
   };
 }

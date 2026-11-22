@@ -12,7 +12,11 @@ import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 import { type LearningRun, learningRunOf } from '../deep/deep-definition';
 import type { RunSnapshot } from '../start/snapshot';
 import { knowledgeText } from './knowledge-text';
-import { type GraphItem, selectKnowledge, type ToolAlive } from './select-knowledge';
+import {
+  type GraphItem,
+  selectKnowledge,
+  type ToolAlive,
+} from './select-knowledge';
 import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 
 export interface KnowledgeBlockDeps {
@@ -72,7 +76,13 @@ export async function knowledgeBlock(
   // `limit` — every record of the graph: selection itself decides which pairs it takes (KD-6).
   const closeness =
     vector !== null && model !== null
-      ? await closenessOrNone(deps.vectorStore, { recordId, taskId, logger }, vector, model, items.length)
+      ? await closenessOrNone(
+          deps.vectorStore,
+          { recordId, taskId, logger },
+          vector,
+          model,
+          items.length,
+        )
       : [];
 
   const choice = selectKnowledge({ items, settings, toolAlive, closeness });
@@ -100,7 +110,10 @@ export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
   if (snapshot.kind === 'subagent') {
     return snapshot.learning === null
       ? null
-      : { recordId: snapshot.origin.recordId, servers: snapshot.learning.servers };
+      : {
+          recordId: snapshot.origin.recordId,
+          servers: snapshot.learning.servers,
+        };
   }
   return learningRunOf(snapshot);
 }
@@ -120,7 +133,9 @@ export async function registryToolAlive(
     : await mcpServerRows.findMany(servers);
   const tools = new Set(
     rows.flatMap((row) =>
-      (storedMcpTools(row.tools) ?? []).map((tool) => toolKey(row.name, tool.tool)),
+      (storedMcpTools(row.tools) ?? []).map((tool) =>
+        toolKey(row.name, tool.tool),
+      ),
     ),
   );
   return (server, tool) => tools.has(toolKey(server, tool));
@@ -136,7 +151,11 @@ function toolKey(server: string, tool: string): string {
  */
 async function closenessOrNone(
   store: KnowledgeVectorStore,
-  ids: { readonly recordId: string; readonly taskId: string; readonly logger: Logger },
+  ids: {
+    readonly recordId: string;
+    readonly taskId: string;
+    readonly logger: Logger;
+  },
   vector: readonly number[],
   model: string,
   limit: number,
@@ -144,13 +163,16 @@ async function closenessOrNone(
   try {
     return await store.query(ids.recordId, vector, model, limit);
   } catch (error) {
-    ids.logger.warn('knowledge store query failed; selection without closeness', {
-      taskId: ids.taskId,
-      recordId: ids.recordId,
-      model,
-      // The cause, not the failed query: the query's parameters carry the question vector.
-      error: causeMessage(error),
-    });
+    ids.logger.warn(
+      'knowledge store query failed; selection without closeness',
+      {
+        taskId: ids.taskId,
+        recordId: ids.recordId,
+        model,
+        // The cause, not the failed query: the query's parameters carry the question vector.
+        error: causeMessage(error),
+      },
+    );
     return [];
   }
 }
@@ -167,18 +189,16 @@ function causeMessage(error: unknown): string {
  */
 export function graphItemsOf(graph: KnowledgeGraph): GraphItem[] {
   const names = new Map(graph.entities.map((row) => [row.id, row.name]));
-  const entities = graph.entities.map(
-    (row): GraphItem => ({
-      type: 'entity',
-      kind: KnowledgeItemKindSchema.enum.fact,
-      id: row.id,
-      confirmations: row.confirmations,
-      date: row.confirmedAt.toISOString(),
-      outdated: row.outdated,
-      name: row.name,
-      description: row.description,
-    }),
-  );
+  const entities = graph.entities.map((row): GraphItem => ({
+    type: 'entity',
+    kind: KnowledgeItemKindSchema.enum.fact,
+    id: row.id,
+    confirmations: row.confirmations,
+    date: row.confirmedAt.toISOString(),
+    outdated: row.outdated,
+    name: row.name,
+    description: row.description,
+  }));
   const relations = graph.relations.flatMap((row): GraphItem[] => {
     const common = {
       type: 'relation' as const,
@@ -225,6 +245,7 @@ export function graphItemsOf(graph: KnowledgeGraph): GraphItem[] {
 
 /** A column the shape CHECK of `agent_knowledge_relations` requires for the relation's kind. */
 function required<T>(value: T | null, column: string, relationId: number): T {
-  if (value === null) throw new Error(`Knowledge relation ${relationId} has no ${column}`);
+  if (value === null)
+    throw new Error(`Knowledge relation ${relationId} has no ${column}`);
   return value;
 }

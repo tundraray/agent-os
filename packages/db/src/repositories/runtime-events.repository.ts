@@ -24,11 +24,16 @@ export class RuntimeEventsRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   /** Inserts the event; returns what the log assigns to it. */
-  async insert(event: NewRuntimeEventRow): Promise<{ seq: number; createdAt: Date }> {
+  async insert(
+    event: NewRuntimeEventRow,
+  ): Promise<{ seq: number; createdAt: Date }> {
     const [row] = await this.db.client
       .insert(runtimeEvents)
       .values(event)
-      .returning({ seq: runtimeEvents.seq, createdAt: runtimeEvents.createdAt });
+      .returning({
+        seq: runtimeEvents.seq,
+        createdAt: runtimeEvents.createdAt,
+      });
     return row;
   }
 
@@ -53,7 +58,9 @@ export class RuntimeEventsRepository {
           eq(runtimeTasks.ownerId, ownerId),
         ),
       )
-      .where(and(eq(runtimeEvents.rootId, rootId), gt(runtimeEvents.seq, afterSeq)))
+      .where(
+        and(eq(runtimeEvents.rootId, rootId), gt(runtimeEvents.seq, afterSeq)),
+      )
       .orderBy(asc(runtimeEvents.seq))
       .limit(limit);
   }

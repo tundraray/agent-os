@@ -16,13 +16,26 @@ describe('lib/auth/session-redirect: redirectToLogin', () => {
       search: '?tab=run',
       to: '/login?reason=disabled&next=%2Fagents%2Fa-1%3Ftab%3Drun',
     },
-    { code: undefined, pathname: '/', search: '', to: '/login?reason=expired&next=%2F' },
-    { code: 'SOMETHING_ELSE', pathname: '/account', search: '', to: '/login?reason=expired&next=%2Faccount' },
-  ])('401 $code on $pathname$search → $to', ({ code, pathname, search, to }) => {
-    const assign = vi.fn<(url: string) => void>();
+    {
+      code: undefined,
+      pathname: '/',
+      search: '',
+      to: '/login?reason=expired&next=%2F',
+    },
+    {
+      code: 'SOMETHING_ELSE',
+      pathname: '/account',
+      search: '',
+      to: '/login?reason=expired&next=%2Faccount',
+    },
+  ])(
+    '401 $code on $pathname$search → $to',
+    ({ code, pathname, search, to }) => {
+      const assign = vi.fn<(url: string) => void>();
 
-    redirectToLogin(code, { pathname, search, assign });
+      redirectToLogin(code, { pathname, search, assign });
 
-    expect(assign).toHaveBeenCalledExactlyOnceWith(to);
-  });
+      expect(assign).toHaveBeenCalledExactlyOnceWith(to);
+    },
+  );
 });

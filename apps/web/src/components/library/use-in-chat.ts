@@ -3,15 +3,24 @@
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ChipRecord } from '@agent-os/contracts';
-import { leaveThenGo, useShellServices } from '@/components/shell/shell-actions';
+import {
+  leaveThenGo,
+  useShellServices,
+} from '@/components/shell/shell-actions';
 import { focusShellTarget } from '@/lib/focus';
-import { NEW_THREAD_TARGET, type SeedTarget } from '@/lib/threads/composer-seed';
+import {
+  NEW_THREAD_TARGET,
+  type SeedTarget,
+} from '@/lib/threads/composer-seed';
 import { threadPath } from '@/lib/shell-route';
 
 /** A screen's own navigation that respects unsaved changes (KD-4): the shell's `leaveThenGo` bound to its `leaveGuard`. */
 export function useLeaveThenGo(): (go: () => void) => void {
   const { leaveGuard } = useShellServices();
-  return useCallback((go: () => void) => leaveThenGo(leaveGuard, go), [leaveGuard]);
+  return useCallback(
+    (go: () => void) => leaveThenGo(leaveGuard, go),
+    [leaveGuard],
+  );
 }
 
 export type InChatSeed = {

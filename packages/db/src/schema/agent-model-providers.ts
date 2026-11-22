@@ -21,6 +21,9 @@ export const agentModelProviders = app.table(
       .defaultNow(),
   },
   (t) => [
-    check('agent_model_providers_kind_check', isOneOf(t.kind, ModelProviderKindSchema.options)),
+    check(
+      'agent_model_providers_kind_check',
+      isOneOf(t.kind, ModelProviderKindSchema.options),
+    ),
   ],
 );

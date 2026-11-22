@@ -5,7 +5,11 @@ import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { LoaderCircle, WrenchIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { McpErrorCode, type McpServerView, type McpToolView } from '@agent-os/contracts';
+import {
+  McpErrorCode,
+  type McpServerView,
+  type McpToolView,
+} from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ThreadNotice } from '@/components/shell/thread-notice';
@@ -19,10 +23,21 @@ import { logger } from '@/lib/logger';
 import { takeAdminConnectReturn } from '@/lib/mcp/connect-return';
 import { adminPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
-import { AdminForm, CAPTION, CONTROL_SIZE, describeRefusal, FormError } from '../admin-form';
+import {
+  AdminForm,
+  CAPTION,
+  CONTROL_SIZE,
+  describeRefusal,
+  FormError,
+} from '../admin-form';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
-import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
+import {
+  ActionsMenu,
+  DataTable,
+  type DataTableColumn,
+  type DataTableRow,
+} from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 import { SecretField } from '../secret-field';
 import { serverModeLabel, ServerStatusBadge } from './server-list';
@@ -51,7 +66,10 @@ const toToolRow = (t: PageTranslator, tool: McpToolView): DataTableRow => ({
         </span>
       )}
       <span
-        className={cn('truncate font-mono text-mono-compact', tool.title !== null && 'text-muted-foreground')}
+        className={cn(
+          'truncate font-mono text-mono-compact',
+          tool.title !== null && 'text-muted-foreground',
+        )}
         title={tool.name}
       >
         {tool.name}
@@ -89,7 +107,9 @@ export function ServerPage({ name }: { name: string }) {
   /** The refusal of the last refresh, above the tools. */
   const [toolsError, setToolsError] = useState<ReactNode>(null);
   /** The failed connection return, above the tools until the next refresh. */
-  const [connectFailure, setConnectFailure] = useState<ConnectFailure | null>(null);
+  const [connectFailure, setConnectFailure] = useState<ConnectFailure | null>(
+    null,
+  );
   const returned = useRef<ConnectFailure | null>(null);
 
   // Read once on mount; a second run of the effect finds the address already clean and keeps the outcome.
@@ -108,11 +128,21 @@ export function ServerPage({ name }: { name: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  if (isNotFound(server.error)) return <ThreadNotice variant="record-not-found" section="servers" />;
+  if (isNotFound(server.error))
+    return <ThreadNotice variant="record-not-found" section="servers" />;
   const data = server.data;
-  if (data === undefined) return <RecordPlaceholder section="servers" resource={server} loadFailed={t('loadFailed')} />;
+  if (data === undefined)
+    return (
+      <RecordPlaceholder
+        section="servers"
+        resource={server}
+        loadFailed={t('loadFailed')}
+      />
+    );
 
-  const toolsNotice: ReactNode = toolsError ?? (connectFailure === null ? null : t(`connectReturn.${connectFailure}`));
+  const toolsNotice: ReactNode =
+    toolsError ??
+    (connectFailure === null ? null : t(`connectReturn.${connectFailure}`));
 
   /** Every change: a server that is gone reads the server again (→ «Запись не найдена») and still reaches its control. */
   const change = rereadOnNotFound(server.reload);
@@ -127,18 +157,33 @@ export function ServerPage({ name }: { name: string }) {
     setConnectFailure(null);
     setRefreshing(true);
     try {
-      const { added, removed } = await change(() => adminApi.servers.refreshTools(name));
-      logger.info('admin: server tools refresh: done', { server: name, added: added.length, removed: removed.length });
-      toast.success(t('refreshed', { added: added.length, removed: removed.length }));
+      const { added, removed } = await change(() =>
+        adminApi.servers.refreshTools(name),
+      );
+      logger.info('admin: server tools refresh: done', {
+        server: name,
+        added: added.length,
+        removed: removed.length,
+      });
+      toast.success(
+        t('refreshed', { added: added.length, removed: removed.length }),
+      );
       server.reload();
     } catch (error) {
       if (isAccountRequired(error)) {
         // DC-11: the administrator has no account on the server yet — the tab goes to connect it.
-        logger.info('admin: server tools refresh: connecting the admin account', { server: name });
+        logger.info(
+          'admin: server tools refresh: connecting the admin account',
+          { server: name },
+        );
         navigate(adminApi.servers.connectUrl(name));
         return;
       }
-      setToolsError(describeRefusal(tErrors, error, { logEvent: 'admin: server tools refresh' })?.text ?? null);
+      setToolsError(
+        describeRefusal(tErrors, error, {
+          logEvent: 'admin: server tools refresh',
+        })?.text ?? null,
+      );
     } finally {
       setRefreshing(false);
     }
@@ -152,12 +197,31 @@ export function ServerPage({ name }: { name: string }) {
 
   return (
     <>
-      <PageHeader area={titles.panel} parent={titles.parent('servers')} title={data.name} badge={<ServerStatusBadge status={data.status} />}>
-        <Button variant="outline" size="sm" className={CONTROL_SIZE} disabled={refreshing} onClick={() => void refresh()}>
-          {refreshing && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
+      <PageHeader
+        area={titles.panel}
+        parent={titles.parent('servers')}
+        title={data.name}
+        badge={<ServerStatusBadge status={data.status} />}
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          className={CONTROL_SIZE}
+          disabled={refreshing}
+          onClick={() => void refresh()}
+        >
+          {refreshing && (
+            <LoaderCircle
+              className="animate-spin motion-reduce:animate-none"
+              aria-hidden
+            />
+          )}
           {refreshing ? t('refreshing') : t('refresh')}
         </Button>
-        <ActionsMenu name={data.name} actions={[{ label: t('remove'), onSelect: () => setDeleting(true) }]} />
+        <ActionsMenu
+          name={data.name}
+          actions={[{ label: t('remove'), onSelect: () => setDeleting(true) }]}
+        />
       </PageHeader>
       <div className="flex max-w-240 flex-col gap-6">
         {/* Under the header, as on a provider's page: a refusal reads under the switch, which the header would clip. */}
@@ -168,11 +232,16 @@ export function ServerPage({ name }: { name: string }) {
           onSave={saveEnabled}
           logEvent="admin: server enable"
         />
-        <ServerAddress server={data} connectUrl={adminApi.servers.connectUrl(name)} />
+        <ServerAddress
+          server={data}
+          connectUrl={adminApi.servers.connectUrl(name)}
+        />
         {data.mode === 'shared' && (
           <SharedTokenForm
             isSet={data.sharedTokenSet}
-            onSave={(sharedToken) => change(() => adminApi.servers.update(name, { sharedToken }))}
+            onSave={(sharedToken) =>
+              change(() => adminApi.servers.update(name, { sharedToken }))
+            }
             onSaved={server.reload}
           />
         )}
@@ -207,12 +276,21 @@ export function ServerPage({ name }: { name: string }) {
  * DC-10: the address and the mode are text, never fields. A server waiting for the administrator's account
  * offers the connection as a link: the connect route redirects to the authorization server.
  */
-function ServerAddress({ server, connectUrl }: { server: McpServerView; connectUrl: string }) {
+function ServerAddress({
+  server,
+  connectUrl,
+}: {
+  server: McpServerView;
+  connectUrl: string;
+}) {
   const t = useTranslations('admin.servers');
   return (
     <div className="flex flex-col gap-1">
       <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-data text-foreground">
-        <span className="truncate font-mono text-mono-compact" title={server.url}>
+        <span
+          className="truncate font-mono text-mono-compact"
+          title={server.url}
+        >
           {server.url}
         </span>
         <span aria-hidden className="text-muted-foreground">
@@ -220,9 +298,17 @@ function ServerAddress({ server, connectUrl }: { server: McpServerView; connectU
         </span>
         <span>{serverModeLabel(t, server.mode)}</span>
       </p>
-      <p className={cn(CAPTION, 'text-muted-foreground')}>{t('page.readOnlyHint')}</p>
+      <p className={cn(CAPTION, 'text-muted-foreground')}>
+        {t('page.readOnlyHint')}
+      </p>
       {server.status === 'awaiting_admin_account' && (
-        <a href={connectUrl} className={buttonVariants({ size: 'sm', className: cn(CONTROL_SIZE, 'mt-2 w-fit') })}>
+        <a
+          href={connectUrl}
+          className={buttonVariants({
+            size: 'sm',
+            className: cn(CONTROL_SIZE, 'mt-2 w-fit'),
+          })}
+        >
           {t('page.connect')}
         </a>
       )}
@@ -250,8 +336,12 @@ function SharedTokenForm({ isSet, onSave, onSaved }: SharedTokenFormProps) {
     <AdminForm<{ sharedToken: string | undefined }>
       variant="page"
       initialValues={{ sharedToken: undefined }}
-      hasChange={({ sharedToken }) => sharedToken !== undefined && sharedToken !== ''}
-      validate={({ sharedToken }) => sharedTokenRules({ sharedToken: sharedToken ?? '' })}
+      hasChange={({ sharedToken }) =>
+        sharedToken !== undefined && sharedToken !== ''
+      }
+      validate={({ sharedToken }) =>
+        sharedTokenRules({ sharedToken: sharedToken ?? '' })
+      }
       onSubmit={async ({ sharedToken }) => {
         await onSave(sharedToken ?? '');
       }}

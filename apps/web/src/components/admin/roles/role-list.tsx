@@ -13,7 +13,12 @@ import type { Locale } from '@/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
 import { useAdminTitles } from '../admin-header';
-import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import {
+  DataTable,
+  resourceTableState,
+  type DataTableColumn,
+  type DataTableRow,
+} from '../data-table';
 import { RoleNameDialog } from './role-name-dialog';
 
 type RolesTranslator = ReturnType<typeof useTranslations<'admin.roles'>>;
@@ -24,7 +29,10 @@ const builtinFirst = (roles: Roles): Roles => [
   ...roles.filter((role) => !role.builtin),
 ];
 
-function toRow(role: RoleSummary, { t, locale }: { t: RolesTranslator; locale: Locale }): DataTableRow {
+function toRow(
+  role: RoleSummary,
+  { t, locale }: { t: RolesTranslator; locale: Locale },
+): DataTableRow {
   const name = builtinRoleName(role.name, locale);
   return {
     key: role.id,
@@ -35,7 +43,9 @@ function toRow(role: RoleSummary, { t, locale }: { t: RolesTranslator; locale: L
         <span className="truncate" title={name}>
           {name}
         </span>
-        {role.builtin && <StateBadge variant="source">{t('builtin')}</StateBadge>}
+        {role.builtin && (
+          <StateBadge variant="source">{t('builtin')}</StateBadge>
+        )}
       </span>,
       role.memberCount,
       // The «Администраторы» column: a word for yes, a dash for no (plan Notes 6).
@@ -65,11 +75,19 @@ export function RoleList() {
   return (
     <>
       <PageHeader area={titles.panel} title={titles.section('roles')}>
-        <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
+        <Button
+          size="sm"
+          className={CONTROL_SIZE}
+          onClick={() => setCreating(true)}
+        >
           {t('create')}
         </Button>
       </PageHeader>
-      <DataTable caption={titles.section('roles')} columns={columns} state={state} />
+      <DataTable
+        caption={titles.section('roles')}
+        columns={columns}
+        state={state}
+      />
       <RoleNameDialog open={creating} onOpenChange={setCreating} />
     </>
   );

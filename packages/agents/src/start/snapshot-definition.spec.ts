@@ -1,7 +1,15 @@
 import type { RecordHeader, ResolvedRecord } from '@agent-os/contracts';
 
-import { DEEP_AGENT_RULES, LIST_DELEGATION_RULES, subagentSnapshot } from '../deep/deep-definition';
-import { recordSnapshot, type RunDefinition, snapshotDefinition } from './snapshot-definition';
+import {
+  DEEP_AGENT_RULES,
+  LIST_DELEGATION_RULES,
+  subagentSnapshot,
+} from '../deep/deep-definition';
+import {
+  recordSnapshot,
+  type RunDefinition,
+  snapshotDefinition,
+} from './snapshot-definition';
 import type { DeepAgentSnapshot } from './snapshot';
 
 // AC-16.4, DC-7, AC-15.3 (rule); deep-agents KD-1, KD-2, AC-08.1: the definition a step hands the model
@@ -115,7 +123,11 @@ const TEAM_LINES = [
 ];
 
 describe('snapshotDefinition', () => {
-  it.each<{ case: string; definition: () => RunDefinition | null; expected: RunDefinition | null }>([
+  it.each<{
+    case: string;
+    definition: () => RunDefinition | null;
+    expected: RunDefinition | null;
+  }>([
     {
       case: 'an agent: its content, and only the records of its agents the starter sees',
       definition: () => {
@@ -152,7 +164,10 @@ describe('snapshotDefinition', () => {
     {
       // DC-6: without the list form the prompt has no rules about lists.
       case: 'a deep agent without a final subagent writes the answer itself; its task list and list form are off',
-      definition: () => snapshotDefinition(deepAgent(null, { taskList: false, listDelegation: false })),
+      definition: () =>
+        snapshotDefinition(
+          deepAgent(null, { taskList: false, listDelegation: false }),
+        ),
       expected: {
         name: 'Глубокий ресерч',
         prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nWhen the work is done, write the answer yourself as plain text without tool calls.`,
@@ -187,7 +202,10 @@ describe('snapshotDefinition', () => {
       // FR-20: general-purpose works on the deep agent's model, servers and maxTurns.
       case: 'general-purpose taken from the deep agent',
       definition: () => {
-        const snapshot = subagentSnapshot(deepAgent('answer'), 'general-purpose');
+        const snapshot = subagentSnapshot(
+          deepAgent('answer'),
+          'general-purpose',
+        );
         return snapshot === null ? null : snapshotDefinition(snapshot);
       },
       expected: {
@@ -216,7 +234,10 @@ describe('snapshotDefinition', () => {
   });
 
   it('a subagent of a learning deep agent keeps its origin with its own name and learns on the servers of the deep agent and the team', () => {
-    const snapshot = subagentSnapshot(deepAgent('answer', { selfLearning: true }), 'gather');
+    const snapshot = subagentSnapshot(
+      deepAgent('answer', { selfLearning: true }),
+      'gather',
+    );
     expect({ origin: snapshot?.origin, learning: snapshot?.learning }).toEqual({
       origin: {
         recordId: DEEP_AGENT_ID,

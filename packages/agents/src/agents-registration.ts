@@ -1,5 +1,9 @@
 import type { Logger } from '@agent-os/common';
-import { AGENT_TASK_TYPE, CHAT_TASK_TYPE, DEEP_AGENT_TASK_TYPE } from '@agent-os/contracts';
+import {
+  AGENT_TASK_TYPE,
+  CHAT_TASK_TYPE,
+  DEEP_AGENT_TASK_TYPE,
+} from '@agent-os/contracts';
 import {
   AgentCodeCallsRepository,
   AgentKnowledgeRepository,
@@ -12,7 +16,11 @@ import {
   AgentToolResultsRepository,
   Db,
 } from '@agent-os/db';
-import { EventConsumerRegistry, HandlerRegistry, TaskControl } from '@agent-os/runtime';
+import {
+  EventConsumerRegistry,
+  HandlerRegistry,
+  TaskControl,
+} from '@agent-os/runtime';
 import {
   Inject,
   Injectable,
@@ -23,7 +31,13 @@ import {
 
 import type { AccessAudit, AccessGate } from './access-gate';
 import { AgentFactory } from './agent/agent-factory';
-import { ACCESS_AUDIT, ACCESS_GATE, AGENTS_CONFIG, AGENTS_LOGGER, RECORD_LIBRARY } from './agents.tokens';
+import {
+  ACCESS_AUDIT,
+  ACCESS_GATE,
+  AGENTS_CONFIG,
+  AGENTS_LOGGER,
+  RECORD_LIBRARY,
+} from './agents.tokens';
 import type { AgentsConfig } from './config';
 import { createStartDeepAgentTool } from './deep/start-deep-agent';
 import { createTaskTool } from './deep/task-delegation';
@@ -51,17 +65,24 @@ import { ToolRegistry } from './tools/tool-registry';
 @Injectable()
 export class SystemToolsRegistration implements OnModuleInit {
   constructor(
-    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'register'>,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, 'register'>,
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentMessagesRepository) private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
-    @Inject(AgentSessionTasksRepository) private readonly sessionTaskRows: AgentSessionTasksRepository,
-    @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'listTree' | 'stop'>,
+    @Inject(AgentMessagesRepository)
+    private readonly messageRows: AgentMessagesRepository,
+    @Inject(AgentToolResultsRepository)
+    private readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(AgentSessionTasksRepository)
+    private readonly sessionTaskRows: AgentSessionTasksRepository,
+    @Inject(TaskControl)
+    private readonly tasks: Pick<TaskControl, 'listTree' | 'stop'>,
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
-    @Inject(AgentsProviders) private readonly providers: Pick<AgentsProviders, 'connection'>,
+    @Inject(AgentsProviders)
+    private readonly providers: Pick<AgentsProviders, 'connection'>,
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
-    @Inject(AGENTS_CONFIG) private readonly config: Pick<AgentsConfig, 'maxDepth'>,
+    @Inject(AGENTS_CONFIG)
+    private readonly config: Pick<AgentsConfig, 'maxDepth'>,
     @Inject(AGENTS_LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -85,7 +106,11 @@ export class SystemToolsRegistration implements OnModuleInit {
         resolveStart: (request) => resolveStart(request, startDeps),
         auditStartRefusal: (refusal) => auditStartRefusal(audit, refusal),
         rootMayStart: async (ownerId, recordId) =>
-          rootMayStartRecord(await library.listVisible(ownerId), 'deep_agent', recordId),
+          rootMayStartRecord(
+            await library.listVisible(ownerId),
+            'deep_agent',
+            recordId,
+          ),
         logger,
       }),
       createTaskTool(),
@@ -101,33 +126,59 @@ export class SystemToolsRegistration implements OnModuleInit {
  * Once every module has registered its tools it closes the tools library.
  */
 @Injectable()
-export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap, OnApplicationShutdown {
+export class AgentsRegistration
+  implements OnModuleInit, OnApplicationBootstrap, OnApplicationShutdown
+{
   constructor(
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(EventConsumerRegistry) private readonly eventConsumers: EventConsumerRegistry,
-    @Inject(AgentFactory) private readonly factory: Pick<AgentFactory, 'restore'>,
-    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'seal' | 'toolNames'>,
+    @Inject(EventConsumerRegistry)
+    private readonly eventConsumers: EventConsumerRegistry,
+    @Inject(AgentFactory)
+    private readonly factory: Pick<AgentFactory, 'restore'>,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, 'seal' | 'toolNames'>,
     @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
-    @Inject(AgentMessagesRepository) private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentCodeCallsRepository) private readonly codeCallRows: AgentCodeCallsRepository,
-    @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
-    @Inject(AgentKnowledgeRepository) private readonly knowledgeRows: AgentKnowledgeRepository,
-    @Inject(AgentKnowledgeRunsRepository) private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
+    @Inject(AgentSessionsRepository)
+    private readonly sessionRows: AgentSessionsRepository,
+    @Inject(AgentMessagesRepository)
+    private readonly messageRows: AgentMessagesRepository,
+    @Inject(AgentCodeCallsRepository)
+    private readonly codeCallRows: AgentCodeCallsRepository,
+    @Inject(AgentMcpServersRepository)
+    private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(AgentKnowledgeRepository)
+    private readonly knowledgeRows: AgentKnowledgeRepository,
+    @Inject(AgentKnowledgeRunsRepository)
+    private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
     // One store of the knowledge vectors for every reader and writer (self-learning KD-8).
-    @Inject(AgentKnowledgeVectorsRepository) private readonly vectorStore: KnowledgeVectorStore,
+    @Inject(AgentKnowledgeVectorsRepository)
+    private readonly vectorStore: KnowledgeVectorStore,
     @Inject(TaskControl) private readonly tasks: TaskControl,
-    @Inject(ModelClient) private readonly modelClient: Pick<ModelClient, 'call'>,
-    @Inject(AgentsEmbeddings) private readonly embeddings: Pick<AgentsEmbeddings, 'embed' | 'model'>,
-    @Inject(AGENTS_CONFIG) private readonly config: Pick<AgentsConfig, 'allowHttpUrls'>,
+    @Inject(ModelClient)
+    private readonly modelClient: Pick<ModelClient, 'call'>,
+    @Inject(AgentsEmbeddings)
+    private readonly embeddings: Pick<AgentsEmbeddings, 'embed' | 'model'>,
+    @Inject(AGENTS_CONFIG)
+    private readonly config: Pick<AgentsConfig, 'allowHttpUrls'>,
     @Inject(AGENTS_LOGGER) private readonly logger: Logger,
   ) {}
 
   onModuleInit(): void {
-    const { sessions, knowledgeRows, knowledgeRunRows, tasks, embeddings, logger } = this;
+    const {
+      sessions,
+      knowledgeRows,
+      knowledgeRunRows,
+      tasks,
+      embeddings,
+      logger,
+    } = this;
     // The three agent classes the runtime launches, each a live task type: one object per task, from the factory.
-    for (const type of [CHAT_TASK_TYPE, AGENT_TASK_TYPE, DEEP_AGENT_TASK_TYPE]) {
+    for (const type of [
+      CHAT_TASK_TYPE,
+      AGENT_TASK_TYPE,
+      DEEP_AGENT_TASK_TYPE,
+    ]) {
       this.handlers.registerLive({
         type,
         inputSchema: AgentTaskInputSchema,
@@ -150,11 +201,24 @@ export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap,
       }),
     );
     this.handlers.register(
-      createKnowledgeEmbedHandler({ knowledgeRows, knowledgeRunRows, embeddings, store: this.vectorStore }),
+      createKnowledgeEmbedHandler({
+        knowledgeRows,
+        knowledgeRunRows,
+        embeddings,
+        store: this.vectorStore,
+      }),
     );
-    this.eventConsumers.register(createStopChildrenOnFailure({ tasks, sessions, logger }));
     this.eventConsumers.register(
-      createKnowledgeTrigger({ db: this.db, tasks, sessionRows: this.sessionRows, knowledgeRunRows, logger }),
+      createStopChildrenOnFailure({ tasks, sessions, logger }),
+    );
+    this.eventConsumers.register(
+      createKnowledgeTrigger({
+        db: this.db,
+        tasks,
+        sessionRows: this.sessionRows,
+        knowledgeRunRows,
+        logger,
+      }),
     );
   }
 

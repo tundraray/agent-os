@@ -86,7 +86,10 @@ export class AgentsController {
       route: 'GET /agents/:agentId/history',
       fields: { ownerId, agentId },
       work: () => this.control.history(agentId, ownerId, query.afterSeq),
-      outcomeOf: (page) => ({ agentStatus: page.agent.status, entries: page.entries.length }),
+      outcomeOf: (page) => ({
+        agentStatus: page.agent.status,
+        entries: page.entries.length,
+      }),
     });
   }
 
@@ -124,7 +127,10 @@ export class AgentsController {
   }
 
   @Get(':agentId/tasks')
-  tasks(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<AgentTasksView> {
+  tasks(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<AgentTasksView> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /agents/:agentId/tasks',
@@ -138,7 +144,8 @@ export class AgentsController {
   @HttpCode(202)
   send(
     @Param('agentId') agentId: string,
-    @Body(new ZodValidationPipe(SendMessageRequestSchema)) body: SendMessageRequest,
+    @Body(new ZodValidationPipe(SendMessageRequestSchema))
+    body: SendMessageRequest,
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
@@ -167,7 +174,10 @@ export class AgentsController {
 
   @Post(':agentId/stop')
   @HttpCode(200)
-  stop(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<StopResponse> {
+  stop(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<StopResponse> {
     const ownerId = req.user.id;
     return this.run({
       route: 'POST /agents/:agentId/stop',
@@ -179,7 +189,10 @@ export class AgentsController {
 
   @Post(':agentId/restart')
   @HttpCode(201)
-  restart(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<RestartResponse> {
+  restart(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<RestartResponse> {
     const ownerId = req.user.id;
     return this.run({
       route: 'POST /agents/:agentId/restart',

@@ -7,7 +7,10 @@ import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { describeApiError } from '@/lib/api/api-request';
 
 /** SP-01 as the user block reads it; the block words it (design-web.md, KD-5). */
-export type SpendState = { kind: 'loading' } | { kind: 'ready'; spend: SpendResponse } | { kind: 'error' };
+export type SpendState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; spend: SpendResponse }
+  | { kind: 'error' };
 
 // The figure is read once per page load (design-web.md, FR-29): the drawer and the icon strip remount
 // the user block, so the read lives at module level, not in the component. A failure stays until reload.
@@ -31,7 +34,9 @@ function readSpendOnce(): Promise<SpendState> {
 
 /** SP-01: the month's spend, read the first time the shell's user block mounts. */
 export function useSpend(): SpendState {
-  const [state, setState] = useState<SpendState>(() => spendSettled ?? { kind: 'loading' });
+  const [state, setState] = useState<SpendState>(
+    () => spendSettled ?? { kind: 'loading' },
+  );
 
   useEffect(() => {
     let mounted = true;

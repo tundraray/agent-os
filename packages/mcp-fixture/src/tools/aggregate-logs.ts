@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import type { LogRecord } from '../dataset';
 import { defineTool } from './fixture-tool';
-import { LogQueryShape, matchingRecords, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query';
+import {
+  LogQueryShape,
+  matchingRecords,
+  WINDOW_ORDER_MESSAGE,
+  windowIsOrdered,
+} from './log-query';
 
 const BUCKET_MS = { '15m': 15 * 60_000, '1h': 60 * 60_000 } as const;
 const GROUP_BY_FIELDS = ['service', 'level', 'event', 'status'] as const;
@@ -44,7 +49,11 @@ export const aggregateLogsTool = defineTool({
   },
 });
 
-function countBuckets(records: LogRecord[], groupBy: (typeof GROUP_BY_FIELDS)[number], bucketMs: number): Bucket[] {
+function countBuckets(
+  records: LogRecord[],
+  groupBy: (typeof GROUP_BY_FIELDS)[number],
+  bucketMs: number,
+): Bucket[] {
   const counts = new Map<string, Bucket>();
   for (const record of records) {
     const startMs = Math.floor(Date.parse(record.ts) / bucketMs) * bucketMs;
@@ -58,7 +67,8 @@ function countBuckets(records: LogRecord[], groupBy: (typeof GROUP_BY_FIELDS)[nu
     }
   }
   return [...counts.values()].sort(
-    (left, right) => compareText(left.start, right.start) || compareText(left.key, right.key),
+    (left, right) =>
+      compareText(left.start, right.start) || compareText(left.key, right.key),
   );
 }
 

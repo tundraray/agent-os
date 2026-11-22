@@ -9,9 +9,14 @@ import { AdminForm, AdminTextField } from '../admin-form';
 import { DataTable, resourceTableState } from '../data-table';
 
 /** Called after `librarySettingsRules` passed, so the text reads as a number. */
-async function save({ defaultMaxTurns }: { defaultMaxTurns: string }): Promise<void> {
+async function save({
+  defaultMaxTurns,
+}: {
+  defaultMaxTurns: string;
+}): Promise<void> {
   const turns = parseDecimal(defaultMaxTurns);
-  if (turns === null) throw new Error('Library settings: the limit was sent unchecked');
+  if (turns === null)
+    throw new Error('Library settings: the limit was sent unchecked');
   await adminApi.library.saveSettings({ defaultMaxTurns: turns });
 }
 
@@ -28,7 +33,11 @@ export function LibrarySettingsForm() {
         {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={t('title')} columns={[]} state={resourceTableState(settings, t('loadFailed'))} />
+        <DataTable
+          caption={t('title')}
+          columns={[]}
+          state={resourceTableState(settings, t('loadFailed'))}
+        />
       ) : (
         // Every save moves `updatedAt`: the new read starts the form from the value the server now holds.
         <AdminForm

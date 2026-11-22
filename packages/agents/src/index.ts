@@ -57,9 +57,19 @@ export type {
   McpServerWrite,
   McpToolsRefresh,
 } from './mcp/mcp-registry';
-export type { AgentTurnMessage, AgentTurnModelClient } from './model/mastra-turn';
-export { ModelClient, type OnTextDelta, type TextDelta } from './model/model-client';
-export type { AgentConfirmation, AgentHistoryEntry } from './operations/agent-sessions';
+export type {
+  AgentTurnMessage,
+  AgentTurnModelClient,
+} from './model/mastra-turn';
+export {
+  ModelClient,
+  type OnTextDelta,
+  type TextDelta,
+} from './model/model-client';
+export type {
+  AgentConfirmation,
+  AgentHistoryEntry,
+} from './operations/agent-sessions';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';
 export type { RootSession } from './store/sessions';

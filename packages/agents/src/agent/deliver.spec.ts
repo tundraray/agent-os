@@ -9,7 +9,11 @@ const message = (kind: string, payload: Record<string, unknown>): StepMessage =>
 
 describe('the turn counter after delivery', () => {
   it.each<[string, StepMessage[], number]>([
-    ['a chat resets on a user message', [message('user_message', { text: 'hi' })], 0],
+    [
+      'a chat resets on a user message',
+      [message('user_message', { text: 'hi' })],
+      0,
+    ],
     ['a chat keeps the counter on an interrupt', [message('interrupt', {})], 3],
     ['a chat keeps the counter without messages', [], 3],
   ])('%s', (_name, messages, expected) => {

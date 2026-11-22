@@ -1,4 +1,9 @@
-import type { AgentStatus, ChatStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
+import type {
+  AgentStatus,
+  ChatStatus,
+  TaskStatus,
+  WaitReason,
+} from '@agent-os/contracts';
 import { chatStatus } from './chat-status';
 
 type Row = {
@@ -59,7 +64,10 @@ describe('chat status', () => {
       task: { status: 'running', waitReason: null },
       expected: { status: 'working', failureReason: null },
     },
-  ])('chat status follows the root\'s task and view: $name', ({ root, task, expected }) => {
-    expect(chatStatus({ root, task })).toEqual(expected);
-  });
+  ])(
+    "chat status follows the root's task and view: $name",
+    ({ root, task, expected }) => {
+      expect(chatStatus({ root, task })).toEqual(expected);
+    },
+  );
 });

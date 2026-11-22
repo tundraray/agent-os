@@ -1,5 +1,12 @@
 import { ProviderTypeSchema } from '@agent-os/contracts';
-import { boolean, check, integer, jsonb, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  integer,
+  jsonb,
+  text,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { createdAt, isOneOf } from './helpers';
 
@@ -18,5 +25,10 @@ export const identityProviders = app.table(
     /** Orders the providers. */
     createdAt: createdAt(),
   },
-  (t) => [check('identity_providers_type_check', isOneOf(t.type, ProviderTypeSchema.options))],
+  (t) => [
+    check(
+      'identity_providers_type_check',
+      isOneOf(t.type, ProviderTypeSchema.options),
+    ),
+  ],
 );

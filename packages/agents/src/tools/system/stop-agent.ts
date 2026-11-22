@@ -5,7 +5,10 @@ import type { OutsideAgentTool } from '../tool';
 import type { BuiltinTasks } from './list-agents';
 
 const StopAgentArgsSchema = z.object({
-  agentId: z.string().min(1).describe('Id of an agent you started, or of one it started'),
+  agentId: z
+    .string()
+    .min(1)
+    .describe('Id of an agent you started, or of one it started'),
 });
 type StopAgentArgs = z.infer<typeof StopAgentArgsSchema>;
 
@@ -18,7 +21,8 @@ export function createStopAgentTool(deps: {
 }): OutsideAgentTool<StopAgentArgs> {
   return {
     name: 'stop_agent',
-    description: 'Stop an agent you started (or one it started) together with the agents it started.',
+    description:
+      'Stop an agent you started (or one it started) together with the agents it started.',
     argsSchema: StopAgentArgsSchema,
     mode: 'outside',
     async execute({ args, caller }) {

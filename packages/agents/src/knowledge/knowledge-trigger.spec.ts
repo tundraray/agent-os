@@ -78,7 +78,11 @@ const ROWS: Row[] = [
     type: 'task.failed',
     taskId: EXTRACTION,
     run: EXTRACTING_MARKED,
-    expected: { action: 'interrupted', run: EXTRACTING_MARKED, nextRound: true },
+    expected: {
+      action: 'interrupted',
+      run: EXTRACTING_MARKED,
+      nextRound: true,
+    },
   },
   {
     name: 'extraction completed, no pass in progress: queue a pass',
@@ -108,7 +112,11 @@ const ROWS: Row[] = [
     type: 'task.failed',
     taskId: PASS,
     embedding: PASSING_MARKED,
-    expected: { action: 'release_pass', embedding: PASSING_MARKED, nextPass: true },
+    expected: {
+      action: 'release_pass',
+      embedding: PASSING_MARKED,
+      nextPass: true,
+    },
   },
   {
     name: 'a task no knowledge row names (or the run row went with its conversation): ignore',
@@ -120,8 +128,12 @@ const ROWS: Row[] = [
 
 describe('triggerDecision: one extraction per run end, none after a stop', () => {
   it.each(ROWS)('$name', (row) => {
-    expect(triggerDecision({ type: row.type, taskId: row.taskId }, row.run, row.embedding)).toEqual(
-      row.expected,
-    );
+    expect(
+      triggerDecision(
+        { type: row.type, taskId: row.taskId },
+        row.run,
+        row.embedding,
+      ),
+    ).toEqual(row.expected);
   });
 });

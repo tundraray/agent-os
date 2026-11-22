@@ -20,7 +20,10 @@ export interface NewMcpAccount extends McpTokens {
 }
 
 function accountKey(server: string, ownerId: string) {
-  return and(eq(agentMcpAccounts.server, server), eq(agentMcpAccounts.ownerId, ownerId));
+  return and(
+    eq(agentMcpAccounts.server, server),
+    eq(agentMcpAccounts.ownerId, ownerId),
+  );
 }
 
 /**
@@ -35,7 +38,10 @@ export class AgentMcpAccountsRepository {
     server: string,
     ownerId: string,
   ): Promise<McpAccountRow | undefined> {
-    const [row] = await this.db.client.select().from(agentMcpAccounts).where(accountKey(server, ownerId));
+    const [row] = await this.db.client
+      .select()
+      .from(agentMcpAccounts)
+      .where(accountKey(server, ownerId));
     return row;
   }
 
@@ -57,7 +63,11 @@ export class AgentMcpAccountsRepository {
     };
     await this.db.client
       .insert(agentMcpAccounts)
-      .values({ ownerId: account.ownerId, server: account.server, ...connected })
+      .values({
+        ownerId: account.ownerId,
+        server: account.server,
+        ...connected,
+      })
       .onConflictDoUpdate({
         target: [agentMcpAccounts.ownerId, agentMcpAccounts.server],
         set: connected,

@@ -27,7 +27,11 @@ export type StartSource =
   /** The built-in record with this key, such as `chat` for the root of a conversation. */
   | { readonly kind: 'builtin'; readonly builtinKey: string }
   /** A record by its id, and its restart from scratch; a record of another kind is unavailable. */
-  | { readonly kind: 'record'; readonly recordId: string; readonly expected: RecordKind }
+  | {
+      readonly kind: 'record';
+      readonly recordId: string;
+      readonly expected: RecordKind;
+    }
   /** A fork: the caller's snapshot. */
   | { readonly kind: 'fork'; readonly snapshot: RunSnapshot }
   /** The restart of a subagent or a fork: its own earlier snapshot. */
@@ -62,8 +66,7 @@ export interface StartRefusal {
 }
 
 export type StartResolution =
-  | { readonly kind: 'snapshot'; readonly snapshot: RunSnapshot }
-  | StartRefusal;
+  { readonly kind: 'snapshot'; readonly snapshot: RunSnapshot } | StartRefusal;
 
 export const RECORD_UNAVAILABLE: StartRefusal = {
   kind: 'refused',
@@ -97,12 +100,18 @@ export async function resolveStart(
   const model = snapshotDefinition(snapshot).model;
   return (
     (await modelRefusal(ownerId, model, deps.access)) ??
-    (await providerRefusal(model, deps.providers)) ?? { kind: 'snapshot', snapshot }
+    (await providerRefusal(model, deps.providers)) ?? {
+      kind: 'snapshot',
+      snapshot,
+    }
   );
 }
 
 /** Writes the `access_denied` record of a start refused for its model; any other refusal writes nothing. */
-export async function auditStartRefusal(audit: AccessAudit, refusal: StartRefusal): Promise<void> {
+export async function auditStartRefusal(
+  audit: AccessAudit,
+  refusal: StartRefusal,
+): Promise<void> {
   if (refusal.denied !== null) await audit(refusal.denied);
 }
 
@@ -113,12 +122,19 @@ async function buildSnapshot(
 ): Promise<RunSnapshot | StartRefusal> {
   switch (source.kind) {
     case 'builtin': {
-      const record = await deps.library.resolveBuiltin(ownerId, source.builtinKey);
+      const record = await deps.library.resolveBuiltin(
+        ownerId,
+        source.builtinKey,
+      );
       return snapshotOfRecord(ownerId, record, deps);
     }
     case 'record': {
       const record = await deps.library.resolve(ownerId, source.recordId);
-      return snapshotOfRecord(ownerId, record?.kind === source.expected ? record : null, deps);
+      return snapshotOfRecord(
+        ownerId,
+        record?.kind === source.expected ? record : null,
+        deps,
+      );
     }
     case 'fork':
     case 'restart':
@@ -151,11 +167,16 @@ async function modelRefusal(
   access: AccessGate,
 ): Promise<StartRefusal | undefined> {
   const verdict = await access.model(ownerId, model);
-  if (verdict.kind === 'allowed' || verdict.reason === 'quota_exhausted') return undefined;
-  if (verdict.reason === 'owner_disabled') throw new OwnerDisabledError(ownerId);
+  if (verdict.kind === 'allowed' || verdict.reason === 'quota_exhausted')
+    return undefined;
+  if (verdict.reason === 'owner_disabled')
+    throw new OwnerDisabledError(ownerId);
   return {
     kind: 'refused',
-    reason: verdict.reason === 'model_not_connected' ? 'model_not_connected' : 'model_not_allowed',
+    reason:
+      verdict.reason === 'model_not_connected'
+        ? 'model_not_connected'
+        : 'model_not_allowed',
     model,
     denied: modelDeniedEntry(ownerId, model, verdict),
   };
@@ -169,7 +190,14 @@ async function providerRefusal(
   model: string,
   providers: StartDeps['providers'],
 ): Promise<StartRefusal | undefined> {
-  const readiness = providerReadiness(await providers.connection(modelProvider(model)));
+  const readiness = providerReadiness(
+    await providers.connection(modelProvider(model)),
+  );
   if (readiness === 'ready') return undefined;
-  return { kind: 'refused', reason: `provider_${readiness}`, model, denied: null };
+  return {
+    kind: 'refused',
+    reason: `provider_${readiness}`,
+    model,
+    denied: null,
+  };
 }

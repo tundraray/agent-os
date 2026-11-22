@@ -15,7 +15,12 @@ import {
   type StartSource,
 } from '../../start/resolve-start';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool';
-import { gateStart, type LaunchSet, type StartGate, type StartTarget } from './tool-gate';
+import {
+  gateStart,
+  type LaunchSet,
+  type StartGate,
+  type StartTarget,
+} from './tool-gate';
 import { logStart } from './start-child';
 
 /**
@@ -37,7 +42,10 @@ export const StartAgentArgsSchema = z.object({
     .describe(
       `What to start, as the description lists it: the id of an agent, or "${FORK_AGENT}" for a copy of yourself`,
     ),
-  prompt: z.string().min(1).describe('The assignment: everything the agent needs to do the work'),
+  prompt: z
+    .string()
+    .min(1)
+    .describe('The assignment: everything the agent needs to do the work'),
 });
 export type StartAgentArgs = z.infer<typeof StartAgentArgsSchema>;
 
@@ -46,7 +54,8 @@ export type StartAgentArgs = z.infer<typeof StartAgentArgsSchema>;
  * listing or the agent's `agents`), each as a list item, and the fork.
  */
 function describeStartAgent(startable: readonly string[]): string {
-  const lines = startable.length === 0 ? ['(none)'] : startable.map((line) => `- ${line}`);
+  const lines =
+    startable.length === 0 ? ['(none)'] : startable.map((line) => `- ${line}`);
   return [
     'Start an agent in the background on an assignment. It returns the agentId at once; the agent works on its own, and its report arrives as a message when it finishes.',
     WAITING_RULE,
@@ -86,16 +95,29 @@ const RecordIdSchema = z.uuid();
 
 /** The call's target before its record's kind is known. */
 function targetOf(agent: string): StartTarget {
-  return agent === FORK_AGENT ? { kind: 'fork' } : { kind: 'record', recordId: agent, recordKind: null };
+  return agent === FORK_AGENT
+    ? { kind: 'fork' }
+    : { kind: 'record', recordId: agent, recordKind: null };
 }
 
 /** The caller's launch set (Terms «Набор запуска»): the root's is read live, the others' from the snapshot. */
-async function launchSetOf(caller: ToolCaller, library: RecordLibrary): Promise<LaunchSet> {
+async function launchSetOf(
+  caller: ToolCaller,
+  library: RecordLibrary,
+): Promise<LaunchSet> {
   const { snapshot } = caller;
   if (caller.root) {
-    return { kind: 'root', headers: await library.listVisible(caller.ownerId), tool: 'agent' };
+    return {
+      kind: 'root',
+      headers: await library.listVisible(caller.ownerId),
+      tool: 'agent',
+    };
   }
-  return { kind: 'agents', ids: snapshot.kind === 'agent' ? snapshot.agents.map((agent) => agent.id) : [] };
+  return {
+    kind: 'agents',
+    ids:
+      snapshot.kind === 'agent' ? snapshot.agents.map((agent) => agent.id) : [],
+  };
 }
 
 /**
@@ -110,9 +132,13 @@ async function recordKindOf(
   library: RecordLibrary,
 ): Promise<RecordKind | null> {
   if (launchSet.kind === 'root') {
-    return launchSet.headers.find((candidate) => candidate.id === recordId)?.kind ?? null;
+    return (
+      launchSet.headers.find((candidate) => candidate.id === recordId)?.kind ??
+      null
+    );
   }
-  if (launchSet.kind === 'agents' && launchSet.ids.includes(recordId)) return 'agent';
+  if (launchSet.kind === 'agents' && launchSet.ids.includes(recordId))
+    return 'agent';
   return (await library.resolve(caller.ownerId, recordId))?.kind ?? null;
 }
 
@@ -120,7 +146,11 @@ async function recordKindOf(
  * Where the child's snapshot comes from (design-runtime.md, «Откуда берётся снимок»); `null` for a target
  * the gate refuses without the library — a deep agent's record, a record outside an agent's `agents`.
  */
-function sourceOf(target: StartTarget, caller: ToolCaller, launchSet: LaunchSet): StartSource | null {
+function sourceOf(
+  target: StartTarget,
+  caller: ToolCaller,
+  launchSet: LaunchSet,
+): StartSource | null {
   switch (target.kind) {
     case 'fork':
       return { kind: 'fork', snapshot: caller.snapshot };
@@ -128,9 +158,14 @@ function sourceOf(target: StartTarget, caller: ToolCaller, launchSet: LaunchSet)
       if (target.recordKind === 'deep_agent') return null;
       // The root checks the kind and the switch in the gate (`not_allowed`), so it resolves the record as it is.
       if (launchSet.kind === 'root') {
-        return { kind: 'record', recordId: target.recordId, expected: target.recordKind ?? 'agent' };
+        return {
+          kind: 'record',
+          recordId: target.recordId,
+          expected: target.recordKind ?? 'agent',
+        };
       }
-      return launchSet.kind === 'agents' && launchSet.ids.includes(target.recordId)
+      return launchSet.kind === 'agents' &&
+        launchSet.ids.includes(target.recordId)
         ? { kind: 'record', recordId: target.recordId, expected: 'agent' }
         : null;
   }
@@ -156,7 +191,9 @@ export function createStartAgentTool(
   function refuse(
     caller: ToolCaller,
     prepared: PreparedStart,
-    reason: Extract<StartGate, { kind: 'refused' }>['reason'] | StartRefusal['reason'],
+    reason:
+      | Extract<StartGate, { kind: 'refused' }>['reason']
+      | StartRefusal['reason'],
     model: string | null,
     text?: string,
   ) {
@@ -166,7 +203,9 @@ export function createStartAgentTool(
       parentId: caller.agentId,
       agentId: null,
       source: prepared.source?.kind ?? null,
-      ...(prepared.target.kind === 'record' ? { recordId: prepared.target.recordId } : {}),
+      ...(prepared.target.kind === 'record'
+        ? { recordId: prepared.target.recordId }
+        : {}),
       resolution: prepared.resolution,
       refusal: reason,
       startedAt: prepared.startedAt,
@@ -185,36 +224,72 @@ export function createStartAgentTool(
     argsSchema: StartAgentArgsSchema,
     mode: 'in_commit',
     // The agents the caller declares: the chat's listing, an agent's `agents`; none listed without them.
-    describe: ({ startable }) => ({ description: describeStartAgent(startable ?? []) }),
+    describe: ({ startable }) => ({
+      description: describeStartAgent(startable ?? []),
+    }),
     // The assignment prompt stays out of the log.
     loggedArgs: ({ agent, description }) => ({ agent, description }),
     async prepare({ args, caller }) {
       const startedAt = Date.now();
       const named = targetOf(args.agent);
       const launchSet = await launchSetOf(caller, deps.library);
-      if (named.kind === 'record' && !RecordIdSchema.safeParse(named.recordId).success) {
-        return { startedAt, target: named, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
+      if (
+        named.kind === 'record' &&
+        !RecordIdSchema.safeParse(named.recordId).success
+      ) {
+        return {
+          startedAt,
+          target: named,
+          launchSet,
+          source: null,
+          resolution: RECORD_UNAVAILABLE,
+        };
       }
       const target: StartTarget =
         named.kind === 'record'
-          ? { ...named, recordKind: await recordKindOf(named.recordId, caller, launchSet, deps.library) }
+          ? {
+              ...named,
+              recordKind: await recordKindOf(
+                named.recordId,
+                caller,
+                launchSet,
+                deps.library,
+              ),
+            }
           : named;
       // A record an agent's owner does not see is refused before the gate, as the start procedure would
       // (plan Notes 2).
-      if (target.kind === 'record' && target.recordKind === null && launchSet.kind === 'agents') {
-        return { startedAt, target, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
+      if (
+        target.kind === 'record' &&
+        target.recordKind === null &&
+        launchSet.kind === 'agents'
+      ) {
+        return {
+          startedAt,
+          target,
+          launchSet,
+          source: null,
+          resolution: RECORD_UNAVAILABLE,
+        };
       }
       const source = sourceOf(target, caller, launchSet);
       const resolution =
-        source === null ? null : await resolveStart({ ownerId: caller.ownerId, source }, deps);
+        source === null
+          ? null
+          : await resolveStart({ ownerId: caller.ownerId, source }, deps);
       return { startedAt, target, launchSet, source, resolution };
     },
     async execute({ callId, args, caller, startChild, prepared }) {
       if (prepared === undefined) {
-        throw new Error(`start_agent of agent ${caller.agentId} runs without its prepare`);
+        throw new Error(
+          `start_agent of agent ${caller.agentId} runs without its prepare`,
+        );
       }
       const { resolution } = prepared;
-      if (resolution?.kind === 'refused' && resolution.reason === 'record_unavailable') {
+      if (
+        resolution?.kind === 'refused' &&
+        resolution.reason === 'record_unavailable'
+      ) {
         return refuse(caller, prepared, 'record_unavailable', null);
       }
 
@@ -225,9 +300,12 @@ export function createStartAgentTool(
         depth: caller.depth,
         maxDepth: deps.maxDepth,
       });
-      if (gate.kind === 'refused') return refuse(caller, prepared, gate.reason, null, gate.text);
+      if (gate.kind === 'refused')
+        return refuse(caller, prepared, gate.reason, null, gate.text);
       if (resolution === null) {
-        throw new Error(`start_agent of agent ${caller.agentId} passed the gate with nothing resolved`);
+        throw new Error(
+          `start_agent of agent ${caller.agentId} passed the gate with nothing resolved`,
+        );
       }
       if (resolution.kind === 'refused') {
         await auditStartRefusal(deps.audit, resolution);
@@ -239,7 +317,16 @@ export function createStartAgentTool(
         description: args.description,
         prompt: args.prompt,
         ...(target.kind === 'fork'
-          ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(deps.messageRows, caller, callId) } }
+          ? {
+              forkedFrom: {
+                agentId: caller.agentId,
+                throughSeq: await seqBeforeAnswer(
+                  deps.messageRows,
+                  caller,
+                  callId,
+                ),
+              },
+            }
           : {}),
       });
       logStart(logger, {
@@ -270,7 +357,9 @@ async function seqBeforeAnswer(
 ): Promise<number> {
   const answerSeq = await messageRows.answerSeqOf(caller.agentId, callId);
   if (answerSeq === undefined) {
-    throw new Error(`No answer of agent ${caller.agentId} requested call ${callId}`);
+    throw new Error(
+      `No answer of agent ${caller.agentId} requested call ${callId}`,
+    );
   }
   return answerSeq - 1;
 }

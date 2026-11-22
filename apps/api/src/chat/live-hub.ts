@@ -8,13 +8,23 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { LOGGER, type Logger } from '@agent-os/common';
 import type { LiveEvent } from '@agent-os/contracts';
-import { CLOCK, RUNTIME_EVENTS_CHANNEL, type CancelTimer, type Clock } from '@agent-os/runtime';
+import {
+  CLOCK,
+  RUNTIME_EVENTS_CHANNEL,
+  type CancelTimer,
+  type Clock,
+} from '@agent-os/runtime';
 import pg from 'pg';
 import { Observable, type Subscriber } from 'rxjs';
 import { z } from 'zod';
 import { ViewOperations } from '@agent-os/agents';
 import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher';
-import { deltaTargets, noteTargets, type LiveStream, type Watch } from './live-filter';
+import {
+  deltaTargets,
+  noteTargets,
+  type LiveStream,
+  type Watch,
+} from './live-filter';
 
 /** `application_name` of the hub's connection: tells it apart from the pool in `pg_stat_activity`. */
 export const LIVE_HUB_APPLICATION_NAME = 'agent-os-live-hub';
@@ -65,7 +75,9 @@ const PING = messageEvent({ type: 'ping', data: {} });
  * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
  */
 @Injectable()
-export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdown {
+export class LiveHub
+  implements OnApplicationBootstrap, BeforeApplicationShutdown
+{
   private readonly logger: Logger;
   private readonly streams = new Set<HubStream>();
   /** Signals are handled one after another, so the parts of one agent keep their order. */
@@ -123,7 +135,9 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       connectionString: this.config.getOrThrow<string>('DATABASE_URL'),
       application_name: LIVE_HUB_APPLICATION_NAME,
     });
-    client.on('notification', (notice) => this.enqueue(notice.channel, notice.payload));
+    client.on('notification', (notice) =>
+      this.enqueue(notice.channel, notice.payload),
+    );
     client.on('error', (error) => this.lost(client, error));
     client.on('end', () => this.lost(client));
     try {
@@ -164,7 +178,9 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       await this.beforeApplicationShutdown();
       return;
     }
-    this.logger.info('live hub LISTEN restored', { streams: this.streams.size });
+    this.logger.info('live hub LISTEN restored', {
+      streams: this.streams.size,
+    });
     for (const stream of this.streams) stream.subscriber.next(READY);
   }
 
@@ -176,7 +192,10 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       });
   }
 
-  private async handle(channel: string, payload: string | undefined): Promise<void> {
+  private async handle(
+    channel: string,
+    payload: string | undefined,
+  ): Promise<void> {
     // Nobody to tell: drop before parsing or looking anything up.
     if (this.streams.size === 0 || payload === undefined) return;
     if (channel === RUNTIME_EVENTS_CHANNEL) await this.note(payload);
@@ -189,7 +208,8 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
     const ownerId = await this.views.rootOwner(rootId);
     if (ownerId === undefined) return;
     const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
-    for (const stream of noteTargets(ownerId, this.streams)) stream.subscriber.next(event);
+    for (const stream of noteTargets(ownerId, this.streams))
+      stream.subscriber.next(event);
   }
 
   /** A text part: only to the owner's streams that watch its agent or the root's conversation. */
@@ -199,6 +219,7 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       type: 'delta',
       data: { agentId: delta.agentId, offset: delta.offset, text: delta.text },
     });
-    for (const stream of deltaTargets(delta, this.streams)) stream.subscriber.next(event);
+    for (const stream of deltaTargets(delta, this.streams))
+      stream.subscriber.next(event);
   }
 }

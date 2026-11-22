@@ -7,10 +7,15 @@ import { agentMcpServers } from '../schema';
 export type McpServerRow = typeof agentMcpServers.$inferSelect;
 
 /** What registration writes; `enabled`, `tools` and the times take their defaults when left out. */
-export type NewMcpServerRow = Omit<typeof agentMcpServers.$inferInsert, 'createdAt' | 'updatedAt'>;
+export type NewMcpServerRow = Omit<
+  typeof agentMcpServers.$inferInsert,
+  'createdAt' | 'updatedAt'
+>;
 
 /** What may change after registration: name, address and mode never do. */
-export type McpServerPatch = Partial<Pick<McpServerRow, 'enabled' | 'tools' | 'sharedToken'>>;
+export type McpServerPatch = Partial<
+  Pick<McpServerRow, 'enabled' | 'tools' | 'sharedToken'>
+>;
 
 /** The server rows before and after a write: the audit record is built from them. */
 export interface McpServerChange {
@@ -37,25 +42,37 @@ export class AgentMcpServersRepository {
   /** The registered servers among the names, in one query. */
   async findMany(names: readonly string[]): Promise<McpServerRow[]> {
     if (names.length === 0) return [];
-    return this.db.client.select().from(agentMcpServers).where(inArray(agentMcpServers.name, [...names]));
+    return this.db.client
+      .select()
+      .from(agentMcpServers)
+      .where(inArray(agentMcpServers.name, [...names]));
   }
 
   /** All registry servers by name. */
   list(): Promise<McpServerRow[]> {
-    return this.db.client.select().from(agentMcpServers).orderBy(asc(agentMcpServers.name));
+    return this.db.client
+      .select()
+      .from(agentMcpServers)
+      .orderBy(asc(agentMcpServers.name));
   }
 
   /**
    * Enabled servers among the definition's names (`*` — all enabled), by name; an enabled server
    * always has its tool list (Invariant 2). The first of the two queries of a tool set.
    */
-  async enabledWithTools(names: readonly string[] | '*'): Promise<McpServerRow[]> {
+  async enabledWithTools(
+    names: readonly string[] | '*',
+  ): Promise<McpServerRow[]> {
     if (names !== '*' && names.length === 0) return [];
     const enabled = eq(agentMcpServers.enabled, true);
     return this.db.client
       .select()
       .from(agentMcpServers)
-      .where(names === '*' ? enabled : and(enabled, inArray(agentMcpServers.name, [...names])))
+      .where(
+        names === '*'
+          ? enabled
+          : and(enabled, inArray(agentMcpServers.name, [...names])),
+      )
       .orderBy(asc(agentMcpServers.name));
   }
 
@@ -84,7 +101,8 @@ export class AgentMcpServersRepository {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(agentMcpServers.name, name))
       .returning();
-    if (after === undefined) throw new Error(`MCP server ${name} vanished during its update`);
+    if (after === undefined)
+      throw new Error(`MCP server ${name} vanished during its update`);
     return { before, after };
   }
 

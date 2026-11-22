@@ -9,7 +9,9 @@ export const identitySessions = app.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     /** SHA-256 of the session token; the token itself is never stored. */
-    tokenHash: text('token_hash').notNull().unique('identity_sessions_token_hash_key'),
+    tokenHash: text('token_hash')
+      .notNull()
+      .unique('identity_sessions_token_hash_key'),
     userId: uuid('user_id')
       .notNull()
       .references(() => identityUsers.id, { onDelete: 'cascade' }),

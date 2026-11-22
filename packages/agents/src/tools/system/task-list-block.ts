@@ -12,7 +12,9 @@ export const TASK_BLOCK_HEADING =
 export function taskLine(task: SessionTask, text: string): string {
   return [
     `${task.number}. [${task.status}] ${text}`,
-    ...(task.blockedBy.length === 0 ? [] : [`blocked by ${task.blockedBy.join(', ')}`]),
+    ...(task.blockedBy.length === 0
+      ? []
+      : [`blocked by ${task.blockedBy.join(', ')}`]),
     ...(task.owner === null ? [] : [`owner ${task.owner}`]),
   ].join('; ');
 }
@@ -20,12 +22,17 @@ export function taskLine(task: SessionTask, text: string): string {
 /** A task as the block and the end-of-turn notice show it: a task in progress by its `activeForm`. */
 export function blockLine(task: SessionTask): string {
   const inProgress = task.status === SessionTaskStatusSchema.enum.in_progress;
-  return taskLine(task, inProgress ? (task.activeForm ?? task.subject) : task.subject);
+  return taskLine(
+    task,
+    inProgress ? (task.activeForm ?? task.subject) : task.subject,
+  );
 }
 
 /** The task block (Contract «Блок, уведомление, запись, маршрут»): `null` for an empty list. */
 export function taskBlock(tasks: readonly SessionTask[]): string | null {
-  return tasks.length === 0 ? null : [TASK_BLOCK_HEADING, ...tasks.map(blockLine)].join('\n');
+  return tasks.length === 0
+    ? null
+    : [TASK_BLOCK_HEADING, ...tasks.map(blockLine)].join('\n');
 }
 
 /**

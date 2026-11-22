@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { backOfficeOf, ORDER_STATUSES, PAYMENT_METHODS } from '../backoffice';
 import { pageOf } from '../cursor';
 import { defineTool } from './fixture-tool';
-import { LogQueryShape, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query';
+import {
+  LogQueryShape,
+  WINDOW_ORDER_MESSAGE,
+  windowIsOrdered,
+} from './log-query';
 
 const SEARCH_PAGE_SIZE_MAX = 500;
 
@@ -11,8 +15,16 @@ const SearchOrdersArgsSchema = z
     from: LogQueryShape.from,
     to: LogQueryShape.to,
     status: z.enum(ORDER_STATUSES).optional().meta({ title: 'Статус' }),
-    paymentMethod: z.enum(PAYMENT_METHODS).optional().meta({ title: 'Способ оплаты' }),
-    pageSize: z.int().min(1).max(SEARCH_PAGE_SIZE_MAX).default(SEARCH_PAGE_SIZE_MAX).meta({ title: 'Размер страницы' }),
+    paymentMethod: z
+      .enum(PAYMENT_METHODS)
+      .optional()
+      .meta({ title: 'Способ оплаты' }),
+    pageSize: z
+      .int()
+      .min(1)
+      .max(SEARCH_PAGE_SIZE_MAX)
+      .default(SEARCH_PAGE_SIZE_MAX)
+      .meta({ title: 'Размер страницы' }),
     cursor: z.string().min(1).max(1024).optional().meta({ title: 'Курсор' }),
   })
   .refine(windowIsOrdered, { message: WINDOW_ORDER_MESSAGE, path: ['to'] });
@@ -51,7 +63,8 @@ export const searchOrdersTool = defineTool({
       .filter(
         (order) =>
           (args.status === undefined || order.status === args.status) &&
-          (args.paymentMethod === undefined || order.paymentMethod === args.paymentMethod),
+          (args.paymentMethod === undefined ||
+            order.paymentMethod === args.paymentMethod),
       );
     const page = pageOf(matched, args, dataset);
     if (typeof page === 'string') {

@@ -35,7 +35,10 @@ const MEASUREMENT_MS = 300_000;
  * The first 8 h 24 min of the fixture's week (v1): the dense segment holds 2 500 records an hour, so the window is exactly
  * 2 625 blocks of 8 — 21 000 records, 42 pages of 500, about 5.0 MB of page JSON.
  */
-const WINDOW = { from: '2026-09-14T00:00:00.000Z', to: '2026-09-14T08:24:00.000Z' } as const;
+const WINDOW = {
+  from: '2026-09-14T00:00:00.000Z',
+  to: '2026-09-14T08:24:00.000Z',
+} as const;
 /**
  * What the script must return for {@link WINDOW}, counted independently of the feature from the fixture's own dataset
  * generator (`createLogDataset('v1')` and `matchingRecords` of `packages/mcp-fixture`).
@@ -48,7 +51,11 @@ const EXPECTED = {
 /** The page JSON the script received must be about 5 MB (NFR-01). */
 const MIN_DATA_BYTES = 5_000_000;
 
-const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
+const logger = createLogger({
+  sinks: [consoleSink()],
+  secrets: [],
+  minLevel: 'info',
+});
 
 /** The nearest-rank 95th percentile. */
 function p95(values: readonly number[]): number {
@@ -89,7 +96,18 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
       const prompt = 'Group the errors of the payment logs by service';
       const model = createScriptedModel();
       const script = model.script({ task: prompt }, [
-        { calls: [{ tool: 'run_code', args: { description: 'Ошибки по сервисам', class: 'read', script: GROUPING_SCRIPT } }] },
+        {
+          calls: [
+            {
+              tool: 'run_code',
+              args: {
+                description: 'Ошибки по сервисам',
+                class: 'read',
+                script: GROUPING_SCRIPT,
+              },
+            },
+          ],
+        },
         { text: 'Ошибки сгруппированы' },
       ]);
       const fixture = createFixtureFiles('code-run-verify');
@@ -102,19 +120,32 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
       try {
         // When: the agent works to the end of its turn
         const startedAt = Date.now();
-        const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'n1 reader' });
+        const { agentId } = await harness.sessions.start({
+          ownerId,
+          prompt,
+          description: 'n1 reader',
+        });
         await script.called(2);
         await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
         const turnMs = Date.now() - startedAt;
 
         const runCallId = script.calls[0]?.toolCallIds[0];
-        if (runCallId === undefined) throw new Error('the model made no run_code call');
-        const ended = runLogsOf(harness, runCallId).find((record) => record.message === 'code run ended');
+        if (runCallId === undefined)
+          throw new Error('the model made no run_code call');
+        const ended = runLogsOf(harness, runCallId).find(
+          (record) => record.message === 'code run ended',
+        );
         const runMs = Number(ended?.fields.durationMs);
         const history = await historyOf(harness, agentId, ownerId);
-        const runEntry = history.find((entry) => entry.kind === 'tool_result' && entry.content.callId === runCallId);
-        const text = runEntry?.kind === 'tool_result' ? runEntry.content.text : null;
-        const { bytes, ...totals } = JSON.parse(text ?? 'null') as { bytes: number } & Record<string, unknown>;
+        const runEntry = history.find(
+          (entry) =>
+            entry.kind === 'tool_result' && entry.content.callId === runCallId,
+        );
+        const text =
+          runEntry?.kind === 'tool_result' ? runEntry.content.text : null;
+        const { bytes, ...totals } = JSON.parse(text ?? 'null') as {
+          bytes: number;
+        } & Record<string, unknown>;
         logger.info('UC-N1: a run over the log window', {
           runMs,
           turnMs,
@@ -126,10 +157,15 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
 
         // Then: the run succeeded with the totals counted from the fixture's dataset, every page reached the server once,
         // and the run took no more than 30 s (NFR-01)
-        expect([ended?.fields.outcome, ended?.fields.calls]).toEqual(['success', EXPECTED.pages]);
+        expect([ended?.fields.outcome, ended?.fields.calls]).toEqual([
+          'success',
+          EXPECTED.pages,
+        ]);
         expect(totals).toEqual(EXPECTED);
         expect(bytes).toBeGreaterThanOrEqual(MIN_DATA_BYTES);
-        expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs' })).toHaveLength(EXPECTED.pages);
+        expect(
+          fixtureCallsOf(fixture.callLog, { tool: 'search_logs' }),
+        ).toHaveLength(EXPECTED.pages);
         expect(runMs).toBeLessThanOrEqual(LARGE_RUN_TARGET_MS);
       } finally {
         await harness.close();
@@ -145,7 +181,10 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
     async () => {
       // Given: the executor with its production flags and the run limits at their defaults (design Runtime settings)
       const defaults = parseAgentsConfig({});
-      const runner = createCodeRunner({ maxConcurrent: defaults.codeRun.maxConcurrent, logger });
+      const runner = createCodeRunner({
+        maxConcurrent: defaults.codeRun.maxConcurrent,
+        logger,
+      });
       const limits = {
         timeoutMs: defaults.codeRun.timeoutMs,
         memoryMb: defaults.codeRun.memoryMb,
@@ -159,17 +198,24 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
         const outcome = await runner.run({
           script: '',
           limits,
-          onRequest: () => Promise.reject(new Error('the empty script makes no request')),
+          onRequest: () =>
+            Promise.reject(new Error('the empty script makes no request')),
           logger: logger.child({ run }),
         });
         durations.push(performance.now() - startedAt);
-        expect(outcome).toEqual({ status: 'returned', value: null, output: '' });
+        expect(outcome).toEqual({
+          status: 'returned',
+          value: null,
+          output: '',
+        });
       }
       const sorted = [...durations].sort((a, b) => a - b);
       logger.info('UC-N2: empty script from run to result', {
         runs: EMPTY_RUNS,
         minMs: Math.round(sorted[0] ?? Number.NaN),
-        p50Ms: Math.round(sorted[Math.ceil(sorted.length / 2) - 1] ?? Number.NaN),
+        p50Ms: Math.round(
+          sorted[Math.ceil(sorted.length / 2) - 1] ?? Number.NaN,
+        ),
         p95Ms: Math.round(p95(durations)),
         maxMs: Math.round(sorted.at(-1) ?? Number.NaN),
         targetMs: EMPTY_RUN_TARGET_MS,

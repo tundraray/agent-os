@@ -115,7 +115,8 @@ export interface ErrorMessage {
   line: number | null;
 }
 
-export type ExecutorMessage = CallMessage | ReadMessage | OutputMessage | DoneMessage | ErrorMessage;
+export type ExecutorMessage =
+  CallMessage | ReadMessage | OutputMessage | DoneMessage | ErrorMessage;
 
 export type ProtocolViolation =
   | 'frame_too_large'
@@ -133,7 +134,9 @@ export type ProtocolViolation =
  * mark never exceeds the limit, and output already cut by this rule passes through it unchanged:
  * the executor and the API process apply the same limiter without cutting or marking twice.
  */
-export function createOutputLimit(onLine: (line: string) => void): { add(line: string): void } {
+export function createOutputLimit(onLine: (line: string) => void): {
+  add(line: string): void;
+} {
   const markBytes = Buffer.byteLength(OUTPUT_TRUNCATED_MARK, 'utf8') + 1;
   let bytes = 0;
   let truncated = false;
@@ -186,16 +189,20 @@ export function createFrameDecoder(limits: FrameDecoderLimits): FrameDecoder {
   let total = 0;
   return {
     push(chunk) {
-      buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
+      buffered =
+        buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
       const frames: unknown[] = [];
       while (buffered.length >= HEADER_BYTES) {
         const length = buffered.readUInt32BE(0);
-        if (length > limits.frameMaxBytes) return { frames, violation: 'frame_too_large' };
+        if (length > limits.frameMaxBytes)
+          return { frames, violation: 'frame_too_large' };
         if (total + HEADER_BYTES + length > limits.totalMaxBytes) {
           return { frames, violation: 'run_frames_too_large' };
         }
         if (buffered.length < HEADER_BYTES + length) break;
-        const body = buffered.subarray(HEADER_BYTES, HEADER_BYTES + length).toString('utf8');
+        const body = buffered
+          .subarray(HEADER_BYTES, HEADER_BYTES + length)
+          .toString('utf8');
         buffered = buffered.subarray(HEADER_BYTES + length);
         total += HEADER_BYTES + length;
         try {
@@ -213,16 +220,21 @@ export function createFrameDecoder(limits: FrameDecoderLimits): FrameDecoder {
 export function parseExecutorMessage(
   value: unknown,
 ): { message: ExecutorMessage } | { violation: ProtocolViolation } {
-  if (!isRecord(value) || typeof value.op !== 'string') return { violation: 'invalid_message' };
+  if (!isRecord(value) || typeof value.op !== 'string')
+    return { violation: 'invalid_message' };
   const message = shapeOf(value);
   if (message === 'unknown') return { violation: 'unknown_operation' };
   return message === null ? { violation: 'invalid_message' } : { message };
 }
 
-function shapeOf(value: Record<string, unknown>): ExecutorMessage | null | 'unknown' {
+function shapeOf(
+  value: Record<string, unknown>,
+): ExecutorMessage | null | 'unknown' {
   switch (value.op) {
     case 'call':
-      return isRequestId(value.id) && typeof value.name === 'string' && 'args' in value
+      return isRequestId(value.id) &&
+        typeof value.name === 'string' &&
+        'args' in value
         ? { op: 'call', id: value.id, name: value.name, args: value.args }
         : null;
     case 'read':
@@ -230,14 +242,23 @@ function shapeOf(value: Record<string, unknown>): ExecutorMessage | null | 'unkn
         ? { op: 'read', id: value.id, resultId: value.resultId }
         : null;
     case 'output':
-      return typeof value.line === 'string' ? { op: 'output', line: value.line } : null;
+      return typeof value.line === 'string'
+        ? { op: 'output', line: value.line }
+        : null;
     case 'done':
-      return value.value === null || typeof value.value === 'string' ? { op: 'done', value: value.value } : null;
+      return value.value === null || typeof value.value === 'string'
+        ? { op: 'done', value: value.value }
+        : null;
     case 'error':
       return isExecutorFailReason(value.reason) &&
         (value.text === null || typeof value.text === 'string') &&
         (value.line === null || isLineNumber(value.line))
-        ? { op: 'error', reason: value.reason, text: value.text, line: value.line }
+        ? {
+            op: 'error',
+            reason: value.reason,
+            text: value.text,
+            line: value.line,
+          }
         : null;
     default:
       return 'unknown';

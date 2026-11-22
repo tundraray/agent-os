@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import type { RecordFocusAction } from '@agent-os/contracts';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -9,11 +15,18 @@ import { useStore } from 'zustand';
 import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
 import { LocaleSync } from '@/i18n/locale-sync';
 import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
+import {
+  SidebarInset,
+  SidebarProvider,
+  useSidebar,
+} from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 import { useLeaveGuardHistory } from '@/hooks/use-leave-guard-history';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
+import {
+  setAdminRequiredHandler,
+  setUnauthorizedHandler,
+} from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
 import type { FocusTarget } from '@/lib/focus';
@@ -52,7 +65,12 @@ type ChatShellProps = {
 };
 
 /** SH-01: sidebar (built-in or drawer) and the main area, on the full height of the dynamic viewport. */
-export function ChatShell({ defaultSidebarOpen, openEventSource, location, children }: ChatShellProps) {
+export function ChatShell({
+  defaultSidebarOpen,
+  openEventSource,
+  location,
+  children,
+}: ChatShellProps) {
   // Every 401 inside the shell leaves for /login (DC-13). The handler is checked when a response
   // arrives, so the requests children start in their own effects are covered too.
   useEffect(() => {
@@ -61,8 +79,14 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
   }, []);
 
   return (
-    <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
-      <ChatRuntimeProvider openEventSource={openEventSource} location={location}>
+    <SidebarProvider
+      defaultOpen={defaultSidebarOpen}
+      className="h-dvh overflow-hidden"
+    >
+      <ChatRuntimeProvider
+        openEventSource={openEventSource}
+        location={location}
+      >
         <AdminRightWatch />
         <ShellLocaleSync />
         <ShellAnnouncer />
@@ -78,7 +102,10 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
 }
 
 /** Focus actions that open the panel by themselves from 1024 px (deep-agents UXRD KD-7); a read, a delete or a start does not. */
-const OPENING_ACTIONS: ReadonlySet<RecordFocusAction> = new Set(['created', 'changed']);
+const OPENING_ACTIONS: ReadonlySet<RecordFocusAction> = new Set([
+  'created',
+  'changed',
+]);
 
 /**
  * The main area: the chat panel and the diagram panel (WS-01…WS-03, deep-agents DA-12) — beside the feed while
@@ -136,19 +163,36 @@ function ShellMain({ children }: { children: ReactNode }) {
     else workspace.show({ focusHeading: true });
   };
 
-  const rememberWorkspaceSize = (layout: Layout, meta: LayoutChangedMeta): void => {
+  const rememberWorkspaceSize = (
+    layout: Layout,
+    meta: LayoutChangedMeta,
+  ): void => {
     const size = layout[WORKSPACE_PANEL_ID];
-    if (meta.isUserInteraction && size !== undefined && size > 0) setWorkspaceSize(size);
+    if (meta.isUserInteraction && size !== undefined && size > 0)
+      setWorkspaceSize(size);
   };
 
   return (
     <SidebarInset ref={mainRef} className="min-h-0 min-w-0">
-      {workspaceAllowed && feed !== null && <SchemaAutoOpen feed={feed} chatTasks={chatTasks} desktop={desktop} />}
-      <ResizablePanelGroup orientation="horizontal" onLayoutChanged={rememberWorkspaceSize}>
-        <ResizablePanel id="chat" minSize={FEED_MIN_WIDTH} className="flex flex-col" style={{ overflow: 'hidden' }}>
+      {workspaceAllowed && feed !== null && (
+        <SchemaAutoOpen feed={feed} chatTasks={chatTasks} desktop={desktop} />
+      )}
+      <ResizablePanelGroup
+        orientation="horizontal"
+        onLayoutChanged={rememberWorkspaceSize}
+      >
+        <ResizablePanel
+          id="chat"
+          minSize={FEED_MIN_WIDTH}
+          className="flex flex-col"
+          style={{ overflow: 'hidden' }}
+        >
           <RouteFeedProvider route={route}>
             <DocumentTitle />
-            <ChatHeader workspaceOpen={workspaceOpen && workspaceAllowed} onToggleWorkspace={toggleWorkspace} />
+            <ChatHeader
+              workspaceOpen={workspaceOpen && workspaceAllowed}
+              onToggleWorkspace={toggleWorkspace}
+            />
             <ConnectionBar live={live} />
             <div className="min-h-0 flex-1">
               <MainView />
@@ -157,7 +201,11 @@ function ShellMain({ children }: { children: ReactNode }) {
         </ResizablePanel>
         {workspaceVisible && (
           <WorkspacePanel
-            defaultSize={workspaceSize === undefined ? WORKSPACE_DEFAULT_SIZE : `${workspaceSize}%`}
+            defaultSize={
+              workspaceSize === undefined
+                ? WORKSPACE_DEFAULT_SIZE
+                : `${workspaceSize}%`
+            }
             onClose={closeWorkspace}
           >
             <SchemaPanel feed={feed} chatTasks={chatTasks} />
@@ -174,7 +222,11 @@ function ShellMain({ children }: { children: ReactNode }) {
   );
 }
 
-type SchemaAutoOpenProps = { feed: FeedStore; chatTasks: ChatTasks; desktop: boolean };
+type SchemaAutoOpenProps = {
+  feed: FeedStore;
+  chatTasks: ChatTasks;
+  desktop: boolean;
+};
 
 /**
  * deep-agents UXRD KD-7, DA-12: from 1024 px the panel opens by itself — on «Схема» when the conversation's focus
@@ -196,13 +248,18 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
     const check = ({ view }: FeedState): void => {
       if (view?.kind !== 'thread') return;
       const focus = view.focus;
-      const key = focus === null ? null : `${focus.recordId}|${focus.action}|${focus.at}`;
+      const key =
+        focus === null ? null : `${focus.recordId}|${focus.action}|${focus.at}`;
       if (seen === undefined || key === seen) {
         seen = key;
         return;
       }
       seen = key;
-      if (focus !== null && OPENING_ACTIONS.has(focus.action) && desktopRef.current) {
+      if (
+        focus !== null &&
+        OPENING_ACTIONS.has(focus.action) &&
+        desktopRef.current
+      ) {
         workspace.show({ tab: 'schema', focusHeading: false });
       }
     };
@@ -213,12 +270,19 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
   // The tab «Задачи» as the last read of this root showed it; the first read only records it.
   const { rootAgentId, tasks, tabShown } = chatTasks;
   const read = tasks.status === 'ready' && rootAgentId !== null;
-  const seenTab = useRef<{ rootAgentId: string; tabShown: boolean } | null>(null);
+  const seenTab = useRef<{ rootAgentId: string; tabShown: boolean } | null>(
+    null,
+  );
   useEffect(() => {
     if (!read || rootAgentId === null) return;
     const before = seenTab.current;
     seenTab.current = { rootAgentId, tabShown };
-    if (before?.rootAgentId === rootAgentId && !before.tabShown && tabShown && desktopRef.current) {
+    if (
+      before?.rootAgentId === rootAgentId &&
+      !before.tabShown &&
+      tabShown &&
+      desktopRef.current
+    ) {
       workspace.show({ tab: 'tasks', focusHeading: false });
     }
   }, [read, rootAgentId, tabShown, workspace]);
@@ -231,7 +295,13 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
  * the agent so another agent gets a fresh one. It wraps the chat panel only: the sidebar is not remounted
  * when the route moves between a conversation and an agent.
  */
-function RouteFeedProvider({ route, children }: { route: ShellRoute; children: ReactNode }) {
+function RouteFeedProvider({
+  route,
+  children,
+}: {
+  route: ShellRoute;
+  children: ReactNode;
+}) {
   if (route.kind !== 'agent') return children;
   return (
     <AgentFeedProvider key={route.agentId} agentId={route.agentId}>
@@ -251,7 +321,9 @@ function SkipLink() {
   const target: FocusTarget = panel ? 'page-title' : 'composer';
   const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     event.preventDefault();
-    document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`)?.focus();
+    document
+      .querySelector<HTMLElement>(`[data-shell-focus="${target}"]`)
+      ?.focus();
   };
 
   return (

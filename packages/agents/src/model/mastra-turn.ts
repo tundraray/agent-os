@@ -39,7 +39,8 @@ export interface AgentToolCall {
 }
 
 /** A JSON value: what a tool result carries back to the model. */
-export type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue =
+  null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue };
 
 /** The result of one tool call, as the session hands it back to the model. */
 export interface AgentToolResult {
@@ -51,7 +52,11 @@ export interface AgentToolResult {
 /** One message of an agent session: a text, a model answer with its tool calls, or the results of those calls. */
 export type AgentTurnMessage =
   | { readonly role: 'user'; readonly content: string }
-  | { readonly role: 'assistant'; readonly content: string; readonly toolCalls: readonly AgentToolCall[] }
+  | {
+      readonly role: 'assistant';
+      readonly content: string;
+      readonly toolCalls: readonly AgentToolCall[];
+    }
   | { readonly role: 'tool'; readonly results: readonly AgentToolResult[] };
 
 /**
@@ -96,7 +101,10 @@ export interface StreamTurnOptions {
  * returns the tool calls instead of running them. A provider error rejects the returned promise.
  */
 export interface AgentTurnModelClient {
-  streamTurn(call: AgentTurnCall, options: StreamTurnOptions): Promise<AgentTurnGeneration>;
+  streamTurn(
+    call: AgentTurnCall,
+    options: StreamTurnOptions,
+  ): Promise<AgentTurnGeneration>;
 }
 
 /**
@@ -126,7 +134,9 @@ function turnMessage(message: AgentTurnMessage) {
       return {
         role: 'assistant' as const,
         content: [
-          ...(message.content === '' ? [] : [{ type: 'text' as const, text: message.content }]),
+          ...(message.content === ''
+            ? []
+            : [{ type: 'text' as const, text: message.content }]),
           ...message.toolCalls.map(({ toolCallId, toolName, args }) => ({
             type: 'tool-call' as const,
             toolCallId,
@@ -154,12 +164,17 @@ function turnMessage(message: AgentTurnMessage) {
  * (KD-6). Mastra copies a result part's options onto the tool call it answers, so the answer just
  * before carries a mark too: three breakpoints with the system block, within the provider's four.
  */
-function withCacheMark(sent: ReturnType<typeof turnMessage>, cacheMark: ProviderOptions) {
+function withCacheMark(
+  sent: ReturnType<typeof turnMessage>,
+  cacheMark: ProviderOptions,
+) {
   if (sent.role !== 'tool') return { ...sent, providerOptions: cacheMark };
   const last = sent.content.length - 1;
   return {
     ...sent,
-    content: sent.content.map((part, index) => (index === last ? { ...part, providerOptions: cacheMark } : part)),
+    content: sent.content.map((part, index) =>
+      index === last ? { ...part, providerOptions: cacheMark } : part,
+    ),
   };
 }
 
@@ -167,10 +182,15 @@ function withCacheMark(sent: ReturnType<typeof turnMessage>, cacheMark: Provider
  * The session messages of a turn. With the adapter's cache mark it ends at the last one, so the provider
  * caches the session so far; without one (the provider caches the request's start itself) none is marked.
  */
-function turnMessages(messages: readonly AgentTurnMessage[], cacheMark: ProviderOptions | null) {
+function turnMessages(
+  messages: readonly AgentTurnMessage[],
+  cacheMark: ProviderOptions | null,
+) {
   return messages.map((message, index) => {
     const sent = turnMessage(message);
-    return cacheMark !== null && index === messages.length - 1 ? withCacheMark(sent, cacheMark) : sent;
+    return cacheMark !== null && index === messages.length - 1
+      ? withCacheMark(sent, cacheMark)
+      : sent;
   });
 }
 
@@ -180,14 +200,22 @@ function modelName(modelId: string): string {
 }
 
 /** The tools as Mastra tools without `execute`: the model may call them, Mastra cannot run them. */
-function turnTools(tools: readonly AgentToolDefinition[]): Record<string, ReturnType<typeof createTool>> {
+function turnTools(
+  tools: readonly AgentToolDefinition[],
+): Record<string, ReturnType<typeof createTool>> {
   return Object.fromEntries(
-    tools.map(({ name, description, inputSchema }) => [name, createTool({ id: name, description, inputSchema })]),
+    tools.map(({ name, description, inputSchema }) => [
+      name,
+      createTool({ id: name, description, inputSchema }),
+    ]),
   );
 }
 
 /** Hands every non-empty part of the text stream to `onText`, in order, until the stream ends. */
-async function readTextParts(textStream: AsyncIterable<string>, onText: (text: string) => void): Promise<void> {
+async function readTextParts(
+  textStream: AsyncIterable<string>,
+  onText: (text: string) => void,
+): Promise<void> {
   for await (const part of textStream) {
     if (part !== '') onText(part);
   }
@@ -218,18 +246,23 @@ export function createMastraTurnClient(): AgentTurnModelClient {
         instructions: {
           role: 'system',
           content: call.instructions,
-          ...(adapter.cacheMark === null ? {} : { providerOptions: adapter.cacheMark }),
+          ...(adapter.cacheMark === null
+            ? {}
+            : { providerOptions: adapter.cacheMark }),
         },
         model: adapter.languageModel(call.connection, modelName(call.model)),
         tools: turnTools(call.tools),
         errorProcessorDefaults: false,
       });
       agent.__setLogger(noopLogger);
-      const output = await agent.stream(turnMessages(call.messages, adapter.cacheMark), {
-        maxSteps: 1,
-        modelSettings: { maxOutputTokens: call.maxOutputTokens },
-        abortSignal: signal,
-      });
+      const output = await agent.stream(
+        turnMessages(call.messages, adapter.cacheMark),
+        {
+          maxSteps: 1,
+          modelSettings: { maxOutputTokens: call.maxOutputTokens },
+          abortSignal: signal,
+        },
+      );
       await readTextParts(output.textStream, onText);
       if (output.error !== undefined) throw output.error;
       const [text, toolCalls, usage, finishReason] = await Promise.all([

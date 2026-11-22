@@ -52,7 +52,10 @@ import {
   inboxOf,
   statusesOf,
 } from './support/runtimeDb';
-import { createRuntimeHarness, type RuntimeHarness } from './support/runtimeHarness';
+import {
+  createRuntimeHarness,
+  type RuntimeHarness,
+} from './support/runtimeHarness';
 import { uniqueType } from './support/testHandlers';
 
 /** NFR-05: the work interrupted by a restart resumes within 60 s — the harness timeout of the finish. */
@@ -73,8 +76,12 @@ const NOTE_TO_DECIDER = { text: 'while waiting' };
  * `tasks.create` accepts them. It creates the trees, sends the messages, resolves the decisions.
  */
 async function testRuntime(types: ChildTypes): Promise<RuntimeHarness> {
-  const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
-  for (const handler of handlersFor(types, control.runtimeDb)) control.handlers.register(handler);
+  const control = await createRuntimeHarness({
+    handlers: [],
+    config: { workers: false },
+  });
+  for (const handler of handlersFor(types, control.runtimeDb))
+    control.handlers.register(handler);
   return control;
 }
 
@@ -86,7 +93,9 @@ interface Tree {
   readerId: string;
 }
 
-const treeTypes = (): Required<Pick<ChildTypes, 'parent' | 'writer' | 'reader'>> => ({
+const treeTypes = (): Required<
+  Pick<ChildTypes, 'parent' | 'writer' | 'reader'>
+> => ({
   parent: uniqueType('e2e1-parent'),
   writer: uniqueType('e2e1-writer'),
   reader: uniqueType('e2e1-reader'),
@@ -146,7 +155,10 @@ async function recoveriesOf(
   control: RuntimeHarness,
   taskIds: readonly string[],
 ): Promise<Map<string, number>> {
-  const { rows } = await control.db.execute<{ taskId: string; recoveries: number }>(sql`
+  const { rows } = await control.db.execute<{
+    taskId: string;
+    recoveries: number;
+  }>(sql`
     SELECT task_id AS "taskId", recoveries FROM app.runtime_tasks
      WHERE task_id IN (${sql.join(
        taskIds.map((taskId) => sql`${taskId}::uuid`),
@@ -170,9 +182,19 @@ interface EndState {
   /** P's `task.step_committed` events equal its step number: no step written twice or skipped. */
   parentCommittedEqualsStepNo: boolean;
   recoveries: Record<Role, number>;
-  readerInbox: { kind: string; payload: unknown; status: string; deliveredStep: number | null }[];
+  readerInbox: {
+    kind: string;
+    payload: unknown;
+    status: string;
+    deliveredStep: number | null;
+  }[];
   /** P's notices by child, each with its status. */
-  parentInbox: { kind: string; sender: string; status: string; childStatus: unknown }[];
+  parentInbox: {
+    kind: string;
+    sender: string;
+    status: string;
+    childStatus: unknown;
+  }[];
 }
 
 /** Steps of the run flagged `resumedAfterLoss` in their committed rows. */
@@ -185,7 +207,8 @@ async function endStateOf(
   const roles = rolesOf(tree);
   const ids = Object.values(roles);
   const roleOf = (taskId: string): string =>
-    (Object.keys(roles) as Role[]).find((role) => roles[role] === taskId) ?? taskId;
+    (Object.keys(roles) as Role[]).find((role) => roles[role] === taskId) ??
+    taskId;
   const tasks = await control.tasks.listTree(tree.parentId, tree.ownerId);
   const task = (role: Role): Task => {
     const found = tasks.find((candidate) => candidate.taskId === roles[role]);
@@ -194,7 +217,9 @@ async function endStateOf(
   };
   const stepRows = (await handlerRowsOf(ids)).filter(isStepRow);
   const stepsOf = (role: Role) =>
-    stepRows.filter((row) => row.taskId === roles[role]).map((row) => row.stepNo);
+    stepRows
+      .filter((row) => row.taskId === roles[role])
+      .map((row) => row.stepNo);
   const recoveries = await recoveriesOf(control, ids);
   const parentInbox = await inboxOf(tree.parentId);
   const readerInbox = await inboxOf(tree.readerId);
@@ -218,12 +243,14 @@ async function endStateOf(
       writer: recoveries.get(tree.writerId) ?? -1,
       reader: recoveries.get(tree.readerId) ?? -1,
     },
-    readerInbox: readerInbox.map(({ kind, payload, status, deliveredStep }) => ({
-      kind,
-      payload,
-      status,
-      deliveredStep,
-    })),
+    readerInbox: readerInbox.map(
+      ({ kind, payload, status, deliveredStep }) => ({
+        kind,
+        payload,
+        status,
+        deliveredStep,
+      }),
+    ),
     parentInbox: parentInbox
       .map((message) => ({
         kind: message.kind,
@@ -248,11 +275,26 @@ const REFERENCE_END: EndState = {
   parentCommittedEqualsStepNo: true,
   recoveries: { parent: 0, writer: 0, reader: 0 },
   readerInbox: [
-    { kind: 'note', payload: { text: 'hello C2' }, status: 'delivered', deliveredStep: 0 },
+    {
+      kind: 'note',
+      payload: { text: 'hello C2' },
+      status: 'delivered',
+      deliveredStep: 0,
+    },
   ],
   parentInbox: [
-    { kind: 'child_finished', sender: 'reader', status: 'delivered', childStatus: 'completed' },
-    { kind: 'child_finished', sender: 'writer', status: 'delivered', childStatus: 'completed' },
+    {
+      kind: 'child_finished',
+      sender: 'reader',
+      status: 'delivered',
+      childStatus: 'completed',
+    },
+    {
+      kind: 'child_finished',
+      sender: 'writer',
+      status: 'delivered',
+      childStatus: 'completed',
+    },
   ],
 };
 
@@ -272,7 +314,9 @@ async function finishTree(
 
 /** Committed step rows of one task: step numbers of the commits that happened. */
 async function stepRowsOf(taskId: string): Promise<number[]> {
-  return (await handlerRowsOf([taskId])).filter(isStepRow).map((row) => row.stepNo);
+  return (await handlerRowsOf([taskId]))
+    .filter(isStepRow)
+    .map((row) => row.stepNo);
 }
 
 async function statusOf(taskId: string): Promise<string | undefined> {
@@ -338,7 +382,7 @@ const KILL_ROWS: KillRow[] = [
     lostStep: null,
   },
   {
-    name: 'after a message enqueue, before the wake-up (C1\'s notice to P)',
+    name: "after a message enqueue, before the wake-up (C1's notice to P)",
     crashAt: 'inbox.before-wake',
     thenSweeperKill: false,
     leftRows: [0, 1],
@@ -346,7 +390,7 @@ const KILL_ROWS: KillRow[] = [
     lostStep: 2,
   },
   {
-    name: 'after the sweeper\'s requeue (second kill)',
+    name: "after the sweeper's requeue (second kill)",
     crashAt: 'step.after-claim:2',
     thenSweeperKill: true,
     leftRows: [0],
@@ -452,7 +496,10 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         const tree = await createTree(control, types);
 
         // The dying child runs only C1, so `:n` counts C1's passes of the point.
-        const dying = await children.start({ types: { writer: types.writer }, crashAt: row.crashAt });
+        const dying = await children.start({
+          types: { writer: types.writer },
+          crashAt: row.crashAt,
+        });
         await dying.crashed();
         // What the dead child left: a lost step has no row, a committed one has exactly one.
         expect(await stepRowsOf(tree.writerId)).toEqual(row.leftRows);
@@ -460,13 +507,19 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         if (row.thenSweeperKill) {
           await killAtSweeperRequeue(children, types, tree);
           expect(await statusOf(tree.writerId)).toBe('queued');
-          expect((await recoveriesOf(control, [tree.writerId])).get(tree.writerId)).toBe(1);
+          expect(
+            (await recoveriesOf(control, [tree.writerId])).get(tree.writerId),
+          ).toBe(1);
         }
         await finishTree(children, types, tree);
 
         const { end, flagged } = await endStateOf(control, tree);
         expect(end).toEqual(REFERENCE_END);
-        expect(flagged).toEqual(row.lostStep === null ? [] : [{ role: 'writer', stepNo: row.lostStep }]);
+        expect(flagged).toEqual(
+          row.lostStep === null
+            ? []
+            : [{ role: 'writer', stepNo: row.lostStep }],
+        );
       } finally {
         await children.killAll();
         await control.close();
@@ -476,7 +529,7 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
   );
 
   it(
-    'E2E-1 guard: after a kill between the intent and the step\'s commit the redone step sees the loss flag and the intent and does not repeat the external action',
+    "E2E-1 guard: after a kill between the intent and the step's commit the redone step sees the loss flag and the intent and does not repeat the external action",
     async () => {
       const types = treeTypes();
       const control = await testRuntime(types);
@@ -502,7 +555,11 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
 
         const stepRows = (await handlerRowsOf([tree.writerId]))
           .filter(isStepRow)
-          .map(({ stepNo, resumedAfterLoss, note }) => ({ stepNo, resumedAfterLoss, note }));
+          .map(({ stepNo, resumedAfterLoss, note }) => ({
+            stepNo,
+            resumedAfterLoss,
+            note,
+          }));
         expect(stepRows).toEqual([
           { stepNo: 0, resumedAfterLoss: false, note: STEP_DONE },
           { stepNo: 1, resumedAfterLoss: true, note: STEP_UNKNOWN },
@@ -523,7 +580,10 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
   it(
     'E2E-1 recovery exhausted: a step that kills its process every time fails the task with recovery_exhausted after the permitted losses and tells the parent once',
     async () => {
-      const types = { parent: uniqueType('e2e1-parent'), writer: uniqueType('e2e1-killer') };
+      const types = {
+        parent: uniqueType('e2e1-parent'),
+        writer: uniqueType('e2e1-killer'),
+      };
       const control = await testRuntime(types);
       const children = new Children();
       try {
@@ -544,15 +604,22 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         // longer claims it and lives.
         let crashes = 0;
         let failedWhileAlive = false;
-        for (let start = 0; start < MAX_STARTS && !failedWhileAlive; start += 1) {
+        for (
+          let start = 0;
+          start < MAX_STARTS && !failedWhileAlive;
+          start += 1
+        ) {
           const child = await children.start({
             types: { writer: types.writer },
             crashAt: 'step.after-claim',
           });
-          const end = await child.untilOrExit(async () => (await statusOf(killerId)) === 'failed', {
-            what: 'its crash or the failure of the task',
-            timeoutMs: RESUME_TARGET_MS,
-          });
+          const end = await child.untilOrExit(
+            async () => (await statusOf(killerId)) === 'failed',
+            {
+              what: 'its crash or the failure of the task',
+              timeoutMs: RESUME_TARGET_MS,
+            },
+          );
           if (end === 'exited') {
             await child.crashed();
             crashes += 1;
@@ -589,7 +656,12 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
           childStatus: (message.payload as { status?: unknown }).status,
         }));
         expect(notices).toEqual([
-          { kind: 'child_finished', sender: killerId, status: 'delivered', childStatus: 'failed' },
+          {
+            kind: 'child_finished',
+            sender: killerId,
+            status: 'delivered',
+            childStatus: 'failed',
+          },
         ]);
         expect(await statusOf(parentId)).toBe('completed');
       } finally {
@@ -603,7 +675,10 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
   it(
     'E2E-1 decision: an open decision and a pending message survive a restart, the decision resolves once, and the next step gets both',
     async () => {
-      const types = { parent: uniqueType('e2e1-parent'), decider: uniqueType('e2e1-decider') };
+      const types = {
+        parent: uniqueType('e2e1-parent'),
+        decider: uniqueType('e2e1-decider'),
+      };
       const control = await testRuntime(types);
       const children = new Children();
       try {
@@ -621,7 +696,8 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         });
         const first = await children.start({ types });
         await first.until(
-          async () => (await control.decisions.listTree(parentId, ownerId)).filter(
+          async () =>
+            (await control.decisions.listTree(parentId, ownerId)).filter(
               (d) => d.status === 'open',
             ).length === 1,
           { what: 'the decision request', timeoutMs: RESUME_TARGET_MS },
@@ -639,26 +715,37 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         const second = await children.start({ types });
 
         const waiting = await control.tasks.get(deciderId, ownerId);
-        expect({ status: waiting.status, waitReason: waiting.waitReason }).toEqual({
+        expect({
+          status: waiting.status,
+          waitReason: waiting.waitReason,
+        }).toEqual({
           status: 'waiting',
           waitReason: 'decision',
         });
-        const open = (await control.decisions.listTree(parentId, ownerId)).filter(
-          (d) => d.status === 'open',
-        );
-        expect(open.map(({ taskId, kind, payload }) => ({ taskId, kind, payload }))).toEqual([
+        const open = (
+          await control.decisions.listTree(parentId, ownerId)
+        ).filter((d) => d.status === 'open');
+        expect(
+          open.map(({ taskId, kind, payload }) => ({ taskId, kind, payload })),
+        ).toEqual([
           { taskId: deciderId, kind: DECISION_KIND, payload: DECISION_PAYLOAD },
         ]);
         const pending = await control.inbox.listPending(deciderId, ownerId);
-        expect(pending.map((message) => message.payload)).toEqual([{ text: 'while waiting' }]);
+        expect(pending.map((message) => message.payload)).toEqual([
+          { text: 'while waiting' },
+        ]);
 
         const { decisionId } = open[0];
-        expect(await control.decisions.resolve(decisionId, ownerId, { approved: true })).toBe(
-          'resolved',
-        );
-        expect(await control.decisions.resolve(decisionId, ownerId, { approved: false })).toBe(
-          'already_resolved',
-        );
+        expect(
+          await control.decisions.resolve(decisionId, ownerId, {
+            approved: true,
+          }),
+        ).toBe('resolved');
+        expect(
+          await control.decisions.resolve(decisionId, ownerId, {
+            approved: false,
+          }),
+        ).toBe('already_resolved');
 
         await second.until(() => allCompleted([parentId, deciderId]), {
           what: 'the tree to complete after the decision',
@@ -666,8 +753,13 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
         });
         await second.stop();
 
-        const view: DeciderView = { decision: { approved: true }, messages: [{ text: 'while waiting' }] };
-        const rows = (await handlerRowsOf([deciderId])).map(({ stepNo, note }) => ({ stepNo, note }));
+        const view: DeciderView = {
+          decision: { approved: true },
+          messages: [{ text: 'while waiting' }],
+        };
+        const rows = (await handlerRowsOf([deciderId])).map(
+          ({ stepNo, note }) => ({ stepNo, note }),
+        );
         expect(rows).toEqual([
           { stepNo: 0, note: STEP_ASKED },
           { stepNo: 1, note: JSON.stringify(view) },
@@ -680,17 +772,27 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
           SELECT status, resolution, delivered_step AS "deliveredStep"
             FROM app.runtime_decisions WHERE task_id = ${deciderId}`);
         expect(decisions).toEqual([
-          { status: 'resolved', resolution: { approved: true }, deliveredStep: 1 },
+          {
+            status: 'resolved',
+            resolution: { approved: true },
+            deliveredStep: 1,
+          },
         ]);
-        expect((await control.decisions.listTree(parentId, ownerId)).filter(
-          (d) => d.status === 'open',
-        )).toEqual([]);
-        const inbox = (await inboxOf(deciderId)).map(({ kind, status, deliveredStep }) => ({
-          kind,
-          status,
-          deliveredStep,
-        }));
-        expect(inbox).toEqual([{ kind: 'note', status: 'delivered', deliveredStep: 1 }]);
+        expect(
+          (await control.decisions.listTree(parentId, ownerId)).filter(
+            (d) => d.status === 'open',
+          ),
+        ).toEqual([]);
+        const inbox = (await inboxOf(deciderId)).map(
+          ({ kind, status, deliveredStep }) => ({
+            kind,
+            status,
+            deliveredStep,
+          }),
+        );
+        expect(inbox).toEqual([
+          { kind: 'note', status: 'delivered', deliveredStep: 1 },
+        ]);
       } finally {
         await children.killAll();
         await control.close();

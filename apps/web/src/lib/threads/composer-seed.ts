@@ -20,7 +20,10 @@ export type ComposerSeedState = {
  */
 export type ComposerSeed = StoreApi<ComposerSeedState> & {
   /** The target's seed becomes exactly this: a new chip replaces the previous one, a seed without one drops it. */
-  put: (target: SeedTarget, seed: { record?: ChipRecord; text?: string }) => void;
+  put: (
+    target: SeedTarget,
+    seed: { record?: ChipRecord; text?: string },
+  ) => void;
   /** The template text of `target`, once; `null` when there is none or it was already taken. */
   takeText: (target: SeedTarget) => string | null;
   /**
@@ -32,26 +35,42 @@ export type ComposerSeed = StoreApi<ComposerSeedState> & {
   move: (from: SeedTarget, to: SeedTarget) => void;
 };
 
-function without<V>(map: ReadonlyMap<SeedTarget, V>, key: SeedTarget): Map<SeedTarget, V> {
+function without<V>(
+  map: ReadonlyMap<SeedTarget, V>,
+  key: SeedTarget,
+): Map<SeedTarget, V> {
   const next = new Map(map);
   next.delete(key);
   return next;
 }
 
-function withEntry<V>(map: ReadonlyMap<SeedTarget, V>, key: SeedTarget, value: V | undefined): Map<SeedTarget, V> {
+function withEntry<V>(
+  map: ReadonlyMap<SeedTarget, V>,
+  key: SeedTarget,
+  value: V | undefined,
+): Map<SeedTarget, V> {
   const next = without(map, key);
   if (value !== undefined) next.set(key, value);
   return next;
 }
 
 export function createComposerSeed(): ComposerSeed {
-  const store = createStore<ComposerSeedState>()(() => ({ chips: new Map(), texts: new Map() }));
+  const store = createStore<ComposerSeedState>()(() => ({
+    chips: new Map(),
+    texts: new Map(),
+  }));
   const { getState: get, setState: set } = store;
 
   return Object.assign(store, {
-    put: (target: SeedTarget, { record, text }: { record?: ChipRecord; text?: string }): void => {
+    put: (
+      target: SeedTarget,
+      { record, text }: { record?: ChipRecord; text?: string },
+    ): void => {
       const { chips, texts } = get();
-      set({ chips: withEntry(chips, target, record), texts: withEntry(texts, target, text) });
+      set({
+        chips: withEntry(chips, target, record),
+        texts: withEntry(texts, target, text),
+      });
     },
     takeText: (target: SeedTarget): string | null => {
       const { texts } = get();
@@ -63,14 +82,23 @@ export function createComposerSeed(): ComposerSeed {
     clear: (target: SeedTarget, record?: ChipRecord): void => {
       const { chips } = get();
       const chip = chips.get(target);
-      if (chip === undefined || (record !== undefined && chip !== record)) return;
+      if (chip === undefined || (record !== undefined && chip !== record))
+        return;
       set({ chips: without(chips, target) });
     },
     move: (from: SeedTarget, to: SeedTarget): void => {
       const { chips, texts } = get();
       set({
-        chips: withEntry(without(chips, from), to, chips.get(from) ?? chips.get(to)),
-        texts: withEntry(without(texts, from), to, texts.get(from) ?? texts.get(to)),
+        chips: withEntry(
+          without(chips, from),
+          to,
+          chips.get(from) ?? chips.get(to),
+        ),
+        texts: withEntry(
+          without(texts, from),
+          to,
+          texts.get(from) ?? texts.get(to),
+        ),
       });
     },
   });

@@ -1,14 +1,17 @@
-"use client";
+'use client';
 
-import { useId, useState } from "react";
-import { useTranslations } from "next-intl";
-import { ChevronRightIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useId, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { ChevronRightIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /** Mono 13 / 20 up to 320 px in the tool-call block, Mono 14 / 22 whole in the decision card (tool-call.md). */
 const CODE = {
-  data: { block: "max-h-80 overflow-auto text-[13px] leading-5", line: "min-h-5" },
-  ui: { block: "text-sm leading-[22px]", line: "min-h-[22px]" },
+  data: {
+    block: 'max-h-80 overflow-auto text-[13px] leading-5',
+    line: 'min-h-5',
+  },
+  ui: { block: 'text-sm leading-[22px]', line: 'min-h-[22px]' },
 } as const;
 
 export type ScriptToggleProps = {
@@ -26,7 +29,7 @@ const LINE_TERMINATOR = /\r\n|[\n\r\u2028\u2029]/;
  * `dd` parts, so it stands in a `dl` right after the row's `dt`.
  */
 export function ScriptToggle({ script, density }: ScriptToggleProps) {
-  const t = useTranslations("agents");
+  const t = useTranslations('agents');
   const [open, setOpen] = useState(false);
   const blockId = useId();
   const lines = script.split(LINE_TERMINATOR);
@@ -45,11 +48,11 @@ export function ScriptToggle({ script, density }: ScriptToggleProps) {
           <ChevronRightIcon
             aria-hidden
             className={cn(
-              "size-3.5 transition-transform duration-(--duration-fast) motion-reduce:transition-none",
-              open && "rotate-90",
+              'size-3.5 transition-transform duration-(--duration-fast) motion-reduce:transition-none',
+              open && 'rotate-90',
             )}
           />
-          {t(open ? "runCode.hideScript" : "runCode.showScript")}
+          {t(open ? 'runCode.hideScript' : 'runCode.showScript')}
         </button>
       </dd>
       {open && (
@@ -57,17 +60,17 @@ export function ScriptToggle({ script, density }: ScriptToggleProps) {
           <div
             id={blockId}
             role="region"
-            aria-label={t("runCode.script")}
+            aria-label={t('runCode.script')}
             // Only the bounded block scrolls, so only it is a focus stop for the arrow keys.
-            tabIndex={density === "data" ? 0 : undefined}
+            tabIndex={density === 'data' ? 0 : undefined}
             className={cn(
-              "bg-muted text-foreground focus-visible:ring-ring animate-in fade-in-0 rounded-md p-2.5 font-mono outline-none duration-(--duration-fast) focus-visible:ring-2 motion-reduce:animate-none",
+              'bg-muted text-foreground focus-visible:ring-ring animate-in fade-in-0 rounded-md p-2.5 font-mono outline-none duration-(--duration-fast) focus-visible:ring-2 motion-reduce:animate-none',
               CODE[density].block,
             )}
           >
             {lines.map((line, index) => (
               // Lines are positional: the script is shown as it is and never reordered.
-              <div key={index} className={cn("flex gap-3", CODE[density].line)}>
+              <div key={index} className={cn('flex gap-3', CODE[density].line)}>
                 <span
                   aria-hidden
                   style={{ minWidth: numberWidth }}
@@ -75,7 +78,9 @@ export function ScriptToggle({ script, density }: ScriptToggleProps) {
                 >
                   {index + 1}
                 </span>
-                <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{line}</span>
+                <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">
+                  {line}
+                </span>
               </div>
             ))}
           </div>

@@ -20,7 +20,14 @@ import { useAdminTitles } from './admin-header';
 import { ADMIN_SECTIONS } from './admin-sections';
 
 /** One skeleton row per section of `ADMIN_SECTIONS`. */
-const SKELETON_WIDTHS = ['w-3/5', 'w-2/5', 'w-1/2', 'w-3/5', 'w-2/5', 'w-1/2'] as const;
+const SKELETON_WIDTHS = [
+  'w-3/5',
+  'w-2/5',
+  'w-1/2',
+  'w-3/5',
+  'w-2/5',
+  'w-1/2',
+] as const;
 
 const itemClass = (isMobile: boolean): string =>
   cn(
@@ -43,7 +50,11 @@ type AdminSidebarNavProps = {
  * AD-01: «К чату», the «Панель» label and the panel's sections in place of «Новый чат», «Агенты» and the history.
  * The selected section is marked as the active thread (SB-06).
  */
-export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebarNavProps) {
+export function AdminSidebarNav({
+  loading,
+  backRef,
+  onMobilePick,
+}: AdminSidebarNavProps) {
   const { isMobile } = useSidebar();
   const t = useTranslations('admin');
   const titles = useAdminTitles();
@@ -70,9 +81,15 @@ export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebar
           <div aria-hidden className="flex flex-col gap-1">
             {SKELETON_WIDTHS.map((width, index) => (
               // The slot of the sidebar kit's own menu skeleton, which pulses even under reduced motion.
-              <div key={index} data-slot="sidebar-menu-skeleton" className="flex h-8 items-center gap-2 px-2">
+              <div
+                key={index}
+                data-slot="sidebar-menu-skeleton"
+                className="flex h-8 items-center gap-2 px-2"
+              >
                 <Skeleton className="size-4 shrink-0 motion-reduce:animate-none" />
-                <Skeleton className={cn('h-3 motion-reduce:animate-none', width)} />
+                <Skeleton
+                  className={cn('h-3 motion-reduce:animate-none', width)}
+                />
               </div>
             ))}
           </div>
@@ -87,7 +104,13 @@ export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebar
                     isActive={isActive}
                     tooltip={isMobile ? undefined : title}
                     className={itemClass(isMobile)}
-                    render={<ShellLink href={path} aria-current={isActive ? 'page' : undefined} onClick={isMobile ? onMobilePick : undefined} />}
+                    render={
+                      <ShellLink
+                        href={path}
+                        aria-current={isActive ? 'page' : undefined}
+                        onClick={isMobile ? onMobilePick : undefined}
+                      />
+                    }
                   >
                     <Icon aria-hidden />
                     <span className="flex-1 truncate">{title}</span>
