@@ -82,4 +82,4 @@
 
 ## Used In
 
-- [docs/features/custom-agents/uxrd.md](../../features/custom-agents/uxrd.md) — кнопка аудитории в редакторе, строка библиотеки, отказ чата, панель администратора.
+- [docs/features/custom-agents/uxrd.md](../../features/custom-agents/uxrd.md) — кнопка аудитории в редакторе и на карточке глубокого агента, строка библиотеки, панель администратора.
