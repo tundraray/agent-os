@@ -2,8 +2,6 @@ import { ChipRecordSchema, RecordKindSchema, type RunOrigin } from '@agent-os/co
 import {
   type AgentSessionRow,
   AgentSessionsRepository,
-  type Executor,
-  type Transaction,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
@@ -129,13 +127,12 @@ export class Sessions {
    * starts with an empty title and its list time. `true` — this call created the session: the caller
    * (`BaseAgent.createSession`) then runs the agent's `sessionCreated` in the same transaction.
    */
-  async ensureSession(tx: Transaction, task: SessionTask, input: SessionInput): Promise<boolean> {
+  async ensureSession(task: SessionTask, input: SessionInput): Promise<boolean> {
     const { taskId, ownerId } = task;
     const root = task.parentId === null;
     const { origin } = input.snapshot;
-    const firstRun = root ? false : !(await this.rows.ranBefore(tx, ownerId, origin.recordId, taskId));
+    const firstRun = root ? false : !(await this.rows.ranBefore(ownerId, origin.recordId, taskId));
     return this.rows.create(
-      tx,
       {
         taskId,
         parentId: task.parentId,
@@ -163,14 +160,14 @@ export class Sessions {
   }
 
   /** The session of the agent; `undefined` when it has none yet. */
-  async get(executor: Executor, taskId: string): Promise<Session | undefined> {
-    const row = await this.rows.find(executor, taskId);
+  async get(taskId: string): Promise<Session | undefined> {
+    const row = await this.rows.find(taskId);
     return row === undefined ? undefined : toSession(row);
   }
 
   /** The sessions of the given agents by task id; an agent without a session is absent. */
-  async getMany(executor: Executor, taskIds: readonly string[]): Promise<Map<string, Session>> {
-    const rows = await this.rows.findMany(executor, taskIds);
+  async getMany(taskIds: readonly string[]): Promise<Map<string, Session>> {
+    const rows = await this.rows.findMany(taskIds);
     return new Map(rows.map((row) => [row.taskId, toSession(row)]));
   }
 }

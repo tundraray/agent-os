@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import type { ToolResultSettings } from '@agent-os/contracts';
-import { AgentToolResultsRepository, DATABASE, type Database, type ToolResultSettingsRow } from '@agent-os/db';
+import { AgentToolResultsRepository, Db, type ToolResultSettingsRow } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
@@ -30,7 +30,7 @@ export class AgentsToolResults {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
@@ -38,7 +38,7 @@ export class AgentsToolResults {
   }
 
   async settings(): Promise<ToolResultSettings> {
-    return settingsView(await this.toolResultRows.readSettings(this.database));
+    return settingsView(await this.toolResultRows.readSettings());
   }
 
   async updateSettings({
@@ -48,8 +48,8 @@ export class AgentsToolResults {
     readMaxTokens,
   }: ToolResultSettingsUpdate): Promise<ToolResultSettingsChange> {
     const startedAt = Date.now();
-    const change = await this.database.transaction((tx) =>
-      this.toolResultRows.writeSettings(tx, { storeFromChars, previewChars, readMaxTokens }),
+    const change = await this.db.transaction(async () =>
+      this.toolResultRows.writeSettings({ storeFromChars, previewChars, readMaxTokens }),
     );
     const before = settingsView(change.before);
     const after = settingsView(change.after);

@@ -4,9 +4,8 @@ export {
   type Database,
   type DatabaseConnection,
   type DatabaseOptions,
-  type Executor,
-  type Transaction,
 } from './database';
+export { Db } from './db';
 export { DbModule } from './db.module';
 export { DATABASE, DATABASE_CONNECTION } from './db.tokens';
 export * from './repositories';

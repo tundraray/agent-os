@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import type {
-  DatabaseConnection,
+  Db,
   IdentitySettingsRepository,
   IdentitySettingsRow,
 } from '@agent-os/db';
@@ -32,7 +32,7 @@ function settingsRow(publicUrl: string | null): IdentitySettingsRow {
 // so the fallback public address is FRONTEND_ORIGIN, saved once, and only when it is a valid one.
 describe('public address without a saved one: the saved one wins, a valid FRONTEND_ORIGIN is returned and saved, http on another host is refused and nothing is saved', () => {
   const settings = new IdentitySettings(
-    { db: {} } as DatabaseConnection,
+    {} as Db,
     {
       read: readSettings,
       savePublicUrlIfUnset,
@@ -71,10 +71,7 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
       if (savedNow === undefined)
         expect(savePublicUrlIfUnset).not.toHaveBeenCalled();
       else
-        expect(savePublicUrlIfUnset).toHaveBeenCalledWith(
-          expect.anything(),
-          savedNow,
-        );
+        expect(savePublicUrlIfUnset).toHaveBeenCalledWith(savedNow);
     },
   );
 

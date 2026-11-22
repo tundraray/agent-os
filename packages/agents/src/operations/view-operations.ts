@@ -14,8 +14,6 @@ import {
   AgentMessagesRepository,
   AgentSessionsRepository,
   AgentSessionTasksRepository,
-  DATABASE,
-  type Database,
   type RootSession,
 } from '@agent-os/db';
 import { Decisions, Inbox, type Task, TaskControl, Trackers, type TrackerTask } from '@agent-os/runtime';
@@ -92,7 +90,6 @@ export class ViewOperations {
   private readonly logged: ReturnType<typeof createLogged>;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
     /** The sessions, the history and the task lists the operations read after the runtime's owner check. */
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
@@ -129,7 +126,7 @@ export class ViewOperations {
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
         // A child whose session is not written yet (between `tasks.create` and `ensureSession`) is not shown.
-        const session = await this.sessions.get(this.database, agentId);
+        const session = await this.sessions.get(agentId);
         if (session === undefined) throw agentNotFound(agentId);
         return this.view(task, session);
       },
@@ -144,7 +141,6 @@ export class ViewOperations {
       async () => {
         const agents = await this.tree(rootId, ownerId);
         const found = await this.sessions.getMany(
-          this.database,
           agents.map((task) => task.taskId),
         );
         const views: AgentView[] = [];
@@ -166,14 +162,14 @@ export class ViewOperations {
         const task = await agentTask(this.tasks, agentId, ownerId);
         const isStopped = task.status === stopped;
         const derived = isStopped
-          ? await stopEntries({ history: this.entries, messageRows: this.messageRows }, this.database, {
+          ? await stopEntries({ history: this.entries, messageRows: this.messageRows }, {
               task,
               parent: await parentOf(this.tasks, task, ownerId),
             })
           : [];
         // The page is cut by the query after the call records are left out, so a page shorter than
         // `limit` is the end of the history.
-        const stored = await this.entries.page(this.database, agentId, afterSeq, limit);
+        const stored = await this.entries.page(agentId, afterSeq, limit);
         const answers = stored.filter((entry) => entry.kind === 'model_answer');
         const calls = await this.callsOf(agentId, answers, isStopped);
         const page: AgentHistoryEntry[] = stored.map((entry) => {
@@ -240,7 +236,7 @@ export class ViewOperations {
         // The owner check first: the list is read only for the owner's session (AC-17.1).
         await agentTask(this.tasks, agentId, ownerId);
         const [tasks, delegations] = await Promise.all([
-          this.sessionTaskRows.list(this.database, agentId),
+          this.sessionTaskRows.list(agentId),
           this.delegationsOf(agentId, ownerId),
         ]);
         return {
@@ -281,7 +277,7 @@ export class ViewOperations {
     return this.logged(
       'root',
       { rootId, ownerId },
-      () => this.sessionRows.root(this.database, rootId, ownerId),
+      () => this.sessionRows.root(rootId, ownerId),
       (found) => ({ found: found !== undefined }),
     );
   }
@@ -291,7 +287,7 @@ export class ViewOperations {
     return this.logged(
       'rootOwner',
       { rootId },
-      () => this.sessionRows.rootOwner(this.database, rootId),
+      () => this.sessionRows.rootOwner(rootId),
       (ownerId) => ({ ownerId: ownerId ?? null }),
       // The live hub asks on every runtime event of every running agent.
       'debug',
@@ -304,7 +300,7 @@ export class ViewOperations {
       'roots',
       { ownerId, afterRootId: after?.rootId ?? null, limit: limit ?? null },
       () =>
-        this.sessionRows.roots(this.database, ownerId, {
+        this.sessionRows.roots(ownerId, {
           ...(after === undefined ? {} : { after }),
           ...(limit === undefined ? {} : { limit }),
         }),
@@ -329,10 +325,9 @@ export class ViewOperations {
     if (tasks.length === 0) return [];
     const [found, entries] = await Promise.all([
       this.sessions.getMany(
-        this.database,
         tasks.map((task) => task.taskId),
       ),
-      this.entries.all(this.database, agentId),
+      this.entries.all(agentId),
     ]);
     const listTaskOf = new Map<string, number>();
     for (const entry of entries) {
@@ -365,7 +360,7 @@ export class ViewOperations {
     const byAnswer = new Map<number, AnswerToolCall[]>();
     const callIds = answers.flatMap((answer) => answer.content.toolCalls.map((call) => call.callId));
     // Only the records of the page's calls are read, by `(task_id, call_id)`; the answers go first.
-    const calls = foldCalls([...answers, ...(await this.entries.callRecords(this.database, agentId, callIds))]);
+    const calls = foldCalls([...answers, ...(await this.entries.callRecords(agentId, callIds))]);
     const displays = await this.registry.displays(calls);
     for (const [index, call] of calls.entries()) {
       const ofAnswer = byAnswer.get(call.answerSeq) ?? [];

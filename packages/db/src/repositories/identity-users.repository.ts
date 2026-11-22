@@ -1,7 +1,7 @@
 import { UserStatusSchema, type Language, type UserStatus } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { identityUsers } from '../schema';
 import { IS_ADMIN } from './identity-columns';
 
@@ -35,19 +35,20 @@ export interface UserPageQuery {
 const escapeLikePattern = (text: string): string => text.replace(/[\\%_]/g, '\\$&');
 
 /**
- * Drizzle queries of `identity_users` (repository over a transaction): each takes the caller's
- * transaction or the plain client first. The id is always the database's `gen_random_uuid()`
+ * Drizzle queries of `identity_users`. The id is always the database's `gen_random_uuid()`
  * (ADR-0012, Invariant 3).
  */
 @Injectable()
 export class IdentityUsersRepository {
-  async findByLogin(executor: Executor, login: string): Promise<IdentityUserRow | undefined> {
-    const [row] = await executor.select().from(identityUsers).where(eq(identityUsers.login, login));
+  constructor(@Inject(Db) private readonly db: Db) {}
+
+  async findByLogin(login: string): Promise<IdentityUserRow | undefined> {
+    const [row] = await this.db.client.select().from(identityUsers).where(eq(identityUsers.login, login));
     return row;
   }
 
-  async insertLocal(executor: Executor, user: NewLocalUserRow): Promise<IdentityUserRow> {
-    const [row] = await executor.insert(identityUsers).values(user).returning();
+  async insertLocal(user: NewLocalUserRow): Promise<IdentityUserRow> {
+    const [row] = await this.db.client.insert(identityUsers).values(user).returning();
     if (row === undefined) throw new Error('identity_users insert returned no row');
     return row;
   }
@@ -58,10 +59,9 @@ export class IdentityUsersRepository {
    * the status, roles, login and password stay as they are.
    */
   async upsertFromProvider(
-    executor: Executor,
     user: { email: string; name: string | undefined },
   ): Promise<IdentityUserRow> {
-    const [row] = await executor
+    const [row] = await this.db.client
       .insert(identityUsers)
       .values({ email: user.email, name: user.name ?? '' })
       .onConflictDoUpdate({
@@ -73,14 +73,14 @@ export class IdentityUsersRepository {
     return row;
   }
 
-  async findById(executor: Executor, userId: string): Promise<IdentityUserRow | undefined> {
-    const [row] = await executor.select().from(identityUsers).where(eq(identityUsers.id, userId));
+  async findById(userId: string): Promise<IdentityUserRow | undefined> {
+    const [row] = await this.db.client.select().from(identityUsers).where(eq(identityUsers.id, userId));
     return row;
   }
 
   /** Whether the employee has the admin right now; `false` for an unknown one. */
-  async hasAdminRight(executor: Executor, userId: string): Promise<boolean> {
-    const [row] = await executor
+  async hasAdminRight(userId: string): Promise<boolean> {
+    const [row] = await this.db.client
       .select({ isAdmin: IS_ADMIN })
       .from(identityUsers)
       .where(eq(identityUsers.id, userId));
@@ -88,9 +88,9 @@ export class IdentityUsersRepository {
   }
 
   /** Of the employee ids given, those of employees that exist. */
-  async existingIds(executor: Executor, userIds: string[]): Promise<string[]> {
+  async existingIds(userIds: string[]): Promise<string[]> {
     if (userIds.length === 0) return [];
-    const rows = await executor
+    const rows = await this.db.client
       .select({ id: identityUsers.id })
       .from(identityUsers)
       .where(inArray(identityUsers.id, userIds));
@@ -98,12 +98,9 @@ export class IdentityUsersRepository {
   }
 
   /** Id, name and status of the employees named, by name. */
-  async names(
-    executor: Executor,
-    userIds: string[],
-  ): Promise<{ id: string; name: string; status: string }[]> {
+  async names(userIds: string[]): Promise<{ id: string; name: string; status: string }[]> {
     if (userIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select({ id: identityUsers.id, name: identityUsers.name, status: identityUsers.status })
       .from(identityUsers)
       .where(inArray(identityUsers.id, userIds))
@@ -111,10 +108,10 @@ export class IdentityUsersRepository {
   }
 
   /** Up to `limit` employees by name, then id, strictly after `after` (keyset over the pair). */
-  async page(executor: Executor, query: UserPageQuery): Promise<IdentityUserRow[]> {
+  async page(query: UserPageQuery): Promise<IdentityUserRow[]> {
     const search = query.search?.trim();
     const pattern = search ? `%${escapeLikePattern(search)}%` : undefined;
-    return executor
+    return this.db.client
       .select()
       .from(identityUsers)
       .where(
@@ -136,42 +133,41 @@ export class IdentityUsersRepository {
   }
 
   /** Replaces the password hash; the status stays as it is. */
-  async setPasswordHash(executor: Executor, userId: string, passwordHash: string): Promise<void> {
-    await executor.update(identityUsers).set({ passwordHash }).where(eq(identityUsers.id, userId));
+  async setPasswordHash(userId: string, passwordHash: string): Promise<void> {
+    await this.db.client.update(identityUsers).set({ passwordHash }).where(eq(identityUsers.id, userId));
   }
 
   /** Gives or takes the personal admin right. */
-  async setPersonalAdmin(executor: Executor, userId: string, enabled: boolean): Promise<void> {
-    await executor
+  async setPersonalAdmin(userId: string, enabled: boolean): Promise<void> {
+    await this.db.client
       .update(identityUsers)
       .set({ isAdmin: enabled })
       .where(eq(identityUsers.id, userId));
   }
 
   /** Turns the account on or off; nothing else of the employee changes. */
-  async setStatus(executor: Executor, userId: string, status: UserStatus): Promise<void> {
-    await executor.update(identityUsers).set({ status }).where(eq(identityUsers.id, userId));
+  async setStatus(userId: string, status: UserStatus): Promise<void> {
+    await this.db.client.update(identityUsers).set({ status }).where(eq(identityUsers.id, userId));
   }
 
   /** Sets a new password hash and turns the account on. */
   async setPasswordAndEnable(
-    executor: Executor,
     userId: string,
     passwordHash: string,
   ): Promise<void> {
-    await executor
+    await this.db.client
       .update(identityUsers)
       .set({ passwordHash, status: UserStatusSchema.enum.active })
       .where(eq(identityUsers.id, userId));
   }
 
   /** Records the employee's interface language. */
-  async setLanguage(executor: Executor, userId: string, language: Language): Promise<void> {
-    await executor.update(identityUsers).set({ language }).where(eq(identityUsers.id, userId));
+  async setLanguage(userId: string, language: Language): Promise<void> {
+    await this.db.client.update(identityUsers).set({ language }).where(eq(identityUsers.id, userId));
   }
 
-  async markSignedIn(executor: Executor, userId: string): Promise<void> {
-    await executor
+  async markSignedIn(userId: string): Promise<void> {
+    await this.db.client
       .update(identityUsers)
       .set({ lastSignInAt: sql`now()` })
       .where(eq(identityUsers.id, userId));

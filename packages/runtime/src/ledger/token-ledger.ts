@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@agent-os/common';
-import { DATABASE, type Database, RuntimeModelCallsRepository } from '@agent-os/db';
+import { RuntimeModelCallsRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '../clock';
 import { CLOCK, RUNTIME_LOGGER } from '../runtime.tokens';
@@ -37,7 +37,6 @@ export interface MonthSpend {
 }
 
 interface TokenLedgerDeps {
-  db: Database;
   rows: RuntimeModelCallsRepository;
   clock: Clock;
   logger: Logger;
@@ -55,20 +54,19 @@ export class TokenLedger {
   private readonly deps: TokenLedgerDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
     @Inject(RuntimeModelCallsRepository) rows: RuntimeModelCallsRepository,
     @Inject(CLOCK) clock: Clock,
     @Inject(RUNTIME_LOGGER) logger: Logger,
   ) {
-    this.deps = { db, rows, clock, logger: logger.child({ service: 'ledger' }) };
+    this.deps = { rows, clock, logger: logger.child({ service: 'ledger' }) };
   }
 
   /** Records a finished call at the price of its record. */
   async record(call: ModelCallRecord): Promise<RecordedCall> {
-    const { db, rows, clock, logger } = this.deps;
+    const { rows, clock, logger } = this.deps;
     const costUsd = callCostUsd(call.price, call.usage);
     const callId = randomUUID();
-    await rows.insert(db, {
+    await rows.insert({
       callId,
       ownerId: call.ownerId,
       taskId: call.taskId ?? null,
@@ -96,8 +94,7 @@ export class TokenLedger {
    * `[start of the month UTC, start of the next)`. An empty month gives zeros.
    */
   async monthSpend(ownerId: string, month: string): Promise<MonthSpend> {
-    const { db, rows } = this.deps;
-    const row = await rows.sumOwned(db, ownerId, monthWindowUtc(month));
+    const row = await this.deps.rows.sumOwned(ownerId, monthWindowUtc(month));
     return { costUsd: Number(row?.costUsd ?? 0), calls: row?.calls ?? 0 };
   }
 
@@ -106,8 +103,7 @@ export class TokenLedger {
    * {@link monthSpend}: model -> USD. A model with no call in the month is absent.
    */
   async monthSpendByModel(ownerId: string, month: string): Promise<ReadonlyMap<string, number>> {
-    const { db, rows } = this.deps;
-    const spent = await rows.sumOwnedByModel(db, ownerId, monthWindowUtc(month));
+    const spent = await this.deps.rows.sumOwnedByModel(ownerId, monthWindowUtc(month));
     return new Map(spent.map((row) => [row.model, Number(row.costUsd)]));
   }
 }

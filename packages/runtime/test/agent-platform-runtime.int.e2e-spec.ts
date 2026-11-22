@@ -1270,9 +1270,9 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         await spawnSteps.of(ctx.taskId).pass(ctx.signal);
         return {
           outcome: 'wait',
-          commit: async (tx, effects) => {
+          commit: async (effects) => {
             await effects.spawn({ type: childType, input: {} });
-            await writeHandlerRow(ctx, 'spawned')(tx);
+            await writeHandlerRow(ctx, 'spawned')();
           },
         };
       },
@@ -1336,7 +1336,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       async step() {
         return {
           outcome: 'wait',
-          commit: async (_tx, effects) => {
+          commit: async (effects) => {
             spawnedIds.length = 0; // a retried commit spawns again
             for (let index = 0; index < 5; index += 1) {
               spawnedIds.push(await effects.spawn({ type: childType, input: { index } }));

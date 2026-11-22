@@ -297,8 +297,8 @@ const CARD_ACTION: Record<string, LibraryRecordAction> = {
  * Each is a thin adapter: rights and rules live in `LibraryChatService` and `decideSave`. `create_record`,
  * `edit_record` and `delete_record` wait for the employee's `library.record` card: `review` asks the
  * library before the card, and a refusal closes the call with its text and no card; `execute` saves the
- * approved card's content in the step's transaction, where the library checks it again under the row
- * lock. The facts of a call — the admin right, the servers, the models — are read outside the
+ * approved card's content in the step's transaction, where the library checks it again.
+ * The facts of a call — the admin right, the servers, the models — are read outside the
  * transaction (`review`, `prepare`). The log names the employee, the agent, the call, the action, the
  * record, the outcome and the reason; `loggedArgs` name only the record (Security Considerations).
  */
@@ -394,13 +394,13 @@ function createRecordTools(options: RecordToolsOptions) {
         review: (args, caller) => review(tool, changeOf(args), caller),
       },
       prepare: ({ caller }) => contextOf(caller.ownerId),
-      async execute({ caller, callId, tx, prepared, confirmed }) {
+      async execute({ caller, callId, prepared, confirmed }) {
         if (prepared === undefined || confirmed === undefined)
           throw new Error(`${tool} of agent ${caller.agentId} runs without its approved card`);
         const card = LibraryRecordCardSchema.parse(confirmed);
         if (card.action !== CARD_ACTION[tool])
           throw new Error(`${tool} of agent ${caller.agentId} got a ${card.action} card`);
-        const saved = await library.saveChatChange(tx, prepared, card);
+        const saved = await library.saveChatChange(prepared, card);
         const call = { ownerId: caller.ownerId, agentId: caller.agentId, callId };
         if (saved.outcome === 'refused') {
           const answer = refused(saved);

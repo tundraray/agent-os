@@ -9,6 +9,7 @@ import {
   type ModuleMetadata,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { Db } from './db';
 import { DATABASE, DATABASE_CONNECTION } from './db.tokens';
 import { REPOSITORIES } from './repositories';
 import {
@@ -57,9 +58,10 @@ export class DbModule implements OnApplicationShutdown {
           inject: [DATABASE_CONNECTION],
           useFactory: (connection: DatabaseConnection) => connection.db,
         },
+        Db,
         ...REPOSITORIES,
       ],
-      exports: [DATABASE_CONNECTION, DATABASE, ...REPOSITORIES],
+      exports: [DATABASE_CONNECTION, DATABASE, Db, ...REPOSITORIES],
     };
   }
 

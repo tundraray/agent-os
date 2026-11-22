@@ -4,11 +4,9 @@ import {
   type RuntimeEventType,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
+  Db,
   RuntimeEventDeliveriesRepository,
   RuntimeEventsRepository,
-  type Transaction,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
@@ -94,13 +92,13 @@ export function upperEventProblem(
 
 /**
  * Transactional outbox: the event, one delivery row per registered consumer of its type and a
- * `NOTIFY` — all in the caller's transaction, so the notification goes out at its commit and
+ * `NOTIFY` — all in the transaction open at the call, so the notification goes out at its commit and
  * nothing is written when it rolls back (ADR-0001).
  */
 @Injectable()
 export class EventLog {
   constructor(
-    @Inject(DATABASE) private readonly db: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(RuntimeEventsRepository) private readonly rows: RuntimeEventsRepository,
     @Inject(RuntimeEventDeliveriesRepository)
     private readonly deliveries: RuntimeEventDeliveriesRepository,
@@ -108,15 +106,15 @@ export class EventLog {
   ) {}
 
   /** Writes an event of the runtime itself. */
-  append(tx: Transaction, event: NewEvent): Promise<StoredEvent> {
-    return this.write(tx, event);
+  append(event: NewEvent): Promise<StoredEvent> {
+    return this.write(event);
   }
 
   /** Writes an upper-layer event; throws when {@link upperEventProblem} finds one. */
-  appendUpper(tx: Transaction, event: NewEvent<string>): Promise<StoredEvent> {
+  appendUpper(event: NewEvent<string>): Promise<StoredEvent> {
     const problem = upperEventProblem(event.type, event.payload);
     if (problem !== undefined) throw new Error(problem);
-    return this.write(tx, event);
+    return this.write(event);
   }
 
   /**
@@ -131,23 +129,20 @@ export class EventLog {
   ): Promise<TreeEvent[]> {
     const cappedLimit = Math.min(Math.max(Math.trunc(limit), 0), LIST_AFTER_MAX_LIMIT);
     if (cappedLimit === 0) return [];
-    return this.rows.listAfter(this.db, rootId, ownerId, afterSeq, cappedLimit);
+    return this.rows.listAfter(rootId, ownerId, afterSeq, cappedLimit);
   }
 
   /** The event by its id, as its consumers receive it. */
-  find(tx: Transaction, eventId: string): Promise<StoredEvent | undefined> {
-    return this.rows.find(tx, eventId);
+  find(eventId: string): Promise<StoredEvent | undefined> {
+    return this.rows.find(eventId);
   }
 
   /** The one way an event, its deliveries and its NOTIFY are written. */
-  private async write(
-    tx: Transaction,
-    event: NewEvent<string>,
-  ): Promise<StoredEvent> {
+  private async write(event: NewEvent<string>): Promise<StoredEvent> {
     const eventId = randomUUID();
     const { taskId, rootId, stepNo } = event.task;
     const causationId = event.causationId ?? null;
-    const row = await this.rows.insert(tx, {
+    const row = await this.rows.insert({
       eventId,
       type: event.type,
       schemaVersion: RUNTIME_EVENT_SCHEMA_VERSION,
@@ -160,10 +155,10 @@ export class EventLog {
 
     const consumerNames = this.consumers.consumerNamesFor(event.type);
     if (consumerNames.length > 0) {
-      await this.deliveries.insert(tx, eventId, consumerNames);
+      await this.deliveries.insert(eventId, consumerNames);
     }
     const notice = JSON.stringify({ rootId, taskId, type: event.type });
-    await tx.execute(sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`);
+    await this.db.client.execute(sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`);
 
     return {
       eventId,

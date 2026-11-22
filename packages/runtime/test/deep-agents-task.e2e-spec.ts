@@ -51,7 +51,7 @@ const ownerWithParkedTasks = (types: Types): ChildTypes => ({
 /** The test process's runtime: workers off, the types registered only so `tasks.create` accepts them. */
 async function testRuntime(types: Types): Promise<RuntimeHarness> {
   const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
-  for (const handler of handlersFor(types, control.db)) control.handlers.register(handler);
+  for (const handler of handlersFor(types, control.runtimeDb)) control.handlers.register(handler);
   return control;
 }
 

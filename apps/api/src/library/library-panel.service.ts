@@ -7,7 +7,7 @@ import type {
   SystemRecordAudienceBody,
   UpdateRecordBody,
 } from '@agent-os/contracts';
-import { LibraryRecordsRepository } from '@agent-os/db';
+import { Db, LibraryRecordsRepository } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
@@ -45,6 +45,7 @@ const NO_HOLDERS: LibraryRecord['holders'] = {
 @Injectable()
 export class LibraryPanelService {
   constructor(
+    private readonly db: Db,
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
     private readonly repository: LibraryRecordsRepository,
@@ -64,7 +65,7 @@ export class LibraryPanelService {
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
         const [records, context] = await Promise.all([
-          this.records.panel(this.records.db, { list }),
+          this.records.panel({ list }),
           this.records.contextOf(viewer, actor.isAdmin, 'panel', facts),
         ]);
         return records.map((record) => recordSummary(record, context));
@@ -78,7 +79,7 @@ export class LibraryPanelService {
     return this.records.logged(
       'bans',
       { viewerId: actor.id },
-      async () => (await this.records.bans(this.records.db)).map(bannedRecord),
+      async () => (await this.records.bans()).map(bannedRecord),
       (rows) => ({ count: rows.length }),
     );
   }
@@ -94,7 +95,7 @@ export class LibraryPanelService {
       { viewerId: actor.id, recordId: id },
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
-        const record = await this.records.panelOr404(this.records.db, id);
+        const record = await this.records.panelOr404(id);
         return this.records.detail(record, viewer, actor.isAdmin, 'panel', facts);
       },
       recordFields,
@@ -150,7 +151,7 @@ export class LibraryPanelService {
     );
   }
 
-  /** PUT /api/admin/library/:id/audience: locked like the employee's; the version stays (DC-11). */
+  /** PUT /api/admin/library/:id/audience: like the employee's; the version stays (DC-11). */
   setSystemAudience(
     actor: LibraryActor,
     id: string,
@@ -168,9 +169,9 @@ export class LibraryPanelService {
       },
       async () => {
         if (!isUuid(id)) throw notFound();
-        const record = await this.records.db.transaction(async (tx) => {
-          if (!(await this.repository.lock(tx, id))) throw notFound();
-          const before = await this.records.panelOr404(tx, id);
+        const record = await this.db.transaction(async () => {
+          if (!(await this.repository.exists(id))) throw notFound();
+          const before = await this.records.panelOr404(id);
           if (before.ownerId !== null) throw readOnly();
           const existing = await this.identity.existing(body);
           const decision = decideSystemAudience({
@@ -182,10 +183,10 @@ export class LibraryPanelService {
           });
           if (decision.kind === 'refused')
             throw libraryError('RECORD_REJECTED', decision.reason);
-          await this.repository.replaceHolders(tx, id, body);
-          await this.repository.setOfferInChat(tx, id, body.offerInChat);
-          const after = present(await this.records.panelOne(tx, id), id);
-          await this.records.audit(tx, actor.id, 'library_audience', before, after);
+          await this.repository.replaceHolders(id, body);
+          await this.repository.setOfferInChat(id, body.offerInChat);
+          const after = present(await this.records.panelOne(id), id);
+          await this.records.audit(actor.id, 'library_audience', before, after);
           return after;
         });
         const viewer = await this.records.viewerOf(actor.id);
@@ -201,10 +202,10 @@ export class LibraryPanelService {
       'delete_system',
       { actorId: actor.id, recordId: id },
       () =>
-        this.records.db.transaction(async (tx) => {
-          const record = await this.records.panelOr404(tx, id);
+        this.db.transaction(async () => {
+          const record = await this.records.panelOr404(id);
           if (record.ownerId !== null) throw readOnly();
-          await this.records.deleteChecked(tx, actor.id, record);
+          await this.records.deleteChecked(actor.id, record);
         }),
     );
   }
@@ -219,13 +220,13 @@ export class LibraryPanelService {
       { actorId: actor.id, recordId: id },
       async () => {
         if (!isUuid(id)) throw notFound();
-        await this.records.db.transaction(async (tx) => {
-          if (!(await this.repository.lock(tx, id))) throw notFound();
-          const before = await this.records.panelOr404(tx, id);
+        await this.db.transaction(async () => {
+          if (!(await this.repository.exists(id))) throw notFound();
+          const before = await this.records.panelOr404(id);
           if (before.ownerId === null) throw notFound();
-          const closedAt = await this.repository.closeSharing(tx, id);
+          const closedAt = await this.repository.closeSharing(id);
           const after = { ...before, holders: NO_HOLDERS, closedAt };
-          await this.records.audit(tx, actor.id, 'library_close', before, after);
+          await this.records.audit(actor.id, 'library_close', before, after);
         });
       },
     );
@@ -238,11 +239,11 @@ export class LibraryPanelService {
       { actorId: actor.id, recordId: id },
       async () => {
         if (!isUuid(id)) throw notFound();
-        await this.records.db.transaction(async (tx) => {
-          if (!(await this.repository.lock(tx, id))) throw notFound();
-          const ban = await this.records.ban(tx, id);
-          if (ban === undefined || !(await this.repository.liftBan(tx, id))) throw notFound();
-          await this.auditLog.record(tx, {
+        await this.db.transaction(async () => {
+          if (!(await this.repository.exists(id))) throw notFound();
+          const ban = await this.records.ban(id);
+          if (ban === undefined || !(await this.repository.liftBan(id))) throw notFound();
+          await this.auditLog.record({
             kind: 'library_unban',
             actor: actor.id,
             objectType: AUDIT_OBJECT_TYPE,

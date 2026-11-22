@@ -8,9 +8,7 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
-  type Transaction,
+  Db,
   RuntimeInboxRepository,
   type RuntimeInboxRow,
   RuntimeTasksRepository,
@@ -26,7 +24,6 @@ import {
 } from '../tasks/guarded-transition';
 import type { EnqueuedMessage, StepMessage } from '../steps/step-contract';
 import type { RuntimeConfig } from '../runtime-config';
-import { retryingTransaction } from '../runtime-tx';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { Tasks } from '../tasks/tasks';
 
@@ -99,7 +96,7 @@ export interface InsertedMessage {
 }
 
 interface InboxDeps {
-  db: Database;
+  db: Db;
   repository: RuntimeInboxRepository;
   tasks: Tasks;
   taskRows: RuntimeTasksRepository;
@@ -135,14 +132,14 @@ function wakeChange(
 
 /**
  * The task inbox: the only writer of `runtime_inbox` rows, through `RuntimeInboxRepository`. A message,
- * its event and the recipient's wake-up commit together, under the recipient's lock.
+ * its event and the recipient's wake-up commit together.
  */
 @Injectable()
 export class Inbox {
   private readonly deps: InboxDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(RuntimeInboxRepository) repository: RuntimeInboxRepository,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
@@ -184,9 +181,7 @@ export class Inbox {
       if (reserved !== undefined) throw new Error(reserved);
       const tooLarge = payloadTooLarge(message.payload, inboxPayloadMaxBytes);
       if (tooLarge) throw tooLarge;
-      const inserted = await retryingTransaction(db, logger, 'inbox.enqueue', (tx) =>
-        this.insertMessage(tx, message),
-      );
+      const inserted = await db.transaction(() => this.insertMessage(message));
       logger.info('message enqueued', {
         ...fields,
         messageId: inserted.messageId,
@@ -208,33 +203,32 @@ export class Inbox {
 
   /** The task's pending messages by `seq`; `[]` for another owner's or a missing task. */
   async listPending(taskId: string, ownerId: string): Promise<StepMessage[]> {
-    const { db, repository } = this.deps;
-    const rows = await repository.listPendingOwned(db, taskId, ownerId);
+    const rows = await this.deps.repository.listPendingOwned(taskId, ownerId);
     return rows.map(toStepMessage);
   }
 
   /**
-   * Locks the recipient FOR UPDATE, takes its `next_message_seq`, writes the `pending` message and
+   * Reads the recipient, takes its `next_message_seq`, writes the `pending` message and
    * `inbox.enqueued`, then wakes the recipient by the wake-up rule with `task.queued`. Throws
    * `TASK_NOT_FOUND` for a missing or another owner's recipient.
    */
-  async insertMessage(tx: Transaction, message: NewMessage): Promise<InsertedMessage> {
+  async insertMessage(message: NewMessage): Promise<InsertedMessage> {
     const { repository, taskRows, events, crashPoints } = this.deps;
-    const locked = await taskRows.lockOwned(tx, message.recipientId, message.ownerId);
-    if (!locked) {
+    const found = await taskRows.findOwned(message.recipientId, message.ownerId);
+    if (!found) {
       throw new RuntimeError(
         'TASK_NOT_FOUND',
         `Task ${message.recipientId} not found`,
       );
     }
-    const seq = locked.nextMessageSeq;
-    const recipient = await this.write(tx, locked, {
+    const seq = found.nextMessageSeq;
+    const recipient = await this.write(found, {
       kind: 'set',
       fields: { nextMessageSeq: seq + 1 },
     });
     const messageId = randomUUID();
     const revive = message.revive ?? false;
-    await repository.insert(tx, {
+    await repository.insert({
       messageId,
       recipientId: recipient.taskId,
       ownerId: recipient.ownerId,
@@ -244,7 +238,7 @@ export class Inbox {
       payload: message.payload,
       revive,
     });
-    await events.append(tx, {
+    await events.append({
       type: EVENT['inbox.enqueued'],
       task: recipient,
       payload: { messageId, seq, kind: message.kind, sender: message.sender, revive },
@@ -253,8 +247,8 @@ export class Inbox {
 
     const wake = wakeChange(recipient, { kind: message.kind, revive });
     if (wake === undefined) return { messageId, seq, recipient };
-    const woken = await this.write(tx, recipient, wake);
-    await events.append(tx, {
+    const woken = await this.write(recipient, wake);
+    await events.append({
       type: EVENT['task.queued'],
       task: woken,
       payload: { cause: 'message', messageId, from: recipient.status },
@@ -264,19 +258,18 @@ export class Inbox {
 
   /**
    * Marks the task's pending messages as delivered to step `stepNo` and writes `inbox.delivered`.
-   * Call it in the step's commit transaction, under the task's lock.
+   * Call it in the step's commit transaction.
    */
   async markDelivered(
-    tx: Transaction,
     task: TaskRow,
     messageIds: readonly string[],
     stepNo: number,
   ): Promise<void> {
     if (messageIds.length === 0) return;
-    const rows = await this.deps.repository.markDelivered(tx, task.taskId, messageIds, stepNo);
+    const rows = await this.deps.repository.markDelivered(task.taskId, messageIds, stepNo);
     if (rows.length === 0) return;
     rows.sort((left, right) => left.seq - right.seq);
-    await this.deps.events.append(tx, {
+    await this.deps.events.append({
       type: EVENT['inbox.delivered'],
       task,
       payload: { messageIds: rows.map((row) => row.messageId), stepNo },
@@ -284,23 +277,21 @@ export class Inbox {
   }
 
   /** The task's pending messages by `seq`. */
-  loadPending(tx: Transaction, taskId: string): Promise<RuntimeInboxRow[]> {
-    return this.deps.repository.listPending(tx, taskId);
+  loadPending(taskId: string): Promise<RuntimeInboxRow[]> {
+    return this.deps.repository.listPending(taskId);
   }
 
   /** Whether a message with `revive` waits in the task's inbox. */
-  hasPendingRevive(tx: Transaction, taskId: string): Promise<boolean> {
-    return this.deps.repository.hasPendingRevive(tx, taskId);
+  hasPendingRevive(taskId: string): Promise<boolean> {
+    return this.deps.repository.hasPendingRevive(taskId);
   }
 
-  /** A guarded write of the locked recipient; it cannot be fenced while the lock is held. */
+  /** A guarded write of the recipient as it was read; throws when it changed meanwhile. */
   private async write(
-    tx: Transaction,
     recipient: TaskRow,
     change: TaskChange,
   ): Promise<TaskRow> {
     const row = await this.deps.tasks.transition(
-      tx,
       {
         taskId: recipient.taskId,
         from: [TaskStatusSchema.parse(recipient.status)],
@@ -309,7 +300,7 @@ export class Inbox {
       change,
     );
     if (!row) {
-      throw new Error(`Write of locked task ${recipient.taskId} matched no row`);
+      throw new Error(`Guarded write of task ${recipient.taskId} matched no row`);
     }
     return row;
   }

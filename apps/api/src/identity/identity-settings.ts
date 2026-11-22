@@ -6,12 +6,10 @@ import {
   type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   type IdentitySettingsChange,
   type IdentitySettingsRow,
   IdentitySettingsRepository,
+  Db,
 } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { identityError } from './identity.errors';
@@ -45,20 +43,16 @@ const auditState = ({
  */
 @Injectable()
 export class IdentitySettings {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly settings: IdentitySettingsRepository,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** The saved public address, or null: the sign-in reads only this, never the request's address. */
   async savedPublicUrl(): Promise<string | null> {
-    return (await this.settings.read(this.db)).publicUrl;
+    return (await this.settings.read()).publicUrl;
   }
 
   /**
@@ -81,7 +75,7 @@ export class IdentitySettings {
       });
       throw identityError('PUBLIC_URL_REQUIRED');
     }
-    if (!(await this.settings.savePublicUrlIfUnset(this.db, candidate)))
+    if (!(await this.settings.savePublicUrlIfUnset(candidate)))
       return (await this.savedPublicUrl()) ?? candidate;
     this.logger.info('public url saved from frontend origin', {
       publicUrl: candidate,
@@ -92,7 +86,7 @@ export class IdentitySettings {
 
   /** GET /api/admin/settings/sign-in (FR-26). */
   async get(): Promise<SignInSettings> {
-    return toSignInSettings(await this.settings.read(this.db));
+    return toSignInSettings(await this.settings.read());
   }
 
   /**
@@ -104,10 +98,10 @@ export class IdentitySettings {
     body: UpdateSignInSettingsBody,
   ): Promise<SignInSettings> {
     const startedAt = Date.now();
-    const { before, after } = await this.db.transaction(async (tx) => {
-      const previous = await this.settings.read(tx);
-      const updated = await this.settings.write(tx, auditState(body));
-      await this.auditLog.record(tx, {
+    const { before, after } = await this.db.transaction(async () => {
+      const previous = await this.settings.read();
+      const updated = await this.settings.write(auditState(body));
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: SETTINGS_OBJECT_TYPE,

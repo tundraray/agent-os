@@ -94,7 +94,6 @@ async function runConfirmed(resolution: StartResolution, inLaunchSet: boolean) {
     callId: 'call-1',
     args: confirmed,
     caller,
-    tx: {},
     effects: {},
     prepared,
     startChild: async (request: StartChildRequest) => {

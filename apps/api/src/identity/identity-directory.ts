@@ -1,10 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  type Executor,
   IdentityRolesRepository,
   IdentityUsersRepository,
 } from '@agent-os/db';
@@ -41,34 +37,29 @@ function uniqueUuids(ids: readonly string[]): string[] {
  */
 @Injectable()
 export class IdentityDirectory {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly users: IdentityUsersRepository,
     private readonly roles: IdentityRolesRepository,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** Ids of the employee's roles at the moment of the call; none for an unknown employee. */
   async rolesOf(userId: string): Promise<string[]> {
     if (!isUuid(userId)) return [];
-    const roles = await this.roles.ofUsers(this.db, [userId]);
+    const roles = await this.roles.ofUsers([userId]);
     return roles.map((role) => role.id);
   }
 
   /** Whether the employee is on; `false` for an unknown one. */
   async isActive(userId: string): Promise<boolean> {
     if (!isUuid(userId)) return false;
-    const user = await this.users.findById(this.db, userId);
+    const user = await this.users.findById(userId);
     return user?.status === UserStatusSchema.enum.active;
   }
 
   /** Whether the employee has the admin right now, by the rule of the session; `false` for an unknown one. */
   async isAdmin(userId: string): Promise<boolean> {
     if (!isUuid(userId)) return false;
-    return this.users.hasAdminRight(this.db, userId);
+    return this.users.hasAdminRight(userId);
   }
 
   /** Of the roles and employees named, those that exist; an id that is not a UUID names nobody. */
@@ -76,30 +67,27 @@ export class IdentityDirectory {
     ids: HolderIds,
   ): Promise<{ roleIds: string[]; userIds: string[] }> {
     const [roleIds, userIds] = await Promise.all([
-      this.roles.existingIds(this.db, ids.roleIds.filter(isUuid)),
-      this.users.existingIds(this.db, ids.userIds.filter(isUuid)),
+      this.roles.existingIds(ids.roleIds.filter(isUuid)),
+      this.users.existingIds(ids.userIds.filter(isUuid)),
     ]);
     return { roleIds, userIds };
   }
 
   /**
    * The names of the roles named, in the database's order of names; a missing role and an id that is
-   * not a UUID are left out. Read on the caller's executor, so a caller inside a transaction takes no
-   * second connection.
+   * not a UUID are left out.
    */
   roleNames(
-    executor: Executor,
     roleIds: readonly string[],
   ): Promise<RoleName[]> {
-    return this.roles.names(executor, uniqueUuids(roleIds));
+    return this.roles.names(uniqueUuids(roleIds));
   }
 
   /** The same for employees, each with whether he is on. */
   async userNames(
-    executor: Executor,
     userIds: readonly string[],
   ): Promise<UserName[]> {
-    const users = await this.users.names(executor, uniqueUuids(userIds));
+    const users = await this.users.names(uniqueUuids(userIds));
     return users.map(({ id, name, status }) => ({
       id,
       name,

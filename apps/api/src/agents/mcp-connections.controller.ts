@@ -42,7 +42,7 @@ export async function recordServerChange(
     };
   },
 ): Promise<void> {
-  await auditLog.record(null, {
+  await auditLog.record({
     kind: 'admin_change',
     actor,
     objectType: MCP_SERVER_OBJECT_TYPE,
@@ -193,7 +193,7 @@ export class McpConnectionsController {
       }),
     );
     if (result.outcome === 'access_denied' && result.server !== null) {
-      await this.auditLog.record(null, {
+      await this.auditLog.record({
         kind: 'access_denied',
         actor: ownerId,
         objectType: MCP_SERVER_OBJECT_TYPE,

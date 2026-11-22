@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gt } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { runtimeEvents, runtimeTasks } from '../schema';
 
 export type NewRuntimeEventRow = Pick<
@@ -16,17 +16,16 @@ export type NewRuntimeEventRow = Pick<
 >;
 
 /**
- * Drizzle queries of `runtime_events` (repository over a transaction). The runtime's `EventLog` is
+ * Drizzle queries of `runtime_events`. The runtime's `EventLog` is
  * the only writer: it adds the deliveries and the NOTIFY of an event in the same transaction.
  */
 @Injectable()
 export class RuntimeEventsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Inserts the event; returns what the log assigns to it. */
-  async insert(
-    tx: Transaction,
-    event: NewRuntimeEventRow,
-  ): Promise<{ seq: number; createdAt: Date }> {
-    const [row] = await tx
+  async insert(event: NewRuntimeEventRow): Promise<{ seq: number; createdAt: Date }> {
+    const [row] = await this.db.client
       .insert(runtimeEvents)
       .values(event)
       .returning({ seq: runtimeEvents.seq, createdAt: runtimeEvents.createdAt });
@@ -37,8 +36,8 @@ export class RuntimeEventsRepository {
    * Events of the owner's tree with `seq > afterSeq`, by `seq`, at most `limit`. Another owner's or
    * a missing tree gives `[]`.
    */
-  listAfter(executor: Executor, rootId: string, ownerId: string, afterSeq: number, limit: number) {
-    return executor
+  listAfter(rootId: string, ownerId: string, afterSeq: number, limit: number) {
+    return this.db.client
       .select({
         seq: runtimeEvents.seq,
         type: runtimeEvents.type,
@@ -60,8 +59,8 @@ export class RuntimeEventsRepository {
   }
 
   /** The event by its id, as its consumers receive it. */
-  async find(tx: Transaction, eventId: string) {
-    const [row] = await tx
+  async find(eventId: string) {
+    const [row] = await this.db.client
       .select({
         eventId: runtimeEvents.eventId,
         seq: runtimeEvents.seq,

@@ -1,5 +1,5 @@
 import { CHAT_BUILTIN_KEY } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
   asc,
@@ -12,7 +12,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { libraryRecords, libraryShares } from '../schema';
 
 /** A row of `library_records`; `kind` and `content` are read by the api, which owns their shape. */
@@ -106,9 +106,9 @@ function isNameCollision(error: unknown): boolean {
 // ---------- Conditions ----------
 
 /** A holder row of the record being filtered that meets `holder`. */
-function holderExists(executor: Executor, holder: SQL): SQL {
+function holderExists(db: Db, holder: SQL): SQL {
   return exists(
-    executor
+    db.client
       .select({ one: sql`1` })
       .from(libraryShares)
       .where(and(eq(libraryShares.recordId, libraryRecords.id), holder)),
@@ -121,7 +121,7 @@ function holderExists(executor: Executor, holder: SQL): SQL {
  * roles the viewer is in; a system record by the viewer himself, his role, or "everyone" when he has
  * at least one role.
  */
-function visibleTo(executor: Executor, viewer: LibraryViewer): SQL {
+function visibleTo(db: Db, viewer: LibraryViewer): SQL {
   if (!viewer.active) return sql`false`;
   const hasRoles = viewer.roleIds.length > 0;
   const viewerRole = hasRoles ? inArray(libraryShares.roleId, [...viewer.roleIds]) : sql`false`;
@@ -135,21 +135,21 @@ function visibleTo(executor: Executor, viewer: LibraryViewer): SQL {
     or(
       eq(libraryRecords.builtinKey, CHAT_BUILTIN_KEY),
       eq(libraryRecords.ownerId, viewer.id),
-      and(isNotNull(libraryRecords.ownerId), holderExists(executor, viewerRole)),
-      and(isNull(libraryRecords.ownerId), holderExists(executor, systemHolder)),
+      and(isNotNull(libraryRecords.ownerId), holderExists(db, viewerRole)),
+      and(isNull(libraryRecords.ownerId), holderExists(db, systemHolder)),
     ) ?? sql`false`
   );
 }
 
 /** The panel condition: system records, and employee records open to a role and not banned. */
-function inPanel(executor: Executor): SQL {
+function inPanel(db: Db): SQL {
   return (
     or(
       isNull(libraryRecords.ownerId),
       and(
         isNotNull(libraryRecords.ownerId),
         isNull(libraryRecords.closedAt),
-        holderExists(executor, isNotNull(libraryShares.roleId)),
+        holderExists(db, isNotNull(libraryShares.roleId)),
       ),
     ) ?? sql`false`
   );
@@ -169,8 +169,7 @@ function panelQueryCondition(query: LibraryPanelQuery | undefined): SQL | undefi
 }
 
 /**
- * Drizzle queries of `library_records` and `library_shares` (repository over a transaction): each
- * takes the caller's transaction or the plain client first. The only place that reads and writes the
+ * Drizzle queries of `library_records` and `library_shares`. The only place that reads and writes the
  * library tables (ADR-0016). Records are read by exactly two methods: {@link findVisible} under the
  * visibility procedure (design-library.md, «Как решается видимость») and {@link findInPanel} under
  * the panel condition, which never finds a personal record (KD-2). The admin right takes no part in
@@ -178,28 +177,29 @@ function panelQueryCondition(query: LibraryPanelQuery | undefined): SQL | undefi
  */
 @Injectable()
 export class LibraryRecordsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /**
    * The records the viewer sees, or the one with this id or built-in key when it is visible, by name
    * without regard to case, then id. Every read of the employee routes and of the agents' record
    * operations goes through here (KD-2).
    */
   findVisible(
-    executor: Executor,
     viewer: LibraryViewer,
     key?: LibraryRecordKey,
   ): Promise<LibraryRecordRow[]> {
-    return this.where(executor, and(visibleTo(executor, viewer), keyCondition(key)) ?? sql`false`);
+    return this.where(and(visibleTo(this.db, viewer), keyCondition(key)) ?? sql`false`);
   }
 
   /** The records of the admin panel, in the same order: all of them, one list, or one by id when the panel shows it. */
-  findInPanel(executor: Executor, query?: LibraryPanelQuery): Promise<LibraryRecordRow[]> {
-    return this.where(executor, and(inPanel(executor), panelQueryCondition(query)) ?? sql`false`);
+  findInPanel(query?: LibraryPanelQuery): Promise<LibraryRecordRow[]> {
+    return this.where(and(inPanel(this.db), panelQueryCondition(query)) ?? sql`false`);
   }
 
   /** The holder rows of the records, by the id of the holder row. */
-  async sharesOf(executor: Executor, recordIds: readonly string[]): Promise<LibraryShareRow[]> {
+  async sharesOf(recordIds: readonly string[]): Promise<LibraryShareRow[]> {
     if (recordIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select({
         recordId: libraryShares.recordId,
         everyone: libraryShares.everyone,
@@ -212,13 +212,13 @@ export class LibraryRecordsRepository {
   }
 
   /** The panel's ban list, by name without regard to case, then id. */
-  listBans(executor: Executor): Promise<LibraryBanRow[]> {
-    return this.bansWhere(executor);
+  listBans(): Promise<LibraryBanRow[]> {
+    return this.bansWhere();
   }
 
   /** The ban of one record; `undefined` — the record has none (or is gone). */
-  async findBan(executor: Executor, id: string): Promise<LibraryBanRow | undefined> {
-    const [ban] = await this.bansWhere(executor, eq(libraryRecords.id, id));
+  async findBan(id: string): Promise<LibraryBanRow | undefined> {
+    const [ban] = await this.bansWhere(eq(libraryRecords.id, id));
     return ban;
   }
 
@@ -226,24 +226,20 @@ export class LibraryRecordsRepository {
    * Names of the owner's records, or of the system records when `ownerId` is `null`, the record
    * `exceptId` left out — the input of the name rule (DC-8).
    */
-  async names(executor: Executor, ownerId: string | null, exceptId?: string): Promise<string[]> {
-    const rows = await executor
+  async names(ownerId: string | null, exceptId?: string): Promise<string[]> {
+    const rows = await this.db.client
       .select({ id: libraryRecords.id, name: libraryRecords.name })
       .from(libraryRecords)
       .where(ownerId === null ? isNull(libraryRecords.ownerId) : eq(libraryRecords.ownerId, ownerId));
     return rows.filter((row) => row.id !== exceptId).map((row) => row.name);
   }
 
-  /**
-   * Locks the record row FOR UPDATE inside the caller's transaction, before an audience change, a
-   * close or a ban lift reads its state; `false` when the record is gone.
-   */
-  async lock(tx: Transaction, id: string): Promise<boolean> {
-    const [row] = await tx
+  /** Whether the record exists. */
+  async exists(id: string): Promise<boolean> {
+    const [row] = await this.db.client
       .select({ id: libraryRecords.id })
       .from(libraryRecords)
-      .where(eq(libraryRecords.id, id))
-      .for('update');
+      .where(eq(libraryRecords.id, id));
     return row !== undefined;
   }
 
@@ -251,9 +247,9 @@ export class LibraryRecordsRepository {
    * Adds the record in version 1. A name taken under a name index answers `name_taken`, not an error;
    * it comes from the database, so a transaction it ran in is aborted and must be rolled back.
    */
-  async insert(executor: Executor, record: NewLibraryRecordRow): Promise<LibraryInsertOutcome> {
+  async insert(record: NewLibraryRecordRow): Promise<LibraryInsertOutcome> {
     try {
-      const [row] = await executor
+      const [row] = await this.db.client
         .insert(libraryRecords)
         .values({
           ...(record.id === undefined ? {} : { id: record.id }),
@@ -277,8 +273,8 @@ export class LibraryRecordsRepository {
    * Adds the built-in system record with its "everyone" holder unless a record with this key exists;
    * `false` — it exists and is left as it is. Safe for two servers at once.
    */
-  async insertBuiltin(executor: Executor, record: NewBuiltinLibraryRecordRow): Promise<boolean> {
-    const [row] = await executor
+  async insertBuiltin(record: NewBuiltinLibraryRecordRow): Promise<boolean> {
+    const [row] = await this.db.client
       .insert(libraryRecords)
       .values({
         id: record.id,
@@ -294,17 +290,14 @@ export class LibraryRecordsRepository {
       .returning({ id: libraryRecords.id });
     if (row === undefined) return false;
     if (record.everyone)
-      await executor.insert(libraryShares).values({ recordId: row.id, everyone: true });
+      await this.db.client.insert(libraryShares).values({ recordId: row.id, everyone: true });
     return true;
   }
 
   /** Saves name, description and content only while the record is in `version`, and raises it by one (KD-5). */
-  async updateContent(
-    executor: Executor,
-    change: LibraryContentChange,
-  ): Promise<LibraryUpdateOutcome> {
+  async updateContent(change: LibraryContentChange): Promise<LibraryUpdateOutcome> {
     try {
-      const [row] = await executor
+      const [row] = await this.db.client
         .update(libraryRecords)
         .set({
           name: change.name,
@@ -324,28 +317,27 @@ export class LibraryRecordsRepository {
 
   /** Replaces the record's holders; the version stays (DC-11). */
   async replaceHolders(
-    executor: Executor,
     recordId: string,
     holders: LibraryHolderIds,
   ): Promise<void> {
-    await executor.delete(libraryShares).where(eq(libraryShares.recordId, recordId));
+    await this.db.client.delete(libraryShares).where(eq(libraryShares.recordId, recordId));
     const rows = [
       ...(holders.everyone ? [{ recordId, everyone: true }] : []),
       ...holders.roleIds.map((roleId) => ({ recordId, roleId })),
       ...holders.userIds.map((userId) => ({ recordId, userId })),
     ];
-    if (rows.length > 0) await executor.insert(libraryShares).values(rows);
+    if (rows.length > 0) await this.db.client.insert(libraryShares).values(rows);
   }
 
   /** Sets «предлагать в главном чате»; the version stays (DC-11). */
-  async setOfferInChat(executor: Executor, id: string, offerInChat: boolean): Promise<void> {
-    await executor.update(libraryRecords).set({ offerInChat }).where(eq(libraryRecords.id, id));
+  async setOfferInChat(id: string, offerInChat: boolean): Promise<void> {
+    await this.db.client.update(libraryRecords).set({ offerInChat }).where(eq(libraryRecords.id, id));
   }
 
   /** Closes sharing (Flow 4): every holder removed and the ban date set, which it returns; the version stays. */
-  async closeSharing(executor: Executor, id: string): Promise<Date> {
-    await executor.delete(libraryShares).where(eq(libraryShares.recordId, id));
-    const [row] = await executor
+  async closeSharing(id: string): Promise<Date> {
+    await this.db.client.delete(libraryShares).where(eq(libraryShares.recordId, id));
+    const [row] = await this.db.client
       .update(libraryRecords)
       .set({ closedAt: sql`now()` })
       .where(eq(libraryRecords.id, id))
@@ -356,8 +348,8 @@ export class LibraryRecordsRepository {
   }
 
   /** Lifts the sharing ban; `false` — the record has none (or is gone). The version stays. */
-  async liftBan(executor: Executor, id: string): Promise<boolean> {
-    const [row] = await executor
+  async liftBan(id: string): Promise<boolean> {
+    const [row] = await this.db.client
       .update(libraryRecords)
       .set({ closedAt: null })
       .where(and(eq(libraryRecords.id, id), isNotNull(libraryRecords.closedAt)))
@@ -366,13 +358,13 @@ export class LibraryRecordsRepository {
   }
 
   /** Deletes the record; its holders go by cascade. */
-  async delete(executor: Executor, id: string): Promise<void> {
-    await executor.delete(libraryRecords).where(eq(libraryRecords.id, id));
+  async delete(id: string): Promise<void> {
+    await this.db.client.delete(libraryRecords).where(eq(libraryRecords.id, id));
   }
 
   /** Records meeting the condition, by name without regard to case, then id. */
-  private where(executor: Executor, where: SQL): Promise<LibraryRecordRow[]> {
-    return executor
+  private where(where: SQL): Promise<LibraryRecordRow[]> {
+    return this.db.client
       .select()
       .from(libraryRecords)
       .where(where)
@@ -380,8 +372,8 @@ export class LibraryRecordsRepository {
   }
 
   /** Records under a sharing ban meeting the condition, by name, then id. */
-  private bansWhere(executor: Executor, where?: SQL): Promise<LibraryBanRow[]> {
-    return executor
+  private bansWhere(where?: SQL): Promise<LibraryBanRow[]> {
+    return this.db.client
       .select({
         id: libraryRecords.id,
         kind: libraryRecords.kind,

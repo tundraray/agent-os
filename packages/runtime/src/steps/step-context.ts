@@ -1,9 +1,7 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
 import type {
-  Database,
-  Transaction,
+  Db,
   RuntimeDecisionRow,
   RuntimeInboxRow,
   RuntimeTasksRepository,
@@ -23,7 +21,7 @@ const { running } = TaskStatusSchema.enum;
 
 /** Services a step context writes through. */
 export interface StepContextDeps {
-  db: Database;
+  db: Db;
   taskRows: RuntimeTasksRepository;
   crashPoints: CrashPoints;
   /** The runtime's logger; the step's logger is its child. */
@@ -47,13 +45,13 @@ export interface ClaimedStep {
 }
 
 /**
- * Bounds both timeouts of the current transaction by `ms` for this transaction only (`set_config`
- * with `true`, the value as a parameter — ADR-0003), so that a stuck holder of the task row lock
- * does not outlive the lease.
+ * Bounds both timeouts of the transaction open in this async context by `ms`, for this transaction
+ * only (`set_config` with `true`, the value as a parameter — ADR-0003), so that a stuck
+ * transaction does not outlive the lease. Call it inside `db.transaction`.
  */
-export async function boundTransaction(tx: Transaction, ms: number): Promise<void> {
+export async function boundTransaction(db: Db, ms: number): Promise<void> {
   const timeout = String(ms);
-  await tx.execute(
+  await db.client.execute(
     sql`select set_config('statement_timeout', ${timeout}, true), set_config('idle_in_transaction_session_timeout', ${timeout}, true)`,
   );
 }
@@ -78,8 +76,6 @@ export class TaskStepContext implements StepContext {
   readonly logger: Logger;
   /** The claim's attempt: only it may write (Invariant 1). */
   readonly attempt: number;
-  /** Set inside the `work` of an open {@link guard}, in that async context only. */
-  private readonly guardedWork = new AsyncLocalStorage<true>();
 
   constructor(
     private readonly deps: StepContextDeps,
@@ -126,31 +122,21 @@ export class TaskStepContext implements StepContext {
   }
 
   /**
-   * One short transaction: the task row FOR UPDATE — held to the commit, so neither a command nor
-   * the step's own commit changes the task meanwhile — then `work` only if the task is `running`
+   * One short transaction: the task row is read, then `work` runs only if the task is `running`
    * with this attempt. An interrupt, a stop or a requeue raises the attempt, so `fenced` follows
    * from it; nothing is written then.
    */
-  async guard<T>(work: (tx: Transaction) => Promise<T>): Promise<GuardResult<T>> {
-    if (this.guardedWork.getStore()) {
-      // The nested transaction would wait on the row lock the outer one holds.
-      throw new Error(
-        `guard of task ${this.taskId} attempt ${this.attempt} called inside guard work`,
-      );
-    }
+  async guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
     const startedAt = Date.now();
     try {
-      const result = await this.deps.db.transaction(
-        async (tx): Promise<GuardResult<T>> => {
-          await boundTransaction(tx, this.deps.leaseMs);
-          const own = await this.deps.taskRows.lock(tx, this.taskId);
-          if (own?.status !== running || own.attempt !== this.attempt) {
-            return { outcome: 'fenced' };
-          }
-          const value = await this.guardedWork.run(true, () => work(tx));
-          return { outcome: 'committed', value };
-        },
-      );
+      const result = await this.deps.db.transaction(async (): Promise<GuardResult<T>> => {
+        await boundTransaction(this.deps.db, this.deps.leaseMs);
+        const own = await this.deps.taskRows.find(this.taskId);
+        if (own?.status !== running || own.attempt !== this.attempt) {
+          return { outcome: 'fenced' };
+        }
+        return { outcome: 'committed', value: await work() };
+      });
       const durationMs = Date.now() - startedAt;
       if (result.outcome === 'fenced') {
         this.logger.warn('guard fenced: the attempt is no longer current', {

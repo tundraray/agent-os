@@ -9,11 +9,8 @@ import {
   type UpdateProviderBody,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   IdentityProvidersRepository,
-  type Transaction,
+  Db,
 } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
@@ -66,21 +63,17 @@ function logState(provider: Omit<Provider, 'id'>) {
  */
 @Injectable()
 export class ProvidersService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly providers: IdentityProvidersRepository,
     private readonly auditLog: AuditLog,
     private readonly settings: IdentitySettings,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** The providers in creation order. */
   async list(): Promise<ProviderList> {
-    const rows = await this.providers.list(this.db);
+    const rows = await this.providers.list();
     return rows.map((row) => ({
       ...row,
       type: ProviderTypeSchema.parse(row.type),
@@ -89,7 +82,7 @@ export class ProvidersService {
 
   /** The enabled providers in creation order: the buttons of the sign-in page. */
   async buttons(): Promise<ProviderButtonList> {
-    const rows = await this.providers.listEnabled(this.db);
+    const rows = await this.providers.listEnabled();
     return rows.map((row) => ({
       ...row,
       type: ProviderTypeSchema.parse(row.type),
@@ -116,12 +109,11 @@ export class ProvidersService {
       fetch: globalThis.fetch,
     });
     const publicUrl = await this.settings.publicUrlFor();
-    const provider = await this.db.transaction(async (tx) => {
+    const provider = await this.db.transaction(async () => {
       const created = toProvider(
-        await this.providers.insert(tx, { type, name: body.name, options }),
+        await this.providers.insert({ type, name: body.name, options }),
       );
       await this.recordChange(
-        tx,
         actorId,
         created.id,
         null,
@@ -175,10 +167,9 @@ export class ProvidersService {
       throw identityError('PROVIDER_INCOMPLETE');
     }
     const publicUrl = await this.settings.publicUrlFor();
-    await this.db.transaction(async (tx) => {
-      await this.providers.update(tx, providerId, after);
+    await this.db.transaction(async () => {
+      await this.providers.update(providerId, after);
       await this.recordChange(
-        tx,
         actorId,
         providerId,
         auditState(before),
@@ -214,13 +205,12 @@ export class ProvidersService {
   }
 
   private recordChange(
-    tx: Transaction,
     actorId: string,
     providerId: string,
     before: ReturnType<typeof auditState> | null,
     after: ReturnType<typeof auditState>,
   ): Promise<void> {
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind: 'admin_change',
       actor: actorId,
       objectType: 'provider',
@@ -234,7 +224,7 @@ export class ProvidersService {
   /** A provider id that is not a UUID answers 404 like a missing one. */
   private async findOr404(providerId: string): Promise<Provider> {
     if (!isUuid(providerId)) throw identityError('PROVIDER_NOT_FOUND');
-    const row = await this.providers.find(this.db, providerId);
+    const row = await this.providers.find(providerId);
     if (row === undefined) throw identityError('PROVIDER_NOT_FOUND');
     return toProvider(row);
   }

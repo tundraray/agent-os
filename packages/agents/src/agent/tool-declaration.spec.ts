@@ -5,6 +5,7 @@ import {
   AgentMcpServersRepository,
   AgentSessionsRepository,
   type Database,
+  Db,
 } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -43,9 +44,10 @@ function emptyDatabase(): Database {
 }
 
 // A declaration reads only the snapshot; the chat's listing also reads the library and the owner's sessions.
+const DB = new Db(emptyDatabase());
 const DEPS = {
-  database: emptyDatabase(),
-  sessionRows: new AgentSessionsRepository(),
+  db: DB,
+  sessionRows: new AgentSessionsRepository(DB),
   library: createLibraryDouble(),
   logger: SILENT,
 };
@@ -157,7 +159,7 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
 });
 
 function registryOfStubs() {
-  const registry = new ToolRegistry(emptyDatabase(), new AgentMcpServersRepository(), new AgentMcpAccountsRepository(), {
+  const registry = new ToolRegistry(new AgentMcpServersRepository(DB), new AgentMcpAccountsRepository(DB), {
     tools: async () => ({ kind: 'allowed', allows: () => true }),
   });
   registry.useRunCode(stubTool('run_code'));

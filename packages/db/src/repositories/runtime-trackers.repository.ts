@@ -1,7 +1,7 @@
 import { TrackerStatusSchema } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { runtimeTasks, runtimeTrackers } from '../schema';
 
 export type RuntimeTrackerRow = typeof runtimeTrackers.$inferSelect;
@@ -9,22 +9,19 @@ export type RuntimeTrackerRow = typeof runtimeTrackers.$inferSelect;
 const { open, finished } = TrackerStatusSchema.enum;
 
 /**
- * Drizzle queries of `runtime_trackers` inside the caller's transaction (repository over a
- * transaction). Every write runs under the lock of the owner task's row, which also orders the
- * ends of the tracker's tasks: each of them locks its parent, the owner, first.
+ * Drizzle queries of `runtime_trackers`.
  */
 @Injectable()
 export class RuntimeTrackersRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Inserts an `open` tracker of the owner task. */
-  async insert(
-    tx: Transaction,
-    tracker: { trackerId: string; taskId: string; ownerId: string },
-  ): Promise<void> {
-    await tx.insert(runtimeTrackers).values({ ...tracker, status: open });
+  async insert(tracker: { trackerId: string; taskId: string; ownerId: string }): Promise<void> {
+    await this.db.client.insert(runtimeTrackers).values({ ...tracker, status: open });
   }
 
-  async find(tx: Transaction, trackerId: string): Promise<RuntimeTrackerRow | undefined> {
-    const [row] = await tx
+  async find(trackerId: string): Promise<RuntimeTrackerRow | undefined> {
+    const [row] = await this.db.client
       .select()
       .from(runtimeTrackers)
       .where(eq(runtimeTrackers.trackerId, trackerId));
@@ -32,11 +29,8 @@ export class RuntimeTrackersRepository {
   }
 
   /** Id and status of each task of the tracker, in the order they were created. */
-  taskStatuses(
-    tx: Transaction,
-    trackerId: string,
-  ): Promise<{ taskId: string; status: string }[]> {
-    return tx
+  taskStatuses(trackerId: string): Promise<{ taskId: string; status: string }[]> {
+    return this.db.client
       .select({ taskId: runtimeTasks.taskId, status: runtimeTasks.status })
       .from(runtimeTasks)
       .where(eq(runtimeTasks.trackerId, trackerId))
@@ -44,8 +38,8 @@ export class RuntimeTrackersRepository {
   }
 
   /** Marks the tracker `finished`; called once, at the end of its last task. */
-  async finish(tx: Transaction, trackerId: string): Promise<void> {
-    await tx
+  async finish(trackerId: string): Promise<void> {
+    await this.db.client
       .update(runtimeTrackers)
       .set({ status: finished, finishedAt: sql`now()` })
       .where(and(eq(runtimeTrackers.trackerId, trackerId), eq(runtimeTrackers.status, open)));
@@ -55,8 +49,8 @@ export class RuntimeTrackersRepository {
    * The trackers of the owner's task, oldest first. Another owner's, a deleted or a missing task
    * gives `[]`.
    */
-  listOwned(executor: Executor, taskId: string, ownerId: string) {
-    return executor
+  listOwned(taskId: string, ownerId: string) {
+    return this.db.client
       .select({
         trackerId: runtimeTrackers.trackerId,
         status: runtimeTrackers.status,
@@ -76,8 +70,8 @@ export class RuntimeTrackersRepository {
   }
 
   /** The tasks of the given trackers with their outcomes, in the order they were created. */
-  listTasks(executor: Executor, trackerIds: readonly string[]) {
-    return executor
+  listTasks(trackerIds: readonly string[]) {
+    return this.db.client
       .select({
         trackerId: runtimeTasks.trackerId,
         taskId: runtimeTasks.taskId,

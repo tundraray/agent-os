@@ -1,9 +1,7 @@
 import type { Logger } from '@agent-os/common';
 import { DeliveryStatusSchema } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
-  type Transaction,
+  Db,
   type RuntimeEventDeliveryKey,
   RuntimeEventDeliveriesRepository,
   type RuntimeEventDeliveryRow,
@@ -51,12 +49,12 @@ function deliveryBackoffMs(attempts: number, random: number): number {
 /**
  * What one delivery did: the consumer ran and the delivery is `done`; it failed and waits for its
  * next try; it is parked as `needs_attention`; or there was nothing to deliver (not `pending`, not
- * due, locked by another relay, its tree deleted, its consumer not registered here).
+ * due, its tree deleted, its consumer not registered here).
  */
 export type DeliveryOutcome = 'done' | 'retry' | 'needs_attention' | 'skipped';
 
 interface OutboxRelayDeps {
-  db: Database;
+  db: Db;
   config: RuntimeConfig;
   clock: Clock;
   logger: Logger;
@@ -69,8 +67,8 @@ interface OutboxRelayDeps {
 /**
  * Delivery of outbox events to their consumers. Every `RUNTIME_POLL_MS` it takes the due `pending`
  * deliveries of the consumers registered in this process and delivers each in its own
- * transaction: the event's root is locked FOR KEY SHARE (the tree cannot be deleted meanwhile),
- * then the delivery FOR UPDATE SKIP LOCKED, still `pending`; the consumer runs in a savepoint and
+ * transaction: the event's root is checked to exist, then the delivery is read, still `pending`
+ * and due; the consumer runs in a savepoint and
  * the delivery is marked `done` in the same transaction. A failing consumer is rolled back to the
  * savepoint while its counters are written; after `RUNTIME_DELIVERY_MAX_ATTEMPTS` — or at once for
  * an unknown `schemaVersion` — the delivery is parked as `needs_attention` and the others go on.
@@ -81,7 +79,7 @@ export class OutboxRelay {
   private readonly deps: OutboxRelayDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
     @Inject(CLOCK) clock: Clock,
     @Inject(RUNTIME_LOGGER) runtimeLogger: Logger,
@@ -114,42 +112,40 @@ export class OutboxRelay {
   async deliver(key: RuntimeEventDeliveryKey): Promise<DeliveryOutcome> {
     const consumer = this.deps.consumers.get(key.consumer);
     if (!consumer) return 'skipped';
-    return this.deps.db.transaction((tx) => this.deliverIn(tx, key, consumer));
+    return this.deps.db.transaction(() => this.deliverIn(key, consumer));
   }
 
   /** One pass: the oldest due deliveries of the local consumers; `true` when the batch was full. */
   private async deliverDue(): Promise<boolean> {
     const names = this.deps.consumers.names();
     if (names.length === 0) return false;
-    const { db, deliveries, clock } = this.deps;
-    const due = await deliveries.listDue(db, names, clock.now(), DELIVERY_BATCH);
+    const { deliveries, clock } = this.deps;
+    const due = await deliveries.listDue(names, clock.now(), DELIVERY_BATCH);
     for (const key of due) await this.deliver(key);
     return due.length === DELIVERY_BATCH;
   }
 
   private async deliverIn(
-    tx: Transaction,
     key: RuntimeEventDeliveryKey,
     consumer: EventConsumer,
   ): Promise<DeliveryOutcome> {
     const now = this.deps.clock.now();
-    const event = await this.deps.events.find(tx, key.eventId);
+    const event = await this.deps.events.find(key.eventId);
     if (!event) return 'skipped';
-    // Lock order: the root task, then the delivery.
-    if (!(await this.deps.taskRows.lockAgainstDelete(tx, event.rootId))) {
+    if (!(await this.deps.taskRows.exists(event.rootId))) {
       return 'skipped';
     }
-    const delivery = await this.deps.deliveries.lockDue(tx, key, now);
+    const delivery = await this.deps.deliveries.findDue(key, now);
     if (!delivery) return 'skipped';
 
     if (!consumer.schemaVersions.includes(event.schemaVersion)) {
-      return this.parkUnknownVersion(tx, delivery, event);
+      return this.parkUnknownVersion(delivery, event);
     }
-    const failure = await this.runConsumer(tx, consumer, event);
+    const failure = await this.runConsumer(consumer, event);
     if (failure !== undefined) {
-      return this.recordFailure(tx, delivery, failure, now);
+      return this.recordFailure(delivery, failure, now);
     }
-    await this.deps.deliveries.update(tx, delivery, {
+    await this.deps.deliveries.update(delivery, {
       status: done,
       attempts: delivery.attempts + 1,
       lastError: null,
@@ -162,14 +158,11 @@ export class OutboxRelay {
    * transaction goes on. Returns the failure, `undefined` on success.
    */
   private async runConsumer(
-    tx: Transaction,
     consumer: EventConsumer,
     event: StoredEvent,
   ): Promise<{ error: unknown } | undefined> {
     try {
-      await tx.transaction((savepoint) =>
-        consumer.handle(savepoint, event),
-      );
+      await this.deps.db.savepoint(() => consumer.handle(event));
       return undefined;
     } catch (error) {
       return { error };
@@ -177,7 +170,6 @@ export class OutboxRelay {
   }
 
   private async recordFailure(
-    tx: Transaction,
     delivery: RuntimeEventDeliveryRow,
     failure: { error: unknown },
     now: Date,
@@ -190,7 +182,7 @@ export class OutboxRelay {
       error: failure.error,
     };
     if (attempts >= this.deps.config.deliveryMaxAttempts) {
-      await this.deps.deliveries.update(tx, delivery, {
+      await this.deps.deliveries.update(delivery, {
         status: needs_attention,
         attempts,
         lastError: errorText(failure.error),
@@ -199,7 +191,7 @@ export class OutboxRelay {
       return 'needs_attention';
     }
     const retryInMs = deliveryBackoffMs(attempts, this.deps.clock.random());
-    await this.deps.deliveries.update(tx, delivery, {
+    await this.deps.deliveries.update(delivery, {
       attempts,
       lastError: errorText(failure.error),
       nextAttemptAt: new Date(now.getTime() + retryInMs),
@@ -210,11 +202,10 @@ export class OutboxRelay {
 
   /** An event of a `schemaVersion` the consumer does not know: parked without calling it. */
   private async parkUnknownVersion(
-    tx: Transaction,
     delivery: RuntimeEventDeliveryRow,
     event: StoredEvent,
   ): Promise<DeliveryOutcome> {
-    await this.deps.deliveries.update(tx, delivery, {
+    await this.deps.deliveries.update(delivery, {
       status: needs_attention,
       lastError: `Unknown schemaVersion ${event.schemaVersion} of ${event.type}`,
     });

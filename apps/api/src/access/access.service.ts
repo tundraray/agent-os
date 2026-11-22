@@ -24,12 +24,8 @@ import {
   AccessGrantsRepository,
   type AccessModelDefaultsRow,
   AccessModelsRepository,
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  type Executor,
   type GrantHolderQuery,
-  type Transaction,
+  Db,
 } from '@agent-os/db';
 import {
   CLOCK,
@@ -151,10 +147,8 @@ function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
  */
 @Injectable()
 export class AccessService implements AccessGate {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     @Inject(TokenLedger) private readonly ledger: TokenLedger,
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly identity: IdentityDirectory,
@@ -162,9 +156,7 @@ export class AccessService implements AccessGate {
     private readonly models: AccessModelsRepository,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** The employee's tool rights; `owner_disabled` for a disabled or unknown employee. */
   async tools(ownerId: string): Promise<ToolAccess> {
@@ -204,7 +196,7 @@ export class AccessService implements AccessGate {
     const month = monthOf(this.clock.now());
     const [active, catalogued, access] = await Promise.all([
       this.identity.isActive(ownerId),
-      this.findModel(this.db, model),
+      this.findModel(model),
       this.accessOf(ownerId),
     ]);
     const modelAccess = access.model(model);
@@ -236,7 +228,7 @@ export class AccessService implements AccessGate {
 
   /** The id of the default chat model, or `null` while none is chosen (KD-5); read at each call. */
   async defaultChatModel(): Promise<string | null> {
-    const { chatModel } = await this.models.readDefaults(this.db);
+    const { chatModel } = await this.models.readDefaults();
     this.logger.info('default chat model read', { model: chatModel });
     return chatModel;
   }
@@ -250,7 +242,7 @@ export class AccessService implements AccessGate {
     const [active, model] = await Promise.all([
       ownerId === null ? true : this.identity.isActive(ownerId),
       this.models
-        .findDefaultEmbedding(this.db)
+        .findDefaultEmbedding()
         .then(toCatalogModelOrUndefined),
     ]);
     if (model !== undefined && model.purpose !== 'embedding')
@@ -338,12 +330,12 @@ export class AccessService implements AccessGate {
   // ---------- Admin: catalogue ----------
 
   async listModels(): Promise<CatalogModel[]> {
-    return (await this.models.list(this.db)).map(toCatalogModel);
+    return (await this.models.list()).map(toCatalogModel);
   }
 
   /** How many catalogue models the provider has; a provider with models is not deleted (AC-01.3). */
   countModelsOfProvider(name: string): Promise<number> {
-    return this.models.countByProvider(this.db, name);
+    return this.models.countByProvider(name);
   }
 
   /**
@@ -369,11 +361,11 @@ export class AccessService implements AccessGate {
       });
       throw accessError('MODEL_PROVIDER_INVALID', rule.reason);
     }
-    const created = await this.db.transaction(async (tx) => {
-      const row = await this.models.insert(tx, body.id, modelColumnsOf(body));
+    const created = await this.db.transaction(async () => {
+      const row = await this.models.insert(body.id, modelColumnsOf(body));
       if (row === undefined) throw accessError('MODEL_ID_TAKEN');
       const model = toCatalogModel(row);
-      await this.audit(tx, actorId, 'model', model.id, null, model);
+      await this.audit(actorId, 'model', model.id, null, model);
       return model;
     });
     this.logChange(actorId, 'model', created.id, 'create');
@@ -386,16 +378,16 @@ export class AccessService implements AccessGate {
     id: string,
     body: UpdateCatalogModelBody,
   ): Promise<CatalogModel> {
-    const updated = await this.db.transaction(async (tx) => {
-      const before = toCatalogModelOrUndefined(await this.models.lock(tx, id));
+    const updated = await this.db.transaction(async () => {
+      const before = toCatalogModelOrUndefined(await this.models.find(id));
       if (before === undefined) throw accessError('MODEL_NOT_FOUND');
       const rule = modelUpdateRule(before, body);
       if (rule.kind === 'invalid')
         throw foreignFieldsError(before.purpose, rule.foreignFields);
       const after = toCatalogModel(
-        await this.models.update(tx, rule.after.id, modelColumnsOf(rule.after)),
+        await this.models.update(rule.after.id, modelColumnsOf(rule.after)),
       );
-      await this.audit(tx, actorId, 'model', id, before, after);
+      await this.audit(actorId, 'model', id, before, after);
       return after;
     });
     this.logChange(actorId, 'model', id, 'update');
@@ -404,12 +396,12 @@ export class AccessService implements AccessGate {
 
   /** The model's grants go by cascade, a default on it is cleared (DC-6). 404 MODEL_NOT_FOUND. */
   async deleteModel(actorId: string, id: string): Promise<void> {
-    await this.db.transaction(async (tx) => {
+    await this.db.transaction(async () => {
       const deleted = toCatalogModelOrUndefined(
-        await this.models.delete(tx, id),
+        await this.models.delete(id),
       );
       if (deleted === undefined) throw accessError('MODEL_NOT_FOUND');
-      await this.audit(tx, actorId, 'model', id, deleted, null);
+      await this.audit(actorId, 'model', id, deleted, null);
     });
     this.logChange(actorId, 'model', id, 'delete');
   }
@@ -418,7 +410,7 @@ export class AccessService implements AccessGate {
 
   /** GET /api/admin/model-defaults. */
   async modelDefaults(): Promise<ModelDefaults> {
-    return toModelDefaults(await this.models.readDefaults(this.db));
+    return toModelDefaults(await this.models.readDefaults());
   }
 
   /**
@@ -431,8 +423,8 @@ export class AccessService implements AccessGate {
     body: UpdateModelDefaultsBody,
   ): Promise<ModelDefaults> {
     const startedAt = Date.now();
-    const { before, after } = await this.db.transaction(async (tx) => {
-      const rule = modelDefaultsRule(await this.defaultChoicesOf(tx, body));
+    const { before, after } = await this.db.transaction(async () => {
+      const rule = modelDefaultsRule(await this.defaultChoicesOf(body));
       if (rule.kind === 'invalid') {
         this.logger.info('model defaults update refused', {
           actorId,
@@ -444,10 +436,9 @@ export class AccessService implements AccessGate {
         });
         throw modelDefaultError(rule.reason, rule.model);
       }
-      const previous = await this.models.readDefaults(tx);
-      const updated = await this.models.writeDefaults(tx, body, actorId);
+      const previous = await this.models.readDefaults();
+      const updated = await this.models.writeDefaults(body, actorId);
       await this.audit(
-        tx,
         actorId,
         MODEL_DEFAULTS_OBJECT_TYPE,
         undefined,
@@ -469,7 +460,6 @@ export class AccessService implements AccessGate {
 
   /** The values of the body that name a model, with their catalogue rows read in the write's transaction. */
   private defaultChoicesOf(
-    tx: Transaction,
     body: UpdateModelDefaultsBody,
   ): Promise<DefaultChoice[]> {
     const wanted = [
@@ -481,7 +471,7 @@ export class AccessService implements AccessGate {
         model === null
           ? []
           : [
-              this.findModel(tx, model).then((catalogued) => ({
+              this.findModel(model).then((catalogued) => ({
                 purpose,
                 model,
                 catalogued,
@@ -496,8 +486,8 @@ export class AccessService implements AccessGate {
   /** The grants of a role or an employee by creation time. 404 ROLE_NOT_FOUND, USER_NOT_FOUND. */
   async listGrants(holder: GrantHolderQuery): Promise<Grant[]> {
     await this.holderOr404(holder);
-    const rows = await this.grants.list(this.db, holder);
-    return this.named(this.db, rows.map(toStoredGrant));
+    const rows = await this.grants.list(holder);
+    return this.named(rows.map(toStoredGrant));
   }
 
   /**
@@ -512,7 +502,7 @@ export class AccessService implements AccessGate {
   ): Promise<Grant> {
     const targetModel =
       body.target.kind === 'model'
-        ? await this.findModel(this.db, body.target.model)
+        ? await this.findModel(body.target.model)
         : undefined;
     const rules = grantRules({
       ...body,
@@ -528,11 +518,11 @@ export class AccessService implements AccessGate {
           : null
         : await mcpTargetCheck(body.target);
     if (unknown !== null) throw accessError('GRANT_TARGET_UNKNOWN', unknown);
-    const created = await this.db.transaction(async (tx) => {
-      const id = await this.grants.insert(tx, grantColumnsOf(body));
+    const created = await this.db.transaction(async () => {
+      const id = await this.grants.insert(grantColumnsOf(body));
       if (id === undefined) throw accessError('GRANT_EXISTS');
-      const grant = await this.grantOr404(tx, id);
-      await this.audit(tx, actorId, 'grant', id, null, grant);
+      const grant = await this.grantOr404(id);
+      await this.audit(actorId, 'grant', id, null, grant);
       return grant;
     });
     this.logChange(actorId, 'grant', created.id, 'create');
@@ -545,14 +535,14 @@ export class AccessService implements AccessGate {
     id: string,
     quotaUsd: number | null,
   ): Promise<Grant> {
-    const updated = await this.db.transaction(async (tx) => {
-      const before = await this.grantOr404(tx, id);
+    const updated = await this.db.transaction(async () => {
+      const before = await this.grantOr404(id);
       const rules = grantRules(ruleInputOf(before, quotaUsd));
       if (rules.kind === 'invalid')
         throw accessError('GRANT_INVALID', rules.reason);
-      await this.grants.updateQuota(tx, id, quotaUsd);
-      const after = await this.grantOr404(tx, id);
-      await this.audit(tx, actorId, 'grant', id, before, after);
+      await this.grants.updateQuota(id, quotaUsd);
+      const after = await this.grantOr404(id);
+      await this.audit(actorId, 'grant', id, before, after);
       return after;
     });
     this.logChange(actorId, 'grant', id, 'update');
@@ -561,10 +551,10 @@ export class AccessService implements AccessGate {
 
   /** 404 GRANT_NOT_FOUND. */
   async deleteGrant(actorId: string, id: string): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      const before = await this.grantOr404(tx, id);
-      await this.grants.delete(tx, id);
-      await this.audit(tx, actorId, 'grant', id, before, null);
+    await this.db.transaction(async () => {
+      const before = await this.grantOr404(id);
+      await this.grants.delete(id);
+      await this.audit(actorId, 'grant', id, before, null);
     });
     this.logChange(actorId, 'grant', id, 'delete');
   }
@@ -575,7 +565,7 @@ export class AccessService implements AccessGate {
    * The removal of the server is the audited change; the grants go with it, as a cascade does.
    */
   async removeServerGrants(actorId: string, server: string): Promise<void> {
-    const grants = await this.grants.deleteOfServer(this.db, server);
+    const grants = await this.grants.deleteOfServer(server);
     this.logger.info('grants of a removed mcp server deleted', {
       actorId,
       server,
@@ -588,14 +578,13 @@ export class AccessService implements AccessGate {
    * Contract «Операции администратора»), as identity does: a write without its record is rolled back.
    */
   private audit(
-    tx: Transaction,
     actorId: string,
     objectType: AuditObjectType,
     objectId: string | undefined,
     before: CatalogModel | Grant | DefaultModels | null,
     after: CatalogModel | Grant | DefaultModels | null,
   ): Promise<void> {
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind: 'admin_change',
       actor: actorId,
       objectType,
@@ -646,16 +635,15 @@ export class AccessService implements AccessGate {
   private async grantRowsOf(ownerId: string): Promise<GrantRow[]> {
     if (!isUuid(ownerId)) return [];
     const roleIds = await this.identity.rolesOf(ownerId);
-    const rows = await this.grants.ofEmployee(this.db, roleIds, ownerId);
+    const rows = await this.grants.ofEmployee(roleIds, ownerId);
     return rows.map(toGrantRow);
   }
 
   /** The catalogue model of the id; `undefined` for a missing one. */
   private async findModel(
-    executor: Executor,
     id: string,
   ): Promise<CatalogModel | undefined> {
-    return toCatalogModelOrUndefined(await this.models.find(executor, id));
+    return toCatalogModelOrUndefined(await this.models.find(id));
   }
 
   /** Spend on one model this month; read at each check, no cache (KD-1). */
@@ -668,23 +656,21 @@ export class AccessService implements AccessGate {
     return spend.get(model) ?? 0;
   }
 
-  private async grantOr404(executor: Executor, id: string): Promise<Grant> {
+  private async grantOr404(id: string): Promise<Grant> {
     const stored = isUuid(id)
-      ? await this.grants.find(executor, id)
+      ? await this.grants.find(id)
       : undefined;
     if (stored === undefined) throw accessError('GRANT_NOT_FOUND');
-    const [grant] = await this.named(executor, [toStoredGrant(stored)]);
+    const [grant] = await this.named([toStoredGrant(stored)]);
     if (grant === undefined) throw new Error(`grant ${id} lost its holder`);
     return grant;
   }
 
-  /** The grants with the name of each role holder, read in `identity` on the same executor. */
+  /** The grants with the name of each role holder, read in `identity`. */
   private async named(
-    executor: Executor,
     grants: readonly StoredGrant[],
   ): Promise<Grant[]> {
     const roles = await this.identity.roleNames(
-      executor,
       grants.flatMap(({ holder }) => (holder.kind === 'role' ? holder.id : [])),
     );
     const names = new Map(roles.map((role) => [role.id, role.name]));

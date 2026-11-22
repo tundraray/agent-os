@@ -1,7 +1,7 @@
 import type { Logger } from '@agent-os/common';
 import { AgentMessageKindSchema, TaskStatusSchema, WaitReasonSchema } from '@agent-os/contracts';
-import { AgentSessionsRepository, DATABASE, type Database, type RootSession } from '@agent-os/db';
-import { Decisions, Inbox, type ResolveOutcome, retryingTransaction, TaskControl } from '@agent-os/runtime';
+import { AgentSessionsRepository, Db, type RootSession } from '@agent-os/db';
+import { Decisions, Inbox, type ResolveOutcome, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
@@ -25,7 +25,7 @@ export class ControlOperations {
   private readonly logged: ReturnType<typeof createLogged>;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
     @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'get' | 'interrupt' | 'stop' | 'deleteTree'>,
     @Inject(Inbox) private readonly inbox: Pick<Inbox, 'enqueue'>,
@@ -124,7 +124,7 @@ export class ControlOperations {
   /** Moves the owner's root session to the top of the list. */
   touchRoot(rootId: string, ownerId: string): Promise<void> {
     return this.logged('touchRoot', { rootId, ownerId }, () =>
-      this.sessionRows.touchRoot(this.database, rootId, ownerId),
+      this.sessionRows.touchRoot(rootId, ownerId),
     );
   }
 
@@ -133,7 +133,7 @@ export class ControlOperations {
     return this.logged(
       'renameRoot',
       { rootId, ownerId },
-      () => this.sessionRows.renameRoot(this.database, rootId, ownerId, title),
+      () => this.sessionRows.renameRoot(rootId, ownerId, title),
       (renamed) => ({ found: renamed !== undefined }),
     );
   }
@@ -143,7 +143,7 @@ export class ControlOperations {
     return this.logged(
       'titleRootIfEmpty',
       { rootId, ownerId },
-      () => this.sessionRows.titleRootIfEmpty(this.database, rootId, ownerId, title),
+      () => this.sessionRows.titleRootIfEmpty(rootId, ownerId, title),
       (written) => ({ written }),
     );
   }
@@ -156,11 +156,9 @@ export class ControlOperations {
   deleteRoot(rootId: string, ownerId: string): Promise<void> {
     return this.logged('deleteRoot', { rootId, ownerId }, () =>
       asAgent(
-        // Retried as a whole on a deadlock: `deleteTree` does not retry in the caller's transaction.
-        // The task rows are locked first (inside `deleteTree`), the session row after, as a step's commit does.
-        retryingTransaction(this.database, this.logger, 'sessions.deleteRoot', async (tx) => {
-          await this.tasks.deleteTree(rootId, ownerId, tx);
-          await this.sessionRows.markDeleted(tx, rootId);
+        this.db.transaction(async () => {
+          await this.tasks.deleteTree(rootId, ownerId);
+          await this.sessionRows.markDeleted(rootId);
         }),
       ),
     );

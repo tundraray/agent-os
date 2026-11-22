@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { agentMcpAccounts } from '../schema';
 
 /** A row of `agent_mcp_accounts`: an employee's own credentials on a server. */
@@ -24,23 +24,24 @@ function accountKey(server: string, ownerId: string) {
 }
 
 /**
- * Drizzle queries of `agent_mcp_accounts` (repository over a transaction, ADR-0014): tokens are read by
+ * Drizzle queries of `agent_mcp_accounts` (ADR-0014): tokens are read by
  * the pair "server — owner" only. No method opens a transaction or calls out of the process.
  */
 @Injectable()
 export class AgentMcpAccountsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   async find(
-    executor: Executor,
     server: string,
     ownerId: string,
   ): Promise<McpAccountRow | undefined> {
-    const [row] = await executor.select().from(agentMcpAccounts).where(accountKey(server, ownerId));
+    const [row] = await this.db.client.select().from(agentMcpAccounts).where(accountKey(server, ownerId));
     return row;
   }
 
   /** The employee's accounts by server: the second of the two queries of a tool set. */
-  listOwned(executor: Executor, ownerId: string): Promise<McpAccountRow[]> {
-    return executor
+  listOwned(ownerId: string): Promise<McpAccountRow[]> {
+    return this.db.client
       .select()
       .from(agentMcpAccounts)
       .where(eq(agentMcpAccounts.ownerId, ownerId))
@@ -48,13 +49,13 @@ export class AgentMcpAccountsRepository {
   }
 
   /** Saves a fresh connection; a reconnection replaces the tokens. */
-  async upsert(executor: Executor, account: NewMcpAccount): Promise<void> {
+  async upsert(account: NewMcpAccount): Promise<void> {
     const connected = {
       accessToken: account.accessToken,
       refreshToken: account.refreshToken,
       expiresAt: account.expiresAt,
     };
-    await executor
+    await this.db.client
       .insert(agentMcpAccounts)
       .values({ ownerId: account.ownerId, server: account.server, ...connected })
       .onConflictDoUpdate({
@@ -65,12 +66,11 @@ export class AgentMcpAccountsRepository {
 
   /** Writes refreshed tokens; `false` when the account is gone (disconnected meanwhile). */
   async updateTokens(
-    executor: Executor,
     server: string,
     ownerId: string,
     tokens: McpTokens,
   ): Promise<boolean> {
-    const rows = await executor
+    const rows = await this.db.client
       .update(agentMcpAccounts)
       .set(tokens)
       .where(accountKey(server, ownerId))
@@ -79,8 +79,8 @@ export class AgentMcpAccountsRepository {
   }
 
   /** Removes the account; `false` when there was none. */
-  async delete(executor: Executor, server: string, ownerId: string): Promise<boolean> {
-    const rows = await executor
+  async delete(server: string, ownerId: string): Promise<boolean> {
+    const rows = await this.db.client
       .delete(agentMcpAccounts)
       .where(accountKey(server, ownerId))
       .returning({ server: agentMcpAccounts.server });

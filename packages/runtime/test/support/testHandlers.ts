@@ -1,5 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import type { Database, Transaction } from '@agent-os/db';
+import type { Db } from '@agent-os/db';
 import type {
   ChildTask,
   OpenedTracker,
@@ -25,8 +26,8 @@ import { z } from 'zod';
 export const HANDLER_ROWS_TABLE = 'public.e2e_handler_rows';
 
 /** Creates {@link HANDLER_ROWS_TABLE} once; the harness calls it before building the runtime. */
-export async function ensureHandlerRowsTable(db: Database): Promise<void> {
-  await db.execute(
+export async function ensureHandlerRowsTable(db: Db): Promise<void> {
+  await db.client.execute(
     sql.raw(
       `CREATE TABLE IF NOT EXISTS ${HANDLER_ROWS_TABLE} (
          task_id uuid NOT NULL,
@@ -167,14 +168,38 @@ function viewOf(ctx: StepContext): StepView {
   };
 }
 
+/** The `Db` of the runtime that runs the handler's step or commit; set by {@link boundToDb}. */
+const handlerDb = new AsyncLocalStorage<Db>();
+
 /**
- * Writes the step's handler row inside the commit. `attempt` is read from the task row, which the
- * commit holds FOR UPDATE after checking that the claimed attempt is still current: it is the
- * attempt that committed the step.
+ * The handler with `db` — the `Db` of the runtime it is registered in — as the database its steps
+ * and commits write through, so that {@link writeHandlerRow} joins the transaction of a commit or
+ * a guard. A handler object may be bound to several runtimes, each with its own `Db`.
+ */
+export function boundToDb(handler: TaskHandler, db: Db): TaskHandler {
+  return {
+    type: handler.type,
+    inputSchema: handler.inputSchema,
+    step: (ctx) =>
+      handlerDb.run(db, async (): Promise<StepResult> => {
+        const result = await handler.step(ctx);
+        const { commit } = result;
+        if (!commit) return result;
+        return { ...result, commit: (effects) => handlerDb.run(db, () => commit(effects)) };
+      }),
+  };
+}
+
+/**
+ * Writes the step's handler row in the transaction open where it is called: the commit's or a
+ * guard's. `attempt` is read from the task row after the commit checked that the claimed attempt
+ * is still current: it is the attempt that committed the step.
  */
 export function writeHandlerRow(ctx: StepContext, note: string | null) {
-  return async (tx: Transaction) => {
-    await tx.execute(sql`
+  return async () => {
+    const db = handlerDb.getStore();
+    if (!db) throw new Error('writeHandlerRow called outside a handler bound by boundToDb');
+    await db.client.execute(sql`
       INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
       SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${note}
         FROM app.runtime_tasks WHERE task_id = ${ctx.taskId}`);
@@ -225,10 +250,10 @@ export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
       if (ctx.stepNo > 0) return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
       return {
         outcome: 'wait',
-        commit: async (tx, effects) => {
+        commit: async (effects) => {
           const tracker = await effects.openTracker(tasks);
           opened?.push(tracker);
-          await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)(tx);
+          await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)();
         },
       };
     },

@@ -1,7 +1,7 @@
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
-import type { Database, Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { agentCodeCalls, agentMessages } from '../schema';
 import { type FinishedMcpCall, finishedIn, type FinishedWindow } from './finished-window';
 
@@ -50,24 +50,25 @@ function byKey(call: CodeCallKey) {
 }
 
 /**
- * Drizzle queries of `agent_code_calls` (repository over a transaction): the audit of the calls a script
+ * Drizzle queries of `agent_code_calls`: the audit of the calls a script
  * made, one row per request, of the `run_code` call `(task_id, run_call_id)` of its session (KD-6). A row
  * gets at most one outcome (Invariant 4): every closing write is guarded by `outcome is null`.
  */
 @Injectable()
 export class AgentCodeCallsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Writes the open row of a call; the caller writes it through the step's `guard`. */
-  async open(tx: Transaction, call: NewCodeCall): Promise<void> {
-    await tx.insert(agentCodeCalls).values(call);
+  async open(call: NewCodeCall): Promise<void> {
+    await this.db.client.insert(agentCodeCalls).values(call);
   }
 
   /**
-   * Closes the row with its outcome outside a step's transaction: one UPDATE, its own short
-   * transaction — a record that the call ended or was cancelled, not a new action (Flow 4). `false`
+   * Closes the row with its outcome: one UPDATE — a record that the call ended or was cancelled, not a new action (Flow 4). `false`
    * when the row was already closed.
    */
-  async close(db: Database, call: CodeCallKey, ending: CodeCallEnding): Promise<boolean> {
-    const closed = await db
+  async close(call: CodeCallKey, ending: CodeCallEnding): Promise<boolean> {
+    const closed = await this.db.client
       .update(agentCodeCalls)
       .set({
         outcome: ending.outcome,
@@ -86,7 +87,6 @@ export class AgentCodeCallsRepository {
    * (a `write` run has none and runs once, as attempt 1).
    */
   async mcpCallsOfLatestAttempts<O extends ToolOutcome>(
-    executor: Executor,
     taskIds: readonly string[],
     outcomes: readonly O[],
     window: FinishedWindow,
@@ -96,7 +96,7 @@ export class AgentCodeCallsRepository {
        where ${agentMessages.taskId} = ${agentCodeCalls.taskId}
          and ${agentMessages.callId} = ${agentCodeCalls.runCallId}
          and ${agentMessages.kind} = 'run_attempt')`;
-    const rows = await executor
+    const rows = await this.db.client
       .select({
         server: agentCodeCalls.server,
         tool: agentCodeCalls.tool,
@@ -131,8 +131,8 @@ export class AgentCodeCallsRepository {
   }
 
   /** Closes every open row of the run, of any attempt, with the given outcome. */
-  async closeOpenOfRun(tx: Transaction, run: CallKey, outcome: ToolOutcome): Promise<void> {
-    await tx
+  async closeOpenOfRun(run: CallKey, outcome: ToolOutcome): Promise<void> {
+    await this.db.client
       .update(agentCodeCalls)
       .set({ outcome, finishedAt: sql`now()` })
       .where(

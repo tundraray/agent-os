@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import {
   AuditEventsRepository,
   createDatabase,
+  Db,
   IdentityRolesRepository,
   IdentitySessionsRepository,
   IdentityUsersRepository,
@@ -54,15 +55,16 @@ async function main(): Promise<void> {
     connectionString: databaseUrl,
     poolMax: 1,
   });
+  const db = new Db(connection.db);
   try {
     const { userId, created } = await seedSuperAdmin(
-      connection.db,
+      db,
       {
-        users: new IdentityUsersRepository(),
-        roles: new IdentityRolesRepository(),
-        sessions: new IdentitySessionsRepository(),
+        users: new IdentityUsersRepository(db),
+        roles: new IdentityRolesRepository(db),
+        sessions: new IdentitySessionsRepository(db),
       },
-      new AuditLog(connection.db, new AuditEventsRepository()),
+      new AuditLog(new AuditEventsRepository(db)),
       {
         login,
         name,

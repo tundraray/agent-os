@@ -7,7 +7,7 @@ import {
   type ModelProviderView,
   type UpdateModelProviderBody,
 } from '@agent-os/contracts';
-import { AgentModelProvidersRepository, DATABASE, type Database, type ModelProviderRow } from '@agent-os/db';
+import { AgentModelProvidersRepository, Db, type ModelProviderRow } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
@@ -123,7 +123,7 @@ export class AgentsProviders {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(AgentModelProvidersRepository) private readonly providerRows: AgentModelProvidersRepository,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
@@ -131,7 +131,7 @@ export class AgentsProviders {
   }
 
   async list(): Promise<ProviderRegistryView[]> {
-    const rows = await this.providerRows.list(this.database);
+    const rows = await this.providerRows.list();
     return rows.map((row) => viewOf(remembered(row)));
   }
 
@@ -145,7 +145,7 @@ export class AgentsProviders {
     const fields = { provider: input.name, kind: input.kind, changed: Object.keys(input) };
     return this.logged('model provider creation', fields, async () => {
       const row = remembered(
-        await this.providerRows.insert(this.database, {
+        await this.providerRows.insert({
           name: input.name,
           kind: input.kind,
           baseUrl: input.baseUrl ?? null,
@@ -165,7 +165,7 @@ export class AgentsProviders {
       'model provider update',
       fields,
       async () => {
-        const change = await this.database.transaction((tx) => this.providerRows.update(tx, name, patch));
+        const change = await this.db.transaction(async () => this.providerRows.update(name, patch));
         if (change === undefined) throw providerNotFound(name);
         const keyChanged = patch.apiKey !== undefined;
         return {
@@ -185,7 +185,7 @@ export class AgentsProviders {
       { provider: name, catalogModels },
       async () => {
         if (catalogModels > 0) throw providerHasModels(name, catalogModels);
-        const row = remembered(await this.providerRows.delete(this.database, name));
+        const row = remembered(await this.providerRows.delete(name));
         if (row === undefined) throw providerNotFound(name);
         return { before: auditStateOf(row, false), after: null };
       },
@@ -195,20 +195,20 @@ export class AgentsProviders {
 
   /** The provider's kind, or `null` when it is not registered. */
   async kindOf(name: string): Promise<ModelProviderKind | null> {
-    const row = remembered(await this.providerRows.find(this.database, name));
+    const row = remembered(await this.providerRows.find(name));
     return row === undefined ? null : kindOf(row);
   }
 
   /** Readiness of each named provider, in one query. */
   async readiness(names: readonly string[]): Promise<ReadonlyMap<string, ProviderReadiness>> {
-    const rows = await this.providerRows.findMany(this.database, names);
+    const rows = await this.providerRows.findMany(names);
     const byName = new Map(rows.map((row) => [row.name, connectionOf(remembered(row))]));
     return new Map(names.map((name) => [name, providerReadiness(byName.get(name) ?? null)]));
   }
 
   /** The provider's connection with its key, or `null` when it is not registered. */
   async connection(name: string): Promise<ProviderConnection | null> {
-    const row = remembered(await this.providerRows.find(this.database, name));
+    const row = remembered(await this.providerRows.find(name));
     return row === undefined ? null : connectionOf(row);
   }
 
@@ -223,7 +223,7 @@ export class AgentsProviders {
   }
 
   private async rowOf(name: string): Promise<ModelProviderRow> {
-    const row = remembered(await this.providerRows.find(this.database, name));
+    const row = remembered(await this.providerRows.find(name));
     if (row === undefined) throw providerNotFound(name);
     return row;
   }

@@ -6,16 +6,11 @@ import type {
   RecordDetail,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  type Executor,
   type LibraryPanelQuery,
   type LibraryRecordKey,
   type LibraryRecordRow,
   LibraryRecordsRepository,
   type LibraryViewer,
-  type Transaction,
 } from '@agent-os/db';
 import { AccessService } from '../access/access.service';
 import { AuditLog } from '../audit/audit-log';
@@ -120,69 +115,56 @@ function authorOf(user: UserName): RecordAuthor {
 
 /**
  * What the library's services share: the reads of records — the repository's two conditions
- * (ADR-0016) with authors and holders named through `IdentityDirectory` on the same executor — who
+ * (ADR-0016) with authors and holders named through `IdentityDirectory` — who
  * looks, the delete, the audit event and the one log record of an operation.
  */
 @Injectable()
 export class LibraryRecords {
-  readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly repository: LibraryRecordsRepository,
     private readonly identity: IdentityDirectory,
     private readonly access: AccessService,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   // ---------- Reads ----------
 
   /** The records the viewer sees, or the one with this id or built-in key when it is visible (KD-2). */
   async visible(
-    executor: Executor,
     viewer: LibraryViewer,
     key?: LibraryRecordKey,
   ): Promise<LibraryRecord[]> {
     return this.named(
-      executor,
       await this.stored(
-        executor,
-        await this.repository.findVisible(executor, viewer, key),
+        await this.repository.findVisible(viewer, key),
       ),
     );
   }
 
   /** The records of the admin panel: all of them, one list, or one by id when the panel shows it. */
   async panel(
-    executor: Executor,
     query?: LibraryPanelQuery,
   ): Promise<LibraryRecord[]> {
     return this.named(
-      executor,
       await this.stored(
-        executor,
-        await this.repository.findInPanel(executor, query),
+        await this.repository.findInPanel(query),
       ),
     );
   }
 
   /** The panel's ban list. */
-  async bans(executor: Executor): Promise<BannedRecordRow[]> {
-    const rows = await this.repository.listBans(executor);
-    return this.namedBans(executor, rows.map(toStoredBan));
+  async bans(): Promise<BannedRecordRow[]> {
+    const rows = await this.repository.listBans();
+    return this.namedBans(rows.map(toStoredBan));
   }
 
   /** The ban of one record; `undefined` — the record has none (or is gone). */
   async ban(
-    executor: Executor,
     id: string,
   ): Promise<BannedRecordRow | undefined> {
-    const row = await this.repository.findBan(executor, id);
+    const row = await this.repository.findBan(id);
     const [ban] = await this.namedBans(
-      executor,
       row ? [toStoredBan(row)] : [],
     );
     return ban;
@@ -228,14 +210,12 @@ export class LibraryRecords {
 
   /** Ids of the agent records the viewer sees; read only when the content names records. */
   async visibleAgentIds(
-    executor: Executor,
     viewer: LibraryViewer,
     needed: boolean,
   ): Promise<string[]> {
     if (!needed) return [];
     const records = await this.stored(
-      executor,
-      await this.repository.findVisible(executor, viewer),
+      await this.repository.findVisible(viewer),
     );
     return records
       .filter((record) => record.body.kind === 'agent')
@@ -243,37 +223,34 @@ export class LibraryRecords {
   }
 
   async visibleOne(
-    executor: Executor,
     viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord | undefined> {
-    const [record] = await this.visible(executor, viewer, { id });
+    const [record] = await this.visible(viewer, { id });
     return record;
   }
 
   async panelOne(
-    executor: Executor,
     id: string,
   ): Promise<LibraryRecord | undefined> {
-    const [record] = await this.panel(executor, { id });
+    const [record] = await this.panel({ id });
     return record;
   }
 
   /** A number that is not a UUID is answered without the database (DC-2). */
   async visibleOr404(
-    executor: Executor,
     viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord> {
     const record = isUuid(id)
-      ? await this.visibleOne(executor, viewer, id)
+      ? await this.visibleOne(viewer, id)
       : undefined;
     if (record === undefined) throw notFound();
     return record;
   }
 
-  async panelOr404(executor: Executor, id: string): Promise<LibraryRecord> {
-    const record = isUuid(id) ? await this.panelOne(executor, id) : undefined;
+  async panelOr404(id: string): Promise<LibraryRecord> {
+    const record = isUuid(id) ? await this.panelOne(id) : undefined;
     if (record === undefined) throw notFound();
     return record;
   }
@@ -289,13 +266,11 @@ export class LibraryRecords {
       .map((model) => model.id);
   }
 
-  /** The record rows with their holders, read on the same executor; the order of the records stays. */
+  /** The record rows with their holders; the order of the records stays. */
   private async stored(
-    executor: Executor,
     rows: readonly LibraryRecordRow[],
   ): Promise<StoredRecord[]> {
     const shares = await this.repository.sharesOf(
-      executor,
       rows.map((record) => record.id),
     );
     return toStoredRecords(rows, shares);
@@ -303,16 +278,13 @@ export class LibraryRecords {
 
   /** The records with their authors and holders by name; the order of the records stays. */
   private async named(
-    executor: Executor,
     stored: readonly StoredRecord[],
   ): Promise<LibraryRecord[]> {
     const [roles, users] = await Promise.all([
       this.identity.roleNames(
-        executor,
         stored.flatMap((record) => record.holders.roleIds),
       ),
       this.identity.userNames(
-        executor,
         stored.flatMap((record) => [
           ...record.holders.userIds,
           ...(record.ownerId === null ? [] : [record.ownerId]),
@@ -340,11 +312,9 @@ export class LibraryRecords {
 
   /** The bans with their authors; a ban whose record has no author among the employees is left out. */
   private async namedBans(
-    executor: Executor,
     stored: readonly StoredBan[],
   ): Promise<BannedRecordRow[]> {
     const users = await this.identity.userNames(
-      executor,
       stored.flatMap((ban) => ban.ownerId ?? []),
     );
     const userById = new Map(users.map((user) => [user.id, user]));
@@ -358,19 +328,17 @@ export class LibraryRecords {
 
   /** Deletes the record unless it is built-in (AC-12.2); its holders go by cascade. */
   async deleteChecked(
-    tx: Transaction,
     actorId: string,
     record: LibraryRecord,
   ): Promise<void> {
     if (record.builtinKey !== null)
       throw libraryError('RECORD_REJECTED', 'builtin');
-    await this.repository.delete(tx, record.id);
-    await this.audit(tx, actorId, 'library_delete', record, null);
+    await this.repository.delete(record.id);
+    await this.audit(actorId, 'library_delete', record, null);
   }
 
   /** One event per action, in the action's transaction, with the KD-7 sample only. */
   audit(
-    tx: Transaction,
     actorId: string,
     kind: LibraryAuditKind,
     before: LibraryRecord | null,
@@ -379,7 +347,7 @@ export class LibraryRecords {
   ): Promise<void> {
     const subject = after ?? before;
     if (subject === null) throw new Error(`${kind} audit without a record`);
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind,
       actor: actorId,
       objectType: AUDIT_OBJECT_TYPE,

@@ -1,5 +1,5 @@
 import type { Logger } from '@agent-os/common';
-import type { Database, RuntimeTasksRepository } from '@agent-os/db';
+import type { RuntimeTasksRepository } from '@agent-os/db';
 import { z } from 'zod';
 import type { Clock } from '../clock';
 import type { RuntimeConfig } from '../runtime-config';
@@ -51,7 +51,7 @@ function setup() {
   const active: LiveTaskIdentity[] = [];
   const taskRows = { listActive: () => Promise.resolve(active) } as unknown as RuntimeTasksRepository;
   const config = { workers: true, leaseMs: 1_000 } as RuntimeConfig;
-  const live = new LiveTasks(handlers, {} as Database, taskRows, clock, config, logger);
+  const live = new LiveTasks(handlers, taskRows, clock, config, logger);
 
   const task = (taskId: string, type = LIVE): LiveTaskIdentity => ({
     taskId,

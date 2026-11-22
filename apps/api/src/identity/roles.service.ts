@@ -9,14 +9,10 @@ import type {
   UpdateRoleBody,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  type Executor,
   type IdentityRoleRow,
   IdentityRolesRepository,
   type RoleSummaryRow,
-  type Transaction,
+  Db,
 } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
@@ -43,37 +39,32 @@ function roleNameTaken(error: unknown): never {
  */
 @Injectable()
 export class RolesService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly roles: IdentityRolesRepository,
     private readonly auditLog: AuditLog,
     private readonly users: UsersService,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** The roles by name with their employee count. */
   list(): Promise<RoleList> {
-    return this.roles.summaries(this.db);
+    return this.roles.summaries();
   }
 
   /** One role with its employees. 404 ROLE_NOT_FOUND. */
   async detail(roleId: string): Promise<RoleDetail> {
     const role = await this.findOr404(roleId);
-    return { ...role, members: await this.roles.members(this.db, role.id) };
+    return { ...role, members: await this.roles.members(role.id) };
   }
 
   /** A role without the admin right and without employees. 409 ROLE_NAME_TAKEN. */
   async create(actorId: string, body: CreateRoleBody): Promise<RoleSummary> {
     const startedAt = Date.now();
     const role = await this.db
-      .transaction(async (tx) => {
-        const created = await this.roles.insert(tx, body.name);
+      .transaction(async () => {
+        const created = await this.roles.insert(body.name);
         await this.recordRoleChange(
-          tx,
           actorId,
           created.id,
           null,
@@ -113,10 +104,9 @@ export class RolesService {
       isAdmin: body.isAdmin ?? role.isAdmin,
     };
     await this.db
-      .transaction(async (tx) => {
-        await this.roles.update(tx, role.id, after);
+      .transaction(async () => {
+        await this.roles.update(role.id, after);
         await this.recordRoleChange(
-          tx,
           actorId,
           role.id,
           roleState(role),
@@ -140,9 +130,9 @@ export class RolesService {
     const startedAt = Date.now();
     const role = await this.findOr404(roleId);
     if (role.builtin) throw this.refuseBuiltin(actorId, role.id, 'delete');
-    await this.db.transaction(async (tx) => {
-      await this.roles.delete(tx, role.id);
-      await this.recordRoleChange(tx, actorId, role.id, roleState(role), null);
+    await this.db.transaction(async () => {
+      await this.roles.delete(role.id);
+      await this.recordRoleChange(actorId, role.id, roleState(role), null);
     });
     this.logger.info('role deleted', {
       actorId,
@@ -183,19 +173,19 @@ export class RolesService {
     const startedAt = Date.now();
     await this.users.findOr404(userId);
     const role = await this.findOr404(roleId);
-    const changed = await this.db.transaction(async (tx) => {
-      const before = await this.roleRefsOf(tx, userId);
+    const changed = await this.db.transaction(async () => {
+      const before = await this.roleRefsOf(userId);
       const has = before.some((held) => held.id === role.id);
       if (has === (change === 'assign')) return false;
-      if (change === 'assign') await this.roles.addMember(tx, role.id, userId);
-      else await this.roles.removeMember(tx, role.id, userId);
-      await this.auditLog.record(tx, {
+      if (change === 'assign') await this.roles.addMember(role.id, userId);
+      else await this.roles.removeMember(role.id, userId);
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: 'user',
         objectId: userId,
         before: { roles: before },
-        after: { roles: await this.roleRefsOf(tx, userId) },
+        after: { roles: await this.roleRefsOf(userId) },
         outcome: 'ok',
       });
       return true;
@@ -215,20 +205,18 @@ export class RolesService {
   }
 
   private async roleRefsOf(
-    executor: Executor,
     userId: string,
   ): Promise<{ id: string; name: string }[]> {
-    return roleRefs(await this.roles.ofUsers(executor, [userId]));
+    return roleRefs(await this.roles.ofUsers([userId]));
   }
 
   private recordRoleChange(
-    tx: Transaction,
     actorId: string,
     roleId: string,
     before: ReturnType<typeof roleState> | null,
     after: ReturnType<typeof roleState> | null,
   ): Promise<void> {
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind: 'admin_change',
       actor: actorId,
       objectType: 'role',
@@ -256,7 +244,7 @@ export class RolesService {
 
   /** The role with its employee count, or 404 ROLE_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
   private async findOr404(roleId: string): Promise<RoleSummaryRow> {
-    const [role] = isUuid(roleId) ? await this.roles.summaries(this.db, roleId) : [];
+    const [role] = isUuid(roleId) ? await this.roles.summaries(roleId) : [];
     if (role === undefined) throw identityError('ROLE_NOT_FOUND');
     return role;
   }

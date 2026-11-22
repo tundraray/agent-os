@@ -1,5 +1,4 @@
 import type { Logger } from '@agent-os/common';
-import type { Transaction } from '@agent-os/db';
 import type { LiveTask, LiveTaskIdentity } from '@agent-os/runtime';
 
 import { AgentsError } from '../../errors';
@@ -16,7 +15,6 @@ export interface StartChildDeps {
   readonly childType: (snapshot: RunSnapshot) => string;
   /** Makes the child's object with its session inside the commit (`AgentFactory.createIn`). */
   readonly createIn: (
-    tx: Transaction,
     type: string,
     task: Omit<LiveTaskIdentity, 'type' | 'input'>,
     input: SessionInput,
@@ -32,7 +30,7 @@ export interface StartChildDeps {
  * Owner and parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
  */
 export function createStartChild(deps: StartChildDeps): (scope: StartChildScope) => StartChild {
-  return ({ tx, effects, caller }) =>
+  return ({ effects, caller }) =>
     async ({ snapshot, prompt, description, forkedFrom }) => {
       if (caller.depth + 1 > deps.maxDepth) {
         throw new AgentsError(
@@ -49,7 +47,6 @@ export function createStartChild(deps: StartChildDeps): (scope: StartChildScope)
       const type = deps.childType(snapshot);
       const agentId = await effects.spawn({ type, input });
       const child = await deps.createIn(
-        tx,
         type,
         {
           taskId: agentId,

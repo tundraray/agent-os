@@ -70,7 +70,7 @@ export class AdminToolResultsController {
           previewChars: body.previewChars,
           readMaxTokens: body.readMaxTokens,
         });
-        await this.auditLog.record(null, {
+        await this.auditLog.record({
           kind: 'admin_change',
           actor,
           objectType: SETTINGS_OBJECT_TYPE,

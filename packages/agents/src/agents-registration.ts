@@ -10,8 +10,7 @@ import {
   AgentSessionsRepository,
   AgentSessionTasksRepository,
   AgentToolResultsRepository,
-  DATABASE,
-  type Database,
+  Db,
 } from '@agent-os/db';
 import { EventConsumerRegistry, HandlerRegistry, TaskControl } from '@agent-os/runtime';
 import {
@@ -53,7 +52,6 @@ import { ToolRegistry } from './tools/tool-registry';
 export class SystemToolsRegistration implements OnModuleInit {
   constructor(
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'register'>,
-    @Inject(DATABASE) private readonly database: Database,
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(AgentMessagesRepository) private readonly messageRows: AgentMessagesRepository,
     @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
@@ -75,7 +73,6 @@ export class SystemToolsRegistration implements OnModuleInit {
         ...startDeps,
         maxDepth: this.config.maxDepth,
         logger,
-        database: this.database,
         sessions: this.sessions,
         messageRows: this.messageRows,
         toolResultRows: this.toolResultRows,
@@ -110,7 +107,7 @@ export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap,
     @Inject(EventConsumerRegistry) private readonly eventConsumers: EventConsumerRegistry,
     @Inject(AgentFactory) private readonly factory: Pick<AgentFactory, 'restore'>,
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, 'seal' | 'toolNames'>,
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(AgentSessionsRepository) private readonly sessionRows: AgentSessionsRepository,
     @Inject(AgentMessagesRepository) private readonly messageRows: AgentMessagesRepository,
@@ -128,7 +125,7 @@ export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap,
   ) {}
 
   onModuleInit(): void {
-    const { database, sessions, knowledgeRows, knowledgeRunRows, tasks, embeddings, logger } = this;
+    const { sessions, knowledgeRows, knowledgeRunRows, tasks, embeddings, logger } = this;
     // The three agent classes the runtime launches, each a live task type: one object per task, from the factory.
     for (const type of [CHAT_TASK_TYPE, AGENT_TASK_TYPE, DEEP_AGENT_TASK_TYPE]) {
       this.handlers.registerLive({
@@ -139,7 +136,7 @@ export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap,
     }
     this.handlers.register(
       createKnowledgeExtractHandler({
-        database,
+        db: this.db,
         sessions,
         knowledgeRows,
         knowledgeRunRows,
@@ -153,11 +150,11 @@ export class AgentsRegistration implements OnModuleInit, OnApplicationBootstrap,
       }),
     );
     this.handlers.register(
-      createKnowledgeEmbedHandler({ database, knowledgeRows, knowledgeRunRows, embeddings, store: this.vectorStore }),
+      createKnowledgeEmbedHandler({ knowledgeRows, knowledgeRunRows, embeddings, store: this.vectorStore }),
     );
     this.eventConsumers.register(createStopChildrenOnFailure({ tasks, sessions, logger }));
     this.eventConsumers.register(
-      createKnowledgeTrigger({ tasks, sessionRows: this.sessionRows, knowledgeRunRows, logger }),
+      createKnowledgeTrigger({ db: this.db, tasks, sessionRows: this.sessionRows, knowledgeRunRows, logger }),
     );
   }
 

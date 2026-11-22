@@ -1,4 +1,4 @@
-import type { AgentMessagesRepository, Transaction } from '@agent-os/db';
+import type { AgentMessagesRepository } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { START_AGENT_TOOL, type RecordKind } from '@agent-os/contracts';
 import { z } from 'zod';
@@ -209,7 +209,7 @@ export function createStartAgentTool(
         source === null ? null : await resolveStart({ ownerId: caller.ownerId, source }, deps);
       return { startedAt, target, launchSet, source, resolution };
     },
-    async execute({ callId, args, caller, tx, startChild, prepared }) {
+    async execute({ callId, args, caller, startChild, prepared }) {
       if (prepared === undefined) {
         throw new Error(`start_agent of agent ${caller.agentId} runs without its prepare`);
       }
@@ -239,7 +239,7 @@ export function createStartAgentTool(
         description: args.description,
         prompt: args.prompt,
         ...(target.kind === 'fork'
-          ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(deps.messageRows, tx, caller, callId) } }
+          ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(deps.messageRows, caller, callId) } }
           : {}),
       });
       logStart(logger, {
@@ -265,11 +265,10 @@ export function createStartAgentTool(
 /** The fork's link (KD-7): the last entry of the caller before the `model_answer` that requested this call. */
 async function seqBeforeAnswer(
   messageRows: AgentMessagesRepository,
-  tx: Transaction,
   caller: ToolCaller,
   callId: string,
 ): Promise<number> {
-  const answerSeq = await messageRows.answerSeqOf(tx, caller.agentId, callId);
+  const answerSeq = await messageRows.answerSeqOf(caller.agentId, callId);
   if (answerSeq === undefined) {
     throw new Error(`No answer of agent ${caller.agentId} requested call ${callId}`);
   }

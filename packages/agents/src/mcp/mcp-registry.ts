@@ -13,8 +13,7 @@ import {
 } from '@agent-os/contracts';
 import {
   AgentMcpServersRepository,
-  DATABASE,
-  type Database,
+  Db,
   type McpServerPatch,
   type McpServerRow,
   type NewMcpServerRow,
@@ -200,7 +199,7 @@ export class McpRegistry {
   private readonly allowHttp: boolean;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
     @Inject(McpClient) private readonly client: McpClient,
     @Inject(AGENTS_LOGGER) logger: Logger,
@@ -212,7 +211,7 @@ export class McpRegistry {
   }
 
   async list(): Promise<McpServerSummary[]> {
-    const rows = await this.mcpServerRows.list(this.database);
+    const rows = await this.mcpServerRows.list();
     return rows.map((row) => summaryOf(row));
   }
 
@@ -228,7 +227,7 @@ export class McpRegistry {
   register(input: McpServerRegistration): Promise<McpServerWrite> {
     return this.logged('mcp server registration', { server: input.name, mode: input.mode }, async () => {
       const { name, url, mode } = input;
-      if ((await this.mcpServerRows.find(this.database, name)) !== undefined) throw nameTaken(name);
+      if ((await this.mcpServerRows.find(name)) !== undefined) throw nameTaken(name);
       this.requireSecureUrl(url);
       const row: NewMcpServerRow =
         input.mode === 'shared'
@@ -241,7 +240,7 @@ export class McpRegistry {
               sharedToken: input.sharedToken,
             }
           : { name, url, mode, ...(await this.registerOAuthClient(url, input.redirectUrl)) };
-      const inserted = await this.mcpServerRows.insert(this.database, row);
+      const inserted = await this.mcpServerRows.insert(row);
       if (inserted === undefined) throw nameTaken(name);
       return { view: viewOf(inserted), before: null, after: auditStateOf(inserted, mode === 'shared') };
     });
@@ -302,21 +301,21 @@ export class McpRegistry {
   /** Removes the server; the cascade removes every account on it (AC-13.6). */
   remove(name: string): Promise<McpServerRemoval> {
     return this.logged('mcp server removal', { server: name }, async () => {
-      const row = await this.mcpServerRows.delete(this.database, name);
+      const row = await this.mcpServerRows.delete(name);
       if (row === undefined) throw notFound(name);
       return { before: auditStateOf(row, false), after: null };
     });
   }
 
   private async rowOf(name: string): Promise<McpServerRow> {
-    const row = await this.mcpServerRows.find(this.database, name);
+    const row = await this.mcpServerRows.find(name);
     if (row === undefined) throw notFound(name);
     return row;
   }
 
   private async write(name: string, patch: McpServerPatch, tokenChanged: boolean): Promise<McpServerWrite> {
-    const change = await this.database.transaction((tx) =>
-      this.mcpServerRows.update(tx, name, patch),
+    const change = await this.db.transaction(async () =>
+      this.mcpServerRows.update(name, patch),
     );
     if (change === undefined) throw notFound(name);
     return {

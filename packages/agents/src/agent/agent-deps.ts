@@ -7,8 +7,7 @@ import {
   AgentSessionsRepository,
   AgentSessionTasksRepository,
   AgentToolResultsRepository,
-  DATABASE,
-  type Database,
+  Db,
 } from '@agent-os/db';
 import { Inbox, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -32,8 +31,8 @@ export class AgentDeps {
   readonly compactAtTokens: number;
 
   constructor(
-    /** Reads the session and its history outside the commit: only steps of this agent write them, one at a time. */
-    @Inject(DATABASE) readonly database: Database,
+    /** The savepoint of a learning session's question outcome (`ensureQuestionVector`). */
+    @Inject(Db) readonly db: Db,
     /** The session of the agent, made from its snapshot and read back; `sessionRows` — its other reads and writes. */
     @Inject(Sessions) readonly sessions: Sessions,
     @Inject(AgentSessionsRepository) readonly sessionRows: AgentSessionsRepository,

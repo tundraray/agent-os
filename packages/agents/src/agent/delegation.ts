@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 
 import type { CallState } from '../history/call-state';
@@ -12,7 +11,7 @@ import type { ToolCaller } from '../tools/tool';
  * in-commit call sees the results of the calls before it (two `start_agent` calls of one answer count each
  * other).
  */
-export type CallClosing = (tx: Transaction, effects: StepEffects) => Promise<HistoryEntry | undefined>;
+export type CallClosing = (effects: StepEffects) => Promise<HistoryEntry | undefined>;
 
 /** A call of the model's answer the agent delegates instead of running: its record and its checked arguments. */
 export interface DelegatedCall {
@@ -36,7 +35,7 @@ export interface Delegation {
   /** How many calls were accepted. */
   readonly accepted: number;
   /** Starts the accepted calls' work in the step's commit, after which the step waits; `null` — none accepted. */
-  readonly open: ((tx: Transaction, effects: StepEffects) => Promise<void>) | null;
+  readonly open: ((effects: StepEffects) => Promise<void>) | null;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   AgentMcpServersRepository,
   AgentMessagesRepository,
   type Database,
+  Db,
 } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -30,6 +31,8 @@ import { ToolRunner } from '../tool-runner';
 // design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the server–tool pair, one audit record per
 // refusal).
 const OWNER = 'employee-1';
+/** No query is made: the specs stop before any table is read. */
+const DB = new Db({} as Database);
 
 /** A uuid whose last group is `n`. */
 function id(n: number): string {
@@ -154,7 +157,7 @@ interface RunnerDoubles {
 /** A runner over the gate double whose client sends nothing: a call that reaches a server throws. */
 function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
   const runner = new ToolRunner(
-    new CallRecords(new History(new AgentMessagesRepository()), new AgentCodeCallsRepository()),
+    new CallRecords(new History(new AgentMessagesRepository(DB)), new AgentCodeCallsRepository(DB)),
     { callTool: NO_SERVER_CALLS },
     { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
     gateOf(doubles.pairs ?? []),
@@ -162,7 +165,6 @@ function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
       doubles.audits?.push(entry);
     },
     { mcpCallTimeoutMs: 1000 },
-    {} as Database,
     {
       readSettings: async () => ({
         storeFromChars: 50_000,
@@ -210,9 +212,8 @@ const RUN_CODE_STUB: AgentTool = {
 async function checkRunCode(runClass: 'read' | 'write', script: string): Promise<Gate> {
   const registry = new ToolRegistry(
     // A declaration that names no server reads nothing of the registry.
-    {} as Database,
-    new AgentMcpServersRepository(),
-    new AgentMcpAccountsRepository(),
+    new AgentMcpServersRepository(DB),
+    new AgentMcpAccountsRepository(DB),
     gateOf([]),
   );
   registry.useRunCode(RUN_CODE_STUB);

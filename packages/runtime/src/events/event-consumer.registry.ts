@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import { Injectable } from '@nestjs/common';
 
 
@@ -19,8 +18,8 @@ export interface StoredEvent {
 }
 
 /**
- * A consumer of outbox events. `handle` only makes database writes inside the given transaction
- * (the relay's delivery transaction, in a savepoint); it calls no handler or external system.
+ * A consumer of outbox events. `handle` only makes database writes; they join the
+ * relay's delivery transaction, in a savepoint; it calls no handler or external system.
  */
 export interface EventConsumer {
   /** Unique name, stored as `runtime_event_deliveries.consumer`. */
@@ -29,7 +28,7 @@ export interface EventConsumer {
   readonly eventTypes: readonly string[];
   /** `schemaVersion`s it understands; any other version is parked as `needs_attention`. */
   readonly schemaVersions: readonly number[];
-  handle(tx: Transaction, event: StoredEvent): Promise<void>;
+  handle(event: StoredEvent): Promise<void>;
 }
 
 /**

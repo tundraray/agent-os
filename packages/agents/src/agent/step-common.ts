@@ -1,5 +1,5 @@
 import { AgentFailureReasonSchema, AGENTS_HISTORY_APPENDED, type ChipRecord, HistoryEventSchema } from '@agent-os/contracts';
-import type { SessionPatch, Transaction } from '@agent-os/db';
+import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
@@ -23,7 +23,7 @@ export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
  */
 export interface StepPrelude {
   readonly entries: readonly NewHistoryEntry[];
-  readonly write: (tx: Transaction) => Promise<readonly NewHistoryEntry[]>;
+  readonly write: () => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }
 
@@ -84,13 +84,12 @@ export function providerMessagesOf(
  */
 export async function appendWithEvent(
   deps: Pick<AgentDeps, 'history'>,
-  tx: Transaction,
   effects: StepEffects,
   taskId: string,
   entries: readonly NewHistoryEntry[],
   before: readonly HistoryEntry[] = [],
 ): Promise<HistoryEntry[]> {
-  const appended = await deps.history.append(tx, taskId, entries);
+  const appended = await deps.history.append(taskId, entries);
   const last = appended.at(-1) ?? before.at(-1);
   if (last !== undefined) {
     await effects.emit(AGENTS_HISTORY_APPENDED, { agentId: taskId, seq: last.seq });
@@ -114,7 +113,7 @@ export function failResult(input: {
   readonly reason: string;
   readonly message: string;
   /** Writes the entries before the event and returns them. */
-  readonly writeEntries: (tx: Transaction, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): StepResult {
   const { deps, ctx, reason, message } = input;
@@ -122,10 +121,10 @@ export function failResult(input: {
     outcome: 'fail',
     reason,
     message,
-    commit: async (tx, effects) => {
-      const entries = await input.writeEntries(tx, effects);
-      await appendWithEvent(deps, tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
-      await deps.sessionRows.update(tx, ctx.taskId, {
+    commit: async (effects) => {
+      const entries = await input.writeEntries(effects);
+      await appendWithEvent(deps, effects, ctx.taskId, [...entries, failedEvent(reason)]);
+      await deps.sessionRows.update(ctx.taskId, {
         ...input.patch,
         turns: 0,
         closed: true,
@@ -148,7 +147,7 @@ export async function refusedResult(input: {
   readonly model: string;
   readonly refusal: ModelRefusal;
   readonly audit: AccessAudit;
-  readonly writeEntries: (tx: Transaction, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): Promise<StepResult> {
   const { ctx, model, refusal } = input;

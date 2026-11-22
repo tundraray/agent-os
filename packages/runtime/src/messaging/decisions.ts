@@ -8,9 +8,7 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
-  type Transaction,
+  Db,
   RuntimeDecisionsRepository,
   type RuntimeDecisionRow,
   type RuntimeDecisionView,
@@ -20,7 +18,6 @@ import { Inject, Injectable } from '@nestjs/common';
 import { RuntimeError } from '../errors';
 import { EventLog } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
-import { retryingTransaction } from '../runtime-tx';
 import { RUNTIME_LOGGER } from '../runtime.tokens';
 import { Tasks } from '../tasks/tasks';
 
@@ -48,7 +45,7 @@ export interface DecisionRequest {
 }
 
 interface DecisionsDeps {
-  db: Database;
+  db: Db;
   repository: RuntimeDecisionsRepository;
   tasks: Tasks;
   taskRows: RuntimeTasksRepository;
@@ -63,15 +60,14 @@ const EVENT = RuntimeEventTypeSchema.enum;
 /**
  * Decision requests (design-runtime.md, Запросы решений; KD-2, Invariant 3): a step opens one with
  * `await_decision`, the employee resolves it once, and the resolution is handed to exactly one
- * committed step — the one whose commit sets `delivered_step`. Lock order: the task before its
- * request, as in a step's commit and in a stop.
+ * committed step — the one whose commit sets `delivered_step`.
  */
 @Injectable()
 export class Decisions {
   private readonly deps: DecisionsDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(RuntimeDecisionsRepository) repository: RuntimeDecisionsRepository,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
@@ -90,10 +86,10 @@ export class Decisions {
 
   /**
    * Opens the request of an `await_decision` step with `decision.requested`, in the step's commit
-   * transaction under the task's lock. The caller puts the task in `waiting` (`decision`).
+   * transaction. The caller puts the task in `waiting` (`decision`).
    */
-  async open(tx: Transaction, task: TaskRow, request: DecisionRequest): Promise<RuntimeDecisionRow> {
-    const row = await this.deps.repository.insert(tx, {
+  async open(task: TaskRow, request: DecisionRequest): Promise<RuntimeDecisionRow> {
+    const row = await this.deps.repository.insert({
       decisionId: randomUUID(),
       taskId: task.taskId,
       rootId: task.rootId,
@@ -101,7 +97,7 @@ export class Decisions {
       kind: request.kind,
       payload: request.payload ?? null,
     });
-    await this.deps.events.append(tx, {
+    await this.deps.events.append({
       type: EVENT['decision.requested'],
       task,
       payload: { decisionId: row.decisionId, kind: row.kind },
@@ -110,13 +106,13 @@ export class Decisions {
   }
 
   /** The task's resolved request that no committed step has received yet; read by the claim. */
-  loadUndelivered(tx: Transaction, taskId: string): Promise<RuntimeDecisionRow | undefined> {
-    return this.deps.repository.findUndelivered(tx, taskId);
+  loadUndelivered(taskId: string): Promise<RuntimeDecisionRow | undefined> {
+    return this.deps.repository.findUndelivered(taskId);
   }
 
   /** Hands the request to step `stepNo`, in that step's commit transaction. */
-  markDelivered(tx: Transaction, decisionId: string, stepNo: number): Promise<void> {
-    return this.deps.repository.markDelivered(tx, decisionId, stepNo);
+  markDelivered(decisionId: string, stepNo: number): Promise<void> {
+    return this.deps.repository.markDelivered(decisionId, stepNo);
   }
 
   /**
@@ -134,8 +130,8 @@ export class Decisions {
     const startedAt = Date.now();
     const fields = { decisionId, ownerId };
     try {
-      const outcome = await retryingTransaction(db, logger, 'decisions.resolve', (tx) =>
-        this.resolveIn(tx, decisionId, ownerId, resolution),
+      const outcome = await db.transaction(() =>
+        this.resolveIn(decisionId, ownerId, resolution),
       );
       logger.info('decision resolve answered', {
         ...fields,
@@ -157,8 +153,7 @@ export class Decisions {
 
   /** The owner's request in any status; `undefined` for a missing or another owner's one. */
   async get(decisionId: string, ownerId: string): Promise<TreeDecision | undefined> {
-    const { db, repository } = this.deps;
-    const row = await repository.findOwned(db, decisionId, ownerId);
+    const row = await this.deps.repository.findOwned(decisionId, ownerId);
     return row === undefined ? undefined : toTreeDecision(row);
   }
 
@@ -167,25 +162,22 @@ export class Decisions {
    * or no tree.
    */
   async listTree(rootId: string, ownerId: string): Promise<TreeDecision[]> {
-    const { db, repository } = this.deps;
-    const rows = await repository.listTree(db, rootId, ownerId);
+    const rows = await this.deps.repository.listTree(rootId, ownerId);
     return rows.map(toTreeDecision);
   }
 
   private async resolveIn(
-    tx: Transaction,
     decisionId: string,
     ownerId: string,
     resolution: unknown,
   ): Promise<{ outcome: ResolveOutcome; taskId: string; rootId: string }> {
     const { repository, tasks, taskRows, events } = this.deps;
-    const found = await repository.findTaskAndOwner(tx, decisionId);
+    const found = await repository.findTaskAndOwner(decisionId);
     if (found?.ownerId !== ownerId) {
       throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
     }
-    // The task first, then its request: the order of a step's commit and of a stop.
-    const task = await taskRows.lock(tx, found.taskId);
-    const request = await repository.lock(tx, decisionId);
+    const task = await taskRows.find(found.taskId);
+    const request = await repository.find(decisionId);
     // A request of a deleted tree answers as a missing one: the stop cancelled it, and
     // `already_resolved` would tell the deleted tree apart.
     if (!task || task.deletedAt !== null || !request) {
@@ -195,10 +187,9 @@ export class Decisions {
       return { outcome: 'already_resolved', taskId: task.taskId, rootId: task.rootId };
     }
 
-    await repository.resolve(tx, decisionId, resolution);
+    await repository.resolve(decisionId, resolution);
     // Invariant 3: an open request means its task waits for it.
     const woken = await tasks.transition(
-      tx,
       { taskId: task.taskId, from: [waiting], waitReason: WaitReasonSchema.enum.decision },
       { kind: 'set', status: queued },
     );
@@ -207,12 +198,12 @@ export class Decisions {
         `Task ${task.taskId} of open decision ${decisionId} is ${task.status}/${task.waitReason}, not waiting for it`,
       );
     }
-    await events.append(tx, {
+    await events.append({
       type: EVENT['decision.resolved'],
       task: woken,
       payload: { decisionId },
     });
-    await events.append(tx, {
+    await events.append({
       type: EVENT['task.queued'],
       task: woken,
       payload: { cause: 'decision', decisionId, from: waiting },

@@ -4,11 +4,8 @@ import type {
   AgentMessagesRepository,
   AgentSessionTasksRepository,
   AgentToolResultsRepository,
-  Database,
-  Executor,
   StoredToolResult,
   ToolResultSettingsRow,
-  Transaction,
 } from '@agent-os/db';
 import type { Trackers, StepEffects, Tracker, TrackerTask } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -168,7 +165,6 @@ export interface Delegations {
    * subagent as its owner. The step then ends with `wait`.
    */
   open(input: {
-    readonly tx: Transaction;
     readonly effects: StepEffects;
     readonly caller: ToolCaller;
     readonly accepted: readonly AcceptedDelegation[];
@@ -180,12 +176,11 @@ export interface Delegations {
     calls: readonly CallState[],
   ): Promise<DelegationClosing[]>;
   /** In the step's commit: the call's `tool_result`, its stored result and its task of the list `completed`. */
-  close(tx: Transaction, agentId: string, closing: DelegationClosing): Promise<HistoryEntry | undefined>;
+  close(agentId: string, closing: DelegationClosing): Promise<HistoryEntry | undefined>;
 }
 
 export interface DelegationsDeps {
   /** The deep agent's history and task list are read from it before the commit. */
-  readonly database: Database;
   /** The session of each subagent, the `tool_sent` and the closing of each call, and the deep agent's task list. */
   readonly sessions: Sessions;
   readonly history: History;
@@ -211,10 +206,9 @@ function deepAgentOf(caller: ToolCaller): DeepAgentSnapshot {
 /** The brief of a deep agent `start_deep_agent` started: its first entry; `null` for any other task. */
 async function briefOf(
   history: History,
-  reader: Executor,
   agentId: string,
 ): Promise<DeepAgentBrief | null> {
-  const [first] = await history.through(reader, agentId, 1);
+  const [first] = await history.through(agentId, 1);
   if (first?.kind !== 'task') return null;
   try {
     const parsed = DeepAgentBriefSchema.safeParse(JSON.parse(first.content.text));
@@ -285,7 +279,7 @@ function withLine(text: string, line: string | null): string {
 }
 
 export function createDelegations(deps: DelegationsDeps): Delegations {
-  const { database, trackers, resultSettings, maxDepth } = deps;
+  const { trackers, resultSettings, maxDepth } = deps;
   const { sessions, history, messageRows, callRecords, sessionTaskRows, toolResultRows } = deps;
 
   /** The ending of a single call: the answer, a long one stored as an MCP result is; a failure or a cancel as an error. */
@@ -354,8 +348,8 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       const deepAgent = deepAgentOf(caller);
       const definition = snapshotDefinition(deepAgent);
       const [singleRuns, tasks] = await Promise.all([
-        messageRows.singleTaskRuns(database, caller.agentId, TASK_TOOL),
-        definition.taskList ? sessionTaskRows.read(database, caller.agentId) : Promise.resolve(null),
+        messageRows.singleTaskRuns(caller.agentId, TASK_TOOL),
+        definition.taskList ? sessionTaskRows.read(caller.agentId) : Promise.resolve(null),
       ]);
       const delegationCalls: DelegationCall[] = calls.map(({ call, args }) => ({ callId: call.callId, args }));
       return decideDelegations({
@@ -367,9 +361,9 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       });
     },
 
-    async open({ tx, effects, caller, accepted, logger }) {
+    async open({ effects, caller, accepted, logger }) {
       const deepAgent = deepAgentOf(caller);
-      const brief = await briefOf(history, tx, caller.agentId);
+      const brief = await briefOf(history, caller.agentId);
       const children = accepted.flatMap((delegation) =>
         partsOf(delegation).map(({ description, body }) => {
           const snapshot = subagentSnapshot(deepAgent, delegation.subagent);
@@ -391,7 +385,6 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
         if (taskId === undefined) throw new Error(`Tracker ${trackerId} gave no task for subagent ${index}`);
         // A subagent's kind adds nothing to a new session, so the store makes it directly.
         await sessions.ensureSession(
-          tx,
           { taskId, ownerId: caller.ownerId, parentId: caller.agentId, rootId: caller.rootId },
           input,
         );
@@ -414,7 +407,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
         const count = partsOf(delegation).length;
         const callTasks = taskIds.slice(next, next + count);
         next += count;
-        await history.append(tx, caller.agentId, [
+        await history.append(caller.agentId, [
           {
             kind: 'tool_sent',
             content: {
@@ -426,7 +419,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
           },
         ]);
         if (delegation.listTask !== null) {
-          await changeListTask(sessionTaskRows, tx, caller.agentId, delegation.listTask, {
+          await changeListTask(sessionTaskRows, caller.agentId, delegation.listTask, {
             status: 'in_progress',
             owner: delegation.subagent,
           });
@@ -469,11 +462,11 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       });
     },
 
-    async close(tx, agentId, { call, ending, stored, completedTask }) {
-      const closed = await callRecords.close(tx, agentId, call, ending);
+    async close(agentId, { call, ending, stored, completedTask }) {
+      const closed = await callRecords.close(agentId, call, ending);
       if (closed === undefined) return undefined;
-      if (stored !== null) await toolResultRows.insert(tx, { taskId: agentId, callId: call.callId, ...stored });
-      if (completedTask !== null) await changeListTask(sessionTaskRows, tx, agentId, completedTask, { status: 'completed' });
+      if (stored !== null) await toolResultRows.insert({ taskId: agentId, callId: call.callId, ...stored });
+      if (completedTask !== null) await changeListTask(sessionTaskRows, agentId, completedTask, { status: 'completed' });
       return closed;
     },
   };
@@ -485,15 +478,14 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
  */
 async function changeListTask(
   sessionTaskRows: AgentSessionTasksRepository,
-  tx: Transaction,
   agentId: string,
   taskId: number,
   change: { readonly status: 'in_progress' | 'completed'; readonly owner?: string },
 ): Promise<void> {
-  const state = await sessionTaskRows.read(tx, agentId);
+  const state = await sessionTaskRows.read(agentId);
   const decision = decideTaskChange(state, { tool: 'update', args: { taskId, ...change } });
   if (decision.kind === 'refused') {
     throw new Error(`Task ${taskId} of agent ${agentId} cannot become ${change.status}: ${decision.text}`);
   }
-  await sessionTaskRows.write(tx, agentId, decision);
+  await sessionTaskRows.write(agentId, decision);
 }

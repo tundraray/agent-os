@@ -4,7 +4,7 @@ import {
   type SessionTaskStatus,
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
-import type { SessionPatch, Transaction } from '@agent-os/db';
+import type { SessionPatch } from '@agent-os/db';
 import { isFinished, type StepContext, type StepEffects, type StepResult } from '@agent-os/runtime';
 
 import { knowledgeBlock } from '../knowledge/knowledge-block';
@@ -122,15 +122,15 @@ export async function runModelStep(
   view: SessionHistory,
   prelude?: StepPrelude,
 ): Promise<StepResult> {
-  const { database, registry, modelClient, audit } = deps;
+  const { registry, modelClient, audit } = deps;
   const startedAt = Date.now();
   // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
   const { snapshot, answerFields: askedFields } = agent.input;
   const { definition } = agent;
   const turns = agent.turnsAfterDelivery(prelude?.patch.turns ?? session.turns, ctx.messages);
-  const delivered = await entriesOf(deps, database, ctx.messages);
-  const writeStepEntries = async (tx: Transaction): Promise<NewHistoryEntry[]> => [
-    ...(prelude === undefined ? [] : await prelude.write(tx)),
+  const delivered = await entriesOf(deps, ctx.messages);
+  const writeStepEntries = async (): Promise<NewHistoryEntry[]> => [
+    ...(prelude === undefined ? [] : await prelude.write()),
     ...delivered,
   ];
   const basePatch: SessionPatch = { ...prelude?.patch };
@@ -154,7 +154,7 @@ export async function runModelStep(
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
   const declaration = await agent.offeredDeclaration(ctx);
-  const tasks = await tasksOf(deps, database, ctx.taskId, declaration.taskList);
+  const tasks = await tasksOf(deps, ctx.taskId, declaration.taskList);
   // The owner the runtime names and what the agent declares: the library answers with the session's tools.
   const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
   const result = await callUnlessAborted(ctx, () =>
@@ -224,17 +224,16 @@ export async function runModelStep(
     lastInputTokens: result.usage.inputTokens,
   };
   const writeAnswer = async (
-    tx: Transaction,
     effects: StepEffects,
     after: readonly NewHistoryEntry[],
     patch: SessionPatch,
   ): Promise<void> => {
-    await appendWithEvent(deps, tx, effects, ctx.taskId, [
-      ...(await writeStepEntries(tx)),
+    await appendWithEvent(deps, effects, ctx.taskId, [
+      ...(await writeStepEntries()),
       answerEntry,
       ...after,
     ]);
-    await deps.sessionRows.update(tx, ctx.taskId, patch);
+    await deps.sessionRows.update(ctx.taskId, patch);
   };
 
   if (result.toolCalls.length > 0) {
@@ -245,7 +244,7 @@ export async function runModelStep(
     });
     return {
       outcome: 'continue',
-      commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch),
+      commit: (effects) => writeAnswer(effects, [], callPatch),
     };
   }
 
@@ -264,7 +263,7 @@ export async function runModelStep(
         pendingChildNotices: inFlight.pending,
         ...answered,
       });
-      return { outcome: 'wait', commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch) };
+      return { outcome: 'wait', commit: (effects) => writeAnswer(effects, [], callPatch) };
     case 'notice':
       if (ending.openTasks !== undefined) {
         // Every reminder is logged, numbers only, so how often an agent answers with tasks open shows (Risks).
@@ -289,16 +288,16 @@ export async function runModelStep(
       logStep(ctx, STEP_KIND, startedAt, 'continue', { notice: true, turns: counted, ...answered });
       return {
         outcome: 'continue',
-        commit: (tx, effects) =>
-          writeAnswer(tx, effects, [{ kind: 'notice', content: noticeContent(ending) }], callPatch),
+        commit: (effects) =>
+          writeAnswer(effects, [{ kind: 'notice', content: noticeContent(ending) }], callPatch),
       };
     case 'complete':
       logStep(ctx, STEP_KIND, startedAt, 'complete', { turns: counted, ...answered });
       return {
         outcome: 'complete',
         result: { report: ending.report },
-        commit: (tx, effects) =>
-          writeAnswer(tx, effects, [], { ...callPatch, turns: 0, closed: true }),
+        commit: (effects) =>
+          writeAnswer(effects, [], { ...callPatch, turns: 0, closed: true }),
       };
   }
 }

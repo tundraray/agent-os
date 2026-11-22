@@ -26,7 +26,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher';
 function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
   return async (entry) => {
     try {
-      await auditLog.record(null, entry);
+      await auditLog.record(entry);
     } catch (error) {
       logger.error('audit record not written', {
         ...entry,

@@ -6,9 +6,8 @@ import type {
   AgentKnowledgeRunsRepository,
   AgentMcpServersRepository,
   AgentMessagesRepository,
-  Database,
+  Db,
   NewKnowledgeRelation,
-  Transaction,
 } from '@agent-os/db';
 import {
   type TaskControl,
@@ -54,7 +53,7 @@ import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 /*
  * The handler of `knowledge.extract` (design-core.md, KD-3, KD-4, Flow 1): one extraction round per
  * step. The model judges, the code decides: the deep agent's model returns operations through
- * `record_knowledge`, `checkOperations` checks them against the graph re-read under the graph lock,
+ * `record_knowledge`, `checkOperations` checks them against the graph re-read in the commit,
  * and the code applies them by id. Model and embedding calls run outside any transaction; every write
  * of the round — graph, outcome, mark, the run row's task fields — is one guarded transaction.
  */
@@ -96,8 +95,8 @@ const CHOOSE_ENTITIES: AgentToolDefinition = {
 };
 
 export interface KnowledgeExtractHandlerDeps {
-  /** Reads outside the commit: the run row, the session, the graph, the settings, the registry, the calls. */
-  readonly database: Database;
+  /** The savepoint of the round's graph writes: a deleted deep agent fails only them. */
+  readonly db: Db;
   readonly sessions: Sessions;
   readonly knowledgeRows: AgentKnowledgeRepository;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
@@ -199,7 +198,6 @@ function retryMessages(
 /** Inserts the additions in the answer's order (a `ref` before what uses it), then confirms and marks. */
 async function applyChecked(
   knowledgeRows: AgentKnowledgeRepository,
-  tx: Transaction,
   recordId: string,
   runId: string,
   roundAt: Date,
@@ -222,7 +220,7 @@ async function applyChecked(
   const relationRows: NewKnowledgeRelation[] = [];
   for (const addition of checked.apply) {
     if (addition.type === 'entity') {
-      const row = await knowledgeRows.insertEntity(tx, {
+      const row = await knowledgeRows.insertEntity({
         ...born,
         name: addition.name,
         description: addition.description,
@@ -262,16 +260,16 @@ async function applyChecked(
         break;
     }
   }
-  await knowledgeRows.insertRelations(tx, relationRows);
+  await knowledgeRows.insertRelations(relationRows);
   for (const confirmation of checked.confirm) {
-    await knowledgeRows.confirmItem(tx, recordId, {
+    await knowledgeRows.confirmItem(recordId, {
       item: { type: confirmation.type, id: confirmation.id },
       confirmations: confirmation.confirmations,
       at: confirmation.confirmedAt,
       runId: confirmation.confirmedByRunId,
     });
   }
-  for (const item of checked.outdated) await knowledgeRows.markOutdated(tx, recordId, item);
+  for (const item of checked.outdated) await knowledgeRows.markOutdated(recordId, item);
 }
 
 function statusOf(result: RoundResult): {
@@ -323,10 +321,10 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  *    an answer without a good call gets one more attempt, a second bad one is `invalid_answer` (DC-7).
  * 4. New entities: masked, embedded, the store's similar entities; only with candidates one more call
  *    with `choose_entities` (DC-17). So a round makes at most three model calls.
- * 5. The commit — one guarded transaction: `lockGraph`, the run row locked and re-read, the graph re-read,
+ * 5. The commit — one guarded transaction: the run row re-read, the graph re-read,
  *    `checkOperations`, the graph writes in a savepoint (a deleted deep agent drops only them, DC-8), the
- *    outcome with `last_extract_task_id`, the mark moved forward to `readAt` on `done`, and under the run
- *    row's lock: «one more round» set → cleared and the task continues; else `extract_task_id` cleared and
+ *    outcome with `last_extract_task_id`, the mark moved forward to `readAt` on `done`, and by the run
+ *    row: «one more round» set → cleared and the task continues; else `extract_task_id` cleared and
  *    the task completes. The step never returns `fail`.
  *
  * The outcome of the step is decided in the guarded transaction, not before it, because the trigger can
@@ -337,7 +335,7 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  * nothing was applied. Nothing is applied twice — every write is inside the one transaction.
  */
 export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps): TaskHandler {
-  const { database, modelClient, embeddings, store, sessions, knowledgeRows, knowledgeRunRows } = deps;
+  const { db, modelClient, embeddings, store, sessions, knowledgeRows, knowledgeRunRows } = deps;
   const mask = createSecretMasker([]);
 
   /** The round's model call through `ModelClient`: the starter as owner, the extraction task as task and root. */
@@ -508,8 +506,8 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
   }
 
   /**
-   * The round's single commit, in a guarded transaction so the step's outcome follows what it saw under
-   * the run row's lock. `outcome` is `null` when the conversation is gone: only the task fields change.
+   * The round's single commit, in a guarded transaction so the step's outcome follows what it read
+   * there. `outcome` is `null` when the conversation is gone: only the task fields change.
    */
   async function commitRound(
     ctx: StepContext,
@@ -522,16 +520,15 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     result: RoundResult | null,
     window: { readonly calls: ReadonlyMap<string, RoundCall>; readonly readAt: Date } | null,
   ): Promise<Settled | 'fenced'> {
-    const guarded = await ctx.guard(async (tx: Transaction): Promise<Settled> => {
-      await knowledgeRows.lockGraph(tx, round.recordId);
-      const run = knowledgeRunOf(await knowledgeRunRows.findRunById(tx, round.runId));
+    const guarded = await ctx.guard(async (): Promise<Settled> => {
+      const run = knowledgeRunOf(await knowledgeRunRows.findRunById(round.runId));
       if (run === undefined || run.extractTaskId !== ctx.taskId) return { kind: 'not_current' };
 
       let counts = NO_COUNTS;
       let recordDeleted = false;
       const roundAt = new Date();
       if (result?.kind === 'answered' && window !== null) {
-        const graph = await knowledgeRows.readGraph(tx, round.recordId);
+        const graph = await knowledgeRows.readGraph(round.recordId);
         const checked = checkOperations({
           graph,
           calls: window.calls,
@@ -549,8 +546,8 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
           rejected: rejectionCounts(checked),
         });
         try {
-          await tx.transaction((savepoint) =>
-            applyChecked(knowledgeRows, savepoint, round.recordId, round.runId, roundAt, checked),
+          await db.savepoint(() =>
+            applyChecked(knowledgeRows, round.recordId, round.runId, roundAt, checked),
           );
           counts = {
             added: checked.apply.length,
@@ -567,7 +564,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       }
 
       if (result !== null) {
-        await knowledgeRunRows.writeRoundOutcome(tx, round.runId, {
+        await knowledgeRunRows.writeRoundOutcome(round.runId, {
           ...statusOf(result),
           ...counts,
           model: round.model,
@@ -576,15 +573,15 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
         });
         // Only a done round moves the mark, and only forward (Invariant 2, DC-3).
         if (window !== null && (result.kind === 'answered' || result.kind === 'empty')) {
-          await knowledgeRunRows.advanceExtractedUpTo(tx, round.runId, window.readAt);
+          await knowledgeRunRows.advanceExtractedUpTo(round.runId, window.readAt);
         }
       }
 
       if (run.needsRound && result !== null && !recordDeleted) {
-        await knowledgeRunRows.updateRun(tx, round.runId, { needsRound: false });
+        await knowledgeRunRows.updateRun(round.runId, { needsRound: false });
         return { kind: 'continue', counts, recordDeleted };
       }
-      await knowledgeRunRows.updateRun(tx, round.runId, { extractTaskId: null, needsRound: false });
+      await knowledgeRunRows.updateRun(round.runId, { extractTaskId: null, needsRound: false });
       return { kind: 'complete', counts, recordDeleted };
     });
     return guarded.outcome === 'fenced' ? 'fenced' : guarded.value;
@@ -652,7 +649,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     const { runId, rootId } = KnowledgeExtractInputSchema.parse(ctx.input);
     const baseLogger = ctx.logger.child({ runId, conversationRootId: rootId });
 
-    const run = knowledgeRunOf(await knowledgeRunRows.findRunById(database, runId));
+    const run = knowledgeRunOf(await knowledgeRunRows.findRunById(runId));
     if (run === undefined) {
       baseLogger.info('knowledge round ended: run row gone', {
         outcome: 'gone',
@@ -670,7 +667,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       return { outcome: 'complete', result: { outcome: 'not_current' } };
     }
 
-    const session = await sessions.get(database, runId);
+    const session = await sessions.get(runId);
     const input = session === undefined ? undefined : await inputOf(run);
     if (session === undefined || input === undefined) {
       const logger = baseLogger.child({ recordId, ownerId });
@@ -690,8 +687,8 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     });
     if (input.counts.calls === 0) return finish(ctx, round, { kind: 'empty' }, input, startedAt);
 
-    const settings = await knowledgeRows.readSettings(database);
-    const graphItems = graphItemsOf(await knowledgeRows.readGraph(database, recordId));
+    const settings = await knowledgeRows.readSettings();
+    const graphItems = graphItemsOf(await knowledgeRows.readGraph(recordId));
     const choice = selectKnowledge({
       items: graphItems,
       settings,

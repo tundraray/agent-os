@@ -1,8 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   type IdentityUserRow,
   IdentityUsersRepository,
 } from '@agent-os/db';
@@ -22,18 +19,12 @@ export type PasswordCheck =
  */
 @Injectable()
 export class PasswordSignIn {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly users: IdentityUsersRepository,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   async check(login: string, password: string): Promise<PasswordCheck> {
     const user = await this.users.findByLogin(
-      this.db,
       normalizeIdentifier(login),
     );
     const matches = await verifyPassword(password, user?.passwordHash ?? null);

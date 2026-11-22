@@ -53,10 +53,10 @@ export class ChatAgent extends BaseAgent {
 
   /** The chat listing of the root's owner (KD-4): his `listVisible` and his session counts, read now. */
   private async listing(ctx: StepContext): Promise<ChatListing> {
-    const { library, database, sessionRows } = this.chatDeps;
+    const { library, sessionRows } = this.chatDeps;
     const startedAt = Date.now();
     const headers = await library.listVisible(ctx.ownerId);
-    const sessionCounts = await sessionRows.recordCounts(database, ctx.ownerId);
+    const sessionCounts = await sessionRows.recordCounts(ctx.ownerId);
     const listing = chatListing({ headers, sessionCounts, budget: CHAT_LISTING_BUDGET });
     this.chatDeps.logger.child({ service: 'agents.tools' }).info('chat listing built', {
       ownerId: ctx.ownerId,

@@ -2,8 +2,6 @@ import { ALL_SERVERS, McpServerModeSchema } from '@agent-os/contracts';
 import {
   AgentMcpAccountsRepository,
   AgentMcpServersRepository,
-  DATABASE,
-  type Database,
   type McpServerRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
@@ -102,7 +100,6 @@ export class ToolRegistry {
 
   constructor(
     /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
-    @Inject(DATABASE) private readonly database: Database,
     @Inject(AgentMcpServersRepository) private readonly mcpServerRows: AgentMcpServersRepository,
     @Inject(AgentMcpAccountsRepository) private readonly mcpAccountRows: AgentMcpAccountsRepository,
     /** The one access check: the same in the tool set, in the call check and in the connections list. */
@@ -155,7 +152,7 @@ export class ToolRegistry {
    */
   async displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]> {
     const names = new Set(calls.flatMap(({ server }) => (server === null ? [] : [server])));
-    const rows = await this.mcpServerRows.findMany(this.database, [...names]);
+    const rows = await this.mcpServerRows.findMany([...names]);
     const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row.tools)]));
     return calls.map(
       ({ tool, server }): ToolDisplay =>
@@ -239,7 +236,6 @@ export class ToolRegistry {
   /** Enabled registry servers among the declared ones; a name the registry does not hold gives nothing (DC-11). */
   private enabledServers(servers: readonly string[]): Promise<McpServerRow[]> {
     return this.mcpServerRows.enabledWithTools(
-      this.database,
       servers.includes(ALL_SERVERS) ? ALL_SERVERS : servers,
     );
   }
@@ -257,7 +253,7 @@ export class ToolRegistry {
     const isOAuth = (row: McpServerRow) => row.mode === McpServerModeSchema.enum.oauth;
     if (!rows.some(isOAuth)) return rows;
     const connected = new Set(
-      (await this.mcpAccountRows.listOwned(this.database, ownerId)).map((account) => account.server),
+      (await this.mcpAccountRows.listOwned(ownerId)).map((account) => account.server),
     );
     return rows.filter((row) => !isOAuth(row) || connected.has(row.name));
   }

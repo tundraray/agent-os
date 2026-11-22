@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema, WaitReasonSchema } from '@agent-os/contracts';
-import type { Database, RuntimeTasksRepository } from '@agent-os/db';
+import type { Db, RuntimeTasksRepository } from '@agent-os/db';
 import type { CancelTimer, Clock } from '../clock';
 import type { RuntimeConfig } from '../runtime-config';
 import type { TaskRow } from '../tasks/guarded-transition';
@@ -13,7 +13,7 @@ const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 
 /** Services of a step heartbeat. */
 export interface HeartbeatDeps {
-  db: Database;
+  db: Db;
   tasks: Tasks;
   taskRows: RuntimeTasksRepository;
   clock: Clock;
@@ -85,14 +85,13 @@ export class Heartbeat {
     const expiresAt = new Date(clock.now().getTime() + config.leaseMs);
     const startedAt = Date.now();
     try {
-      const fenced = await db.transaction(async (tx) => {
+      const fenced = await db.transaction(async () => {
         const row = await tasks.transition(
-          tx,
           { taskId, from: [running], attempt },
           { kind: 'set', fields: { leaseExpiresAt: expiresAt } },
         );
         if (row) return undefined;
-        return fencedSignal(await taskRows.find(tx, taskId));
+        return fencedSignal(await taskRows.find(taskId));
       });
       this.failures = 0;
       if (fenced) {

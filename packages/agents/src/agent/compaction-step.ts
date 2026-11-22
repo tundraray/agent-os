@@ -1,5 +1,5 @@
 import { HistoryEventSchema } from '@agent-os/contracts';
-import type { SessionPatch, Transaction } from '@agent-os/db';
+import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepResult } from '@agent-os/runtime';
 
 import { knowledgeBlock } from '../knowledge/knowledge-block';
@@ -60,18 +60,18 @@ export async function runCompactionStep(
   view: SessionHistory,
   prelude?: StepPrelude,
 ): Promise<StepResult> {
-  const { database, registry, modelClient, audit, history, messageRows, sessionRows } = deps;
+  const { registry, modelClient, audit, history, messageRows, sessionRows } = deps;
   const startedAt = Date.now();
   const { snapshot } = agent.input;
   const { definition } = agent;
-  const delivered = await entriesOf(deps, database, ctx.messages);
+  const delivered = await entriesOf(deps, ctx.messages);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
   // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
   // the summary would be written without the task list (design-task-list.md KD-2).
   const knowledge = await knowledgeBlock(deps, { snapshot, taskId: ctx.taskId, logger: ctx.logger });
   const declaration = await agent.offeredDeclaration(ctx);
-  const tasks = taskBlock(await tasksOf(deps, database, ctx.taskId, declaration.taskList));
+  const tasks = taskBlock(await tasksOf(deps, ctx.taskId, declaration.taskList));
   // History holds tool calls, and the provider takes them only with the tools defined.
   const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
 
@@ -95,12 +95,12 @@ export async function runCompactionStep(
 
   // The compaction call is not a turn (DC-1).
   const turns = agent.turnsAfterDelivery(prelude?.patch.turns ?? session.turns, ctx.messages);
-  const writePrelude = async (tx: Transaction): Promise<readonly NewHistoryEntry[]> =>
-    prelude === undefined ? [] : prelude.write(tx);
+  const writePrelude = async (): Promise<readonly NewHistoryEntry[]> =>
+    prelude === undefined ? [] : prelude.write();
 
   // The entries a step that compacts nothing still owes: the prelude, then the delivered messages.
-  const writeOwedEntries = async (tx: Transaction): Promise<NewHistoryEntry[]> => [
-    ...(await writePrelude(tx)),
+  const writeOwedEntries = async (): Promise<NewHistoryEntry[]> => [
+    ...(await writePrelude()),
     ...delivered,
   ];
   if (result.kind === 'not_started') {
@@ -145,9 +145,9 @@ export async function runCompactionStep(
     logStep(ctx, STEP_KIND, startedAt, 'continue', { emptySummary: true, turns });
     return {
       outcome: 'continue',
-      commit: async (tx, effects) => {
-        await appendWithEvent(deps, tx, effects, ctx.taskId, await writeOwedEntries(tx));
-        await sessionRows.update(tx, ctx.taskId, patch);
+      commit: async (effects) => {
+        await appendWithEvent(deps, effects, ctx.taskId, await writeOwedEntries());
+        await sessionRows.update(ctx.taskId, patch);
       },
     };
   }
@@ -164,17 +164,17 @@ export async function runCompactionStep(
   });
   return {
     outcome: 'continue',
-    commit: async (tx, effects) => {
+    commit: async (effects) => {
       // The prelude goes first in its own appends, so the summary knows the last `seq` it covers.
       // `agents.history_appended` goes once, with the last `seq`, from the last append.
-      await history.append(tx, ctx.taskId, await writePrelude(tx));
-      const throughSeq = await messageRows.lastSeq(tx, ctx.taskId);
-      await appendWithEvent(deps, tx, effects, ctx.taskId, [
+      await history.append(ctx.taskId, await writePrelude());
+      const throughSeq = await messageRows.lastSeq(ctx.taskId);
+      await appendWithEvent(deps, effects, ctx.taskId, [
         { kind: 'compaction', content: { summary, throughSeq } },
         { kind: 'event', content: { event: HistoryEventSchema.enum.compacted, reason: null } },
         ...delivered,
       ]);
-      await sessionRows.update(tx, ctx.taskId, patch);
+      await sessionRows.update(ctx.taskId, patch);
     },
   };
 }

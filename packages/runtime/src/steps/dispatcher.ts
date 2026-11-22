@@ -6,10 +6,9 @@ import {
   TaskStatusSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
   DATABASE_CONNECTION,
-  type Database,
   type DatabaseConnection,
+  Db,
   type RuntimeDecisionRow,
   type RuntimeInboxRow,
   RuntimeTrackersRepository,
@@ -115,8 +114,8 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 interface DispatcherDeps {
-  db: Database;
-  /** The pool of `db`: one of its connections LISTENs. */
+  db: Db;
+  /** The pool of the database: one of its connections LISTENs. */
   pool: pg.Pool;
   config: RuntimeConfig;
   clock: Clock;
@@ -138,8 +137,8 @@ interface DispatcherDeps {
 /**
  * Execution of steps (Flow 1, Flow 2). A tick — at least every `RUNTIME_POLL_MS`, sooner on any
  * NOTIFY of `runtime_events` or when a slot frees — claims while slots (`RUNTIME_CONCURRENCY`) are
- * free the oldest `queued` task of a type registered here: `FOR UPDATE SKIP LOCKED`, then the
- * guarded claim re-checks `queued` under the lock. Each step runs its handler outside any
+ * free the oldest `queued` task of a type registered here: a plain read, then the guarded claim
+ * re-checks `queued`. Each step runs its handler outside any
  * transaction with a signal (step limit, heartbeat, shutdown) and ends in the commit transaction,
  * or — exception, step limit, shutdown — in a guarded write of the dispatcher that raises the
  * attempt, so that a late result and `guard` of the step are fenced (Invariant 1).
@@ -159,7 +158,7 @@ export class Dispatcher {
   private readonly deps: DispatcherDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(DATABASE_CONNECTION) connection: DatabaseConnection,
     @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
     @Inject(CLOCK) clock: Clock,
@@ -291,12 +290,11 @@ export class Dispatcher {
       this.deps;
     const types = handlers.types();
     if (types.length === 0) return undefined;
-    const claimed = await db.transaction(async (tx) => {
-      const taskId = await taskRows.lockReady(tx, types);
+    const claimed = await db.transaction(async () => {
+      const taskId = await taskRows.findReady(types);
       if (!taskId) return undefined;
-      // The guard re-checks `queued` under the lock.
+      // The guard re-checks `queued`.
       const task = await tasks.transition(
-        tx,
         { taskId, from: [queued] },
         {
           kind: 'claim',
@@ -304,9 +302,9 @@ export class Dispatcher {
         },
       );
       if (!task) return undefined;
-      const messages = await inbox.loadPending(tx, taskId);
-      const decision = await decisions.loadUndelivered(tx, taskId);
-      await events.append(tx, {
+      const messages = await inbox.loadPending(taskId);
+      const decision = await decisions.loadUndelivered(taskId);
+      await events.append({
         type: EVENT['task.step_started'],
         task,
         payload: {
@@ -465,12 +463,11 @@ export class Dispatcher {
     startedAt: number,
   ): Promise<void> {
     const { db, taskRows, config } = this.deps;
-    const ended = await db.transaction(async (tx) => {
-      await boundTransaction(tx, config.leaseMs);
-      // The failure notifies the parent: the parent is locked first (Invariant 6).
-      const task = await taskRows.lockWithParent(tx, step.taskId);
+    const ended = await db.transaction(async () => {
+      await boundTransaction(db, config.leaseMs);
+      const task = await taskRows.find(step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return undefined;
-      return endTask(tx, this.deps, task, {
+      return endTask(this.deps, task, {
         status: failed,
         failure: { reason, message: errorMessage(error) },
         fields: { stepClaims: 0, recoveries: 0 },
@@ -491,14 +488,13 @@ export class Dispatcher {
   /** Shutdown: the task goes back to `queued` without counting a loss; `attempt + 1`. */
   private async requeue(step: TaskStepContext, startedAt: number): Promise<void> {
     const { db, tasks, events } = this.deps;
-    const row = await db.transaction(async (tx) => {
+    const row = await db.transaction(async () => {
       const requeued = await tasks.transition(
-        tx,
         { taskId: step.taskId, from: [running], attempt: step.attempt },
         { kind: 'set', status: queued, fence: true },
       );
       if (!requeued) return undefined;
-      await events.append(tx, {
+      await events.append({
         type: EVENT['task.queued'],
         task: requeued,
         payload: { cause: 'shutdown', from: running },
@@ -566,7 +562,7 @@ export class Dispatcher {
   }
 
   private async cutOffTask(notice: TaskNotice, reason: StepSignalReason): Promise<void> {
-    const current = await this.deps.taskRows.find(this.deps.db, notice.taskId);
+    const current = await this.deps.taskRows.find(notice.taskId);
     // Not awaited: the steps end when their handlers answer the signal.
     void this.deps.running.abortTask(notice.taskId, reason, current?.attempt);
     this.deps.live.evict([notice.taskId]);

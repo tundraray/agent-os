@@ -6,8 +6,6 @@ import {
 import {
   type AgentMessageRow,
   AgentMessagesRepository,
-  type Executor,
-  type Transaction,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -64,19 +62,16 @@ export class History {
 
   /**
    * Appends the entries in order with `seq` = `max(seq) + 1`, `+ 2`, …: history is written only in a
-   * transaction under the task's lock — a step's commit or its `guard` (plan Notes 11) — so no other
-   * writer races for the numbers. Returns the appended entries; the caller writes
+   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time. Returns the appended entries; the caller writes
    * `agents.history_appended` with the last `seq`.
    */
   async append(
-    tx: Transaction,
     taskId: string,
     entries: readonly NewHistoryEntry[],
   ): Promise<HistoryEntry[]> {
     if (entries.length === 0) return [];
-    const lastSeq = await this.rows.lastSeq(tx, taskId);
+    const lastSeq = await this.rows.lastSeq(taskId);
     const rows = await this.rows.insert(
-      tx,
       entries.map((entry, index) => ({
         taskId,
         seq: lastSeq + index + 1,
@@ -94,44 +89,42 @@ export class History {
    * one. The model sees nothing earlier (KD-7), and no open call is earlier: a compaction is written
    * only when every call is closed.
    */
-  async visible(executor: Executor, taskId: string): Promise<HistoryEntry[]> {
-    return (await this.rows.visible(executor, taskId)).map(toEntry);
+  async visible(taskId: string): Promise<HistoryEntry[]> {
+    return (await this.rows.visible(taskId)).map(toEntry);
   }
 
   /** The entries appended after `seq`, in order: what a kept agent takes in after its step's commit. */
-  async after(executor: Executor, taskId: string, seq: number): Promise<HistoryEntry[]> {
-    return (await this.rows.after(executor, taskId, seq)).map(toEntry);
+  async after(taskId: string, seq: number): Promise<HistoryEntry[]> {
+    return (await this.rows.after(taskId, seq)).map(toEntry);
   }
 
   /** A page for the employee: entries with `seq` greater than `afterSeq`, in order, at most `limit`. */
   async page(
-    executor: Executor,
     taskId: string,
     afterSeq: number,
     limit: number,
   ): Promise<PageEntry[]> {
-    const rows = await this.rows.page(executor, taskId, afterSeq, limit, HIDDEN_KINDS);
+    const rows = await this.rows.page(taskId, afterSeq, limit, HIDDEN_KINDS);
     // The hidden kinds are filtered out by the query.
     return rows.map(toEntry) as PageEntry[];
   }
 
   /** Every entry, in order, whatever was compacted since. */
-  async all(executor: Executor, taskId: string): Promise<HistoryEntry[]> {
-    return (await this.rows.all(executor, taskId)).map(toEntry);
+  async all(taskId: string): Promise<HistoryEntry[]> {
+    return (await this.rows.all(taskId)).map(toEntry);
   }
 
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */
-  async through(executor: Executor, taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
-    return (await this.rows.through(executor, taskId, throughSeq)).map(toEntry);
+  async through(taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
+    return (await this.rows.through(taskId, throughSeq)).map(toEntry);
   }
 
   /** The records of the given calls, in order. */
   async callRecords(
-    executor: Executor,
     taskId: string,
     callIds: readonly string[],
   ): Promise<CallRecord[]> {
-    const rows = await this.rows.callRecords(executor, taskId, callIds);
+    const rows = await this.rows.callRecords(taskId, callIds);
     // Only call records carry a `call_id` (`agent_messages_call_id_check`).
     return rows.map(toEntry) as CallRecord[];
   }

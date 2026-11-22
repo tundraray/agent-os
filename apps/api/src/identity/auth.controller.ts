@@ -206,7 +206,7 @@ export class AuthController {
       token === undefined ? undefined : await this.sessions.find(token);
     if (session === undefined) return;
     await this.sessions.end(session.sessionId);
-    await this.auditLog.record(null, {
+    await this.auditLog.record({
       kind: 'sign_out',
       actor: session.user.id,
       objectType: 'user',

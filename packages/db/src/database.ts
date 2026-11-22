@@ -6,16 +6,6 @@ import * as schema from './schema';
 /** Drizzle client typed with the model of schema `app`. */
 export type Database = NodePgDatabase<typeof schema>;
 
-/** A transaction of {@link Database}: what a write that must commit with its caller's writes takes. */
-export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
-
-/**
- * What a repository runs its queries on (repository-over-transaction.md): the caller's transaction
- * or the plain client. A function that takes it may run outside a transaction; one that must not
- * takes {@link Transaction}.
- */
-export type Executor = Database | Transaction;
-
 export interface DatabaseOptions {
   connectionString: string;
   /** Upper bound of the pool's connections (`DB_POOL_MAX` of Runtime Settings). */

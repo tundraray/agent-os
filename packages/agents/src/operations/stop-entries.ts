@@ -1,4 +1,4 @@
-import type { AgentMessagesRepository, Executor } from '@agent-os/db';
+import type { AgentMessagesRepository } from '@agent-os/db';
 import type { Task } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
@@ -26,15 +26,14 @@ export interface StopEntriesInput {
  */
 export async function stopEntries(
   deps: { readonly history: History; readonly messageRows: AgentMessagesRepository },
-  reader: Executor,
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {
   const { task, parent } = input;
   const stoppedAt = task.finishedAt ?? task.updatedAt;
 
   // An open call never stands before the last compaction, so the entries a step works on hold them all.
-  const visible = await deps.history.visible(reader, task.taskId);
-  const lastSeq = await deps.messageRows.lastSeq(reader, task.taskId);
+  const visible = await deps.history.visible(task.taskId);
+  const lastSeq = await deps.messageRows.lastSeq(task.taskId);
   const records = [
     ...interruptedResults(openCalls(visible), stoppedAt),
     stopEvent(stoppedTogether(task, parent)),

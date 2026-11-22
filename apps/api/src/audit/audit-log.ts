@@ -1,6 +1,6 @@
 import { isSecretFieldName } from '@agent-os/common';
-import { AuditEventsRepository, DATABASE, type Database, type Transaction } from '@agent-os/db';
-import { Inject, Injectable } from '@nestjs/common';
+import { AuditEventsRepository } from '@agent-os/db';
+import { Injectable } from '@nestjs/common';
 
 /** A JSON object of `before`/`after`; secret and password fields in it are masked before the write. */
 type AuditState = Record<string, unknown> | null;
@@ -44,18 +44,14 @@ function mask(value: unknown): unknown {
 
 /**
  * Writes `app.audit_events` right after a change (design-identity.md KD-7): masks secrets, then
- * inserts inside the caller's transaction when given, otherwise with its own insert. Code outside
- * Nest builds it with `new` over the database client.
+ * inserts; inside a caller's transaction the insert joins it. Code outside Nest builds it with `new`.
  */
 @Injectable()
 export class AuditLog {
-  constructor(
-    @Inject(DATABASE) private readonly db: Database,
-    private readonly events: AuditEventsRepository,
-  ) {}
+  constructor(private readonly events: AuditEventsRepository) {}
 
-  async record(tx: Transaction | null, entry: AuditEntry): Promise<void> {
-    await this.events.insert(tx ?? this.db, {
+  async record(entry: AuditEntry): Promise<void> {
+    await this.events.insert({
       ...entry,
       before: mask(entry.before ?? null),
       after: mask(entry.after ?? null),

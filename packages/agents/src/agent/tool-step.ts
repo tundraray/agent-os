@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import {
   ToolCallStateSchema,
   ToolOutcomeSchema,
@@ -90,12 +89,11 @@ function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): 
 /** Runs the closings in call order, each appending its `tool_result`, and returns the appended entries. */
 async function closeAll(
   closings: readonly CallClosing[],
-  tx: Transaction,
   effects: StepEffects,
 ): Promise<HistoryEntry[]> {
   const results: HistoryEntry[] = [];
   for (const closing of closings) {
-    const closed = await closing(tx, effects);
+    const closed = await closing(effects);
     if (closed !== undefined) results.push(closed);
   }
   return results;
@@ -112,21 +110,20 @@ function commitOf(
   ctx: StepContext,
   closings: readonly CallClosing[],
   awaited?: CallState,
-  opening?: (tx: Transaction, effects: StepEffects) => Promise<void>,
+  opening?: (effects: StepEffects) => Promise<void>,
 ): NonNullable<StepResult['commit']> {
-  return async (tx, effects) => {
-    const results = await closeAll(closings, tx, effects);
-    await opening?.(tx, effects);
+  return async (effects) => {
+    const results = await closeAll(closings, effects);
+    await opening?.(effects);
     await appendWithEvent(
       deps,
-      tx,
       effects,
       ctx.taskId,
       [
         ...(awaited === undefined
           ? []
           : [{ kind: 'tool_confirmation' as const, content: { callId: awaited.callId } }]),
-        ...(await entriesOf(deps, tx, ctx.messages)),
+        ...(await entriesOf(deps, ctx.messages)),
       ],
       results,
     );
@@ -211,7 +208,7 @@ export async function runToolStep(
     return { ...ending, resultText: text === '' ? mark : `${text}\n\n${mark}` };
   };
   const close = (call: CallState, ending: CallEnding): CallClosing =>
-    (tx) => deps.callRecords.close(tx, ctx.taskId, call, marked(call, ending));
+    () => deps.callRecords.close(ctx.taskId, call, marked(call, ending));
   /**
    * Closes a call the runner ran and stores its full result in the same transaction: every successful and
    * empty direct MCP result, as before (code-execution KD-5); only a long one reached the model as the
@@ -219,7 +216,6 @@ export async function runToolStep(
    * carry no `stored` and get no row (DC-8).
    */
   const closeExecuted = async (
-    tx: Transaction,
     call: CallState,
     run: { readonly execution: ToolExecution; readonly startedAt: Date; readonly finishedAt: Date },
     // The employee's decision on a confirmed call, written with the result unless the intent wrote it.
@@ -227,7 +223,6 @@ export async function runToolStep(
   ): Promise<HistoryEntry | undefined> => {
     const { execution } = run;
     const closed = await deps.callRecords.close(
-      tx,
       ctx.taskId,
       call,
       marked(call, endingOf(execution, run.startedAt, run.finishedAt)),
@@ -236,7 +231,7 @@ export async function runToolStep(
         : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
     );
     if (closed !== undefined && execution.kind === 'done' && execution.stored !== undefined) {
-      await deps.toolResultRows.insert(tx, { taskId: ctx.taskId, callId: call.callId, ...execution.stored });
+      await deps.toolResultRows.insert({ taskId: ctx.taskId, callId: call.callId, ...execution.stored });
     }
     return closed;
   };
@@ -254,9 +249,9 @@ export async function runToolStep(
       model: session.model,
       refusal: { kind: 'refused', reason: 'owner_disabled' },
       audit,
-      writeEntries: async (tx, effects) => {
-        await closeAll(closings, tx, effects);
-        return entriesOf(deps, tx, ctx.messages);
+      writeEntries: async (effects) => {
+        await closeAll(closings, effects);
+        return entriesOf(deps, ctx.messages);
       },
       patch: {},
     });
@@ -422,8 +417,8 @@ export async function runToolStep(
             reason: 'rejected',
             durationMs: 0,
           });
-          closings.push((tx) =>
-            deps.callRecords.close(tx, ctx.taskId, call, marked(call, { outcome: rejected }), {
+          closings.push(() =>
+            deps.callRecords.close(ctx.taskId, call, marked(call, { outcome: rejected }), {
               approved: false,
             }),
           );
@@ -444,12 +439,11 @@ export async function runToolStep(
         }
         if (send.kind === 'in_commit') {
           const { commit } = send;
-          closings.push(async (tx, effects) => {
+          closings.push(async (effects) => {
             const callStartedAt = new Date();
-            const execution = await commit(tx, effects);
+            const execution = await commit(effects);
             if (execution.kind === 'not_sent') return undefined;
             return closeExecuted(
-              tx,
               call,
               { execution, startedAt: callStartedAt, finishedAt: new Date() },
               callDecision,
@@ -460,8 +454,8 @@ export async function runToolStep(
         const { execution } = send;
         if (execution.kind === 'aborted') return abandon('signal aborted during the confirmed call');
         const finishedAt = new Date();
-        closings.push((tx) =>
-          closeExecuted(tx, call, { execution, startedAt, finishedAt }, callDecision),
+        closings.push(() =>
+          closeExecuted(call, { execution, startedAt, finishedAt }, callDecision),
         );
         // The confirmed result is committed before anything else of the answer runs (KD-1).
         return done();
@@ -469,10 +463,10 @@ export async function runToolStep(
 
       if (isInCommit(resolved)) {
         const run = await runner.planInCommit(resolved, ctx.logger);
-        closings.push(async (tx, effects) => {
+        closings.push(async (effects) => {
           const startedAt = new Date();
-          const execution = await run(tx, effects);
-          return closeExecuted(tx, call, { execution, startedAt, finishedAt: new Date() });
+          const execution = await run(effects);
+          return closeExecuted(call, { execution, startedAt, finishedAt: new Date() });
         });
         continue;
       }
@@ -481,7 +475,7 @@ export async function runToolStep(
       const execution = await runner.runOutside(resolved, ctx);
       if (execution.kind === 'aborted') return abandon('signal aborted during the call');
       const finishedAt = new Date();
-      closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
+      closings.push(() => closeExecuted(call, { execution, startedAt, finishedAt }));
     }
 
     return delegatedCalls.length > 0 ? delegate() : done();

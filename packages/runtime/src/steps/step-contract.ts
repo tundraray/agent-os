@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import type { z } from 'zod';
 
@@ -69,7 +68,7 @@ export interface StepContext {
    * transaction of its own, if the attempt is still current and the task is not interrupted or
    * stopped. `fenced` means nothing was written.
    */
-  guard<T>(work: (tx: Transaction) => Promise<T>): Promise<GuardResult<T>>;
+  guard<T>(work: () => Promise<T>): Promise<GuardResult<T>>;
 }
 
 /** A message to put in an inbox, by the rules of `inbox.enqueue`; the owner is the task's. */
@@ -153,7 +152,7 @@ export type StepOutcome =
 
 /** Result of a step: its outcome and, optionally, the handler's writes inside the commit transaction. */
 export type StepResult = StepOutcome & {
-  commit?: (tx: Transaction, effects: StepEffects) => Promise<void>;
+  commit?: (effects: StepEffects) => Promise<void>;
 };
 
 /**

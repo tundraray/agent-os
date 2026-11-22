@@ -14,7 +14,6 @@ export { Inbox, type NewMessage } from './messaging/inbox';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config';
 export { RuntimeModule } from './runtime.module';
 export { CLOCK } from './runtime.tokens';
-export { retryingTransaction } from './runtime-tx';
 export { HandlerRegistry } from './steps/handler.registry';
 export { LiveTasks } from './steps/live-tasks';
 export {

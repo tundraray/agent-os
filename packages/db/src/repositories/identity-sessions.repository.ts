@@ -1,18 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { identitySessions, identitySettings, identityUsers } from '../schema';
 import { IS_ADMIN, sessionLimitColumns } from './identity-columns';
 
 /**
- * Drizzle queries of `identity_sessions` (repository over a transaction): the executor is always
- * the first parameter. Tokens and expiry rules live in the api's `SessionStore`.
+ * Drizzle queries of `identity_sessions`. Tokens and expiry rules live in the api's `SessionStore`.
  */
 @Injectable()
 export class IdentitySessionsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Deletes the employee's sessions created more than `absoluteMinutes` ago. */
-  async deleteOlderThan(executor: Executor, userId: string, absoluteMinutes: number): Promise<void> {
-    await executor
+  async deleteOlderThan(userId: string, absoluteMinutes: number): Promise<void> {
+    await this.db.client
       .delete(identitySessions)
       .where(
         and(
@@ -23,8 +24,8 @@ export class IdentitySessionsRepository {
   }
 
   /** Inserts a session of the employee under the hash of its token; returns the session id. */
-  async insert(executor: Executor, userId: string, tokenHash: string): Promise<string> {
-    const [row] = await executor
+  async insert(userId: string, tokenHash: string): Promise<string> {
+    const [row] = await this.db.client
       .insert(identitySessions)
       .values({ tokenHash, userId })
       .returning({ id: identitySessions.id });
@@ -36,21 +37,21 @@ export class IdentitySessionsRepository {
    * Ends every live session of the employee with the reason given: the rows stay, so a request
    * with such a cookie can still be told from one without a session.
    */
-  async endLive(executor: Executor, userId: string, endedReason: string): Promise<void> {
-    await executor
+  async endLive(userId: string, endedReason: string): Promise<void> {
+    await this.db.client
       .update(identitySessions)
       .set({ endedReason })
       .where(and(eq(identitySessions.userId, userId), isNull(identitySessions.endedReason)));
   }
 
   /** Deletes every session of the employee (a password reset, a repair by the operator command). */
-  async deleteOfUser(executor: Executor, userId: string): Promise<void> {
-    await executor.delete(identitySessions).where(eq(identitySessions.userId, userId));
+  async deleteOfUser(userId: string): Promise<void> {
+    await this.db.client.delete(identitySessions).where(eq(identitySessions.userId, userId));
   }
 
   /** The session of the token hash with its employee, admin right and the current session limits, in one query. */
-  async findByTokenHash(executor: Executor, tokenHash: string) {
-    const [row] = await executor
+  async findByTokenHash(tokenHash: string) {
+    const [row] = await this.db.client
       .select({
         sessionId: identitySessions.id,
         createdAt: identitySessions.createdAt,
@@ -73,15 +74,15 @@ export class IdentitySessionsRepository {
   }
 
   /** Writes the time of the session's last request. */
-  async touch(executor: Executor, sessionId: string, now: Date): Promise<void> {
-    await executor
+  async touch(sessionId: string, now: Date): Promise<void> {
+    await this.db.client
       .update(identitySessions)
       .set({ lastSeenAt: now })
       .where(eq(identitySessions.id, sessionId));
   }
 
   /** Deletes the session. */
-  async delete(executor: Executor, sessionId: string): Promise<void> {
-    await executor.delete(identitySessions).where(eq(identitySessions.id, sessionId));
+  async delete(sessionId: string): Promise<void> {
+    await this.db.client.delete(identitySessions).where(eq(identitySessions.id, sessionId));
   }
 }

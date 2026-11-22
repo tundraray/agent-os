@@ -5,11 +5,9 @@ import type {
   UpdateLibrarySettingsBody,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   LibrarySettingsRepository,
   type LibrarySettingsRow,
+  Db,
 } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 
@@ -28,20 +26,16 @@ function toLibrarySettings(row: LibrarySettingsRow): LibrarySettings {
  */
 @Injectable()
 export class LibrarySettingsService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly settings: LibrarySettingsRepository,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** GET /api/admin/library/settings. */
   async get(): Promise<LibrarySettings> {
-    return toLibrarySettings(await this.settings.read(this.db));
+    return toLibrarySettings(await this.settings.read());
   }
 
   /**
@@ -53,10 +47,10 @@ export class LibrarySettingsService {
     { defaultMaxTurns }: UpdateLibrarySettingsBody,
   ): Promise<LibrarySettings> {
     const startedAt = Date.now();
-    const { before, after } = await this.db.transaction(async (tx) => {
-      const previous = await this.settings.read(tx);
-      const updated = await this.settings.write(tx, defaultMaxTurns);
-      await this.auditLog.record(tx, {
+    const { before, after } = await this.db.transaction(async () => {
+      const previous = await this.settings.read();
+      const updated = await this.settings.write(defaultMaxTurns);
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: SETTINGS_OBJECT_TYPE,

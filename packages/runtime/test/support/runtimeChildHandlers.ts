@@ -1,9 +1,10 @@
 import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type { Db } from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  boundToDb,
   HANDLER_ROWS_TABLE,
   scriptedHandler,
   TRACKER_OPENED_NOTE,
@@ -66,8 +67,8 @@ export const DECISION_KIND = 'approval';
 export const DECISION_PAYLOAD = { question: 'proceed?' };
 
 /** The external action of the guard row: one autocommit row per call, apart from the step. */
-async function callExternalAction(db: Database, ctx: StepContext): Promise<void> {
-  await db.execute(sql`
+async function callExternalAction(db: Db, ctx: StepContext): Promise<void> {
+  await db.client.execute(sql`
     INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
     SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${EXTERNAL_NOTE}
       FROM app.runtime_tasks WHERE task_id = ${ctx.taskId}`);
@@ -76,7 +77,7 @@ async function callExternalAction(db: Database, ctx: StepContext): Promise<void>
 const ParentInputSchema = z.object({ children: z.number().int().min(1) });
 
 /** P: each step records how many child notices it got; completes once all children reported. */
-function parentHandler(type: string, db: Database): TaskHandler {
+function parentHandler(type: string, db: Db): TaskHandler {
   return {
     type,
     inputSchema: ParentInputSchema,
@@ -84,7 +85,7 @@ function parentHandler(type: string, db: Database): TaskHandler {
       const { children } = ParentInputSchema.parse(ctx.input);
       const notices = ctx.messages.filter((message) => message.kind === 'child_finished').length;
       // Notices of earlier steps: only committed steps left a row.
-      const { rows } = await db.execute<{ note: string }>(sql`
+      const { rows } = await db.client.execute<{ note: string }>(sql`
         SELECT note FROM ${sql.raw(HANDLER_ROWS_TABLE)}
          WHERE task_id = ${ctx.taskId} AND note LIKE ${`${CHILDREN_NOTE_PREFIX}%`}`);
       const earlier = rows.reduce(
@@ -106,18 +107,18 @@ const WriterInputSchema = z.object({ steps: z.number().int().min(1) });
  * its row. A step that finds its own intent — the previous attempt got that far and was lost — does
  * not call the action again and commits the outcome `unknown`.
  */
-function writerHandler(type: string, db: Database): TaskHandler {
+function writerHandler(type: string, db: Db): TaskHandler {
   return {
     type,
     inputSchema: WriterInputSchema,
     async step(ctx): Promise<StepResult> {
       const { steps } = WriterInputSchema.parse(ctx.input);
-      const guarded = await ctx.guard(async (tx) => {
-        const { rows } = await tx.execute(sql`
+      const guarded = await ctx.guard(async () => {
+        const { rows } = await db.client.execute(sql`
           SELECT 1 FROM ${sql.raw(HANDLER_ROWS_TABLE)}
            WHERE task_id = ${ctx.taskId} AND step_no = ${ctx.stepNo} AND note = ${INTENT_NOTE}`);
         if (rows.length > 0) return 'found' as const;
-        await writeHandlerRow(ctx, INTENT_NOTE)(tx);
+        await writeHandlerRow(ctx, INTENT_NOTE)();
         return 'written' as const;
       });
       if (guarded.outcome === 'fenced') {
@@ -198,11 +199,11 @@ function ownerOfTrackerHandler(type: string): TaskHandler {
       if (ctx.stepNo === 0) {
         return {
           outcome: 'wait',
-          commit: async (tx, effects) => {
+          commit: async (effects) => {
             await effects.openTracker(
               Array.from({ length: tasks }, (_, item) => ({ type: taskType, input: { item } })),
             );
-            await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)(tx);
+            await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)();
           },
         };
       }
@@ -274,8 +275,8 @@ function holdHandler(type: string): TaskHandler {
   };
 }
 
-/** The handlers of the roles in `types`; `db` is the process's own pool. */
-export function handlersFor(types: ChildTypes, db: Database): TaskHandler[] {
+/** The handlers of the roles in `types`, bound to `db`: the `Db` of the runtime they register in. */
+export function handlersFor(types: ChildTypes, db: Db): TaskHandler[] {
   const handlers: TaskHandler[] = [];
   if (types.parent) handlers.push(parentHandler(types.parent, db));
   if (types.writer) handlers.push(writerHandler(types.writer, db));
@@ -285,5 +286,5 @@ export function handlersFor(types: ChildTypes, db: Database): TaskHandler[] {
   if (types.trackerOwner) handlers.push(ownerOfTrackerHandler(types.trackerOwner));
   if (types.trackerTask) handlers.push(trackerTaskHandler(types.trackerTask));
   if (types.parkedTrackerTask) handlers.push(parkedTrackerTaskHandler(types.parkedTrackerTask));
-  return handlers;
+  return handlers.map((handler) => boundToDb(handler, db));
 }

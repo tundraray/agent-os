@@ -14,6 +14,7 @@ import {
   AgentSessionTasksRepository,
   AgentToolResultsRepository,
   type Database,
+  Db,
 } from '@agent-os/db';
 import { type ModelPrice, type StepContext, type StepResult, systemClock } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -151,7 +152,7 @@ type Refusal = Extract<ModelVerdict, { readonly kind: 'refused' }>;
 /** Every step of an agent over the gate double that answers `refusal`, with counting doubles. */
 function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
-  const database = emptyDatabase();
+  const db = new Db(emptyDatabase());
   const model = createScriptedModel();
   model.script({ agent: SNAPSHOT.name }, [], { thereafter: { text: 'answer' } });
   const audits: AuditRecord[] = [];
@@ -175,22 +176,22 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AuditRecord) => {
     audits.push(entry);
   };
-  const sessionRows = new AgentSessionsRepository();
-  const messageRows = new AgentMessagesRepository();
+  const sessionRows = new AgentSessionsRepository(db);
+  const messageRows = new AgentMessagesRepository(db);
   const history = new History(messageRows);
   const stores = {
     sessions: new Sessions(sessionRows),
     sessionRows,
     history,
     messageRows,
-    callRecords: new CallRecords(history, new AgentCodeCallsRepository()),
-    toolResultRows: new AgentToolResultsRepository(),
-    sessionTaskRows: new AgentSessionTasksRepository(),
-    knowledgeRows: new AgentKnowledgeRepository(),
-    knowledgeRunRows: new AgentKnowledgeRunsRepository(),
-    mcpServerRows: new AgentMcpServersRepository(),
+    callRecords: new CallRecords(history, new AgentCodeCallsRepository(db)),
+    toolResultRows: new AgentToolResultsRepository(db),
+    sessionTaskRows: new AgentSessionTasksRepository(db),
+    knowledgeRows: new AgentKnowledgeRepository(db),
+    knowledgeRunRows: new AgentKnowledgeRunsRepository(db),
+    mcpServerRows: new AgentMcpServersRepository(db),
   };
-  const registry = new ToolRegistry(database, stores.mcpServerRows, new AgentMcpAccountsRepository(), access);
+  const registry = new ToolRegistry(stores.mcpServerRows, new AgentMcpAccountsRepository(db), access);
   registry.useRunCode({ ...lookup, name: 'run_code' });
   [lookup, ...createTaskListTools({ ...stores, logger })].forEach((tool) => registry.register(tool));
   const runner = new ToolRunner(
@@ -205,7 +206,6 @@ function refusedAgent(refusal: Refusal) {
     access,
     audit,
     { mcpCallTimeoutMs: 1000 },
-    database,
     {
       readSettings: async () => ({
         storeFromChars: 50_000,
@@ -241,7 +241,7 @@ function refusedAgent(refusal: Refusal) {
   const ctx = stepContext(logger);
   const agent = new ChatAgent(
     {
-      database,
+      db,
       ...stores,
       registry,
       runner,

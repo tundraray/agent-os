@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, lte, sql } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { identityLoginRequests, identityProviders } from '../schema';
 
 /** A row of `identity_providers`; `type` and `options` are read by the api, which owns their shape. */
@@ -29,14 +29,15 @@ export type NewIdentityLoginRequestRow = Omit<
 const CREATION_ORDER = [asc(identityProviders.createdAt), asc(identityProviders.id)];
 
 /**
- * Drizzle queries of `identity_providers` and `identity_login_requests` (repository over a
- * transaction): each takes the caller's transaction or the plain client first.
+ * Drizzle queries of `identity_providers` and `identity_login_requests`.
  */
 @Injectable()
 export class IdentityProvidersRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** The providers in creation order. */
-  list(executor: Executor) {
-    return executor
+  list() {
+    return this.db.client
       .select({
         id: identityProviders.id,
         type: identityProviders.type,
@@ -48,8 +49,8 @@ export class IdentityProvidersRepository {
   }
 
   /** The enabled providers in creation order, as the sign-in page shows them. */
-  listEnabled(executor: Executor) {
-    return executor
+  listEnabled() {
+    return this.db.client
       .select({
         id: identityProviders.id,
         name: identityProviders.name,
@@ -60,14 +61,14 @@ export class IdentityProvidersRepository {
       .orderBy(...CREATION_ORDER);
   }
 
-  async find(executor: Executor, id: string): Promise<IdentityProviderRow | undefined> {
-    const [row] = await executor.select().from(identityProviders).where(eq(identityProviders.id, id));
+  async find(id: string): Promise<IdentityProviderRow | undefined> {
+    const [row] = await this.db.client.select().from(identityProviders).where(eq(identityProviders.id, id));
     return row;
   }
 
   /** A new provider, always disabled (DC-6). */
-  async insert(executor: Executor, values: NewIdentityProviderRow): Promise<IdentityProviderRow> {
-    const [row] = await executor
+  async insert(values: NewIdentityProviderRow): Promise<IdentityProviderRow> {
+    const [row] = await this.db.client
       .insert(identityProviders)
       .values({ ...values, enabled: false })
       .returning();
@@ -76,18 +77,15 @@ export class IdentityProvidersRepository {
   }
 
   /** Writes the change and raises `version`. */
-  async update(executor: Executor, id: string, values: IdentityProviderPatch): Promise<void> {
-    await executor
+  async update(id: string, values: IdentityProviderPatch): Promise<void> {
+    await this.db.client
       .update(identityProviders)
       .set({ ...values, version: sql`${identityProviders.version} + 1` })
       .where(eq(identityProviders.id, id));
   }
 
-  async insertLoginRequest(
-    executor: Executor,
-    values: NewIdentityLoginRequestRow,
-  ): Promise<string> {
-    const [row] = await executor
+  async insertLoginRequest(values: NewIdentityLoginRequestRow): Promise<string> {
+    const [row] = await this.db.client
       .insert(identityLoginRequests)
       .values(values)
       .returning({ id: identityLoginRequests.id });
@@ -96,11 +94,8 @@ export class IdentityProvidersRepository {
   }
 
   /** Deletes the request of this `state` and returns it: a second return finds nothing (DC-4). */
-  async consumeLoginRequest(
-    executor: Executor,
-    state: string,
-  ): Promise<IdentityLoginRequestRow | undefined> {
-    const [row] = await executor
+  async consumeLoginRequest(state: string): Promise<IdentityLoginRequestRow | undefined> {
+    const [row] = await this.db.client
       .delete(identityLoginRequests)
       .where(eq(identityLoginRequests.state, state))
       .returning();
@@ -108,8 +103,8 @@ export class IdentityProvidersRepository {
   }
 
   /** Deletes every sign-in request past its expiry; returns how many went. */
-  async deleteExpiredLoginRequests(executor: Executor): Promise<number> {
-    const deleted = await executor
+  async deleteExpiredLoginRequests(): Promise<number> {
+    const deleted = await this.db.client
       .delete(identityLoginRequests)
       .where(lte(identityLoginRequests.expiresAt, sql`now()`))
       .returning({ id: identityLoginRequests.id });

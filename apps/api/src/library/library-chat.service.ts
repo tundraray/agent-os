@@ -7,9 +7,7 @@ import {
   type RecordBody,
 } from '@agent-os/contracts';
 import {
-  type Executor,
   LibraryRecordsRepository,
-  type Transaction,
 } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import { LibraryRecords, recordFields } from './library-records';
@@ -196,8 +194,8 @@ export class LibraryChatService {
       { viewerId: actor.id },
       async () => {
         const [visible, system] = await Promise.all([
-          this.records.visible(this.records.db, viewer),
-          actor.isAdmin ? this.records.panel(this.records.db, { list: 'system' }) : [],
+          this.records.visible(viewer),
+          actor.isAdmin ? this.records.panel({ list: 'system' }) : [],
         ]);
         const seen = new Set(visible.map((record) => record.id));
         return [
@@ -218,7 +216,7 @@ export class LibraryChatService {
       'chat_read',
       { viewerId: context.actor.id, recordId },
       async () => {
-        const record = await this.chatTarget(this.records.db, context, recordId);
+        const record = await this.chatTarget(context, recordId);
         return record === undefined
           ? null
           : chatRecordOf(record, context.viewer.id);
@@ -249,13 +247,12 @@ export class LibraryChatService {
   }
 
   /**
-   * The save of an approved card in the step's transaction (Invariant 3): the row is locked, the same
+   * The save of an approved card in the step's transaction (Invariant 3): the same
    * checks run again on the version the card showed — another version is `version_conflict` — and the
    * record's version and its audit event are written at a savepoint of the step's transaction. The
    * self-learning flag is the stored one on an edit and off on a create (Invariant 4).
    */
   saveChatChange(
-    tx: Transaction,
     context: ChatContext,
     card: LibraryRecordCard,
   ): Promise<ChatSaveResult> {
@@ -267,7 +264,7 @@ export class LibraryChatService {
         recordId: card.recordId,
         fromVersion: card.previous?.version ?? null,
       },
-      () => this.savedFromCard(tx, context, card),
+      () => this.savedFromCard(context, card),
       chatOutcomeFields,
     );
   }
@@ -285,7 +282,7 @@ export class LibraryChatService {
       };
       const scope = change.system ? 'system' : 'employee';
       const request = this.chatSaveRequest(context, scope, null, next);
-      const check = await this.saving.checkSave(request, this.records.db);
+      const check = await this.saving.checkSave(request);
       if (check.outcome === 'refused') return chatRefusedBy(check, request);
       return {
         outcome: 'card',
@@ -298,7 +295,7 @@ export class LibraryChatService {
         }),
       };
     }
-    const target = await this.chatTarget(this.records.db, context, change.recordId);
+    const target = await this.chatTarget(context, change.recordId);
     const scope = chatScope(target, context, change.action);
     if (scope.outcome === 'refused') return scope;
     const { record: previous } = scope;
@@ -319,7 +316,7 @@ export class LibraryChatService {
       body: withSelfLearning(change.record.body, selfLearningOf(previous.body)),
     };
     const request = this.chatSaveRequest(context, scope.scope, previous, next);
-    const check = await this.saving.checkSave(request, this.records.db);
+    const check = await this.saving.checkSave(request);
     if (check.outcome === 'refused') return chatRefusedBy(check, request);
     return {
       outcome: 'card',
@@ -334,7 +331,6 @@ export class LibraryChatService {
   }
 
   private async savedFromCard(
-    tx: Transaction,
     context: ChatContext,
     card: LibraryRecordCard,
   ): Promise<ChatSaveResult> {
@@ -350,7 +346,7 @@ export class LibraryChatService {
         body: withSelfLearning(next.body, false),
       });
       return chatSaved(
-        await this.saving.save({ ...request, newId: card.recordId }, tx),
+        await this.saving.save({ ...request, newId: card.recordId }),
         request,
       );
     }
@@ -358,15 +354,15 @@ export class LibraryChatService {
       throw new Error(
         `${card.action} card of record ${card.recordId} has no previous version`,
       );
-    if (!(await this.repository.lock(tx, card.recordId))) return chatRefused('not_found');
-    const target = await this.chatTarget(tx, context, card.recordId);
+    if (!(await this.repository.exists(card.recordId))) return chatRefused('not_found');
+    const target = await this.chatTarget(context, card.recordId);
     const scope = chatScope(target, context, card.action);
     if (scope.outcome === 'refused') return scope;
     const { record: current } = scope;
     if (current.version !== card.previous.version)
       return chatRefused('version_conflict');
     if (card.action === 'delete') {
-      await this.records.deleteChecked(tx, context.actor.id, current);
+      await this.records.deleteChecked(context.actor.id, current);
       return { outcome: 'saved', recordId: current.id, version: null };
     }
     if (next === null)
@@ -375,7 +371,7 @@ export class LibraryChatService {
       ...next,
       body: withSelfLearning(next.body, selfLearningOf(current.body)),
     });
-    return chatSaved(await this.saving.save(request, tx), request);
+    return chatSaved(await this.saving.save(request), request);
   }
 
   /**
@@ -384,14 +380,13 @@ export class LibraryChatService {
    * answer alike, so the chat learns nothing of a record it cannot see.
    */
   private async chatTarget(
-    executor: Executor,
     context: ChatContext,
     recordId: string,
   ): Promise<LibraryRecord | undefined> {
     if (!isUuid(recordId)) return undefined;
-    const visible = await this.records.visibleOne(executor, context.viewer, recordId);
+    const visible = await this.records.visibleOne(context.viewer, recordId);
     if (visible !== undefined || !context.actor.isAdmin) return visible;
-    const inPanel = await this.records.panelOne(executor, recordId);
+    const inPanel = await this.records.panelOne(recordId);
     return inPanel?.ownerId === null ? inPanel : undefined;
   }
 

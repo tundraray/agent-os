@@ -1,5 +1,5 @@
 import type { Logger } from '@agent-os/common';
-import { DATABASE, type Database, RuntimeTasksRepository } from '@agent-os/db';
+import { RuntimeTasksRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type { CancelTimer, Clock } from '../clock';
 import type { RuntimeConfig } from '../runtime-config';
@@ -69,7 +69,6 @@ export class LiveTasks {
 
   constructor(
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(DATABASE) private readonly db: Database,
     @Inject(RuntimeTasksRepository) private readonly taskRows: RuntimeTasksRepository,
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(RUNTIME_CONFIG) private readonly config: RuntimeConfig,
@@ -204,7 +203,7 @@ export class LiveTasks {
     const startedAt = Date.now();
     const epoch = this.epoch;
     try {
-      const rows = await this.taskRows.listActive(this.db, types, LIVE_TASKS_MAX);
+      const rows = await this.taskRows.listActive(types, LIVE_TASKS_MAX);
       let restored = 0;
       let failed = 0;
       const next = async (): Promise<void> => {

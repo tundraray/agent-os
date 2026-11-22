@@ -12,6 +12,7 @@ import type {
   UpdateRecordBody,
 } from '@agent-os/contracts';
 import {
+  Db,
   type LibraryRecordKey,
   LibraryRecordsRepository,
   LibrarySettingsRepository,
@@ -50,6 +51,7 @@ import { recordHeader, recordSummary, resolvedRecord } from './record-view';
 @Injectable()
 export class LibraryService {
   constructor(
+    private readonly db: Db,
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
     private readonly repository: LibraryRecordsRepository,
@@ -67,7 +69,7 @@ export class LibraryService {
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
         const [records, context] = await Promise.all([
-          this.records.visible(this.records.db, viewer),
+          this.records.visible(viewer),
           this.records.contextOf(viewer, actor.isAdmin, 'employee', facts),
         ]);
         return records.map((record) => recordSummary(record, context));
@@ -87,7 +89,7 @@ export class LibraryService {
       { viewerId: actor.id, recordId: id },
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
-        const record = await this.records.visibleOr404(this.records.db, viewer, id);
+        const record = await this.records.visibleOr404(viewer, id);
         return this.records.detail(record, viewer, actor.isAdmin, 'employee', facts);
       },
       recordFields,
@@ -156,9 +158,8 @@ export class LibraryService {
   }
 
   /**
-   * PUT /api/library/:id/audience (Flow 2): the row is locked first, then the ban, the owner's roles
-   * and the holders are read, so a close running at the same time is seen (Invariant 2). The version
-   * stays (DC-11).
+   * PUT /api/library/:id/audience (Flow 2): the ban, the owner's roles and the holders are read and the
+   * audience written in one transaction. The version stays (DC-11).
    */
   setAudience(
     actor: LibraryActor,
@@ -171,10 +172,10 @@ export class LibraryService {
       { actorId: actor.id, recordId: id, roleIds: body.roleIds },
       async () => {
         if (!isUuid(id)) throw notFound();
-        const { record, viewer } = await this.records.db.transaction(async (tx) => {
-          if (!(await this.repository.lock(tx, id))) throw notFound();
+        const { record, viewer } = await this.db.transaction(async () => {
+          if (!(await this.repository.exists(id))) throw notFound();
           const owner = await this.records.viewerOf(actor.id);
-          const before = await this.records.visibleOr404(tx, owner, id);
+          const before = await this.records.visibleOr404(owner, id);
           if (before.ownerId !== owner.id) throw readOnly();
           const decision = decideEmployeeAudience({
             currentRoleIds: before.holders.roles.map((role) => role.id),
@@ -184,14 +185,14 @@ export class LibraryService {
           });
           if (decision.kind === 'refused')
             throw libraryError('RECORD_REJECTED', decision.reason);
-          await this.repository.replaceHolders(tx, id, {
+          await this.repository.replaceHolders(id, {
             everyone: false,
             roleIds: body.roleIds,
             userIds: [],
           });
-          await this.repository.setOfferInChat(tx, id, body.offerInChat);
-          const after = present(await this.records.visibleOne(tx, owner, id), id);
-          await this.records.audit(tx, owner.id, 'library_audience', before, after);
+          await this.repository.setOfferInChat(id, body.offerInChat);
+          const after = present(await this.records.visibleOne(owner, id), id);
+          await this.records.audit(owner.id, 'library_audience', before, after);
           return { record: after, viewer: owner };
         });
         return this.records.detail(record, viewer, actor.isAdmin, 'employee', facts);
@@ -212,14 +213,14 @@ export class LibraryService {
       { actorId: actor.id, recordId: id, language },
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
-        const source = await this.records.visibleOr404(this.records.db, viewer, id);
+        const source = await this.records.visibleOr404(viewer, id);
         const [allowedModels, defaultModel, visible, ownNames, systemNames] =
           await Promise.all([
             this.records.allowedModelIds(viewer.id),
             this.access.defaultChatModel(),
-            this.records.visibleAgentIds(this.records.db, viewer, refersToRecords(source.body)),
-            this.repository.names(this.records.db, viewer.id),
-            this.repository.names(this.records.db, null),
+            this.records.visibleAgentIds(viewer, refersToRecords(source.body)),
+            this.repository.names(viewer.id),
+            this.repository.names(null),
           ]);
         const plan = planCopy({
           name: source.name,
@@ -232,8 +233,8 @@ export class LibraryService {
           language,
           builtinKey: source.builtinKey,
         });
-        const copied = await this.records.db.transaction(async (tx) => {
-          const inserted = await this.repository.insert(tx, {
+        const copied = await this.db.transaction(async () => {
+          const inserted = await this.repository.insert({
             ownerId: viewer.id,
             name: plan.name,
             description: source.description,
@@ -244,11 +245,10 @@ export class LibraryService {
           if (inserted.outcome === 'name_taken')
             throw libraryError('RECORD_NAME_TAKEN', 'own');
           const record = present(
-            await this.records.visibleOne(tx, viewer, inserted.id),
+            await this.records.visibleOne(viewer, inserted.id),
             inserted.id,
           );
           await this.records.audit(
-            tx,
             viewer.id,
             'library_copy',
             null,
@@ -281,10 +281,10 @@ export class LibraryService {
       { actorId: actor.id, recordId: id },
       async () => {
         const viewer = await this.records.viewerOf(actor.id);
-        await this.records.db.transaction(async (tx) => {
-          const record = await this.records.visibleOr404(tx, viewer, id);
+        await this.db.transaction(async () => {
+          const record = await this.records.visibleOr404(viewer, id);
           if (record.ownerId !== viewer.id) throw readOnly();
-          await this.records.deleteChecked(tx, actor.id, record);
+          await this.records.deleteChecked(actor.id, record);
         });
       },
     );
@@ -301,7 +301,7 @@ export class LibraryService {
       const [allowedModels, defaultModel, settings] = await Promise.all([
         this.records.allowedModelIds(actor.id),
         this.access.defaultChatModel(),
-        this.settings.read(this.records.db),
+        this.settings.read(),
       ]);
       return {
         servers: [...facts.usableServers].sort(),
@@ -333,8 +333,8 @@ export class LibraryService {
         if (!isUuid(recordId)) throw notFound();
         const viewer = await this.records.viewerOf(actor.id);
         const [visible, inPanel] = await Promise.all([
-          this.records.visibleOne(this.records.db, viewer, recordId),
-          actor.isAdmin ? this.records.panelOne(this.records.db, recordId) : undefined,
+          this.records.visibleOne(viewer, recordId),
+          actor.isAdmin ? this.records.panelOne(recordId) : undefined,
         ]);
         const record = visible ?? inPanel;
         if (record === undefined || record.body.kind !== 'deep_agent')
@@ -374,7 +374,7 @@ export class LibraryService {
       { viewerId },
       async () => {
         const viewer = await this.records.viewerOf(viewerId);
-        const records = await this.records.visible(this.records.db, viewer);
+        const records = await this.records.visible(viewer);
         return records.map((record) => recordHeader(record, viewerId));
       },
       (headers) => ({ count: headers.length }),
@@ -394,17 +394,17 @@ export class LibraryService {
         builtinKey: input.builtinKey,
       },
       () =>
-        this.records.db.transaction(async (tx) => {
+        this.db.transaction(async () => {
           const { body, ...row } = input;
-          const inserted = await this.repository.insertBuiltin(tx, {
+          const inserted = await this.repository.insertBuiltin({
             ...row,
             kind: body.kind,
             content: body.content,
             offerInChat: true,
           });
           if (!inserted) return false;
-          const record = present(await this.records.panelOne(tx, input.id), input.id);
-          await this.records.audit(tx, SYSTEM_ACTOR, 'library_create', null, record);
+          const record = present(await this.records.panelOne(input.id), input.id);
+          await this.records.audit(SYSTEM_ACTOR, 'library_create', null, record);
           return true;
         }),
       (created) => ({ created }),
@@ -422,7 +422,7 @@ export class LibraryService {
       async () => {
         if ('id' in key && !isUuid(key.id)) return null;
         const viewer = await this.records.viewerOf(viewerId);
-        const [record] = await this.records.visible(this.records.db, viewer, key);
+        const [record] = await this.records.visible(viewer, key);
         return record === undefined ? null : resolvedRecord(record, viewerId);
       },
       (record) =>

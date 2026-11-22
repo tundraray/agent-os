@@ -3,7 +3,6 @@ import {
   type NewRuntimeTaskRow,
   runtimeTasks,
   RuntimeTasksRepository,
-  type Transaction,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
@@ -58,16 +57,15 @@ function changeColumns(change: TaskChange): PgUpdateSetSource<typeof runtimeTask
 
 /**
  * The writes of a task row: the rules of the state diagram over the queries of
- * `RuntimeTasksRepository`, inside the caller's transaction. Locks and reads go to the repository
- * directly.
+ * `RuntimeTasksRepository`. Reads go to the repository directly.
  */
 @Injectable()
 export class Tasks {
   constructor(@Inject(RuntimeTasksRepository) private readonly rows: RuntimeTasksRepository) {}
 
   /** Inserts a task in `queued`. An id already taken is `TASK_EXISTS`. */
-  async insert(tx: Transaction, task: NewRuntimeTaskRow): Promise<TaskRow> {
-    const row = await this.rows.insert(tx, task);
+  async insert(task: NewRuntimeTaskRow): Promise<TaskRow> {
+    const row = await this.rows.insert(task);
     if (row === undefined) {
       throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
     }
@@ -80,12 +78,8 @@ export class Tasks {
    * reason. Returns the updated row, or `undefined` when the guard matched nothing — the write is
    * fenced and dropped.
    */
-  async transition(
-    tx: Transaction,
-    guard: TaskGuard,
-    change: TaskChange,
-  ): Promise<TaskRow | undefined> {
+  async transition(guard: TaskGuard, change: TaskChange): Promise<TaskRow | undefined> {
     assertAllowed(guard, change);
-    return this.rows.updateGuarded(tx, guard, changeColumns(change));
+    return this.rows.updateGuarded(guard, changeColumns(change));
   }
 }

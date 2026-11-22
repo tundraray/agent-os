@@ -5,9 +5,7 @@ import {
   TaskStatusSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
-  type Transaction,
+  Db,
   RuntimeTrackersRepository,
   RuntimeTasksRepository,
 } from '@agent-os/db';
@@ -19,7 +17,6 @@ import type { TaskRow } from '../tasks/guarded-transition';
 import { Inbox } from '../messaging/inbox';
 import { WorkerLoop } from './worker-loop';
 import type { RuntimeConfig } from '../runtime-config';
-import { retryingTransaction } from '../runtime-tx';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { endTask } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
@@ -30,7 +27,7 @@ const { queued, running, failed } = TaskStatusSchema.enum;
 const SWEEP_BATCH = 50;
 
 interface RecoverySweeperDeps {
-  db: Database;
+  db: Db;
   config: RuntimeConfig;
   clock: Clock;
   logger: Logger;
@@ -55,7 +52,7 @@ type Recovery =
  * `attempt + 1` (a late outcome of the lost attempt is fenced) and `task.recovered`, so that a new
  * claim runs the step again. Once the step was lost `RUNTIME_MAX_RECOVERIES` times in a row, the
  * task is `failed` with `recovery_exhausted` and its parent is told. No handler is called; each task
- * is one transaction under its row lock.
+ * is one transaction.
  */
 @Injectable()
 export class RecoverySweeper {
@@ -63,7 +60,7 @@ export class RecoverySweeper {
   private readonly deps: RecoverySweeperDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
     @Inject(CLOCK) clock: Clock,
     @Inject(RUNTIME_LOGGER) runtimeLogger: Logger,
@@ -97,7 +94,7 @@ export class RecoverySweeper {
   /** One pass; `true` when the batch was full and more may be left. */
   private async sweep(): Promise<boolean> {
     const now = this.deps.clock.now();
-    const expired = await this.deps.taskRows.listExpired(this.deps.db, now, SWEEP_BATCH);
+    const expired = await this.deps.taskRows.listExpired(now, SWEEP_BATCH);
     for (const task of expired) await this.recover(task, now);
     return expired.length === SWEEP_BATCH;
   }
@@ -108,9 +105,7 @@ export class RecoverySweeper {
   ): Promise<void> {
     const { db, logger, crashPoints, config } = this.deps;
     const startedAt = Date.now();
-    const recovery = await retryingTransaction(db, logger, 'sweeper.recover', (tx) =>
-      this.recoverIn(tx, expired, now),
-    );
+    const recovery = await db.transaction(() => this.recoverIn(expired, now));
     const fields = {
       taskId: expired.taskId,
       attempt: expired.attempt,
@@ -151,13 +146,11 @@ export class RecoverySweeper {
   }
 
   private async recoverIn(
-    tx: Transaction,
     expired: { taskId: string; attempt: number },
     now: Date,
   ): Promise<Recovery> {
     const { tasks, taskRows, events, config } = this.deps;
-    // An exhausted task ends and notifies its parent: the parent is locked first (Invariant 6).
-    const task = await taskRows.lockWithParent(tx, expired.taskId);
+    const task = await taskRows.find(expired.taskId);
     const stillLost =
       task?.status === running &&
       task.attempt === expired.attempt &&
@@ -166,7 +159,7 @@ export class RecoverySweeper {
     if (!task || !stillLost) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {
-      const row = await endTask(tx, this.deps, task, {
+      const row = await endTask(this.deps, task, {
         status: failed,
         failure: {
           reason: RuntimeFailureReasonSchema.enum.recovery_exhausted,
@@ -179,18 +172,16 @@ export class RecoverySweeper {
     }
 
     const row = await tasks.transition(
-      tx,
       { taskId: task.taskId, from: [running], attempt: task.attempt },
       {
         kind: 'set',
         status: queued,
-        // The row is locked, so the count read with it is the current one.
         fields: { recoveries: task.recoveries + 1 },
         fence: true,
       },
     );
-    if (!row) throw new Error(`Write of locked task ${task.taskId} matched no row`);
-    await events.append(tx, {
+    if (!row) throw new Error(`Guarded write of task ${task.taskId} matched no row`);
+    await events.append({
       type: RuntimeEventTypeSchema.enum['task.recovered'],
       task: row,
       payload: {

@@ -1,4 +1,4 @@
-import type { AgentSessionTasksRepository, Executor, SessionTask } from '@agent-os/db';
+import type { AgentSessionTasksRepository, SessionTask } from '@agent-os/db';
 import { SessionTaskStatusSchema } from '@agent-os/contracts';
 
 /**
@@ -35,9 +35,8 @@ export function taskBlock(tasks: readonly SessionTask[]): string | null {
  */
 export function tasksOf(
   deps: { readonly sessionTaskRows: AgentSessionTasksRepository },
-  reader: Executor,
   agentId: string,
   taskList: boolean,
 ): Promise<SessionTask[]> {
-  return taskList ? deps.sessionTaskRows.list(reader, agentId) : Promise.resolve([]);
+  return taskList ? deps.sessionTaskRows.list(agentId) : Promise.resolve([]);
 }

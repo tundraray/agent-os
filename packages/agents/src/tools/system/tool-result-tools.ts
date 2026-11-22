@@ -1,4 +1,4 @@
-import type { AgentToolResultsRepository, Database } from '@agent-os/db';
+import type { AgentToolResultsRepository } from '@agent-os/db';
 import { z } from 'zod';
 
 import { pageOf, RESULT_NOT_FOUND, searchOf } from '../large-result';
@@ -50,7 +50,6 @@ function notFound(): ToolRunResult {
 
 export interface ToolResultToolsDeps {
   /** The stored results and the settings row are read from it on every call. */
-  readonly database: Database;
   readonly toolResultRows: AgentToolResultsRepository;
 }
 
@@ -63,16 +62,16 @@ export interface ToolResultToolsDeps {
 export function createToolResultTools(
   deps: ToolResultToolsDeps,
 ): [OutsideAgentTool<ReadToolResultArgs>, OutsideAgentTool<SearchToolResultArgs>] {
-  const { database, toolResultRows } = deps;
+  const { toolResultRows } = deps;
 
   /** The stored text of the caller's own call, and the settings, read now. */
   async function storedOf(callId: string, caller: ToolCaller) {
-    const found = await toolResultRows.findForRun(database, {
+    const found = await toolResultRows.findForRun({
       callId,
       taskId: caller.agentId,
       ownerId: caller.ownerId,
     });
-    return found === undefined ? undefined : { text: found.text, settings: await toolResultRows.readSettings(database) };
+    return found === undefined ? undefined : { text: found.text, settings: await toolResultRows.readSettings() };
   }
 
   const read: OutsideAgentTool<ReadToolResultArgs> = {

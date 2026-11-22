@@ -74,7 +74,7 @@ const NOTE_TO_DECIDER = { text: 'while waiting' };
  */
 async function testRuntime(types: ChildTypes): Promise<RuntimeHarness> {
   const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
-  for (const handler of handlersFor(types, control.db)) control.handlers.register(handler);
+  for (const handler of handlersFor(types, control.runtimeDb)) control.handlers.register(handler);
   return control;
 }
 

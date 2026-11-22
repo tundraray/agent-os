@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { agentMessages, agentSessions } from '../schema';
 
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
@@ -95,19 +95,19 @@ function toRootSession(row: {
 }
 
 /**
- * Drizzle queries of `agent_sessions` inside the caller's transaction (repository over a
- * transaction): one row per agent, keyed by its runtime task. No method opens a transaction.
+ * Drizzle queries of `agent_sessions`: one row per agent, keyed by its runtime task. No method opens a transaction.
  */
 @Injectable()
 export class AgentSessionsRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Whether the owner has a session of this record other than `taskId`. */
   async ranBefore(
-    tx: Transaction,
     ownerId: string,
     recordId: string,
     taskId: string,
   ): Promise<boolean> {
-    const [row] = await tx
+    const [row] = await this.db.client
       .select({ sessions: count() })
       .from(agentSessions)
       .where(
@@ -126,8 +126,8 @@ export class AgentSessionsRepository {
    * A root session starts with an empty title and its list time. `true` — this call created the
    * session.
    */
-  async create(tx: Transaction, session: NewAgentSessionRow, taskEntry: unknown): Promise<boolean> {
-    const created = await tx
+  async create(session: NewAgentSessionRow, taskEntry: unknown): Promise<boolean> {
+    const created = await this.db.client
       .insert(agentSessions)
       .values({
         ...session,
@@ -136,7 +136,7 @@ export class AgentSessionsRepository {
       .onConflictDoNothing({ target: agentSessions.taskId })
       .returning({ taskId: agentSessions.taskId });
     if (created.length === 0) return false;
-    await tx.insert(agentMessages).values({
+    await this.db.client.insert(agentMessages).values({
       taskId: session.taskId,
       seq: TASK_ENTRY_SEQ,
       kind: 'task',
@@ -146,8 +146,8 @@ export class AgentSessionsRepository {
   }
 
   /** The session row of the agent; `undefined` when it has none yet. */
-  async find(executor: Executor, taskId: string): Promise<AgentSessionRow | undefined> {
-    const [row] = await executor
+  async find(taskId: string): Promise<AgentSessionRow | undefined> {
+    const [row] = await this.db.client
       .select()
       .from(agentSessions)
       .where(eq(agentSessions.taskId, taskId));
@@ -155,9 +155,9 @@ export class AgentSessionsRepository {
   }
 
   /** The session rows of the given agents; an agent without a session is absent. */
-  async findMany(executor: Executor, taskIds: readonly string[]): Promise<AgentSessionRow[]> {
+  async findMany(taskIds: readonly string[]): Promise<AgentSessionRow[]> {
     if (taskIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select()
       .from(agentSessions)
       .where(inArray(agentSessions.taskId, [...taskIds]));
@@ -168,8 +168,8 @@ export class AgentSessionsRepository {
    * sessions of the record itself — a subagent carries its deep agent's record id and a fork its
    * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
-  async recordCounts(executor: Executor, ownerId: string): Promise<Map<string, number>> {
-    const rows = await executor
+  async recordCounts(ownerId: string): Promise<Map<string, number>> {
+    const rows = await this.db.client
       .select({ recordId: agentSessions.recordId, sessions: count() })
       .from(agentSessions)
       .where(
@@ -185,8 +185,8 @@ export class AgentSessionsRepository {
   }
 
   /** The root of the agent's tree, from its session; `undefined` when it has none. */
-  async rootIdOf(executor: Executor, taskId: string): Promise<string | undefined> {
-    const [row] = await executor
+  async rootIdOf(taskId: string): Promise<string | undefined> {
+    const [row] = await this.db.client
       .select({ rootId: agentSessions.rootId })
       .from(agentSessions)
       .where(eq(agentSessions.taskId, taskId));
@@ -197,22 +197,22 @@ export class AgentSessionsRepository {
    * Marks the root session deleted: from then on the conversation answers as a missing one. The row
    * stays; the caller has deleted the runtime tree in the same transaction.
    */
-  async markDeleted(tx: Transaction, rootId: string): Promise<void> {
-    await tx
+  async markDeleted(rootId: string): Promise<void> {
+    await this.db.client
       .update(agentSessions)
       .set({ deletedAt: sql`now()` })
       .where(eq(agentSessions.taskId, rootId));
   }
 
   /** Writes the given fields of the session; an empty patch writes nothing. */
-  async update(tx: Transaction, taskId: string, patch: SessionPatch): Promise<void> {
+  async update(taskId: string, patch: SessionPatch): Promise<void> {
     if (Object.values(patch).every((value) => value === undefined)) return;
-    await tx.update(agentSessions).set(patch).where(eq(agentSessions.taskId, taskId));
+    await this.db.client.update(agentSessions).set(patch).where(eq(agentSessions.taskId, taskId));
   }
 
   /** The owner's root session; another owner's and a session that is not a root are as absent as a missing one. */
-  async root(executor: Executor, rootId: string, ownerId: string): Promise<RootSession | undefined> {
-    const [row] = await executor
+  async root(rootId: string, ownerId: string): Promise<RootSession | undefined> {
+    const [row] = await this.db.client
       .select(ROOT_COLUMNS)
       .from(agentSessions)
       .where(ownedRoot(rootId, ownerId));
@@ -220,8 +220,8 @@ export class AgentSessionsRepository {
   }
 
   /** The owner of a root session, whoever it is; `undefined` when `rootId` names no root session. */
-  async rootOwner(executor: Executor, rootId: string): Promise<string | undefined> {
-    const [row] = await executor
+  async rootOwner(rootId: string): Promise<string | undefined> {
+    const [row] = await this.db.client
       .select({ ownerId: agentSessions.ownerId })
       .from(agentSessions)
       .where(and(eq(agentSessions.taskId, rootId), isRoot));
@@ -233,13 +233,12 @@ export class AgentSessionsRepository {
    * `agent_sessions_owner_page_idx`): strictly after `after`, at most `limit`; all of them without either.
    */
   async roots(
-    executor: Executor,
     ownerId: string,
     page: { readonly after?: RootPosition; readonly limit?: number } = {},
   ): Promise<RootSession[]> {
     const owned = and(eq(agentSessions.ownerId, ownerId), isRoot);
     const { after } = page;
-    const query = executor
+    const query = this.db.client
       .select(ROOT_COLUMNS)
       .from(agentSessions)
       .where(
@@ -256,8 +255,8 @@ export class AgentSessionsRepository {
   }
 
   /** `updated_at = now()`: the owner's root session moves to the top of the list. */
-  async touchRoot(executor: Executor, rootId: string, ownerId: string): Promise<void> {
-    await executor
+  async touchRoot(rootId: string, ownerId: string): Promise<void> {
+    await this.db.client
       .update(agentSessions)
       .set({ updatedAt: NOW_MS })
       .where(ownedRoot(rootId, ownerId));
@@ -265,12 +264,11 @@ export class AgentSessionsRepository {
 
   /** Sets the owner's title and moves the root session up; `undefined` for a missing or another owner's one. */
   async renameRoot(
-    executor: Executor,
     rootId: string,
     ownerId: string,
     title: string,
   ): Promise<RootSession | undefined> {
-    const [row] = await executor
+    const [row] = await this.db.client
       .update(agentSessions)
       .set({ title, updatedAt: NOW_MS })
       .where(ownedRoot(rootId, ownerId))
@@ -280,12 +278,11 @@ export class AgentSessionsRepository {
 
   /** Writes a generated title only into an empty one; `true` when it was written. */
   async titleRootIfEmpty(
-    executor: Executor,
     rootId: string,
     ownerId: string,
     title: string,
   ): Promise<boolean> {
-    const rows = await executor
+    const rows = await this.db.client
       .update(agentSessions)
       .set({ title })
       .where(and(ownedRoot(rootId, ownerId), eq(agentSessions.title, '')))

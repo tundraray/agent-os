@@ -1,4 +1,4 @@
-import type { AgentCodeCallsRepository, AgentMessagesRepository, Executor } from '@agent-os/db';
+import type { AgentCodeCallsRepository, AgentMessagesRepository } from '@agent-os/db';
 import type { TaskControl } from '@agent-os/runtime';
 
 import { envelope } from '../model/provider-messages';
@@ -31,7 +31,6 @@ const ENVELOPE_AUTHOR = 'this run of the deep agent';
 export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedUpTo'>;
 
 export interface ExtractionInputDeps {
-  readonly database: Executor;
   readonly messageRows: AgentMessagesRepository;
   readonly codeCallRows: AgentCodeCallsRepository;
   readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
@@ -169,11 +168,10 @@ export async function readExtractionInput(
   const taskIds = await subtreeTaskIds(deps, run);
   // `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round.
   const window = { after: run.extractedUpTo, through: readAt };
-  const results = await deps.messageRows.mcpResults(deps.database, taskIds, ROUND_OUTCOMES, window);
+  const results = await deps.messageRows.mcpResults(taskIds, ROUND_OUTCOMES, window);
   const direct: InputCall[] = results.map(({ text, ...call }) => ({ ...call, resultText: text, inCode: false }));
   // Calls a `run_code` script made, of its latest attempt only (Invariant 3).
   const scripted = await deps.codeCallRows.mcpCallsOfLatestAttempts(
-    deps.database,
     taskIds,
     ROUND_OUTCOMES,
     window,

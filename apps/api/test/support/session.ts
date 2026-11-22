@@ -4,8 +4,8 @@ import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
   type DatabaseConnection,
+  Db,
   IdentityRolesRepository,
   IdentitySessionsRepository,
   IdentityUsersRepository,
@@ -123,9 +123,8 @@ export async function seedSuperAdmin(
   login: string,
   password = DEFAULT_PASSWORD,
 ): Promise<Session> {
-  const { db } = app.get<DatabaseConnection>(DATABASE_CONNECTION);
   await seedSuperAdminRow(
-    db,
+    app.get(Db),
     {
       users: app.get(IdentityUsersRepository),
       roles: app.get(IdentityRolesRepository),

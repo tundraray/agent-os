@@ -1,4 +1,3 @@
-import type { Executor } from '@agent-os/db';
 import {
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
@@ -53,7 +52,6 @@ export function resumeMarkOf(message: StepMessage): ResumeMark | undefined {
 
 async function childReport(
   deps: Pick<AgentDeps, 'messageRows'>,
-  reader: Executor,
   notice: ChildFinishedPayload,
   description: string,
 ): Promise<NewHistoryEntry> {
@@ -65,7 +63,7 @@ async function childReport(
       status: notice.status,
       reason: notice.failure?.reason ?? null,
       text: notice.result?.report ?? null,
-      toolCalls: await deps.messageRows.toolCallCount(reader, notice.taskId),
+      toolCalls: await deps.messageRows.toolCallCount(notice.taskId),
       durationMs: notice.durationMs,
     },
   };
@@ -82,7 +80,6 @@ async function childReport(
  */
 export async function entriesOf(
   deps: Pick<AgentDeps, 'sessions' | 'messageRows'>,
-  reader: Executor,
   messages: readonly StepMessage[],
 ): Promise<NewHistoryEntry[]> {
   const notices = new Map<string, ChildFinishedPayload>();
@@ -92,7 +89,6 @@ export async function entriesOf(
     }
   }
   const children = await deps.sessions.getMany(
-    reader,
     [...notices.values()].map((notice) => notice.taskId),
   );
 
@@ -110,7 +106,7 @@ export async function entriesOf(
       // A child started by `start` outside a step may end before its first step made its session:
       // the report still reaches the parent, without a description.
       const description = children.get(notice.taskId)?.description ?? '';
-      entries.push(await childReport(deps, reader, notice, description));
+      entries.push(await childReport(deps, notice, description));
     } else if (message.kind !== interrupt && message.kind !== TASKS_FINISHED_KIND) {
       throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
     }

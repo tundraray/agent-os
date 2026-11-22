@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { agentSessions, agentToolResults, agentToolResultSettings } from '../schema';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
@@ -46,25 +46,23 @@ const settingsColumns = {
 };
 
 /**
- * Drizzle queries of `agent_tool_results` and `agent_tool_result_settings` (repository over a
- * transaction): a result is written in the step's commit together with the closing of the call, read by
+ * Drizzle queries of `agent_tool_results` and `agent_tool_result_settings`: a result is written in the step's commit together with the closing of the call, read by
  * `run_code` scripts and the reading tools. No method opens a transaction.
  */
 @Injectable()
 export class AgentToolResultsRepository {
-  async insert(tx: Transaction, result: NewToolResult): Promise<void> {
-    await tx.insert(agentToolResults).values(result);
+  constructor(@Inject(Db) private readonly db: Db) {}
+
+  async insert(result: NewToolResult): Promise<void> {
+    await this.db.client.insert(agentToolResults).values(result);
   }
 
   /**
    * The stored result of the call in the caller's session, read only when the session belongs to
    * `ownerId`; `undefined` otherwise. Another session's id and a missing id are indistinguishable (AC-04.3).
    */
-  async findForRun(
-    executor: Executor,
-    lookup: ToolResultLookup,
-  ): Promise<StoredToolResult | undefined> {
-    const [row] = await executor
+  async findForRun(lookup: ToolResultLookup): Promise<StoredToolResult | undefined> {
+    const [row] = await this.db.client
       .select({ value: agentToolResults.value, text: agentToolResults.text })
       .from(agentToolResults)
       .innerJoin(agentSessions, eq(agentSessions.taskId, agentToolResults.taskId))
@@ -79,20 +77,19 @@ export class AgentToolResultsRepository {
   }
 
   /** The settings row, read anew on every use (settings-row.md); the migration creates it. */
-  async readSettings(executor: Executor): Promise<ToolResultSettingsRow> {
-    const [row] = await executor.select(settingsColumns).from(agentToolResultSettings);
+  async readSettings(): Promise<ToolResultSettingsRow> {
+    const [row] = await this.db.client.select(settingsColumns).from(agentToolResultSettings);
     if (row === undefined) throw new Error('agent_tool_result_settings row is missing');
     return row;
   }
 
-  /** Locks the row and writes the administrator's change with its time; the next MCP call reads it. */
+  /** Writes the administrator's change with its time; the next MCP call reads it. */
   async writeSettings(
-    tx: Transaction,
     values: Omit<ToolResultSettingsRow, 'updatedAt'>,
   ): Promise<ToolResultSettingsRowChange> {
-    const [before] = await tx.select(settingsColumns).from(agentToolResultSettings).for('update');
+    const [before] = await this.db.client.select(settingsColumns).from(agentToolResultSettings);
     if (before === undefined) throw new Error('agent_tool_result_settings row is missing');
-    const [after] = await tx
+    const [after] = await this.db.client
       .update(agentToolResultSettings)
       .set({
         storeFromChars: values.storeFromChars,

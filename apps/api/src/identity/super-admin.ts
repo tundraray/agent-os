@@ -1,6 +1,6 @@
 import { UserStatusSchema } from '@agent-os/contracts';
 import type {
-  Database,
+  Db,
   IdentityRolesRepository,
   IdentitySessionsRepository,
   IdentityUsersRepository,
@@ -38,10 +38,10 @@ export interface SeededSuperAdmin {
 /**
  * The operator command's work (KD-6, FR-32): finds the local account by login or creates it, sets the
  * password, turns it on, ends the sessions of a found account (as a password reset does), assigns the
- * built-in role, and writes `admin_change` with actor `system` — all in one transaction. Plain function over the database client: the command runs outside Nest.
+ * built-in role, and writes `admin_change` with actor `system` — all in one transaction. Plain function over `Db`: the command runs outside Nest.
  */
 export async function seedSuperAdmin(
-  db: Database,
+  db: Db,
   { users, roles, sessions }: SuperAdminRepositories,
   auditLog: AuditLog,
   input: SuperAdminInput,
@@ -50,22 +50,22 @@ export async function seedSuperAdmin(
   const passwordHash = await hashPassword(input.password);
   const login = normalizeIdentifier(input.login);
   return db
-    .transaction(async (tx) => {
-      const found = await users.findByLogin(tx, login);
+    .transaction(async () => {
+      const found = await users.findByLogin(login);
       const user =
         found ??
-        (await users.insertLocal(tx, {
+        (await users.insertLocal({
           login,
           email: normalizeIdentifier(input.email),
           name: input.name,
           passwordHash,
         }));
       if (found !== undefined) {
-        await users.setPasswordAndEnable(tx, found.id, passwordHash);
-        await sessions.deleteOfUser(tx, found.id);
+        await users.setPasswordAndEnable(found.id, passwordHash);
+        await sessions.deleteOfUser(found.id);
       }
-      await roles.addMember(tx, await roles.builtinId(tx), user.id);
-      await auditLog.record(tx, {
+      await roles.addMember(await roles.builtinId(), user.id);
+      await auditLog.record({
         kind: 'admin_change',
         actor: SYSTEM_ACTOR,
         objectType: 'user',

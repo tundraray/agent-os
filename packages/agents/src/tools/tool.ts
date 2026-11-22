@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
@@ -98,7 +97,6 @@ export interface InCommitToolInput<Args, Prepared = unknown> {
   readonly callId: string;
   readonly args: Args;
   readonly caller: ToolCaller;
-  readonly tx: Transaction;
   readonly effects: StepEffects;
   readonly startChild: StartChild;
   /** What the tool's `prepare` answered before the commit; absent for a tool without one. */
@@ -182,7 +180,7 @@ interface AgentToolBase<Args> {
   loggedArgs?(args: Args): Record<string, unknown>;
 }
 
-/** Runs in the commit transaction of the step, with its `tx`, `effects` and the spawn helper. */
+/** Runs in the commit transaction of the step, with its `effects` and the spawn helper. */
 export interface InCommitAgentTool<Args, Prepared = unknown> extends AgentToolBase<Args> {
   readonly mode: 'in_commit';
   /**

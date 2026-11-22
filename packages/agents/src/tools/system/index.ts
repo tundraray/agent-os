@@ -1,4 +1,4 @@
-import type { AgentToolResultsRepository, Database } from '@agent-os/db';
+import type { AgentToolResultsRepository } from '@agent-os/db';
 
 import type { Sessions } from '../../store/sessions';
 import type { AgentTool } from '../tool';
@@ -11,7 +11,6 @@ import { createToolResultTools } from './tool-result-tools';
 export interface SystemToolsDeps extends StartAgentDeps {
   readonly tasks: BuiltinTasks;
   /** `list_agents` reads the sessions of the caller's descendants; the reading tools, the stored results. */
-  readonly database: Database;
   readonly sessions: Sessions;
   readonly toolResultRows: AgentToolResultsRepository;
 }

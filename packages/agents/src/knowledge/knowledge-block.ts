@@ -4,7 +4,6 @@ import type {
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
   AgentMcpServersRepository,
-  Database,
   KnowledgeGraph,
 } from '@agent-os/db';
 
@@ -18,7 +17,6 @@ import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 
 export interface KnowledgeBlockDeps {
   /** Reads the graph, the settings, the registry and the question row on every step (KD-6). */
-  readonly database: Database;
   readonly knowledgeRows: AgentKnowledgeRepository;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly mcpServerRows: AgentMcpServersRepository;
@@ -52,9 +50,9 @@ export async function knowledgeBlock(
   if (learning === null) return null;
 
   const startedAt = Date.now();
-  const { database, knowledgeRows, knowledgeRunRows } = deps;
+  const { knowledgeRows, knowledgeRunRows } = deps;
   const { recordId } = learning;
-  const items = graphItemsOf(await knowledgeRows.readGraph(database, recordId));
+  const items = graphItemsOf(await knowledgeRows.readGraph(recordId));
   // An empty graph gives no block whatever the rest says: the other reads are skipped.
   if (items.length === 0) {
     logger.info('knowledge block built', {
@@ -66,9 +64,9 @@ export async function knowledgeBlock(
     return null;
   }
 
-  const settings = await knowledgeRows.readSettings(database);
+  const settings = await knowledgeRows.readSettings();
   const toolAlive = await registryToolAlive(deps, learning.servers);
-  const question = await knowledgeRunRows.readQuestion(database, taskId);
+  const question = await knowledgeRunRows.readQuestion(taskId);
   const vector = question?.vector ?? null;
   const model = question?.model ?? null;
   // `limit` — every record of the graph: selection itself decides which pairs it takes (KD-6).
@@ -113,13 +111,13 @@ export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
  * The run step, the extraction round and the knowledge view all judge by it.
  */
 export async function registryToolAlive(
-  { database, mcpServerRows }: Pick<KnowledgeBlockDeps, 'database' | 'mcpServerRows'>,
+  { mcpServerRows }: Pick<KnowledgeBlockDeps, 'mcpServerRows'>,
   servers: readonly string[],
 ): Promise<ToolAlive> {
   const anyServer = servers.includes(ALL_SERVERS);
   const rows = anyServer
-    ? await mcpServerRows.list(database)
-    : await mcpServerRows.findMany(database, servers);
+    ? await mcpServerRows.list()
+    : await mcpServerRows.findMany(servers);
   const tools = new Set(
     rows.flatMap((row) =>
       (storedMcpTools(row.tools) ?? []).map((tool) => toolKey(row.name, tool.tool)),

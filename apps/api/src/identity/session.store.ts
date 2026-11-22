@@ -1,10 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  type Executor,
   IdentitySessionsRepository,
   IdentitySettingsRepository,
 } from '@agent-os/db';
@@ -64,27 +60,20 @@ export const ENDED_BY_BLOCK = 'account_disabled';
  */
 @Injectable()
 export class SessionStore {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly sessions: IdentitySessionsRepository,
     private readonly settings: IdentitySettingsRepository,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** Opens a session of the employee and deletes his rows older than the absolute limit. */
-  async open(executor: Executor, userId: string): Promise<OpenedSession> {
-    const limits = await this.settings.readSessionLimits(executor);
+  async open(userId: string): Promise<OpenedSession> {
+    const limits = await this.settings.readSessionLimits();
     await this.sessions.deleteOlderThan(
-      executor,
       userId,
       limits.absoluteMinutes,
     );
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
     const sessionId = await this.sessions.insert(
-      executor,
       userId,
       hashToken(token),
     );
@@ -96,7 +85,7 @@ export class SessionStore {
     token: string,
     now: Date = new Date(),
   ): Promise<FoundSession | undefined> {
-    const row = await this.sessions.findByTokenHash(this.db, hashToken(token));
+    const row = await this.sessions.findByTokenHash(hashToken(token));
     if (row === undefined) return undefined;
     const {
       userId,
@@ -133,11 +122,11 @@ export class SessionStore {
     now: Date = new Date(),
   ): Promise<void> {
     if (!needsTouch(session.lastSeenAt, now)) return;
-    await this.sessions.touch(this.db, session.sessionId, now);
+    await this.sessions.touch(session.sessionId, now);
   }
 
   /** Sign-out: the row is deleted. */
   async end(sessionId: string): Promise<void> {
-    await this.sessions.delete(this.db, sessionId);
+    await this.sessions.delete(sessionId);
   }
 }

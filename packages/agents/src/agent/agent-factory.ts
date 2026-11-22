@@ -1,6 +1,5 @@
 import { AGENT_TASK_TYPE, CHAT_TASK_TYPE, DEEP_AGENT_TASK_TYPE } from '@agent-os/contracts';
 import type { Logger } from '@agent-os/common';
-import type { Transaction } from '@agent-os/db';
 import { type LiveTaskIdentity, Trackers } from '@agent-os/runtime';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
@@ -49,7 +48,7 @@ export class AgentFactory implements OnModuleInit {
     this.chat = Object.assign({}, agent, { library, logger });
     this.deep = Object.assign({}, agent, {
       trackers,
-      resultSettings: () => agent.toolResultRows.readSettings(agent.database),
+      resultSettings: () => agent.toolResultRows.readSettings(),
       maxDepth: config.maxDepth,
     });
   }
@@ -63,7 +62,7 @@ export class AgentFactory implements OnModuleInit {
       createStartChild({
         maxDepth: this.config.maxDepth,
         childType: childTypeOf,
-        createIn: (tx, type, task, input) => this.createIn(tx, type, task, input),
+        createIn: (type, task, input) => this.createIn(type, task, input),
       }),
     );
   }
@@ -74,15 +73,14 @@ export class AgentFactory implements OnModuleInit {
    * transaction commits (`LiveTasks.adopt`, or `effects.adopt` in a step's commit).
    */
   async createIn(
-    tx: Transaction,
     type: string,
     task: Omit<LiveTaskIdentity, 'type' | 'input'>,
     input: SessionInput,
   ): Promise<BaseAgent> {
     const startedAt = Date.now();
     const agent = this.build({ task: { ...task, type, input }, input });
-    await agent.createSession(tx);
-    await agent.absorb(tx);
+    await agent.createSession();
+    await agent.absorb();
     this.logger.info('agent object created', { ...agent.held(), durationMs: Date.now() - startedAt });
     return agent;
   }
@@ -94,7 +92,7 @@ export class AgentFactory implements OnModuleInit {
   async restore(task: LiveTaskIdentity): Promise<BaseAgent> {
     const startedAt = Date.now();
     const agent = this.build({ task, input: sessionInputOf(task.input) });
-    await agent.absorb(this.agent.database);
+    await agent.absorb();
     this.logger.info('agent object restored', { ...agent.held(), durationMs: Date.now() - startedAt });
     return agent;
   }

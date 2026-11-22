@@ -1,10 +1,9 @@
 import { type HttpException, Injectable } from '@nestjs/common';
 import type { RecordDetail } from '@agent-os/contracts';
 import {
-  type Executor,
+  Db,
   LibraryRecordsRepository,
   type LibraryViewer,
-  type Transaction,
 } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import {
@@ -58,6 +57,7 @@ function saveRefusalError(refusal: SaveRefusal): HttpException {
 @Injectable()
 export class LibrarySave {
   constructor(
+    private readonly db: Db,
     private readonly records: LibraryRecords,
     private readonly repository: LibraryRecordsRepository,
   ) {}
@@ -65,23 +65,20 @@ export class LibrarySave {
   /**
    * The one save path of POST and PUT (employee and panel) and of the chat's save (Flow 1): visibility →
    * the right to change → the rule → the versioned write and its audit event in one transaction. A refusal
-   * writes nothing. On the plain client the write opens its own transaction; on the caller's
+   * writes nothing. With no transaction open the write opens its own; inside the caller's
    * transaction it is a savepoint, so a `name_taken` from the database rolls back only the save and
    * the caller's transaction goes on.
    */
-  async save(
-    request: SaveRequest,
-    executor: Executor = this.records.db,
-  ): Promise<SaveResult> {
-    const check = await this.checkSave(request, executor);
+  async save(request: SaveRequest): Promise<SaveResult> {
+    const check = await this.checkSave(request);
     if (check.outcome === 'refused') return check;
     const { previous } = check;
-    const write = (tx: Transaction): Promise<LibraryRecord> =>
+    const write = (): Promise<LibraryRecord> =>
       previous === null
-        ? this.insertSaved(tx, request)
-        : this.updateSaved(tx, request, previous);
+        ? this.insertSaved(request)
+        : this.updateSaved(request, previous);
     try {
-      const record = await executor.transaction(write);
+      const record = await this.db.savepoint(write);
       return { outcome: 'saved', record };
     } catch (error) {
       if (error instanceof SaveRefused)
@@ -91,10 +88,7 @@ export class LibrarySave {
   }
 
   /** The checks of {@link save} before its write; writes nothing, so the chat asks it before the card. */
-  async checkSave(
-    request: SaveRequest,
-    executor: Executor,
-  ): Promise<SaveCheck> {
+  async checkSave(request: SaveRequest): Promise<SaveCheck> {
     // A disabled author sees no record, so whatever was written could not be read back (KD-2).
     if (!request.author.active)
       return { outcome: 'refused', refusal: 'not_found' };
@@ -102,7 +96,7 @@ export class LibrarySave {
     if (request.target !== null) {
       const { id } = request.target;
       const record = isUuid(id)
-        ? await this.readOne(executor, request.scope, request.author, id)
+        ? await this.readOne(request.scope, request.author, id)
         : undefined;
       if (record === undefined)
         return { outcome: 'refused', refusal: 'not_found' };
@@ -114,7 +108,7 @@ export class LibrarySave {
       previous = record;
     }
     const decision = decideSave(
-      await this.saveInput(executor, request, previous),
+      await this.saveInput(request, previous),
     );
     if (decision.kind === 'name_taken')
       return {
@@ -133,7 +127,6 @@ export class LibrarySave {
 
   /** The input of the save rule: other records' names, the author's choices, the agents he sees. */
   private async saveInput(
-    executor: Executor,
     request: SaveRequest,
     previous: LibraryRecord | null,
   ): Promise<SaveInput> {
@@ -141,14 +134,13 @@ export class LibrarySave {
     const exceptId = previous?.id;
     const [ownNames, systemNames, visibleAgentIds, models] = await Promise.all([
       scope === 'employee'
-        ? this.repository.names(executor, author.id, exceptId)
+        ? this.repository.names(author.id, exceptId)
         : [],
       this.repository.names(
-        executor,
         null,
         scope === 'system' ? exceptId : undefined,
       ),
-      this.records.visibleAgentIds(executor, author, refersToRecords(body)),
+      this.records.visibleAgentIds(author, refersToRecords(body)),
       request.models ??
         (scope === 'employee'
           ? this.records.allowedModelIds(author.id)
@@ -178,11 +170,10 @@ export class LibrarySave {
   }
 
   private async insertSaved(
-    tx: Transaction,
     request: SaveRequest,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const inserted = await this.repository.insert(tx, {
+    const inserted = await this.repository.insert({
       ...(request.newId === undefined ? {} : { id: request.newId }),
       ownerId: scope === 'employee' ? author.id : null,
       name: body.name,
@@ -193,10 +184,10 @@ export class LibrarySave {
     });
     if (inserted.outcome === 'name_taken') throw new SaveRefused('name_taken');
     const record = present(
-      await this.readOne(tx, scope, author, inserted.id),
+      await this.readOne(scope, author, inserted.id),
       inserted.id,
     );
-    await this.records.audit(tx, author.id, 'library_create', null, record);
+    await this.records.audit(author.id, 'library_create', null, record);
     return record;
   }
 
@@ -204,12 +195,11 @@ export class LibrarySave {
    * `name_taken` aborts the transaction, so it is thrown and the transaction rolled back.
    */
   private async updateSaved(
-    tx: Transaction,
     request: SaveRequest,
     previous: LibraryRecord,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const updated = await this.repository.updateContent(tx, {
+    const updated = await this.repository.updateContent({
       id: previous.id,
       version: request.target?.version ?? previous.version,
       name: body.name,
@@ -217,13 +207,13 @@ export class LibrarySave {
       content: body.content,
     });
     if (updated.outcome === 'name_taken') throw new SaveRefused('name_taken');
-    const current = await this.readOne(tx, scope, author, previous.id);
+    const current = await this.readOne(scope, author, previous.id);
     if (updated.outcome === 'stale')
       throw new SaveRefused(
         current === undefined ? 'not_found' : 'version_conflict',
       );
     const record = present(current, previous.id);
-    await this.records.audit(tx, author.id, 'library_update', previous, record);
+    await this.records.audit(author.id, 'library_update', previous, record);
     return record;
   }
 
@@ -240,13 +230,12 @@ export class LibrarySave {
 
   /** The one record an employee route (visibility) or a panel route (panel condition) may touch. */
   private readOne(
-    executor: Executor,
     scope: SaveScope,
     viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord | undefined> {
     return scope === 'employee'
-      ? this.records.visibleOne(executor, viewer, id)
-      : this.records.panelOne(executor, id);
+      ? this.records.visibleOne(viewer, id)
+      : this.records.panelOne(id);
   }
 }

@@ -1,5 +1,5 @@
 import { consoleSink, createLogger } from '@agent-os/common';
-import { DATABASE, type Database, DbModule } from '@agent-os/db';
+import { Db, DbModule } from '@agent-os/db';
 import { HandlerRegistry, parseRuntimeConfig, RuntimeModule } from '@agent-os/runtime';
 import { Inject, Injectable, Module, type OnModuleInit } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -32,7 +32,7 @@ function readTypes(): ChildTypes {
 @Injectable()
 class ChildHandlers implements OnModuleInit {
   constructor(
-    @Inject(DATABASE) private readonly db: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
   ) {}
 

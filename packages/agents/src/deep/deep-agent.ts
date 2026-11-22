@@ -1,4 +1,3 @@
-import type { Transaction } from '@agent-os/db';
 import { ToolOutcomeSchema } from '@agent-os/contracts';
 import type { StepContext } from '@agent-os/runtime';
 
@@ -53,9 +52,9 @@ export class DeepAgent extends BaseAgent {
   }
 
   /** A run that learns gets its row with its deep agent session, in the same transaction (self-learning KD-2). */
-  protected override async sessionCreated(tx: Transaction): Promise<void> {
+  protected override async sessionCreated(): Promise<void> {
     const learning = learningRunOf(this.input.snapshot);
-    if (learning !== null) await this.deps.knowledgeRunRows.insertRun(tx, { runId: this.task.taskId, ...learning });
+    if (learning !== null) await this.deps.knowledgeRunRows.insertRun({ runId: this.task.taskId, ...learning });
   }
 
   /**
@@ -68,7 +67,7 @@ export class DeepAgent extends BaseAgent {
       { taskId: ctx.taskId, ownerId: ctx.ownerId, logger: ctx.logger },
       calls,
     );
-    return results.map((result): CallClosing => (tx) => this.delegations.close(tx, ctx.taskId, result));
+    return results.map((result): CallClosing => () => this.delegations.close(ctx.taskId, result));
   }
 
   override delegates(tool: Pick<SessionTool, 'kind' | 'name'>): boolean {
@@ -116,8 +115,8 @@ export class DeepAgent extends BaseAgent {
       open:
         decision.accepted.length === 0
           ? null
-          : (tx, effects) =>
-              this.delegations.open({ tx, effects, caller, accepted: decision.accepted, logger: ctx.logger }),
+          : (effects) =>
+              this.delegations.open({ effects, caller, accepted: decision.accepted, logger: ctx.logger }),
     };
   }
 
@@ -134,8 +133,8 @@ export class DeepAgent extends BaseAgent {
   }
 
   private async finalSubagentReport(ctx: StepContext, subagent: string): Promise<FinalSubagentReport | null> {
-    const { database, messageRows } = this.deps;
-    const childTaskId = await messageRows.lastSingleTask(database, ctx.taskId, TASK_TOOL, subagent);
+    const { messageRows } = this.deps;
+    const childTaskId = await messageRows.lastSingleTask(ctx.taskId, TASK_TOOL, subagent);
     if (childTaskId === undefined) return null;
     const trackers = await this.trackers.list(ctx.taskId, ctx.ownerId);
     const task = trackers.flatMap((tracker) => tracker.tasks).find((candidate) => candidate.taskId === childTaskId);

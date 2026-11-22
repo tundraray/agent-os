@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { identityRoleMembers, identityRoles, identityUsers } from '../schema';
 
 /** A row of `identity_roles`. */
@@ -24,14 +24,15 @@ export interface MemberRoleRow {
 }
 
 /**
- * Drizzle queries of `identity_roles` and `identity_role_members` (repository over a transaction):
- * each takes the caller's transaction or the plain client first.
+ * Drizzle queries of `identity_roles` and `identity_role_members`.
  */
 @Injectable()
 export class IdentityRolesRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** Id of the built-in «Супер-администратор» role the migration creates (KD-6). */
-  async builtinId(executor: Executor): Promise<string> {
-    const [row] = await executor
+  async builtinId(): Promise<string> {
+    const [row] = await this.db.client
       .select({ id: identityRoles.id })
       .from(identityRoles)
       .where(eq(identityRoles.builtin, true));
@@ -40,20 +41,20 @@ export class IdentityRolesRepository {
   }
 
   /** Assigns the role; assigning it again changes nothing. */
-  async addMember(executor: Executor, roleId: string, userId: string): Promise<void> {
-    await executor.insert(identityRoleMembers).values({ roleId, userId }).onConflictDoNothing();
+  async addMember(roleId: string, userId: string): Promise<void> {
+    await this.db.client.insert(identityRoleMembers).values({ roleId, userId }).onConflictDoNothing();
   }
 
   /** Takes the role from the employee; taking it again changes nothing. */
-  async removeMember(executor: Executor, roleId: string, userId: string): Promise<void> {
-    await executor
+  async removeMember(roleId: string, userId: string): Promise<void> {
+    await this.db.client
       .delete(identityRoleMembers)
       .where(and(eq(identityRoleMembers.roleId, roleId), eq(identityRoleMembers.userId, userId)));
   }
 
   /** The roles by name, then id, each with its employee count; only the given role when `roleId` is set. */
-  async summaries(executor: Executor, roleId?: string): Promise<RoleSummaryRow[]> {
-    return executor
+  async summaries(roleId?: string): Promise<RoleSummaryRow[]> {
+    return this.db.client
       .select({
         id: identityRoles.id,
         name: identityRoles.name,
@@ -69,9 +70,9 @@ export class IdentityRolesRepository {
   }
 
   /** Of the role ids given, those of roles that exist. */
-  async existingIds(executor: Executor, roleIds: string[]): Promise<string[]> {
+  async existingIds(roleIds: string[]): Promise<string[]> {
     if (roleIds.length === 0) return [];
-    const rows = await executor
+    const rows = await this.db.client
       .select({ id: identityRoles.id })
       .from(identityRoles)
       .where(inArray(identityRoles.id, roleIds));
@@ -79,9 +80,9 @@ export class IdentityRolesRepository {
   }
 
   /** Id and name of the roles named, by name. */
-  async names(executor: Executor, roleIds: string[]): Promise<{ id: string; name: string }[]> {
+  async names(roleIds: string[]): Promise<{ id: string; name: string }[]> {
     if (roleIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select({ id: identityRoles.id, name: identityRoles.name })
       .from(identityRoles)
       .where(inArray(identityRoles.id, roleIds))
@@ -89,11 +90,8 @@ export class IdentityRolesRepository {
   }
 
   /** The employees of the role by name, then id. */
-  async members(
-    executor: Executor,
-    roleId: string,
-  ): Promise<{ id: string; name: string; email: string }[]> {
-    return executor
+  async members(roleId: string): Promise<{ id: string; name: string; email: string }[]> {
+    return this.db.client
       .select({ id: identityUsers.id, name: identityUsers.name, email: identityUsers.email })
       .from(identityRoleMembers)
       .innerJoin(identityUsers, eq(identityUsers.id, identityRoleMembers.userId))
@@ -102,9 +100,9 @@ export class IdentityRolesRepository {
   }
 
   /** The roles of the employees, by role name. */
-  async ofUsers(executor: Executor, userIds: string[]): Promise<MemberRoleRow[]> {
+  async ofUsers(userIds: string[]): Promise<MemberRoleRow[]> {
     if (userIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select({
         userId: identityRoleMembers.userId,
         id: identityRoles.id,
@@ -117,23 +115,22 @@ export class IdentityRolesRepository {
       .orderBy(asc(identityRoles.name), asc(identityRoles.id));
   }
 
-  async insert(executor: Executor, name: string): Promise<IdentityRoleRow> {
-    const [row] = await executor.insert(identityRoles).values({ name }).returning();
+  async insert(name: string): Promise<IdentityRoleRow> {
+    const [row] = await this.db.client.insert(identityRoles).values({ name }).returning();
     if (row === undefined) throw new Error('identity_roles insert returned no row');
     return row;
   }
 
   /** Changes the name and/or the admin right of the role. */
   async update(
-    executor: Executor,
     roleId: string,
     change: { name?: string; isAdmin?: boolean },
   ): Promise<void> {
-    await executor.update(identityRoles).set(change).where(eq(identityRoles.id, roleId));
+    await this.db.client.update(identityRoles).set(change).where(eq(identityRoles.id, roleId));
   }
 
   /** Deletes the role; its assignments and the rows of other parts that reference it go by cascade. */
-  async delete(executor: Executor, roleId: string): Promise<void> {
-    await executor.delete(identityRoles).where(eq(identityRoles.id, roleId));
+  async delete(roleId: string): Promise<void> {
+    await this.db.client.delete(identityRoles).where(eq(identityRoles.id, roleId));
   }
 }

@@ -52,7 +52,7 @@ async function recordProviderChange(
     };
   },
 ): Promise<void> {
-  await auditLog.record(null, {
+  await auditLog.record({
     kind: 'admin_change',
     actor,
     objectType: MODEL_PROVIDER_OBJECT_TYPE,

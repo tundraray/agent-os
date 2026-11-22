@@ -1,4 +1,3 @@
-import type { Database } from '@agent-os/db';
 import type { TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -15,7 +14,6 @@ type ListAgentsArgs = z.infer<typeof ListAgentsArgsSchema>;
 
 export interface ListAgentsDeps {
   readonly tasks: BuiltinTasks;
-  readonly database: Database;
   readonly sessions: Sessions;
 }
 
@@ -32,7 +30,6 @@ export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<Lis
       const tree = await deps.tasks.listTree(caller.rootId, caller.ownerId);
       const descendants = descendantsOf(tree, caller.agentId);
       const sessionsById = await deps.sessions.getMany(
-        deps.database,
         descendants.map((task) => task.taskId),
       );
       const agents = descendants.flatMap((task) => {

@@ -7,11 +7,9 @@ import {
   type SignInError,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   type IdentityUserRow,
   IdentityUsersRepository,
+  Db,
 } from '@agent-os/db';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
 import { normalizeIdentifier } from './identity-input';
@@ -62,19 +60,15 @@ export type ProviderSignIn =
  */
 @Injectable()
 export class SignInService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly passwordSignIn: PasswordSignIn,
     private readonly oidcSignIn: OidcSignIn,
     private readonly auditLog: AuditLog,
     private readonly sessionStore: SessionStore,
     private readonly users: IdentityUsersRepository,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /**
    * Flow 2: 401 INVALID_CREDENTIALS for an unknown login and a wrong password alike (AC-01.3);
@@ -154,7 +148,7 @@ export class SignInService {
       await this.reject({ attempt, reason: 'no_email', user: undefined });
       return { ok: false, reason: 'no_email' };
     }
-    const user = await this.users.upsertFromProvider(this.db, {
+    const user = await this.users.upsertFromProvider({
       email,
       name: finished.name,
     });
@@ -180,10 +174,10 @@ export class SignInService {
       await this.reject({ attempt, reason: 'account_disabled', user });
       return undefined;
     }
-    const opened = await this.db.transaction(async (tx) => {
-      const session = await this.sessionStore.open(tx, user.id);
-      await this.users.markSignedIn(tx, user.id);
-      await this.auditLog.record(tx, {
+    const opened = await this.db.transaction(async () => {
+      const session = await this.sessionStore.open(user.id);
+      await this.users.markSignedIn(user.id);
+      await this.auditLog.record({
         kind: 'sign_in',
         actor: user.id,
         objectType: 'user',
@@ -211,7 +205,7 @@ export class SignInService {
     user,
     detail,
   }: Rejection): Promise<void> {
-    await this.auditLog.record(null, {
+    await this.auditLog.record({
       kind: 'sign_in_rejected',
       actor: user?.id ?? SYSTEM_ACTOR,
       objectType: user === undefined ? undefined : 'user',

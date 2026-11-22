@@ -1,7 +1,7 @@
 import { type SessionTaskStatus, SessionTaskStatusSchema } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { agentSessions, agentSessionTasks } from '../schema';
 
 /** A task of a session's list (deep-agents design-task-list.md, Data Model). */
@@ -26,16 +26,17 @@ export interface SessionTasksWrite {
 }
 
 /**
- * Drizzle queries of `agent_session_tasks` and `agent_sessions.last_task_number` inside the caller's
- * transaction (repository over a transaction; KD-1, KD-3). Only the steps of the session write them, one at
+ * Drizzle queries of `agent_session_tasks` and `agent_sessions.last_task_number` (KD-1, KD-3). Only the steps of the session write them, one at
  * a time and in the step's commit, so the list changes together with the `tool_result` of the call that
  * changed it. No method opens a transaction.
  */
 @Injectable()
 export class AgentSessionTasksRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** The session's tasks by number; empty for a session without a list. */
-  async list(executor: Executor, sessionId: string): Promise<SessionTask[]> {
-    const rows = await executor
+  async list(sessionId: string): Promise<SessionTask[]> {
+    const rows = await this.db.client
       .select({
         number: agentSessionTasks.number,
         subject: agentSessionTasks.subject,
@@ -52,22 +53,19 @@ export class AgentSessionTasksRepository {
   }
 
   /** The list and the last number given, as the rules decide on them. */
-  async read(
-    executor: Executor,
-    sessionId: string,
-  ): Promise<{ tasks: SessionTask[]; lastNumber: number }> {
-    const [session] = await executor
+  async read(sessionId: string): Promise<{ tasks: SessionTask[]; lastNumber: number }> {
+    const [session] = await this.db.client
       .select({ lastNumber: agentSessions.lastTaskNumber })
       .from(agentSessions)
       .where(eq(agentSessions.taskId, sessionId));
     if (session === undefined) throw new Error(`Session ${sessionId} has no row`);
-    return { tasks: await this.list(executor, sessionId), lastNumber: session.lastNumber };
+    return { tasks: await this.list(sessionId), lastNumber: session.lastNumber };
   }
 
   /** Writes a decision: the tasks whole (created or replaced), the deletions and the counter. */
-  async write(tx: Transaction, sessionId: string, change: SessionTasksWrite): Promise<void> {
+  async write(sessionId: string, change: SessionTasksWrite): Promise<void> {
     if (change.deleted.length > 0) {
-      await tx
+      await this.db.client
         .delete(agentSessionTasks)
         .where(
           and(eq(agentSessionTasks.taskId, sessionId), inArray(agentSessionTasks.number, [...change.deleted])),
@@ -82,7 +80,7 @@ export class AgentSessionTasksRepository {
         owner: task.owner,
         blockedBy: [...task.blockedBy],
       };
-      await tx
+      await this.db.client
         .insert(agentSessionTasks)
         .values({ taskId: sessionId, number: task.number, ...row })
         .onConflictDoUpdate({
@@ -90,7 +88,7 @@ export class AgentSessionTasksRepository {
           set: { ...row, updatedAt: sql`now()` },
         });
     }
-    await tx
+    await this.db.client
       .update(agentSessions)
       .set({ lastTaskNumber: change.lastNumber })
       .where(eq(agentSessions.taskId, sessionId));

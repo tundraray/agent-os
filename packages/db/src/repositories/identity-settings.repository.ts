@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { isNull } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { identitySettings } from '../schema';
 import { sessionLimitColumns } from './identity-columns';
 
@@ -29,26 +29,28 @@ export type IdentitySettingsChange = Pick<
 >;
 
 /**
- * Drizzle queries of the single `identity_settings` row (repository over a transaction); the
+ * Drizzle queries of the single `identity_settings` row; the
  * migration creates the row, so its absence is a fault.
  */
 @Injectable()
 export class IdentitySettingsRepository {
-  async readSessionLimits(executor: Executor): Promise<SessionLimitsRow> {
-    const [row] = await executor.select(sessionLimitColumns).from(identitySettings);
+  constructor(@Inject(Db) private readonly db: Db) {}
+
+  async readSessionLimits(): Promise<SessionLimitsRow> {
+    const [row] = await this.db.client.select(sessionLimitColumns).from(identitySettings);
     if (row === undefined) throw new Error('identity_settings row is missing');
     return row;
   }
 
-  async read(executor: Executor): Promise<IdentitySettingsRow> {
-    const [row] = await executor.select(settingsColumns).from(identitySettings);
+  async read(): Promise<IdentitySettingsRow> {
+    const [row] = await this.db.client.select(settingsColumns).from(identitySettings);
     if (row === undefined) throw new Error('identity_settings row is missing');
     return row;
   }
 
   /** Writes the administrator's change with its time; returns the row after it. */
-  async write(executor: Executor, change: IdentitySettingsChange): Promise<IdentitySettingsRow> {
-    const [row] = await executor
+  async write(change: IdentitySettingsChange): Promise<IdentitySettingsRow> {
+    const [row] = await this.db.client
       .update(identitySettings)
       .set({ ...change, updatedAt: new Date() })
       .returning(settingsColumns);
@@ -57,8 +59,8 @@ export class IdentitySettingsRepository {
   }
 
   /** Saves the public address only while none is saved; false when one already was. */
-  async savePublicUrlIfUnset(executor: Executor, publicUrl: string): Promise<boolean> {
-    const saved = await executor
+  async savePublicUrlIfUnset(publicUrl: string): Promise<boolean> {
+    const saved = await this.db.client
       .update(identitySettings)
       .set({ publicUrl })
       .where(isNull(identitySettings.publicUrl))

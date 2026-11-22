@@ -10,7 +10,7 @@ import {
   type ToolOutcome,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { AgentMessagesRepository, type Database } from '@agent-os/db';
+import { AgentMessagesRepository, type Database, Db } from '@agent-os/db';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
@@ -753,7 +753,7 @@ export interface ToolCallRow {
  * by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
 export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await new History(new AgentMessagesRepository()).all(db, agentId);
+  const entries = await new History(new AgentMessagesRepository(new Db(db))).all(agentId);
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {

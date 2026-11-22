@@ -32,7 +32,7 @@ function p95(values: readonly number[]): number {
 
 async function holdRuntime(holdType: string): Promise<RuntimeHarness> {
   const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
-  for (const handler of handlersFor({ hold: holdType }, control.db)) {
+  for (const handler of handlersFor({ hold: holdType }, control.runtimeDb)) {
     control.handlers.register(handler);
   }
   return control;

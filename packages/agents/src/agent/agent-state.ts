@@ -1,4 +1,3 @@
-import type { Executor } from '@agent-os/db';
 import type { LiveTaskIdentity } from '@agent-os/runtime';
 
 import { type CallState, foldCalls } from '../history/call-state';
@@ -57,19 +56,18 @@ function stateOf(
  */
 export async function loadState(
   deps: StateDeps,
-  reader: Executor,
   taskId: string,
 ): Promise<AgentState | undefined> {
-  const session = await deps.sessions.get(reader, taskId);
+  const session = await deps.sessions.get(taskId);
   if (session === undefined) return undefined;
-  const entries = await deps.history.visible(reader, taskId);
+  const entries = await deps.history.visible(taskId);
   const compacted = entries.some((entry) => entry.kind === 'compaction');
   const forkPrefix: ForkPrefix | undefined =
     compacted || session.forkedFromTaskId === null || session.forkedThroughSeq === null
       ? undefined
       : {
           throughSeq: session.forkedThroughSeq,
-          entries: await deps.history.through(reader, session.forkedFromTaskId, session.forkedThroughSeq),
+          entries: await deps.history.through(session.forkedFromTaskId, session.forkedThroughSeq),
         };
   return stateOf(session, forkPrefix, entries, entries.at(-1)?.seq ?? 0);
 }
@@ -88,9 +86,9 @@ function withDelta(state: AgentState, session: Session, delta: readonly HistoryE
 }
 
 /** The state brought up to the database: the session row read again and the entries after `lastSeq`. */
-export async function absorbState(deps: StateDeps, reader: Executor, state: AgentState): Promise<AgentState> {
+export async function absorbState(deps: StateDeps, state: AgentState): Promise<AgentState> {
   const { taskId } = state.session;
-  const session = await deps.sessions.get(reader, taskId);
+  const session = await deps.sessions.get(taskId);
   if (session === undefined) throw new Error(`Session of agent ${taskId} is gone`);
-  return withDelta(state, session, await deps.history.after(reader, taskId, state.lastSeq));
+  return withDelta(state, session, await deps.history.after(taskId, state.lastSeq));
 }

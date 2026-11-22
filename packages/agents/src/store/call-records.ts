@@ -1,4 +1,4 @@
-import { AgentCodeCallsRepository, type CallKey, type Transaction } from '@agent-os/db';
+import { AgentCodeCallsRepository, type CallKey } from '@agent-os/db';
 import {
   RunCodeArgsSchema,
   type ToolOutcome,
@@ -116,8 +116,8 @@ export function interruptedResults(open: readonly CallState[], finishedAt: Date)
 
 /**
  * The records of tool calls in `agent_messages`, over the session's `History` and the queries of
- * `AgentCodeCallsRepository`: every change of a call is an appended record, written under the task's
- * lock — in a step's commit or its `guard`. Each write first reads the call's records, so a closed call
+ * `AgentCodeCallsRepository`: every change of a call is an appended record, written in a step's
+ * commit or its `guard`. Each write first reads the call's records, so a closed call
  * gets no second result and a sent call no second intent (Invariants 1, 2); the unique index
  * `agent_messages_call_once_idx` holds the same.
  */
@@ -134,13 +134,12 @@ export class CallRecords {
    * also closes its open calls from code, by the run's class (code-execution Invariant 4).
    */
   async close(
-    tx: Transaction,
     taskId: string,
     call: AnswerCall,
     ending: CallEnding,
     decision?: CallDecision,
   ): Promise<Extract<HistoryEntry, { kind: 'tool_result' }> | undefined> {
-    const records = await this.history.callRecords(tx, taskId, [call.callId]);
+    const records = await this.history.callRecords(taskId, [call.callId]);
     if (records.some((record) => record.kind === 'tool_result')) return undefined;
     const sent = records.find((record) => record.kind === 'tool_sent');
     const closing = {
@@ -149,13 +148,12 @@ export class CallRecords {
       sentAt: sent?.content.startedAt ?? null,
     };
     const decided = records.some((record) => record.kind === 'tool_decision');
-    const appended = await this.history.append(tx, taskId, [
+    const appended = await this.history.append(taskId, [
       ...(decision === undefined || decided ? [] : [decisionEntry(call.callId, decision)]),
       resultEntry(closing, ending, ending.finishedAt ?? new Date()),
     ]);
     if (isRunCodeCall(call)) {
       await this.codeCallRows.closeOpenOfRun(
-        tx,
         { taskId, callId: call.callId },
         interruptedRunOutcome(closing.args),
       );
@@ -170,11 +168,11 @@ export class CallRecords {
    * returns their results; a sent `task` call stays open for its tracker's outcomes. The only closing of
    * open calls (overview, Common Processing Points).
    */
-  async closeOpen(tx: Transaction, taskId: string): Promise<HistoryEntry[]> {
+  async closeOpen(taskId: string): Promise<HistoryEntry[]> {
     const closed: HistoryEntry[] = [];
-    for (const call of openCalls(await this.history.visible(tx, taskId))) {
+    for (const call of openCalls(await this.history.visible(taskId))) {
       if (isDelegated(call)) continue;
-      const result = await this.close(tx, taskId, call, interruptedEnding(call));
+      const result = await this.close(taskId, call, interruptedEnding(call));
       if (result !== undefined) closed.push(result);
     }
     return closed;
@@ -185,14 +183,14 @@ export class CallRecords {
    * the call goes out (KD-4, Invariant 2). `args` — the arguments the employee edited; they replace the
    * call's. `false` when the call does not await confirmation — then it must not be sent.
    */
-  async markSent(tx: Transaction, call: CallKey & { readonly args?: unknown }): Promise<boolean> {
-    const records = await this.history.callRecords(tx, call.taskId, [call.callId]);
+  async markSent(call: CallKey & { readonly args?: unknown }): Promise<boolean> {
+    const records = await this.history.callRecords(call.taskId, [call.callId]);
     const kinds = new Set(records.map((record) => record.kind));
     if (!kinds.has('tool_confirmation') || kinds.has('tool_sent') || kinds.has('tool_result')) {
       return false;
     }
     const edited = call.args === undefined ? {} : { args: call.args };
-    await this.history.append(tx, call.taskId, [
+    await this.history.append(call.taskId, [
       decisionEntry(call.callId, { approved: true, ...edited }),
       {
         kind: 'tool_sent',
@@ -207,12 +205,12 @@ export class CallRecords {
    * started twice — then it must not start again. Open calls from code of the earlier attempt get
    * their outcome by the run's class (Invariant 4).
    */
-  async startAttempt(tx: Transaction, run: CallKey, runArgs: unknown): Promise<number | null> {
-    const records = await this.history.callRecords(tx, run.taskId, [run.callId]);
+  async startAttempt(run: CallKey, runArgs: unknown): Promise<number | null> {
+    const records = await this.history.callRecords(run.taskId, [run.callId]);
     const attempt = records.filter((record) => record.kind === 'run_attempt').length + 1;
     if (attempt > MAX_RUN_ATTEMPTS) return null;
-    await this.history.append(tx, run.taskId, [{ kind: 'run_attempt', content: { callId: run.callId, attempt } }]);
-    await this.codeCallRows.closeOpenOfRun(tx, run, interruptedRunOutcome(runArgs));
+    await this.history.append(run.taskId, [{ kind: 'run_attempt', content: { callId: run.callId, attempt } }]);
+    await this.codeCallRows.closeOpenOfRun(run, interruptedRunOutcome(runArgs));
     return attempt;
   }
 }

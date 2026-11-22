@@ -4,7 +4,7 @@ import {
   type TrackerStatus,
   TrackerStatusSchema,
 } from '@agent-os/contracts';
-import { DATABASE, type Database, RuntimeTrackersRepository } from '@agent-os/db';
+import { RuntimeTrackersRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type { TaskFailure } from './guarded-transition';
 
@@ -31,7 +31,6 @@ export interface Tracker {
 @Injectable()
 export class Trackers {
   constructor(
-    @Inject(DATABASE) private readonly db: Database,
     @Inject(RuntimeTrackersRepository) private readonly rows: RuntimeTrackersRepository,
   ) {}
 
@@ -40,13 +39,10 @@ export class Trackers {
    * owner's, a deleted or a missing task gives `[]`.
    */
   async list(taskId: string, ownerId: string): Promise<Tracker[]> {
-    const trackers = await this.rows.listOwned(this.db, taskId, ownerId);
+    const trackers = await this.rows.listOwned(taskId, ownerId);
     if (trackers.length === 0) return [];
 
-    const tasks = await this.rows.listTasks(
-      this.db,
-      trackers.map((tracker) => tracker.trackerId),
-    );
+    const tasks = await this.rows.listTasks(trackers.map((tracker) => tracker.trackerId));
 
     return trackers.map((tracker) => ({
       trackerId: tracker.trackerId,

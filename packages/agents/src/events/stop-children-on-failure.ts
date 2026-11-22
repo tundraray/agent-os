@@ -28,10 +28,10 @@ export function createStopChildrenOnFailure(deps: StopChildrenOnFailureDeps): Ev
     name: 'agents.stop-children-on-failure',
     eventTypes: [RuntimeEventTypeSchema.enum['task.failed']],
     schemaVersions: [RUNTIME_EVENT_SCHEMA_VERSION],
-    async handle(tx, event) {
+    async handle(event) {
       if (event.taskId === null) return;
       const agentId = event.taskId;
-      const session = await deps.sessions.get(tx, agentId);
+      const session = await deps.sessions.get(agentId);
       if (session === undefined) return;
 
       const tree = await deps.tasks.listTree(event.rootId, session.ownerId);

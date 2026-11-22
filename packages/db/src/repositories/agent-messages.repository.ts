@@ -1,5 +1,5 @@
 import { type ToolOutcome, ToolOutcomeSchema } from '@agent-os/contracts';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
   asc,
@@ -16,7 +16,7 @@ import {
   type SQL,
   sql,
 } from 'drizzle-orm';
-import type { Executor, Transaction } from '../database';
+import { Db } from '../db';
 import { agentMessages } from '../schema';
 import { type FinishedMcpCall, finishedIn, type FinishedWindow } from './finished-window';
 
@@ -67,16 +67,17 @@ function isSingleTaskResult(tool: string) {
 }
 
 /**
- * Drizzle queries of `agent_messages` inside the caller's transaction (repository over a
- * transaction): an append-only history whose `seq` grows within the session (Invariant 5). Tool calls
+ * Drizzle queries of `agent_messages`: an append-only history whose `seq` grows within the session (Invariant 5). Tool calls
  * live here too: a call is an item of its `model_answer`, and what happened to it are later call
  * records. No method opens a transaction, and none updates a row.
  */
 @Injectable()
 export class AgentMessagesRepository {
+  constructor(@Inject(Db) private readonly db: Db) {}
+
   /** `seq` of the last entry; 0 for an empty history. */
-  async lastSeq(executor: Executor, taskId: string): Promise<number> {
-    const [last] = await executor
+  async lastSeq(taskId: string): Promise<number> {
+    const [last] = await this.db.client
       .select({ seq: max(agentMessages.seq) })
       .from(agentMessages)
       .where(eq(agentMessages.taskId, taskId));
@@ -84,19 +85,19 @@ export class AgentMessagesRepository {
   }
 
   /** Inserts the entries and returns them as read back, in no particular order. */
-  insert(tx: Transaction, rows: readonly NewAgentMessageRow[]): Promise<AgentMessageRow[]> {
-    return tx
+  insert(rows: readonly NewAgentMessageRow[]): Promise<AgentMessageRow[]> {
+    return this.db.client
       .insert(agentMessages)
       .values([...rows])
       .returning(ENTRY_COLUMNS);
   }
 
   /** The entries from the last `compaction` on, in order, or all of them before the first one. */
-  visible(executor: Executor, taskId: string): Promise<AgentMessageRow[]> {
+  visible(taskId: string): Promise<AgentMessageRow[]> {
     const lastCompaction = sql`coalesce((
       select max(m.seq) from ${agentMessages} m
        where m.task_id = ${taskId} and m.kind = 'compaction'), 0)`;
-    return executor
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), gte(agentMessages.seq, lastCompaction)))
@@ -105,13 +106,12 @@ export class AgentMessagesRepository {
 
   /** Entries with `seq` greater than `afterSeq` of any kind but `hiddenKinds`, in order, at most `limit`. */
   page(
-    executor: Executor,
     taskId: string,
     afterSeq: number,
     limit: number,
     hiddenKinds: readonly string[],
   ): Promise<AgentMessageRow[]> {
-    return executor
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(
@@ -126,8 +126,8 @@ export class AgentMessagesRepository {
   }
 
   /** Every entry, in order, whatever was compacted since. */
-  all(executor: Executor, taskId: string): Promise<AgentMessageRow[]> {
-    return executor
+  all(taskId: string): Promise<AgentMessageRow[]> {
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(eq(agentMessages.taskId, taskId))
@@ -135,8 +135,8 @@ export class AgentMessagesRepository {
   }
 
   /** Every entry with `seq` greater than `seq`, in order: what was appended since. */
-  after(executor: Executor, taskId: string, seq: number): Promise<AgentMessageRow[]> {
-    return executor
+  after(taskId: string, seq: number): Promise<AgentMessageRow[]> {
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), gt(agentMessages.seq, seq)))
@@ -144,8 +144,8 @@ export class AgentMessagesRepository {
   }
 
   /** Every entry through `throughSeq`, in order. */
-  through(executor: Executor, taskId: string, throughSeq: number): Promise<AgentMessageRow[]> {
-    return executor
+  through(taskId: string, throughSeq: number): Promise<AgentMessageRow[]> {
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), lte(agentMessages.seq, throughSeq)))
@@ -154,12 +154,11 @@ export class AgentMessagesRepository {
 
   /** The records of the given calls, in order: only call records carry a `call_id`. */
   async callRecords(
-    executor: Executor,
     taskId: string,
     callIds: readonly string[],
   ): Promise<AgentMessageRow[]> {
     if (callIds.length === 0) return [];
-    return executor
+    return this.db.client
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), inArray(agentMessages.callId, [...callIds])))
@@ -167,8 +166,8 @@ export class AgentMessagesRepository {
   }
 
   /** `seq` of the `model_answer` that requested the call; `undefined` when no answer of the agent did. */
-  async answerSeqOf(executor: Executor, taskId: string, callId: string): Promise<number | undefined> {
-    const [answer] = await executor
+  async answerSeqOf(taskId: string, callId: string): Promise<number | undefined> {
+    const [answer] = await this.db.client
       .select({ seq: agentMessages.seq })
       .from(agentMessages)
       .where(
@@ -190,14 +189,13 @@ export class AgentMessagesRepository {
    * is the order of their calls.
    */
   async mcpResults<O extends ToolOutcome>(
-    executor: Executor,
     taskIds: readonly string[],
     outcomes: readonly O[],
     window: FinishedWindow,
   ): Promise<(FinishedMcpCall<O> & { readonly text: string })[]> {
     const server = resultField('server');
     const outcome = resultField('outcome');
-    const rows = await executor
+    const rows = await this.db.client
       .select({
         server,
         tool: resultField('tool'),
@@ -229,8 +227,8 @@ export class AgentMessagesRepository {
   }
 
   /** How many tool calls the agent's answers requested: the count of a child's report. */
-  async toolCallCount(executor: Executor, taskId: string): Promise<number> {
-    const [row] = await executor
+  async toolCallCount(taskId: string): Promise<number> {
+    const [row] = await this.db.client
       .select({
         calls: sql<number>`coalesce(sum(jsonb_array_length(${agentMessages.content} -> 'toolCalls')), 0)::int`,
       })
@@ -243,9 +241,9 @@ export class AgentMessagesRepository {
    * How many single assignments each subagent got from the agent's calls of the tool, whatever was
    * compacted since. List items and refused or interrupted calls do not count.
    */
-  async singleTaskRuns(executor: Executor, taskId: string, tool: string): Promise<Map<string, number>> {
+  async singleTaskRuns(taskId: string, tool: string): Promise<Map<string, number>> {
     const subagent = sql<string>`${agentMessages.content} -> 'args' ->> 'subagentType'`;
-    const rows = await executor
+    const rows = await this.db.client
       .select({ subagent, runs: count() })
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), isSingleTaskResult(tool)))
@@ -258,12 +256,11 @@ export class AgentMessagesRepository {
    * `undefined` — none yet.
    */
   async lastSingleTask(
-    executor: Executor,
     taskId: string,
     tool: string,
     subagent: string,
   ): Promise<string | undefined> {
-    const [row] = await executor
+    const [row] = await this.db.client
       .select({ childTaskId: sql<string | null>`${agentMessages.content} ->> 'childTaskId'` })
       .from(agentMessages)
       .where(

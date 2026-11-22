@@ -47,7 +47,7 @@ export interface KnowledgeGraph {
 }
 
 export interface CheckOperationsInput {
-  /** The deep agent's graph read again after `lockGraph` (Invariant 5). */
+  /** The deep agent's graph read again in the round's commit (Invariant 5). */
   readonly graph: KnowledgeGraph;
   /** The calls of the round's input by number `c…`. */
   readonly calls: ReadonlyMap<string, RoundCall>;

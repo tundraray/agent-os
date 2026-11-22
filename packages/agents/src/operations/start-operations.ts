@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import { CHAT_BUILTIN_KEY, CHAT_TASK_TYPE } from '@agent-os/contracts';
-import { DATABASE, type Database } from '@agent-os/db';
+import { Db } from '@agent-os/db';
 import { isFinished, LiveTasks, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -35,7 +35,7 @@ export class StartOperations {
   private readonly logged: ReturnType<typeof createLogged>;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'create' | 'get'>,
     @Inject(LiveTasks) private readonly liveTasks: Pick<LiveTasks, 'adopt'>,
@@ -85,7 +85,7 @@ export class StartOperations {
         if (!isFinished(task.status)) {
           throw new AgentsError('NOT_FINISHED', `Agent ${agentId} is ${task.status}, not finished`);
         }
-        const session = await this.sessions.get(this.database, agentId);
+        const session = await this.sessions.get(agentId);
         if (session === undefined) throw new Error(`Finished agent ${agentId} has no session`);
         const { snapshot } = sessionInputOf(task.input);
         // AC-09.2: the same assignment and parent on the snapshot of KD-2; the history starts anew,
@@ -150,9 +150,9 @@ export class StartOperations {
     input: SessionInput,
   ): Promise<{ agentId: string }> {
     const { type, ownerId, parentId = null } = request;
-    const { agentId, agent } = await this.database.transaction(async (tx) => {
-      const taskId = await this.tasks.create({ ...request, input }, tx);
-      const agent = await this.factory.createIn(tx, type, { taskId, ownerId, parentId, ...placeOf(taskId) }, input);
+    const { agentId, agent } = await this.db.transaction(async () => {
+      const taskId = await this.tasks.create({ ...request, input });
+      const agent = await this.factory.createIn(type, { taskId, ownerId, parentId, ...placeOf(taskId) }, input);
       return { agentId: taskId, agent };
     });
     this.liveTasks.adopt(agentId, agent);

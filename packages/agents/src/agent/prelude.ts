@@ -80,9 +80,9 @@ export function preludeOf(
   return {
     entries,
     patch,
-    write: async (tx) => {
+    write: async () => {
       // The results are appended here, ahead of the events the caller appends.
-      if (closes) await deps.callRecords.closeOpen(tx, ctx.taskId);
+      if (closes) await deps.callRecords.closeOpen(ctx.taskId);
       return events;
     },
   };
@@ -102,10 +102,10 @@ export function withPrelude(
   if (prelude === undefined || inner === undefined) return result;
   return {
     ...result,
-    commit: async (tx, effects) => {
-      await appendWithEvent(deps, tx, effects, ctx.taskId, await prelude.write(tx));
-      await deps.sessionRows.update(tx, ctx.taskId, prelude.patch);
-      await inner(tx, effects);
+    commit: async (effects) => {
+      await appendWithEvent(deps, effects, ctx.taskId, await prelude.write());
+      await deps.sessionRows.update(ctx.taskId, prelude.patch);
+      await inner(effects);
     },
   };
 }
@@ -123,10 +123,10 @@ export function interruptWait(
   logStep(ctx, 'interrupt', startedAt, 'wait');
   return {
     outcome: 'wait',
-    commit: async (tx, effects) => {
+    commit: async (effects) => {
       // The step's only messages are `interrupt`s: they add no entry of their own.
-      await appendWithEvent(deps, tx, effects, ctx.taskId, await prelude.write(tx));
-      await deps.sessionRows.update(tx, ctx.taskId, {
+      await appendWithEvent(deps, effects, ctx.taskId, await prelude.write());
+      await deps.sessionRows.update(ctx.taskId, {
         ...prelude.patch,
         interrupted: true,
         turns: 0,

@@ -63,7 +63,7 @@ export class SessionGuard implements CanActivate {
 
     req.user = await this.userOf(readSessionToken(req), route);
     if (this.marked(context, IS_ADMIN_ONLY) && !req.user.isAdmin) {
-      await this.auditLog.record(null, {
+      await this.auditLog.record({
         kind: 'access_denied',
         actor: req.user.id,
         objectType: 'route',

@@ -1,5 +1,4 @@
 import { AgentMessageKindSchema, ToolCallStateSchema } from '@agent-os/contracts';
-import type { Executor, Transaction } from '@agent-os/db';
 import type { LiveTask, LiveTaskIdentity, StepContext, StepMessage, StepResult } from '@agent-os/runtime';
 
 import { type CallState, isDelegated } from '../history/call-state';
@@ -158,7 +157,7 @@ export abstract class BaseAgent implements LiveTask {
   /** The step's commit succeeded: the object takes the committed state in. */
   async committed(ctx: StepContext): Promise<void> {
     const startedAt = Date.now();
-    await this.absorb(this.deps.database);
+    await this.absorb();
     ctx.logger.debug('agent state absorbed', { ...this.held(), durationMs: Date.now() - startedAt });
   }
 
@@ -178,40 +177,40 @@ export abstract class BaseAgent implements LiveTask {
   }
 
   /**
-   * Brings the state up to the database, on `reader` — the one place the object changes: the session row and
+   * Brings the state up to the database — the one place the object changes: the session row and
    * the entries appended since (`absorbState`), or the whole state when the object has none yet (`loadState`).
    * The entries a step wrote through `guard` come with the same read. Called after a committed step, and by
    * `AgentFactory` on a new object, before anyone else holds it.
    */
-  async absorb(reader: Executor): Promise<void> {
+  async absorb(): Promise<void> {
     this.state =
       this.state === undefined
-        ? await loadState(this.deps, reader, this.task.taskId)
-        : await absorbState(this.deps, reader, this.state);
+        ? await loadState(this.deps, this.task.taskId)
+        : await absorbState(this.deps, this.state);
   }
 
   /**
    * The one way a session is made: `sessions.ensureSession`, then `sessionCreated` in the same transaction when
    * this call created the row.
    */
-  async createSession(tx: Transaction): Promise<void> {
-    const created = await this.deps.sessions.ensureSession(tx, this.task, this.input);
-    if (created) await this.sessionCreated(tx);
+  async createSession(): Promise<void> {
+    const created = await this.deps.sessions.ensureSession(this.task, this.input);
+    if (created) await this.sessionCreated();
   }
 
   /**
    * Called in the transaction that created the agent's session, once per session. Overridden by `DeepAgent`.
    */
-  protected async sessionCreated(_tx: Transaction): Promise<void> {}
+  protected async sessionCreated(): Promise<void> {}
 
   /**
    * The state of an agent whose task was created without its session: the session is made from the task input
    * and read; `undefined` when the attempt is fenced. The object keeps it only after the step's commit.
    */
   private async startedState(ctx: StepContext): Promise<AgentState | undefined> {
-    const made = await ctx.guard((tx: Transaction) => this.createSession(tx));
+    const made = await ctx.guard(() => this.createSession());
     if (made.outcome === 'fenced') return undefined;
-    const state = await loadState(this.deps, this.deps.database, ctx.taskId);
+    const state = await loadState(this.deps, ctx.taskId);
     if (state === undefined) throw new Error(`Session of agent ${ctx.taskId} was not created`);
     return state;
   }

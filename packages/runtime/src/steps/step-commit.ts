@@ -7,11 +7,9 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
+  Db,
   RuntimeTasksRepository,
   RuntimeTrackersRepository,
-  type Transaction,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { CrashPoints } from '../crash-points';
@@ -43,7 +41,6 @@ import {
   reservedKindProblem,
 } from '../messaging/inbox';
 import type { RuntimeConfig } from '../runtime-config';
-import { retryingTransaction } from '../runtime-tx';
 import { RUNTIME_CONFIG } from '../runtime.tokens';
 import { Tasks } from '../tasks/tasks';
 import { boundTransaction, type TaskStepContext } from './step-context';
@@ -57,7 +54,7 @@ const COMMIT_RETRIES = 3;
 
 /** Services of the step's commit. */
 interface StepCommitDeps extends TaskEndDeps {
-  db: Database;
+  db: Db;
   taskRows: RuntimeTasksRepository;
   handlers: HandlerRegistry;
   decisions: Decisions;
@@ -117,7 +114,7 @@ interface CommittedStep {
   adopted: readonly AdoptedTask[];
 }
 
-/** The attempt is no longer current when the commit locks the task. */
+/** The attempt is no longer current when the commit reads the task. */
 const REJECTED = Symbol('rejected');
 
 const OUTCOMES = new Set(['continue', 'wait', 'await_decision', 'complete', 'fail']);
@@ -132,7 +129,7 @@ export class StepCommitter {
   private readonly deps: StepCommitDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
     @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
@@ -217,14 +214,9 @@ export class StepCommitter {
     result: StepResult,
   ): Promise<CommittedStep | typeof REJECTED> {
     const { db, tasks, taskRows, inbox, decisions, events, crashPoints, leaseMs } = this.deps;
-    const outcome = outcomeOf(result);
-    const endsTask = outcome === 'complete' || outcome === 'fail';
-    return retryingTransaction(db, step.logger, 'step.commit', async (tx) => {
-      await boundTransaction(tx, leaseMs);
-      // A step that ends the task notifies its parent: the parent is locked first (Invariant 6).
-      const task = endsTask
-        ? await taskRows.lockWithParent(tx, step.taskId)
-        : await taskRows.lock(tx, step.taskId);
+    return db.transaction(async () => {
+      await boundTransaction(db, leaseMs);
+      const task = await taskRows.find(step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return REJECTED;
       this.checkOutcome(result);
 
@@ -232,8 +224,8 @@ export class StepCommitter {
       // Collected by this run of the transaction only: a retry starts from none.
       let adopted: readonly AdoptedTask[] = [];
       if (result.commit) {
-        const effects = this.effects(tx, task, result.outcome);
-        await result.commit(tx, effects.api);
+        const effects = this.effects(task, result.outcome);
+        await result.commit(effects.api);
         if (effects.state.problem !== undefined) {
           throw new InvalidStepResultError(effects.state.problem);
         }
@@ -241,9 +233,9 @@ export class StepCommitter {
         adopted = effects.state.adopted;
       }
       crashPoints.hit('step.inside-commit');
-      await inbox.markDelivered(tx, task, step.messageIds, step.stepNo);
+      await inbox.markDelivered(task, step.messageIds, step.stepNo);
       if (step.decision) {
-        await decisions.markDelivered(tx, step.decision.decisionId, step.stepNo);
+        await decisions.markDelivered(step.decision.decisionId, step.stepNo);
       }
 
       const stepFields: TaskFields = {
@@ -252,7 +244,7 @@ export class StepCommitter {
         recoveries: 0,
       };
       const committedEvent = async (row: TaskRow) => {
-        await events.append(tx, {
+        await events.append({
           type: EVENT['task.step_committed'],
           task: row,
           payload: {
@@ -268,7 +260,7 @@ export class StepCommitter {
       if (result.outcome === 'complete' || result.outcome === 'fail') {
         // The step counters go with the final status; the step event precedes the status event.
         await committedEvent({ ...task, stepNo: task.stepNo + 1 });
-        const ended = await endTask(tx, this.deps, task, {
+        const ended = await endTask(this.deps, task, {
           status: result.outcome === 'complete' ? completed : failed,
           result: result.outcome === 'complete' ? result.result : undefined,
           failure:
@@ -283,13 +275,13 @@ export class StepCommitter {
       if (tracker) {
         // KD-3: only the tracker's `tasks_finished` wakes the task; messages pending now or
         // arriving meanwhile come with it to the next step.
-        const row = await writeLocked(tx, tasks, task, {
+        const row = await writeLocked(tasks, task, {
           kind: 'wait',
           reason: tasksReason,
           fields: stepFields,
         });
         await committedEvent(row);
-        await events.append(tx, {
+        await events.append({
           type: EVENT['task.waiting'],
           task: row,
           payload: { reason: tasksReason, trackerId: tracker.trackerId },
@@ -300,17 +292,17 @@ export class StepCommitter {
       if (result.outcome === 'await_decision') {
         // Messages that arrive meanwhile wait: the decision wakes the task, and its next step
         // receives them with the decision (Flow 3).
-        const row = await writeLocked(tx, tasks, task, {
+        const row = await writeLocked(tasks, task, {
           kind: 'wait',
           reason: decision,
           fields: stepFields,
         });
         await committedEvent(row);
-        const request = await decisions.open(tx, row, {
+        const request = await decisions.open(row, {
           kind: result.kind,
           payload: result.payload,
         });
-        await events.append(tx, {
+        await events.append({
           type: EVENT['task.waiting'],
           task: row,
           payload: { reason: decision, decisionId: request.decisionId },
@@ -318,10 +310,9 @@ export class StepCommitter {
         return { row, tracker, adopted };
       }
 
-      const pending = await inbox.loadPending(tx, task.taskId);
+      const pending = await inbox.loadPending(task.taskId);
       const waits = result.outcome === 'wait' && pending.length === 0;
       const row = await writeLocked(
-        tx,
         tasks,
         task,
         waits
@@ -329,7 +320,7 @@ export class StepCommitter {
           : { kind: 'set', status: queued, fields: stepFields },
       );
       await committedEvent(row);
-      await events.append(tx, {
+      await events.append({
         type: waits ? EVENT['task.waiting'] : EVENT['task.queued'],
         task: row,
         payload: waits
@@ -385,7 +376,6 @@ export class StepCommitter {
    * result is invalid even when the handler catches the error.
    */
   private effects(
-    tx: Transaction,
     task: TaskRow,
     outcome: StepResult['outcome'],
   ): { api: StepEffects; state: EffectsState } {
@@ -411,7 +401,7 @@ export class StepCommitter {
       return { type, input: parsed.data };
     };
     const insertChild = async (child: ChildTask, trackerId: string | null): Promise<string> => {
-      const row = await tasks.insert(tx, {
+      const row = await tasks.insert({
         taskId: randomUUID(),
         type: child.type,
         ownerId: task.ownerId,
@@ -421,7 +411,7 @@ export class StepCommitter {
         input: child.input,
         trackerId,
       });
-      await events.append(tx, {
+      await events.append({
         type: EVENT['task.created'],
         task: row,
         payload: { type: child.type, parentId: task.taskId, depth: row.depth, trackerId },
@@ -444,7 +434,7 @@ export class StepCommitter {
         const trackerId = randomUUID();
         // Marked before the writes, so a second call in this commit is refused even meanwhile.
         state.tracker = { trackerId, taskIds: [] };
-        await trackers.insert(tx, { trackerId, taskId: task.taskId, ownerId: task.ownerId });
+        await trackers.insert({ trackerId, taskId: task.taskId, ownerId: task.ownerId });
         const taskIds: string[] = [];
         for (const child of checked) taskIds.push(await insertChild(child, trackerId));
         state.tracker = { trackerId, taskIds };
@@ -458,7 +448,7 @@ export class StepCommitter {
           state.problem ??= tooLarge.message;
           throw tooLarge;
         }
-        const inserted = await inbox.insertMessage(tx, {
+        const inserted = await inbox.insertMessage({
           recipientId: message.recipientId,
           ownerId: task.ownerId,
           kind: message.kind,
@@ -471,7 +461,7 @@ export class StepCommitter {
       emit: async (type, payload) => {
         const problem = upperEventProblem(type, payload);
         if (problem !== undefined) return invalid(problem);
-        await events.appendUpper(tx, { type, task, payload });
+        await events.appendUpper({ type, task, payload });
       },
       adopt: (taskId, object) => {
         const type = spawned.get(taskId);
@@ -499,11 +489,11 @@ export class StepCommitter {
     };
     let ended: boolean;
     try {
-      ended = await retryingTransaction(this.deps.db, logger, 'step.fail-invalid', async (tx) => {
-        await boundTransaction(tx, this.deps.leaseMs);
-        const task = await this.deps.taskRows.lockWithParent(tx, step.taskId);
+      ended = await this.deps.db.transaction(async () => {
+        await boundTransaction(this.deps.db, this.deps.leaseMs);
+        const task = await this.deps.taskRows.find(step.taskId);
         if (task?.status !== running || task.attempt !== step.attempt) return false;
-        await endTask(tx, this.deps, task, {
+        await endTask(this.deps, task, {
           status: failed,
           failure,
           fields: { stepClaims: 0, recoveries: 0 },

@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, gte, lt, sql } from 'drizzle-orm';
-import type { Executor } from '../database';
+import { Db } from '../db';
 import { runtimeModelCalls } from '../schema';
 
 export type NewRuntimeModelCallRow = Pick<
@@ -29,17 +29,18 @@ export interface CalledWindow {
  */
 @Injectable()
 export class RuntimeModelCallsRepository {
-  async insert(executor: Executor, call: NewRuntimeModelCallRow): Promise<void> {
-    await executor.insert(runtimeModelCalls).values(call);
+  constructor(@Inject(Db) private readonly db: Db) {}
+
+  async insert(call: NewRuntimeModelCallRow): Promise<void> {
+    await this.db.client.insert(runtimeModelCalls).values(call);
   }
 
   /** Cost and number of the owner's calls in the window; an empty window gives zeros. */
   async sumOwned(
-    executor: Executor,
     ownerId: string,
     window: CalledWindow,
   ): Promise<{ costUsd: string; calls: number } | undefined> {
-    const [row] = await executor
+    const [row] = await this.db.client
       .select({
         costUsd: sql<string>`coalesce(sum(${runtimeModelCalls.costUsd}), 0)`,
         calls: sql<number>`count(*)::int`,
@@ -51,11 +52,10 @@ export class RuntimeModelCallsRepository {
 
   /** Cost of the owner's calls in the window by model; a model with no call in it is absent. */
   sumOwnedByModel(
-    executor: Executor,
     ownerId: string,
     window: CalledWindow,
   ): Promise<{ model: string; costUsd: string }[]> {
-    return executor
+    return this.db.client
       .select({
         model: runtimeModelCalls.model,
         costUsd: sql<string>`sum(${runtimeModelCalls.costUsd})`,

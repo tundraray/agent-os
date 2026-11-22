@@ -1,6 +1,6 @@
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { DATABASE, type Database, DbModule } from '@agent-os/db';
+import { DATABASE, type Database, Db, DbModule } from '@agent-os/db';
 import {
   CLOCK,
   type Clock,
@@ -24,7 +24,7 @@ import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
 import { databaseUrl } from './database-url';
 import { loggerModule } from './loggerModule';
-import { ensureHandlerRowsTable } from './testHandlers';
+import { boundToDb, ensureHandlerRowsTable } from './testHandlers';
 
 /**
  * Test assembly of the runtime (design-runtime.md, Test Strategy): a Nest context of the package's
@@ -102,6 +102,8 @@ export interface RuntimeHarness {
   stop(): Promise<void>;
   /** The Drizzle client of the runtime's pool. */
   readonly db: Database;
+  /** The runtime's `Db`: what handlers registered after the start are bound to (`handlersFor`). */
+  readonly runtimeDb: Db;
   /** Every record the runtime logged, in order: the in-memory sink of `@agent-os/common/testing`. */
   readonly logs: readonly LogRecord[];
   /** Closes the context: the workers stop, then `DbModule` closes the pool. */
@@ -148,9 +150,10 @@ export async function createRuntimeHarness(
     .useValue(options.clock ?? systemClock)
     .compile();
   const db = app.get<Database>(DATABASE);
-  await ensureHandlerRowsTable(db);
+  const runtimeDb = app.get(Db);
+  await ensureHandlerRowsTable(runtimeDb);
   const handlers = app.get(HandlerRegistry);
-  for (const handler of options.handlers) handlers.register(handler);
+  for (const handler of options.handlers) handlers.register(boundToDb(handler, runtimeDb));
   const workers = app.get(RuntimeWorkers);
   // The context's start runs `onApplicationBootstrap`, which starts the workers; held workers
   // start by `start()`. `close()` runs the shutdown hooks either way.
@@ -168,6 +171,7 @@ export async function createRuntimeHarness(
     start: () => workers.start(),
     stop: () => workers.stop(),
     db,
+    runtimeDb,
     logs: sink.records,
     close: () => app.close(),
   };

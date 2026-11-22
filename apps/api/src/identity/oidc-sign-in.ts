@@ -5,12 +5,7 @@ import {
   type ProviderType,
   type SignInError,
 } from '@agent-os/contracts';
-import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
-  IdentityProvidersRepository,
-} from '@agent-os/db';
+import { IdentityProvidersRepository } from '@agent-os/db';
 import * as client from 'openid-client';
 import { isUuid } from '../common/is-uuid';
 import { IdentitySettings } from './identity-settings';
@@ -102,7 +97,6 @@ function describeError(error: unknown): Record<string, unknown> {
  */
 @Injectable()
 export class OidcSignIn {
-  private readonly db: Database;
   private readonly logger: Logger;
   /** Per provider id: the configuration of its current version (ADR-0001). */
   private readonly configs = new Map<
@@ -111,13 +105,11 @@ export class OidcSignIn {
   >();
 
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
     private readonly providers: IdentityProvidersRepository,
     private readonly settings: IdentitySettings,
     @Inject(GOOGLE_ISSUER_URL) private readonly googleIssuer: string,
     @Inject(LOGGER) logger: Logger,
   ) {
-    this.db = database.db;
     this.logger = logger.child({ service: 'identity.oidc' });
   }
 
@@ -126,7 +118,7 @@ export class OidcSignIn {
     providerId: string,
   ): Promise<SignInProvider | undefined> {
     const row = isUuid(providerId)
-      ? await this.providers.find(this.db, providerId)
+      ? await this.providers.find(providerId)
       : undefined;
     const provider = row === undefined ? undefined : toProvider(row);
     if (
@@ -176,12 +168,12 @@ export class OidcSignIn {
     const state = client.randomState();
     const nonce = client.randomNonce();
     const codeVerifier = client.randomPKCECodeVerifier();
-    const expired = await this.providers.deleteExpiredLoginRequests(this.db);
+    const expired = await this.providers.deleteExpiredLoginRequests();
     if (expired > 0)
       this.logger.debug('expired sign-in requests deleted', {
         count: expired,
       });
-    const loginRequestId = await this.providers.insertLoginRequest(this.db, {
+    const loginRequestId = await this.providers.insertLoginRequest({
       state,
       providerId,
       nonce,
@@ -207,7 +199,7 @@ export class OidcSignIn {
   async finish(callback: ReturnFromProvider): Promise<FinishedSignIn> {
     const state = callback.query.get('state');
     const loginRequest =
-      state === null ? undefined : await this.providers.consumeLoginRequest(this.db, state);
+      state === null ? undefined : await this.providers.consumeLoginRequest(state);
     const refuse = (
       reason: ProviderRefusal,
       detail: string,

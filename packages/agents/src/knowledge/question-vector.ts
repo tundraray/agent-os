@@ -1,7 +1,7 @@
 import { AgentMessageKindSchema } from '@agent-os/contracts';
 import type {
   AgentKnowledgeRunsRepository,
-  Database,
+  Db,
   EmbeddingOutcome,
   KnowledgeQuestionRow,
 } from '@agent-os/db';
@@ -28,8 +28,8 @@ export interface SessionQuestion {
 }
 
 export interface QuestionVectorDeps {
-  /** Reads the question row outside the guarded write. */
-  readonly database: Database;
+  /** The savepoint of the question outcome: a deleted deep agent fails only it. */
+  readonly db: Db;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly embeddings: Pick<AgentsEmbeddings, 'embed'>;
 }
@@ -90,7 +90,7 @@ export async function embedQuestion(
   if (learning === null) return true;
   const { recordId } = learning;
 
-  const stored = await deps.knowledgeRunRows.readQuestion(deps.database, ctx.taskId);
+  const stored = await deps.knowledgeRunRows.readQuestion(ctx.taskId);
   const question = questionToEmbed(session, embedsEmployeeMessages, ctx.messages, stored);
   if (question === null) return true;
 
@@ -120,8 +120,8 @@ export async function embedQuestion(
   const vector = attempt.kind === 'vectors' ? attempt.vectors[0] : undefined;
   const model = attempt.kind === 'error' ? null : attempt.model;
   const outcome = outcomeOf(attempt);
-  const written = await ctx.guard(async (tx) => {
-    await deps.knowledgeRunRows.writeQuestion(tx, {
+  const written = await ctx.guard(async () => {
+    await deps.knowledgeRunRows.writeQuestion({
       taskId: ctx.taskId,
       source: question.source,
       model,
@@ -129,8 +129,8 @@ export async function embedQuestion(
     });
     if (outcome === null) return;
     // A deep agent deleted during the run takes its vector row with it: the outcome is lost, not the step.
-    await tx
-      .transaction((savepoint) => deps.knowledgeRunRows.writeQuestionOutcome(savepoint, recordId, outcome))
+    await deps.db
+      .savepoint(() => deps.knowledgeRunRows.writeQuestionOutcome(recordId, outcome))
       .catch((error: unknown) => {
         ctx.logger.warn('question outcome not written', {
           ...fields,

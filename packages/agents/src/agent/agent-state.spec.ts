@@ -1,4 +1,3 @@
-import type { Executor } from '@agent-os/db';
 
 import type { HistoryEntry } from '../history/history';
 import type { Session } from '../store/sessions';
@@ -10,7 +9,6 @@ import { absorbState, loadState } from './agent-state';
 // among them drops what precedes it and a fork's prefix, as `history.visible` does.
 const AGENT = 'agent-1';
 const PARENT = 'parent-1';
-const READER = {} as Executor;
 const AT = new Date(0);
 
 const SESSION = { taskId: AGENT, forkedFromTaskId: PARENT, forkedThroughSeq: 1, turns: 0 } as Session;
@@ -52,8 +50,8 @@ function storesAt(written: number, turns: number): Pick<AgentDeps, 'sessions' | 
     sessions: { get: async () => ({ ...SESSION, turns }) },
     history: {
       visible: async () => own.slice(Math.max(fromCompaction, 0)),
-      after: async (_reader: Executor, _taskId: string, seq: number) => own.filter((entry) => entry.seq > seq),
-      through: async (_reader: Executor, taskId: string, seq: number) =>
+      after: async (_taskId: string, seq: number) => own.filter((entry) => entry.seq > seq),
+      through: async (taskId: string, seq: number) =>
         taskId === PARENT ? PARENT_ENTRIES.filter((entry) => entry.seq <= seq) : [],
     },
   } as unknown as Pick<AgentDeps, 'sessions' | 'history'>;
@@ -64,10 +62,10 @@ describe('an agent kept in memory takes a committed step in and holds what a res
     ['entries without a compaction follow the kept ones', 2, 4, { seqs: [1, 2, 3, 4], openCalls: 0, forkPrefix: true }],
     ['a compaction drops what precedes it and the fork prefix', 4, 7, { seqs: [5, 6, 7], openCalls: 0, forkPrefix: false }],
   ])('%s', async (_, before, after, expected) => {
-    const kept = await loadState(storesAt(before, 0), READER, AGENT);
+    const kept = await loadState(storesAt(before, 0), AGENT);
     if (kept === undefined) throw new Error('the agent has a session');
 
-    const absorbed = await absorbState(storesAt(after, 1), READER, kept);
+    const absorbed = await absorbState(storesAt(after, 1), kept);
 
     expect({
       seqs: absorbed.entries.map((entry) => entry.seq),
@@ -75,11 +73,11 @@ describe('an agent kept in memory takes a committed step in and holds what a res
       forkPrefix: absorbed.forkPrefix !== undefined,
     }).toEqual(expected);
     expect([absorbed.lastSeq, absorbed.session.turns]).toEqual([after, 1]);
-    expect(absorbed).toEqual(await loadState(storesAt(after, 1), READER, AGENT));
+    expect(absorbed).toEqual(await loadState(storesAt(after, 1), AGENT));
   });
 
   it('holds the open call of the last answer until its result is appended', async () => {
-    const kept = await loadState(storesAt(2, 0), READER, AGENT);
+    const kept = await loadState(storesAt(2, 0), AGENT);
 
     expect(kept?.calls.map((call) => [call.callId, call.state])).toEqual([['call-1', 'requested']]);
     expect(kept?.forkPrefix).toEqual({ throughSeq: 1, entries: PARENT_ENTRIES });

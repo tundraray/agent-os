@@ -12,11 +12,9 @@ import {
   AgentKnowledgeRunsRepository,
   AgentKnowledgeVectorsRepository,
   AgentMcpServersRepository,
-  DATABASE,
-  type Database,
+  Db,
   type KnowledgeEmbeddingRow,
   type KnowledgeSettingsRow,
-  type Transaction,
 } from '@agent-os/db';
 import { TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -87,7 +85,7 @@ export class AgentsKnowledge {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(DATABASE) private readonly database: Database,
+    @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(AgentKnowledgeRepository) private readonly knowledgeRows: AgentKnowledgeRepository,
     @Inject(AgentKnowledgeRunsRepository) private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
@@ -106,9 +104,9 @@ export class AgentsKnowledge {
   /** The graph for the knowledge screen; reads only, no embeddings call (C3 «экран знаний»). */
   async view({ recordId, selfLearning, servers }: KnowledgeViewRequest): Promise<KnowledgeView> {
     const startedAt = Date.now();
-    const settings = await this.knowledgeRows.readSettings(this.database);
-    const items = graphItemsOf(await this.knowledgeRows.readGraph(this.database, recordId));
-    const toolAlive = await registryToolAlive({ database: this.database, mcpServerRows: this.mcpServerRows }, servers);
+    const settings = await this.knowledgeRows.readSettings();
+    const items = graphItemsOf(await this.knowledgeRows.readGraph(recordId));
+    const toolAlive = await registryToolAlive({ mcpServerRows: this.mcpServerRows }, servers);
     const embedding = await this.embeddingState(recordId);
     const parts = knowledgeViewParts({ items, settings, toolAlive, selfLearning, embedding });
     const last = await this.lastExtractionOf(recordId);
@@ -134,8 +132,8 @@ export class AgentsKnowledge {
   /** Deletes the entity with its fact relations and queues the cleanup of their vectors. */
   async deleteEntity({ recordId, entityId }: KnowledgeEntityDelete): Promise<KnowledgeEntityDeletion> {
     const startedAt = Date.now();
-    const { result, cleanup } = await this.deleteUnderLock(recordId, (tx) =>
-      this.knowledgeRows.deleteEntity(tx, recordId, entityId),
+    const { result, cleanup } = await this.deleteWithCleanup(recordId, () =>
+      this.knowledgeRows.deleteEntity(recordId, entityId),
     );
     this.logger.info('knowledge entity delete', {
       recordId,
@@ -151,8 +149,8 @@ export class AgentsKnowledge {
   /** Deletes the relation, lesson or «searched — found nothing» and queues the cleanup of its vector. */
   async deleteRelation({ recordId, relationId }: KnowledgeRelationDelete): Promise<KnowledgeRelationDeletion> {
     const startedAt = Date.now();
-    const { result, cleanup } = await this.deleteUnderLock(recordId, async (tx) => ({
-      deleted: await this.knowledgeRows.deleteRelation(tx, recordId, relationId),
+    const { result, cleanup } = await this.deleteWithCleanup(recordId, async () => ({
+      deleted: await this.knowledgeRows.deleteRelation(recordId, relationId),
     }));
     this.logger.info('knowledge relation delete', {
       recordId,
@@ -165,7 +163,7 @@ export class AgentsKnowledge {
   }
 
   async settings(): Promise<KnowledgeSettings> {
-    return settingsView(await this.knowledgeRows.readSettings(this.database));
+    return settingsView(await this.knowledgeRows.readSettings());
   }
 
   async updateSettings({
@@ -174,8 +172,8 @@ export class AgentsKnowledge {
     lessonsEnabled,
   }: KnowledgeSettingsUpdate): Promise<KnowledgeSettingsChange> {
     const startedAt = Date.now();
-    const change = await this.database.transaction((tx) =>
-      this.knowledgeRows.writeSettings(tx, { limitTokens, lessonsEnabled }),
+    const change = await this.db.transaction(async () =>
+      this.knowledgeRows.writeSettings({ limitTokens, lessonsEnabled }),
     );
     const before = settingsView(change.before);
     const after = settingsView(change.after);
@@ -189,34 +187,32 @@ export class AgentsKnowledge {
   }
 
   /**
-   * The cleanup of a deleted record's vector (KD-8, Flow 3): in the deletion's transaction, under the vector
-   * row's lock. No pass in progress — a new pass the platform pays for (`payer_id` `null`: only a deletion
+   * The cleanup of a deleted record's vector (KD-8, Flow 3): in the deletion's transaction.
+   * No pass in progress — a new pass the platform pays for (`payer_id` `null`: only a deletion
    * asked for it); a pass in progress — only «one more pass», its payer unchanged. The pass removes every key
    * without a graph record, so no vector of the deleted record is found after it (Invariant 10).
    */
-  private async queueVectorCleanup(tx: Transaction, recordId: string): Promise<VectorCleanup> {
-    const row = await this.knowledgeRunRows.ensureEmbeddingRow(tx, recordId);
+  private async queueVectorCleanup(recordId: string): Promise<VectorCleanup> {
+    const row = await this.knowledgeRunRows.ensureEmbeddingRow(recordId);
     if (row.passTaskId !== null) {
-      await this.knowledgeRunRows.updateEmbeddingRow(tx, recordId, { needsPass: true });
+      await this.knowledgeRunRows.updateEmbeddingRow(recordId, { needsPass: true });
       return 'pass_marked';
     }
-    const passTaskId = await this.tasks.create(embedPassRequest(recordId), tx);
-    await this.knowledgeRunRows.updateEmbeddingRow(tx, recordId, { passTaskId, payerId: null });
+    const passTaskId = await this.tasks.create(embedPassRequest(recordId));
+    await this.knowledgeRunRows.updateEmbeddingRow(recordId, { passTaskId, payerId: null });
     return 'pass_created';
   }
 
   /**
-   * One deletion: the graph lock first, so it never interleaves with a round's commit (Invariant 5), then
-   * the delete, then — only when something was deleted — the vector cleanup, all in one transaction.
+   * One deletion: the delete, then — only when something was deleted — the vector cleanup, all in one transaction.
    */
-  private async deleteUnderLock<T extends { readonly deleted: boolean }>(
+  private async deleteWithCleanup<T extends { readonly deleted: boolean }>(
     recordId: string,
-    remove: (tx: Transaction) => Promise<T>,
+    remove: () => Promise<T>,
   ): Promise<{ readonly result: T; readonly cleanup: VectorCleanup | null }> {
-    return this.database.transaction(async (tx) => {
-      await this.knowledgeRows.lockGraph(tx, recordId);
-      const result = await remove(tx);
-      const cleanup = result.deleted ? await this.queueVectorCleanup(tx, recordId) : null;
+    return this.db.transaction(async () => {
+      const result = await remove();
+      const cleanup = result.deleted ? await this.queueVectorCleanup(recordId) : null;
       return { result, cleanup };
     });
   }
@@ -227,7 +223,7 @@ export class AgentsKnowledge {
    */
   private async embeddingState(recordId: string): Promise<EmbeddingState> {
     const choice = await this.embeddings.model();
-    const row = await this.knowledgeRunRows.findEmbeddingRow(this.database, recordId);
+    const row = await this.knowledgeRunRows.findEmbeddingRow(recordId);
     const vectors = await this.store.list(recordId);
     return {
       model: choice.kind === 'model' ? choice.model : null,
@@ -242,9 +238,9 @@ export class AgentsKnowledge {
    * (KD-4), so the run's session names it — the run row lives exactly as long as that session.
    */
   private async lastExtractionOf(recordId: string): Promise<LastExtraction | null> {
-    const row = await this.knowledgeRunRows.lastExtraction(this.database, recordId);
+    const row = await this.knowledgeRunRows.lastExtraction(recordId);
     if (row?.lastAt == null) return null;
-    const model = row.lastModel ?? (await this.sessions.get(this.database, row.runId))?.model;
+    const model = row.lastModel ?? (await this.sessions.get(row.runId))?.model;
     if (model === undefined)
       throw new Error(`knowledge run ${row.runId} has no model and no session`);
     return {

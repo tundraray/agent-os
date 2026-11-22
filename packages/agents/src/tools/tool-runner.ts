@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
-import { AgentToolResultsRepository, DATABASE, type Database, type Transaction } from '@agent-os/db';
+import { AgentToolResultsRepository } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -34,8 +34,8 @@ import {
 } from './tool-execution';
 import { callTarget, isMcp, type SessionTool } from './tool-registry';
 
-/** What `planInCommit` gives the step: run inside `commit(tx, effects)`. */
-export type InCommitPlan = (tx: Transaction, effects: StepEffects) => Promise<ToolExecution>;
+/** What `planInCommit` gives the step: run inside `commit(effects)`. */
+export type InCommitPlan = (effects: StepEffects) => Promise<ToolExecution>;
 
 export type ConfirmedSend =
   | { readonly kind: 'sent'; readonly execution: ToolExecution | AbortedExecution }
@@ -43,7 +43,7 @@ export type ConfirmedSend =
   /** An in-commit tool: the intent and the call happen in the step's commit transaction. */
   | {
       readonly kind: 'in_commit';
-      readonly commit: (tx: Transaction, effects: StepEffects) => Promise<ToolExecution | NotSent>;
+      readonly commit: (effects: StepEffects) => Promise<ToolExecution | NotSent>;
     };
 
 /** The decision request of a tool with confirmation (design-agents.md, «Сообщения и события»). */
@@ -67,7 +67,6 @@ export type ConfirmationCard =
 
 /** What the spawn helper of one in-commit call is bound to. */
 export interface StartChildScope {
-  readonly tx: Transaction;
   readonly effects: StepEffects;
   readonly caller: ToolCaller;
 }
@@ -106,7 +105,6 @@ export class ToolRunner {
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
     /** `mcpCallTimeoutMs` bounds one MCP call, the handshake included. */
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs'>,
-    @Inject(DATABASE) database: Database,
     /** The settings row of large results (tool-result-reading R-5), read on every direct MCP call. */
     @Inject(AgentToolResultsRepository) toolResultRows: Pick<AgentToolResultsRepository, 'readSettings'>,
     /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
@@ -116,7 +114,7 @@ export class ToolRunner {
       client,
       accounts,
       callTimeoutMs: config.mcpCallTimeoutMs,
-      resultSettings: () => toolResultRows.readSettings(database),
+      resultSettings: () => toolResultRows.readSettings(),
       maskSecrets,
     });
     this.codeCall = createCodeCall({ access, audit, callMcp: this.mcpCalls.fromCode });
@@ -225,15 +223,15 @@ export class ToolRunner {
   }
 
   /**
-   * The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper. The gate is asked and
+   * The closure an `in_commit` tool runs in `commit(effects)`, with the spawn helper. The gate is asked and
    * the tool's `prepare` runs first, outside the transaction.
    */
   async planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan> {
     const refusal = await admit(this.access, this.audit, call, logger);
     const prepared = refusal === undefined ? await prepareInCommit(call) : undefined;
-    return async (tx, effects) => {
+    return async (effects) => {
       const startedAt = Date.now();
-      const execution = refusal ?? (await this.runInCommit(call, prepared, tx, effects));
+      const execution = refusal ?? (await this.runInCommit(call, prepared, effects));
       logCall(logger, loggedCall(call), execution, startedAt);
       return execution;
     };
@@ -268,10 +266,10 @@ export class ToolRunner {
       const prepared = await prepareInCommit(inCommit);
       return {
         kind: 'in_commit',
-        commit: async (tx, effects) => {
+        commit: async (effects) => {
           const startedAt = Date.now();
-          const execution: ToolExecution | NotSent = (await this.callRecords.markSent(tx, key))
-            ? await this.runInCommit(inCommit, prepared, tx, effects, confirmed)
+          const execution: ToolExecution | NotSent = (await this.callRecords.markSent(key))
+            ? await this.runInCommit(inCommit, prepared, effects, confirmed)
             : { kind: 'not_sent', reason: 'not_awaiting' };
           logCall(ctx.logger, loggedCall(sent), execution, startedAt);
           return execution;
@@ -280,7 +278,7 @@ export class ToolRunner {
     }
     const startedAt = Date.now();
     // Committed before the request leaves: a step lost from here on finds the intent and never resends.
-    const intent = await ctx.guard((tx) => this.callRecords.markSent(tx, key));
+    const intent = await ctx.guard(() => this.callRecords.markSent(key));
     if (intent.outcome === 'fenced' || !intent.value) {
       const notSent: NotSent = {
         kind: 'not_sent',
@@ -320,7 +318,6 @@ export class ToolRunner {
   private runInCommit(
     call: InCommitCall,
     prepared: unknown,
-    tx: Transaction,
     effects: StepEffects,
     confirmed?: unknown,
   ): Promise<ToolExecution> {
@@ -331,9 +328,8 @@ export class ToolRunner {
       callId: call.callId,
       args: call.args,
       caller: call.caller,
-      tx,
       effects,
-      startChild: this.startChildFor({ tx, effects, caller: call.caller }),
+      startChild: this.startChildFor({ effects, caller: call.caller }),
       prepared,
       ...(confirmed === undefined ? {} : { confirmed }),
     });

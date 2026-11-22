@@ -10,6 +10,7 @@ import {
   agentKnowledgeSettings,
   AgentKnowledgeVectorsRepository,
   type Database,
+  Db,
   type KnowledgeEmbeddingRow,
   libraryRecords,
   runtimeTasks,
@@ -31,17 +32,17 @@ import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from 
  * the background work, and the reads the cases assert on. The reads are the queries of the `@agent-os/db`
  * repositories and the store the package itself uses, so a case has one import place.
  */
-const knowledgeRows = new AgentKnowledgeRepository();
-const knowledgeRunRows = new AgentKnowledgeRunsRepository();
+const knowledgeRows = (db: Database) => new AgentKnowledgeRepository(new Db(db));
+const knowledgeRunRows = (db: Database) => new AgentKnowledgeRunsRepository(new Db(db));
 
-export const readGraph = (db: Database, recordId: string) => knowledgeRows.readGraph(db, recordId);
+export const readGraph = (db: Database, recordId: string) => knowledgeRows(db).readGraph(recordId);
 export const findRunById = async (db: Database, runId: string) =>
-  knowledgeRunOf(await knowledgeRunRows.findRunById(db, runId));
+  knowledgeRunOf(await knowledgeRunRows(db).findRunById(runId));
 export const findEmbeddingRow = (db: Database, recordId: string) =>
-  knowledgeRunRows.findEmbeddingRow(db, recordId);
-export const readQuestion = (db: Database, taskId: string) => knowledgeRunRows.readQuestion(db, taskId);
+  knowledgeRunRows(db).findEmbeddingRow(recordId);
+export const readQuestion = (db: Database, taskId: string) => knowledgeRunRows(db).readQuestion(taskId);
 export const createPgvectorStore = (db: Database): KnowledgeVectorStore =>
-  new AgentKnowledgeVectorsRepository(db);
+  new AgentKnowledgeVectorsRepository(new Db(db));
 
 /** The agent name of the extraction's model calls: the scripted model's key `{ agent: KNOWLEDGE_EXTRACT_AGENT }`. */
 export const KNOWLEDGE_EXTRACT_AGENT = 'knowledge-extract';

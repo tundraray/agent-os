@@ -8,9 +8,7 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import {
-  DATABASE,
-  type Database,
-  type Transaction,
+  Db,
   RuntimeDecisionsRepository,
   RuntimeTrackersRepository,
   RuntimeTasksRepository,
@@ -33,7 +31,6 @@ import type {
 import { Inbox, payloadTooLarge, reservedKindProblem } from '../messaging/inbox';
 import { RunningTaskRegistry } from './running-task.registry';
 import type { RuntimeConfig } from '../runtime-config';
-import { retryingTransaction } from '../runtime-tx';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { endTask, writeLocked } from './task-end';
 import { Tasks } from './tasks';
@@ -91,7 +88,7 @@ export interface CreateTask {
 }
 
 interface TaskControlDeps {
-  db: Database;
+  db: Db;
   handlers: HandlerRegistry;
   tasks: Tasks;
   taskRows: RuntimeTasksRepository;
@@ -148,16 +145,14 @@ function toTask(row: TaskRow): Task {
  * raises the attempt, so the step in flight is fenced; the step is then cut off — here at once,
  * elsewhere by NOTIFY or heartbeat.
  *
- * Lock order (plan Notes 4, Invariant 6): an ancestor before its descendants, one level by
- * `task_id`. A write that may end a task locks its parent first (the end notice goes there);
- * `create` locks the parent; a step's commit holds its own task, the parent of what it spawns.
+ * Each command is one transaction; called inside a caller's `db.transaction` it joins that one.
  */
 @Injectable()
 export class TaskControl {
   private readonly deps: TaskControlDeps;
 
   constructor(
-    @Inject(DATABASE) db: Database,
+    @Inject(Db) db: Db,
     @Inject(HandlerRegistry) handlers: HandlerRegistry,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
@@ -190,29 +185,23 @@ export class TaskControl {
    * Creates a root task (its own root, depth 0) or, with `parentId`, a child of the owner's task
    * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`. The id
    * is `taskId` when given — `TASK_EXISTS` if a task of any owner has it — or a new one.
-   * The parent is locked FOR UPDATE and must not be finished: a stop of the parent and this
-   * creation are ordered by that lock (plan Notes 4, Invariant 6). Returns the `taskId`.
+   * The parent must not be finished. Returns the `taskId`.
    *
-   * With `tx` everything is written in the caller's transaction and nothing is retried here: the
-   * caller commits or rolls back (and retries) the whole of it, the task with it (KD-3, self-learning).
-   * The `task.created` NOTIFY goes out at that commit; the dispatcher's poll is the guarantee anyway.
+   * Inside a caller's transaction the caller commits or rolls back the whole of it, the task with
+   * it (KD-3, self-learning). The `task.created` NOTIFY goes out at that commit; the dispatcher's
+   * poll is the guarantee anyway.
    */
-  async create(request: CreateTask, tx?: Transaction): Promise<string> {
+  async create(request: CreateTask): Promise<string> {
     const { db, logger } = this.deps;
     const startedAt = Date.now();
     const fields = {
       type: request.type,
       ownerId: request.ownerId,
       parentId: request.parentId ?? null,
-      inCallerTx: tx !== undefined,
     };
     try {
       const input = this.checkInput(request.type, request.input);
-      const task = tx
-        ? await this.createIn(tx, request, input)
-        : await retryingTransaction(db, logger, 'tasks.create', (own) =>
-            this.createIn(own, request, input),
-          );
+      const task = await db.transaction(() => this.createIn(request, input));
       logger.info('task created', {
         ...fields,
         taskId: task.taskId,
@@ -233,18 +222,14 @@ export class TaskControl {
 
   /** The owner's task; `TASK_NOT_FOUND` for a missing or another owner's one. */
   async get(taskId: string, ownerId: string): Promise<Task> {
-    const row = await this.deps.db.transaction((tx) =>
-      this.deps.taskRows.findOwned(tx, taskId, ownerId),
-    );
+    const row = await this.deps.taskRows.findOwned(taskId, ownerId);
     if (!row) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
     return toTask(row);
   }
 
   /** Every task of the owner's tree in creation order; `[]` for another owner's or no tree. */
   async listTree(rootId: string, ownerId: string): Promise<Task[]> {
-    const rows = await this.deps.db.transaction((tx) =>
-      this.deps.taskRows.listTree(tx, rootId, ownerId),
-    );
+    const rows = await this.deps.taskRows.listTree(rootId, ownerId);
     return rows.map(toTask);
   }
 
@@ -271,9 +256,7 @@ export class TaskControl {
     };
     try {
       if (message) this.checkMessage(message);
-      const interrupted = await retryingTransaction(db, logger, 'tasks.interrupt', (tx) =>
-        this.interruptIn(tx, taskId, ownerId, message),
-      );
+      const interrupted = await db.transaction(() => this.interruptIn(taskId, ownerId, message));
       if (!interrupted) {
         logger.info('task not interrupted: not active', {
           ...fields,
@@ -314,15 +297,14 @@ export class TaskControl {
     const startedAt = Date.now();
     const fields = { taskId, ownerId };
     try {
-      const stoppedTasks = await retryingTransaction(db, logger, 'tasks.stop', async (tx) => {
-        // The target's end notice goes to its parent: the parent is locked first. That lock does
-        // not read the deletion mark, so it is checked here, as in `lockOwned`.
-        const target = await taskRows.lockWithParent(tx, taskId);
+      const stoppedTasks = await db.transaction(async () => {
+        // `find` does not read the deletion mark, so it is checked here, as in `findOwned`.
+        const target = await taskRows.find(taskId);
         if (target?.ownerId !== ownerId || target.deletedAt !== null) {
           throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
         }
         if (isFinished(target.status)) return [];
-        return this.stopTree(tx, target);
+        return this.stopTree(target);
       });
       this.cutOff(stoppedTasks, 'stopped');
       const stoppedIds = stoppedTasks.map((task) => task.taskId);
@@ -347,25 +329,17 @@ export class TaskControl {
    * root session. Only a root can be deleted: another task, a missing, another owner's or an
    * already deleted one gives `TASK_NOT_FOUND`.
    *
-   * With `tx` everything is written in the caller's transaction and nothing is retried here, as in
-   * {@link create}. The steps of the stopped tasks are then not cut off here, since the commit is
-   * the caller's: the `task.stopped` NOTIFY at that commit cuts them off on every instance, this
-   * one included, and the heartbeat if the NOTIFY is lost.
+   * This process's steps of the stopped tasks are cut off right after the write, also when the
+   * write joined a caller's transaction that has not committed yet: if that one rolls back, the
+   * cut-off steps are lost steps, and the sweeper queues their tasks again.
    */
-  async deleteTree(rootId: string, ownerId: string, tx?: Transaction): Promise<'deleted'> {
+  async deleteTree(rootId: string, ownerId: string): Promise<'deleted'> {
     const { db, logger } = this.deps;
     const startedAt = Date.now();
-    const fields = { rootId, ownerId, inCallerTx: tx !== undefined };
+    const fields = { rootId, ownerId };
     try {
-      let stoppedTasks: TaskRow[];
-      if (tx) {
-        stoppedTasks = await this.deleteTreeIn(tx, rootId, ownerId);
-      } else {
-        stoppedTasks = await retryingTransaction(db, logger, 'tasks.deleteTree', (own) =>
-          this.deleteTreeIn(own, rootId, ownerId),
-        );
-        this.cutOff(stoppedTasks, 'stopped');
-      }
+      const stoppedTasks = await db.transaction(() => this.deleteTreeIn(rootId, ownerId));
+      this.cutOff(stoppedTasks, 'stopped');
       logger.info('task tree deleted', {
         ...fields,
         stoppedIds: stoppedTasks.map((task) => task.taskId),
@@ -383,21 +357,20 @@ export class TaskControl {
     }
   }
 
-  /** The deletion's writes in `tx`: the root locked, the tree stopped and marked deleted. */
-  private async deleteTreeIn(tx: Transaction, rootId: string, ownerId: string): Promise<TaskRow[]> {
+  /** The deletion's writes: the tree stopped and marked deleted. */
+  private async deleteTreeIn(rootId: string, ownerId: string): Promise<TaskRow[]> {
     const { taskRows } = this.deps;
-    const root = await taskRows.lockOwned(tx, rootId, ownerId);
+    const root = await taskRows.findOwned(rootId, ownerId);
     if (!root || root.parentId !== null) {
       throw new RuntimeError('TASK_NOT_FOUND', `Task ${rootId} not found`);
     }
-    // `stopTree` locks every task of the tree before the mark is written.
-    const stoppedInTree = await this.stopTree(tx, root);
-    await taskRows.markDeleted(tx, root.taskId);
+    const stoppedInTree = await this.stopTree(root);
+    await taskRows.markDeleted(root.taskId);
     return stoppedInTree;
   }
 
-  /** The creation's writes in `tx`: the parent locked, the task row and `task.created`. */
-  private async createIn(tx: Transaction, request: CreateTask, input: unknown): Promise<TaskRow> {
+  /** The creation's writes: the task row and `task.created`. */
+  private async createIn(request: CreateTask, input: unknown): Promise<TaskRow> {
     const { tasks, taskRows, events } = this.deps;
     const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
@@ -406,7 +379,7 @@ export class TaskControl {
       depth: 0,
     };
     if (request.parentId !== undefined) {
-      const parent = await taskRows.lockOwned(tx, request.parentId, request.ownerId);
+      const parent = await taskRows.findOwned(request.parentId, request.ownerId);
       if (!parent) {
         throw new RuntimeError('TASK_NOT_FOUND', `Task ${request.parentId} not found`);
       }
@@ -418,14 +391,14 @@ export class TaskControl {
       }
       lineage = { parentId: parent.taskId, rootId: parent.rootId, depth: parent.depth + 1 };
     }
-    const row = await tasks.insert(tx, {
+    const row = await tasks.insert({
       taskId,
       type: request.type,
       ownerId: request.ownerId,
       input,
       ...lineage,
     });
-    await events.append(tx, {
+    await events.append({
       type: RuntimeEventTypeSchema.enum['task.created'],
       task: row,
       payload: { type: row.type, parentId: row.parentId, depth: row.depth },
@@ -433,30 +406,29 @@ export class TaskControl {
     return row;
   }
 
-  /** The interrupt under the task's lock; `undefined` when the task is not active. */
+  /** The interrupt's writes; `undefined` when the task is not active. */
   private async interruptIn(
-    tx: Transaction,
     taskId: string,
     ownerId: string,
     message: InterruptMessage | undefined,
   ): Promise<{ task: TaskRow; messageId: string | undefined } | undefined> {
     const { tasks, taskRows, events, inbox } = this.deps;
-    const task = await taskRows.lockOwned(tx, taskId, ownerId);
+    const task = await taskRows.findOwned(taskId, ownerId);
     if (!task) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
     if (!isInterruptible(task)) return undefined;
 
     const change: TaskChange = message
       ? { kind: 'set', status: queued, fence: true }
       : { kind: 'wait', reason: WaitReasonSchema.enum.interrupted, fence: true };
-    const row = await writeLocked(tx, tasks, task, change);
-    await events.append(tx, {
+    const row = await writeLocked(tasks, task, change);
+    await events.append({
       type: EVENT['task.interrupted'],
       task: row,
       payload: { from: task.status, status: row.status, withMessage: message !== undefined },
     });
     if (!message) return { task: row, messageId: undefined };
     // The task is `queued` already: the message wakes nothing.
-    const inserted = await inbox.insertMessage(tx, {
+    const inserted = await inbox.insertMessage({
       recipientId: taskId,
       ownerId,
       kind: message.kind,
@@ -468,19 +440,17 @@ export class TaskControl {
   }
 
   /**
-   * Stops `top` (unless finished) and every unfinished descendant, the caller holding `top`'s lock
-   * and its parent's. Descendants are locked level by level, each level re-read after its locks
-   * until no new child shows up: a child spawned meanwhile either committed before the lock and is
-   * stopped here, or its parent's commit is fenced (Invariant 6). Tasks end top-down, so each row
-   * is still as locked when it ends: only its children, ending later, write to it.
+   * Stops `top` (unless finished) and every unfinished descendant. Descendants are read level by
+   * level; a parent stopped here has its attempt raised, so its commit that would spawn a child
+   * afterwards is fenced. Tasks end top-down: only a task's children, ending later, write to it.
    */
-  private async stopTree(tx: Transaction, top: TaskRow): Promise<TaskRow[]> {
-    const tree = [top, ...(await this.lockDescendants(tx, top.taskId))];
+  private async stopTree(top: TaskRow): Promise<TaskRow[]> {
+    const tree = [top, ...(await this.listDescendants(top.taskId))];
     const stoppedTasks: TaskRow[] = [];
     for (const task of tree) {
       if (isFinished(task.status)) continue;
       stoppedTasks.push(
-        await endTask(tx, this.deps, task, {
+        await endTask(this.deps, task, {
           status: stopped,
           fields: { stepClaims: 0, recoveries: 0 },
           fence: true,
@@ -488,33 +458,29 @@ export class TaskControl {
       );
     }
     if (stoppedTasks.length > 0) {
-      // Invariant 3: a task that no longer waits has no open request. The task is locked before
-      // its request, as in `Decisions.resolve`.
-      await this.deps.decisions.cancelOpen(
-        tx,
-        stoppedTasks.map((task) => task.taskId),
-      );
+      // Invariant 3: a task that no longer waits has no open request.
+      await this.deps.decisions.cancelOpen(stoppedTasks.map((task) => task.taskId));
     }
     return stoppedTasks;
   }
 
-  /** Every descendant of the task, locked FOR UPDATE level by level, in that order. */
-  private async lockDescendants(tx: Transaction, taskId: string): Promise<TaskRow[]> {
+  /** Every descendant of the task, read level by level, in that order. */
+  private async listDescendants(taskId: string): Promise<TaskRow[]> {
     const descendants: TaskRow[] = [];
     let parentIds = [taskId];
     while (parentIds.length > 0) {
-      const level = await this.lockLevel(tx, parentIds);
+      const level = await this.listLevel(parentIds);
       descendants.push(...level);
       parentIds = level.map((task) => task.taskId);
     }
     return descendants;
   }
 
-  /** The children of `parentIds`, locked and re-read until no new one shows up, by `task_id`. */
-  private async lockLevel(tx: Transaction, parentIds: readonly string[]): Promise<TaskRow[]> {
+  /** The children of `parentIds`, re-read until no new one shows up, by `task_id`. */
+  private async listLevel(parentIds: readonly string[]): Promise<TaskRow[]> {
     const children = new Map<string, TaskRow>();
     for (;;) {
-      const rows = await this.deps.taskRows.lockChildren(tx, parentIds);
+      const rows = await this.deps.taskRows.listChildren(parentIds);
       const known = children.size;
       for (const row of rows) children.set(row.taskId, row);
       if (children.size === known) break;

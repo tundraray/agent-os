@@ -149,7 +149,7 @@ export class KnowledgeController {
     recordId: string,
     after: { type: 'entity' | 'relation'; id: number; relations?: number },
   ): Promise<void> {
-    return this.auditLog.record(null, {
+    return this.auditLog.record({
       kind: KNOWLEDGE_DELETE_KIND,
       actor,
       objectType: LIBRARY_RECORD_OBJECT_TYPE,

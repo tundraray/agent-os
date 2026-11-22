@@ -15,15 +15,13 @@ import {
   type UserStatus,
 } from '@agent-os/contracts';
 import {
-  DATABASE_CONNECTION,
-  type Database,
-  type DatabaseConnection,
   IdentityRolesRepository,
   IdentitySessionsRepository,
   type IdentityUserRow,
   IdentityUsersRepository,
   type MemberRoleRow,
   type UserListPosition,
+  Db,
 } from '@agent-os/db';
 import { z } from 'zod';
 import { AuditLog, PASSWORD_SET } from '../audit/audit-log';
@@ -83,31 +81,26 @@ function decodeUserCursor(cursor: string): UserListPosition {
 /** Employees managed by an administrator (FR-33) and the employee's own password (AC-33.3). */
 @Injectable()
 export class UsersService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(DATABASE_CONNECTION) database: DatabaseConnection,
+    private readonly db: Db,
     private readonly users: IdentityUsersRepository,
     private readonly roles: IdentityRolesRepository,
     private readonly sessions: IdentitySessionsRepository,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+  ) {}
 
   /** A page of employees by name, then id; the search matches name, email and login ignoring case. */
   async list(query: AdminUserListQuery): Promise<AdminUserPage> {
     const after =
       query.cursor === undefined ? undefined : decodeUserCursor(query.cursor);
-    const rows = await this.users.page(this.db, {
+    const rows = await this.users.page({
       search: query.query,
       after,
       limit: ADMIN_USER_PAGE_SIZE + 1,
     });
     const page = rows.slice(0, ADMIN_USER_PAGE_SIZE);
     const roles = await this.roles.ofUsers(
-      this.db,
       page.map((user) => user.id),
     );
     const last = page.at(-1);
@@ -128,7 +121,7 @@ export class UsersService {
   /** The employee with where his admin right comes from. 404 USER_NOT_FOUND. */
   async detail(userId: string): Promise<AdminUserDetail> {
     const user = await this.findOr404(userId);
-    const roles = await this.roles.ofUsers(this.db, [user.id]);
+    const roles = await this.roles.ofUsers([user.id]);
     return {
       ...toAdminUserSummary(user, roles),
       adminRight: {
@@ -150,14 +143,14 @@ export class UsersService {
     checkNewPassword(body.password);
     const passwordHash = await hashPassword(body.password);
     const user = await this.db
-      .transaction(async (tx) => {
-        const created = await this.users.insertLocal(tx, {
+      .transaction(async () => {
+        const created = await this.users.insertLocal({
           login: normalizeIdentifier(body.login),
           email: normalizeIdentifier(body.email),
           name: body.name,
           passwordHash,
         });
-        await this.auditLog.record(tx, {
+        await this.auditLog.record({
           kind: 'admin_change',
           actor: actorId,
           objectType: 'user',
@@ -203,17 +196,17 @@ export class UsersService {
     if (user.passwordHash === null) throw identityError('NOT_LOCAL_ACCOUNT');
     checkNewPassword(password);
     const passwordHash = await hashPassword(password);
-    await this.db.transaction(async (tx) => {
-      await this.users.setPasswordHash(tx, user.id, passwordHash);
-      await this.sessions.deleteOfUser(tx, user.id);
+    await this.db.transaction(async () => {
+      await this.users.setPasswordHash(user.id, passwordHash);
+      await this.sessions.deleteOfUser(user.id);
       const target = {
         actor: actorId,
         objectType: 'user',
         objectId: user.id,
         outcome: 'ok',
       };
-      await this.auditLog.record(tx, { kind: 'password_reset', ...target });
-      await this.auditLog.record(tx, {
+      await this.auditLog.record({ kind: 'password_reset', ...target });
+      await this.auditLog.record({
         kind: 'admin_change',
         ...target,
         before: null,
@@ -236,9 +229,9 @@ export class UsersService {
   ): Promise<AdminUserDetail> {
     const startedAt = Date.now();
     const user = await this.findOr404(userId);
-    await this.db.transaction(async (tx) => {
-      await this.users.setPersonalAdmin(tx, user.id, enabled);
-      await this.auditLog.record(tx, {
+    await this.db.transaction(async () => {
+      await this.users.setPersonalAdmin(user.id, enabled);
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: 'user',
@@ -282,11 +275,11 @@ export class UsersService {
     const startedAt = Date.now();
     const user = await this.findOr404(userId);
     const disabling = status === UserStatusSchema.enum.disabled;
-    await this.db.transaction(async (tx) => {
-      await this.users.setStatus(tx, user.id, status);
+    await this.db.transaction(async () => {
+      await this.users.setStatus(user.id, status);
       if (disabling)
-        await this.sessions.endLive(tx, user.id, ENDED_BY_BLOCK);
-      await this.auditLog.record(tx, {
+        await this.sessions.endLive(user.id, ENDED_BY_BLOCK);
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: 'user',
@@ -304,13 +297,13 @@ export class UsersService {
       outcome: 'ok',
       durationMs: Date.now() - startedAt,
     });
-    const roles = await this.roles.ofUsers(this.db, [user.id]);
+    const roles = await this.roles.ofUsers([user.id]);
     return toAdminUserSummary({ ...user, status }, roles);
   }
 
   /** The employee's own roles by name, for the share window (AC-03.1); no members, no other roles. */
   async ownRoles(userId: string): Promise<MyRoleList> {
-    return roleRefs(await this.roles.ofUsers(this.db, [userId]));
+    return roleRefs(await this.roles.ofUsers([userId]));
   }
 
   /**
@@ -322,7 +315,7 @@ export class UsersService {
     body: PasswordChangeBody,
   ): Promise<void> {
     const startedAt = Date.now();
-    const user = await this.users.findById(this.db, userId);
+    const user = await this.users.findById(userId);
     if (user?.passwordHash == null) {
       throw this.refuseOwnChange(
         userId,
@@ -337,9 +330,9 @@ export class UsersService {
     }
     checkNewPassword(body.newPassword);
     const passwordHash = await hashPassword(body.newPassword);
-    await this.db.transaction(async (tx) => {
-      await this.users.setPasswordHash(tx, userId, passwordHash);
-      await this.auditLog.record(tx, {
+    await this.db.transaction(async () => {
+      await this.users.setPasswordHash(userId, passwordHash);
+      await this.auditLog.record({
         kind: 'password_changed',
         actor: userId,
         objectType: 'user',
@@ -356,7 +349,7 @@ export class UsersService {
 
   /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
   async setOwnLanguage(userId: string, language: Language): Promise<void> {
-    await this.users.setLanguage(this.db, userId, language);
+    await this.users.setLanguage(userId, language);
   }
 
   /** Logs a refused own change and gives its 400 answer; the password stays as it was (AC-33.4). */
@@ -375,7 +368,7 @@ export class UsersService {
   /** The employee, or 404 USER_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
   async findOr404(userId: string): Promise<IdentityUserRow> {
     const user = isUuid(userId)
-      ? await this.users.findById(this.db, userId)
+      ? await this.users.findById(userId)
       : undefined;
     if (user === undefined) throw identityError('USER_NOT_FOUND');
     return user;

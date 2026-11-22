@@ -68,7 +68,7 @@ export class AdminKnowledgeSettingsController {
           limitTokens: body.limitTokens,
           lessonsEnabled: body.lessonsEnabled,
         });
-        await this.auditLog.record(null, {
+        await this.auditLog.record({
           kind: 'admin_change',
           actor,
           objectType: SETTINGS_OBJECT_TYPE,

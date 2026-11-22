@@ -9,7 +9,7 @@ import {
   RunCodeConfirmationContentSchema,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import { AgentCodeCallsRepository, AgentToolResultsRepository, DATABASE, type Database } from '@agent-os/db';
+import { AgentCodeCallsRepository, AgentToolResultsRepository } from '@agent-os/db';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import { OwnerDisabledError } from '../../access-gate';
@@ -126,7 +126,6 @@ export function confirmedNamesOf(confirmed: unknown): ConfirmedNames {
 
 export interface RunCodeDeps {
   readonly codeRunner: CodeRunner;
-  readonly database: Database;
   /** The attempts of a read run, the audit rows of the calls a script makes and the results it reads. */
   readonly callRecords: CallRecords;
   readonly codeCallRows: AgentCodeCallsRepository;
@@ -235,8 +234,8 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     }
     const target = callTargetOf(run.codeScope.snapshot, request.name);
     const key = { taskId: run.caller.agentId, runCallId: run.callId, attempt: run.attempt, seq };
-    const opened = await run.guard((tx) =>
-      deps.codeCallRows.open(tx, { ...key, ...target, args: request.args }),
+    const opened = await run.guard(() =>
+      deps.codeCallRows.open({ ...key, ...target, args: request.args }),
     );
     if (opened.outcome === 'fenced') {
       run.logger.warn('code call not sent: its audit row was fenced', { seq, ...target });
@@ -253,7 +252,7 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
         // The gate refused a disabled owner before the call started (KD-4): `interrupted` even in a `write`
         // run, never `unknown`. The rejection still ends the run; the agent fails at its next model call.
         if (error instanceof OwnerDisabledError) {
-          await deps.codeCallRows.close(deps.database, key, {
+          await deps.codeCallRows.close(key, {
             outcome: ToolOutcomeSchema.enum.interrupted,
             finishedAt: new Date(),
           });
@@ -262,14 +261,14 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       });
     if (execution.kind === 'aborted') {
       // A record that the call was cancelled, not a new action: its own transaction, no `guard` (Flow 4).
-      await deps.codeCallRows.close(deps.database, key, {
+      await deps.codeCallRows.close(key, {
         outcome: interruptedRunOutcome(run.runArgs),
         finishedAt: new Date(),
       });
       return { kind: 'finish', reason: 'aborted' };
     }
     if (execution.kind === 'refused') {
-      await deps.codeCallRows.close(deps.database, key, {
+      await deps.codeCallRows.close(key, {
         outcome: 'refused',
         refusalReason: execution.reason,
         finishedAt: new Date(),
@@ -279,7 +278,7 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
         error: { outcome: 'refused', reason: execution.reason, text: execution.text },
       };
     }
-    await deps.codeCallRows.close(deps.database, key, { outcome: execution.outcome, finishedAt: new Date() });
+    await deps.codeCallRows.close(key, { outcome: execution.outcome, finishedAt: new Date() });
     if (execution.outcome === 'success' || execution.outcome === 'empty') {
       return { kind: 'value', value: execution.fullResult?.value ?? null };
     }
@@ -294,7 +293,7 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     run: RunScope,
     request: Extract<BridgeRequest, { op: 'read' }>,
   ): Promise<RequestAnswer> {
-    const found = await deps.toolResultRows.findForRun(deps.database, {
+    const found = await deps.toolResultRows.findForRun({
       callId: request.resultId,
       taskId: run.caller.agentId,
       ownerId: run.caller.ownerId,
@@ -352,8 +351,8 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
   /** The attempt of a run: 1 for `write` (it has no `run_attempt` record); for `read`, recorded through `guard` (KD-7). */
   async function attemptOf(input: OutsideToolInput<RunCodeArgs>, logger: Logger): Promise<number | DoneResult> {
     if (input.args.class === 'write') return 1;
-    const bumped = await input.guard((tx) =>
-      deps.callRecords.startAttempt(tx, { taskId: input.caller.agentId, callId: input.callId }, input.args),
+    const bumped = await input.guard(() =>
+      deps.callRecords.startAttempt({ taskId: input.caller.agentId, callId: input.callId }, input.args),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');
@@ -442,7 +441,6 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
 export class RunCodeTool implements OnModuleInit {
   constructor(
     @Inject(CODE_RUNNER) private readonly codeRunner: CodeRunner,
-    @Inject(DATABASE) private readonly database: Database,
     @Inject(CallRecords) private readonly callRecords: CallRecords,
     @Inject(AgentCodeCallsRepository) private readonly codeCallRows: AgentCodeCallsRepository,
     @Inject(AgentToolResultsRepository) private readonly toolResultRows: AgentToolResultsRepository,
@@ -456,7 +454,6 @@ export class RunCodeTool implements OnModuleInit {
     this.registry.useRunCode(
       createRunCodeTool({
         codeRunner: this.codeRunner,
-        database: this.database,
         callRecords: this.callRecords,
         codeCallRows: this.codeCallRows,
         toolResultRows: this.toolResultRows,
