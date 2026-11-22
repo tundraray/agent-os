@@ -63,7 +63,7 @@
 - **Part**: `agent-types`
 - **Covers**: FR-01 – FR-11
 - **Depends on**: ничего — первая часть
-- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md), [ADR-0002](../../adr/ADR-0002-app-schema-migrations.md), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md), [ADR-0016](../../adr/ADR-0016-library-records-and-visibility.md), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md), [ADR-0021](../../adr/ADR-0021-deep-agent-record-kind.md)
+- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md), [ADR-0016](../../adr/ADR-0016-library-records-and-visibility.md), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md), [ADR-0021](../../adr/ADR-0021-deep-agent-record-kind.md)
 
 **Out of scope**
 
@@ -472,7 +472,7 @@ sequenceDiagram
 - `library_records.kind` проверяет CHECK из `RecordKindSchema` (`agent`, `deep_agent`). Содержимое проверяет только схема вида в коде.
 - `agent_sessions.subagent` — имя сабагента сессии или `null`; `record_kind` без CHECK.
 - `agent_code_calls.refusal_reason` — CHECK из `ToolRefusalReasonSchema`.
-- Схему меняют миграции от `db:generate` ([ADR-0002](../../adr/ADR-0002-app-schema-migrations.md)); строк данных они не пишут, встроенные записи вставляет сидер ([builtin-record.md](../../code-system/patterns/builtin-record.md)).
+- Схему меняют миграции от `db:generate` ([ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md)); строк данных они не пишут, встроенные записи вставляет сидер ([builtin-record.md](../../code-system/patterns/builtin-record.md)).
 
 ### Invariants
 

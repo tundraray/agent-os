@@ -6,7 +6,7 @@
 
 ## Decision
 
-Runtime исследований связан с NestJS и чатом внутри `apps/api`, а оценке нужен движок, который собирается без сервера. Агентская система делится на приватные пакеты pnpm workspace в `packages/`, по одному на каждую границу владения, а `apps/api` (NestJS) остаётся только точкой сборки. Пакеты не зависят от NestJS: каждый отдаёт функцию сборки, а `apps/api` оборачивает её в модуль Nest. Модель схемы `app` и история миграций переезжают в `@agent-os/db`. Решения ADR-0001 и ADR-0003 не меняются; меняется место их исполнения и место контракта обработчика.
+Агентская система делится на приватные пакеты pnpm workspace в `packages/`, по одному на каждую границу владения, а `apps/api` (NestJS) остаётся только точкой сборки. Пакеты не зависят от NestJS: каждый отдаёт функцию сборки, а `apps/api` оборачивает её в модуль Nest. Модель схемы `app` и история миграций переезжают в `@agent-os/db`. Решения ADR-0001 и ADR-0003 не меняются; меняется место их исполнения и место контракта обработчика.
 
 ### Decision Details
 
@@ -24,20 +24,17 @@ Runtime исследований связан с NestJS и чатом внутр
 |---|---|---|
 | `@agent-os/contracts` (есть) | zod-контракты API и данных runtime | — |
 | `@agent-os/db` | пул `pg`, клиент Drizzle, модель схемы `app` всех фич, миграции и их проверка | contracts |
-| `@agent-os/runtime` | задачи, события, outbox, восстановление, evidence; порт обработчика (`TaskHandler`, `TaskContext`, `HandlerResult`) | contracts, db |
-| `@agent-os/sources` | `ToolExecutor`, `SourceAdapter`, клиент MCP, обработчик `source.fetch` | contracts, runtime |
-| `@agent-os/engine` | реестр возможностей, контроллер, `ContextBuilder`, конфигурация процесса; агенты ролей на Mastra | всё выше, `@mastra/core` |
-| `@agent-os/eval` | не планируется | — |
-| `@agent-os/mcp-fixture` | тестовый MCP-сервер ([design-mcp-source.md](../features/research-runtime/design-mcp-source.md), KD-6) | — (только в devDependencies) |
+| `@agent-os/runtime` | задачи, события, outbox, восстановление; порт обработчика (`TaskHandler`) | contracts, db |
+| `@agent-os/mcp-fixture` | тестовый MCP-сервер | — (только в devDependencies) |
 | `apps/api` | HTTP, аутентификация, чат и беседы, модули Nest над пакетами, чтение окружения | рабочие пакеты |
 
-Слои снизу вверх: contracts, db, runtime, sources, engine. Пакет зависит только от слоёв ниже себя, `apps/api` стоит над всеми, а `apps/web` зависит только от contracts. Пакета `@agent-os/eval` не будет: части `eval` в Delivery Parts [deep-research/prd.md](../features/deep-research/prd.md) нет. Оценка в Decision, Context, Rationale и Options — мотив решения на момент принятия.
+Слои снизу вверх: contracts, db, runtime. Пакет зависит только от слоёв ниже себя, `apps/api` стоит над всеми, а `apps/web` зависит только от contracts. Оценка в Decision, Context, Rationale и Options — мотив решения на момент принятия.
 
 ## Context
 
 Runtime исследований живёт в `apps/api/src/research`, слой данных схемы `app` — в `src/database`, миграции — в `apps/api/migrations` ([ADR-0003](ADR-0003-drizzle-data-layer.md)). Runtime связан с Nest декораторами DI, `Logger` и `ConfigService`, а владельца беседы проверяет прямо через `ThreadsService`. Поэтому его тесты с Postgres поднимают весь `AppModule` с Mastra и чатом.
 
-Дальше на runtime строятся `mcp-source` (спроектирован, не собран), движок глубокого исследования и оценка ([deep-research/prd.md](../features/deep-research/prd.md), Delivery Parts); оценка запускает движок без сервера. Ограничения того же PRD (Constraints) требуют фреймворка из приватных пакетов, где `apps/api` — только точка входа, а граница [ADR-0001](ADR-0001-durable-runtime-owner.md) сохраняется.
+Дальше на runtime строятся `mcp-source` (спроектирован, не собран), движок глубокого исследования и оценка; оценка запускает движок без сервера. Ограничения того же PRD (Constraints) требуют фреймворка из приватных пакетов, где `apps/api` — только точка входа, а граница [ADR-0001](ADR-0001-durable-runtime-owner.md) сохраняется.
 
 ## Rationale
 
@@ -75,9 +72,8 @@ Runtime исследований живёт в `apps/api/src/research`, слой
 
 ### Positive Consequences
 
-- Запрет Mastra в db, runtime и sources проверяют и объявленные зависимости (knip в CI), и lint
+- Запрет Mastra в db и runtime проверяют и объявленные зависимости (knip в CI), и lint
 - Тесты runtime с Postgres и матрица убийств поднимают только runtime и db
-- Тесты пакета движка собирают движок теми же функциями сборки, что `apps/api`
 
 ### Negative Consequences
 
@@ -87,8 +83,7 @@ Runtime исследований живёт в `apps/api/src/research`, слой
 ### Neutral Consequences
 
 - Схема `app`, префиксы таблиц и история миграций не меняются; меняется каталог
-- Модуль `research` из ADR-0001 теперь пакет `@agent-os/runtime`
-- Порт обработчика (`TaskHandler`, `TaskContext`, `HandlerResult`), который ADR-0001 относит к `packages/contracts`, живёт в `@agent-os/runtime`. Zod-схемы данных, включая `HandlerResultSchema`, исходы и покрытие, остаются в contracts
+- Порт обработчика (`TaskHandler`) живёт в `@agent-os/runtime`
 
 ## Implementation Guidance
 
@@ -97,30 +92,20 @@ Runtime исследований живёт в `apps/api/src/research`, слой
 - Относительный путь в чужой пакет запрещён: пакет импортируется только по имени, через свой вход
 - Пакеты потребляются как исходный TypeScript: `exports` указывает на `src/index.ts`, у пакета нет сборки и нет `dist`. Собираются только приложения: `apps/api` — бандлером Nest CLI (rspack), который компилирует исходники пакетов в свой `dist`, `apps/web` — Next с `transpilePackages`. Относительные импорты пишутся без расширения
 
-  > Изменено 2026-11-21. Раньше здесь стояло: «Пакеты потребляются как собранный `dist` через `exports`. Собирает их `tsc` в порядке графа Turborepo, а при локальной разработке пакеты собираются в режиме watch». Решение заменено: владелец не хочет, чтобы каждый пакет участвовал в сборке. Первый вариант замены — запускать исходники пакетов прямо в Node 26, который исполняет TypeScript сам, — в тот же день уступил бандлу приложения: Node требует расширение в каждом относительном импорте, а бандлер нет. Node исполняет исходник сам только там, где загрузчик невозможен: в тестах — процесс исполнителя кода под моделью разрешений (каталог `packages/code-runner/src/executor`, импорты через `#executor/*`). Остальные дочерние процессы тестов (MCP fixture, тестовые процессы runtime и agents) запускаются из исходников через загрузчик `tsx`
+  > Node исполняет исходник сам только там, где загрузчик невозможен: в тестах — процесс исполнителя кода под моделью разрешений (каталог `packages/code-runner/src/executor`, импорты через `#executor/*`). Остальные дочерние процессы тестов (MCP fixture, тестовые процессы runtime и agents) запускаются из исходников через загрузчик `tsx`
 - Сторонние зависимости пакетов в бандл не входят и ищутся при запуске из `apps/api/node_modules`, поэтому `apps/api` объявляет их в своём `package.json` той же версией, что и пакет
 - Файлы, которые пакет читает при работе, лежат рядом с его кодом, и сборка `apps/api` кладёт их рядом с бандлом: миграции — `packages/db/src/migrations` → `dist/migrations`, вход исполнителя кода — `packages/code-runner/src/executor` → `dist/executor`
 - Зависимость идёт только вниз по слоям и объявлена в `package.json`; цикл отвергает turbo, необъявленный импорт отмечает knip
 - Пакеты не импортируют `@nestjs/*`: функция сборки принимает настройки и порты (логгер, часы, владелец беседы) и отдаёт сервисы со стартом и остановкой; `apps/api` привязывает их к хукам Nest
 - Окружение читает только точка сборки `apps/api`. Код в `packages/`, включая функции сборки, получает настройки параметрами
 - Чужой домен приходит в пакет портом: runtime не знает о беседах, проверку владельца и хук удаления беседы связывает `apps/api`
-- `@mastra/*` объявляют только engine и `apps/api`; правила ADR-0001 действуют в пакетах так же, как в приложении
-- Запрет импорта `@mastra/*` остаётся в lint пакетов db, runtime и sources: проверку одних зависимостей обходит добавление зависимости
+- Запрет импорта `@mastra/*` остаётся в lint пакетов db и runtime: проверку одних зависимостей обходит добавление зависимости
 - Таблицы фичи объявляются в модели схемы `app` в `@agent-os/db`, миграции генерируются там же
 - Тест живёт в пакете, чьё поведение доказывает; в `apps/api` остаются HTTP-тесты чата и бесед и тест связывания пакетов
 
 ## Related Information
 
 - [ADR-0001](ADR-0001-durable-runtime-owner.md) — runtime как durable-владелец, граница с Mastra; этим ADR не правится
-- [ADR-0003](ADR-0003-drizzle-data-layer.md) — Drizzle, схема `app`, миграции; этим ADR не правится, как и ADR-0002 и `research-runtime/prd.md`
-- [design-runtime.md](../features/research-runtime/design-runtime.md) приводится в соответствие этому ADR:
-  - C2–C4 и расположение кода переходят в runtime и db
-  - DI Nest (`DatabaseModule`, `DRIZZLE`, `ResearchModule`) заменяется функцией сборки
-  - старт и остановка по хукам Nest (KD-7) переходят в связывание `apps/api`
-  - `ThreadsService` становится портом
-  - порт обработчика (`TaskHandler`, `TaskContext`, `HandlerResult`) в Snapshot числится в runtime, а zod-схемы — в contracts
-  - тесты, матрица убийств и CI-задача `e2e-runtime` переходят в пакет runtime
-- [design-mcp-source.md](../features/research-runtime/design-mcp-source.md) приводится в соответствие этому ADR: модуль `sources` становится пакетом вместе с `@modelcontextprotocol/client`, allowlist приходит из точки сборки, тесты `research-runtime-mcp-source` переходят в пакет sources
-- [deep-research/prd.md](../features/deep-research/prd.md) — Constraints ссылаются на этот ADR; Delivery Parts
+- [ADR-0003](ADR-0003-drizzle-data-layer.md) — Drizzle, схема `app`, миграции; этим ADR не правится
 - [Node.js — Package entry points](https://nodejs.org/api/packages.html#package-entry-points) — `exports` закрывает неперечисленные подпути
 - [knip — Unlisted dependencies](https://knip.dev/guides/handling-issues#unlisted-dependencies) — импорт необъявленного пакета

@@ -18,9 +18,9 @@ Accepted
 
 ## Context
 
-[ADR-0002](ADR-0002-app-schema-migrations.md) отвёл таблицам приложения схему `app` и выбрал node-pg-migrate с `.sql`-файлами, а запросы при этом пишутся на сыром `pg`. Кода на этом решении ещё нет. Runtime исследований и следующий за ним `chat-storage` дают сотни запросов к одним таблицам.
+ADR-0002 отвёл таблицам приложения схему `app` и выбрал node-pg-migrate с `.sql`-файлами, а запросы при этом пишутся на сыром `pg`. Кода на этом решении ещё нет. Runtime исследований и следующий за ним `chat-storage` дают сотни запросов к одним таблицам.
 
-Запросы runtime требуют от слоя данных многого: частичный UNIQUE и `INSERT … ON CONFLICT` с арбитром по нему, блокировки строк `FOR NO KEY UPDATE` и `FOR UPDATE OF … SKIP LOCKED`, рекурсивный CTE проверки цикла, savepoint во вложенной транзакции, `bytea`, составные FK с каскадом, CHECK и identity ([design-runtime.md](../features/research-runtime/design-runtime.md), KD-3, Data Model). Таблицы `mastra_*` и `audit_events` в `public` остаются чужими. Приложение работает несколькими экземплярами и само не мигрирует.
+Запросы runtime требуют от слоя данных многого: частичный UNIQUE и `INSERT … ON CONFLICT` с арбитром по нему, блокировки строк `FOR NO KEY UPDATE` и `FOR UPDATE OF … SKIP LOCKED`, рекурсивный CTE проверки цикла, savepoint во вложенной транзакции, `bytea`, составные FK с каскадом, CHECK и identity. Таблицы `mastra_*` и `audit_events` в `public` остаются чужими. Приложение работает несколькими экземплярами и само не мигрирует.
 
 ## Rationale
 
@@ -121,9 +121,7 @@ flowchart LR
 
 ## Related Information
 
-- [ADR-0002](ADR-0002-app-schema-migrations.md) — схема `app` и node-pg-migrate; инструмент заменён этим ADR
 - [ADR-0001](ADR-0001-durable-runtime-owner.md) — runtime, чьи таблицы первыми живут в схеме `app`
-- [design-runtime.md](../features/research-runtime/design-runtime.md) — KD-2, Data Model, Migration Strategy, Appendix: Evidence (spike Drizzle, обходы и ограничение `OF` неполными именами таблиц)
 - [Drizzle — Migrations](https://orm.drizzle.team/docs/migrations) — `generate`, `migrate`, программный `migrate()`
 - [Drizzle — drizzle.config](https://orm.drizzle.team/docs/drizzle-config-file) — `schemaFilter`, `migrations.schema` и `migrations.table`
 - [Drizzle — custom migrations](https://orm.drizzle.team/docs/kit-custom-migrations) — `generate --custom`

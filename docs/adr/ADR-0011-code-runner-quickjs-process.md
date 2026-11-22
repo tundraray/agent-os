@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-14). Ждёт решения владельца.
+Accepted (2026-11-22).
 
 ## Decision
 

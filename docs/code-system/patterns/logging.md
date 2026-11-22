@@ -2,7 +2,7 @@
 
 ## Problem
 
-Каждый шаг агента, workflow и фоновой работы должен попасть и в консоль, и в Sentry, с идентификаторами, входами, исходами, длительностью и полной ошибкой, но без секретов. Признак: любое место, где код хочет что-то сообщить о своей работе.
+Каждый шаг агента и фоновой работы должен попасть и в консоль, и в Sentry, с идентификаторами, входами, исходами, длительностью и полной ошибкой, но без секретов. Признак: любое место, где код хочет что-то сообщить о своей работе.
 
 ## Shape
 
@@ -28,9 +28,8 @@
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — KD-6, контракт логгера
 - [design-agents.md](../../features/agent-platform/design-agents.md) — шаг, вызов модели и вызов инструмента агента
-- [design-workflows.md](../../features/agent-platform/design-workflows.md) — разбор шаблонов и запуск workflow
 - [design-chat.md](../../features/agent-platform/design-chat.md) — команды API, поток SSE, генерация заголовка
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — вход, блокировка; новые имена секретных полей
-- [design-web.md](../../features/custom-agents/design-web.md) — изменения записей, черновики и сообщения с чипом в вебе
+- [design-web.md](../../features/custom-agents/design-web.md) — изменения записей и сообщения с чипом в вебе
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — реестр, подключение аккаунта и вызов MCP; имена `refreshToken`, `sharedToken`, `tokens`
 - [design-core.md](../../features/model-providers/design-core.md) — память секретов процесса для ключей провайдеров (KD-7)

@@ -16,11 +16,11 @@
 
 Шаг модели собирает историю, вызывает модель и сохраняет ответ вместе с открытыми вызовами инструментов. Следующий шаг исполняет эти вызовы по порядку и сохраняет их результаты. Ответ модели сохранён до того, как начались инструменты, поэтому прерванный или потерянный шаг инструментов оставляет в истории видимые открытые вызовы, а не пропавший ответ. Сообщения, которые runtime отдаёт в начале шага, шаг модели ставит в историю перед вызовом модели, а шаг инструментов — после результатов своих вызовов. Так сообщение всегда стоит сразу за результатом инструмента (AC-07.1). Шаг, который не закрыл все вызовы ответа (остановился на подтверждении или исполнил подтверждённый вызов, а следующие ещё открыты), тоже пишет сообщения после своих результатов; `ModelClient`, собирая сообщения провайдера, ставит такие сообщения после последнего результата этого ответа, поэтому пара «вызов — результат», которую требует провайдер, не разрывается. Шаг сжатия пишет сообщения после сводки, а шаг, который падает по пределу ходов, — перед событием сбоя: модель увидит их после продолжения.
 
-Не взяты: модель и инструменты в одном шаге — прерывание теряло бы ответ модели вместе с вызовами; прежний длинный цикл `run` — нарушает [step-handler.md](../../code-system/patterns/step-handler.md).
+Не взяты: модель и инструменты в одном шаге — прерывание теряло бы ответ модели вместе с вызовами.
 
 #### KD-2: Ход кончается ответом без вызовов инструментов, как в Claude Code
 
-Если модель ответила текстом без вызовов, ход окончен. Корневая сессия (беседа) после этого ждёт сообщений. Дочерний агент без незаконченных детей завершается, и этот текст становится его отчётом. Дочерний агент, у которого дети ещё работают, ждёт их уведомлений, а его текст остаётся промежуточной репликой. Отдельного инструмента «finish» и форм результата нет: их процессный код уходит вместе с движком, а Haiku надёжнее заканчивает ход текстом, чем вызовом формы.
+Если модель ответила текстом без вызовов, ход окончен. Корневая сессия (беседа) после этого ждёт сообщений. Дочерний агент без незаконченных детей завершается, и этот текст становится его отчётом. Дочерний агент, у которого дети ещё работают, ждёт их уведомлений, а его текст остаётся промежуточной репликой. Отдельного инструмента «finish» и форм результата нет: Haiku надёжнее заканчивает ход текстом, чем вызовом формы.
 
 #### KD-3: Прерывание всегда приходит агенту сообщением `interrupt`
 
@@ -30,17 +30,17 @@
 
 #### KD-4: Инструмент с подтверждением ждёт запроса решения runtime, а перед отправкой пишет намерение
 
-MCP-инструмент читающий, только если сервер в `tools/list` пометил его `readOnlyHint: true`; любой другой изменяющий (FR-11). MCP разрешает это поле, по умолчанию оно `false`, и считать его можно только у доверенного сервера — серверы регистрирует администратор в реестре, поэтому они доверенные ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1; [MCP — Tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools), [MCP — ToolAnnotations](https://modelcontextprotocol.io/specification/2025-06-18/schema#toolannotations); поле есть в установленном `@modelcontextprotocol/client` 2.4.0). Изменяющий вызов останавливает шаг исходом `await_decision`, и тот же коммит дописывает в историю запись `tool_confirmation`. После подтверждения следующий шаг дописывает решение и намерение `tool_sent`, коммитит их через `guard` и только потом зовёт сервер. Потерянный после намерения шаг даёт вызову исход «исход неизвестен», и вызов не повторяется (AC-01.2). Тот же механизм «инструмент с подтверждением» открыт для инструментов верхних частей: бриф workflow в части `workflows` — это подтверждение с правкой аргументов. Инструмент может решать по аргументам, нужно ли подтверждение: так изменяющий запуск `run_code` ждёт решения, а читающий — нет ([design-code-execution.md](../code-execution/design-code-execution.md), KD-4).
+MCP-инструмент читающий, только если сервер в `tools/list` пометил его `readOnlyHint: true`; любой другой изменяющий (FR-11). MCP разрешает это поле, по умолчанию оно `false`, и считать его можно только у доверенного сервера — серверы регистрирует администратор в реестре, поэтому они доверенные ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1; [MCP — Tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools), [MCP — ToolAnnotations](https://modelcontextprotocol.io/specification/2025-06-18/schema#toolannotations); поле есть в установленном `@modelcontextprotocol/client` 2.4.0). Изменяющий вызов останавливает шаг исходом `await_decision`, и тот же коммит дописывает в историю запись `tool_confirmation`. После подтверждения следующий шаг дописывает решение и намерение `tool_sent`, коммитит их через `guard` и только потом зовёт сервер. Потерянный после намерения шаг даёт вызову исход «исход неизвестен», и вызов не повторяется (AC-01.2). Тот же механизм «инструмент с подтверждением» открыт для инструментов верхних частей. Инструмент может решать по аргументам, нужно ли подтверждение: так изменяющий запуск `run_code` ждёт решения, а читающий — нет ([design-code-execution.md](../code-execution/design-code-execution.md), KD-4).
 
 #### KD-5: MCP-инструменты вызываются прямо из шага, вне транзакции
 
 Шаг инструментов зовёт MCP-сервер сам, вне транзакции: вызов MCP дочерней задачей был бы лишним шагом и лишним ожиданием.
 
-Заменено: клиент stdio, файл серверов развёртывания и таблица доступа «сотрудник → серверы». Серверы и их списки инструментов лежат в реестре в базе, каждый вызов открывает своё соединение Streamable HTTP с общим токеном сервера или токеном аккаунта сотрудника ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1–KD-3, KD-5). Права на пару «сервер — инструмент» отвечает порт `AccessGate` и при сборке набора инструментов, и перед каждым вызовом ([design-access.md](../enterprise-access/design-access.md), KD-1, KD-2).
+Серверы и их списки инструментов лежат в реестре в базе, каждый вызов открывает своё соединение Streamable HTTP с общим токеном сервера или токеном аккаунта сотрудника ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1–KD-3, KD-5). Права на пару «сервер — инструмент» отвечает порт `AccessGate` и при сборке набора инструментов, и перед каждым вызовом ([design-access.md](../enterprise-access/design-access.md), KD-1, KD-2).
 
-#### KD-6: Обёртка модели — перенесённые `role-agent` и политика повторов, без счёта токенов до вызова
+#### KD-6: Обёртка модели — Mastra `Agent` на вызов и политика повторов, без счёта токенов до вызова
 
-`ModelClient` строит на каждый вызов новый Mastra `Agent` без памяти и хранилища и зовёт `stream` с `maxSteps: 1`; инструменты передаются через `createTool` без `execute`, поэтому Mastra их не исполняет. MCP-схемы входят как JSON Schema: тип `inputSchema` у `createTool` в установленном `@mastra/core` 1.80 принимает `JSONSchema7` (`@mastra/schema-compat` 1.3.17, `dist/schema.types.d.ts`). Сигнал отмены и два повтора с паузами 1000 и 3000 мс переходят как есть. Вызов `count_tokens` перед каждым ходом уходит: он был основой резервирования и ступеней окна, которых больше нет, а сжатие (KD-7) берёт размер из `usage` прошлого вызова. Каждая оплачиваемая попытка — строка журнала токенов runtime.
+`ModelClient` строит на каждый вызов новый Mastra `Agent` без памяти и хранилища и зовёт `stream` с `maxSteps: 1`; инструменты передаются через `createTool` без `execute`, поэтому Mastra их не исполняет. MCP-схемы входят как JSON Schema: тип `inputSchema` у `createTool` в установленном `@mastra/core` 1.80 принимает `JSONSchema7` (`@mastra/schema-compat` 1.3.17, `dist/schema.types.d.ts`). Обёртка передаёт сигнал отмены и делает два повтора с паузами 1000 и 3000 мс. Сжатие (KD-7) берёт размер из `usage` прошлого вызова. Каждая оплачиваемая попытка — строка журнала токенов runtime.
 
 Модель, метку кеша и подключение обёртка берёт у адаптера вида провайдера и из реестра провайдеров в базе ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3; [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md)), id модели — `<провайдер>/<модель>` ([ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md)). Перед первой попыткой она спрашивает `AccessGate.model`; цена строки журнала приходит с разрешением ([design-access.md](../enterprise-access/design-access.md), KD-3, KD-4).
 
@@ -54,28 +54,26 @@ MCP-инструмент читающий, только если сервер в
 - **Открытый вызов** — вызов инструмента из ответа модели, у которого ещё нет результата.
 - **Записи вызова** — записи истории о судьбе одного вызова с его `callId`: запрос подтверждения, решение сотрудника, намерение, попытка `run_code` и закрывающий результат. Состояние вызова нигде не хранится — его выводят из этих записей.
 - **Намерение** — запись `tool_sent` перед вызовом с подтверждением; через `guard` runtime она коммитится до отправки.
-- **Инструмент с подтверждением** — инструмент, который исполняется только после решения сотрудника: изменяющий MCP-инструмент, изменяющий запуск `run_code` или инструмент верхней части, например запуск workflow.
+- **Инструмент с подтверждением** — инструмент, который исполняется только после решения сотрудника: изменяющий MCP-инструмент, изменяющий запуск `run_code` или инструмент верхней части.
 - **Событие истории** — запись в истории о смене состояния без реплики модели: прерван, остановлен, продолжен, сжат, сбой.
 - **Снимок** — копия записи библиотеки, с которой стартовал запуск: промпт, инструменты, серверы, кого он может запустить, модель и предел ходов. Снимок лежит во входе задачи, и шаги читают только его ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-1; [run-snapshot.md](../../code-system/patterns/run-snapshot.md)).
-- **Набор запуска** — кого сессия может запустить: у корня — записи, которые чат может предложить, у агента — записи из его `agents`, у координатора workflow — исполнители его команды, каждый не больше своего предела вызовов ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-5).
+- **Набор запуска** — кого сессия может запустить: у корня — записи, которые чат может предложить, у агента — записи из его `agents` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-5).
 
 ## Part
 
 - **Part**: `agents` — вторая часть Delivery Parts в PRD.
 - **Covers**: FR-03–FR-13, FR-25, FR-27; NFR-01 и NFR-04 в доле агента; NFR-06 и NFR-07.
 - **Depends on**: [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `createRuntime`, `TaskHandler`, `StepContext`, `StepResult`, `tasks`, `inbox`, `decisions`, `events`, `eventConsumers`, `ledger`, логгер `packages/common`.
-- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (Postgres — единственный владелец состояния, Mastra без durability), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) в части правил пакетов. Код следует и более поздним решениям: [ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md) (реестр MCP), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md) (`AccessGate` и каталог моделей), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md) (снимок запуска), [ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md) и [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md) (id модели и реестр провайдеров). ADR-0010 описывает удалённый движок и не применяется; ADR-0009 заменён ADR-0017.
-- **Sibling parts**: `workflows` (бриф, инструмент запуска workflow), `chat` (беседа как корневая сессия, стриминг, API для веба), `web`.
+- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (Postgres — единственный владелец состояния, Mastra без durability), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) в части правил пакетов. Код следует и более поздним решениям: [ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md) (реестр MCP), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md) (`AccessGate` и каталог моделей), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md) (снимок запуска), [ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md) и [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md) (id модели и реестр провайдеров).
+- **Sibling parts**: `chat` (беседа как корневая сессия, стриминг, API для веба), `web`.
 
 **Out of scope**
 
 - Стриминг по токенам и HTTP API для веба — часть `chat`. Эта часть даёт корневую сессию, которая ведёт себя как агент, и единственное место вызова модели, куда `chat` добавил стриминг. Главный чат — встроенная запись библиотеки `chat` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-7).
-- Бриф и инструмент `start_workflow` — часть `workflows`; здесь только механизм регистрации инструмента с подтверждением.
 - Записи библиотеки, снимок и набор запуска — фича `custom-agents`; права, роли и квоты — [design-access.md](../enterprise-access/design-access.md); реестр MCP-серверов, транспорт и аккаунты сотрудников — [design-mcp-connect.md](../enterprise-access/design-mcp-connect.md); провайдеры моделей и эмбеддинги — [model-providers/design-core.md](../model-providers/design-core.md); `run_code` — [design-code-execution.md](../code-execution/design-code-execution.md); знания самообучения — [self-learning/design-core.md](../self-learning/design-core.md).
 
 **Constraints**
 
-- PoC: таблицы, настройки и код движка не переносятся; часть берёт из git только то, что названо в [Building-block Inventory](#building-block-inventory).
 - Слои: `packages/agents` зависит только от `runtime`, `db`, `contracts`, `common` и `code-runner`; Mastra и пакеты AI SDK объявляет только он ([code system](../../code-system/README.md)).
 - Всё состояние агента в своих таблицах `agent_*`, после каждого шага; в памяти процесса только реестр инструментов, открытые запросы подключения MCP-аккаунтов и обновления токенов в работе. Один вызов модели на шаг, без памяти, хранилища и цикла инструментов Mastra (KD-1, KD-6); каждый оплачиваемый вызов — строка журнала токенов runtime, месячные квоты проверяет `AccessGate` ([design-access.md](../enterprise-access/design-access.md), KD-5).
 - Логирование через логгер `common`: каждый шаг, вызов модели и вызов инструмента с идентификаторами, без секретов ([logging.md](../../code-system/patterns/logging.md)).
@@ -83,21 +81,17 @@ MCP-инструмент читающий, только если сервер в
 
 ## Building-block Inventory
 
-Follows the [code system](../../code-system/README.md). «Из git» — файл на `HEAD`, который часть `runtime` удаляет вместе с движком.
+Follows the [code system](../../code-system/README.md).
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `createAgents`, `parseAgentsConfig`, `AgentsModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | вместо `createEngine`; настройки разбирает пакет, а не `apps/api` |
-| `AgentStepHandler` — обработчик задачи `agent` | [step-handler.md](../../code-system/patterns/step-handler.md) | new — KD-1 | идеи из `agent-run.handler.ts` (всё читать заново из базы каждый шаг), код новый |
+| `createAgents`, `parseAgentsConfig`, `AgentsModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | настройки разбирает пакет, а не `apps/api` |
+| `AgentStepHandler` — обработчик задачи `agent` | [step-handler.md](../../code-system/patterns/step-handler.md) | new — KD-1 | всё читать заново из базы каждый шаг |
 | Репозитории `agent_sessions`, `agent_messages` и записей вызова | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | вызов — элемент `model_answer`; состояние выводит чистая функция `foldCalls` из записей вызова; запись в транзакции шага |
-| `ModelClient` над Mastra | — | из git с изменениями — KD-6 | `role-agent.ts` (вызов хода), `retry-policy.ts` как есть; `model-gateway.ts` — только повтор и отмена; модель и подключение — адаптеры и реестр провайдеров ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3) |
-| Конверт данных `<data>` против инъекций | — | из git как есть | `DATA_PREAMBLE` и `envelope` из `session-window.ts`; ступени окна не переносятся |
-| `McpClient` | — | заменено — KD-5 | соединение Streamable HTTP на вызов и реестр в базе ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1–KD-3) |
-| Проверка доступа к инструментам | — | заменено — KD-5 | права на пару «сервер — инструмент» отвечает `AccessGate.tools` ([design-access.md](../enterprise-access/design-access.md), KD-1) |
-| Встроенные инструменты и реестр инструментов | — | new | вместо `call_agent`, `memory_*`, `investigation_read`, `finish`; проверка глубины — из `decideCallAgent` |
-| Каталог определений | — | заменено | снимок записи библиотеки во входе задачи ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-1) |
+| `ModelClient` над Mastra | — | new — KD-6 | `retry-policy.ts`; модель и подключение — адаптеры и реестр провайдеров ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3) |
+| Конверт данных `<data>` против инъекций | — | new | `DATA_PREAMBLE` и `envelope` |
+| Встроенные инструменты и реестр инструментов | — | new | — |
 | Изменяющий инструмент фикстуры | — | extended | `packages/mcp-fixture` получает `create_incident_note`; фикстура — HTTP-процесс ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-7) |
-| `token-counter.ts`, `anthropic-token-counter.ts`, резервирование, доли, формы результата, память агентов, транскрипты, `packages/sources` кроме клиента | — | не переносятся | резервирования токенов и окна по ступеням нет; evidence удалено |
 
 ## Acceptance Criteria
 
@@ -114,7 +108,7 @@ Follows the [code system](../../code-system/README.md). «Из git» — фай�
 
 - From the PRD: AC-05.1, AC-05.2, AC-05.3, AC-06.1, AC-06.2, AC-06.3, AC-10.1, AC-10.2, AC-10.3.
 - Дочерний агент завершается ответом без вызовов только без незаконченных детей; с ними он ждёт их уведомлений (DC-3).
-- Агент не запускает запись вне своего набора запуска (`not_allowed`), а координатор — исполнителя сверх его предела (`run_limit`); если у координатора задан исполнитель последнего шага, попытка закончить без его отчёта получает отказ, а отчётом сессии становится отчёт этого исполнителя (DC-4; [custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-5).
+- Агент не запускает запись вне своего набора запуска (`not_allowed`) ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-5).
 
 ### FR-07: Сообщение работающему агенту
 
@@ -315,8 +309,7 @@ flowchart TB
 
 - корневая сессия — `wait`;
 - у агента есть незаконченные дети или недоставленное уведомление ребёнка — `wait`, уведомление его разбудит;
-- в снимке координатора задан исполнитель последнего шага (`finalExecutor`), а его отчёта со статусом `completed` ещё нет — в историю пишется уведомление кода об отказе, итог `continue`, и это считается ходом;
-- иначе — `complete` с отчётом: текстом ответа или, при исполнителе последнего шага, его последним отчётом.
+- иначе — `complete` с отчётом: текстом ответа.
 
 Шаг инструментов исполняет открытые вызовы по порядку. Если очередной вызов требует подтверждения, а решения в контексте нет, шаг фиксирует уже готовые результаты и возвращает `await_decision`; остальные вызовы ждут следующего шага.
 
@@ -381,7 +374,7 @@ sequenceDiagram
 
 - Инструмент вне набора, пара «сервер — инструмент» не разрешена сотруднику или аргументы встроенного инструмента не прошли схему → результат с исходом «отказ» и причиной (`tool_not_in_definition`, `no_access`, `invalid_arguments`); сервер не вызывается (AC-03.1, AC-11.3). У сервера с личным OAuth без аккаунта сотрудника вызов получает исход `auth_required` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-5).
 - MCP вернул `isError` → исход «ошибка инструмента»; пустой результат → «пустой результат»; обрыв, таймаут `MCP_CALL_TIMEOUT_MS` или ошибка протокола → «сбой связи»; агент продолжает (AC-11.2).
-- Успешный результат MCP длиннее порога из настроек `agent_tool_result_settings` → модель получает обёртку с размером, `callId` и превью, а весь текст лежит в `agent_tool_results`; дочитать его модель может инструментами `read_tool_result` и `search_tool_result`. Каждый текст MCP, который получает модель, замаскирован ([план tool-result-reading](../tool-result-reading/core/20261120-feature-tool-result-reading-core.md)).
+- Успешный результат MCP длиннее порога из настроек `agent_tool_result_settings` → модель получает обёртку с размером, `callId` и превью, а весь текст лежит в `agent_tool_results`; дочитать его модель может инструментами `read_tool_result` и `search_tool_result`. Каждый текст MCP, который получает модель, замаскирован.
 - Провайдер ответил ошибкой → два повтора; после них итог `fail` с причиной `model_error` или названной причиной провайдера `provider_*` ([model-providers/design-core.md](../model-providers/design-core.md), KD-2).
 - `AccessGate` отказал в вызове модели (квота, модель не разрешена, сотрудник выключен) → модель не вызывается, итог `fail` с причиной отказа ([design-access.md](../enterprise-access/design-access.md), KD-5).
 - Шаг потерян или отсечён → строка журнала остаётся, ответ модели не записан, и шаг выполняется заново (Flow 2 в `design-runtime.md`).
@@ -436,7 +429,7 @@ sequenceDiagram
 
 **Failure handling:**
 
-- Запись не видна запускающему → отказ `record_unavailable`; запись вне набора запуска → `not_allowed`; исполнитель сверх своего предела → `run_limit`; задача не создаётся (AC-10.2, DC-4; [custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-2, KD-5).
+- Запись не видна запускающему → отказ `record_unavailable`; запись вне набора запуска → `not_allowed`; задача не создаётся (AC-10.2; [custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-2, KD-5).
 - Глубина ребёнка больше `AGENT_MAX_DEPTH` → отказ `depth_limit` (AC-10.3).
 - Модель снимка не подключена или не разрешена запускающему, её провайдер не готов или модель по умолчанию не выбрана → отказ `model_not_connected`, `model_not_allowed`, `provider_*` или `model_not_configured` (DC-2; [model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-5).
 - Родитель занят → уведомление ждёт в его очереди и доставляется в начале следующего шага (AC-06.2); родитель ждёт решения → уведомление доставляется после решения.
@@ -732,27 +725,26 @@ sequenceDiagram
 
 **Сборка**
 
-- **`createAgents(options)`** — собирает пакет из базы, `Runtime`, логгера `common`, разобранных настроек `AgentsConfig`, шва модели, порта `AccessGate` с хуком аудита и порта библиотеки `RecordLibrary`. Сразу регистрирует в runtime обработчики задач `agent`, `knowledge.extract` и `knowledge.embed` и потребителей событий. Возвращает `Agents`: `tools`, операции `sessions` ниже, `start()` и `stop()`, а также входы более поздних фич — `resolveStart`, `auditStartRefusal` и `rootMayStart` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)), `mcp` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md#contract-definitions)), `providers`, `embeddings` и `completeText` ([model-providers/design-core.md](../model-providers/design-core.md#contract-definitions)), `knowledge` ([self-learning/design-core.md](../self-learning/design-core.md#contract-definitions)), `toolResults` ([план tool-result-reading](../tool-result-reading/core/20261120-feature-tool-result-reading-core.md)).
+- **`createAgents(options)`** — собирает пакет из базы, `Runtime`, логгера `common`, разобранных настроек `AgentsConfig`, шва модели, порта `AccessGate` с хуком аудита и порта библиотеки `RecordLibrary`. Сразу регистрирует в runtime обработчики задач `agent`, `knowledge.extract` и `knowledge.embed` и потребителей событий. Возвращает `Agents`: `tools`, операции `sessions` ниже, `start()` и `stop()`, а также входы более поздних фич — `resolveStart` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)), `mcp` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md#contract-definitions)), `providers`, `embeddings` и `completeText` ([model-providers/design-core.md](../model-providers/design-core.md#contract-definitions)), `knowledge` ([self-learning/design-core.md](../self-learning/design-core.md#contract-definitions)), `toolResults`.
 - **`parseAgentsConfig(variables)`** — проверяет переменные из `Runtime settings`; неверное значение останавливает старт с именем переменной.
 - **`start()`** — закрывает регистрацию инструментов. Записи и их модели проверяет каждый старт, MCP-соединений `start()` не открывает. Вызывается до старта воркеров runtime.
 - **`stop()`** — только пишет лог: соединение MCP живёт один вызов, закрывать нечего.
 
 **Определения агентов**
 
-Заменено: каталог определений, `definitions.register` и `AgentDefinition` удалены. Запуск берёт запись библиотеки на имя запускающего и работает на её снимке; поля записи агента — `AgentContent` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-1, KD-2; [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md)). `general-purpose` и главный чат — встроенные записи библиотеки (там же, KD-7).
+Запуск берёт запись библиотеки на имя запускающего и работает на её снимке; поля записи агента — `AgentContent` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-1, KD-2; [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md)). `general-purpose` и главный чат — встроенные записи библиотеки (там же, KD-7).
 
 **Инструменты (`tools`)**
 
 - **`register(tool)`** — добавляет инструмент верхней части до `start()`. Инструмент задаёт `name`, `description`, zod-схему аргументов и один из двух способов исполнения. Внутри транзакции итога шага он получает транзакцию, `effects` и помощник запуска дочернего агента и внешних вызовов не делает; запросы, которые нельзя делать при открытой транзакции, он делает в необязательном `prepare` до неё. Помощник берёт снимок, задание, описание и ссылку ответвления, а владельца и родителя — от вызывающего агента, и возвращает `agentId` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Вне транзакции инструмент может звать внешнюю систему и получает сигнал отмены и `guard` шага. По желанию инструмент объявляет подтверждение: вид запроса, содержимое для сотрудника, признак, можно ли править аргументы, и условие, нужно ли подтверждение этому вызову. Признак `rootOnly` даёт инструмент только корню, `everySession` — каждой сессии.
 - Встроенные инструменты пакета, имена для модели:
-  - `start_agent` — аргументы `description` (несколько слов для списка и карточки), `agent`, `prompt`; `agent` — номер записи, `fork` или у координатора имя исполнителя ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Запускает ребёнка в транзакции итога и возвращает `agentId` сразу. С `fork` ребёнок получает снимок вызывающего и ссылку на его историю до текущего ответа (KD-7).
+  - `start_agent` — аргументы `description` (несколько слов для списка и карточки), `agent`, `prompt`; `agent` — номер записи или `fork` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions)). Запускает ребёнка в транзакции итога и возвращает `agentId` сразу. С `fork` ребёнок получает снимок вызывающего и ссылку на его историю до текущего ответа (KD-7).
   - `message_agent` — `agentId`, `message`: кладёт сообщение потомку с `revive`, поэтому законченный потомок продолжает работу.
   - `list_agents` — потомки вызывающего: id, описание, имя запуска, модель, статус.
   - `stop_agent` — `agentId`: останавливает потомка и его потомков.
-  - `read_tool_result` и `search_tool_result` есть в каждой сессии: страница и поиск по большому результату MCP своей сессии и своего владельца ([план tool-result-reading](../tool-result-reading/core/20261120-feature-tool-result-reading-core.md)).
+  - `read_tool_result` и `search_tool_result` есть в каждой сессии: страница и поиск по большому результату MCP своей сессии и своего владельца.
   - `run_code` есть в каждой сессии ([design-code-execution.md](../code-execution/design-code-execution.md), KD-3).
   - Цель `message_agent` и `stop_agent` — только потомок вызывающего; иначе отказ `unknown_agent`.
-- Только корень получает инструменты `start_workflow` и `draft_record` ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-6).
 - MCP-инструмент виден модели под именем `mcp__<server>__<tool>`, с описанием и схемой сервера. В набор попадают инструменты включённых серверов снимка, чью пару «сервер — инструмент» `AccessGate` разрешает владельцу; у сервера с личным OAuth — только при аккаунте владельца ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-2).
 
 **Операции агентов** (`Agents.sessions`)
@@ -769,10 +761,6 @@ sequenceDiagram
 - **`resolveConfirmation({ decisionId, ownerId, approve, args? })`** — решение сотрудника. `args` принимаются, только если инструмент разрешает правку. Возвращает `resolved` или `already_resolved`; ошибки `DECISION_NOT_FOUND`, `INVALID_ARGUMENTS`.
 - `snapshot` и операции корневой сессии `root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`, `deleteRoot` описаны в [custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions) и [design-chat.md](./design-chat.md#contract-definitions) (KD-1). `deleteRoot` одной транзакцией вызывает `tasks.deleteTree` runtime в этой транзакции и помечает корневую сессию удалённой; после неё операции агентов над деревом отвечают `AGENT_NOT_FOUND`, а операции корня беседы не видят.
 
-**Ограничения вызывающего**
-
-Заменено: `SessionLimits` и `limits` у `start` удалены. Команда workflow, предел вызовов каждого исполнителя (`run_limit`) и исполнитель последнего шага `finalExecutor` лежат в снимке координатора ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-5). Ответвление у координатора получает `not_allowed`.
-
 **AgentView**
 
 - `agentId`, `parentId`, `rootId`, `depth`, `description`, `model`, `createdAt`, `finishedAt`.
@@ -788,7 +776,7 @@ sequenceDiagram
 - `child_report` — `agentId`, описание, статус, причина, текст отчёта или его нет, число вызовов инструментов, длительность.
 - `model_answer` — текст и вызовы инструментов этого ответа.
 - `tool_result` — результат одного вызова: `callId`, инструмент, сервер, аргументы, исход, причина отказа, модель отказа `refusalDetail`, текст результата, время начала и конца; у `run_code` ещё вывод скрипта ([design-code-execution.md](../code-execution/design-code-execution.md#contract-definitions)).
-- `notice` — сообщение кода модели, например отказ закончить без отчёта исполнителя последнего шага.
+- `notice` — сообщение кода модели.
 - `event` — `interrupted`, `stopped`, `stopped_with_parent`, `continued`, `failed` с причиной, `compacted`.
 - `compaction` — сводка и номер последней записи, которую она заменяет для модели.
 
@@ -813,7 +801,7 @@ sequenceDiagram
 
 **Runtime settings**
 
-Переменные читает `apps/api` и передаёт в `parseAgentsConfig`. Провайдеры моделей, их ключи и модели по умолчанию, реестр MCP-серверов и права живут в базе и в панели администратора, а не в окружении ([model-providers/design-core.md](../model-providers/design-core.md), KD-1, KD-5; [design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1; [design-access.md](../enterprise-access/design-access.md), KD-1). Пороги больших результатов инструментов — строка `agent_tool_result_settings` ([план tool-result-reading](../tool-result-reading/core/20261120-feature-tool-result-reading-core.md)).
+Переменные читает `apps/api` и передаёт в `parseAgentsConfig`. Провайдеры моделей, их ключи и модели по умолчанию, реестр MCP-серверов и права живут в базе и в панели администратора, а не в окружении ([model-providers/design-core.md](../model-providers/design-core.md), KD-1, KD-5; [design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1; [design-access.md](../enterprise-access/design-access.md), KD-1). Пороги больших результатов инструментов — строка `agent_tool_result_settings`.
 
 - `AGENT_MAX_OUTPUT_TOKENS` — default `16000`; предел ответа модели.
 - `AGENT_MAX_DEPTH` — default `3`; наибольшая глубина агента, у беседы 0.
@@ -850,7 +838,7 @@ erDiagram
 - Записи вызова в той же истории говорят, что стало с вызовом: `tool_confirmation` — вызов поставлен перед сотрудником; `tool_decision` — решение и правленые аргументы; `tool_sent` — намерение; `run_attempt` — попытка читающего прогона `run_code`, не больше двух; `tool_result` — закрывающий результат, у `start_agent` с id задачи ребёнка. Каждого вида, кроме `run_attempt`, у вызова не больше одной записи: это держит частичный уникальный индекс `agent_messages_call_once_idx`. Правленые аргументы модель видит как свой вызов.
 - `callId` записи вызова и время конца `tool_result` лежат в своих столбцах, поэтому вызовы читают из истории запросом, не разбирая содержимое записей: так считают число вызовов в отчёте ребёнка и строят страницы `history`. Шаг читает историю один раз, начиная со сводки последнего сжатия. Записи вызова — аудит вызова; сотрудник — владелец задачи.
 - Снимок записи лежит только во входе задачи runtime; сессия хранит имя запуска и его происхождение ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-3). Запросы подтверждения хранит runtime (`runtime_decisions`).
-- Остальные таблицы `agent_*` принадлежат более поздним фичам: `agent_tool_results` и `agent_code_calls` — [design-code-execution.md](../code-execution/design-code-execution.md) (KD-5, KD-6), `agent_tool_result_settings` — [план tool-result-reading](../tool-result-reading/core/20261120-feature-tool-result-reading-core.md), `agent_mcp_servers` и `agent_mcp_accounts` — [design-mcp-connect.md](../enterprise-access/design-mcp-connect.md) (KD-1), `agent_model_providers` — [model-providers/design-core.md](../model-providers/design-core.md) (KD-1), `agent_knowledge_*` — [self-learning/design-core.md](../self-learning/design-core.md) (KD-1).
+- Остальные таблицы `agent_*` принадлежат более поздним фичам: `agent_tool_results` и `agent_code_calls` — [design-code-execution.md](../code-execution/design-code-execution.md) (KD-5, KD-6), `agent_mcp_servers` и `agent_mcp_accounts` — [design-mcp-connect.md](../enterprise-access/design-mcp-connect.md) (KD-1), `agent_model_providers` — [model-providers/design-core.md](../model-providers/design-core.md) (KD-1), `agent_knowledge_*` — [self-learning/design-core.md](../self-learning/design-core.md) (KD-1).
 
 Корень создаёт операция `start`: задачу и сессию одной транзакцией. Ребёнка создаёт транзакция итога родителя вместе со `spawn`. Запуск с нуля дочернего агента создаёт задачу, а затем сессию своей транзакцией; если процесс умер между ними, первый шаг агента создаёт строку из снимка во входе задачи.
 
@@ -926,10 +914,6 @@ stateDiagram-v2
   - Given: агент, который упал по пределу ходов, и агент, который завершился.
   - When: первому пишут сообщение, второго запускают с нуля.
   - Then: первый работает в той же сессии с полным пределом ходов и сдаёт отчёт, родитель получил второе уведомление; второй — новый `agentId` с той же записью, заданием и родителем, история с задания, прежний в списке.
-- **UC-5: Команда координатора** — covers DC-4
-  - Given: координатор, в команде которого `planner` до одного вызова и `answer` — исполнитель последнего шага.
-  - When: сценарий запускает `planner` дважды, `gatherer` один раз, затем отвечает текстом, затем запускает `answer` и после его отчёта отвечает текстом.
-  - Then: второй `planner` — отказ `run_limit`, `gatherer` — `not_allowed`; первый текст — уведомление об отказе и новый ход; отчёт сессии родителю — отчёт `answer`.
 
 ### Error and Edge Use Cases
 
@@ -986,7 +970,7 @@ stateDiagram-v2
 
 ## Risks and Mitigation
 
-- **Haiku не удерживает цикл агента и плохо делегирует** — высокое влияние, средняя вероятность. Предел ходов и модель в записи, команда с пределами для координатора; проверка ручным прогоном после части `chat` (PRD, Assumptions).
+- **Haiku не удерживает цикл агента и плохо делегирует** — высокое влияние, средняя вероятность. Предел ходов и модель в записи; проверка ручным прогоном после части `chat` (PRD, Assumptions).
 - **Шаг с сообщением `interrupt` ждёт свободного слота воркера, и открытые вызовы ещё показаны как исполняемые** — малое влияние, низкая вероятность. Статус «Прерван» виден из ждущего сообщения сразу после команды (KD-3); шаг закрытия вызовов не вызывает модель и занимает миллисекунды.
 - **MCP-схемы в JSON Schema поведут себя у провайдера иначе, чем zod** — среднее влияние, низкая вероятность. Тип проверен по установленному Mastra; поведение на проводе — допущение, которое первая задача плана проверяет пробой с инструментом фикстуры.
 
@@ -994,37 +978,14 @@ stateDiagram-v2
 
 Нет.
 
-## Appendix: Fact Disposition
-
-| Fact | Disposition | Handled in |
-|------|-------------|------------|
-| Долгий цикл ходов в одной попытке с `yield` и охраняемыми записями (`packages/engine/src/agents/agent-run.handler.ts:createAgentRunHandlers`) | transform | шаг модели и шаг инструментов (KD-1, «Как шаг выбирает работу») |
-| Mastra-обёртка хода: новый `Agent` на вызов, `maxSteps: 1`, инструменты без `execute`, метки кеша (`packages/engine/src/model/role-agent.ts:mastraAgentTurnClient`) | transform | `ModelClient` с JSON Schema MCP, без счёта токенов (KD-6) |
-| `ModelGateway`: повторы и отмена общие, резерв, ожидание и ступени окна привязаны к бюджету (`packages/engine/src/model/model-gateway.ts:createModelGateway`) | transform | остаются повтор и отмена; запись в `ledger.record` (KD-6) |
-| Журнал токенов движка без владельца, цены в коде (`packages/engine/src/model/ledger.ts:postgresCallLedger`) | remove | журнал runtime; цена приходит с разрешением `AccessGate` ([design-access.md](../enterprise-access/design-access.md), KD-3) |
-| Цепочка проверок вызова, классы эффекта, одна строка аудита на вызов (`packages/engine/src/agents/tool-executor.ts:createToolExecutor`) | transform | `ToolRunner`, причины отказа, записи вызова в истории как аудит (Contract Definitions, Data Model) |
-| Синхронный `call_agent` с долями и ожиданием ребёнка (`packages/engine/src/agents/tools/call-agent.ts:decideCallAgent`) | transform | `start_agent` в фоне, отчёт через очередь (Flow 2) |
-| История в `research_agent_messages`, конверт `<data>`, нет видов сообщений очереди (`packages/engine/src/agents/run-session.ts:toRunSession`) | transform | `agent_messages` с видами и тегом источника; конверт сохранён (HistoryEntry) |
-| Таблицы `research_agent_*`, `agent_tool_audit`, память агентов и определений (`packages/db/src/schema.ts:researchAgentRuns`) | remove | таблицы `agent_*` (Data Model); память не нужна ни одному требованию |
-| Предел ходов на весь запуск, принудительный `finish` на последнем ходу (`packages/engine/src/agents/turn-rules.ts:decideNextTurn`) | transform | предел на задание со сбросом, `fail` с `turn_limit` (DC-1, AC-03.2) |
-| Определение внутри `ProcessConfig` без заголовка и MCP, формы результата (`packages/engine/src/config/agent-config.schema.ts:AgentDefinitionSchema`) | transform | позже заменено снимком записи библиотеки ([custom-agents/design-runtime.md](../custom-agents/design-runtime.md), KD-1); формы удалены (KD-2) |
-| Две дороги выбора модели, `ASSISTANT_MODEL` у чата (`apps/api/src/engine/resolve-model.ts:createResolveModel`) | transform | модель снимка; модель по умолчанию — в базе ([model-providers/design-core.md](../model-providers/design-core.md), KD-5) |
-| MCP-клиент stdio без `listTools`, `readOnly` объявлен в коде, нет изменяющего инструмента (`packages/sources/src/mcp/mcp-source-client.ts:McpSourceClient`) | transform | `readOnlyHint`, `create_incident_note` (KD-4); клиент позже заменён на `McpClient` по HTTP (KD-5) |
-| Таблица доступа по источникам в `apps/api` (`apps/api/src/sources/source-access-table.ts:SourceAccessTable`) | transform | позже заменено правами `AccessGate` на пару «сервер — инструмент» (KD-5) |
-| Ступени окна по `count_tokens`, держатся по транскриптам (`packages/engine/src/agents/session-window.ts:buildSessionView`) | transform | сжатие сводкой по `usage` (KD-7) |
-| Расследование, claims, assess, verify, калибровка, групповые таблицы в сборке движка (`packages/engine/src/create-engine.ts:composeEngine`) | remove | не переносятся (Building-block Inventory) |
-| Отмена только целым расследованием (`packages/runtime/src/investigation.service.ts:cancel`) | transform | `interrupt` и `stop` агента поверх runtime (KD-3, Flow 4) |
-| Отклонения от code system: долгий `run`, свой `EngineLogger`, настройки в `apps/api`, чтение чужих таблиц, репозиторий открывает транзакцию (`conformance.deviations`) | remove | шаг, логгер `common`, `parseAgentsConfig`, только `agent_*`, транзакция шага ([code system](../../code-system/README.md)) |
-
-Дизайн сохраняет идею «каждый шаг перечитывает состояние из базы», «закрытый вызов не исполняется снова» (`tool-calls.repository.ts` движка; здесь состояние вызова выводится из записей истории, а не хранится в строке), политику повторов провайдера (`retry-policy.ts`), конверт `<data>` (`session-window.ts`) и реестр инструментов по имени (`conformance.uncatalogued`) — как модуль пакета, без нового паттерна.
-
 ## Update History
 
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-14 | Первая версия |
-| 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Закрыт вопрос к `runtime`: сообщение с `revive`, пришедшее во время последнего шага, оживляет задачу после её конца (Flow 6), а `tasks.interrupt` принимает сообщение в форме `inbox.enqueue` (KD-3). Исходы runtime записаны как в `design-runtime.md`: `not_active`, `already_resolved`. Упавший агент останавливает незаконченных детей (Flow 2); `start` отклоняет модель без цены `UNKNOWN_MODEL`. |
-| 1.2 | 2026-11-14 | Закрыты четыре замечания из `design-workflows.md`: отчётом `finalAgent` считается только `completed`, упавший или остановленный агент последнего шага сессию не заканчивает (SessionLimits); поля помощника запуска в `tools.register`; собственные агенты шаблона не входят в `agents` чужих определений — правило контракта без проверки в коде (AgentDefinition); `fork` под `limits` получает `not_allowed`. |
-| 1.3 | 2026-11-21 | Сверка с кодом. Вызовы инструментов перешли в историю, которая только дописывается: таблицы `agent_tool_calls` нет, состояние вызова выводится из записей вызова, а одна запись результата на вызов держится индексом (KD-4, Terms, Building-block, Flow 1, 4, 5, HistoryEntry, Data Model, инварианты 1–2, UC-E9, Fact Disposition). Сессия хранит родителя и корень, беседа — корневая сессия (Data Model). Большой результат MCP модель получает ссылкой, а не срезом: `AGENT_TOOL_RESULT_MAX_BYTES` удалён, инструменты чтения есть в каждой сессии (Flow 1, Инструменты, Runtime settings). |
-| 1.4 | 2026-11-21 | Сверка с фичами, построенными позже: определения агентов и `SessionLimits` заменены снимком записи библиотеки и командой координатора (`custom-agents`); MCP — реестр в базе, соединение HTTP на вызов и права `AccessGate` на пару «сервер — инструмент» (`enterprise-access`); провайдеры, ключи и модели по умолчанию — в базе (`model-providers`); `run_code`, блок знаний и квоты отмечены ссылками. Удалены `AGENT_DEFAULT_MODEL`, `ANTHROPIC_API_KEY`, `AGENTS_ANTHROPIC_BASE_URL`, `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE`; добавлены `NODE_ENV` и `CODE_RUN_*`. Исправлены Snapshot, KD-4–KD-6, Terms, Part, Building-block, FR-03, FR-04, FR-05, FR-11, C2 и C3, «Конец хода», Flow 1, 2, 4, 5, Contract Definitions, Data Model, Test Strategy, Security, Risks, Fact Disposition. |
-| 1.5 | 2026-11-21 | По коду после решения владельца 2026-11-21 (коммит 7d1fe8d): удаление беседы — операция `deleteRoot`, которая вместе с `deleteTree` runtime помечает корневую сессию `deleted_at`; сессии не стираются, помеченный корень отсутствует для операций корня и списка, сессии удалённых бесед считаются в `firstRun`. Исправлены Contract Definitions («Операции агентов») и Data Model. |
+| 1.1 | 2026-11-14 | Утверждена |
+| 1.2 | 2026-11-14 | Замечания соседних частей |
+| 1.3 | 2026-11-21 | Сверка с кодом: вызовы инструментов в истории |
+| 1.4 | 2026-11-21 | Сверка с фичами, построенными позже |
+| 1.5 | 2026-11-21 | Удаление беседы — `deleteRoot` |
+| 1.6 | 2026-11-22 | Удалено описанное, чего нет в коде |

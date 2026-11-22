@@ -72,7 +72,7 @@
 - **Part**: `core`
 - **Covers**: FR-01 – FR-07
 - **Depends on**: ничего — первая часть
-- **Prerequisite ADRs**: [ADR-0002](../../adr/ADR-0002-app-schema-migrations.md), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md)
+- **Prerequisite ADRs**: [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md)
 
 **Out of scope**
 
@@ -578,7 +578,7 @@ sequenceDiagram
 
 ### Data Model
 
-Новых таблиц и столбцов нет. Значение `repeated_call` меняет CHECK `agent_code_calls.refusal_reason`. Миграцию генерирует `db:generate` из схемы `packages/db`, как по [ADR-0002](../../adr/ADR-0002-app-schema-migrations.md). В `agent_messages` причина отказа лежит в `jsonb` без CHECK, и миграции не требует. Таблица `audit_events` видов записей не ограничивает. Строки, записанные до этой части, не меняются.
+Новых таблиц и столбцов нет. Значение `repeated_call` меняет CHECK `agent_code_calls.refusal_reason`. Миграцию генерирует `db:generate` из схемы `packages/db`, как по [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md). В `agent_messages` причина отказа лежит в `jsonb` без CHECK, и миграции не требует. Таблица `audit_events` видов записей не ограничивает. Строки, записанные до этой части, не меняются.
 
 ## Test Strategy
 

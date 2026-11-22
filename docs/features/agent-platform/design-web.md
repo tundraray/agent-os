@@ -1,85 +1,76 @@
 # Платформа агентов — Design Document — web
 
-**Status:** Approved · **Date:** 2026-11-14 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-chat.md](./design-chat.md#contract-definitions), [design-workflows.md](./design-workflows.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-22 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-chat.md](./design-chat.md#contract-definitions), [deep-agents/design-agent-types.md](../deep-agents/design-agent-types.md#contract-definitions)
 
 ## Snapshot
 
-**Overview.** Эта часть переводит веб-чат на новый API части `chat` и добавляет экраны агентов. Отправка сообщения становится обычной командой HTTP, а ответ приходит не из этого запроса: вкладка держит один поток событий, по заметке «в беседе что-то изменилось» перечитывает вид экрана и показывает текст ответа по частям. Из этих данных приложение собирает ленту и отдаёт её assistant-ui как внешнее хранилище, поэтому прежние лента, композер и блоки сообщений остаются. В ленте появляются карточки хода, решения и отчёты, лоток недоставленных сообщений и кнопка «Прервать»; в оболочке — дерево агентов, страница агента, строка связи и расход за месяц.
+**Overview.** Эта часть — веб беседы и экраны агентов поверх API части `chat`. Отправка сообщения — обычная команда HTTP, а ответ приходит не из этого запроса: вкладка держит один поток событий, по заметке «в беседе что-то изменилось» перечитывает вид экрана и показывает текст ответа по частям. Из этих данных приложение собирает ленту и отдаёт её assistant-ui как внешнее хранилище, поэтому лента, композер и блоки сообщений — компоненты assistant-ui. В ленте есть карточки хода, решения и отчёты, лоток недоставленных сообщений и кнопка «Прервать»; в оболочке — дерево агентов, страница агента, строка связи и расход за месяц.
 
-- **Не меняется**: список бесед, переименование, удаление и заголовки бесед; раскладка оболочки (chat-shell UXRD).
-- **Biggest risk**: поведение assistant-ui с внешним хранилищем внутри списка бесед проверено только по документации и типам; его проверяет спайк S-1 до работы над экранами ([Risks and Mitigation](#risks-and-mitigation)).
+- **Вне части**: список бесед, переименование, удаление и заголовки бесед; раскладка оболочки (chat-shell UXRD).
+- **Biggest risk**: assistant-ui ведёт себя с внешним хранилищем не так, как ждёт KD-1, после обновления библиотеки; это ловят тесты UC-1–UC-4 ([Risks and Mitigation](#risks-and-mitigation)).
 - **Open questions**: нет.
 
 ### Key Decisions
 
-#### KD-1: assistant-ui получает ленту из нашего хранилища, транспорт AI SDK уходит
+#### KD-1: assistant-ui получает ленту из нашего хранилища
 
-Список бесед остаётся на `useRemoteThreadListRuntime` с прежним адаптером, а хук беседы вместо `useChatRuntime` строится на `useExternalStoreRuntime`: сообщения, `onNew` и признак загрузки даёт хранилище `FeedStore` ([assistant-ui, External Store](https://www.assistant-ui.com/docs/runtimes/custom/external-store)). Для новой беседы `onNew` сначала ждёт `initialize()` элемента списка ([assistant-ui, Threads](https://www.assistant-ui.com/docs/runtimes/concepts/threads)). Признак `isRunning` библиотеке не передаётся: с ним она блокирует «Отправить» (`composerSendDisabled` в `@assistant-ui/core` 0.3.32), а писать нужно в любой момент (FR-16). Занятость агента кнопка «Прервать», лоток и плейсхолдер читают из хранилища. Страница агента ставит вокруг той же `Thread` свой `AssistantRuntimeProvider`. Уходят `AssistantChatTransport`, `useChatRuntime`, адаптер истории, пакеты `ai` и `@assistant-ui/ai-sdk`.
-
-Не взяты: очередь assistant-ui (`queue`) — она держит сообщения в браузере, а наша очередь на сервере; своя лента без assistant-ui — заново прокрутка, Markdown, action bar и композер; `ExternalStoreThreadListAdapter` — переписка сайдбара без выигрыша.
+Список бесед стоит на `useRemoteThreadListRuntime`, а хук беседы строится на `useExternalStoreRuntime`: сообщения, `onNew` и признак загрузки даёт хранилище `FeedStore` ([assistant-ui, External Store](https://www.assistant-ui.com/docs/runtimes/custom/external-store)). Для новой беседы `onNew` сначала ждёт `initialize()` элемента списка ([assistant-ui, Threads](https://www.assistant-ui.com/docs/runtimes/concepts/threads)). Признак `isRunning` библиотеке не передаётся: с ним она блокирует «Отправить», а писать нужно в любой момент (FR-16). Занятость агента кнопка «Прервать», лоток и плейсхолдер читают из хранилища. Страница агента ставит вокруг той же `Thread` свой `AssistantRuntimeProvider`.
 
 #### KD-2: Один `EventSource` на вкладку; заметка вызывает перечитывание, а смена экрана — переподключение
 
-`LiveStore` открывает `GET /api/events` с `withCredentials` при монтировании оболочки. `watch` следует за экраном: `thread:<id>` на беседе, `agent:<id>` на странице агента, без него на остальных. URL потока не меняется, поэтому смена экрана закрывает поток и открывает новый, а первое `ready` перечитывает экран. Заметка `tree` перечитывает то, что показано: беседу — только со своим `threadId`, страницу агента — с `threadId` агента, загруженные страницы дерева и счётчик NV-01 — по любой заметке, не чаще раза в секунду ([design-chat.md, Risks](./design-chat.md#risks-and-mitigation)). Пока идёт одно перечитывание, новые заметки ставят одно повторное. Первое сообщение новой беседы ждёт `ready` потока с новым `watch` не дольше 1 с, чтобы не потерять первые части ответа.
-
-Не взяты: поток на экран — несколько соединений на вкладку; клиент SSE поверх `fetch` — `EventSource` сам переподключается; опрос — его убирает PRD.
+`LiveStore` открывает `GET /api/events` с `withCredentials` при монтировании оболочки. `watch` следует за экраном: `thread:<id>` на беседе, `agent:<id>` на странице агента, без него на остальных. URL потока зависит от `watch`, поэтому смена экрана закрывает поток и открывает новый, а первое `ready` перечитывает экран. Заметка `tree` перечитывает то, что показано: беседу — только со своим `threadId`, страницу агента — с `threadId` агента, загруженные страницы дерева и счётчик NV-01 — по любой заметке, не чаще раза в секунду ([design-chat.md, Risks](./design-chat.md#risks-and-mitigation)). Пока идёт одно перечитывание, новые заметки ставят одно повторное. Первое сообщение новой беседы ждёт `ready` потока с новым `watch` не дольше 1 с, чтобы не потерять первые части ответа.
 
 #### KD-3: Лента строится одним правилом: записи по номеру, решения и карточки хода по времени создания
 
-Контракт `chat` не связывает вызов инструмента ни с запросом решения, ни с запущенным агентом. Поэтому `toFeed` ставит записи истории по `seq`, а каждый `Confirmation` из `decisions` и каждого прямого потомка из `agents` или `children` — после последней записи, созданной не позже него. Запрос чата создаётся в шаге своего вызова и встаёт сразу под ним (CV-03); запрос фонового агента встаёт там, где пришёл; координатор создаётся решением по брифу и встаёт под карточкой брифа (CV-01). При равном времени решает порядок списка из API. Удачные `start_agent` и `start_workflow` в ленте не рисуются: их заменяет карточка хода (MC-23).
-
-Не взято: просить у `chat` ссылки «вызов → запрос» и «вызов → агент» — правка контракта ради того, что время уже даёт.
+Контракт `chat` не связывает вызов инструмента ни с запросом решения, ни с запущенным агентом. Поэтому `toFeed` ставит записи истории по `seq`, а каждый `Confirmation` из `decisions` и каждого прямого потомка из `agents` или `children` — после последней записи, созданной не позже него. Запрос чата создаётся в шаге своего вызова и встаёт сразу под ним (CV-03); запрос фонового агента встаёт там, где пришёл; глубокий агент создаётся решением по брифу и встаёт под карточкой брифа (CV-01). При равном времени решает порядок списка из API. Удачные `start_agent` и `start_deep_agent` в ленте не рисуются: их заменяет карточка хода (MC-23).
 
 #### KD-4: Принятое сообщение видно сразу — в ленте или в лотке
 
 После ответа 202 композер очищается, а `FeedStore` ставит оптимистичную запись: занятому агенту — в лоток, свободному — в конец ленты, потому что агент получит её первой и лоток только мигнул бы (Screen 1, «Чат свободен»). Запись лотка убирает первое перечитывание, начатое после ответа 202: сервер уже показывает сообщение в `pending` или в истории. Запись в ленте остаётся там, пока её `messageId` не уйдёт из `pending`, а запись `pending` с этим `messageId` рисуется в ленте, не в лотке; первое сообщение новой беседы (без `messageId`) уходит, когда появляется запись `task`. Если сервер не принял сообщение или ответ на него потерян, оптимистичной записи нет, текст возвращается в поле, под полем строка MC-27.
 
-Не взяты: ждать перечитывания без оптимистичной записи — заметная пауза после «Отправить»; очередь в браузере — дублирует серверную.
+#### KD-5: Одно окно решения — `DecisionCard`
 
-#### KD-5: Одно окно решения — `DecisionCard`; блок инструмента теряет свой поток подтверждения
-
-`ToolFallback` сводится к [tool-call.md](../../design-system/components/tool-call.md): десять исходов, сервер, время, строка причины отказа. Его ветки подтверждения, вопросов и квитанций assistant-ui удаляются: изменяющие действия и брифы решает только `DecisionCard`, иначе для одного вызова было бы две кнопки «Подтвердить».
+Блок инструмента `ToolFallback` (`tool-fallback.aui.tsx`) рисуется по [tool-call.md](../../design-system/components/tool-call.md): исход, сервер, время, строка причины отказа. Своего подтверждения у него нет: изменяющие действия и брифы решает только `DecisionCard`, иначе для одного вызова было бы две кнопки «Подтвердить».
 
 #### KD-6: Тексты, которых нет в UXRD
+
+Тексты лежат в каталогах сообщений `src/messages` ([interface-text.md](../../code-system/patterns/interface-text.md)).
 
 - Причины отказа `unknown_agent`, `unknown_model`, `invalid_arguments` и любая будущая — одна строка «Платформа отказала в вызове»; код причины — в подсказке строки. Остальные причины — тексты MC-22.
 - Причины сбоя вне MC-14 и MC-18 (`handler_error`, `step_timeout`, `recovery_exhausted`, `invalid_step_result`) — «Сбой: ошибка платформы» в строке события и «Причина: ошибка платформы» в отчёте; код — в подсказке.
 - Сбой «Остановить» или «Запустить с нуля» — тост sonner, как сбой переименования беседы: «Не удалось остановить агента. Попробуйте ещё раз.» и «Не удалось запустить агента с нуля.»; экран перечитывается и показывает настоящий статус.
 
-Не взято: свой текст на каждый код — эти исходы редки, а сотрудник с ними всё равно ничего не делает.
-
 ## Terms
 
 - **Вид** — ответ `GET` экрана: `ConversationView` беседы или `AgentPageView` агента ([design-chat.md, Contract Definitions](./design-chat.md#contract-definitions)).
 - **Заметка, часть текста, наблюдаемый агент** — как в [design-chat.md, Terms](./design-chat.md#terms).
-- **Черновик** — текст ответа наблюдаемого агента, собранный из частей; живёт только в браузере до записи истории.
+- **Черновик ответа** — текст ответа наблюдаемого агента, собранный из частей; живёт только в браузере до записи истории.
 - **Элемент ленты** — сообщение, ответ модели с вызовами, карточка хода или решения, отчёт, строка события.
 
 ## Part
 
-- **Part**: `web` — пятая часть Delivery Parts в PRD.
+- **Part**: `web` из Delivery Parts в PRD.
 - **Covers**: FR-21, FR-22, FR-23, FR-24, FR-29, NFR-08; веб-доля AC-14.x, AC-16.x, AC-17.x, которые UXRD относит к экранам.
-- **Depends on**: [design-chat.md, Contract Definitions](./design-chat.md#contract-definitions) — маршруты бесед, агентов, решений, `GET /spend`, поток `GET /events`, `ConversationView`, `AgentPageView`, `AgentNode`, `Confirmation`, коды ошибок; [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `AgentView`, `HistoryEntry`, исходы и причины отказа; [design-workflows.md, Contract Definitions](./design-workflows.md#contract-definitions) — `WorkflowRunView`; [design-runtime.md](./design-runtime.md) и [logging.md](../../code-system/patterns/logging.md) — логгер `src/lib/logger.ts`.
-- **Prerequisite ADRs**: нет общих ADR для фронтенда; [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) задаёт, что `apps/web` зависит только от `contracts` и `common`.
-- **Sibling parts**: `runtime`, `agents`, `workflows`, `chat` — их требования здесь только контракты.
+- **Depends on**: [design-chat.md, Contract Definitions](./design-chat.md#contract-definitions) — маршруты бесед, агентов, решений, `GET /spend`, поток `GET /events`, `ConversationView`, `AgentPageView`, `AgentNode`, `Confirmation`, коды ошибок; [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `AgentView`, `HistoryEntry`, исходы и причины отказа; [deep-agents/design-agent-types.md, Contract Definitions](../deep-agents/design-agent-types.md#contract-definitions) — `start_deep_agent`, карточка `agents.brief`, `DeepAgentRunView` маршрута `GET /agents/:agentId/run`; [logging.md](../../code-system/patterns/logging.md) — логгер `src/lib/logger.ts`.
+- **Prerequisite ADRs**: [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) — `apps/web` зависит только от `contracts` и `common`; [ADR-0020](../../adr/ADR-0020-next-intl-client-layer.md) — тексты интерфейса через next-intl.
+- **Sibling parts**: `runtime`, `agents`, `chat` — их требования здесь только контракты.
 
-**Два поля контракта `chat`**, на которые опираются экраны ([design-chat.md, Contract Definitions](./design-chat.md#contract-definitions)):
+**Два поля контракта**, на которые опираются экраны:
 
-- **A-1.** `template` у `AgentView` и `AgentNode` координатора workflow: по нему веб отличает запуск от агента в дереве, в карточке хода и в отчёте.
-- **A-2.** Описание родителя-агента в `AgentPageView.agent`: из него строка мета (MC-8) и подпись «От агента «…»» (MC-10).
+- **A-1.** `origin` у `AgentView` и `AgentNode` (`RunOrigin`): запись, её вид и сабагент, с которых стартовал запуск; `null` у корня беседы. Запуск глубокого агента — `origin.kind` `deep_agent` и `origin.subagent` `null`; по нему веб выбирает вариант в дереве, в карточке хода и в отчёте.
+- **A-2.** Описание родителя-агента `AgentPageView.agent.parentDescription`: из него строка мета (MC-8) и подпись «От агента «…»» (MC-10).
 
 **Out of scope**
 
-- Экраны шаблонов, настроек MCP, бюджета и цен, стоимость по агентам (PRD, Won't Have).
+- Экраны настроек MCP, бюджета и цен, стоимость по агентам (PRD, Won't Have).
 - Отдельный запуск агентов: агентов запускает только беседа (FR-15).
 - Сервер, поток, контракты `packages/contracts` и их значения — часть `chat`.
-- Удаление трёх спецификаций `docs/design-system/components/research-card.md`, `research-answer.md`, `research-launch-label.md`: хук запрещает агентам удалять их, удаляет владелец.
+- Вкладка «Задачи» страницы агента — [deep-agents/design-task-list.md](../deep-agents/design-task-list.md), KD-5.
 
 **Constraints**
 
 - Всё внутри оболочки chat-shell; спецификации дизайн-системы и UXRD реализуются как написаны, `foundations.md` задаёт движение: смена статуса не мигает и не меняет высоту.
-- PoC: прежний транспорт и код ресерча удаляются, без слоёв совместимости.
-- Логи — только через `logger` из `src/lib/logger.ts` (часть `runtime`, пишет в консоль и `@sentry/nextjs`); оставшиеся вызовы `console` переходят на него. Тела ответов и тексты сообщений не логируются, как и сейчас.
+- Логи — только через `logger` из `src/lib/logger.ts`, который пишет в консоль и `@sentry/nextjs`. Тела ответов и тексты сообщений не логируются.
 - Тесты — немного, только главный путь каждой поверхности с MSW ([Test Strategy](#test-strategy)).
 
 ## Building-block Inventory
@@ -88,16 +79,15 @@ Follows the [code system](../../code-system/README.md). Новых паттер�
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `threadsApiClient` | — | extended | функции новых маршрутов на прежней обёртке `send` и схемах `contracts`; уходят `getThreadMessages` и разбор UIMessage |
+| `threadsApiClient` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | extended | функция на каждый маршрут беседы и агента поверх `apiRequest` и схем `contracts` |
 | `ShellStatusStore` | — | reused | статусы истории беседы, `titleWaiting`, `activityAt`; `FeedStore` пишет в него `ready`, `not_found`, `load_failed`, `deleted` |
-| `LiveStore` | — | new — KD-2 | искали `EventSource` и SSE в `apps/web`: только транспорт AI SDK |
-| `FeedStore`, `toFeed`, `useFeedRuntime` | — | new — KD-1, KD-3 | одно хранилище для беседы и агента; заменяет адаптер истории |
-| `ChatRuntimeProvider`, `MainView`, `ChatHeader`, `ChatShell`, `DocumentTitle` | — | extended | маршруты агентов, шапка агента, строка связи |
+| `LiveStore` | — | new — KD-2 | один `EventSource` вкладки |
+| `FeedStore`, `toFeed`, `useFeedRuntime` | — | new — KD-1, KD-3 | одно хранилище для беседы и агента |
+| `ChatRuntimeProvider`, `MainView`, `ChatHeader`, `ChatShell`, `DocumentTitle` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | маршруты агентов, шапка агента, строка связи |
 | `Thread`, `Composer`, `AssistantMessage`, `UserMessage` | — | extended | «Прервать», лоток, части `data-*`, подписи источника |
 | `ToolFallback` | — | extended — KD-5 | по tool-call.md, без подтверждения |
 | `AppSidebar`, `UserMenu`, `DeleteThreadDialog`, `ThreadNotice` | — | extended | NV-01, SP-01, MC-26, MC-15 и MC-16 |
-| `AgentStatus`, `RunCard`, `DecisionCard`, `AgentReport`, `QueueTray`, `AgentTree`, `ConnectionBar`, `Announcer`, `AgentHeader`, `InheritedHistory` | — | new | спецификации дизайн-системы и UXRD; искали в `components/**`: нет ни статуса, ни дерева, ни лотка |
-| `ThreadActivityTracker`, адаптер истории, `reportChatError`, `regenerateAfterError`, ожидание отмены хода в `shell-actions` | — | removed | им нужны `isRunning` и запрос ответа; `activityAt` теперь ставит `send`, перегенерации нет ([design-chat.md, Part](./design-chat.md#part)) |
+| `AgentStatus`, `RunCard`, `DecisionCard`, `AgentReport`, `QueueTray`, `AgentTree`, `ConnectionBar`, `Announcer`, `AgentHeader`, `InheritedHistory` | — | new | спецификации дизайн-системы и UXRD |
 
 ## Acceptance Criteria
 
@@ -128,7 +118,7 @@ Follows the [code system](../../code-system/README.md). Новых паттер�
 
 ### Architecture (C1–C4)
 
-Контейнеры те же, что в [design-chat.md, C2](./design-chat.md#c2--containers): `web` шлёт команды обычными запросами, держит один поток SSE на вкладку и перечитывает вид по заметке; запроса, который ждёт ответ модели, больше нет. `api` в этой части не меняется, поэтому ниже — только компоненты `web`.
+Контейнеры те же, что в [design-chat.md, C2](./design-chat.md#c2--containers): `web` шлёт команды обычными запросами, держит один поток SSE на вкладку и перечитывает вид по заметке. Ниже — только компоненты `web`.
 
 #### C3 · Components: web
 
@@ -200,32 +190,32 @@ flowchart TB
 
 #### Компоненты и маршруты
 
-Маршруты `app/(chat)/agents/page.tsx` и `app/(chat)/agents/[agentId]/page.tsx` возвращают `null`, как страницы бесед: весь UI живёт в макете `(chat)`, а экран выбирает `MainView` по пути. `parseRouteThreadId` уступает функции разбора пути с тремя видами — беседа, список агентов, агент; `syncUrlWithThread` по-прежнему трогает только пути `/chat/`.
+Маршруты `app/(chat)/agents/page.tsx` и `app/(chat)/agents/[agentId]/page.tsx` возвращают `null`, как страницы бесед: весь UI живёт в макете `(chat)`, а экран выбирает `MainView` по виду пути из `parseShellRoute` ([shell-route.md](../../code-system/patterns/shell-route.md)).
 
-- `ChatShell` — changed: между `ChatHeader` и областью `MainView` встаёт `ConnectionBar` (CN-01), рядом — `Announcer`.
-  - `ChatRuntimeProvider` — changed (KD-1); создаёт `LiveStore` вместе с прочими службами оболочки.
-  - `AppSidebar` — changed: пункт «Агенты» (NV-01) под «Новый чат»; `UserMenu` — changed: строка расхода (SP-01).
-  - `ChatHeader` — changed: заголовок по маршруту; на `/agents` — «Агенты»; на агенте — `AgentHeader` (AV-01): `AgentStatus` и одна кнопка управления, на мобильном — меню «⋯» (MC-11). Кнопка рабочей области на маршрутах агентов скрыта.
-  - `MainView` — changed:
-    - беседа — прежняя `Thread`, `resolveMainView` без изменений;
+- `ChatShell` — между `ChatHeader` и областью `MainView` стоит `ConnectionBar` (CN-01), рядом — `Announcer`.
+  - `ChatRuntimeProvider` (KD-1) создаёт службы оболочки, среди них `LiveStore`.
+  - `AppSidebar` — пункт «Агенты» (NV-01) под «Новый чат»; `UserMenu` — строка расхода (SP-01).
+  - `ChatHeader` — заголовок по маршруту; на `/agents` — «Агенты»; на агенте — `AgentHeader` (AV-01): `AgentStatus` и одна кнопка управления, на мобильном — меню «⋯» (MC-11). Кнопка рабочей области на маршрутах агентов скрыта.
+  - `MainView`:
+    - беседа — `Thread`, экран выбирает `resolveMainView`;
     - `/agents` — `AgentsScreen`: `AgentTree` и состояния Screen 2;
-    - `/agents/<id>` — `AgentScreen`: свой `AssistantRuntimeProvider`, `Thread` с строкой мета (AV-02), `InheritedHistory` (AV-05) и композером; «не найден» и «ошибка» — `ThreadNotice` с MC-15 и MC-16.
-  - `Thread` — changed: в `ViewportFooter` над композером — `QueueTray`; в ряду композера — `InterruptButton` рядом с «Отправить» (KD-2 UXRD); плейсхолдер агента — MC-12.
-  - `DocumentTitle` — changed: MC-4, MC-8, MC-15.
-  - `DeleteThreadDialog` — changed: абзац MC-26.
+    - `/agents/<id>` — `AgentScreen`: свой `AssistantRuntimeProvider`, `Thread` со строкой мета (AV-02), `InheritedHistory` (AV-05) и композером; «не найден» и «ошибка» — `ThreadNotice` с MC-15 и MC-16.
+  - `Thread` — в `ViewportFooter` над композером `QueueTray`; в ряду композера `InterruptButton` рядом с «Отправить» (KD-2 UXRD); плейсхолдер агента — MC-12.
+  - `DocumentTitle` — MC-4, MC-8, MC-15.
+  - `DeleteThreadDialog` — абзац MC-26.
 
 | Что сотрудник видит | Компонент | Данные |
 |---|---|---|
-| Задание, сообщение сотрудника, сообщение родителя (MC-9, MC-10) | `UserMessage` с подписью источника | `task`, `user_message`, `agent_message`; бриф координатора — `WorkflowRunView.brief` |
+| Задание, сообщение сотрудника, сообщение родителя (MC-9, MC-10) | `UserMessage` с подписью источника | `task`, `user_message`, `agent_message`; у глубокого агента задание — его бриф из `DeepAgentRunView.brief` |
 | Ответ модели с вызовами | `AssistantMessage`, `ToolFallback` | `model_answer` и `tool_result` по `callId`; исход, сервер, время и причина — в `artifact` части `tool-call` |
-| Ответ, который пишется | `AssistantMessage` со статусом `running` | черновик из `delta` |
-| Карточка хода (CV-01) | `RunCard` | прямой потомок из `agents` или `children`; шаги — его `children` (A-1) |
-| Карточка решения (CV-03) | `DecisionCard` | `Confirmation` из `decisions` |
+| Ответ, который пишется | `AssistantMessage` со статусом `running` | черновик ответа из `delta` |
+| Карточка хода (CV-01) | `RunCard` | прямой потомок из `agents` или `children`; вариант по `origin` (A-1); у глубокого агента шаги — его `children`, команда и отказы по пределу — `DeepAgentRunView` |
+| Карточка решения (CV-03) | `DecisionCard` | `Confirmation` из `decisions`; бриф — вид `agents.brief` |
 | Отчёт (CV-02, AV-04) | `AgentReport`; на странице агента — `AssistantMessage` с подписью «Отчёт» | `child_report`; у самого агента — ответ модели без вызовов, которым он закончил ход |
 | Строка события (MC-14) | `AgentStatus`, вариант «Строка события» | `event`; сбой модели корня беседы — блок TH-08 |
 | Лоток (CV-04) | `QueueTray` | `pending` и оптимистичные записи |
 
-Записи `notice` и `compaction` — для модели, в ленте их нет; отметку сжатия показывает `event` `compacted`. Карточки, отчёт и строка события доходят до assistant-ui частями `data-*`, и `AssistantMessage` рисует их своими компонентами.
+Запись `compaction` — для модели, в ленте её нет; отметку сжатия показывает `event` `compacted`. Из записей `notice` в ленту попадает только отказ закончить ответ при открытых задачах или без отчёта финального сабагента ([deep-agents/design-task-list.md](../deep-agents/design-task-list.md), KD-4). Карточки, отчёт и строка события доходят до assistant-ui частями `data-*`, и `AssistantMessage` рисует их своими компонентами.
 
 ### Runtime Flows
 
@@ -319,7 +309,7 @@ sequenceDiagram
     end
     U->>W: «Запустить с правками»
     W->>A: POST decisions с approve и args
-    Note over A,DB: запрос resolved, координатор создан
+    Note over A,DB: запрос resolved, глубокий агент создан
     A-->>W: 200 resolved
     W-->>U: «Отправка» до перечитывания
     W->>A: GET history с afterSeq
@@ -335,7 +325,7 @@ sequenceDiagram
 - 400 `INVALID_ARGUMENTS` на исправленном брифе → карточка остаётся в правке с введёнными значениями и показывает строку ошибки MC-19.
 - 200 `already_resolved` → решение уже принято в другой копии или вкладке; перечитывание показывает итог без строки ошибки.
 - 404 `DECISION_NOT_FOUND` → перечитывание экрана: беседу удалили, и экран показывает «не найдено».
-- «Запустить с правками» с пустым вопросом → запрос не уходит, состояние «Пустой вопрос»; бриф отправляет `template` из `Confirmation` без изменений и три поля ([design-chat.md](./design-chat.md#contract-definitions)).
+- «Запустить с правками» с пустым вопросом → запрос не уходит, состояние «Пустой вопрос»; бриф отправляет `deepAgent` из аргументов карточки без изменений и три поля ([deep-agents/design-agent-types.md](../deep-agents/design-agent-types.md#contract-definitions)).
 
 #### Flow 3: Открыть агента и остановить его
 
@@ -399,7 +389,7 @@ sequenceDiagram
 - Сбой `stop` → тост KD-6 и перечитывание.
 - «Запустить с нуля» → `POST restart`, ответ 201 с `agentId` открывает страницу нового агента, фокус на `h1`; 409 `NOT_FINISHED` или `PARENT_FINISHED` и прочие сбои → тост KD-6 и перечитывание.
 - У агента с `forkedFrom` страница один раз читает `GET /agents/:agentId/inherited` для блока AV-05; ошибка оставляет блок свёрнутым с подписью без числа.
-- У координатора страница читает `GET /agents/:agentId/run` для брифа в задании (AV-03); 404 `RUN_NOT_FOUND` показывает задание текстом.
+- У глубокого агента страница читает `GET /agents/:agentId/run` для брифа в задании (AV-03); любая ошибка чтения, в том числе 404 `RUN_NOT_FOUND`, показывает задание текстом.
 
 #### Flow 4: Связь пропала и вернулась
 
@@ -450,20 +440,20 @@ sequenceDiagram
     W-->>U: строка связи ушла, лента дочитана
 ```
 
-**Outcome:** записи не повторяются и не пропадают, потому что вид дочитывается с последнего номера; лоток и карточки решения берут состояние из полного `pending` и `decisions`; черновик сбрасывается, шаг агента начнёт части с `offset` 0. Прокрутка не двигается, строка связи уходит без анимации.
+**Outcome:** записи не повторяются и не пропадают, потому что вид дочитывается с последнего номера; лоток и карточки решения берут состояние из полного `pending` и `decisions`; черновик ответа сбрасывается, шаг агента начнёт части с `offset` 0. Прокрутка не двигается, строка связи уходит без анимации.
 
 **Failure handling:**
 
-- Сервер отвечает ошибкой, и `EventSource` закрывается сам (`readyState` CLOSED) → `LiveStore` открывает поток заново через 2 с, строка связи стоит.
+- Сервер отвечает ошибкой, и `EventSource` закрывается сам (`readyState` CLOSED) → `LiveStore` проверяет сеанс через `GET /api/auth/me` и, если он жив, открывает поток заново через 2 с; строка связи стоит. Ответ 401 уводит на вход.
 - Команда, отправленная без связи → своя ошибка: MC-27 у композера, MC-19 у карточки.
 
 ### Contract Definitions
 
-Все запросы — `${NEXT_PUBLIC_API_URL}/api/...` с `credentials: 'include'`; ответы разбираются схемами `@agent-os/contracts`; несовпадение схемы — ошибка `invalid_response`. Маршруты и формы — [design-chat.md, Contract Definitions](./design-chat.md#contract-definitions).
+Все запросы идут через `apiRequest` ([web-api-client.md](../../code-system/patterns/web-api-client.md)) на путь `/api/...` адреса веба с `credentials: 'include'`; сервер Next пересылает его в API (`rewrites` в `next.config.ts`). Ответы разбираются схемами `@agent-os/contracts`; несовпадение схемы — ошибка вида `invalid_response`. Маршруты и формы — [design-chat.md, Contract Definitions](./design-chat.md#contract-definitions).
 
-**`threadsApiClient`** (расширен) — по функции на каждый маршрут из [design-chat.md](./design-chat.md#contract-definitions), который нужен вебу. Функция возвращает разобранную форму или бросает `ThreadsApiError`; 404 с кодом `*_NOT_FOUND` — вид `not_found`.
+**`threadsApiClient`** — по функции на каждый маршрут из [design-chat.md](./design-chat.md#contract-definitions), который нужен вебу, и `getRun` для `GET /agents/:agentId/run`. Функция возвращает разобранную форму или бросает `ApiRequestError`; 404 с кодом `*_NOT_FOUND` — вид `not_found`.
 
-**`LiveStore`** — один на вкладку, создаётся в `ChatRuntimeProvider`.
+**`LiveStore`** — один на вкладку, его создают службы оболочки в `ChatRuntimeProvider`.
 
 - Состояние: связь `connecting`, `open` или `lost`; текущий `watch`.
 - `watch(target)` — беседа, агент или ничего; при смене цели закрывает поток и открывает новый; обещание выполняется с первым `ready` или через 1 с.
@@ -474,12 +464,12 @@ sequenceDiagram
 **`FeedStore`** — по одному на открытую беседу или агента, zustand vanilla, как `ShellStatusStore`.
 
 - Вход: источник (`thread` или `agent` с id) и `threadsApiClient`.
-- Состояние: записи истории, последний `seq`, `pending`, `decisions`, потомки, статус (чат: `ConversationView.chat`; агент: `AgentView`), черновик, оптимистичные записи, признак загрузки и ошибка загрузки.
+- Состояние: записи истории, последний `seq`, `pending`, `decisions`, потомки, статус (чат: `ConversationView.chat`; агент: `AgentView`), черновик ответа, оптимистичные записи, признак загрузки и ошибка загрузки.
 - `load()` читает вид с `afterSeq` 0 и дочитывает, пока есть `nextAfterSeq`; `refresh()` дочитывает с последнего номера, остальные поля заменяет целиком; одновременно идёт одно чтение, заметки во время него ставят ещё одно.
-- Черновик: `offset` 0 начинает его заново, часть с `offset`, равным длине, дописывается, остальные отбрасываются; перечитывание, которое добавило записи, черновик очищает.
+- Черновик ответа: `offset` 0 начинает его заново, часть с `offset`, равным длине, дописывается, остальные отбрасываются; перечитывание, которое добавило записи, черновик очищает.
 - `send(text)`, `interrupt()`, `decide(decisionId, approve, args?)`, `stop()`, `restart()` — команды; оптимистичную запись ставит только `send` (KD-4); каждая после успеха вызывает `refresh()`. Ошибка команды возвращается вызывающему компоненту: композер, карточка и шапка показывают её по UXRD.
 - `interrupt()` шлёт `POST interrupt` без тела и только останавливает агента: поле сообщения кнопка «Прервать» не читает и не очищает, набранный текст остаётся в нём, оптимистичной записи нет, событие прерывания приносит перечитывание. Сообщение работающему агенту уходит обычным «Отправить» и ждёт в лотке. Сбой прерывания хранилище пишет в лог, кнопка своего текста не показывает.
-- Беседа пишет статус истории в `ShellStatusStore`, поэтому `resolveMainView` и экраны TH-05–TH-07 и E-8 работают как прежде.
+- Беседа пишет статус истории в `ShellStatusStore`, поэтому `resolveMainView` и экраны TH-05–TH-07 и E-8 работают по нему.
 - Объявления MC-25: новая открытая карточка решения или бриф и пришедший `child_report` — только из перечитывания, не из первой загрузки.
 
 **`toFeed(view, draft, optimistic)`** — элементы ленты по KD-3 и таблице выше; на выходе сообщения `ThreadMessageLike` со стабильными id (`seq`, `decisionId`, `agentId`), чтобы assistant-ui не перерисовывал прежние строки.
@@ -489,7 +479,7 @@ sequenceDiagram
 **Компоненты дизайн-системы** — свойства соответствуют частям спецификаций, без своего состояния данных:
 
 - `AgentStatus` — статус и вариант; все вращающиеся иконки получают отрицательную задержку анимации от общего времени страницы, поэтому вращаются в одной фазе ([agent-status.md](../../design-system/components/agent-status.md)).
-- `RunCard` — `AgentNode`; вариант «Workflow», если у узла есть `template` (A-1).
+- `RunCard` — `AgentNode`; вариант «Глубокий агент», если узел — запуск глубокого агента (A-1), иначе «Агент» ([agent-run-card.md](../../design-system/components/agent-run-card.md)).
 - `DecisionCard` — `Confirmation`, исход отправки и обработчик решения; правка брифа и её проверка — локальное состояние карточки ([decision-card.md](../../design-system/components/decision-card.md)).
 - `QueueTray` — записи лотка, признак «Заблокирован решением» и id карточки для «К запросу».
 - `AgentTree` — страницы `AgentListPage`, раскрытие строк и обработчик «Показать ещё»; раскрытие живёт в памяти до перезагрузки; две строки или колонки — по container query 720 px ([agent-tree.md](../../design-system/components/agent-tree.md)).
@@ -518,14 +508,14 @@ sequenceDiagram
 
 ## Test Strategy
 
-Тесты пишутся с задачами и запускаются один раз в конце части. Граница — сеть (MSW) и источник событий `LiveStore`; оболочка настоящая, как в тестах `shell.*`. Библиотеки и чистое отображение не тестируются; остальное — L1 в браузере.
+Граница — сеть (MSW) и источник событий `LiveStore`; оболочка настоящая, как в тестах `shell.*`. Библиотеки и чистое отображение не тестируются; остальное — L1 в браузере.
 
 ### Main Use Cases
 
 - **UC-1: Лента беседы вживую и после перечитывания** — covers AC-24.1, AC-22.2, DC-1; тест
-  - Given: вид беседы с ответом чата, вызовом MCP-инструмента, подтверждённым брифом и запуском workflow с двумя шагами.
+  - Given: вид беседы с ответом чата, вызовом MCP-инструмента, подтверждённым брифом и запуском глубокого агента с двумя шагами.
   - When: приходят части текста, затем заметка `tree`, после которой вид содержит третий шаг и отчёт.
-  - Then: черновик виден до записи и сменяется ею; карточка хода под брифом показывает три шага с их статусами; отчёт — в конце ленты; ни одна запись не повторилась.
+  - Then: черновик ответа виден до записи и сменяется ею; карточка хода под брифом показывает три шага с их статусами; отчёт — в конце ленты; ни одна запись не повторилась.
 - **UC-2: Лоток и «Прервать»** — covers AC-23.1, AC-16.1, AC-16.2, DC-2; тест
   - Given: чат беседы в статусе `working`.
   - When: сотрудник отправляет сообщение, затем набирает текст и нажимает «Прервать»; следующая отправка получает 500.
@@ -533,7 +523,7 @@ sequenceDiagram
 - **UC-3: Карточка решения** — covers AC-24.2, AC-28.2, AC-28.3; тест
   - Given: в беседе открытый бриф и открытый запрос изменяющего действия фонового агента.
   - When: сотрудник правит вопрос брифа и запускает, затем отклоняет действие; первая отправка отклонения получает сетевую ошибку.
-  - Then: запрос брифа несёт `template` и три поля, карточка показывает «Бриф подтверждён» и фокус на ней; отклонение показывает MC-19 с ошибкой, повтор — «Отклонено».
+  - Then: запрос брифа несёт `deepAgent` и три поля, карточка показывает «Задание подтверждено» и фокус на ней; отклонение показывает MC-19 с ошибкой, повтор — «Отклонено».
 - **UC-4: Дерево, страница агента и управление** — covers AC-21.1, AC-22.1, AC-23.2; тест
   - Given: у сотрудника корневой агент с потомком в статусе «Работает».
   - When: заметка `tree` добавляет новый корень, сотрудник открывает агента, нажимает «Остановить», затем «Запустить с нуля».
@@ -568,46 +558,26 @@ sequenceDiagram
 | Фоновый агент (UXRD Flow 1) | в Network один `GET /api/events`; `POST messages` — 202; карточка хода и отчёт без перезагрузки |
 | Смена статусов | высота строк дерева и карточки хода до и после смены одинакова (DOM-замер) |
 | Рестарт API посреди работы | строка связи появляется и уходит; записей в ленте столько же, сколько в истории API |
-| Workflow deep-research (UXRD Flow 2) | правка брифа, шаги в карточке, отчёт workflow |
+| Глубокий агент через бриф | правка брифа, шаги в карточке хода, отчёт |
 | UC-5, UC-E2, UC-N1 | как в use cases; в консоли нет ошибок |
-
-**Спайк S-1** — до экранов: `useRemoteThreadListRuntime` с хуком на `useExternalStoreRuntime`. Успех: первое сообщение новой беседы создаёт её через `initialize()`; «Отправить» активна, пока агент работает; заголовок новой беседы появляется через прежний `generateTitle` (иначе — явный вызов генерации заголовка элемента после первого ответа); второй `AssistantRuntimeProvider` страницы агента не ломает список бесед в сайдбаре; части `data-*` рисуются своими компонентами.
 
 ## Security Considerations
 
 - **Authentication & Authorization**: веб не проверяет права — каждую точку проверяет API ([design-chat.md, Security](./design-chat.md#security-considerations)); `EventSource` идёт с `withCredentials`, как остальные запросы с `credentials: 'include'`.
 - **Input Validation**: вход проверяют схемы API, веб показывает 400 как ошибку отправки; ответы API проходят схемы `contracts` до хранилища.
-- **Sensitive Data Handling**: аргументы и результаты инструментов, тексты и отчёты выводятся как текст или через прежний Markdown-рендер с политикой `markdown-policy`; в лог идут только id, виды ошибок и коды.
+- **Sensitive Data Handling**: аргументы и результаты инструментов, тексты и отчёты выводятся как текст или через Markdown-рендер с политикой `markdown-policy`; в лог идут только id, виды ошибок и коды.
 
 ## Risks and Mitigation
 
-- **assistant-ui ведёт себя иначе, чем говорят документация и типы** (заголовок, вложенный провайдер, отправка во время работы) — высокое влияние, средняя вероятность. Спайк S-1 до экранов; запасной путь для заголовка в нём же.
+- **assistant-ui меняет поведение внешнего хранилища при обновлении** (отправка во время работы, вложенный провайдер, заголовок новой беседы) — высокое влияние, низкая вероятность. Версия закреплена в `package.json`; UC-1–UC-4 ловят расхождение.
 - **Время создания ставит карточку не на то место** (KD-3), если часы записей и задач расходятся — низкое влияние, низкая вероятность: обе отметки пишет одна база в одной транзакции итога шага.
-- **Удаление беседы в другой вкладке не шлёт заметку** ([design-chat.md, Flow 6](./design-chat.md#flow-6-удаление-беседы-с-работающими-агентами)) — низкое влияние. В своей вкладке веб после удаления перечитывает дерево и открытый экран; другая вкладка увидит изменение при следующей заметке или перезагрузке.
+- **Удаление беседы в другой вкладке не шлёт заметку** ([design-chat.md, Runtime Flows](./design-chat.md#runtime-flows)) — низкое влияние. В своей вкладке веб после удаления перечитывает дерево и открытый экран; другая вкладка увидит изменение при следующей заметке или перезагрузке.
 - **Короткий обрыв сети показывает строку связи на мгновение** — низкое влияние. Строка без анимации и не сдвигает ленту.
-
-## Appendix: Fact Disposition
-
-| Fact | Disposition | Handled in |
-|------|-------------|------------|
-| Только `/` и `/chat/<id>`; на других путях новый чат (`parseRouteThreadId`) | transform | «Компоненты и маршруты» |
-| Один runtime с транспортом AI SDK, адаптер истории, постоянный id агента (`ChatRuntimeProvider`) | transform | KD-1 |
-| «Отправить» или «Остановить», без очереди (`ComposerAction`) | transform | KD-1, KD-4; `InterruptButton`, `QueueTray` |
-| Подтверждение assistant-ui в блоке инструмента (`ToolFallbackApproval`) | remove | KD-5 |
-| Четыре статуса и свои иконки блока инструмента (`statusIconMap`) | transform | KD-5; tool-call.md |
-| Ресерч: карточка, ответ, метка, переключатель, опрос (`ThreadResearchProvider`); скрытые сообщения решений (`isHiddenMessageAt`) | remove | уже удалены частью `runtime`; три спецификации — Part, Out of scope; решения — `DecisionCard` |
-| Сайдбар без пункта навигации и без расхода (`AppSidebar`) | transform | NV-01, SP-01 |
-| Шапка без статуса, кнопка рабочей области везде (`ChatHeaderView`) | transform | `AgentHeader`; скрытие на маршрутах агентов |
-| Опрос вместо живого канала, нет `EventSource` (`threadsApiClient.send`) | transform | KD-2; `LiveStore` |
-| Абзац о ресерче и отмена хода перед удалением (`RunningResearchNotice`) | transform | MC-26 по `GET /threads/:id/agents`; ожидание отмены уходит — сервер останавливает дерево сам |
-| Тесты ресерча и фикстуры AI SDK (`renderWithRuntime`) | transform | тесты ресерча удалены `runtime`; фикстуры UIMessage уходят, тесты — Test Strategy |
-| `console.*` в 9 файлах, логгера нет (`ShellError`) | transform | Constraints: `logger` из `src/lib/logger.ts` |
-
-The design preserves: токены статусов и движения в `globals.css` без новых определений (`--approval`), примитивы shadcn на base-ui (`buttonVariants`), брейкпоинты 768 и 1024 px, фокусные цели и skip link (`CloseDrawerOnDesktop`).
 
 ## Update History
 
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-14 | Initial version |
-| 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Поля A-1 и A-2 взяты из контракта `design-chat.md` v1.2, допущения сняты (Part). Потерянный ответ на отправку обрабатывается как отказ — текст в поле с MC-27 (KD-4, Flow 1); 400 `INVALID_ARGUMENTS` на исправленном брифе оставляет карточку в правке (Flow 2). |
+| 1.1 | 2026-11-14 | Утверждён |
+| 1.2 | 2026-11-22 | Приведён к коду: глубокий агент и бриф `agents.brief`, поле `origin`, запросы через `/api` веба |

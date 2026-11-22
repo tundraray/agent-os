@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-21).
+Accepted (2026-11-22).
 
 ## Decision
 
