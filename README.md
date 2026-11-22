@@ -8,7 +8,7 @@
 |---|---|---|
 | Монорепо | pnpm workspaces + Turborepo | Один lockfile, общие пакеты; Turborepo даёт граф задач и кэш сборок почти без конфигурации |
 | Фронт | Next.js (App Router) + assistant-ui | Примитивы чата под MIT: вложения, ветки, редактирование, tool UI, approvals |
-| Бэкенд | NestJS (Express-платформа) | Guards, interceptors, модули для auth/аудита/бюджетов |
+| Бэкенд | NestJS (Express-платформа) | Guards, interceptors, модули для входа, прав и аудита |
 | Агенты | `packages/agents` поверх `packages/runtime` | Каждый агент — задача durable runtime; Nest только собирает пакеты |
 | Транспорт | HTTP-команды и SSE (`GET /api/events`) | Команда отвечает сразу, ответ агента идёт живым потоком |
 | Хранилище | Postgres (схема `app`, `packages/db`) | Задачи, сессии агентов, беседы, расход и аудит в одной БД |
@@ -96,10 +96,11 @@ cd ../..
 
 `apps/api` — NestJS-приложение, которое собирает пакеты `runtime` и `agents` и отдаёт API чата:
 
-- `src/runtime/`, `src/agents/` — модули-сборщики пакетов: читают переменные окружения и файлы `config/`.
+- `src/runtime/`, `src/agents/` — модули-сборщики пакетов: читают переменные окружения.
 - `src/chat/` — беседы, агенты, решения, расход (HTTP-команды) и живой поток `GET /api/events` (SSE поверх `LISTEN/NOTIFY` Postgres).
 - `src/audit/` — interceptor, пишущий события в Postgres.
-- `src/auth/` — `SessionGuard`: в разработке все запросы идут от `dev-user` (заголовок `x-user-id` подменяет пользователя).
+- `src/identity/`, `src/access/` — вход, сессии, роли и права на MCP-серверы и модели.
+- `src/library/` — записи агентов и глубоких агентов.
 
 Переменные окружения и запуск — `apps/api/README.md` («How to run locally») и `apps/api/.env.example`.
 
@@ -234,7 +235,7 @@ POSTGRES_PORT=5433 pnpm db:up
 | `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (беседы, агенты, решения, живой поток) |
 | `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
 
-Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — `docs/features/agent-platform/design-runtime.md`, Runtime Settings). Неверное значение останавливает старт с именем переменной. Настройки агентов (`AGENT_*`, `MCP_*`) — там же, в `.env.example`.
+Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — [`design-runtime.md`](docs/features/agent-platform/design-runtime.md#runtime-settings)). Неверное значение останавливает старт с именем переменной.
 
 | Переменная | По умолчанию |
 |---|---|
@@ -264,12 +265,6 @@ POSTGRES_PORT=5433 pnpm db:up
 Сообщения коммитов пишутся на английском и проверяются [commitlint](https://commitlint.js.org) по [Conventional Commits](https://www.conventionalcommits.org): `type(scope): subject`, например `feat(web): add new chat button` или `fix(api): keep thread title after delete`. Хук `commit-msg` ставит husky при `pnpm install`; в CI проверяются все коммиты PR.
 
 Скопированные компоненты shadcn и assistant-ui (`components/ui`, `components/assistant-ui`, `file`, `image`, `media-player`, `surfaces`) исключены из проверки неиспользуемых экспортов: это библиотечный код, его API шире того, что использует приложение. Неиспользуемые файлы и зависимости в них по-прежнему ловятся.
-
-## Что дальше
-
-1. Авторизация через корпоративный OIDC в `apps/api/src/auth`.
-2. Бюджеты токенов на пользователя и подразделение.
-3. Инструменты в изолированных Docker-воркерах (`apps/api/src/sandbox`).
 
 ## Альтернативы, которые отложены
 
