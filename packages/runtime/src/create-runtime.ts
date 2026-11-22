@@ -2,21 +2,24 @@ import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock } from './clock';
 import { CrashPoints } from './crash-points';
-import { Decisions } from './decisions';
-import { Dispatcher } from './dispatcher';
-import { EventConsumerRegistry } from './event-consumer.registry';
-import { EventLog } from './event-log';
-import { HandlerRegistry } from './handler.registry';
-import { Inbox } from './inbox';
-import { OutboxRelay } from './outbox.relay';
-import { RecoverySweeper } from './recovery.sweeper';
-import { RunningTaskRegistry } from './running-task.registry';
+import { Decisions } from './messaging/decisions';
+import { DecisionRepository } from './messaging/decisions.repository';
+import { Dispatcher } from './steps/dispatcher';
+import { EventConsumerRegistry } from './events/event-consumer.registry';
+import { DeliveryRepository } from './events/delivery.repository';
+import { EventLog } from './events/event-log.repository';
+import { HandlerRegistry } from './steps/handler.registry';
+import { Inbox } from './messaging/inbox';
+import { InboxRepository } from './messaging/inbox.repository';
+import { OutboxRelay } from './events/outbox.relay';
+import { RecoverySweeper } from './workers/recovery.sweeper';
+import { RunningTaskRegistry } from './tasks/running-task.registry';
 import type { RuntimeConfig } from './runtime-config';
-import { StepCommitter } from './step-commit';
-import { TaskControl } from './task-control';
-import { TaskRepository } from './task.repository';
-import { TokenLedger } from './token-ledger';
-import { type Tracker, TrackerRepository } from './tracker.repository';
+import { StepCommitter } from './steps/step-commit';
+import { TaskControl } from './tasks/task-control';
+import { TaskRepository } from './tasks/task.repository';
+import { TokenLedger } from './ledger/token-ledger.repository';
+import { type Tracker, TrackerRepository } from './tasks/tracker.repository';
 
 /** What the composition root hands to {@link createRuntime}. */
 export interface RuntimeOptions {
@@ -91,14 +94,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   const trackers = new TrackerRepository();
   const inbox = new Inbox({
     db,
+    repository: new InboxRepository(),
     tasks,
     events,
     crashPoints,
     logger: logger.child({ service: 'inbox' }),
     inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,
   });
+  const decisionRows = new DecisionRepository();
   const decisions = new Decisions({
     db,
+    repository: decisionRows,
     tasks,
     events,
     logger: logger.child({ service: 'decisions' }),
@@ -139,6 +145,8 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     logger: logger.child({ worker: 'relay' }),
     consumers: eventConsumers,
     tasks,
+    events,
+    deliveries: new DeliveryRepository(),
   });
   const sweeper = new RecoverySweeper({
     db,
@@ -169,6 +177,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       trackers,
       events,
       inbox,
+      decisions: decisionRows,
       running,
       logger,
       inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,

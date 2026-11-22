@@ -1,5 +1,4 @@
-import { librarySettings } from '@agent-os/db';
-import type { Executor } from '../common/executor';
+import { type Executor, librarySettings } from '@agent-os/db';
 
 const settingsColumns = {
   defaultMaxTurns: librarySettings.defaultMaxTurns,

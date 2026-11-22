@@ -1,10 +1,5 @@
-import {
-  identityRoleMembers,
-  identityRoles,
-  identityUsers,
-} from '@agent-os/db';
+import { type Executor, identityRoleMembers, identityRoles, identityUsers } from '@agent-os/db';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor';
 
 /**
  * Drizzle queries of `identity_roles` and `identity_role_members` (repository-over-transaction.md):

@@ -12,7 +12,7 @@ import type { Agents } from '@agent-os/agents';
 import type { Logger, LogFields } from '@agent-os/common';
 import type { KnowledgeView } from '@agent-os/contracts';
 import { AGENTS } from '../agents/agents.tokens';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import type { AuthedRequest } from '../identity/auth-user';
 import { LibraryService } from '../library/library.service';
 import { APP_LOGGER } from '../logging/app-logger';

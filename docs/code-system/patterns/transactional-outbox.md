@@ -14,7 +14,7 @@
 
 ## Reference
 
-- `packages/runtime/src/outbox.relay.ts`
+- `packages/runtime/src/events/outbox.relay.ts` — доставка; `event-log.repository.ts` и `delivery.repository.ts` рядом — запись события и строки доставок
 
 ## Not For
 

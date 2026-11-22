@@ -4,12 +4,12 @@ import {
   PASSWORD_SET,
   SYSTEM_ACTOR,
   type AuditLog,
-} from '../audit/audit-log';
+} from '../audit/audit-log.repository';
 import { identityError } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword } from './password';
 import { addRoleMember, builtinRoleId } from './roles.repository';
-import { deleteSessionsOf } from './session.store';
+import { deleteSessionsOf } from './sessions.repository';
 import {
   findUserByLogin,
   insertLocalUser,

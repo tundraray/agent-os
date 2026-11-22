@@ -237,7 +237,7 @@ export function focusOf(
   return null;
 }
 
-/** Payloads of the queue messages of an agent (the agents package, `step/deliver.ts`). */
+/** Payloads of the queue messages of an agent (the agents package, `agent/deliver.ts`). */
 const TextPayloadSchema = z.object({ text: z.string() });
 const ChildFinishedPayloadSchema = z.object({
   taskId: z.string(),

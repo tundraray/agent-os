@@ -1,7 +1,7 @@
 import { text } from 'node:stream/consumers';
 import { parseArgs } from 'node:util';
 import { createDatabase } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { createAppLogger } from '../logging/app-logger';
 import { seedSuperAdmin } from './super-admin';
 

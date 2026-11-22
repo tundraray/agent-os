@@ -16,7 +16,7 @@ import type {
 } from '@agent-os/agents';
 import type { McpConnection } from '@agent-os/contracts';
 import type { Response } from 'express';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import type { AuthedRequest } from '../identity/auth-user';
 import { identityError } from '../identity/identity.errors';
 import { IdentitySettings } from '../identity/identity-settings';

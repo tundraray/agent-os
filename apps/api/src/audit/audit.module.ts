@@ -2,7 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import { RuntimeModule } from '../runtime/runtime.module';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { AuditLog } from './audit-log';
+import { AuditLog } from './audit-log.repository';
 
 /** Gives every module the application's `AuditLog` over the runtime's pool (design-identity.md KD-7). */
 @Global()

@@ -223,7 +223,7 @@ POSTGRES_PORT=5433 pnpm db:up
 | Команда | Что делает |
 |---|---|
 | `pnpm db:migrate` | применяет миграции из `packages/db/src/migrations/` к базе `DATABASE_URL` из `apps/api/.env`; нужна собранная `apps/api` (`pnpm --filter api build`: сборка кладёт миграции в `apps/api/dist/migrations`) |
-| `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema.ts` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
+| `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema/` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
 
 Тесты с Postgres поднимают базу `DATABASE_URL` (из окружения, иначе из `apps/api/.env`) и сами применяют миграции один раз до набора. Запускайте их **по одному**, не параллельно против одной базы: воркеры runtime (relay, reaper) трогают чужие строки.
 

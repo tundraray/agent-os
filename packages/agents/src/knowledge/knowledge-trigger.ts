@@ -1,10 +1,10 @@
+import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { RuntimeEventTypeSchema } from '@agent-os/contracts';
 import {
   type EventConsumer,
   type Runtime,
   RUNTIME_EVENT_SCHEMA_VERSION,
-  type RuntimeTx,
 } from '@agent-os/runtime';
 
 import { sessions } from '../store/sessions.repository';
@@ -128,7 +128,7 @@ export interface KnowledgeTriggerDeps {
 export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsumer {
   const logger = deps.logger.child({ consumer: CONSUMER_NAME });
 
-  async function createExtract(tx: RuntimeTx, run: KnowledgeRun, rootId: string): Promise<string> {
+  async function createExtract(tx: Transaction, run: KnowledgeRun, rootId: string): Promise<string> {
     const input: KnowledgeExtractInput = { runId: run.runId, rootId };
     return deps.tasks.create(
       { type: KNOWLEDGE_EXTRACT_TASK_TYPE, ownerId: run.ownerId, input },
@@ -136,13 +136,13 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
     );
   }
 
-  async function createPass(tx: RuntimeTx, recordId: string): Promise<string> {
+  async function createPass(tx: Transaction, recordId: string): Promise<string> {
     return deps.tasks.create(embedPassRequest(recordId), tx);
   }
 
   /** Applies the decision; returns the id of the task it created, if any. */
   async function apply(
-    tx: RuntimeTx,
+    tx: Transaction,
     event: DeliveredEvent,
     decision: TriggerDecision<KnowledgeRun, KnowledgeEmbeddingRow>,
   ): Promise<string | undefined> {
@@ -243,7 +243,7 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
  * `last_extract_task_id` when it completed (its last round committed), by `extract_task_id` otherwise.
  */
 async function findRunOfTask(
-  tx: RuntimeTx,
+  tx: Transaction,
   type: string,
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
@@ -260,7 +260,7 @@ async function findRunOfTask(
  * vector row.
  */
 async function findEmbeddingOfTask(
-  tx: RuntimeTx,
+  tx: Transaction,
   type: string,
   taskId: string,
   run: KnowledgeRun | undefined,
@@ -275,7 +275,7 @@ async function findEmbeddingOfTask(
  * foreign key fails only the savepoint and the branch ends quietly (`undefined`).
  */
 async function ensureEmbeddingRowOfLiveRecord(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   try {

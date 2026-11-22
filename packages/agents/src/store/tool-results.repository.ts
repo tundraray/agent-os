@@ -1,8 +1,12 @@
-import { agentSessions, agentToolResultSettings, agentToolResults } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import {
+  agentSessions,
+  agentToolResults,
+  agentToolResultSettings,
+  type Executor,
+  type Transaction,
+} from '@agent-os/db';
 import { and, eq } from 'drizzle-orm';
 
-import type { StoreReader } from './sessions.repository';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
 export interface StoredToolResult {
@@ -52,7 +56,7 @@ const settingsColumns = {
  * reading tools. No function opens a transaction.
  */
 export const toolResults = {
-  async insert(tx: RuntimeTx, result: NewToolResult): Promise<void> {
+  async insert(tx: Transaction, result: NewToolResult): Promise<void> {
     await tx.insert(agentToolResults).values(result);
   },
 
@@ -60,7 +64,7 @@ export const toolResults = {
    * The stored result of the call in the caller's session, read only when the session belongs to
    * `ownerId`; `undefined` otherwise. Another session's id and a missing id are indistinguishable (AC-04.3).
    */
-  async findForRun(reader: StoreReader, lookup: ToolResultLookup): Promise<StoredToolResult | undefined> {
+  async findForRun(reader: Executor, lookup: ToolResultLookup): Promise<StoredToolResult | undefined> {
     const [row] = await reader
       .select({ value: agentToolResults.value, text: agentToolResults.text })
       .from(agentToolResults)
@@ -76,7 +80,7 @@ export const toolResults = {
   },
 
   /** The settings row, read anew on every use (settings-row.md); the migration creates it. */
-  async readSettings(reader: StoreReader): Promise<ToolResultSettingsRow> {
+  async readSettings(reader: Executor): Promise<ToolResultSettingsRow> {
     const [row] = await reader.select(settingsColumns).from(agentToolResultSettings);
     if (row === undefined) throw new Error('agent_tool_result_settings row is missing');
     return row;
@@ -84,7 +88,7 @@ export const toolResults = {
 
   /** Locks the row and writes the administrator's change with its time; the next MCP call reads it. */
   async writeSettings(
-    tx: RuntimeTx,
+    tx: Transaction,
     values: Omit<ToolResultSettingsRow, 'updatedAt'>,
   ): Promise<ToolResultSettingsRowChange> {
     const [before] = await tx.select(settingsColumns).from(agentToolResultSettings).for('update');

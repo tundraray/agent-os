@@ -1,11 +1,11 @@
+import type { Executor } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
 import { envelope } from '../model/provider-messages';
 import { utf8Bytes } from '../model/token-estimate';
 import { codeCalls } from '../store/code-calls.repository';
 import { history } from '../store/history.repository';
-import type { StoreReader } from '../store/sessions.repository';
-import { descendantsOf } from '../tools/builtin/list-agents';
+import { descendantsOf } from '../task-tree';
 import type { RoundCall, RoundCallOutcome } from './check-operations';
 import type { KnowledgeRun } from './knowledge-runs.repository';
 
@@ -33,7 +33,7 @@ const ENVELOPE_AUTHOR = 'this run of the deep agent';
 export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedUpTo'>;
 
 export interface ExtractionInputDeps {
-  readonly database: StoreReader;
+  readonly database: Executor;
   readonly tasks: Pick<Runtime['tasks'], 'get' | 'listTree'>;
 }
 

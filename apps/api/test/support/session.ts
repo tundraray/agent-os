@@ -6,7 +6,7 @@ import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import request, { type Test } from 'supertest';
 import type { App } from 'supertest/types.js';
-import { AuditLog } from '../../src/audit/audit-log';
+import { AuditLog } from '../../src/audit/audit-log.repository';
 import { hashPassword } from '../../src/identity/password';
 import {
   SESSION_COOKIE,

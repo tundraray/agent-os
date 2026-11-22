@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { Database } from '@agent-os/db';
+import type { Database, Transaction } from '@agent-os/db';
 import type {
   ChildTask,
   OpenedTracker,
-  RuntimeTx,
   StepContext,
   StepDecision,
   StepResult,
@@ -174,7 +173,7 @@ function viewOf(ctx: StepContext): StepView {
  * attempt that committed the step.
  */
 export function writeHandlerRow(ctx: StepContext, note: string | null) {
-  return async (tx: RuntimeTx) => {
+  return async (tx: Transaction) => {
     await tx.execute(sql`
       INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
       SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${note}

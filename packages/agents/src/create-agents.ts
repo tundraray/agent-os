@@ -4,7 +4,13 @@ import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
 import type { AccessAudit, AccessGate } from './access-gate';
+import { Agent } from './agent/agent';
+import type { AgentDeps } from './agent/agent-deps';
+import { ChatAgent } from './agent/chat-agent';
 import type { AgentsConfig } from './config';
+import { DeepAgent } from './deep/deep-agent';
+import { createStartDeepAgentTool } from './deep/start-deep-agent';
+import { createTaskTool } from './deep/task-delegation';
 import { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client';
 import { type AgentsEmbeddings, createEmbeddings } from './embeddings/embeddings';
 import { createStopChildrenOnFailure } from './events/stop-children-on-failure';
@@ -12,7 +18,7 @@ import { createKnowledgeEmbedHandler } from './knowledge/embed.handler';
 import { createKnowledgeExtractHandler } from './knowledge/extract.handler';
 import { type AgentsKnowledge, createAgentsKnowledge } from './knowledge/knowledge';
 import { createKnowledgeTrigger } from './knowledge/knowledge-trigger';
-import { createPgvectorStore } from './knowledge/pgvector-store';
+import { createPgvectorStore } from './knowledge/pgvector-store.repository';
 import { ConnectRequests } from './mcp/connect-requests';
 import { type AgentsMcp, createAgentsMcp } from './mcp/mcp';
 import { McpAccounts } from './mcp/mcp-accounts';
@@ -20,19 +26,23 @@ import { McpClient } from './mcp/mcp-client';
 import { McpRegistry } from './mcp/mcp-registry';
 import type { AgentTurnModelClient } from './model/mastra-turn';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client';
-import { type AgentSessions, createAgentSessions } from './operations/agent-sessions';
+import type { AgentSessions } from './operations/agent-sessions';
+import { createAgentSessions } from './operations/create-agent-sessions';
 import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry';
 import type { RecordLibrary } from './start/record-library';
-import { resolveStart, type StartRequest, type StartResolution } from './start/resolve-start';
-import { createAgentStepHandler } from './step/agent-step.handler';
-import { createCompactionStep } from './step/compaction-step';
-import { createModelStep } from './step/model-step';
-import { createToolStep } from './step/tool-step';
+import {
+  auditStartRefusal,
+  resolveStart,
+  type StartRequest,
+  type StartResolution,
+} from './start/resolve-start';
+import type { ChildStart } from './store/sessions.repository';
 import { toolResults } from './store/tool-results.repository';
-import { createBuiltinTools, createStartChild } from './tools/builtin/index';
-import { createDelegations } from './tools/builtin/task-delegation';
-import { createRunCodeTool } from './tools/builtin/run-code';
-import { createTaskTools } from './tools/builtin/task-tools';
+import { createRunCodeTool } from './tools/external/run-code';
+import { createStartChild, createSystemTools } from './tools/system/index';
+import { createTaskListTools } from './tools/system/task-list-tools';
+import { rootMayStartRecord } from './tools/system/tool-gate';
+import type { AgentTool } from './tools/tool';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry';
 import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings';
 import { createToolRunner } from './tools/tool-runner';
@@ -120,7 +130,8 @@ export interface Agents {
 
 /**
  * Builds the agents package from the database, the runtime, the logger and the parsed settings. The
- * `agent`, `knowledge.extract` and `knowledge.embed` task handlers and the `task.failed` and knowledge
+ * agents (`ChatAgent`, `Agent`, `DeepAgent`: the `chat`, `agent` and `deep_agent` task types), the
+ * `knowledge.extract` and `knowledge.embed` task handlers and the `task.failed` and knowledge
  * trigger consumers are registered in the runtime at once (plan Notes 8). In memory it keeps only the tool registry, the open MCP connection requests and the token
  * refreshes in flight; the MCP registry, the accounts and every run's snapshot are in Postgres (ADR-0001,
  * ADR-0017).
@@ -154,6 +165,9 @@ export function createAgents(options: AgentsOptions): Agents {
   // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
   const maskSecrets = createSecretMasker([]);
   const resultSettings = () => toolResults.readSettings(database);
+  // The class of a run under a parent is chosen here, when its task is created: a deep agent's snapshot runs as
+  // `DeepAgent`, an agent's and a subagent's as `Agent`. The agents are built below, once the runner exists.
+  const childStart: ChildStart = (snapshot) => (snapshot.kind === 'deep_agent' ? deepAgent : agent);
   const runner = createToolRunner({
     client: mcpClient,
     accounts,
@@ -162,7 +176,7 @@ export function createAgents(options: AgentsOptions): Agents {
     callTimeoutMs: config.mcpCallTimeoutMs,
     resultSettings,
     maskSecrets,
-    startChildFor: createStartChild({ maxDepth: config.maxDepth }),
+    startChildFor: createStartChild({ maxDepth: config.maxDepth, childStart }),
   });
   const codeRunner =
     options.codeRunner ??
@@ -179,24 +193,31 @@ export function createAgents(options: AgentsOptions): Agents {
     codeRun: config.codeRun,
     maskSecrets,
   });
-  const registry: ToolRegistry = createToolRegistry({
-    builtins: [
-      ...createBuiltinTools({
-        ...startDeps,
-        maxDepth: config.maxDepth,
-        logger,
-        database,
-        tasks: runtime.tasks,
-      }),
-      // Offered to a session with a task list (design-task-list.md KD-2).
-      ...createTaskTools({ logger }),
-    ],
-    runCode,
-    database,
-    access,
-    library,
-    logger,
-  });
+  // The tools library chooses the external tools — MCP and `run_code` — by the owner's rights; the system tools
+  // are registered into it from outside, here and by upper parts (`Agents.tools`), and reach a session by its
+  // agent's declaration.
+  const registry: ToolRegistry = createToolRegistry({ runCode, database, access });
+  const systemTools: AgentTool[] = [
+    ...createSystemTools({
+      ...startDeps,
+      maxDepth: config.maxDepth,
+      logger,
+      database,
+      tasks: runtime.tasks,
+    }),
+    // Declared by an agent that keeps a task list (design-task-list.md KD-2).
+    ...createTaskListTools({ logger }),
+    // The deep agent's tools: the root's `start_deep_agent` (deep-agents KD-2) and a deep agent's `task`.
+    createStartDeepAgentTool({
+      resolveStart: (request) => resolveStart(request, startDeps),
+      auditStartRefusal: (refusal) => auditStartRefusal(audit, refusal),
+      rootMayStart: async (ownerId, recordId) =>
+        rootMayStartRecord(await library.listVisible(ownerId), 'deep_agent', recordId),
+      logger,
+    }),
+    createTaskTool(),
+  ];
+  systemTools.forEach((tool) => registry.register(tool));
   const modelClient = createModelClient({
     turnClient: options.turnClient,
     ledger: runtime.ledger,
@@ -216,36 +237,31 @@ export function createAgents(options: AgentsOptions): Agents {
   // One store of the knowledge vectors for every reader and writer (self-learning KD-8).
   const vectorStore = createPgvectorStore(database);
 
-  runtime.handlers.register(
-    createAgentStepHandler({
-      database,
-      toolStep: createToolStep({
-        registry,
-        runner,
-        access,
-        audit,
-        delegations: createDelegations({
-          database,
-          trackers: runtime.trackers,
-          resultSettings,
-          maxDepth: config.maxDepth,
-        }),
-      }),
-      modelStep: createModelStep({
-        database,
-        registry,
-        modelClient,
-        audit,
-        tasks: runtime.tasks,
-        inbox: runtime.inbox,
-        trackers: runtime.trackers,
-        vectorStore,
-      }),
-      compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
-      compactAtTokens: config.compactAtTokens,
-      embeddings,
-    }),
-  );
+  // The three agents the runtime launches, each the handler of its own task type.
+  const agentDeps: AgentDeps = {
+    database,
+    registry,
+    runner,
+    access,
+    audit,
+    modelClient,
+    tasks: runtime.tasks,
+    inbox: runtime.inbox,
+    vectorStore,
+    embeddings,
+    compactAtTokens: config.compactAtTokens,
+  };
+  const chatAgent = new ChatAgent({ ...agentDeps, library, logger });
+  const agent = new Agent(agentDeps);
+  const deepAgent = new DeepAgent({
+    ...agentDeps,
+    trackers: runtime.trackers,
+    resultSettings,
+    maxDepth: config.maxDepth,
+  });
+  runtime.handlers.register(chatAgent);
+  runtime.handlers.register(agent);
+  runtime.handlers.register(deepAgent);
   runtime.handlers.register(
     createKnowledgeExtractHandler({
       database,
@@ -261,7 +277,15 @@ export function createAgents(options: AgentsOptions): Agents {
   runtime.eventConsumers.register(createStopChildrenOnFailure({ tasks: runtime.tasks, logger }));
   runtime.eventConsumers.register(createKnowledgeTrigger({ tasks: runtime.tasks, logger }));
 
-  const sessions = createAgentSessions({ database, runtime, registry, ...startDeps, logger });
+  const sessions = createAgentSessions({
+    database,
+    runtime,
+    registry,
+    ...startDeps,
+    chatStart: chatAgent,
+    childStart,
+    logger,
+  });
 
   return {
     tools: { register: (tool) => registry.register(tool) },

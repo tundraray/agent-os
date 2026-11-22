@@ -4,7 +4,6 @@ import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AgentsEmbeddings, EmbedResult } from '../embeddings/embeddings';
-import type { RunSnapshot } from '../start/snapshot';
 import { type Session, sessionInputOf } from '../store/sessions.repository';
 import { sessionLearningOf } from './knowledge-block';
 import {
@@ -39,19 +38,19 @@ export interface QuestionVectorDeps {
 type EmbedAttempt = EmbedResult | { readonly kind: 'error'; readonly message: string };
 
 /**
- * The question to embed now (KD-6, Invariant 12), for a session that learns: a deep agent's step that
- * delivers a `user_message` other than the stored source — the last such message; no question row yet
+ * The question to embed now (KD-6, Invariant 12), for a session that learns: a step of an agent that embeds
+ * the employee's messages (a deep agent) that delivers a `user_message` other than the stored source — the
+ * last such message; no question row yet
  * (the session may exist before its first step) — the session's `task`; otherwise nothing. A step that
  * is both the first and delivers a message embeds only the message: it is the newer question.
  */
 function questionToEmbed(
   session: Session,
-  snapshot: RunSnapshot,
+  embedsEmployeeMessages: boolean,
   messages: readonly StepMessage[],
   stored: KnowledgeQuestionRow | undefined,
 ): SessionQuestion | null {
-  const employees =
-    snapshot.kind === 'deep_agent' ? messages.filter((message) => message.kind === userMessage) : [];
+  const employees = embedsEmployeeMessages ? messages.filter((message) => message.kind === userMessage) : [];
   const latest = employees[employees.length - 1];
   if (latest !== undefined && latest.messageId !== stored?.source) {
     return { source: latest.messageId, text: UserMessageTextSchema.parse(latest.payload).text };
@@ -82,16 +81,16 @@ export async function embedQuestion(
   deps: QuestionVectorDeps,
   ctx: StepContext,
   session: Session,
+  /** The agent embeds the employee's messages as new questions (a deep agent). */
+  embedsEmployeeMessages: boolean,
 ): Promise<boolean> {
-  // A root session never learns, and its input is not even parsed.
-  if (session.parentId === null) return true;
   const snapshot = sessionInputOf(ctx.input).snapshot;
   const learning = sessionLearningOf(snapshot);
   if (learning === null) return true;
   const { recordId } = learning;
 
   const stored = await readQuestion(deps.database, ctx.taskId);
-  const question = questionToEmbed(session, snapshot, ctx.messages, stored);
+  const question = questionToEmbed(session, embedsEmployeeMessages, ctx.messages, stored);
   if (question === null) return true;
 
   const startedAt = Date.now();

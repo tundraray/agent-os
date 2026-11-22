@@ -47,6 +47,11 @@ export interface ChildTypes {
   trackerOwner?: string;
   /** A task of a tracker: one step that commits a `step:done` row and completes with its item. */
   trackerTask?: string;
+  /**
+   * The type of a tracker's tasks in a process that must not run them: registered, so a tracker of
+   * it opens, but its step holds until shutdown gives the task back to the queue.
+   */
+  parkedTrackerTask?: string;
 }
 
 export const STEP_DONE = 'step:done';
@@ -231,19 +236,39 @@ function trackerTaskHandler(type: string): TaskHandler {
   };
 }
 
+/**
+ * A task of a tracker in a process that must not run it: the step holds until its signal aborts and
+ * then throws, so a shutdown requeues the task and nothing of it is committed.
+ */
+function parkedTrackerTaskHandler(type: string): TaskHandler {
+  return {
+    type,
+    inputSchema: TrackerTaskInputSchema,
+    async step(ctx): Promise<StepResult> {
+      await aborted(ctx.signal);
+      throw new Error(`Task ${ctx.taskId} is parked in this process`);
+    },
+  };
+}
+
+/** Resolves once `signal` aborts. */
+function aborted(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
 /** Holds its step until the signal aborts; the late result is fenced. */
 function holdHandler(type: string): TaskHandler {
   return {
     type,
     inputSchema: z.object({}),
     async step(ctx): Promise<StepResult> {
-      await new Promise<void>((resolve) => {
-        if (ctx.signal.aborted) {
-          resolve();
-          return;
-        }
-        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
-      });
+      await aborted(ctx.signal);
       return { outcome: 'wait' };
     },
   };
@@ -259,5 +284,6 @@ export function handlersFor(types: ChildTypes, db: Database): TaskHandler[] {
   if (types.hold) handlers.push(holdHandler(types.hold));
   if (types.trackerOwner) handlers.push(ownerOfTrackerHandler(types.trackerOwner));
   if (types.trackerTask) handlers.push(trackerTaskHandler(types.trackerTask));
+  if (types.parkedTrackerTask) handlers.push(parkedTrackerTaskHandler(types.parkedTrackerTask));
   return handlers;
 }

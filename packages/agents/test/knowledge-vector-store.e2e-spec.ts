@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createPgvectorStore } from '../src/knowledge/pgvector-store';
+import { createPgvectorStore } from '../src/knowledge/pgvector-store.repository';
 import type { KnowledgeVector, KnowledgeVectorStore } from '../src/knowledge/vector-store';
 import { databaseUrl } from './support/database-url';
 import { withLibraryRow } from './support/knowledge';

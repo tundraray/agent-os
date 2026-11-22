@@ -26,7 +26,7 @@ import {
   type SignInError,
 } from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { APP_LOGGER } from '../logging/app-logger';
 import type { AuthedRequest } from './auth-user';

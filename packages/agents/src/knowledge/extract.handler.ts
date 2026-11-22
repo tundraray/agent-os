@@ -1,10 +1,9 @@
 import { createSecretMasker, type Logger } from '@agent-os/common';
 import type { LastExtractionReason, LastExtractionStatus } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import type { Database, Transaction } from '@agent-os/db';
 import {
   type Runtime,
   RuntimeError,
-  type RuntimeTx,
   type StepContext,
   type StepResult,
   type TaskHandler,
@@ -200,7 +199,7 @@ function retryMessages(
 
 /** Inserts the additions in the answer's order (a `ref` before what uses it), then confirms and marks. */
 async function applyChecked(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   runId: string,
   roundAt: Date,
@@ -523,7 +522,7 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
     result: RoundResult | null,
     window: { readonly calls: ReadonlyMap<string, RoundCall>; readonly readAt: Date } | null,
   ): Promise<Settled | 'fenced'> {
-    const guarded = await ctx.guard(async (tx: RuntimeTx): Promise<Settled> => {
+    const guarded = await ctx.guard(async (tx: Transaction): Promise<Settled> => {
       await lockGraph(tx, round.recordId);
       const run = await findRunById(tx, round.runId);
       if (run === undefined || run.extractTaskId !== ctx.taskId) return { kind: 'not_current' };

@@ -313,6 +313,21 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
   return { deepAgentId, rootId: root.rootId, coordinatorId: coordinator.agentId, coordinatorScript };
 }
 
+/**
+ * Closes the harness of a deep-research run with nothing of the owner left to run: INT-2 A and B script the
+ * same task texts, and a root still working when its harness stops is requeued, then run by the next test's
+ * runtime against that test's scripts.
+ */
+async function closeDeepResearch(harness: AgentsHarness, ownerId: string): Promise<void> {
+  try {
+    for (const root of await harness.sessions.roots({ ownerId })) {
+      await harness.sessions.stop({ agentId: root.rootId, ownerId });
+    }
+  } finally {
+    await harness.close();
+  }
+}
+
 // ----- INT-3 B: the deep agent `limits-check` -----
 
 const ANSWER_RUN_TASK = 'Write the answer of the limits check.';
@@ -573,10 +588,11 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         });
 
         // The record's count of one plan reached the deep agent: the second plan is refused by the limit, no task for it.
+        // The refusal closes in the step that sends the first plan, whose result comes with its tracker.
         const coordinatorHistory = await historyOf(harness, run.coordinatorId, ownerId);
         expect(taskResults(coordinatorHistory)).toEqual([
-          ['deep-research-plan', 'success', null],
           ['deep-research-plan', 'refused', 'run_limit'],
+          ['deep-research-plan', 'success', null],
           ['deep-research-gather', 'success', null],
           ['deep-research-gather', 'tool_error', null],
           ['deep-research-answer', 'success', null],
@@ -620,7 +636,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         ]);
       } finally {
         gatherRead.release();
-        await harness.close();
+        await closeDeepResearch(harness, ownerId);
       }
     },
     TEST_TIMEOUT_MS,
@@ -730,7 +746,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           { name: 'AgentsError', code: 'RUN_NOT_FOUND', message: `Deep agent run ${unknownId} is not found` },
         ]);
       } finally {
-        await harness.close();
+        await closeDeepResearch(harness, ownerId);
       }
     },
     TEST_TIMEOUT_MS,

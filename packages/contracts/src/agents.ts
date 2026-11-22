@@ -5,8 +5,16 @@ import { z } from 'zod';
  * values: the CHECK domains of the `agent_*` tables in schema `app` are built from them.
  */
 
-/** Runtime task type of an agent. */
+/**
+ * Runtime task types of the agents, one per class the runtime launches: an ordinary agent (an agent's record,
+ * a deep agent's subagent), a conversation's root and a deep agent.
+ */
 export const AGENT_TASK_TYPE = 'agent';
+export const CHAT_TASK_TYPE = 'chat';
+export const DEEP_AGENT_TASK_TYPE = 'deep_agent';
+
+/** Every task type that is an agent: such a task has a session and a snapshot in its input. */
+export const AGENT_TASK_TYPES: readonly string[] = [AGENT_TASK_TYPE, CHAT_TASK_TYPE, DEEP_AGENT_TASK_TYPE];
 
 /** Event written in every transaction that appended to an agent's history. */
 export const AGENTS_HISTORY_APPENDED = 'agents.history_appended';

@@ -31,7 +31,7 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven). The unit tests are written by the implementation phases,
 // one table-driven test per rule, none of them skeletoned here:
-// - unit, packages/agents/src/step/turn-rules.spec.ts (extend the existing `endOfTurn` table): cut-off x {no final subagent, unfinished children, root, deep agent with a final subagent} - UC-1, AC-01.1 (rule), DC-1
+// - unit, packages/agents/src/agent/turn-rules.spec.ts (extend the existing `endOfTurn` table): cut-off x {no final subagent, unfinished children, deep agent with a final subagent} - UC-1, AC-01.1 (rule), DC-1
 // - unit, packages/agents/src/model/model-client.spec.ts (extend): `finishReason: 'length'` -> `cutOff: true`, any other reason -> false, for the model step and the compaction call alike - KD-3
 // - unit, ToolRunner.check (next to tool-runner/tool-gate specs): MCP schema missing arg / wrong type -> `invalid_arguments` with the argument name and what was expected; built-in tool
 //   with a number for a string -> the same; a schema of unknown dialect -> allowed with the "not checked" reason; `pattern` and `format` are left to the server; the error text is cut at the code constant;

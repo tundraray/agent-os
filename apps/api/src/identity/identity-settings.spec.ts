@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
-import type { AuditLog } from '../audit/audit-log';
+import type { AuditLog } from '../audit/audit-log.repository';
 import { IdentitySettings } from './identity-settings';
 import {
   readSettings,

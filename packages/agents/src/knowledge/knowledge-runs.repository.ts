@@ -8,12 +8,12 @@ import {
   agentKnowledgeQuestions,
   agentKnowledgeRuns,
   agentSessions,
+  type Executor,
+  type Transaction,
 } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
 import { and, desc, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
-import type { StoreReader } from '../store/sessions.repository';
 
 const runs = agentKnowledgeRuns;
 const questions = agentKnowledgeQuestions;
@@ -57,11 +57,11 @@ export interface RoundOutcome {
 const ServersSchema = z.array(z.string());
 
 /**
- * Creates the run row with the deep agent session (KD-2, called from `ensureSession` in its
+ * Creates the run row with the deep agent session (KD-2, called from `DeepAgent.sessionStarted` in its
  * transaction); a second call for the same run writes nothing.
  */
 export async function insertKnowledgeRun(
-  tx: RuntimeTx,
+  tx: Transaction,
   run: { readonly runId: string; readonly recordId: string; readonly servers: readonly string[] },
 ): Promise<void> {
   await tx
@@ -74,7 +74,7 @@ export async function insertKnowledgeRun(
  * The run row matching `where`, locked: inside a transaction the trigger and the round commit decide
  * on it one at a time (Invariant 1); outside one the lock ends with the statement.
  */
-async function findRun(reader: StoreReader, where: SQL): Promise<KnowledgeRun | undefined> {
+async function findRun(reader: Executor, where: SQL): Promise<KnowledgeRun | undefined> {
   // Two statements, not a join with `FOR UPDATE OF`: Postgres takes `OF` unqualified, drizzle writes the schema in.
   const [row] = await reader.select().from(runs).where(where).for('update');
   if (row === undefined) return undefined;
@@ -87,13 +87,13 @@ async function findRun(reader: StoreReader, where: SQL): Promise<KnowledgeRun | 
 }
 
 /** The run row of the deep agent task; `undefined` when the run does not learn or is gone. */
-export function findRunById(reader: StoreReader, runId: string): Promise<KnowledgeRun | undefined> {
+export function findRunById(reader: Executor, runId: string): Promise<KnowledgeRun | undefined> {
   return findRun(reader, eq(runs.runId, runId));
 }
 
 /** The run whose extraction task is in progress — how the trigger recognises its failure. */
 export function findRunByExtractTask(
-  reader: StoreReader,
+  reader: Executor,
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
   return findRun(reader, eq(runs.extractTaskId, taskId));
@@ -101,7 +101,7 @@ export function findRunByExtractTask(
 
 /** The run whose last committed round belongs to the task — how the trigger recognises its end. */
 export function findRunByLastExtractTask(
-  reader: StoreReader,
+  reader: Executor,
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
   return findRun(reader, eq(runs.lastExtractTaskId, taskId));
@@ -109,7 +109,7 @@ export function findRunByLastExtractTask(
 
 /** Sets the extraction task in progress and the «one more round» mark; an empty patch writes nothing. */
 export async function updateKnowledgeRun(
-  tx: RuntimeTx,
+  tx: Transaction,
   runId: string,
   patch: KnowledgeRunPatch,
 ): Promise<void> {
@@ -119,7 +119,7 @@ export async function updateKnowledgeRun(
 
 /** Writes the last round's outcome. */
 export async function writeRoundOutcome(
-  tx: RuntimeTx,
+  tx: Transaction,
   runId: string,
   outcome: RoundOutcome,
 ): Promise<void> {
@@ -139,7 +139,7 @@ export async function writeRoundOutcome(
 }
 
 /** Moves «extracted up to» to `at` unless it is already later: the mark never goes back (Invariant 2). */
-export async function advanceExtractedUpTo(tx: RuntimeTx, runId: string, at: Date): Promise<void> {
+export async function advanceExtractedUpTo(tx: Transaction, runId: string, at: Date): Promise<void> {
   await tx
     .update(runs)
     .set({ extractedUpTo: sql`greatest(${runs.extractedUpTo}, ${at.toISOString()}::timestamptz)` })
@@ -148,7 +148,7 @@ export async function advanceExtractedUpTo(tx: RuntimeTx, runId: string, at: Dat
 
 /** The run row of the deep agent with the latest round outcome (`lastExtraction`); `undefined` before any round. */
 export async function lastExtraction(
-  reader: StoreReader,
+  reader: Executor,
   recordId: string,
 ): Promise<KnowledgeRunRow | undefined> {
   const [row] = await reader
@@ -169,7 +169,7 @@ export type KnowledgeQuestion = Omit<typeof questions.$inferInsert, 'createdAt'>
 
 /** The question row of the session; `undefined` before its first question. */
 export async function readQuestion(
-  reader: StoreReader,
+  reader: Executor,
   taskId: string,
 ): Promise<KnowledgeQuestionRow | undefined> {
   const [row] = await reader.select().from(questions).where(eq(questions.taskId, taskId));
@@ -177,7 +177,7 @@ export async function readQuestion(
 }
 
 /** Writes the session's current question, replacing the previous one (`ON CONFLICT (task_id)`). */
-export async function writeQuestion(tx: RuntimeTx, question: KnowledgeQuestion): Promise<void> {
+export async function writeQuestion(tx: Transaction, question: KnowledgeQuestion): Promise<void> {
   const current = {
     source: question.source,
     model: question.model ?? null,
@@ -207,7 +207,7 @@ export interface EmbeddingOutcome {
 
 /** The deep agent's vector row; `undefined` before its first pass or question outcome. */
 export async function findEmbeddingRow(
-  reader: StoreReader,
+  reader: Executor,
   recordId: string,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   const [row] = await reader.select().from(embedding).where(eq(embedding.recordId, recordId));
@@ -216,7 +216,7 @@ export async function findEmbeddingRow(
 
 /** The vector row whose pass is the task, locked — how the trigger recognises a failed pass. */
 export async function findEmbeddingByPassTask(
-  reader: StoreReader,
+  reader: Executor,
   taskId: string,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   const [row] = await reader
@@ -232,7 +232,7 @@ export async function findEmbeddingByPassTask(
  * each other (Invariant 13).
  */
 export async function ensureEmbeddingRow(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
 ): Promise<KnowledgeEmbeddingRow> {
   await tx.insert(embedding).values({ recordId }).onConflictDoNothing({ target: embedding.recordId });
@@ -247,7 +247,7 @@ export async function ensureEmbeddingRow(
 
 /** Sets the pass in progress, the «one more pass» mark and the payer; an empty patch writes nothing. */
 export async function updateEmbeddingRow(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   patch: KnowledgeEmbeddingPatch,
 ): Promise<void> {
@@ -256,7 +256,7 @@ export async function updateEmbeddingRow(
 }
 
 async function upsertOutcome(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   outcome: EmbeddingOutcome,
   setWhere?: SQL,
@@ -270,7 +270,7 @@ async function upsertOutcome(
 
 /** Writes the outcome of a pass attempt. */
 export function writeEmbeddingOutcome(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   outcome: EmbeddingOutcome,
 ): Promise<void> {
@@ -279,7 +279,7 @@ export function writeEmbeddingOutcome(
 
 /** Writes the outcome of a session question's embedding, only when it differs from the stored one. */
 export function writeQuestionOutcome(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   outcome: EmbeddingOutcome,
 ): Promise<void> {

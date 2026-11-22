@@ -1,15 +1,10 @@
 import { ChipRecordSchema, RecordKindSchema, type RunOrigin } from '@agent-os/contracts';
-import { agentMessages, agentSessions, type Database } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { agentMessages, agentSessions, type Executor, type Transaction } from '@agent-os/db';
 import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository';
-import { RunSnapshotSchema } from '../start/snapshot';
-import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition';
-
-/** A reader of the store: the step's transaction, or the database for a read outside a step. */
-export type StoreReader = Database | RuntimeTx;
+import { type RunSnapshot, RunSnapshotSchema } from '../start/snapshot';
+import { snapshotDefinition } from '../start/snapshot-definition';
 
 /** A field of the answer a `task` call asks its subagent for (deep-agents/design-task.md KD-7). */
 export const AnswerFieldSchema = z.strictObject({
@@ -179,7 +174,7 @@ function toRootSession(row: {
 }
 
 /** Whether the owner has a session of this record other than `taskId`. */
-async function ranBefore(tx: RuntimeTx, ownerId: string, recordId: string, taskId: string): Promise<boolean> {
+async function ranBefore(tx: Transaction, ownerId: string, recordId: string, taskId: string): Promise<boolean> {
   const [row] = await tx
     .select({ sessions: count() })
     .from(agentSessions)
@@ -194,6 +189,23 @@ async function ranBefore(tx: RuntimeTx, ownerId: string, recordId: string, taskI
 }
 
 /**
+ * How a run starts — what an agent class (`ChatAgent`, `Agent`, `DeepAgent`) gives the code that creates its
+ * task: the class is chosen there, once, and from then on the runtime picks it by the task's type.
+ */
+export interface RunStart {
+  /** The runtime task type the run's task is created with. */
+  readonly type: string;
+  /**
+   * Makes the session of the task unless it exists, with whatever the class adds to a new session: what the
+   * starters and the agent's first step call.
+   */
+  startSession(tx: Transaction, task: SessionTask, input: SessionInput): Promise<void>;
+}
+
+/** The start of a run under a parent, by its snapshot: a deep agent's or an ordinary agent's. */
+export type ChildStart = (snapshot: RunSnapshot) => RunStart;
+
+/**
  * `agent_sessions` inside the caller's transaction (repository over a transaction): one row per agent,
  * keyed by its runtime task. No function opens a transaction.
  */
@@ -203,10 +215,10 @@ export const sessions = {
    * both the starter and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps their race
    * safe. The name, the model and the origin come from the snapshot, the parent and the root from the
    * task; `first_run` is set when the owner had no earlier session with the record. A root session
-   * starts with an empty title and its list time. The session that creates the row of a self-learning
-   * deep agent also creates its run row (`agent_knowledge_runs`), once per run.
+   * starts with an empty title and its list time. `true` — this call created the session: the caller
+   * (`BaseAgent.startSession`) then runs the agent's `sessionStarted` in the same transaction.
    */
-  async ensureSession(tx: RuntimeTx, task: SessionTask, input: SessionInput): Promise<void> {
+  async ensureSession(tx: Transaction, task: SessionTask, input: SessionInput): Promise<boolean> {
     const { taskId, ownerId } = task;
     const root = task.parentId === null;
     const { origin } = input.snapshot;
@@ -237,7 +249,7 @@ export const sessions = {
       })
       .onConflictDoNothing({ target: agentSessions.taskId })
       .returning({ taskId: agentSessions.taskId });
-    if (created.length === 0) return;
+    if (created.length === 0) return false;
     await tx.insert(agentMessages).values({
       taskId,
       seq: TASK_ENTRY_SEQ,
@@ -245,13 +257,11 @@ export const sessions = {
       // The chip of a conversation's first message stays on the root's task (plan Notes 9а).
       content: { text: input.prompt, record: input.record ?? null },
     });
-    // A run that learns gets its row with its deep agent session, in this transaction (self-learning KD-2).
-    const learning = learningRunOf(input.snapshot);
-    if (learning !== null) await insertKnowledgeRun(tx, { runId: taskId, ...learning });
+    return true;
   },
 
   /** The session of the agent; `undefined` when it has none yet. */
-  async get(reader: StoreReader, taskId: string): Promise<Session | undefined> {
+  async get(reader: Executor, taskId: string): Promise<Session | undefined> {
     const [row] = await reader
       .select()
       .from(agentSessions)
@@ -261,7 +271,7 @@ export const sessions = {
 
   /** The sessions of the given agents by task id; an agent without a session is absent. */
   async getMany(
-    reader: StoreReader,
+    reader: Executor,
     taskIds: readonly string[],
   ): Promise<Map<string, Session>> {
     if (taskIds.length === 0) return new Map();
@@ -277,7 +287,7 @@ export const sessions = {
    * sessions of the record itself — a subagent carries its deep agent's record id and a fork its
    * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
-  async recordCounts(reader: StoreReader, ownerId: string): Promise<Map<string, number>> {
+  async recordCounts(reader: Executor, ownerId: string): Promise<Map<string, number>> {
     const rows = await reader
       .select({ recordId: agentSessions.recordId, sessions: count() })
       .from(agentSessions)
@@ -294,7 +304,7 @@ export const sessions = {
   },
 
   /** The root of the agent's tree, from its session; `undefined` when it has none. */
-  async rootIdOf(reader: StoreReader, taskId: string): Promise<string | undefined> {
+  async rootIdOf(reader: Executor, taskId: string): Promise<string | undefined> {
     const [row] = await reader
       .select({ rootId: agentSessions.rootId })
       .from(agentSessions)
@@ -306,24 +316,24 @@ export const sessions = {
    * Marks the root session deleted: from then on the conversation answers as a missing one. The row
    * stays; the caller has deleted the runtime tree in the same transaction.
    */
-  async markDeleted(tx: RuntimeTx, rootId: string): Promise<void> {
+  async markDeleted(tx: Transaction, rootId: string): Promise<void> {
     await tx.update(agentSessions).set({ deletedAt: sql`now()` }).where(eq(agentSessions.taskId, rootId));
   },
 
   /** Writes the given fields of the session; an empty patch writes nothing. */
-  async update(tx: RuntimeTx, taskId: string, patch: SessionPatch): Promise<void> {
+  async update(tx: Transaction, taskId: string, patch: SessionPatch): Promise<void> {
     if (Object.values(patch).every((value) => value === undefined)) return;
     await tx.update(agentSessions).set(patch).where(eq(agentSessions.taskId, taskId));
   },
 
   /** The owner's root session; another owner's and a session that is not a root are as absent as a missing one. */
-  async root(reader: StoreReader, rootId: string, ownerId: string): Promise<RootSession | undefined> {
+  async root(reader: Executor, rootId: string, ownerId: string): Promise<RootSession | undefined> {
     const [row] = await reader.select(ROOT_COLUMNS).from(agentSessions).where(ownedRoot(rootId, ownerId));
     return row === undefined ? undefined : toRootSession(row);
   },
 
   /** The owner of a root session, whoever it is; `undefined` when `rootId` names no root session. */
-  async rootOwner(reader: StoreReader, rootId: string): Promise<string | undefined> {
+  async rootOwner(reader: Executor, rootId: string): Promise<string | undefined> {
     const [row] = await reader
       .select({ ownerId: agentSessions.ownerId })
       .from(agentSessions)
@@ -336,7 +346,7 @@ export const sessions = {
    * `agent_sessions_owner_page_idx`): strictly after `after`, at most `limit`; all of them without either.
    */
   async roots(
-    reader: StoreReader,
+    reader: Executor,
     ownerId: string,
     page: { readonly after?: RootPosition; readonly limit?: number } = {},
   ): Promise<RootSession[]> {
@@ -359,13 +369,13 @@ export const sessions = {
   },
 
   /** `updated_at = now()`: the owner's root session moves to the top of the list. */
-  async touchRoot(reader: StoreReader, rootId: string, ownerId: string): Promise<void> {
+  async touchRoot(reader: Executor, rootId: string, ownerId: string): Promise<void> {
     await reader.update(agentSessions).set({ updatedAt: NOW_MS }).where(ownedRoot(rootId, ownerId));
   },
 
   /** Sets the owner's title and moves the root session up; `undefined` for a missing or another owner's one. */
   async renameRoot(
-    reader: StoreReader,
+    reader: Executor,
     rootId: string,
     ownerId: string,
     title: string,
@@ -379,7 +389,7 @@ export const sessions = {
   },
 
   /** Writes a generated title only into an empty one; `true` when it was written. */
-  async titleRootIfEmpty(reader: StoreReader, rootId: string, ownerId: string, title: string): Promise<boolean> {
+  async titleRootIfEmpty(reader: Executor, rootId: string, ownerId: string, title: string): Promise<boolean> {
     const rows = await reader
       .update(agentSessions)
       .set({ title })

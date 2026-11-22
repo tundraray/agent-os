@@ -1,10 +1,43 @@
+import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
+import type { StepContext, StepEffects } from '@agent-os/runtime';
 import type { z } from 'zod';
 
 import type { RunSnapshot } from '../start/snapshot';
 import type { SessionTool } from './tool-registry';
+
+/**
+ * What an agent declares of its tools — plain data its class makes from its definition. The library answers it
+ * with the session's tools: the external ones the owner's rights give, narrowed by `servers`, then the system
+ * ones named here.
+ */
+export interface ToolDeclaration {
+  /** Registry server names, or `*` for every server: they narrow the external tools the owner may use. */
+  readonly servers: readonly string[];
+  /** The system tools the agent has, by name, in the order the model sees them. */
+  readonly system: readonly string[];
+  /** The agent is a conversation's root: it also gets the tools registered `rootOnly`. */
+  readonly root: boolean;
+  /**
+   * Lines of whom the agent may start or call — the agents of `start_agent`, the subagents of `task` — for the
+   * description of the tool that does it; `null` — not listed, the tool keeps its own description.
+   */
+  readonly startable: readonly string[] | null;
+  /** Lines of the deep agents the agent may start, for the description of the tool that does it; `null` — not listed. */
+  readonly deepAgents: readonly string[] | null;
+  /** The agent keeps a task list. */
+  readonly taskList: boolean;
+  /** The agent may give the same work for a list of items. */
+  readonly listDelegation: boolean;
+}
+
+/** How a tool reads for the agent that declares it. */
+export interface ToolDescription<Args> {
+  readonly description: string;
+  /** The schema of the agent's calls; without it the tool's own `argsSchema`. */
+  readonly argsSchema?: z.ZodType<Args>;
+}
 
 /** `agent` of `start_agent` that starts a fork of the caller (KD-7). */
 export const FORK_AGENT = 'fork';
@@ -30,12 +63,14 @@ export interface ToolCaller {
   readonly agentId: string;
   readonly ownerId: string;
   readonly rootId: string;
-  /** `null` for a root session. */
-  readonly parentId: string | null;
+  /** The caller is a conversation's chat (`ChatAgent`): it starts records of the employee's live listing. */
+  readonly root: boolean;
   /** 0 for a root session. */
   readonly depth: number;
   /** The caller's snapshot, from the input of its task (ADR-0017). */
   readonly snapshot: RunSnapshot;
+  /** The servers the caller declares (`ToolDeclaration.servers`): a `run_code` run checks its calls against their tools. */
+  readonly servers: readonly string[];
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */
@@ -63,7 +98,7 @@ export interface InCommitToolInput<Args, Prepared = unknown> {
   readonly callId: string;
   readonly args: Args;
   readonly caller: ToolCaller;
-  readonly tx: RuntimeTx;
+  readonly tx: Transaction;
   readonly effects: StepEffects;
   readonly startChild: StartChild;
   /** What the tool's `prepare` answered before the commit; absent for a tool without one. */
@@ -126,10 +161,15 @@ interface AgentToolBase<Args> {
   readonly description: string;
   readonly argsSchema: z.ZodType<Args>;
   readonly confirmation?: ToolConfirmation<Args>;
-  /** Only a session without a parent gets the tool (KD-6, Invariant 4). */
+  /**
+   * The description and the schema of a tool that depend on the agent — whom it may start, which fields its
+   * flags allow — built from its declaration; without it the tool reads the same for every agent.
+   */
+  describe?(declaration: ToolDeclaration): ToolDescription<Args>;
+  /** A conversation's root gets the tool without naming it, and nobody else does (KD-6, Invariant 4). */
   readonly rootOnly?: boolean;
   /**
-   * Every session gets the tool, without a grant, and no definition names it (tool-result-reading R-2):
+   * Every session gets the tool, without a grant, and no declaration names it (tool-result-reading R-2):
    * it reaches only what the session itself owns.
    */
   readonly everySession?: boolean;
@@ -160,7 +200,8 @@ export interface OutsideAgentTool<Args> extends AgentToolBase<Args> {
 }
 
 /**
- * A tool of the package or of an upper part (design-agents.md, «Инструменты (`tools`)»). `execute`
- * and `content` are methods, so a tool with concrete arguments is an `AgentTool` of the registry.
+ * A tool registered in the tools library by the package or an upper part (design-agents.md, «Инструменты
+ * (`tools`)»): a system tool, or `run_code`. `execute`, `content` and `describe` are methods, so a tool with
+ * concrete arguments is an `AgentTool` of the registry.
  */
 export type AgentTool<Args = unknown> = InCommitAgentTool<Args> | OutsideAgentTool<Args>;

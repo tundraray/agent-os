@@ -4,6 +4,8 @@ export {
   type Database,
   type DatabaseConnection,
   type DatabaseOptions,
+  type Executor,
+  type Transaction,
 } from './database';
 export { applyMigrations } from './migrate';
 export {

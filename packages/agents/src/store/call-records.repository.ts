@@ -1,5 +1,5 @@
+import type { Transaction } from '@agent-os/db';
 import { type ToolOutcome, ToolOutcomeSchema, type ToolRefusalReason } from '@agent-os/contracts';
-import type { RuntimeTx } from '@agent-os/runtime';
 
 import { type CallState, isDelegated, isRunCodeCall, openCalls } from '../history/call-state';
 import type { AnswerCall, HistoryContent, HistoryEntry } from '../history/history';
@@ -108,7 +108,7 @@ export const callRecords = {
    * also closes its open calls from code, by the run's class (code-execution Invariant 4).
    */
   async close(
-    tx: RuntimeTx,
+    tx: Transaction,
     taskId: string,
     call: AnswerCall,
     ending: CallEnding,
@@ -140,7 +140,7 @@ export const callRecords = {
    * returns their results; a sent `task` call stays open for its tracker's outcomes. The only closing of
    * open calls (overview, Common Processing Points).
    */
-  async closeOpen(tx: RuntimeTx, taskId: string): Promise<HistoryEntry[]> {
+  async closeOpen(tx: Transaction, taskId: string): Promise<HistoryEntry[]> {
     const closed: HistoryEntry[] = [];
     for (const call of openCalls(await history.visible(tx, taskId))) {
       if (isDelegated(call)) continue;
@@ -155,7 +155,7 @@ export const callRecords = {
    * the call goes out (KD-4, Invariant 2). `args` — the arguments the employee edited; they replace the
    * call's. `false` when the call does not await confirmation — then it must not be sent.
    */
-  async markSent(tx: RuntimeTx, call: CallKey & { readonly args?: unknown }): Promise<boolean> {
+  async markSent(tx: Transaction, call: CallKey & { readonly args?: unknown }): Promise<boolean> {
     const records = await history.callRecords(tx, call.taskId, [call.callId]);
     const kinds = new Set(records.map((record) => record.kind));
     if (!kinds.has('tool_confirmation') || kinds.has('tool_sent') || kinds.has('tool_result')) {
@@ -177,7 +177,7 @@ export const callRecords = {
    * started twice — then it must not start again. Open calls from code of the earlier attempt get
    * their outcome by the run's class (Invariant 4).
    */
-  async startAttempt(tx: RuntimeTx, run: CallKey, runArgs: unknown): Promise<number | null> {
+  async startAttempt(tx: Transaction, run: CallKey, runArgs: unknown): Promise<number | null> {
     const records = await history.callRecords(tx, run.taskId, [run.callId]);
     const attempt = records.filter((record) => record.kind === 'run_attempt').length + 1;
     if (attempt > MAX_RUN_ATTEMPTS) return null;

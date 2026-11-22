@@ -5,7 +5,7 @@ import type { Database } from '@agent-os/db';
 import { findServers, listServers } from '../mcp/mcp-servers.repository';
 import { storedMcpTools } from '../mcp/mcp-tool';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
-import { type LearningRun, learningRunOf } from '../start/snapshot-definition';
+import { type LearningRun, learningRunOf } from '../deep/deep-definition';
 import type { RunSnapshot } from '../start/snapshot';
 import { readQuestion } from './knowledge-runs.repository';
 import { type KnowledgeGraph, readGraph, readKnowledgeSettings } from './knowledge.repository';

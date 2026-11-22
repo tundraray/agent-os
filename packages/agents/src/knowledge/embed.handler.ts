@@ -1,7 +1,7 @@
 import { createSecretMasker, type Logger } from '@agent-os/common';
 import type { KnowledgeItemType } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
-import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
+import type { Database, Transaction } from '@agent-os/db';
+import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 
 import {
   type AgentsEmbeddings,
@@ -144,7 +144,7 @@ export function createKnowledgeEmbedHandler(deps: KnowledgeEmbedHandlerDeps): Ta
     outcome: EmbeddingOutcome | null,
     next: PassNext,
   ): Promise<'continue' | 'complete' | 'not_current' | 'fenced'> {
-    const settled = await ctx.guard(async (tx: RuntimeTx) => {
+    const settled = await ctx.guard(async (tx: Transaction) => {
       const row = await findEmbeddingByPassTask(tx, ctx.taskId);
       if (row?.recordId !== recordId) return 'not_current' as const;
       if (outcome !== null) await writeEmbeddingOutcome(tx, recordId, outcome);

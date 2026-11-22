@@ -1,8 +1,6 @@
-import { agentMcpServers } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { agentMcpServers, type Executor, type Transaction } from '@agent-os/db';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_mcp_servers`; `tools` is read back by the registry, which owns its shape. */
 export type McpServerRow = typeof agentMcpServers.$inferSelect;
@@ -24,7 +22,7 @@ export interface McpServerChange {
  * database on every use (KD-2). No function opens a transaction or calls out of the process.
  */
 export async function findServer(
-  reader: StoreReader,
+  reader: Executor,
   name: string,
 ): Promise<McpServerRow | undefined> {
   const [row] = await reader.select().from(agentMcpServers).where(eq(agentMcpServers.name, name));
@@ -32,13 +30,13 @@ export async function findServer(
 }
 
 /** The registered servers among the names, in one query. */
-export async function findServers(reader: StoreReader, names: readonly string[]): Promise<McpServerRow[]> {
+export async function findServers(reader: Executor, names: readonly string[]): Promise<McpServerRow[]> {
   if (names.length === 0) return [];
   return reader.select().from(agentMcpServers).where(inArray(agentMcpServers.name, [...names]));
 }
 
 /** All registry servers by name. */
-export function listServers(reader: StoreReader): Promise<McpServerRow[]> {
+export function listServers(reader: Executor): Promise<McpServerRow[]> {
   return reader.select().from(agentMcpServers).orderBy(asc(agentMcpServers.name));
 }
 
@@ -47,7 +45,7 @@ export function listServers(reader: StoreReader): Promise<McpServerRow[]> {
  * always has its tool list (Invariant 2). The first of the two queries of a tool set.
  */
 export async function enabledServersWithTools(
-  reader: StoreReader,
+  reader: Executor,
   names: readonly string[] | '*',
 ): Promise<McpServerRow[]> {
   if (names !== '*' && names.length === 0) return [];
@@ -61,7 +59,7 @@ export async function enabledServersWithTools(
 
 /** Registers the server; `undefined` when the name is taken. */
 export async function insertServer(
-  reader: StoreReader,
+  reader: Executor,
   server: NewMcpServerRow,
 ): Promise<McpServerRow | undefined> {
   const [row] = await reader
@@ -74,7 +72,7 @@ export async function insertServer(
 
 /** Locks the server row and writes the patch; `undefined` when the server is not registered. */
 export async function updateServer(
-  tx: RuntimeTx,
+  tx: Transaction,
   name: string,
   patch: McpServerPatch,
 ): Promise<McpServerChange | undefined> {
@@ -95,7 +93,7 @@ export async function updateServer(
 
 /** Removes the server, and with it every account on it (cascade, AC-13.6); returns the removed row. */
 export async function deleteServer(
-  reader: StoreReader,
+  reader: Executor,
   name: string,
 ): Promise<McpServerRow | undefined> {
   const [row] = await reader

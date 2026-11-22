@@ -8,14 +8,14 @@
 // order the steps.
 //
 // Proven elsewhere (not restated here):
-// - unit, packages/agents/src/tools/builtin/task-rules.spec.ts - UC-1: numbering, blockers, cycles, deletion, limits.
-// - unit, packages/agents/src/step/turn-rules.spec.ts - AC-14.4: the open-tasks branch of `endOfTurn` and its order.
+// - unit, packages/agents/src/tools/system/task-list-rules.spec.ts - UC-1: numbering, blockers, cycles, deletion, limits.
+// - unit, packages/agents/src/agent/turn-rules.spec.ts - AC-14.4: the open-tasks branch of `endOfTurn` and its order.
 // - existing, packages/agents/test/agent-platform-agents.int.e2e-spec.ts INT-4 - UC-2: isolation of the list (another employee, a subagent, the root's list).
 
 import { createLatch, createLibraryDouble, createScriptedModel, inputLines } from '@agent-os/agents/testing';
 import { createFixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { describe, expect, it } from 'vitest';
-import { TASK_BLOCK_HEADING } from '../src/step/task-block';
+import { TASK_BLOCK_HEADING } from '../src/tools/system/task-list-block';
 import {
   type AgentsHarness,
   childNoticesOf,

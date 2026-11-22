@@ -3,14 +3,11 @@ import {
   type HistoryEntryKind,
   HistoryEntryKindSchema,
   type ToolOutcome,
-  ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import { type agentCodeCalls, agentMessages } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { type agentCodeCalls, agentMessages, type Executor, type Transaction } from '@agent-os/db';
 import {
   and,
   asc,
-  count,
   desc,
   eq,
   gt,
@@ -25,8 +22,6 @@ import {
 } from 'drizzle-orm';
 
 import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history';
-import { TASK_TOOL } from '../start/snapshot-definition';
-import type { StoreReader } from './sessions.repository';
 
 /** An entry to append: its kind, its content and, for a `model_answer`, the token ledger row. */
 export type NewHistoryEntry = {
@@ -83,18 +78,6 @@ function promoted(entry: NewHistoryEntry) {
 
 const isResult = eq(agentMessages.kind, 'tool_result');
 
-/**
- * The result of a single `task` call that ran: a built-in `task` with `description` (not a list) that ended
- * with the subagent's answer or its failure — a refusal and an interrupt before it was sent ran nothing.
- */
-const isSingleTaskResult = and(
-  isResult,
-  sql`${agentMessages.content} ->> 'tool' = ${TASK_TOOL}`,
-  sql`${agentMessages.content} ->> 'server' is null`,
-  sql`${agentMessages.content} -> 'args' -> 'description' is not null`,
-  inArray(sql`${agentMessages.content} ->> 'outcome'`, [ToolOutcomeSchema.enum.success, ToolOutcomeSchema.enum.tool_error]),
-);
-
 /** Calls that finished in (`after`, `through`]; `after` null — no lower bound. */
 export interface FinishedWindow {
   readonly after: Date | null;
@@ -135,7 +118,7 @@ function resultField(name: string): SQL<string | null> {
  */
 export const history = {
   /** `seq` of the last entry; 0 for an empty history. */
-  async lastSeq(reader: StoreReader, taskId: string): Promise<number> {
+  async lastSeq(reader: Executor, taskId: string): Promise<number> {
     const [last] = await reader
       .select({ seq: max(agentMessages.seq) })
       .from(agentMessages)
@@ -150,7 +133,7 @@ export const history = {
    * `agents.history_appended` with the last `seq`.
    */
   async append(
-    tx: RuntimeTx,
+    tx: Transaction,
     taskId: string,
     entries: readonly NewHistoryEntry[],
   ): Promise<HistoryEntry[]> {
@@ -177,7 +160,7 @@ export const history = {
    * one. The model sees nothing earlier (KD-7), and no open call is earlier: a compaction is written
    * only when every call is closed.
    */
-  async visible(reader: StoreReader, taskId: string): Promise<HistoryEntry[]> {
+  async visible(reader: Executor, taskId: string): Promise<HistoryEntry[]> {
     const lastCompaction = sql`coalesce((
       select max(m.seq) from ${agentMessages} m
        where m.task_id = ${taskId} and m.kind = 'compaction'), 0)`;
@@ -191,7 +174,7 @@ export const history = {
 
   /** A page for the employee: entries with `seq` greater than `afterSeq`, in order, at most `limit`. */
   async page(
-    reader: StoreReader,
+    reader: Executor,
     taskId: string,
     afterSeq: number,
     limit: number,
@@ -212,8 +195,18 @@ export const history = {
     return rows.map(toEntry) as PageEntry[];
   },
 
+  /** Every entry, in order, whatever was compacted since. */
+  async all(reader: Executor, taskId: string): Promise<HistoryEntry[]> {
+    const rows = await reader
+      .select(ENTRY_COLUMNS)
+      .from(agentMessages)
+      .where(eq(agentMessages.taskId, taskId))
+      .orderBy(asc(agentMessages.seq));
+    return rows.map(toEntry);
+  },
+
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */
-  async through(reader: StoreReader, taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
+  async through(reader: Executor, taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
     const rows = await reader
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
@@ -224,7 +217,7 @@ export const history = {
 
   /** The records of the given calls, in order. */
   async callRecords(
-    reader: StoreReader,
+    reader: Executor,
     taskId: string,
     callIds: readonly string[],
   ): Promise<CallRecord[]> {
@@ -239,7 +232,7 @@ export const history = {
   },
 
   /** `seq` of the `model_answer` that requested the call; `undefined` when no answer of the agent did. */
-  async answerSeqOf(reader: StoreReader, taskId: string, callId: string): Promise<number | undefined> {
+  async answerSeqOf(reader: Executor, taskId: string, callId: string): Promise<number | undefined> {
     const [answer] = await reader
       .select({ seq: agentMessages.seq })
       .from(agentMessages)
@@ -256,48 +249,13 @@ export const history = {
   },
 
   /**
-   * How many single assignments each subagent got from the deep agent's `task` calls, whatever was compacted
-   * since: what its `maxRuns` counts (deep-agents/design-task.md KD-6). List items and refused or interrupted
-   * calls do not count.
-   */
-  async singleTaskRuns(reader: StoreReader, taskId: string): Promise<Map<string, number>> {
-    const subagent = sql<string>`${agentMessages.content} -> 'args' ->> 'subagentType'`;
-    const rows = await reader
-      .select({ subagent, runs: count() })
-      .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), isSingleTaskResult))
-      .groupBy(subagent);
-    return new Map(rows.map((row) => [row.subagent, row.runs]));
-  },
-
-  /**
-   * The subagent task of the last single `task` call to the named subagent that finished (KD-6): the final
-   * subagent's answer is read through it; `undefined` — none yet.
-   */
-  async lastSingleTask(reader: StoreReader, taskId: string, subagent: string): Promise<string | undefined> {
-    const [row] = await reader
-      .select({ childTaskId: resultField('childTaskId') })
-      .from(agentMessages)
-      .where(
-        and(
-          eq(agentMessages.taskId, taskId),
-          isSingleTaskResult,
-          sql`${agentMessages.content} -> 'args' ->> 'subagentType' = ${subagent}`,
-        ),
-      )
-      .orderBy(desc(agentMessages.seq))
-      .limit(1);
-    return row?.childTaskId ?? undefined;
-  },
-
-  /**
    * The direct MCP calls of the tasks with one of the outcomes, finished in the window: their
    * `tool_result` entries, read through the promoted `finished_at` (`agent_messages_result_idx`), by end
    * time. Results of one task that ended at the same moment keep the order they were written in, which
    * is the order of their calls.
    */
   async mcpResults<O extends ToolOutcome>(
-    reader: StoreReader,
+    reader: Executor,
     taskIds: readonly string[],
     outcomes: readonly O[],
     window: FinishedWindow,
@@ -336,7 +294,7 @@ export const history = {
   },
 
   /** How many tool calls the agent's answers requested: the count of a child's report. */
-  async toolCallCount(reader: StoreReader, taskId: string): Promise<number> {
+  async toolCallCount(reader: Executor, taskId: string): Promise<number> {
     const [row] = await reader
       .select({
         calls: sql<number>`coalesce(sum(jsonb_array_length(${agentMessages.content} -> 'toolCalls')), 0)::int`,

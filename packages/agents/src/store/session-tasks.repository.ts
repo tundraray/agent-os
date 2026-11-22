@@ -1,9 +1,7 @@
 import { type SessionTaskStatus, SessionTaskStatusSchema } from '@agent-os/contracts';
-import { agentSessions, agentSessionTasks } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { agentSessions, agentSessionTasks, type Executor, type Transaction } from '@agent-os/db';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
-import type { StoreReader } from './sessions.repository';
 
 /** A task of a session's list (deep-agents design-task-list.md, Data Model). */
 export interface SessionTask {
@@ -34,7 +32,7 @@ export interface SessionTasksWrite {
  */
 export const sessionTasks = {
   /** The session's tasks by number; empty for a session without a list. */
-  async list(reader: StoreReader, sessionId: string): Promise<SessionTask[]> {
+  async list(reader: Executor, sessionId: string): Promise<SessionTask[]> {
     const rows = await reader
       .select({
         number: agentSessionTasks.number,
@@ -53,7 +51,7 @@ export const sessionTasks = {
 
   /** The list and the last number given, as the rules decide on them. */
   async read(
-    reader: StoreReader,
+    reader: Executor,
     sessionId: string,
   ): Promise<{ tasks: SessionTask[]; lastNumber: number }> {
     const [session] = await reader
@@ -65,7 +63,7 @@ export const sessionTasks = {
   },
 
   /** Writes a decision: the tasks whole (created or replaced), the deletions and the counter. */
-  async write(tx: RuntimeTx, sessionId: string, change: SessionTasksWrite): Promise<void> {
+  async write(tx: Transaction, sessionId: string, change: SessionTasksWrite): Promise<void> {
     if (change.deleted.length > 0) {
       await tx
         .delete(agentSessionTasks)

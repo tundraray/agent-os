@@ -35,13 +35,13 @@
 //       executor/fork/record) x outcome - AC-14.1, AC-14.3 (rows `record_unavailable`: missing, not visible, wrong kind), AC-14.4
 //       (`model_not_connected`, `model_not_allowed` with the model's number), DC-3 (which source each kind uses), DC-4, DC-5; the library and
 //       the access gate are the doubles.
-//   - `packages/agents/src/tools/tool-gate.spec.ts` (new rows of the existing table): UC-E4 - `run_limit`, `not_allowed` for a name outside the
+//   - `packages/agents/src/tools/system/tool-gate.spec.ts` (new rows of the existing table): UC-E4 - `run_limit`, `not_allowed` for a name outside the
 //       team, `not_allowed` for a fork at a coordinator, `not_allowed` for the wrong kind or a record outside the launch set, root launch set =
 //       records the chat may offer (AC-15.2 rule half).
 //   - `packages/agents/src/chat-listing.spec.ts`: UC-7 - own first and marked, a colleague's with the author, no colleague's record with the
 //       switch off, over the budget every name stays and descriptions vanish first from the records launched least (AC-15.3, AC-15.5, AC-15.7
 //       rule half). The choice between same-named records by the model is a manual run (Success Criteria of the PRD).
-//   - `packages/agents/src/tools/tool-registry.spec.ts`: UC-E6 - `start_deep_agent` only for a session without a parent;
+//   - `packages/agents/src/agent/tool-declaration.spec.ts`: UC-E6 - `start_deep_agent` only for a session without a parent;
 //       a child, a subagent and a deep agent do not get it (AC-18.4).
 //   - `packages/agents/src/start/snapshot-definition.spec.ts`: the one pure function snapshot -> definition for a model call (prompt, tools,
 //       servers, turn limit; coordinator: shared text + rules + team lines, no `finalExecutor` -> the coordinator's text ends the turn) and

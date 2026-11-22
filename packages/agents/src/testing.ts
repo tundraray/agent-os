@@ -29,7 +29,6 @@ import type {
   AgentTurnModelClient,
   StreamTurnOptions,
 } from './model/mastra-turn';
-import type { Delegations } from './tools/builtin/task-delegation';
 
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
@@ -42,9 +41,6 @@ import type { Delegations } from './tools/builtin/task-delegation';
  * reply may be computed from the call's input; a reply may be a provider error. A call of
  * `agents.completeText` (`purpose: 'complete_text'`) is answered by the separate text script.
  */
-
-/** The largest `seq` a history can have: `agent_messages.seq` is a Postgres `integer`. */
-const MAX_SEQ = 2_147_483_647;
 
 /** Usage of an answer that names none: below any compaction threshold of the tests. */
 export const DEFAULT_USAGE: CallUsage = {
@@ -757,7 +753,7 @@ export interface ToolCallRow {
  * by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
 export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await history.through(db, agentId, MAX_SEQ);
+  const entries = await history.all(db, agentId);
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {
@@ -774,19 +770,3 @@ export async function toolCallRowsOf(db: Database, agentId: string): Promise<Too
     };
   });
 }
-
-/** `Delegations` of a step spec no `task` call reaches: every method throws, so a stray call fails the spec. */
-export const NO_DELEGATIONS: Delegations = {
-  decide: async () => {
-    throw new Error('no task call in this spec');
-  },
-  open: async () => {
-    throw new Error('no task call in this spec');
-  },
-  closings: async () => {
-    throw new Error('no task call in this spec');
-  },
-  close: async () => {
-    throw new Error('no task call in this spec');
-  },
-};

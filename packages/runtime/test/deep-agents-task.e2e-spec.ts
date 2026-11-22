@@ -6,9 +6,10 @@
 // task's step. Nothing below this level proves it: only a process that really dies between two writes shows that the tracker,
 // its tasks and the wake-up commit together or not at all.
 //
-// How a row runs: the test process creates the owner task through its own runtime (workers off). Stage 1 runs the owner alone,
-// so its tasks stay queued while the test sends the owner a note during its wait; stage 2 runs every type. A dying child
-// registers only the type it must crash on, so the pass `:n` of `RUNTIME_CRASH_AT` counts that type's passes alone.
+// How a row runs: the test process creates the owner task through its own runtime (workers off). Stage 1 runs the owner with
+// its tasks' type parked (registered, so the tracker opens, but never committing a step), so the tasks stay unfinished while
+// the test sends the owner a note during its wait; stage 2 runs every type. A dying child commits steps only of the type it
+// must crash on, so the pass `:n` of `RUNTIME_CRASH_AT` counts that type's passes alone.
 //
 // Proof obligation (plan, phase 1): red if after a restart the tasks are not three or zero, a task has two runs, or
 // `tasks_finished` is not exactly one; the note sent during the wait comes with it in one step (DC-4).
@@ -39,6 +40,12 @@ type Types = Required<Pick<ChildTypes, 'trackerOwner' | 'trackerTask'>>;
 const trackerTypes = (): Types => ({
   trackerOwner: uniqueType('uc3-owner'),
   trackerTask: uniqueType('uc3-task'),
+});
+
+/** The owner runs; its tasks' type is known to the process but parked. */
+const ownerWithParkedTasks = (types: Types): ChildTypes => ({
+  trackerOwner: types.trackerOwner,
+  parkedTrackerTask: types.trackerTask,
 });
 
 /** The test process's runtime: workers off, the types registered only so `tasks.create` accepts them. */
@@ -75,14 +82,14 @@ async function ownerWaitsForTasks(control: RuntimeHarness, owner: Owner): Promis
   return task.status === 'waiting' && task.waitReason === 'tasks';
 }
 
-/** Stage 1: the owner alone opens its tracker; then the employee writes to it during the wait. */
+/** Stage 1: the owner opens its tracker, its tasks parked; then the employee writes to it during the wait. */
 async function openTrackerAndWrite(
   children: Children,
   control: RuntimeHarness,
   types: Types,
   owner: Owner,
 ): Promise<void> {
-  const ownerOnly = await children.start({ types: { trackerOwner: types.trackerOwner } });
+  const ownerOnly = await children.start({ types: ownerWithParkedTasks(types) });
   await ownerOnly.until(() => ownerWaitsForTasks(control, owner), {
     what: 'the owner to wait for its tasks',
     timeoutMs: RESUME_TARGET_MS,
@@ -201,7 +208,7 @@ describe('deep-agents / task - E2E (real Postgres, child processes)', () => {
         const owner = await createOwner(control, types);
 
         const dying = await children.start({
-          types: { trackerOwner: types.trackerOwner },
+          types: ownerWithParkedTasks(types),
           crashAt: row.crashAt,
         });
         await dying.crashed();

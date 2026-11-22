@@ -8,6 +8,7 @@ import {
   type RecordBody,
 } from '@agent-os/contracts';
 import {
+  type Executor,
   identityRoles,
   identityUsers,
   libraryRecords,
@@ -25,7 +26,6 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import type { Executor } from '../common/executor';
 
 /**
  * Drizzle queries of `library_records` and `library_shares` (repository-over-transaction.md): each

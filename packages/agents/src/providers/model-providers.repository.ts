@@ -1,8 +1,6 @@
-import { agentModelProviders } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { agentModelProviders, type Executor, type Transaction } from '@agent-os/db';
 import { asc, eq, inArray } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_model_providers`; `apiKey` is the key as stored. */
 export type ModelProviderRow = typeof agentModelProviders.$inferSelect;
@@ -24,7 +22,7 @@ export interface ModelProviderChange {
  * database on every use, without a cache (KD-1). No function opens a transaction or calls out of the process.
  */
 export async function findProvider(
-  reader: StoreReader,
+  reader: Executor,
   name: string,
 ): Promise<ModelProviderRow | undefined> {
   const [row] = await reader
@@ -36,7 +34,7 @@ export async function findProvider(
 
 /** The registered providers among the names, in one query. */
 export async function findProviders(
-  reader: StoreReader,
+  reader: Executor,
   names: readonly string[],
 ): Promise<ModelProviderRow[]> {
   if (names.length === 0) return [];
@@ -47,13 +45,13 @@ export async function findProviders(
 }
 
 /** All providers by name. */
-export function listProviders(reader: StoreReader): Promise<ModelProviderRow[]> {
+export function listProviders(reader: Executor): Promise<ModelProviderRow[]> {
   return reader.select().from(agentModelProviders).orderBy(asc(agentModelProviders.name));
 }
 
 /** Creates the provider; `undefined` when the name is taken (its primary key). */
 export async function insertProvider(
-  reader: StoreReader,
+  reader: Executor,
   provider: NewModelProviderRow,
 ): Promise<ModelProviderRow | undefined> {
   const [row] = await reader
@@ -66,7 +64,7 @@ export async function insertProvider(
 
 /** Locks the provider row and writes the patch; `undefined` when the provider is not registered. */
 export async function updateProvider(
-  tx: RuntimeTx,
+  tx: Transaction,
   name: string,
   patch: ModelProviderPatch,
 ): Promise<ModelProviderChange | undefined> {
@@ -87,7 +85,7 @@ export async function updateProvider(
 
 /** Removes the provider; returns the removed row. */
 export async function deleteProvider(
-  reader: StoreReader,
+  reader: Executor,
   name: string,
 ): Promise<ModelProviderRow | undefined> {
   const [row] = await reader

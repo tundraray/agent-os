@@ -12,24 +12,27 @@
 - **Ожидание своих детей** — коммит шага открывает трекер с дочерними задачами и кончается итогом «ждать»: задача ждёт задач, и runtime будит её одним сообщением `tasks_finished`, когда закончились все. Ответы детей шаг читает операцией `trackers.list`, а не из сообщения.
 - **Внешнее действие, которое нельзя повторить**, предваряется охраняемой записью намерения внутри шага. Если шаг потерян, следующая попытка видит признак потери и намерение без результата и решает, что делать, вместо слепого повтора.
 - Обработчик не держит транзакцию через внешний вызов, не пишет в таблицы `runtime_*` и проверяет сигнал прерывания перед каждым внешним вызовом.
+- **Несколько видов работы с общим шагом** — обработчик пишется классом: абстрактный базовый класс держит общий шаг, а каждый вид — его наследник со своим типом задачи. Наследник переопределяет только то, чем отличается, и общий код на вид не ветвится. Класс выбирают один раз, когда создают задачу: её тип и есть выбор, дальше runtime находит обработчик по типу. В `agents` это `BaseAgent` и три наследника: `Agent` (тип `agent`), `ChatAgent` (тип `chat`, корень беседы) и `DeepAgent` (тип `deep_agent`). Переопределяются: признак корня и объявление инструментов для вызова модели ([tool-declaration.md](./tool-declaration.md)), счётчик ходов после доставки сообщений, конец хода, вектор вопроса, что добавить к новой сессии, какие вызовы инструментов не исполнять по одному, а раздать детям и ждать трекер, как закрыть такие вызовы, чей ответ завершает запуск.
 
 Контракт — [design-runtime.md](../../features/agent-platform/design-runtime.md#contract-definitions).
 
 ## Reference
 
-- `packages/runtime/src/handler.registry.ts`
+- `packages/runtime/src/steps/step-contract.ts` — контракт шага (`TaskHandler`, `StepContext`, `StepResult`)
+- `packages/runtime/src/steps/handler.registry.ts` — реестр обработчиков
+- `packages/agents/src/agent/base-agent.ts` — общий шаг агента; `agent/agent.ts`, `agent/chat-agent.ts`, `deep/deep-agent.ts` — три класса, которые запускает runtime
 
 ## Not For
 
 | Looks like | Use instead |
 |---|---|
 | короткий запрос API, который отвечает сразу | обычный сервис с транзакцией |
-| периодическая служебная работа runtime (возврат потерянных шагов, доставка событий) | `WorkerLoop` внутри runtime |
+| периодическая служебная работа runtime (возврат потерянных шагов, доставка событий) | `WorkerLoop` внутри runtime (`packages/runtime/src/workers/worker-loop.ts`) |
 
 ## Used In
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — порт `TaskHandler`, Flow 1–4
-- [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentStepHandler`: шаг модели и шаг инструментов, намерение перед изменяющим вызовом
+- [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentStepHandler` (классы агентов): шаг модели и шаг инструментов, намерение перед изменяющим вызовом
 - [design-access.md](../../features/enterprise-access/design-access.md) — отказ модели и исчерпанная квота завершают агента итогом «упасть» с причиной (KD-5)
 - [design-core.md](../../features/self-learning/design-core.md) — задача `knowledge.extract`: раунд извлечения, применение операций в коммите шага (KD-4)
 - [design-core.md](../../features/agent-harness/design-core.md) — пустая сводка сжатия как итог шага, а не исключение (KD-7)

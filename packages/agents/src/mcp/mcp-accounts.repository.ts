@@ -1,7 +1,6 @@
-import { agentMcpAccounts } from '@agent-os/db';
+import { agentMcpAccounts, type Executor } from '@agent-os/db';
 import { and, asc, eq } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_mcp_accounts`: an employee's own credentials on a server. */
 export type McpAccountRow = typeof agentMcpAccounts.$inferSelect;
@@ -28,7 +27,7 @@ function accountKey(server: string, ownerId: string) {
  * "server — owner" only. No function opens a transaction or calls out of the process.
  */
 export async function findAccount(
-  reader: StoreReader,
+  reader: Executor,
   server: string,
   ownerId: string,
 ): Promise<McpAccountRow | undefined> {
@@ -37,7 +36,7 @@ export async function findAccount(
 }
 
 /** The employee's accounts by server: the second of the two queries of a tool set. */
-export function accountsOf(reader: StoreReader, ownerId: string): Promise<McpAccountRow[]> {
+export function accountsOf(reader: Executor, ownerId: string): Promise<McpAccountRow[]> {
   return reader
     .select()
     .from(agentMcpAccounts)
@@ -46,7 +45,7 @@ export function accountsOf(reader: StoreReader, ownerId: string): Promise<McpAcc
 }
 
 /** Saves a fresh connection; a reconnection replaces the tokens. */
-export async function upsertAccount(reader: StoreReader, account: NewMcpAccount): Promise<void> {
+export async function upsertAccount(reader: Executor, account: NewMcpAccount): Promise<void> {
   const connected = {
     accessToken: account.accessToken,
     refreshToken: account.refreshToken,
@@ -63,7 +62,7 @@ export async function upsertAccount(reader: StoreReader, account: NewMcpAccount)
 
 /** Writes refreshed tokens; `false` when the account is gone (disconnected meanwhile). */
 export async function updateTokens(
-  reader: StoreReader,
+  reader: Executor,
   server: string,
   ownerId: string,
   tokens: McpTokens,
@@ -78,7 +77,7 @@ export async function updateTokens(
 
 /** Removes the account; `false` when there was none. */
 export async function deleteAccount(
-  reader: StoreReader,
+  reader: Executor,
   server: string,
   ownerId: string,
 ): Promise<boolean> {

@@ -1,5 +1,5 @@
 // agent-platform / runtime — on-demand timing checks, not part of any suite (testing-principles: timing-sensitive checks live in a separate
-// script). Run: `pnpm --filter @agent-os/runtime test:verify` (builds the package and the child first).
+// script). Run: `pnpm --filter @agent-os/runtime test:verify`.
 // Design Doc: docs/features/agent-platform/design-runtime.md, Non-Functional Use Cases UC-N1 (NFR-05), UC-N2 (NFR-01).
 // The step runs in a child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test process
 // creates the tasks and sends the commands through its own runtime with `RUNTIME_WORKERS=off`.

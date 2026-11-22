@@ -20,7 +20,7 @@ import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock, Runtime } from '@agent-os/runtime';
 import { AccessModule } from '../access/access.module';
 import { AccessService } from '../access/access.service';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { IdentityModule } from '../identity/identity.module';
 import { LibraryModule } from '../library/library.module';
 import { LibraryService } from '../library/library.service';

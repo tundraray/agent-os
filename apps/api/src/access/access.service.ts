@@ -20,16 +20,14 @@ import type {
   UpdateCatalogModelBody,
   UpdateModelDefaultsBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
+import type { Database, DatabaseConnection, Executor, Transaction } from '@agent-os/db';
 import {
   monthOf,
   PLATFORM_OWNER_ID,
   type Clock,
   type Runtime,
-  type RuntimeTx,
 } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log';
-import type { Executor } from '../common/executor';
+import { AuditLog } from '../audit/audit-log.repository';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
 import { identityError } from '../identity/identity.errors';
@@ -475,7 +473,7 @@ export class AccessService implements AccessGate {
 
   /** The values of the body that name a model, with their catalogue rows read in the write's transaction. */
   private defaultChoicesOf(
-    tx: RuntimeTx,
+    tx: Transaction,
     body: UpdateModelDefaultsBody,
   ): Promise<DefaultChoice[]> {
     const wanted = [
@@ -589,7 +587,7 @@ export class AccessService implements AccessGate {
    * Contract «Операции администратора»), as identity does: a write without its record is rolled back.
    */
   private audit(
-    tx: RuntimeTx,
+    tx: Transaction,
     actorId: string,
     objectType: AuditObjectType,
     objectId: string | undefined,

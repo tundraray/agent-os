@@ -7,9 +7,8 @@ import type {
   ProviderView,
   UpdateProviderBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log';
+import type { Database, DatabaseConnection, Transaction } from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log.repository';
 import { isUuid } from '../common/is-uuid';
 import { APP_LOGGER } from '../logging/app-logger';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
@@ -209,7 +208,7 @@ export class ProvidersService {
   }
 
   private recordChange(
-    tx: RuntimeTx,
+    tx: Transaction,
     actorId: string,
     providerId: string,
     before: ReturnType<typeof auditState> | null,

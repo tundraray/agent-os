@@ -23,7 +23,7 @@ import {
 } from '@agent-os/contracts';
 import type { Response } from 'express';
 import { AccessService } from '../access/access.service';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';

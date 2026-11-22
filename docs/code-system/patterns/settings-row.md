@@ -14,7 +14,7 @@
 
 ## Reference
 
-- `apps/api/src/library/library-settings.ts` — сервис, аудит в транзакции; таблица `library_settings` в `packages/db/src/schema.ts`
+- `apps/api/src/library/library-settings.ts` — сервис, аудит в транзакции; таблица `library_settings` в `packages/db/src/schema/library-settings.ts`
 
 ## Not For
 

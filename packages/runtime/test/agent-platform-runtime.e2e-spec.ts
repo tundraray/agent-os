@@ -1,14 +1,12 @@
-// agent-platform / runtime E2E Test Skeletons - Design Doc: docs/features/agent-platform/design-runtime.md (Test Strategy UC-2, UC-6, UC-7, UC-E1; Flows 1 and 2)
+// agent-platform / runtime E2E - Design Doc: docs/features/agent-platform/design-runtime.md (Test Strategy UC-2, UC-6, UC-7, UC-E1; Flows 1 and 2)
 // PRD: docs/features/agent-platform/prd.md (FR-01 AC-01.1..AC-01.3; NFR-04, NFR-05). ADR-0001 (runtime owner: one transaction per transition, recovery by lease).
-// Generated: 2026-11-14 | Part: runtime | Test type: End-to-End (child processes running the built runtime + real Postgres), CI job `e2e-runtime`
-// Implementation timing: the first row (reference run + one crash point) right after the step commit and the sweeper land, to prove the kill matrix early; the full matrix at part acceptance (final phase only).
+// Test type: End-to-End (child processes running the runtime from source + real Postgres), CI job `e2e-runtime`.
 // Counterpart in-process file: agent-platform-runtime.int.e2e-spec.ts (INT-1..INT-5). This file owns what an in-process test cannot do: a process that really dies between two writes.
 //
 // File name follows the project convention (`*.e2e-spec.ts` under packages/runtime/test, run with `pnpm --filter @agent-os/runtime test:e2e`: vitest.config.e2e.ts).
-// The old `research-runtime-runtime.e2e-spec.ts` is deleted with the old code (KD-7); the harness it used (test/support/runtimeChild.ts, runtimeChildMain.ts, the crash-point mechanism) is rewritten for tasks and steps, not copied.
 //
-// Started as todo skeletons (filled by plan task T7.1); the Given/When/Then comments are the rows' specification. Tests are written with their tasks and run once, at the end of the part.
-// How the rows run (T7.1): the test process creates each tree through its own runtime (`RUNTIME_WORKERS=off`, the same handler types registered only to create tasks) and reads rows; children run the steps. A dying child registers only the
+// The Given/When/Then comments are the rows' specification.
+// How the rows run: the test process creates each tree through its own runtime (`RUNTIME_WORKERS=off`, the same handler types registered only to create tasks) and reads rows; children run the steps. A dying child registers only the
 //   type it must crash on (C1's writer, unless the row says otherwise), so the pass number `:n` of `RUNTIME_CRASH_AT` counts that task's passes alone; the fresh child registers every type of the tree. The handlers are
 //   test/support/runtimeChildHandlers.ts. The reference end state is a literal (`REFERENCE_END`); every kill row asserts the same literal, which is the comparison with the reference run. P's own step count depends on whether
 //   the two child notices arrive in one step or two, so it is compared as "step_committed events = stepNo" and not as a number.

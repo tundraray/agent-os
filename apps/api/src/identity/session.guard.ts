@@ -8,18 +8,15 @@ import { Reflector } from '@nestjs/core';
 import type { Logger } from '@agent-os/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import type { Request } from 'express';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { APP_LOGGER } from '../logging/app-logger';
 import { IS_ADMIN_ONLY } from './admin-only.decorator';
 import type { AuthedRequest, AuthUser } from './auth-user';
 import { identityError } from './identity.errors';
 import { IS_PUBLIC } from './public.decorator';
 import { frontendOrigin, readSessionToken } from './session-cookie';
-import {
-  ENDED_BY_BLOCK,
-  type FoundSession,
-  SessionStore,
-} from './session.store';
+import { type FoundSession, SessionStore } from './session.store';
+import { ENDED_BY_BLOCK } from './sessions.repository';
 
 /**
  * Methods that change state: they must come from the web's origin (DC-3), with or without the cookie —

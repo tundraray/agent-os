@@ -16,14 +16,14 @@ import {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { z } from 'zod';
-import { AuditLog, PASSWORD_SET } from '../audit/audit-log';
+import { AuditLog, PASSWORD_SET } from '../audit/audit-log.repository';
 import { isUuid } from '../common/is-uuid';
 import { APP_LOGGER } from '../logging/app-logger';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { identityError, validationFailed } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword, verifyPassword } from './password';
-import { deleteSessionsOf, endSessionsByBlock } from './session.store';
+import { deleteSessionsOf, endSessionsByBlock } from './sessions.repository';
 import {
   findUserById,
   insertLocalUser,

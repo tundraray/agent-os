@@ -1,11 +1,11 @@
+import type { Executor } from '@agent-os/db';
 import type { Task } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import { stopEvent, stoppedTogether } from '../step/continuation';
+import { stopEvent, stoppedTogether } from '../resume';
 import { interruptedResults } from '../store/call-records.repository';
 import { history } from '../store/history.repository';
-import type { StoreReader } from '../store/sessions.repository';
 
 /** A derived stop record: a closed call or the stop event. */
 export type StopEntry = Extract<HistoryEntry, { kind: 'tool_result' | 'event' }>;
@@ -25,7 +25,7 @@ export interface StopEntriesInput {
  * writes for real, with the numbers after the last stored one and the time of the stop.
  */
 export async function stopEntries(
-  reader: StoreReader,
+  reader: Executor,
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {
   const { task, parent } = input;

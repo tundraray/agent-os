@@ -14,7 +14,7 @@
 
 ## Reference
 
-- `packages/agents/src/mcp/mcp-registry.ts` — метка `changed` и признак «задан»; `apps/api/src/audit/audit-log.ts` — `secret_changed`
+- `packages/agents/src/mcp/mcp-registry.ts` — метка `changed` и признак «задан»; `apps/api/src/audit/audit-log.repository.ts` — `secret_changed`
 
 ## Not For
 

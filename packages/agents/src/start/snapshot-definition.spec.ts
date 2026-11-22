@@ -1,13 +1,7 @@
 import type { RecordHeader, ResolvedRecord } from '@agent-os/contracts';
 
-import {
-  DEEP_AGENT_RULES,
-  LIST_DELEGATION_RULES,
-  recordSnapshot,
-  type RunDefinition,
-  snapshotDefinition,
-  subagentSnapshot,
-} from './snapshot-definition';
+import { DEEP_AGENT_RULES, LIST_DELEGATION_RULES, subagentSnapshot } from '../deep/deep-definition';
+import { recordSnapshot, type RunDefinition, snapshotDefinition } from './snapshot-definition';
 import type { DeepAgentSnapshot } from './snapshot';
 
 // AC-16.4, DC-7, AC-15.3 (rule); deep-agents KD-1, KD-2, AC-08.1: the definition a step hands the model
@@ -136,7 +130,6 @@ describe('snapshotDefinition', () => {
         tools: ['start_agent', 'list_agents'],
         servers: ['billing'],
         startable: [`${VISIBLE_ID}: Сверка — Сверяет выписки`],
-        finalSubagent: null,
         taskList: true,
         listDelegation: false,
       },
@@ -152,7 +145,6 @@ describe('snapshotDefinition', () => {
         tools: ['task'],
         servers: ['tickets'],
         startable: TEAM_LINES,
-        finalSubagent: 'answer',
         taskList: true,
         listDelegation: true,
       },
@@ -169,7 +161,6 @@ describe('snapshotDefinition', () => {
         tools: ['task'],
         servers: ['tickets'],
         startable: TEAM_LINES,
-        finalSubagent: null,
         taskList: false,
         listDelegation: false,
       },
@@ -188,7 +179,6 @@ describe('snapshotDefinition', () => {
         tools: [],
         servers: ['logs'],
         startable: [],
-        finalSubagent: null,
         taskList: true,
         listDelegation: false,
       },
@@ -209,7 +199,6 @@ describe('snapshotDefinition', () => {
         tools: [],
         servers: ['tickets'],
         startable: [],
-        finalSubagent: null,
         taskList: false,
         listDelegation: false,
       },

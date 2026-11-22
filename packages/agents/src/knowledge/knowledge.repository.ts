@@ -3,11 +3,11 @@ import {
   agentKnowledgeEntities,
   agentKnowledgeRelations,
   agentKnowledgeSettings,
+  type Executor,
+  type Transaction,
 } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository';
 
 const entities = agentKnowledgeEntities;
 const relations = agentKnowledgeRelations;
@@ -80,12 +80,12 @@ export interface KnowledgeSettingsChange {
  * `hashtextextended` of the record id's text: different deep agents get different keys, and the rare
  * collision only makes two deep agents wait for each other — it never lets two writers of one in.
  */
-export async function lockGraph(tx: RuntimeTx, recordId: string): Promise<void> {
+export async function lockGraph(tx: Transaction, recordId: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${recordId}, 0))`);
 }
 
 /** All records of the deep agent's graph, outdated included, by id. */
-export async function readGraph(reader: StoreReader, recordId: string): Promise<KnowledgeGraph> {
+export async function readGraph(reader: Executor, recordId: string): Promise<KnowledgeGraph> {
   const entityRows = await reader
     .select()
     .from(entities)
@@ -101,7 +101,7 @@ export async function readGraph(reader: StoreReader, recordId: string): Promise<
 
 /** Adds one entity; its id answers the `ref` of the operations that point at it. */
 export async function insertEntity(
-  tx: RuntimeTx,
+  tx: Transaction,
   entity: NewKnowledgeEntity,
 ): Promise<KnowledgeEntityRow> {
   const [row] = await tx.insert(entities).values(entity).returning();
@@ -111,7 +111,7 @@ export async function insertEntity(
 
 /** Adds the relations; an empty list writes nothing. */
 export async function insertRelations(
-  tx: RuntimeTx,
+  tx: Transaction,
   rows: readonly NewKnowledgeRelation[],
 ): Promise<void> {
   if (rows.length === 0) return;
@@ -120,7 +120,7 @@ export async function insertRelations(
 
 /** Writes a confirmation and clears the outdated mark (FR-16). */
 export async function confirmItem(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   { item, confirmations, at, runId }: KnowledgeConfirmation,
 ): Promise<void> {
@@ -140,7 +140,7 @@ export async function confirmItem(
 
 /** Marks the record outdated (`mark_outdated`). */
 export async function markOutdated(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   item: KnowledgeItemRef,
 ): Promise<void> {
@@ -162,7 +162,7 @@ export async function markOutdated(
  * delete: under `lockGraph` nobody adds a relation to it in between.
  */
 export async function deleteEntity(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   entityId: number,
 ): Promise<EntityDeletion> {
@@ -185,7 +185,7 @@ export async function deleteEntity(
 
 /** Deletes the relation, lesson or «searched — found nothing» of this deep agent; whether it was there. */
 export async function deleteRelation(
-  tx: RuntimeTx,
+  tx: Transaction,
   recordId: string,
   relationId: number,
 ): Promise<boolean> {
@@ -197,7 +197,7 @@ export async function deleteRelation(
 }
 
 /** The settings row, read anew on every use (settings-row.md); the migration creates it. */
-export async function readKnowledgeSettings(reader: StoreReader): Promise<KnowledgeSettingsRow> {
+export async function readKnowledgeSettings(reader: Executor): Promise<KnowledgeSettingsRow> {
   const [row] = await reader.select(settingsColumns).from(agentKnowledgeSettings);
   if (row === undefined) throw new Error('agent_knowledge_settings row is missing');
   return row;
@@ -205,7 +205,7 @@ export async function readKnowledgeSettings(reader: StoreReader): Promise<Knowle
 
 /** Locks the row and writes the administrator's change with its time (KD-7). */
 export async function writeKnowledgeSettings(
-  tx: RuntimeTx,
+  tx: Transaction,
   change: { readonly limitTokens: number; readonly lessonsEnabled: boolean },
 ): Promise<KnowledgeSettingsChange> {
   const [before] = await tx.select(settingsColumns).from(agentKnowledgeSettings).for('update');

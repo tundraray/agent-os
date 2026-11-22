@@ -7,8 +7,8 @@ import {
   LastExtractionReasonSchema,
   LastExtractionStatusSchema,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
-import type { Runtime, RuntimeTx } from '@agent-os/runtime';
+import type { Database, Transaction } from '@agent-os/db';
+import type { Runtime } from '@agent-os/runtime';
 
 import type { AgentsEmbeddings } from '../embeddings/embeddings';
 import { sessions } from '../store/sessions.repository';
@@ -118,7 +118,7 @@ export function createAgentsKnowledge(deps: AgentsKnowledgeDeps): AgentsKnowledg
    * asked for it); a pass in progress — only «one more pass», its payer unchanged. The pass removes every key
    * without a graph record, so no vector of the deleted record is found after it (Invariant 10).
    */
-  async function queueVectorCleanup(tx: RuntimeTx, recordId: string): Promise<VectorCleanup> {
+  async function queueVectorCleanup(tx: Transaction, recordId: string): Promise<VectorCleanup> {
     const row = await ensureEmbeddingRow(tx, recordId);
     if (row.passTaskId !== null) {
       await updateEmbeddingRow(tx, recordId, { needsPass: true });
@@ -135,7 +135,7 @@ export function createAgentsKnowledge(deps: AgentsKnowledgeDeps): AgentsKnowledg
    */
   async function deleteUnderLock<T extends { readonly deleted: boolean }>(
     recordId: string,
-    remove: (tx: RuntimeTx) => Promise<T>,
+    remove: (tx: Transaction) => Promise<T>,
   ): Promise<{ readonly result: T; readonly cleanup: VectorCleanup | null }> {
     return database.transaction(async (tx) => {
       await lockGraph(tx, recordId);

@@ -61,7 +61,7 @@ import {
 } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { TASK_BLOCK_HEADING } from '../../src/step/task-block';
+import { TASK_BLOCK_HEADING } from '../../src/tools/system/task-list-block';
 import { databaseUrl } from './database-url';
 import { registerFixtureServers, removeServer, runName } from './mcp-servers';
 

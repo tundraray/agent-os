@@ -8,10 +8,8 @@ import type {
   RoleSummary,
   UpdateRoleBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log';
-import type { Executor } from '../common/executor';
+import type { Database, DatabaseConnection, Executor, Transaction } from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log.repository';
 import { isUuid } from '../common/is-uuid';
 import { APP_LOGGER } from '../logging/app-logger';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
@@ -227,7 +225,7 @@ export class RolesService {
   }
 
   private recordRoleChange(
-    tx: RuntimeTx,
+    tx: Transaction,
     actorId: string,
     roleId: string,
     before: ReturnType<typeof roleState> | null,

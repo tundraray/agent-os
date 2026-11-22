@@ -14,7 +14,7 @@
 ## Reference
 
 - `packages/agents/src/knowledge/knowledge-block.ts` — блок знаний и `withKnowledge`
-- `packages/agents/src/step/model-step.ts` — где шаг модели ставит блок
+- `packages/agents/src/agent/model-step.ts` — где шаг модели ставит блок
 
 ## Not For
 

@@ -9,22 +9,19 @@ import { z } from 'zod';
 
 import type { AccessDeniedEntry, AuditRecord, ModelVerdict } from './access-gate';
 import type { CallState } from './history/call-state';
+import { ChatAgent } from './agent/chat-agent';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { createModelClient } from './model/model-client';
 import type { AgentSnapshot } from './start/snapshot';
-import { createCompactionStep } from './step/compaction-step';
-import { createModelStep } from './step/model-step';
-import { createToolStep } from './step/tool-step';
 import type { Session, SessionInput } from './store/sessions.repository';
 import {
   createAccessGateDouble,
   createLibraryDouble,
   createProviderRegistryDouble,
   createScriptedModel,
-  NO_DELEGATIONS,
 } from './testing';
 import type { AgentTool } from './tools/tool';
-import { createTaskTools } from './tools/builtin/task-tools';
+import { createTaskListTools } from './tools/system/task-list-tools';
 import { createToolRegistry } from './tools/tool-registry';
 import { createToolRunner } from './tools/tool-runner';
 
@@ -121,7 +118,7 @@ function stepContext(logger: Logger): StepContext {
     parentId: null,
     ownerId: OWNER,
     depth: 0,
-    type: 'agent',
+    type: 'chat',
     input: INPUT,
     stepNo: 3,
     resumedAfterLoss: false,
@@ -165,14 +162,8 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AuditRecord) => {
     audits.push(entry);
   };
-  const registry = createToolRegistry({
-    builtins: [lookup, ...createTaskTools({ logger })],
-    runCode: { ...lookup, name: 'run_code' },
-    database,
-    access,
-    library: createLibraryDouble(),
-    logger,
-  });
+  const registry = createToolRegistry({ runCode: { ...lookup, name: 'run_code' }, database, access });
+  [lookup, ...createTaskListTools({ logger })].forEach((tool) => registry.register(tool));
   const runner = createToolRunner({
     client: {
       callTool: async () => {
@@ -212,20 +203,25 @@ function refusedAgent(refusal: Refusal) {
     query: notCalled,
     list: notCalled,
   };
+  // The specs run a conversation's root: the chat, which delegates no call and never learns.
+  const agent = new ChatAgent({
+    database,
+    registry,
+    runner,
+    access,
+    audit,
+    modelClient,
+    tasks: { listTree: async () => [] },
+    inbox: { listPending: async () => [] },
+    vectorStore,
+    embeddings: { embed: notCalled },
+    compactAtTokens: 100_000,
+    library: createLibraryDouble(),
+    logger,
+  });
   return {
     ctx: stepContext(logger),
-    modelStep: createModelStep({
-      database,
-      registry,
-      modelClient,
-      audit,
-      tasks: { listTree: async () => [] },
-      inbox: { listPending: async () => [] },
-      trackers: { list: async () => [] },
-      vectorStore,
-    }),
-    compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
-    toolStep: createToolStep({ registry, runner, access, audit, delegations: NO_DELEGATIONS }),
+    agent,
     audits,
     /** Model calls and tool runs that started. */
     started: () => model.calls.length + toolRuns,
@@ -240,7 +236,7 @@ function deniedModel(reason: string): AccessDeniedEntry {
   return { kind: 'access_denied', actor: OWNER, objectType: 'model', objectId: MODEL, outcome: 'rejected', reason };
 }
 
-const modelStep = (agent: RefusedAgent) => agent.modelStep(agent.ctx, SESSION, []);
+const modelStep = ({ agent, ctx }: RefusedAgent) => agent.modelStep(ctx, SESSION, []);
 
 describe("an agent whose model or tool call is refused by the gate ends `failed` with the verdict's reason; the audit hook runs once, never for `owner_disabled`", () => {
   it.each<[string, Refusal, (agent: RefusedAgent) => Promise<StepResult>, readonly AccessDeniedEntry[]]>([
@@ -249,13 +245,13 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the compaction step on a spent quota',
       QUOTA,
-      (agent) => agent.compactionStep(agent.ctx, SESSION, []),
+      ({ agent, ctx }) => agent.compactionStep(ctx, SESSION, []),
       [deniedModel('quota_exhausted')],
     ],
     [
       'the tool step of a disabled owner',
       { kind: 'refused', reason: 'owner_disabled' },
-      (agent) => agent.toolStep(agent.ctx, SESSION, [OPEN_CALL], [OPEN_CALL]),
+      ({ agent, ctx }) => agent.toolStep(ctx, SESSION, [OPEN_CALL], [OPEN_CALL]),
       [],
     ],
   ])('%s', async (_, refusal, act, audits) => {

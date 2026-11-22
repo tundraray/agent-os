@@ -19,11 +19,9 @@ import {
   type SystemRecordAudienceBody,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import type { Database, DatabaseConnection, Executor, Transaction } from '@agent-os/db';
 import { AccessService } from '../access/access.service';
-import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
-import type { Executor } from '../common/executor';
+import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log.repository';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
 import { APP_LOGGER } from '../logging/app-logger';
@@ -1020,7 +1018,7 @@ export class LibraryService {
    * self-learning flag is the stored one on an edit and off on a create (Invariant 4).
    */
   saveChatChange(
-    tx: RuntimeTx,
+    tx: Transaction,
     context: ChatContext,
     card: LibraryRecordCard,
   ): Promise<ChatSaveResult> {
@@ -1099,7 +1097,7 @@ export class LibraryService {
   }
 
   private async savedFromCard(
-    tx: RuntimeTx,
+    tx: Transaction,
     context: ChatContext,
     card: LibraryRecordCard,
   ): Promise<ChatSaveResult> {
@@ -1257,7 +1255,7 @@ export class LibraryService {
     const check = await this.checkSave(request, executor);
     if (check.outcome === 'refused') return check;
     const { previous } = check;
-    const write = (tx: RuntimeTx): Promise<LibraryRecord> =>
+    const write = (tx: Transaction): Promise<LibraryRecord> =>
       previous === null
         ? this.insertSaved(tx, request)
         : this.updateSaved(tx, request, previous);
@@ -1353,7 +1351,7 @@ export class LibraryService {
   }
 
   private async insertSaved(
-    tx: RuntimeTx,
+    tx: Transaction,
     request: SaveRequest,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
@@ -1378,7 +1376,7 @@ export class LibraryService {
    * `name_taken` aborts the transaction, so it is thrown and the transaction rolled back.
    */
   private async updateSaved(
-    tx: RuntimeTx,
+    tx: Transaction,
     request: SaveRequest,
     previous: LibraryRecord,
   ): Promise<LibraryRecord> {
@@ -1545,7 +1543,7 @@ export class LibraryService {
 
   /** Deletes the record unless it is built-in (AC-12.2); its holders go by cascade. */
   private async deleteChecked(
-    tx: RuntimeTx,
+    tx: Transaction,
     actorId: string,
     record: LibraryRecord,
   ): Promise<void> {
@@ -1557,7 +1555,7 @@ export class LibraryService {
 
   /** One event per action, in the action's transaction, with the KD-7 sample only. */
   private audit(
-    tx: RuntimeTx,
+    tx: Transaction,
     actorId: string,
     kind: LibraryAuditKind,
     before: LibraryRecord | null,

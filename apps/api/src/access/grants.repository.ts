@@ -5,9 +5,8 @@ import type {
   GrantTargetBody,
   GrantTargetKind,
 } from '@agent-os/contracts';
-import { accessGrants, accessModels, identityRoles } from '@agent-os/db';
+import { accessGrants, accessModels, type Executor, identityRoles } from '@agent-os/db';
 import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
-import type { Executor } from '../common/executor';
 import type { GrantRow } from './effective-access';
 
 /**

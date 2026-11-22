@@ -12,9 +12,9 @@
 
 ## Reference
 
-- `packages/agents/src/tools/tool-gate.ts`
+- `packages/agents/src/tools/system/tool-gate.ts`
 
-Тот же приём уже есть в `packages/agents/src/step/turn-rules.ts`, `packages/agents/src/agent-view.ts` и `apps/api/src/chat/chat-status.ts`.
+Тот же приём уже есть в `packages/agents/src/agent/turn-rules.ts`, `packages/agents/src/agent-view.ts` и `apps/api/src/chat/chat-status.ts`.
 
 ## Not For
 

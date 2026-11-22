@@ -4,12 +4,16 @@ import {
   ToolOutcomeSchema,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { agentCodeCalls, agentMessages, type Database } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import {
+  agentCodeCalls,
+  agentMessages,
+  type Database,
+  type Executor,
+  type Transaction,
+} from '@agent-os/db';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { type FinishedMcpCall, type FinishedWindow, finishedIn } from './history.repository';
-import type { StoreReader } from './sessions.repository';
 
 /** One call of an agent: its session and the call id its provider gave. */
 export interface CallKey {
@@ -76,7 +80,7 @@ function byKey(call: CodeCallKey) {
  */
 export const codeCalls = {
   /** Writes the open row of a call; the caller writes it through the step's `guard`. */
-  async open(tx: RuntimeTx, call: NewCodeCall): Promise<void> {
+  async open(tx: Transaction, call: NewCodeCall): Promise<void> {
     await tx.insert(agentCodeCalls).values(call);
   },
 
@@ -105,7 +109,7 @@ export const codeCalls = {
    * (a `write` run has none and runs once, as attempt 1).
    */
   async mcpCallsOfLatestAttempts<O extends ToolOutcome>(
-    reader: StoreReader,
+    reader: Executor,
     taskIds: readonly string[],
     outcomes: readonly O[],
     window: FinishedWindow,
@@ -150,7 +154,7 @@ export const codeCalls = {
   },
 
   /** Closes every open row of the run, of any attempt, with the given outcome. */
-  async closeOpenOfRun(tx: RuntimeTx, run: CallKey, outcome: ToolOutcome): Promise<void> {
+  async closeOpenOfRun(tx: Transaction, run: CallKey, outcome: ToolOutcome): Promise<void> {
     await tx
       .update(agentCodeCalls)
       .set({ outcome, finishedAt: sql`now()` })

@@ -55,7 +55,7 @@ export {
 } from './model/mastra-turn';
 export type { TextDelta } from './model/model-client';
 export type { AgentConfirmation, AgentHistoryEntry, AgentSessions } from './operations/agent-sessions';
-export type { DeepAgentRun } from './operations/deep-agent-run';
+export type { DeepAgentRun } from './deep/deep-agent-run';
 export type { RootSession } from './store/sessions.repository';
 export type { EmbeddingInputType } from './providers/adapters';
 export { ModelProviderError } from './providers/model-provider-errors';
@@ -78,7 +78,7 @@ export type {
   RunSnapshot,
   SubagentSnapshot,
 } from './start/snapshot';
-export { WAITING_RULE } from './tools/builtin/start-agent';
+export { WAITING_RULE } from './tools/system/start-agent';
 export type { InCommitAgentTool } from './tools/tool';
 export type {
   AgentsToolResults,

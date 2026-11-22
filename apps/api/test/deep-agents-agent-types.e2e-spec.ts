@@ -14,7 +14,7 @@
 // Budget: E2E 1 of 1-2 — the main path of the part named in the PRD.
 //
 // Not repeated here (proven at a lower level): the card refusals, the stale version and the administrator edit (INT-1, INT-2 next to this file); the task list surviving
-// a replayed step, a restart and compaction, and the block in every model call (UC-3 of packages/agents); the rules of the list (task-rules.spec.ts); the end-of-turn
+// a replayed step, a restart and compaction, and the block in every model call (UC-3 of packages/agents); the rules of the list (packages/agents/src/tools/system/task-list-rules.spec.ts); the end-of-turn
 // branch by session kind (turn-rules.spec.ts); the brief's own lifecycle (agent-platform-chat INT-2 D); the research team's
 // run (agents agent-platform-workflows INT-2 A / INT-3 B); the schema rule of 11 subagents (unit, contracts) — step 1 only shows the record tool's arguments ARE that schema.
 //

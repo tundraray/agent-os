@@ -10,7 +10,7 @@
 // Proven elsewhere (not restated here):
 // - unit, packages/agents/src/tools/builtin/delegation-rules.spec.ts - UC-7, UC-8: every refusal of a task call, list items outside maxRuns,
 //   and the cut of the result table.
-// - unit, packages/agents/src/step/turn-rules.spec.ts - UC-6: the answer fields.
+// - unit, packages/agents/src/agent/turn-rules.spec.ts - UC-6: the answer fields.
 // - integration, packages/runtime/test/deep-agents-task.*.e2e-spec.ts - the tracker itself: restarts, stop, isolation, one wake.
 
 import { agentSessionTasks, agentToolResults } from '@agent-os/db';

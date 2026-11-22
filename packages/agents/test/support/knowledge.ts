@@ -23,7 +23,7 @@ import {
   KNOWLEDGE_EXTRACT_TASK_TYPE,
 } from '../../src/knowledge/knowledge-tasks';
 import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations';
-import { createPgvectorStore } from '../../src/knowledge/pgvector-store';
+import { createPgvectorStore } from '../../src/knowledge/pgvector-store.repository';
 import type { KnowledgeVector } from '../../src/knowledge/vector-store';
 import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from './agentsHarness';
 
@@ -35,7 +35,7 @@ import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from 
  */
 export { readGraph } from '../../src/knowledge/knowledge.repository';
 export { findEmbeddingRow, findRunById, readQuestion } from '../../src/knowledge/knowledge-runs.repository';
-export { createPgvectorStore } from '../../src/knowledge/pgvector-store';
+export { createPgvectorStore } from '../../src/knowledge/pgvector-store.repository';
 
 /** The agent name of the extraction's model calls: the scripted model's key `{ agent: KNOWLEDGE_EXTRACT_AGENT }`. */
 export const KNOWLEDGE_EXTRACT_AGENT = 'knowledge-extract';

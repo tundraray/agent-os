@@ -1,13 +1,11 @@
-// agent-platform / runtime Integration Test Skeletons - Design Doc: docs/features/agent-platform/design-runtime.md (Test Strategy, Flows 1-5, Invariants 1-9)
+// agent-platform / runtime integration - Design Doc: docs/features/agent-platform/design-runtime.md (Test Strategy, Flows 1-5, Invariants 1-9)
 // PRD: docs/features/agent-platform/prd.md (FR-01 AC-01.1..AC-01.3, FR-02 AC-02.1..AC-02.2; NFR-01, NFR-04, NFR-05, NFR-06 in the part runtime gives). ADRs: ADR-0001 (runtime owner), ADR-0003 (Drizzle data layer), ADR-0004 (package rules)
-// Generated: 2026-11-14 | Part: runtime | Test type: Integration (in-process runtime of the package + real Postgres), CI job `e2e-runtime`
-// Implementation timing: created alongside the slice each test names (INT-1 the step and its commit; INT-2 the inbox; INT-3 interrupt and stop; INT-4 the owner check on every operation; INT-5 the token ledger).
+// Test type: Integration (in-process runtime of the package + real Postgres), CI job `e2e-runtime`.
 //
 // File name follows the project convention (`*.e2e-spec.ts` under packages/runtime/test, picked up by vitest.config.e2e.ts, run with `pnpm --filter @agent-os/runtime test:e2e`, never in the default `vitest run`).
-// The `.int.` infix separates these in-process tests from the child-process file `agent-platform-runtime.e2e-spec.ts` (final phase). The old runtime tests (`research-runtime-runtime.*`) are deleted with the old code by the
-// implementation tasks (KD-7); nothing here edits them. Started as `it.todo` skeletons; the Given/When/Then comments are the rows' specification. Tests are written with their tasks and run once, at the end of the part.
+// The `.int.` infix separates these in-process tests from the child-process file `agent-platform-runtime.e2e-spec.ts`. The Given/When/Then comments are the rows' specification.
 //
-// Light test process (CLAUDE.md "Tests", owner decision): skeletons exist only where a defect is invisible below this level - concurrency (two instances, one step), the inbox race, interrupt and stop with a step in flight, isolation
+// Light test process (CLAUDE.md "Tests", owner decision): tests exist only where a defect is invisible below this level - concurrency (two instances, one step), the inbox race, interrupt and stop with a step in flight, isolation
 // between users, and the money rows. Every pure rule is a unit test named in "Proven elsewhere". Restarts and the process-kill matrix are the sibling file (E2E-1).
 //
 // Environment (Design Doc "Test Strategy"):
@@ -19,7 +17,7 @@
 //   rows); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on gates the handler waits on and on rows (`runtimeWorkSettled`-style). "Status changed within the command" (NFR-01) is asserted as: the status read right after the command's
 //   response, while the handler is still held; the 5 s p95 is the on-demand script `test/verify/runtime-latency.verify.ts` (UC-N2), not this file.
-// - Support to write alongside (test/support, same names as the old ones where the role is the same): runtimeHarness.ts (createDatabase + createRuntime with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
+// - Support (test/support): runtimeHarness.ts (createDatabase + createRuntime with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
 //   `expireLease`, a second instance), runtimeDb.ts (read-only snapshots of `runtime_*` rows, a row-version snapshot for "nothing changed"), testHandlers.ts (step scripts, gates, a table of handler rows written through `commit`).
 //
 // Budget: Integration 5 of 3, extended to 5 under the integration-e2e-testing rule ("up to 5 only when each extra test names the defect no other test catches"). Core: INT-1, INT-2, INT-3. Extras: INT-4 and INT-5.
@@ -27,7 +25,7 @@
 //   INT-5 unique defect: the month window and the per-owner sum are SQL over real rows, and the survival of the rows after `deleteTree` is a foreign-key property (no FK on task); a mock cannot show either - money, CLAUDE.md "Tests".
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven):
-// - unit, packages/runtime/src: the cost rule (one table: input tier threshold, output, cache read, cache write; model with and without a tier) in `model-cost.spec.ts` - AC-02.2 (price per model, literal rows), the part of DC-9 that is the rule;
+// - unit, packages/runtime/src/ledger: the cost rule (one table: input tier threshold, output, cache read, cache write; model with and without a tier) in `model-cost.spec.ts` - AC-02.2 (price per model, literal rows), the part of DC-9 that is the rule;
 //   `parseRuntimeConfig` rows extend the existing `runtime-config.spec.ts` only if the plan changes the parsing
 // - unit, packages/common/src: DC-11 and UC-9 - redaction by field name (case-insensitive, nested) and by secret value, the `[redacted]` replacement in BOTH sinks, error expansion with cause chain, the 16 KiB truncation, `child(fields)`; the console and the
 //   Sentry sink over a fake SDK (one log call, plus one exception call when `error` is set). One table-driven file over `@agent-os/common/testing`; no integration test, the logger has no I/O of its own.

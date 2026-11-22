@@ -4,9 +4,8 @@ import {
   type ProviderList,
   type ProviderType,
 } from '@agent-os/contracts';
-import { identityLoginRequests, identityProviders } from '@agent-os/db';
+import { type Executor, identityLoginRequests, identityProviders } from '@agent-os/db';
 import { asc, eq, lte, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor';
 import {
   ProviderOptionsSchema,
   type ProviderOptions,

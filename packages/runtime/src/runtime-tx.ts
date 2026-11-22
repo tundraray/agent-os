@@ -1,8 +1,5 @@
 import type { Logger } from '@agent-os/common';
-import type { Database } from '@agent-os/db';
-
-/** A transaction of the runtime; every data layer method and every `commit` of a step takes one (ADR-0001). */
-export type RuntimeTx = Parameters<Parameters<Database['transaction']>[0]>[0];
+import type { Database, Transaction } from '@agent-os/db';
 
 /** Runs of a transaction that Postgres keeps aborting, the first one included. */
 export const TRANSACTION_ATTEMPTS = 5;
@@ -30,7 +27,7 @@ export async function retryingTransaction<T>(
   db: Database,
   logger: Logger,
   operation: string,
-  work: (tx: RuntimeTx) => Promise<T>,
+  work: (tx: Transaction) => Promise<T>,
 ): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
     try {

@@ -13,7 +13,7 @@
 //
 // Proven elsewhere (not repeated): the content schema of a deep agent (unit, contracts, UC-1); the `decideSave` table with paths (unit, save-rules.spec.ts, UC-2); the
 //   list text — whose a record is, servers only with allowed tools, the cut (unit, record-listing.spec.ts, UC-2a text); `rootOnly` of a built-in tool (unit, packages/agents
-//   tool-registry.spec.ts, AC-06.5); the rights of an MCP call at call time (agents INT-3 A, AC-26.2); the library routes' own visibility, versions and audit
+//   src/agent/tool-declaration.spec.ts, AC-06.5); the rights of an MCP call at call time (agents INT-3 A, AC-26.2); the library routes' own visibility, versions and audit
 //   (custom-agents-library INT-1, INT-2, INT-5). INT-1 and INT-2 here prove the same rules for the CHAT door, a second door into `LibraryService`.
 //
 // acProof of this file:

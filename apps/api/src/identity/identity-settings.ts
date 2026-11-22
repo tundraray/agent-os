@@ -6,7 +6,7 @@ import {
   type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log';
+import { AuditLog } from '../audit/audit-log.repository';
 import { APP_LOGGER } from '../logging/app-logger';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { identityError } from './identity.errors';
