@@ -12,6 +12,7 @@ const CHILD: EndOfTurnInput = {
   openTasks: [],
   text: 'my own answer',
   cutOff: false,
+  answerFields: [],
 };
 
 describe('the end of a turn waits, refuses or completes', () => {
@@ -155,5 +156,34 @@ describe('an agent with open tasks does not finish its turn', () => {
     const outcome = endOfTurn(input);
     if (outcome.kind !== 'notice') throw new Error(`expected a notice, got ${outcome.kind}`);
     expect(noticeContent(outcome)).toStrictEqual({ text: outcome.text, ...fields });
+  });
+});
+
+// deep-agents/design-task.md UC-6, AC-21.1 (KD-7): a subagent asked for answer fields finishes only with one JSON
+// object holding a non-empty string in each and nothing more; the notice names what is missing and what is extra.
+// AC-21.2 — a subagent that never fixes it fails on its maxTurns — is the turn limit of the model step.
+describe('a subagent asked for answer fields', () => {
+  const FIELDS = { ...CHILD, answerFields: ['вывод', 'источники'] };
+  const RULE =
+    'Your answer must be one JSON object and nothing else, with a non-empty string in each of these fields: вывод, источники.';
+  it.each<[string, EndOfTurnInput, EndOfTurn]>([
+    [
+      'finishes with both fields',
+      { ...FIELDS, text: '{"вывод":"рост ошибок","источники":"логи оплат"}' },
+      { kind: 'complete', report: '{"вывод":"рост ошибок","источники":"логи оплат"}' },
+    ],
+    [
+      'gets a notice naming the missing field and the extra one',
+      { ...FIELDS, text: '{"вывод":"рост ошибок","комментарий":"нет"}' },
+      { kind: 'notice', text: `${RULE} Missing or empty: источники. Not asked for: комментарий.` },
+    ],
+    [
+      'gets a notice for an empty field',
+      { ...FIELDS, text: '{"вывод":"рост ошибок","источники":" "}' },
+      { kind: 'notice', text: `${RULE} Missing or empty: источники.` },
+    ],
+    ['gets a notice for free text', { ...FIELDS, text: 'рост ошибок' }, { kind: 'notice', text: `${RULE} Your answer is not JSON.` }],
+  ])('%s', (_, input, outcome) => {
+    expect(endOfTurn(input)).toStrictEqual(outcome);
   });
 });

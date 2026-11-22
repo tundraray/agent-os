@@ -64,6 +64,10 @@ export const HistoryContentSchemas = {
     callId: z.string(),
     startedAt: z.iso.datetime(),
     args: z.unknown().optional(),
+    /** The tracker tasks of an accepted `task` call, in its order (deep-agents/design-task.md KD-4). */
+    taskIds: z.array(z.string()).optional(),
+    /** The task of the session's list the `task` call names (KD-8). */
+    taskId: z.number().int().positive().optional(),
   }),
   /** The start of one attempt of a `run_code` read run (code-execution KD-7). */
   run_attempt: z.object({ callId: z.string(), attempt: z.number().int().positive() }),
@@ -83,7 +87,10 @@ export const HistoryContentSchemas = {
     output: z.string().nullable().optional(),
     startedAt: z.iso.datetime().nullable(),
     finishedAt: z.iso.datetime().nullable(),
-    /** The agent a `start_agent` call started; absent for other calls. Kept for incident analysis. */
+    /**
+     * The agent a `start_agent` call started, or the subagent of a single `task` call — the final subagent's
+     * answer is read through it (deep-agents/design-task.md KD-6); absent for other calls.
+     */
     childTaskId: z.string().optional(),
   }),
   /** A message of the package's code to the model, such as a refusal to finish. */

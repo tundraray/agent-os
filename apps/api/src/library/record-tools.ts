@@ -5,6 +5,7 @@ import {
   CreateRecordBodySchema,
   DEEP_AGENT_SUBAGENTS_MAX,
   DeepAgentContentSchema,
+  GENERAL_PURPOSE_SUBAGENT,
   LIBRARY_RECORD_CONFIRMATION,
   LibraryRecordCardSchema,
   RecordKindSchema,
@@ -144,8 +145,9 @@ const CONTENT_FORMS = [
   'list_agents, stop_agent), taskList (it keeps a task list; true unless given) }.',
   `content of a deep agent: { prompt, servers, model, maxTurns, subagents: 1 to ${DEEP_AGENT_SUBAGENTS_MAX} of { name,`,
   `description (when to call it), prompt, servers, model, maxTurns, maxRuns (1 to ${SUBAGENT_MAX_RUNS_MAX}), taskList`,
-  '(false unless given) }, finalSubagent (the name of the subagent whose report is the answer, or null), taskList',
-  '(true unless given) }.',
+  `(false unless given); the name ${GENERAL_PURPOSE_SUBAGENT} is taken }, finalSubagent (the name of the subagent`,
+  'whose answer is the answer, or null), taskList (true unless given), listDelegation (it may give one instruction',
+  'with a list of items, one subagent per item; true unless given) }.',
   'Give the deep agent and each subagent only the servers it needs, from the servers list_records names.',
 ].join('\n');
 

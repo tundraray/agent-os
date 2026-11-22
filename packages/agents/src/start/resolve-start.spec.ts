@@ -64,6 +64,7 @@ function deepAgentContent(): DeepAgentSnapshot['content'] {
     subagents: [subagent('gather')],
     finalSubagent: null,
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   };
 }
@@ -111,24 +112,6 @@ function seed(library: LibraryDouble) {
   return { helper, hidden, agent, deepAgent, unknownModel };
 }
 type Ids = ReturnType<typeof seed>;
-
-/** The deep agent's snapshot taken at its start (AC-16.3: its subagents need no library). */
-function deepAgentSnapshot(ids: Ids): DeepAgentSnapshot {
-  return {
-    kind: 'deep_agent',
-    name: 'Глубокий ресерч',
-    origin: {
-      recordId: ids.deepAgent,
-      kind: 'deep_agent',
-      version: 1,
-      name: 'Глубокий ресерч',
-      author: { id: AUTHOR, name: AUTHOR },
-      builtinKey: null,
-      subagent: null,
-    },
-    content: deepAgentContent(),
-  };
-}
 
 /** An earlier agent snapshot of the hidden record: a fork or a restart copies it without the library. */
 function ownSnapshot(ids: Ids, model: string): RunSnapshot {
@@ -219,18 +202,6 @@ describe('resolveStart', () => {
       source: (ids) => ({ kind: 'record', recordId: ids.deepAgent, expected: 'agent' }),
       expected: 'refused record_unavailable -',
       resolved: (ids) => [ids.deepAgent],
-    },
-    {
-      case: 'a subagent comes from the deep agent without the library',
-      source: (ids) => ({ kind: 'subagent', deepAgent: deepAgentSnapshot(ids), name: 'gather' }),
-      expected: 'subagent gather',
-      resolved: () => [],
-    },
-    {
-      case: 'a subagent outside the team is unavailable',
-      source: (ids) => ({ kind: 'subagent', deepAgent: deepAgentSnapshot(ids), name: 'nobody' }),
-      expected: 'refused record_unavailable -',
-      resolved: () => [],
     },
     {
       case: "a fork copies the caller's snapshot without the library",

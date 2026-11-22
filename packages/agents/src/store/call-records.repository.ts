@@ -1,7 +1,7 @@
 import { type ToolOutcome, ToolOutcomeSchema, type ToolRefusalReason } from '@agent-os/contracts';
 import type { RuntimeTx } from '@agent-os/runtime';
 
-import { type CallState, isRunCodeCall, openCalls } from '../history/call-state';
+import { type CallState, isDelegated, isRunCodeCall, openCalls } from '../history/call-state';
 import type { AnswerCall, HistoryContent, HistoryEntry } from '../history/history';
 import { type CallKey, codeCalls, interruptedRunOutcome } from './code-calls.repository';
 import { history, type NewHistoryEntry } from './history.repository';
@@ -17,7 +17,7 @@ export interface CallEnding {
   readonly resultText?: string;
   /** Script output of a successful `run_code` run (DC-14). */
   readonly output?: string;
-  /** Agent started by `start_agent`. */
+  /** Agent started by `start_agent`, or the subagent of a single `task` call. */
   readonly childTaskId?: string;
   /** When the call went to its tool; the time of its `tool_sent` record wins. */
   readonly startedAt?: Date;
@@ -86,10 +86,13 @@ function interruptedEnding(call: Pick<CallState, 'sentAt'>): CallEnding {
 
 /**
  * The open calls as an interrupt or a stop closes them at `finishedAt`, before the write or without
- * one: the preview of a step and the derived view of a stopped agent's history.
+ * one: the preview of a step and the derived view of a stopped agent's history. A sent `task` call is
+ * not among them: its tracker's outcomes close it (deep-agents/design-task.md KD-3, KD-4).
  */
 export function interruptedResults(open: readonly CallState[], finishedAt: Date): ResultEntry[] {
-  return open.map((call) => resultEntry(call, interruptedEnding(call), finishedAt));
+  return open
+    .filter((call) => !isDelegated(call))
+    .map((call) => resultEntry(call, interruptedEnding(call), finishedAt));
 }
 
 /**
@@ -134,11 +137,13 @@ export const callRecords = {
 
   /**
    * Closes the agent's open calls in answer and position order as an interrupt or a stop does and
-   * returns their results. The only closing of open calls (overview, Common Processing Points).
+   * returns their results; a sent `task` call stays open for its tracker's outcomes. The only closing of
+   * open calls (overview, Common Processing Points).
    */
   async closeOpen(tx: RuntimeTx, taskId: string): Promise<HistoryEntry[]> {
     const closed: HistoryEntry[] = [];
     for (const call of openCalls(await history.visible(tx, taskId))) {
+      if (isDelegated(call)) continue;
       const result = await callRecords.close(tx, taskId, call, interruptedEnding(call));
       if (result !== undefined) closed.push(result);
     }

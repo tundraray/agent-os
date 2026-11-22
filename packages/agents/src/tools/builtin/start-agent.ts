@@ -14,7 +14,6 @@ import {
   type StartResolution,
   type StartSource,
 } from '../../start/resolve-start';
-import type { RunSnapshot } from '../../start/snapshot';
 import { history } from '../../store/history.repository';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool';
 import { gateStart, type LaunchSet, type StartGate, type StartTarget } from '../tool-gate';
@@ -40,7 +39,7 @@ export const StartAgentArgsSchema = z.object({
     .string()
     .min(1)
     .describe(
-      `What to start, as the description lists it: the id of an agent, a subagent's name in your team, or "${FORK_AGENT}" for a copy of yourself`,
+      `What to start, as the description lists it: the id of an agent, or "${FORK_AGENT}" for a copy of yourself`,
     ),
   prompt: z.string().min(1).describe('The assignment: everything the agent needs to do the work'),
 });
@@ -48,15 +47,14 @@ export type StartAgentArgs = z.infer<typeof StartAgentArgsSchema>;
 
 /**
  * The description of `start_agent` the model sees: the lines of whom the session may start (the chat
- * listing, the agent's `agents` or the deep agent's team), each as a list item, and the fork unless the
- * session is a deep agent.
+ * listing or the agent's `agents`), each as a list item, and the fork.
  */
-export function describeStartAgent(startable: readonly string[], canFork: boolean): string {
+export function describeStartAgent(startable: readonly string[]): string {
   const lines = startable.length === 0 ? ['(none)'] : startable.map((line) => `- ${line}`);
   return [
     'Start an agent in the background on an assignment. It returns the agentId at once; the agent works on its own, and its report arrives as a message when it finishes.',
     WAITING_RULE,
-    ...(canFork ? [`Use agent "${FORK_AGENT}" to start a copy of yourself that sees your history so far.`] : []),
+    `Use agent "${FORK_AGENT}" to start a copy of yourself that sees your history so far.`,
     'Agents you may start:',
     ...lines,
   ].join('\n');
@@ -76,15 +74,10 @@ export interface StartAgentDeps {
   readonly logger: Logger;
 }
 
-/** What the call names, before the commit counts a subagent's starts. */
-type NamedTarget =
-  | Exclude<StartTarget, { kind: 'subagent' }>
-  | { readonly kind: 'subagent'; readonly name: string };
-
 /** What `prepare` hands `execute`: the call's target, the caller's launch set and the start procedure's answer. */
 interface PreparedStart {
   readonly startedAt: number;
-  readonly target: NamedTarget;
+  readonly target: StartTarget;
   readonly launchSet: LaunchSet;
   /** `null` — nothing was resolved, the gate refuses the target. */
   readonly source: StartSource | null;
@@ -93,28 +86,14 @@ interface PreparedStart {
 
 const RecordIdSchema = z.uuid();
 
-/**
- * The call's target before its record's kind is known: a deep agent names its subagents, so only an id
- * that is not a name of its team is taken as a record — to refuse a deep agent's id with its own text.
- */
-function targetOf(agent: string, snapshot: RunSnapshot): NamedTarget {
-  if (agent === FORK_AGENT) return { kind: 'fork' };
-  if (
-    snapshot.kind === 'deep_agent' &&
-    (snapshot.content.subagents.some((subagent) => subagent.name === agent) ||
-      !RecordIdSchema.safeParse(agent).success)
-  ) {
-    return { kind: 'subagent', name: agent };
-  }
-  return { kind: 'record', recordId: agent, recordKind: null };
+/** The call's target before its record's kind is known. */
+function targetOf(agent: string): StartTarget {
+  return agent === FORK_AGENT ? { kind: 'fork' } : { kind: 'record', recordId: agent, recordKind: null };
 }
 
 /** The caller's launch set (Terms «Набор запуска»): the root's is read live, the others' from the snapshot. */
 async function launchSetOf(caller: ToolCaller, library: RecordLibrary): Promise<LaunchSet> {
   const { snapshot } = caller;
-  if (snapshot.kind === 'deep_agent') {
-    return { kind: 'team', subagents: snapshot.content.subagents };
-  }
   if (caller.parentId === null) {
     return { kind: 'root', headers: await library.listVisible(caller.ownerId), tool: 'agent' };
   }
@@ -141,19 +120,12 @@ async function recordKindOf(
 
 /**
  * Where the child's snapshot comes from (design-runtime.md, «Откуда берётся снимок»); `null` for a target
- * the gate refuses without the library — a deep agent's fork, a name outside its team, a deep agent's
- * record, a record outside an agent's `agents`.
+ * the gate refuses without the library — a deep agent's record, a record outside an agent's `agents`.
  */
-function sourceOf(target: NamedTarget, caller: ToolCaller, launchSet: LaunchSet): StartSource | null {
-  const { snapshot } = caller;
+function sourceOf(target: StartTarget, caller: ToolCaller, launchSet: LaunchSet): StartSource | null {
   switch (target.kind) {
     case 'fork':
-      return launchSet.kind === 'team' ? null : { kind: 'fork', snapshot };
-    case 'subagent':
-      return snapshot.kind === 'deep_agent' &&
-        snapshot.content.subagents.some((subagent) => subagent.name === target.name)
-        ? { kind: 'subagent', deepAgent: snapshot, name: target.name }
-        : null;
+      return { kind: 'fork', snapshot: caller.snapshot };
     case 'record':
       if (target.recordKind === 'deep_agent') return null;
       // The root checks the kind and the switch in the gate (`not_allowed`), so it resolves the record as it is.
@@ -211,24 +183,24 @@ export function createStartAgentTool(
 
   return {
     name: START_AGENT_TOOL,
-    description: describeStartAgent([], true),
+    description: describeStartAgent([]),
     argsSchema: StartAgentArgsSchema,
     mode: 'in_commit',
     // The assignment prompt stays out of the log.
     loggedArgs: ({ agent, description }) => ({ agent, description }),
     async prepare({ args, caller }) {
       const startedAt = Date.now();
-      const named = targetOf(args.agent, caller.snapshot);
+      const named = targetOf(args.agent);
       const launchSet = await launchSetOf(caller, deps.library);
       if (named.kind === 'record' && !RecordIdSchema.safeParse(named.recordId).success) {
         return { startedAt, target: named, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
       }
-      const target: NamedTarget =
+      const target: StartTarget =
         named.kind === 'record'
           ? { ...named, recordKind: await recordKindOf(named.recordId, caller, launchSet, deps.library) }
           : named;
       // A record an agent's owner does not see is refused before the gate, as the start procedure would
-      // (plan Notes 2); at a deep agent the gate refuses any id outside its team with the team's text.
+      // (plan Notes 2).
       if (target.kind === 'record' && target.recordKind === null && launchSet.kind === 'agents') {
         return { startedAt, target, launchSet, source: null, resolution: RECORD_UNAVAILABLE };
       }
@@ -246,13 +218,7 @@ export function createStartAgentTool(
         return refuse(caller, prepared, 'record_unavailable', null);
       }
 
-      const target: StartTarget =
-        prepared.target.kind === 'subagent'
-          ? {
-              ...prepared.target,
-              startedCount: await history.startedCount(tx, caller.agentId, prepared.target.name),
-            }
-          : prepared.target;
+      const { target } = prepared;
       const gate = gateStart({
         launchSet: prepared.launchSet,
         target,

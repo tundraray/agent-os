@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { AgentStatus as AgentStatusValue, SessionTaskStatus } from "@agent-os/contracts";
+import type { AgentStatus as AgentStatusValue, DelegationStatus, SessionTaskStatus } from "@agent-os/contracts";
 import { useFormatter, useTranslations } from "next-intl";
 import {
   CircleCheckIcon,
@@ -40,6 +40,14 @@ const TASK_STATUS_LOOK: Record<SessionTaskStatus, StatusLook> = {
   pending: { Icon: CircleIcon, tone: "text-muted-foreground" },
   in_progress: STATUS_LOOK.working,
   completed: STATUS_LOOK.completed,
+};
+
+/** Delegation statuses (agent-status.md, «Статусы поручения»); MC-11 labels — `agents.delegationStatus.{status}`. */
+const DELEGATION_STATUS_LOOK: Record<DelegationStatus, StatusLook> = {
+  running: STATUS_LOOK.working,
+  completed: STATUS_LOOK.completed,
+  failed: STATUS_LOOK.failed,
+  cancelled: STATUS_LOOK.stopped,
 };
 
 /** The icon and colour role of a status, for blocks that show the same state (a running or waiting tool call). */
@@ -153,6 +161,15 @@ export function AgentStatus(props: AgentStatusProps) {
  */
 export function TaskStatusGlyph({ status }: { status: SessionTaskStatus }) {
   return <ToneGlyph look={TASK_STATUS_LOOK[status]} status={status} spinning={status === "in_progress"} />;
+}
+
+/**
+ * A delegation's status icon (agent-status.md, «Статусы поручения»), decorative like the task's. A running
+ * delegation whose subagent waits for a decision shows the agent's «Ждёт подтверждения» instead.
+ */
+export function DelegationStatusGlyph({ status, awaiting }: { status: DelegationStatus; awaiting: boolean }) {
+  if (awaiting) return <ToneGlyph look={STATUS_LOOK.awaiting_confirmation} status="awaiting_confirmation" spinning={false} />;
+  return <ToneGlyph look={DELEGATION_STATUS_LOOK[status]} status={status} spinning={status === "running"} />;
 }
 
 const toneTransition = "transition-colors duration-(--duration-fast) motion-reduce:transition-none";

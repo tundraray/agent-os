@@ -16,6 +16,7 @@ import type { RuntimeConfig } from './runtime-config';
 import { retryingTransaction, type RuntimeTx } from './runtime-tx';
 import { endTask } from './step-commit';
 import type { TaskRepository } from './task.repository';
+import type { TrackerRepository } from './tracker.repository';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 
@@ -28,6 +29,7 @@ export interface RecoverySweeperDeps {
   clock: Clock;
   logger: Logger;
   tasks: TaskRepository;
+  trackers: TrackerRepository;
   events: EventLog;
   inbox: Inbox;
   crashPoints: CrashPoints;
@@ -138,7 +140,7 @@ export class RecoverySweeper {
     expired: { taskId: string; attempt: number },
     now: Date,
   ): Promise<Recovery> {
-    const { tasks, events, inbox, config } = this.deps;
+    const { tasks, events, config } = this.deps;
     // An exhausted task ends and notifies its parent: the parent is locked first (Invariant 6).
     const task = await tasks.lockWithParent(tx, expired.taskId);
     const stillLost =
@@ -149,7 +151,7 @@ export class RecoverySweeper {
     if (!task || !stillLost) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {
-      const row = await endTask(tx, { tasks, events, inbox }, task, {
+      const row = await endTask(tx, this.deps, task, {
         status: failed,
         failure: {
           reason: RuntimeFailureReasonSchema.enum.recovery_exhausted,

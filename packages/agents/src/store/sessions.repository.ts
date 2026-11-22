@@ -11,11 +11,17 @@ import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition'
 /** A reader of the store: the step's transaction, or the database for a read outside a step. */
 export type StoreReader = Database | RuntimeTx;
 
+/** A field of the answer a `task` call asks its subagent for (deep-agents/design-task.md KD-7). */
+export const AnswerFieldSchema = z.strictObject({
+  name: z.string().trim().min(1).max(64).describe('The key of the field in the JSON answer'),
+  description: z.string().trim().min(1).max(500).describe('What the field holds'),
+});
+
 /**
  * The input of an `agent` task (design-runtime.md, Data Model; ADR-0017): the snapshot, the assignment,
- * the description, a fork's link to its parent's history and, at a conversation's root, the chip of its
- * first message. The snapshot is written here once and only here; the first step makes the session from
- * it when the starter did not.
+ * the description, a fork's link to its parent's history, at a conversation's root the chip of its
+ * first message and, for a subagent a `task` call started, the fields its answer must have. The snapshot
+ * is written here once and only here; the first step makes the session from it when the starter did not.
  */
 export const AgentTaskInputSchema = z.object({
   snapshot: RunSnapshotSchema,
@@ -25,6 +31,7 @@ export const AgentTaskInputSchema = z.object({
     .object({ agentId: z.string().min(1), throughSeq: z.number().int().nonnegative() })
     .optional(),
   record: ChipRecordSchema.optional(),
+  answerFields: z.array(AnswerFieldSchema).optional(),
 });
 export type SessionInput = z.infer<typeof AgentTaskInputSchema>;
 

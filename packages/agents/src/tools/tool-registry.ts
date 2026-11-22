@@ -12,11 +12,12 @@ import { mcpToolDescription } from '../mcp/tool-shape';
 import type { JsonSchemaObject } from '../model/mastra-turn';
 import type { RecordLibrary } from '../start/record-library';
 import type { RunSnapshot } from '../start/snapshot';
-import { snapshotDefinition } from '../start/snapshot-definition';
+import { snapshotDefinition, TASK_TOOL } from '../start/snapshot-definition';
 import { hasTaskList } from '../step/task-block';
 import { sessions } from '../store/sessions.repository';
 import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent';
 import { START_DEEP_AGENT_TOOL } from './builtin/start-deep-agent';
+import { describeTask, taskArgsSchema } from './builtin/task-delegation';
 import { TASK_TOOLS } from './builtin/task-tools';
 import type { AgentTool, ToolDisplay } from './tool';
 
@@ -124,7 +125,8 @@ export interface ToolRegistry {
    * owner gets no MCP tool, and his model call fails the step) and, for an `oauth` server, that the owner
    * has an account on. At the root the descriptions of `start_agent` and `start_deep_agent` list the chat
    * listing, read from the library and the owner's sessions on every call; elsewhere `start_agent` lists
-   * the snapshot's agents or team. Nothing is kept between steps (Invariant 3).
+   * the snapshot's agents, and a deep agent's `task` its subagents with its schema by the snapshot's flags
+   * (deep-agents/design-task.md DC-6). Nothing is kept between steps (Invariant 3).
    */
   sessionTools(input: SessionToolsInput): Promise<SessionTool[]>;
   /**
@@ -189,8 +191,12 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     return listing;
   }
 
-  function sessionToolOf(tool: AgentTool, description: string = tool.description): SessionTool {
-    return { kind: 'agent', name: tool.name, description, inputSchema: tool.argsSchema, tool };
+  function sessionToolOf(
+    tool: AgentTool,
+    description: string = tool.description,
+    inputSchema: z.ZodType<unknown> = tool.argsSchema,
+  ): SessionTool {
+    return { kind: 'agent', name: tool.name, description, inputSchema, tool };
   }
 
   function registered(name: string, input: SessionToolsInput): AgentTool {
@@ -202,15 +208,21 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
   }
 
   /**
-   * The description the session sees: `start_agent` lists whom it may start — the chat listing at the root,
-   * the snapshot's agents or team elsewhere — and `start_deep_agent` the chat's deep agents. Without a listing
-   * (the call check) the root keeps the tools' own descriptions.
+   * The tool as the session sees it: `start_agent` lists whom it may start — the chat listing at the root,
+   * the snapshot's agents elsewhere — `start_deep_agent` the chat's deep agents, and `task` the deep agent's
+   * subagents, with the fields its flags allow (DC-6). Without a listing (the call check) the root keeps the
+   * tools' own descriptions.
    */
+  function sessionToolFor(tool: AgentTool, input: SessionToolsInput, listing: ChatListing | null): SessionTool {
+    if (tool.name !== TASK_TOOL) return sessionToolOf(tool, descriptionOf(tool, input, listing));
+    const definition = snapshotDefinition(input.snapshot);
+    return sessionToolOf(tool, describeTask(definition), taskArgsSchema(definition));
+  }
+
   function descriptionOf(tool: AgentTool, input: SessionToolsInput, listing: ChatListing | null): string {
-    const canFork = input.snapshot.kind !== 'deep_agent';
     if (tool.name === START_AGENT_TOOL) {
-      if (!input.root) return describeStartAgent(snapshotDefinition(input.snapshot).startable, canFork);
-      if (listing !== null) return describeStartAgent(listing.agents, canFork);
+      if (!input.root) return describeStartAgent(snapshotDefinition(input.snapshot).startable);
+      if (listing !== null) return describeStartAgent(listing.agents);
     }
     if (tool.name === START_DEEP_AGENT_TOOL && listing !== null) {
       return describeStartDeepAgent(tool.description, listing.deepAgents);
@@ -230,7 +242,7 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     const rootTools = input.root ? [...tools.values()].filter((tool) => tool.rootOnly === true) : [];
     const everySession = [...tools.values()].filter((tool) => tool.everySession === true);
     return [
-      ...[...named, ...rootTools].map((tool) => sessionToolOf(tool, descriptionOf(tool, input, listing))),
+      ...[...named, ...rootTools].map((tool) => sessionToolFor(tool, input, listing)),
       ...everySession.map((tool) => sessionToolOf(tool)),
       sessionToolOf(runCode),
     ];

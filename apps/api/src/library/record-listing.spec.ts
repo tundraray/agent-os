@@ -38,6 +38,7 @@ function record(ownership: RecordOwnership, shared: boolean): ChatRecord {
         ],
         finalSubagent: null,
         taskList: true,
+        listDelegation: true,
         selfLearning: false,
       },
     },

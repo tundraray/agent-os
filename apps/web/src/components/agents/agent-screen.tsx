@@ -1,13 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useTranslations } from "next-intl";
-import type { AgentPageView, DeepAgentRunView, RunTaskListView } from "@agent-os/contracts";
+import type { AgentNode, AgentPageView, AgentTasksView, DeepAgentRunView } from "@agent-os/contracts";
 import { AgentMeta } from "@/components/agents/agent-meta";
 import { InheritedHistory } from "@/components/agents/inherited-history";
-import { RunTaskList, useRunTasks } from "@/components/agents/run-task-list";
+import { SessionTaskList, useAgentTasks } from "@/components/agents/session-task-list";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { ShellLink } from "@/components/shell/shell-link";
@@ -58,12 +58,22 @@ function TaskBrief() {
   );
 }
 
-const TasksContext = createContext<Resource<RunTaskListView> | null>(null);
+const TasksContext = createContext<Resource<AgentTasksView> | null>(null);
 
-/** DA-05: the deep agent's list in place of the feed on the tab «Задачи»; the composer stays under it. */
+const NO_CHILDREN: readonly AgentNode[] = [];
+
+/**
+ * DA-05 and DA-09: the deep agent's tasks and delegations in place of the feed on the tab «Задачи»; the composer
+ * stays under it. «Ждёт подтверждения» of a delegation is its subagent's status among the agent's children.
+ */
 function TasksFeed() {
   const tasks = useContext(TasksContext);
-  return tasks === null ? null : <RunTaskList tasks={tasks} layout="page" />;
+  const children = useFeedSelector((state) => state.view?.children ?? NO_CHILDREN, NO_CHILDREN);
+  const awaitingAgents = useMemo(
+    () => new Set(children.filter((child) => child.status === "awaiting_confirmation").map((child) => child.agentId)),
+    [children],
+  );
+  return tasks === null ? null : <SessionTaskList tasks={tasks} layout="page" awaitingAgents={awaitingAgents} />;
 }
 
 const COMPONENTS: ThreadComponents = { Welcome: NoWelcome, FeedHeader: AgentFeedHeader };
@@ -80,7 +90,7 @@ type DeepAgentTabsProps = { agent: AgentPageView["agent"]; tasksTab: boolean; ch
  */
 function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
   const t = useTranslations("agents.tasks");
-  const tasks = useRunTasks(agent.agentId, agent.threadId);
+  const tasks = useAgentTasks(agent.agentId, agent.threadId);
   const tab = tasksTab ? "tasks" : "activity";
   return (
     <TasksContext.Provider value={tasks}>

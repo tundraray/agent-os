@@ -194,7 +194,7 @@ const SEARCH_LOGS = mcpTool(LOGS_SERVER, 'search_logs');
 const SEARCH_TICKETS = mcpTool(TRACKER_SERVER, 'search_tickets');
 const RUN_CODE = 'run_code';
 
-/** The one subagent of the INT-1 deep agent, which the deep agent starts by name. */
+/** The one subagent of the INT-1 deep agent, which the deep agent gives work to by name with `task`. */
 const ACCESS_SUBAGENT = 'access-subagent';
 
 /**
@@ -208,7 +208,7 @@ function accessCheckDeepAgent(): Extract<CreateRecordBody, { kind: 'deep_agent' 
     description:
       'Test deep agent of the access integration tests: one subagent that writes an incident note.',
     content: {
-      prompt: `Start the subagent ${ACCESS_SUBAGENT} with start_agent and wait for its report.`,
+      prompt: `Give the work to the subagent ${ACCESS_SUBAGENT} with task.`,
       servers: [],
       model: MODEL_A,
       maxTurns: 6,
@@ -227,6 +227,7 @@ function accessCheckDeepAgent(): Extract<CreateRecordBody, { kind: 'deep_agent' 
       ],
       finalSubagent: ACCESS_SUBAGENT,
       taskList: true,
+      listDelegation: false,
       selfLearning: false,
     },
   };
@@ -840,19 +841,16 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           {
             calls: [
               {
-                tool: 'start_agent',
-                args: {
-                  agent: ACCESS_SUBAGENT,
-                  description: 'subagent',
-                  prompt: subagentTask,
-                },
+                tool: 'task',
+                args: { subagentType: ACCESS_SUBAGENT, description: subagentTask },
               },
             ],
           },
         ],
         { thereafter: { text: 'the subagent reported' } },
       );
-      const subagent = harness.model.script({ task: subagentTask }, [
+      // The subagent's one `task` entry: the question of the brief as its labelled line, then the assignment.
+      const subagent = harness.model.script({ task: `Question: ${question}\n\n${subagentTask}` }, [
         {
           calls: [
             {

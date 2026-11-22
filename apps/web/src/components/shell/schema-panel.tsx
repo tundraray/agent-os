@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Workflow } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
-import type { Confirmation, RecordFocus, RecordKind, RunTaskListView } from '@agent-os/contracts';
-import { RunTaskList, useRunTasks } from '@/components/agents/run-task-list';
+import type { AgentTasksView, Confirmation, RecordFocus, RecordKind } from '@agent-os/contracts';
+import { SessionTaskList, useAgentTasks } from '@/components/agents/session-task-list';
 import { DefinitionView } from '@/components/library/definition-view';
 import { RecordLabel } from '@/components/library/record-label';
 import { Button } from '@/components/ui/button';
@@ -40,7 +40,7 @@ const selectThread = (state: FeedState): string | null => (state.view?.kind === 
 export type ChatTasks = {
   /** The conversation's root; null off a conversation and before its first read. */
   rootAgentId: string | null;
-  tasks: Resource<RunTaskListView>;
+  tasks: Resource<AgentTasksView>;
   /** The tab «Задачи» is there: it comes with the conversation's first task and stays (UXRD DA-12). */
   tabShown: boolean;
 };
@@ -52,7 +52,7 @@ export type ChatTasks = {
 export function useChatTasks(feed: FeedStore | null): ChatTasks {
   const rootAgentId = useFeedStoreSelector(feed, selectRoot, null);
   const threadId = useFeedStoreSelector(feed, selectThread, null);
-  const tasks = useRunTasks(rootAgentId, threadId);
+  const tasks = useAgentTasks(rootAgentId, threadId);
   // The root that has had a task in this visit: deleting every task does not take the tab away.
   const [listedRoot, setListedRoot] = useState<string | null>(null);
   const hasTasks = (tasks.data?.tasks.length ?? 0) > 0;
@@ -83,7 +83,7 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
 }
 
 type SchemaTabsProps = {
-  tasks: Resource<RunTaskListView>;
+  tasks: Resource<AgentTasksView>;
   tab: SchemaTab;
   onTab: (tab: SchemaTab) => void;
   focus: RecordFocus | null;
@@ -108,7 +108,7 @@ function SchemaTabs({ tasks, tab, onTab, focus }: SchemaTabsProps) {
         <FocusSchema focus={focus} />
       </TabsContent>
       <TabsContent value="tasks">
-        <RunTaskList tasks={tasks} layout="panel" />
+        <SessionTaskList tasks={tasks} layout="panel" />
       </TabsContent>
     </Tabs>
   );

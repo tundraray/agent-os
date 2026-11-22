@@ -463,7 +463,7 @@ export type SessionTaskStatus = z.infer<typeof SessionTaskStatusSchema>;
  * One task of a session's list (Contract «`GET /api/agents/:agentId/tasks`»): its number in the session counts
  * from 1 and is never reused; `blockedBy` — the numbers of the tasks that must be completed first.
  */
-export const RunTaskViewSchema = z.object({
+export const SessionTaskViewSchema = z.object({
   id: z.number().int().positive(),
   subject: z.string().min(1),
   description: z.string().min(1),
@@ -472,11 +472,43 @@ export const RunTaskViewSchema = z.object({
   owner: z.string().min(1).nullable(),
   blockedBy: z.array(z.number().int().positive()),
 });
-export type RunTaskView = z.infer<typeof RunTaskViewSchema>;
+export type SessionTaskView = z.infer<typeof SessionTaskViewSchema>;
 
-/** GET /agents/:agentId/tasks: the session's tasks by number; empty for a session without a list. */
-export const RunTaskListViewSchema = z.object({ tasks: z.array(RunTaskViewSchema) });
-export type RunTaskListView = z.infer<typeof RunTaskListViewSchema>;
+/**
+ * Status of a delegation (deep-agents design-task.md, «Запись и маршрут»), not of a task of the list: `running` —
+ * the subagent's runtime task is queued, running or waiting; `cancelled` — it was stopped.
+ */
+export const DelegationStatusSchema = z.enum(['running', 'completed', 'failed', 'cancelled']);
+export type DelegationStatus = z.infer<typeof DelegationStatusSchema>;
+
+/** Limits of a delegation row: the item and the answer are cut, the full ones stay in the subagent's history. */
+export const DELEGATION_ITEM_MAX_CHARS = 200;
+export const DELEGATION_ANSWER_MAX_CHARS = 300;
+
+/**
+ * One task of the agent's trackers: the subagent's session, its assignment (the description or the item), the
+ * task of the list the `task` call named, and how it ended.
+ */
+export const DelegationViewSchema = z.object({
+  agentId: z.string().min(1),
+  subagent: z.string().min(1),
+  item: z.string().max(DELEGATION_ITEM_MAX_CHARS),
+  taskId: z.number().int().positive().nullable(),
+  status: DelegationStatusSchema,
+  answer: z.string().max(DELEGATION_ANSWER_MAX_CHARS).nullable(),
+  reason: z.string().nullable(),
+});
+export type DelegationView = z.infer<typeof DelegationViewSchema>;
+
+/**
+ * GET /agents/:agentId/tasks: the session's tasks by number, empty for a session without a list, and the tasks of
+ * its trackers in order, empty for an agent that delegated nothing.
+ */
+export const AgentTasksViewSchema = z.object({
+  tasks: z.array(SessionTaskViewSchema),
+  delegations: z.array(DelegationViewSchema),
+});
+export type AgentTasksView = z.infer<typeof AgentTasksViewSchema>;
 
 // ---------------------------------------------------------------------------------------------------
 // Live stream

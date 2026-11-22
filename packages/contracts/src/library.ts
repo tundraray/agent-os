@@ -19,6 +19,11 @@ export const DEEP_AGENT_SUBAGENTS_MIN = 1;
 export const DEEP_AGENT_SUBAGENTS_MAX = 10;
 export const SUBAGENT_MAX_RUNS_MIN = 1;
 export const SUBAGENT_MAX_RUNS_MAX = 20;
+/**
+ * The subagent every deep agent has besides its record's (deep-agents/design-task.md, Contract «Инструмент
+ * `task`»): a record's subagent may not take this name.
+ */
+export const GENERAL_PURPOSE_SUBAGENT = 'general-purpose';
 export const RECORD_MAX_TURNS_MIN = 1;
 export const RECORD_MAX_TURNS_MAX = 200;
 /** «Максимум шагов» of a new record until an administrator sets another (`library_settings`). */
@@ -171,6 +176,8 @@ export const DeepAgentContentSchema = z
     /** Subagent whose report becomes the answer; `null` — the deep agent writes it. */
     finalSubagent: z.string().nullable(),
     taskList: taskListSchema(true),
+    /** `task` takes an instruction with a list of items, one subagent per item (FR-24); on by default. */
+    listDelegation: z.boolean().default(true),
     /** Runs learn into the deep agent's knowledge graph; only people change it. */
     selfLearning: z.boolean().default(false),
   })
@@ -178,6 +185,14 @@ export const DeepAgentContentSchema = z
     const names = content.subagents.map((subagent) => subagent.name);
     if (!hasNoRepeats(names.map((name) => name.toLowerCase()))) {
       ctx.addIssue({ code: 'custom', path: ['subagents'], message: 'subagent names repeat' });
+    }
+    const reserved = names.findIndex((name) => name.toLowerCase() === GENERAL_PURPOSE_SUBAGENT);
+    if (reserved !== -1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['subagents', reserved, 'name'],
+        message: `${GENERAL_PURPOSE_SUBAGENT} is the name of the built-in subagent`,
+      });
     }
     if (content.finalSubagent !== null && !names.includes(content.finalSubagent)) {
       ctx.addIssue({ code: 'custom', path: ['finalSubagent'], message: 'no such subagent' });

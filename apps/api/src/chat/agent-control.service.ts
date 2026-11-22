@@ -18,7 +18,7 @@ import {
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
-  type RunTaskListView,
+  type AgentTasksView,
   type SpendResponse,
   type StopResponse,
 } from '@agent-os/contracts';
@@ -180,9 +180,10 @@ export class AgentControlService {
 
   /**
    * The task list of any of the owner's sessions, the conversation's root included, in number order; a
-   * session without one has an empty list (deep-agents KD-5). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
+   * session without one has an empty list (deep-agents KD-5), and the tasks of its trackers (design-task.md, «Запись
+   * и маршрут»). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
    */
-  async tasks(agentId: string, ownerId: string): Promise<RunTaskListView> {
+  async tasks(agentId: string, ownerId: string): Promise<AgentTasksView> {
     if (!isUuid(agentId)) throw agentNotFound();
     return this.agents.sessions.taskList(agentId, ownerId);
   }

@@ -4,6 +4,7 @@ import {
   CHILD_FINISHED_KIND,
   MessageStatusSchema,
   RuntimeEventTypeSchema,
+  TASKS_FINISHED_KIND,
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
@@ -31,7 +32,8 @@ export function jsonByteLength(value: unknown): number {
 /**
  * `PAYLOAD_TOO_LARGE` for a message payload over `maxBytes`, or `undefined`. Every writer of an
  * upper-layer message checks it before `insertMessage` (`enqueue`, `effects.enqueue`, `interrupt`);
- * the runtime's own `child_finished` is bounded by the result it carries.
+ * the runtime's own `child_finished` is bounded by the result it carries, `tasks_finished` by
+ * `TRACKER_MAX_TASKS`.
  */
 export function payloadTooLarge(payload: unknown, maxBytes: number): RuntimeError | undefined {
   const bytes = jsonByteLength(payload);
@@ -40,6 +42,19 @@ export function payloadTooLarge(payload: unknown, maxBytes: number): RuntimeErro
     'PAYLOAD_TOO_LARGE',
     `message payload is ${bytes} bytes, over ${maxBytes}`,
   );
+}
+
+/** Message kinds only the runtime writes. */
+const RESERVED_KINDS: readonly string[] = [CHILD_FINISHED_KIND, TASKS_FINISHED_KIND];
+
+/**
+ * Why an upper-layer message may not have this kind, or `undefined`. Every writer of an
+ * upper-layer message checks it before `insertMessage`, as {@link payloadTooLarge}.
+ */
+export function reservedKindProblem(kind: string): string | undefined {
+  return RESERVED_KINDS.includes(kind)
+    ? `message kind "${kind}" is reserved by the runtime`
+    : undefined;
 }
 
 /** A message row as a step and the queue tray see it. */
@@ -55,7 +70,7 @@ export const toStepMessage = (row: MessageRow): StepMessage => ({
 
 const { pending, delivered } = MessageStatusSchema.enum;
 const { queued, waiting } = TaskStatusSchema.enum;
-const { messages, interrupted } = WaitReasonSchema.enum;
+const { messages, interrupted, tasks: tasksReason } = WaitReasonSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
 
 /** A message to write; the caller has checked its kind and payload size. */
@@ -90,16 +105,22 @@ export interface InboxDeps {
 
 /**
  * The wake-up a message brings to its recipient (plan Notes 3, KD-3): waiting for messages or
- * interrupted → `queued`; finished with `revive` → `queued` with its outcome cleared; otherwise
- * (waiting for a decision, queued, running, finished without `revive`) nothing changes.
+ * interrupted → `queued`; waiting for its tasks → `queued` by its `tasks_finished` only
+ * (deep-agents/design-task.md, KD-3); finished with `revive` → `queued` with its outcome cleared;
+ * otherwise (waiting for a decision, queued, running, finished without `revive`) nothing changes.
  */
-function wakeChange(recipient: TaskRow, revive: boolean): TaskChange | undefined {
+function wakeChange(
+  recipient: TaskRow,
+  message: { kind: string; revive: boolean },
+): TaskChange | undefined {
   if (recipient.status === waiting) {
     const wakes =
-      recipient.waitReason === messages || recipient.waitReason === interrupted;
+      recipient.waitReason === messages ||
+      recipient.waitReason === interrupted ||
+      (recipient.waitReason === tasksReason && message.kind === TASKS_FINISHED_KIND);
     return wakes ? { kind: 'set', status: queued } : undefined;
   }
-  if (isFinished(recipient.status) && revive) {
+  if (isFinished(recipient.status) && message.revive) {
     return { kind: 'set', status: queued, fields: { result: null, failure: null } };
   }
   return undefined;
@@ -115,7 +136,8 @@ export class Inbox {
   /**
    * Puts an upper-layer message in the recipient's queue in its own transaction (design-runtime.md,
    * Очередь): `TASK_NOT_FOUND` for a missing or another owner's recipient, `PAYLOAD_TOO_LARGE` over
-   * `INBOX_PAYLOAD_MAX_BYTES`; nothing is written then. `child_finished` is the runtime's own kind.
+   * `INBOX_PAYLOAD_MAX_BYTES`; nothing is written then. `child_finished` and `tasks_finished` are
+   * the runtime's own kinds.
    */
   async enqueue(message: NewMessage): Promise<EnqueuedMessage> {
     const { db, logger, inboxPayloadMaxBytes } = this.deps;
@@ -128,9 +150,8 @@ export class Inbox {
       revive: message.revive ?? false,
     };
     try {
-      if (message.kind === CHILD_FINISHED_KIND) {
-        throw new Error(`message kind "${CHILD_FINISHED_KIND}" is reserved by the runtime`);
-      }
+      const reserved = reservedKindProblem(message.kind);
+      if (reserved !== undefined) throw new Error(reserved);
       const tooLarge = payloadTooLarge(message.payload, inboxPayloadMaxBytes);
       if (tooLarge) throw tooLarge;
       const inserted = await retryingTransaction(db, logger, 'inbox.enqueue', (tx) =>
@@ -210,7 +231,7 @@ export class Inbox {
     });
     crashPoints.hit('inbox.before-wake');
 
-    const wake = wakeChange(recipient, revive);
+    const wake = wakeChange(recipient, { kind: message.kind, revive });
     if (wake === undefined) return { messageId, seq, recipient };
     const woken = await this.write(tx, recipient, wake);
     await events.append(tx, {

@@ -4,7 +4,7 @@ import type {
   McpConnection,
   MyModels,
   RecordSummary,
-  RunTaskListView,
+  AgentTasksView,
   SpendResponse,
 } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
@@ -33,7 +33,9 @@ const shellDefaults = [
   ),
   http.get('/api/mcp/connections', () => HttpResponse.json([] satisfies McpConnection[])),
   http.get('/api/threads/:threadId/agents', () => HttpResponse.json([] satisfies AgentNode[])),
-  http.get('/api/agents/:agentId/tasks', () => HttpResponse.json({ tasks: [] } satisfies RunTaskListView)),
+  http.get('/api/agents/:agentId/tasks', () =>
+    HttpResponse.json({ tasks: [], delegations: [] } satisfies AgentTasksView),
+  ),
   http.get('/api/access/models', () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),

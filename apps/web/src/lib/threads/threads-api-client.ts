@@ -3,6 +3,7 @@ import {
   AgentListPageSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
+  AgentTasksViewSchema,
   AwaitingCountSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
@@ -10,7 +11,6 @@ import {
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
-  RunTaskListViewSchema,
   SendMessageResponseSchema,
   SpendResponseSchema,
   StopResponseSchema,
@@ -19,6 +19,7 @@ import {
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
+  type AgentTasksView,
   type AwaitingCount,
   type ConversationView,
   type DecisionRequest,
@@ -28,7 +29,6 @@ import {
   type InterruptResponse,
   type RenameThreadRequest,
   type RestartResponse,
-  type RunTaskListView,
   type SendMessageRequest,
   type SendMessageResponse,
   type SpendResponse,
@@ -141,9 +141,9 @@ async function getRun(agentId: string): Promise<DeepAgentRunView> {
   return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: DeepAgentRunViewSchema });
 }
 
-/** The deep agent's task list by number; empty for an agent without one. */
-async function getRunTasks(agentId: string): Promise<RunTaskListView> {
-  return apiRequest({ path: `${agentRoute(agentId)}/tasks`, schema: RunTaskListViewSchema });
+/** The session's tasks by number and its delegations in order; both empty for an agent without them. */
+async function getAgentTasks(agentId: string): Promise<AgentTasksView> {
+  return apiRequest({ path: `${agentRoute(agentId)}/tasks`, schema: AgentTasksViewSchema });
 }
 
 async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {
@@ -210,7 +210,7 @@ export const threadsApiClient = {
   getAgentPage,
   getInherited,
   getRun,
-  getRunTasks,
+  getAgentTasks,
   sendAgentMessage,
   interruptAgent,
   stopAgent,

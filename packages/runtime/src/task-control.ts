@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@agent-os/common';
 import {
-  CHILD_FINISHED_KIND,
   DecisionStatusSchema,
   RuntimeEventTypeSchema,
   type TaskStatus,
@@ -19,16 +18,20 @@ import type {
   HandlerRegistry,
   StepSignalReason,
 } from './handler.registry';
-import { type Inbox, payloadTooLarge } from './inbox';
+import { type Inbox, payloadTooLarge, reservedKindProblem } from './inbox';
 import type { RunningTaskRegistry } from './running-task.registry';
 import { retryingTransaction, type RuntimeTx } from './runtime-tx';
 import { endTask, type TaskFailure, writeLocked } from './step-commit';
 import type { TaskRepository } from './task.repository';
+import type { TrackerRepository } from './tracker.repository';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
 
-/** What `tasks.interrupt` answers; `not_active` for a finished task or one awaiting a decision. */
+/**
+ * What `tasks.interrupt` answers; `not_active` for a finished task or one waiting for a decision or
+ * for its tasks.
+ */
 export type InterruptOutcome = 'interrupted' | 'not_active';
 
 /**
@@ -78,6 +81,7 @@ export interface TaskControlDeps {
   db: Database;
   handlers: HandlerRegistry;
   tasks: TaskRepository;
+  trackers: TrackerRepository;
   events: EventLog;
   inbox: Inbox;
   /** Steps of this process: a command cuts its own process's step off at once (KD-4). */
@@ -87,11 +91,17 @@ export interface TaskControlDeps {
   inboxPayloadMaxBytes: number;
 }
 
-/** A task an interrupt can reach: `queued`, `running`, or `waiting` for anything but a decision. */
+/**
+ * A task an interrupt can reach: `queued`, `running`, or `waiting` for messages or after an
+ * interrupt. One waiting for a decision or for its tasks (deep-agents/design-task.md, KD-3) is
+ * woken only by them.
+ */
 const isInterruptible = (task: TaskRow): boolean =>
   task.status === queued ||
   task.status === running ||
-  (task.status === waiting && task.waitReason !== WaitReasonSchema.enum.decision);
+  (task.status === waiting &&
+    task.waitReason !== WaitReasonSchema.enum.decision &&
+    task.waitReason !== WaitReasonSchema.enum.tasks);
 
 function toTask(row: TaskRow): Task {
   return {
@@ -191,10 +201,10 @@ export class TaskControl {
   }
 
   /**
-   * Interrupts a `queued`, `running` or `waiting` (not for a decision) task: without a message it
-   * becomes `waiting` (`interrupted`), with one the message goes into its queue and it becomes
-   * `queued`; `attempt + 1`, the lease cleared, `task.interrupted`. A finished task or one waiting
-   * for a decision gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or another
+   * Interrupts a `queued`, `running` or `waiting` (not for a decision or tasks) task: without a
+   * message it becomes `waiting` (`interrupted`), with one the message goes into its queue and it
+   * becomes `queued`; `attempt + 1`, the lease cleared, `task.interrupted`. A finished task or one
+   * waiting for a decision or its tasks gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or another
    * owner's task, `PAYLOAD_TOO_LARGE` for a message over `INBOX_PAYLOAD_MAX_BYTES`.
    */
   async interrupt(
@@ -417,13 +427,12 @@ export class TaskControl {
    * is still as locked when it ends: only its children, ending later, write to it.
    */
   private async stopTree(tx: RuntimeTx, top: TaskRow): Promise<TaskRow[]> {
-    const { tasks, events, inbox } = this.deps;
     const tree = [top, ...(await this.lockDescendants(tx, top.taskId))];
     const stoppedTasks: TaskRow[] = [];
     for (const task of tree) {
       if (isFinished(task.status)) continue;
       stoppedTasks.push(
-        await endTask(tx, { tasks, events, inbox }, task, {
+        await endTask(tx, this.deps, task, {
           status: stopped,
           fields: { stepClaims: 0, recoveries: 0 },
           fence: true,
@@ -485,9 +494,8 @@ export class TaskControl {
 
   /** The rules of `inbox.enqueue` for an interrupt's message. */
   private checkMessage(message: InterruptMessage): void {
-    if (message.kind === CHILD_FINISHED_KIND) {
-      throw new Error(`message kind "${CHILD_FINISHED_KIND}" is reserved by the runtime`);
-    }
+    const reserved = reservedKindProblem(message.kind);
+    if (reserved !== undefined) throw new Error(reserved);
     const tooLarge = payloadTooLarge(message.payload, this.deps.inboxPayloadMaxBytes);
     if (tooLarge) throw tooLarge;
   }

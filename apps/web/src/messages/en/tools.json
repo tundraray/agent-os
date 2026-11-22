@@ -35,6 +35,17 @@
   },
   "task_get": { "title": "Task", "args": { "taskId": "Task" } },
   "task_list": { "title": "Task list", "args": {} },
+  "task": {
+    "title": "Delegate",
+    "args": {
+      "subagentType": "Subagent",
+      "description": "Assignment",
+      "instruction": "Instruction",
+      "items": "Items",
+      "answerFields": "Answer fields",
+      "taskId": "Task"
+    }
+  },
   "list_records": { "title": "Library list", "args": {} },
   "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
   "create_record": {

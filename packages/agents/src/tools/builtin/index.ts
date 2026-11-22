@@ -8,6 +8,7 @@ import { createMessageAgentTool } from './message-agent';
 import { createStartAgentTool, type StartAgentDeps } from './start-agent';
 import { createStartDeepAgentTool } from './start-deep-agent';
 import { createStopAgentTool } from './stop-agent';
+import { createTaskTool } from './task-delegation';
 import { createToolResultTools } from './tool-result-tools';
 
 export { createStartChild } from './start-child';
@@ -20,9 +21,9 @@ export interface BuiltinToolsDeps extends StartAgentDeps {
 
 /**
  * The package's built-in tools (design-agents.md, «Инструменты»): `start_agent`, `message_agent`,
- * `list_agents`, `stop_agent`, the root's `start_deep_agent` (deep-agents KD-2), and `read_tool_result`,
- * `search_tool_result` of every session (tool-result-reading R-2). The composition root hands them to the
- * tool registry.
+ * `list_agents`, `stop_agent`, the root's `start_deep_agent` (deep-agents KD-2), a deep agent's `task`
+ * (deep-agents/design-task.md KD-6), and `read_tool_result`, `search_tool_result` of every session
+ * (tool-result-reading R-2). The composition root hands them to the tool registry.
  */
 export function createBuiltinTools(deps: BuiltinToolsDeps): AgentTool[] {
   return [
@@ -37,6 +38,7 @@ export function createBuiltinTools(deps: BuiltinToolsDeps): AgentTool[] {
     createMessageAgentTool(deps),
     createListAgentsTool(deps),
     createStopAgentTool(deps),
+    createTaskTool(),
     ...createToolResultTools(deps),
   ];
 }

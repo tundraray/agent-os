@@ -12,7 +12,7 @@ import type { RuntimeTx } from './runtime-tx';
 
 export type NewTaskRow = Pick<
   typeof runtimeTasks.$inferInsert,
-  'taskId' | 'type' | 'ownerId' | 'parentId' | 'rootId' | 'depth' | 'input'
+  'taskId' | 'type' | 'ownerId' | 'parentId' | 'rootId' | 'depth' | 'input' | 'trackerId'
 >;
 
 /**

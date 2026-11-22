@@ -1,9 +1,10 @@
 import type { RunOrigin } from '@agent-os/contracts';
+import { z } from 'zod';
 
 import type { AgentView } from '../agent-view';
 import { AgentsError } from '../errors';
 import type { DeepAgentSnapshot } from '../start/snapshot';
-import { START_AGENT_TOOL, StartAgentArgsSchema } from '../tools/builtin/start-agent';
+import { TASK_TOOL } from '../start/snapshot-definition';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from '../tools/builtin/start-deep-agent';
 import type { AgentHistoryEntry, AgentSessions } from './agent-sessions';
 
@@ -29,15 +30,15 @@ export interface DeepAgentRun {
   readonly team: DeepAgentTeamMember[];
   /** The deep agent's direct children in the order they were created, each with `origin.subagent`. */
   readonly steps: AgentView[];
-  /** Every start of a subagent refused by its `maxRuns`. */
+  /** Every `task` call refused by its subagent's `maxRuns`. */
   readonly limitRefusals: { readonly subagent: string; readonly at: Date }[];
 }
 
 /** The operations of agents the run view reads through. */
 export type DeepAgentRunSessions = Pick<AgentSessions, 'get' | 'list' | 'history' | 'snapshot'>;
 
-/** The `agent` of a `start_agent` call: the subagent's name in a refusal the view lists. */
-const StartedSubagentSchema = StartAgentArgsSchema.pick({ agent: true });
+/** The `subagentType` of a `task` call: the subagent's name in a refusal the view lists. */
+const DelegatedSubagentSchema = z.object({ subagentType: z.string() });
 const HISTORY_PAGE = 500;
 
 function runNotFound(agentId: string, cause?: unknown): AgentsError {
@@ -96,7 +97,7 @@ async function historyOf(
   }
 }
 
-/** The deep agent's `start_agent` results refused with `run_limit`, at the time each was written. */
+/** The deep agent's `task` results refused with `run_limit`, at the time each was written (deep-agents/design-task.md KD-6). */
 async function limitRefusalsOf(
   sessions: DeepAgentRunSessions,
   agentId: string,
@@ -106,12 +107,12 @@ async function limitRefusalsOf(
   for (const entry of await historyOf(sessions, agentId, ownerId)) {
     if (entry.kind !== 'tool_result') continue;
     const { tool, refusalReason, args } = entry.content;
-    if (tool !== START_AGENT_TOOL || refusalReason !== 'run_limit') continue;
-    const parsed = StartedSubagentSchema.safeParse(args);
+    if (tool !== TASK_TOOL || refusalReason !== 'run_limit') continue;
+    const parsed = DelegatedSubagentSchema.safeParse(args);
     if (!parsed.success) {
       throw new Error(`Deep agent run ${agentId} has a run_limit refusal without a subagent name`);
     }
-    refusals.push({ subagent: parsed.data.agent, at: entry.createdAt });
+    refusals.push({ subagent: parsed.data.subagentType, at: entry.createdAt });
   }
   return refusals;
 }

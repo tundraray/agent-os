@@ -21,6 +21,7 @@ import {
   createLibraryDouble,
   createProviderRegistryDouble,
   createScriptedModel,
+  NO_DELEGATIONS,
 } from './testing';
 import type { AgentTool } from './tools/tool';
 import { createTaskTools } from './tools/builtin/task-tools';
@@ -108,6 +109,7 @@ const OPEN_CALL: CallState = {
   args: {},
   state: 'requested',
   sentAt: null,
+  delegation: null,
   attempts: 0,
   result: null,
 };
@@ -219,10 +221,11 @@ function refusedAgent(refusal: Refusal) {
       audit,
       tasks: { listTree: async () => [] },
       inbox: { listPending: async () => [] },
+      trackers: { list: async () => [] },
       vectorStore,
     }),
     compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
-    toolStep: createToolStep({ registry, runner, access, audit }),
+    toolStep: createToolStep({ registry, runner, access, audit, delegations: NO_DELEGATIONS }),
     audits,
     /** Model calls and tool runs that started. */
     started: () => model.calls.length + toolRuns,

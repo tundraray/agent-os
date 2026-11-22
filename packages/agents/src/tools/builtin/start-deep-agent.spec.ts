@@ -45,6 +45,7 @@ const snapshot: DeepAgentSnapshot = {
     ],
     finalSubagent: 'answer',
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   },
 };

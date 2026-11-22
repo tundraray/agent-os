@@ -1,4 +1,9 @@
-import { AgentMessageKindSchema, CHILD_FINISHED_KIND, ChipRecordSchema } from '@agent-os/contracts';
+import {
+  AgentMessageKindSchema,
+  CHILD_FINISHED_KIND,
+  ChipRecordSchema,
+  TASKS_FINISHED_KIND,
+} from '@agent-os/contracts';
 import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -76,8 +81,9 @@ async function childReport(
  * (design-agents.md, «Сообщения и события»): `user_message` of the employee, `agent_message` with the
  * parent's `agentId`, and the runtime's `child_finished` as a `child_report` with the child's
  * description, tool call count and duration (Flow 2). An `interrupt` writes nothing here: the step
- * writes the `interrupted` event (KD-3). Any other kind throws: the queue of an agent holds only
- * these four.
+ * writes the `interrupted` event (KD-3); nor does the runtime's `tasks_finished`: the tool step closes the
+ * `task` calls with its tracker's outcomes (deep-agents/design-task.md KD-4). Any other kind throws: the
+ * queue of an agent holds only these five.
  */
 export async function entriesOf(
   reader: StoreReader,
@@ -109,7 +115,7 @@ export async function entriesOf(
       // the report still reaches the parent, without a description.
       const description = children.get(notice.taskId)?.description ?? '';
       entries.push(await childReport(reader, notice, description));
-    } else if (message.kind !== interrupt) {
+    } else if (message.kind !== interrupt && message.kind !== TASKS_FINISHED_KIND) {
       throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
     }
   }

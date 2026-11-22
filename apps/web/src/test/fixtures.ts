@@ -79,8 +79,10 @@ import {
   type RoleDetail,
   type RoleSummary,
   type RunOrigin,
-  type RunTaskView,
-  RunTaskViewSchema,
+  type SessionTaskView,
+  SessionTaskViewSchema,
+  type DelegationView,
+  DelegationViewSchema,
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
@@ -692,13 +694,28 @@ export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
 }
 
 /** One task of a session's list (`GET /api/agents/:agentId/tasks`): pending, unowned and unblocked unless overridden. */
-export function runTask(overrides: Partial<RunTaskView> & Pick<RunTaskView, 'id' | 'subject'>): RunTaskView {
-  return RunTaskViewSchema.parse({
+export function sessionTask(
+  overrides: Partial<SessionTaskView> & Pick<SessionTaskView, 'id' | 'subject'>,
+): SessionTaskView {
+  return SessionTaskViewSchema.parse({
     description: `Описание задачи ${overrides.id}`,
     activeForm: null,
     status: 'pending',
     owner: null,
     blockedBy: [],
+    ...overrides,
+  });
+}
+
+/** One delegation of a deep agent (`GET /api/agents/:agentId/tasks`): running, naming no task, unless overridden. */
+export function delegation(
+  overrides: Partial<DelegationView> & Pick<DelegationView, 'agentId' | 'subagent' | 'item'>,
+): DelegationView {
+  return DelegationViewSchema.parse({
+    taskId: null,
+    status: 'running',
+    answer: null,
+    reason: null,
     ...overrides,
   });
 }

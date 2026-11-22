@@ -2,10 +2,13 @@ import type { HistoryContent } from '../history/history';
 import type { SessionTask } from '../store/session-tasks.repository';
 import { blockLine } from './task-block';
 
-/** The last report of the final subagent the deep agent has received. */
+/**
+ * The last finished single `task` given to the final subagent (deep-agents/design-task.md KD-6): how it ended
+ * and its last message.
+ */
 export interface FinalSubagentReport {
   readonly status: 'completed' | 'failed' | 'stopped';
-  /** The report text; a failed or stopped subagent may have none. */
+  /** The subagent's last message; a failed or stopped subagent has none. */
   readonly text: string | null;
 }
 
@@ -17,8 +20,13 @@ export interface EndOfTurnInput {
   readonly pendingChildNotices: number;
   /** `finalSubagent` of the deep agent's snapshot; `null` for every other run. */
   readonly finalSubagent: string | null;
-  /** The last report of `finalSubagent`, if any. */
+  /** The last finished single `task` of `finalSubagent`, if any. */
   readonly finalSubagentReport: FinalSubagentReport | null;
+  /**
+   * The fields the answer must have, named by the `task` call that started this subagent (KD-7): the answer is
+   * then one JSON object with a non-empty string in each; empty — the answer is free text.
+   */
+  readonly answerFields: readonly string[];
   /** The session's tasks still `pending` or `in_progress`, by number; empty for a session without a list. */
   readonly openTasks: readonly SessionTask[];
   /** The text of the model's answer without tool calls. */
@@ -48,10 +56,10 @@ export type EndOfTurn =
  * The outcome of an answer without tool calls (KD-2, «Конец хода», DC-3, DC-4, Invariant 4;
  * design-runtime.md KD-5): a root session waits; an agent with unfinished children or an undelivered
  * child notice waits; an agent with open tasks gets a notice naming them (design-task-list.md KD-4),
- * and the final subagent rule is not checked; with a final subagent, only its `completed` report
- * ends the deep agent and becomes its report; otherwise the answer text is the report — unless the answer
- * was cut off at the length limit (agent-harness KD-3, DC-1): then a notice asks for it again, since a cut
- * text is no report.
+ * and the final subagent rule is not checked; with a final subagent, only the `completed` answer of its last
+ * single `task` ends the deep agent and becomes its report (deep-agents/design-task.md KD-6); otherwise the
+ * answer text is the report — unless the answer was cut off at the length limit (agent-harness KD-3, DC-1),
+ * or misses or adds a field of the answer the `task` call named (KD-7): then a notice asks for it again.
  */
 export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
   if (input.isRoot) return { kind: 'wait' };
@@ -64,7 +72,9 @@ export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
     };
   }
   if (input.finalSubagent === null) {
-    return input.cutOff ? { kind: 'notice', text: CUT_OFF_NOTICE } : { kind: 'complete', report: input.text };
+    if (input.cutOff) return { kind: 'notice', text: CUT_OFF_NOTICE };
+    const fieldsNotice = answerFieldsNotice(input.text, input.answerFields);
+    return fieldsNotice === null ? { kind: 'complete', report: input.text } : { kind: 'notice', text: fieldsNotice };
   }
   const report = input.finalSubagentReport;
   if (report?.status === 'completed') return { kind: 'complete', report: report.text ?? '' };
@@ -106,7 +116,34 @@ function openTasksNotice(tasks: readonly SessionTask[]): string {
 function finishRefusal(finalSubagent: string, report: FinalSubagentReport | null): string {
   const why =
     report === null
-      ? `there is no report of subagent "${finalSubagent}" yet`
-      : `the last run of subagent "${finalSubagent}" ended as ${report.status}`;
-  return `You cannot finish: ${why}. The deep agent ends only with a completed report of subagent "${finalSubagent}"; start it with start_agent.`;
+      ? `there is no answer of subagent "${finalSubagent}" yet`
+      : `the last task of subagent "${finalSubagent}" ended as ${report.status}`;
+  return `You cannot finish: ${why}. The deep agent ends only with a completed answer of subagent "${finalSubagent}"; give it a single task with the task tool.`;
+}
+
+/**
+ * The notice of an answer that is not one JSON object with a non-empty string in each named field and no other
+ * (KD-7); `null` — the answer fits, or no fields are named.
+ */
+function answerFieldsNotice(text: string, fields: readonly string[]): string | null {
+  if (fields.length === 0) return null;
+  const rule = `Your answer must be one JSON object and nothing else, with a non-empty string in each of these fields: ${fields.join(', ')}.`;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.trim());
+  } catch {
+    return `${rule} Your answer is not JSON.`;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return `${rule} Your answer is not a JSON object.`;
+  }
+  const values = parsed as Record<string, unknown>;
+  const missing = fields.filter((field) => typeof values[field] !== 'string' || (values[field] as string).trim() === '');
+  const extra = Object.keys(values).filter((key) => !fields.includes(key));
+  if (missing.length === 0 && extra.length === 0) return null;
+  return [
+    rule,
+    ...(missing.length === 0 ? [] : [`Missing or empty: ${missing.join(', ')}.`]),
+    ...(extra.length === 0 ? [] : [`Not asked for: ${extra.join(', ')}.`]),
+  ].join(' ');
 }

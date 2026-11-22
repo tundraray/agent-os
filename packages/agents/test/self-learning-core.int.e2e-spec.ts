@@ -126,6 +126,7 @@ import {
   historyOf,
   ledgerRowsOf,
   START_TEST_DEEP_AGENT,
+  taskCall,
   TEST_AUTHOR_ID,
   TEST_EMBEDDING_MODEL_A,
   TEST_EMBEDDING_MODEL_B,
@@ -276,14 +277,14 @@ interface DeepAgentTurn {
   readonly answer?: ScriptedAnswer | ScriptedModelError;
 }
 
-function promptOf(args: unknown): unknown {
-  return typeof args === 'object' && args !== null && 'prompt' in args ? args.prompt : undefined;
+function descriptionOf(args: unknown): unknown {
+  return typeof args === 'object' && args !== null && 'description' in args ? args.description : undefined;
 }
 
 /**
- * A deep agent decided by its input, so a stop, a continuation or a report arriving with another message
- * does not shift its answers: the latest turn it was given starts its scout once, waits for the scout's
- * report, then answers.
+ * A deep agent decided by its input, so a stop, a continuation or a message arriving with the scout's result
+ * does not shift its answers: the latest turn it was given gives its scout one `task`, and the deep agent is
+ * woken once the scout has finished (deep-agents/design-task.md KD-4), then answers.
  */
 function deepAgentReplies(turns: readonly DeepAgentTurn[]): ReplyFromInput {
   return (messages) => {
@@ -293,19 +294,16 @@ function deepAgentReplies(turns: readonly DeepAgentTurn[]): ReplyFromInput {
     const answer = turn.answer ?? { text: `Answer to: ${turn.text}` };
     const { scout } = turn;
     if (scout === null) return answer;
-    const started = messages.some(
+    const delegated = messages.some(
       (message) =>
         message.role === 'assistant' &&
-        message.toolCalls.some((call) => call.toolName === 'start_agent' && promptOf(call.args) === scout),
+        message.toolCalls.some((call) => call.toolName === 'task' && descriptionOf(call.args) === scout),
     );
-    if (!started) {
-      return { calls: [{ tool: 'start_agent', args: { agent: SCOUT.name, description: scout, prompt: scout } }] };
-    }
-    return said.some((text) => text.includes(reportOf(scout))) ? answer : { text: 'Waiting for the scout.' };
+    return delegated ? answer : { calls: [taskCall({ subagentType: SCOUT.name, description: scout })] };
   };
 }
 
-/** The first child an agent started (`childTaskId` of a `start_agent` result), once it exists. */
+/** The first child an agent started (`childTaskId` of a `start_test_deep_agent` or a single `task` result), once it exists. */
 async function startedChild(harness: AgentsHarness, agentId: string): Promise<string> {
   const rows = await waitFor(
     () => toolCallRowsOf(harness.db, agentId),

@@ -47,6 +47,7 @@ const deepAgentSnapshot: DeepAgentSnapshot = {
     subagents: [subagent('gather', 2), subagent('check', 1), subagent('answer', 1)],
     finalSubagent: 'answer',
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   },
 };
@@ -90,7 +91,7 @@ const briefTask: AgentHistoryEntry = {
   },
 };
 
-function startAgentResult(seq: number, agent: string, refusalReason: 'run_limit' | 'not_allowed' | null) {
+function taskResult(seq: number, subagentType: string, refusalReason: 'run_limit' | 'not_allowed' | null) {
   const at = new Date(Date.UTC(2026, 10, 14, 10, seq));
   return {
     seq,
@@ -98,9 +99,9 @@ function startAgentResult(seq: number, agent: string, refusalReason: 'run_limit'
     createdAt: at,
     content: {
       callId: `call-${seq}`,
-      tool: 'start_agent',
+      tool: 'task',
       server: null,
-      args: { description: 'step', agent, prompt: 'Do it.' },
+      args: { subagentType, description: 'Do it.' },
       outcome: refusalReason === null ? 'success' : 'refused',
       refusalReason,
       refusalDetail: null,
@@ -113,10 +114,10 @@ function startAgentResult(seq: number, agent: string, refusalReason: 'run_limit'
 
 const deepAgentHistory: AgentHistoryEntry[] = [
   briefTask,
-  startAgentResult(2, 'gather', null),
-  startAgentResult(3, 'answer', null),
-  startAgentResult(4, 'answer', 'run_limit'),
-  startAgentResult(5, 'stranger', 'not_allowed'),
+  taskResult(2, 'gather', null),
+  taskResult(3, 'answer', null),
+  taskResult(4, 'answer', 'run_limit'),
+  taskResult(5, 'stranger', 'not_allowed'),
 ];
 
 function sessionsOver(

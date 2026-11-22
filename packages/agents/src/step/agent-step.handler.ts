@@ -9,7 +9,7 @@ import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/
 
 import type { AgentsEmbeddings } from '../embeddings/embeddings';
 import { embedQuestion } from '../knowledge/question-vector';
-import { type CallState, foldCalls } from '../history/call-state';
+import { type CallState, foldCalls, isDelegated } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import { callRecords, interruptedResults } from '../store/call-records.repository';
 import { history, type NewHistoryEntry } from '../store/history.repository';
@@ -214,7 +214,9 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
       return interruptWait(ctx, prelude, startedAt);
     }
 
-    const toRun = closesOpen(plan) ? [] : plan.open;
+    // A stop or an interrupt closes the open calls, but a sent `task` call only its tracker's outcomes close
+    // (deep-agents/design-task.md KD-3): the tool step closes it with the `tasks_finished` this step delivers.
+    const toRun = closesOpen(plan) ? plan.open.filter(isDelegated) : plan.open;
     if (toRun.length > 0) {
       return withPrelude(ctx, await deps.toolStep(ctx, session, toRun, calls), prelude);
     }

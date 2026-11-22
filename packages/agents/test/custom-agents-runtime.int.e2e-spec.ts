@@ -36,7 +36,6 @@ import {
   createScriptedModel,
   inputLines,
   type RecordedModelCall,
-  type ReplyFromInput,
   type ScriptedModel,
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
@@ -56,6 +55,7 @@ import {
   ledgerRowsOf,
   START_TEST_DEEP_AGENT,
   setRootRecord,
+  taskCall,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
   TEST_MODEL_DEFAULT,
@@ -150,24 +150,30 @@ function notCurrentLogsOf(harness: AgentsHarness, taskId: string): LogRecord[] {
 const TEAM_NAME = 'incident review';
 
 /**
- * The deep agent's turns, counted call by call. First run: the start of a, b and c (1), the text on its own
- * results (2), a wake per report, the last one being the answer (3-5). Second run: start a, text, the report.
+ * The deep agent's turns, counted call by call. First run: the task calls of a, b and c (1), the answer on their
+ * results (2). Second run: the task call of a, the answer.
  */
 const TEAM_MAX_TURNS = 5;
 
 /** The finishing rule of a deep agent without `finalSubagent` (DC-7). */
 const WRITES_ANSWER_ITSELF = 'When the work is done, write the answer yourself as plain text without tool calls.';
 
-/** The team as the deep agent's `start_agent` lists it: «имя (up to N runs): описание». */
+/** The line of the built-in subagent every deep agent's `task` names (FR-20). */
+const GENERAL_PURPOSE_LINE =
+  'general-purpose (up to 20 runs): A subagent with the deep agent’s own model and tools: call it for a separate piece of work no other subagent fits.';
+
+/** The team as the deep agent's `task` lists it: «имя (up to N runs): описание», then `general-purpose`. */
 const TEAM_V1_LINES = [
   'a (up to 1 runs): Reads the incident timeline (version 1).',
   'b (up to 2 runs): Checks the payment logs.',
   'c (up to 1 runs): Writes the customer note.',
+  GENERAL_PURPOSE_LINE,
 ];
 const TEAM_V2_LINES = [
   'a (up to 1 runs): Reads the incident timeline and the deploy log (version 2).',
   'b (up to 2 runs): Checks the payment logs.',
   'c (up to 1 runs): Writes the customer note.',
+  GENERAL_PURPOSE_LINE,
 ];
 
 /** Version 1: three subagents with a description each and `maxRuns` 1, 2 and 1, no `finalSubagent`. */
@@ -194,6 +200,7 @@ function teamV1(): DeepAgentContent {
     ],
     finalSubagent: null,
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   };
 }
@@ -226,23 +233,12 @@ function promptOf(call: RecordedModelCall | undefined): string {
   return (call?.instructions ?? '').split('\n\n')[0] ?? '';
 }
 
-/** The lines of whom `start_agent` may start, as the model reads them. */
+/** The subagents `task` names, as the model reads them. */
 function teamLinesOf(call: RecordedModelCall | undefined): string[] {
-  const lines = (call?.toolDescriptions.start_agent ?? '').split('\n');
-  return lines.slice(lines.indexOf('Agents you may start:') + 1).map((line) => line.replace(/^- /, ''));
-}
-
-/** Whether a recorded input holds a report of every child with these descriptions (`provider-messages.ts`). */
-function allReported(messages: readonly AgentTurnMessage[], descriptions: readonly string[]): boolean {
-  const reports = messages.flatMap((message) =>
-    message.role === 'user' && message.content.startsWith('<data source="child agent report"') ? [message.content] : [],
-  );
-  return descriptions.every((description) => reports.some((report) => report.includes(description)));
-}
-
-/** A deep agent that writes `answer` once every child it started has reported, and a short text before that. */
-function answerWhenReported(descriptions: readonly string[], answer: string): ReplyFromInput {
-  return (messages) => ({ text: allReported(messages, descriptions) ? answer : 'Waiting for the team.' });
+  const lines = (call?.toolDescriptions.task ?? '').split('\n');
+  return lines
+    .slice(lines.indexOf('Subagents you may call (subagentType):') + 1)
+    .map((line) => line.replace(/^- /, ''));
 }
 
 /** A conversation of the owner whose first answer starts the deep agent record on `task`; returns once the deep agent exists. */
@@ -492,6 +488,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         ],
         finalSubagent: null,
         taskList: true,
+        listDelegation: true,
         selfLearning: false,
       },
     });
@@ -520,7 +517,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     );
     model.script(
       { task: 'Coordinate the plan' },
-      [{ calls: [startAgent({ agent: 'planner', description: 'planner', prompt: 'Plan the work' })] }],
+      [{ calls: [taskCall({ subagentType: 'planner', description: 'Plan the work' })] }],
       { thereafter: { text: 'deep agent holds', latch: deepAgentHeld } },
     );
     const planner = model.script({ task: 'Plan the work' }, [
@@ -773,14 +770,15 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       [
         {
           calls: [
-            startAgent({ agent: 'a', description: 'subagent a', prompt: 'Read the timeline (run one).' }),
-            startAgent({ agent: 'b', description: 'subagent b', prompt: 'Check the payment logs (run one).' }),
-            startAgent({ agent: 'c', description: 'subagent c', prompt: 'Write the customer note (run one).' }),
+            taskCall({ subagentType: 'a', description: 'Read the timeline (run one).' }),
+            taskCall({ subagentType: 'b', description: 'Check the payment logs (run one).' }),
+            taskCall({ subagentType: 'c', description: 'Write the customer note (run one).' }),
           ],
           latch: held,
         },
       ],
-      { thereafter: answerWhenReported(['subagent a', 'subagent b', 'subagent c'], FIRST_ANSWER) },
+      // The three task calls wake the deep agent once, with all three answers (deep-agents/design-task.md KD-4).
+      { thereafter: { text: FIRST_ANSWER } },
     );
     const subagentA = model.script({ task: 'Read the timeline (run one).' }, [{ text: 'The timeline is read.' }]);
     const subagentB = model.script({ task: 'Check the payment logs (run one).' }, [{ text: 'The logs are checked.' }]);
@@ -855,8 +853,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       // When: Борис starts the deep agent again
       const secondRun = model.script(
         { task: SECOND_RUN_TASK },
-        [{ calls: [startAgent({ agent: 'a', description: 'subagent a', prompt: 'Read the timeline (run two).' })] }],
-        { thereafter: answerWhenReported(['subagent a'], SECOND_ANSWER) },
+        [{ calls: [taskCall({ subagentType: 'a', description: 'Read the timeline (run two).' })] }],
+        { thereafter: { text: SECOND_ANSWER } },
       );
       const subagentASecond = model.script({ task: 'Read the timeline (run two).' }, [{ text: 'The timeline is read again.' }]);
       const second = await startDeepAgentRun(harness, model, boris, deepAgentId, SECOND_RUN_TASK);

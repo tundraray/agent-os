@@ -29,6 +29,7 @@ import type {
   AgentTurnModelClient,
   StreamTurnOptions,
 } from './model/mastra-turn';
+import type { Delegations } from './tools/builtin/task-delegation';
 
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
@@ -773,3 +774,19 @@ export async function toolCallRowsOf(db: Database, agentId: string): Promise<Too
     };
   });
 }
+
+/** `Delegations` of a step spec no `task` call reaches: every method throws, so a stray call fails the spec. */
+export const NO_DELEGATIONS: Delegations = {
+  decide: async () => {
+    throw new Error('no task call in this spec');
+  },
+  open: async () => {
+    throw new Error('no task call in this spec');
+  },
+  closings: async () => {
+    throw new Error('no task call in this spec');
+  },
+  close: async () => {
+    throw new Error('no task call in this spec');
+  },
+};

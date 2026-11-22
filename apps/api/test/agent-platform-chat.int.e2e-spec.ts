@@ -114,7 +114,7 @@ const DEEP_RESEARCH_ORIGIN = {
   builtinKey: DEEP_RESEARCH.builtinKey,
   subagent: null,
 } as const;
-/** Subagents of the built-in research deep agent, which it starts by name. */
+/** Subagents of the built-in research deep agent, which it gives work to by name with `task`. */
 const PLAN_STEP = 'deep-research-plan';
 const ANSWER_STEP = 'deep-research-answer';
 const START_AGENT = 'start_agent';
@@ -281,7 +281,17 @@ function untilFixtureCall(
   );
 }
 
-/** A `start_agent` call of a scripted answer: a record id, a subagent's name or {@link FORK}. */
+/** A `task` call of the research deep agent: one assignment to its subagent. */
+function delegate(subagentType: string, description: string): ScriptedToolCall {
+  return { tool: 'task', args: { subagentType, description } };
+}
+
+/** A subagent's one `task` entry: the question of the deep agent's brief as its labelled line, then the assignment. */
+function subagentTask(question: string, description: string): string {
+  return `Question: ${question}\n\n${description}`;
+}
+
+/** A `start_agent` call of a scripted answer: a record id or {@link FORK}. */
 function startAgent(
   description: string,
   prompt: string,
@@ -1536,15 +1546,15 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(question) },
         [
-          { calls: [startAgent('B plan', planTask, PLAN_STEP)] },
-          { calls: [startAgent('B answer', answerTask, ANSWER_STEP)] },
+          { calls: [delegate(PLAN_STEP, planTask)] },
+          { calls: [delegate(ANSWER_STEP, answerTask)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );
-      harness.model.script({ task: planTask }, [], {
+      harness.model.script({ task: subagentTask(question, planTask) }, [], {
         thereafter: { text: '1. logs' },
       });
-      harness.model.script({ task: answerTask }, [], {
+      harness.model.script({ task: subagentTask(question, answerTask) }, [], {
         thereafter: { text: 'The answer.' },
       });
       try {
@@ -2001,11 +2011,11 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(corrected) },
         [
-          { calls: [startAgent('D answer', answerTask, ANSWER_STEP)] },
+          { calls: [delegate(ANSWER_STEP, answerTask)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );
-      harness.model.script({ task: answerTask }, [], {
+      harness.model.script({ task: subagentTask(corrected, answerTask) }, [], {
         thereafter: { text: 'The answer.' },
       });
       const rejectedChat = harness.model.script(
@@ -2703,11 +2713,11 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(aQuestion) },
         [
-          { calls: [startAgent('A answer', answerTask, ANSWER_STEP)] },
+          { calls: [delegate(ANSWER_STEP, answerTask)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );
-      harness.model.script({ task: answerTask }, [], {
+      harness.model.script({ task: subagentTask(aQuestion, answerTask) }, [], {
         thereafter: { text: 'A answer.' },
       });
       harness.model.script(

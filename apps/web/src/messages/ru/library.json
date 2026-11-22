@@ -123,6 +123,12 @@
     "deepAgentSummary": "{model} · {maxTurns, plural, one {до # шага} few {до # шагов} many {до # шагов} other {до # шага}}",
     "finalSubagent": "Кто пишет ответ",
     "agentItself": "Сам агент",
+    "capabilities": "Способности",
+    "capability": {
+      "taskList": "список задач",
+      "listDelegation": "поручение по списку",
+      "none": "нет"
+    },
     "expand": "Показать целиком",
     "collapse": "Свернуть"
   },

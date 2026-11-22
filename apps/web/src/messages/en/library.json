@@ -123,6 +123,12 @@
     "deepAgentSummary": "{model} · {maxTurns, plural, one {up to # step} other {up to # steps}}",
     "finalSubagent": "Who writes the answer",
     "agentItself": "The agent itself",
+    "capabilities": "Capabilities",
+    "capability": {
+      "taskList": "task list",
+      "listDelegation": "list delegation",
+      "none": "none"
+    },
     "expand": "Show all",
     "collapse": "Collapse"
   },

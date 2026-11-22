@@ -35,6 +35,17 @@
   },
   "task_get": { "title": "Задача", "args": { "taskId": "Задача" } },
   "task_list": { "title": "Список задач", "args": {} },
+  "task": {
+    "title": "Поручение",
+    "args": {
+      "subagentType": "Сабагент",
+      "description": "Задание",
+      "instruction": "Инструкция",
+      "items": "Пункты",
+      "answerFields": "Поля ответа",
+      "taskId": "Задача"
+    }
+  },
   "list_records": { "title": "Список библиотеки", "args": {} },
   "read_record": { "title": "Чтение записи", "args": { "recordId": "Запись" } },
   "create_record": {

@@ -7,7 +7,8 @@
 // AC-10.1: "Given пустая база из infra/docker-compose.yml, When применяются миграции, Then схема создана; повторное применение ничего не меняет."
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
 // AC-RT-8: "Домены CHECK статусов в схеме app совпадают со значениями enum в packages/contracts" — the `runtime_*` tables
-// (task status, wait reason, message status, decision status, delivery status from packages/contracts/src/runtime.ts).
+// (task status, wait reason, message status, decision status, delivery status, tracker status from packages/contracts/src/runtime.ts;
+// the tracker table and the `tasks` wait reason come from deep-agents/design-task.md, Data Model).
 // One baseline migration creates the whole schema `app` with its seed rows and the `vector` extension
 // (self-learning/design-core.md, Data Model): after it, only the tables of the Data Models are in `app`.
 // The `agent_*` CHECK domains (history kind, tool call state, outcome, refusal reason) come from
@@ -41,6 +42,7 @@ import {
   TaskStatusSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  TrackerStatusSchema,
   UserStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
@@ -93,6 +95,7 @@ const APP_TABLES = [
   'runtime_inbox',
   'runtime_model_calls',
   'runtime_tasks',
+  'runtime_trackers',
 ];
 
 /** Stand-in for chat data: a `public` table named like Mastra's, with known rows. */
@@ -247,6 +250,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
       expect(domains).toEqual({
         runtime_tasks_status_check: sorted(TaskStatusSchema.options),
         runtime_tasks_wait_reason_check: sorted(WaitReasonSchema.options),
+        runtime_trackers_status_check: sorted(TrackerStatusSchema.options),
         runtime_inbox_status_check: sorted(MessageStatusSchema.options),
         runtime_decisions_status_check: sorted(DecisionStatusSchema.options),
         runtime_event_deliveries_status_check: sorted(

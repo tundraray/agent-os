@@ -8,11 +8,14 @@ import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/
 import { z } from 'zod';
 
 import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate';
-import { type CallState, requestedName } from '../history/call-state';
+import { type CallState, isDelegated, requestedName } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import { type CallEnding, callRecords } from '../store/call-records.repository';
 import type { Session } from '../store/sessions.repository';
 import { toolResults } from '../store/tool-results.repository';
+import { TASK_TOOL } from '../start/snapshot-definition';
+import type { TaskArgs } from '../tools/builtin/delegation-rules';
+import type { Delegations, TaskCall } from '../tools/builtin/task-delegation';
 import { callTargetOf, loggedArgsOf, type ToolRegistry } from '../tools/tool-registry';
 import {
   callerOf,
@@ -76,6 +79,8 @@ export interface ToolStepDeps {
    * record of each MCP call it refuses for its arguments (KD-6).
    */
   readonly audit: AccessAudit;
+  /** The `task` calls of an answer, checked together, and their closing (deep-agents/design-task.md KD-4). */
+  readonly delegations: Delegations;
 }
 
 /**
@@ -141,17 +146,19 @@ async function closeAll(
 
 /**
  * The commit of the step: the closings in call order, each with its `tool_result`, then the
- * `tool_confirmation` of the call an `await_decision` waits on (`awaited`), then the entries of the
- * messages the step delivers (KD-1: a message stands after the results of its answer), and
- * `agents.history_appended` with the last `seq`.
+ * `tool_confirmation` of the call an `await_decision` waits on (`awaited`) or the tracker of the accepted
+ * `task` calls (`opening`), then the entries of the messages the step delivers (KD-1: a message stands after
+ * the results of its answer), and `agents.history_appended` with the last `seq`.
  */
 function commitOf(
   ctx: StepContext,
   closings: readonly Closing[],
   awaited?: CallState,
+  opening?: (tx: RuntimeTx, effects: StepEffects) => Promise<void>,
 ): NonNullable<StepResult['commit']> {
   return async (tx, effects) => {
     const results = await closeAll(closings, tx, effects);
+    await opening?.(tx, effects);
     await appendWithEvent(
       tx,
       effects,
@@ -170,6 +177,8 @@ function commitOf(
 /**
  * Builds the tool step (design-agents.md: KD-1, KD-4, Flow 1, Flow 5, DC-5, DC-6, Invariants 1–3).
  *
+ * - A sent `task` call waits for its tracker (deep-agents/design-task.md KD-4): the step that delivers
+ *   `tasks_finished` closes it with its tasks' outcomes, first, and never as `unknown`.
  * - A call in `sending` — its `tool_sent` intent is written and it has no result — is never sent again:
  *   `unknown` (DC-5, AC-01.2), also when the owner is disabled. A step finds it so only when a step was
  *   lost after the intent; an interrupt or a stop closes it elsewhere.
@@ -185,13 +194,16 @@ function commitOf(
  *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
  *   after it so its result is committed before anything else runs; an `outside` call runs under the
  *   step's signal; an `in_commit` call runs in the commit.
+ * - The `task` calls the check lets through wait until every other call of the answer is closed, then are
+ *   checked together (KD-4): a refusal is closed with its text; the accepted ones open one tracker in the
+ *   commit and the step ends with `wait`, which the runtime turns into waiting for the tracker's tasks.
  * - The signal aborted around a call, or the intent fenced: `continue` without writes — the runtime
  *   rejects the result of a step that is no longer current.
  * - The gate refused the owner at a call's admission (KD-4): that call and the rest do not start; the
  *   calls that ran are closed and the agent fails with `owner_disabled`.
  */
 export function createToolStep(deps: ToolStepDeps): ToolStep {
-  const { registry, runner, access, audit } = deps;
+  const { registry, runner, access, audit, delegations } = deps;
 
   return async function toolStep(ctx, session, openCalls, calls) {
     const stepStartedAt = Date.now();
@@ -282,10 +294,21 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         patch: {},
       });
 
+    // Sent `task` calls wait for their tracker, and this step delivers its `tasks_finished` (KD-4): they close with
+    // the outcomes of their tasks, before the gate, like the calls in `sending` below.
+    const delegated = openCalls.filter(isDelegated);
+    if (delegated.length > 0) {
+      const results = await delegations.closings(
+        { taskId: ctx.taskId, ownerId: ctx.ownerId, logger: ctx.logger },
+        delegated,
+      );
+      closings.push(...results.map((result): Closing => (tx) => delegations.close(tx, ctx.taskId, result)));
+    }
+
     // Before the gate, so a disabled owner's exit closes them too: a call left in `sending` precedes every
     // other open call of its answer.
     for (const call of openCalls) {
-      if (call.state !== sending) continue;
+      if (call.state !== sending || isDelegated(call)) continue;
       // The intent is written and no result came back: the call may have reached its server.
       ctx.logger.warn('tool call in sending without a result closed as unknown', {
         callId: call.callId,
@@ -309,6 +332,56 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
       return ownerDisabled();
     }
     const { allows } = toolAccess;
+    /** The `task` calls the check let through, run together after every other call of the answer (KD-4). */
+    const taskCalls: TaskCall[] = [];
+
+    /**
+     * The `task` calls of the answer, checked together once every other call is closed (KD-4): a refusal is
+     * closed with its text; the accepted ones open one tracker in the commit, and the step waits for it.
+     */
+    const delegate = async (): Promise<StepResult> => {
+      const decision = await delegations.decide(caller, taskCalls);
+      for (const refusal of decision.refused) {
+        const call = taskCalls.find((candidate) => candidate.call.callId === refusal.callId)?.call;
+        if (call === undefined) throw new Error(`Refused task call ${refusal.callId} is not of this step`);
+        ctx.logger.info('task delegation refused', {
+          agentId: ctx.taskId,
+          rootId: ctx.rootId,
+          ownerId: ctx.ownerId,
+          callId: call.callId,
+          args: argsOf(call),
+          reason: refusal.reason,
+          rule: refusal.rule,
+        });
+        closings.push(
+          close(call, { outcome: refused, refusalReason: refusal.reason, resultText: refusal.text }),
+        );
+      }
+      for (const accepted of decision.accepted) {
+        ctx.logger.info('task delegation accepted', {
+          agentId: ctx.taskId,
+          rootId: ctx.rootId,
+          ownerId: ctx.ownerId,
+          callId: accepted.callId,
+          subagent: accepted.subagent,
+          form: accepted.form.kind,
+          tasks: accepted.form.kind === 'single' ? 1 : accepted.form.items.length,
+          answerFields: accepted.answerFields.length,
+          listTask: accepted.listTask,
+        });
+      }
+      if (decision.accepted.length === 0) return done();
+      logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
+        calls: closings.length,
+        delegations: decision.accepted.length,
+      });
+      return {
+        outcome: 'wait',
+        commit: commitOf(ctx, closings, undefined, (tx, effects) =>
+          delegations.open({ tx, effects, caller, accepted: decision.accepted, logger: ctx.logger }),
+        ),
+      };
+    };
 
     const runCalls = async (): Promise<StepResult> => {
       for (const call of openCalls) {
@@ -373,6 +446,12 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
             sameCallIds: repeat.callIds,
           });
           marks.set(call.callId, repeatMarkText(repeat.callIds));
+        }
+
+        if (resolved.tool.kind === 'agent' && resolved.tool.name === TASK_TOOL) {
+          // The schema checked the arguments against the session's `task` (`taskArgsSchema`).
+          taskCalls.push({ call, args: resolved.args as TaskArgs });
+          continue;
         }
 
         if (runner.needsConfirmation(resolved)) {
@@ -479,7 +558,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
       }
 
-      return done();
+      return taskCalls.length > 0 ? delegate() : done();
     };
 
     try {

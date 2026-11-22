@@ -9,16 +9,15 @@ import type { AgentSnapshot } from '../start/snapshot';
 import type { CallState } from '../history/call-state';
 import { createToolStep } from '../step/tool-step';
 import type { Session, SessionInput } from '../store/sessions.repository';
-import { createLibraryDouble } from '../testing';
+import { createLibraryDouble, NO_DELEGATIONS } from '../testing';
 import type { AgentTool, ToolCaller } from './tool';
 import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate';
 import { createToolRegistry, type SessionTool } from './tool-registry';
 import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
-// (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`, the
-// deep agent's team and its `maxRuns`); deep-agents UC-5, AC-02.1, AC-03.2, DC-2, DC-3 (a deep agent
-// starts only its own team, nobody starts a deep agent with start_agent, each refusal says why);
+// (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`);
+// deep-agents DC-3 (nobody starts a deep agent with start_agent, the refusal says why);
 // design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the server–tool pair, one audit record per
 // refusal).
 const OWNER = 'employee-1';
@@ -261,22 +260,6 @@ const ROOT: LaunchSet = {
 /** An agent whose snapshot's `agents` hold one record. */
 const AGENT_SET: LaunchSet = { kind: 'agents', ids: [id(2)] };
 
-/** A deep agent's team: `gather` may run twice, `answer` once. */
-const TEAM: LaunchSet = {
-  kind: 'team',
-  subagents: [
-    { name: 'gather', maxRuns: 2 },
-    { name: 'answer', maxRuns: 1 },
-  ],
-};
-
-/** DC-2: the text of a refusal outside the team names the team. */
-const OUTSIDE_TEAM: Gate = {
-  kind: 'refused',
-  reason: 'not_allowed',
-  text: 'You may start only the subagents of your team, by name: gather, answer.',
-};
-
 /** DC-3: the text of a refusal of a deep agent's record says who starts it. */
 const DEEP_AGENT_RECORD: Gate = {
   kind: 'refused',
@@ -373,24 +356,6 @@ describe('a tool call is refused with its reason or allowed', () => {
     ["a record outside the agent's agents", () => gate(AGENT_SET, agentRecord(3)), { kind: 'refused', reason: 'not_allowed' }],
     ["a record of the agent's agents", () => gate(AGENT_SET, agentRecord(2)), { kind: 'allowed' }],
     ["an agent names a deep agent's record", () => gate(AGENT_SET, deepAgentRecord(6)), DEEP_AGENT_RECORD],
-    [
-      'a deep agent starts a subagent of its team under its maxRuns',
-      () => gate(TEAM, { kind: 'subagent', name: 'gather', startedCount: 1 }),
-      { kind: 'allowed' },
-    ],
-    [
-      'a deep agent starts a subagent that reached its maxRuns',
-      () => gate(TEAM, { kind: 'subagent', name: 'gather', startedCount: 2 }),
-      { kind: 'refused', reason: 'run_limit' },
-    ],
-    [
-      'a deep agent names a subagent outside its team',
-      () => gate(TEAM, { kind: 'subagent', name: 'review', startedCount: 0 }),
-      OUTSIDE_TEAM,
-    ],
-    ["a deep agent names an agent's record", () => gate(TEAM, agentRecord(2)), OUTSIDE_TEAM],
-    ["a deep agent names a deep agent's record", () => gate(TEAM, deepAgentRecord(6)), DEEP_AGENT_RECORD],
-    ['a fork at a deep agent', () => gate(TEAM, { kind: 'fork' }), OUTSIDE_TEAM],
     ['a fork at an agent', () => gate(AGENT_SET, { kind: 'fork' }), { kind: 'allowed' }],
     ['the root starts an agent the chat offers', () => gate(ROOT, agentRecord(2)), { kind: 'allowed' }],
     [
@@ -443,6 +408,7 @@ const OPEN_PURGE: CallState = {
   args: {},
   state: 'requested',
   sentAt: null,
+  delegation: null,
   attempts: 0,
   result: null,
 };
@@ -597,6 +563,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
             audit: async (entry) => {
               audits.push(entry);
             },
+            delegations: NO_DELEGATIONS,
           });
           const result = await step(stepContext(), SESSION, [OPEN_PURGE], [OPEN_PURGE]);
           return result.outcome;

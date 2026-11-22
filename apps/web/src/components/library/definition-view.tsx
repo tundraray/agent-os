@@ -210,6 +210,7 @@ function AgentRows({ content, missing, variant, marks, recordHref, modelNames }:
         <Servers servers={content.servers} missing={missing} />
         <RemovedLine names={marks.removed("servers")} />
       </Row>
+      <CapabilitiesRow taskList={content.taskList} />
       {(content.agents.length > 0 || removedAgents.length > 0) && (
         <Row label={tLibrary("fields.agents")} changed={marks.changed("agents")}>
           {content.agents.length > 0 && <StartableAgents ids={content.agents} recordHref={recordHref} />}
@@ -272,6 +273,16 @@ function Servers({ servers, missing }: { servers: readonly string[]; missing: re
   );
 }
 
+/**
+ * «Способности» (definition-view.md, part 13; deep-agents UXRD MC-27): the record's switched-on capabilities in words
+ * through « · », «нет» when none is on. List delegation is a deep agent's only, so others pass no `listDelegation`.
+ */
+function CapabilitiesRow({ taskList, listDelegation = false }: { taskList: boolean; listDelegation?: boolean }) {
+  const t = useTranslations("library.definition");
+  const names = [...(taskList ? [t("capability.taskList")] : []), ...(listDelegation ? [t("capability.listDelegation")] : [])];
+  return <Row label={t("capabilities")}>{names.length === 0 ? t("capability.none") : names.join(" · ")}</Row>;
+}
+
 type DeepAgentRowsProps = {
   description: string;
   content: DeepAgentContent;
@@ -299,6 +310,7 @@ function DeepAgentRows({ description, content, missingRights, variant, marks, mo
           <Servers servers={content.servers} missing={missingServers(missingRights, null)} />
           <RemovedLine names={marks.removed("servers")} />
         </Row>
+        <CapabilitiesRow taskList={content.taskList} listDelegation={content.listDelegation} />
         <Row label={tLibrary("team.title", { count: content.subagents.length })}>
           <Team content={content} missingRights={missingRights} variant={variant} marks={marks} modelNames={modelNames} />
         </Row>
@@ -389,6 +401,7 @@ function SubagentItem({ subagent, final, missing, details, mark, modelNames }: S
           <Row label={tLibrary("fields.servers")} changed={changedIn("servers")}>
             <Servers servers={subagent.servers} missing={missing} />
           </Row>
+          <CapabilitiesRow taskList={subagent.taskList} />
           <Row label={tLibrary("team.maxRuns")} changed={changedIn("maxRuns")}>
             <span className="tabular-nums">{tLibrary("team.upTo", { count: subagent.maxRuns })}</span>
           </Row>

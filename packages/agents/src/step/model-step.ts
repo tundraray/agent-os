@@ -17,6 +17,7 @@ import {
   type StepEffects,
   type StepResult,
 } from '@agent-os/runtime';
+import { z } from 'zod';
 
 import type { AccessAudit } from '../access-gate';
 import type { HistoryEntry } from '../history/history';
@@ -54,6 +55,9 @@ const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
+
+/** The `complete` result of an agent task: its report. */
+const ReportSchema = z.object({ report: z.string() });
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
 const FAILURE_REASONS = AgentFailureReasonSchema.enum;
@@ -307,6 +311,8 @@ export interface ModelStepDeps {
   readonly tasks: Pick<Runtime['tasks'], 'listTree'>;
   /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
   readonly inbox: Pick<Runtime['inbox'], 'listPending'>;
+  /** The outcomes of a deep agent's subagent tasks: the final subagent's answer is read there (deep-agents KD-6). */
+  readonly trackers: Pick<Runtime['trackers'], 'list'>;
   /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
   readonly vectorStore: KnowledgeVectorStore;
 }
@@ -342,28 +348,21 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
   const { database, registry, modelClient, audit, vectorStore } = deps;
 
   /**
-   * The last report of the final subagent among the deep agent's child reports, the delivered ones
-   * included (DC-4; design-runtime.md KD-5): a child is that subagent by the `subagent` of its origin.
+   * How the last finished single `task` of the final subagent ended, and its last message (DC-4; deep-agents
+   * design-task.md KD-6): its call's result names the subagent's task, whose outcome the tracker keeps. Read by
+   * kind, not from the step's entries: the result may stand before the last compaction.
    */
   async function finalSubagentReport(
-    taskId: string,
+    ctx: StepContext,
     finalSubagent: string,
-    delivered: readonly NewHistoryEntry[],
   ): Promise<FinalSubagentReport | null> {
-    // Read by kind, not from the step's entries: a report may stand before the last compaction.
-    const reports = await history.childReports(database, taskId);
-    for (const entry of delivered) {
-      if (entry.kind === 'child_report') reports.push(entry.content);
-    }
-    if (reports.length === 0) return null;
-    const children = await sessions.getMany(
-      database,
-      reports.map((report) => report.agentId),
-    );
-    const last = reports
-      .reverse()
-      .find((report) => children.get(report.agentId)?.origin?.subagent === finalSubagent);
-    return last === undefined ? null : { status: last.status, text: last.text };
+    const childTaskId = await history.lastSingleTask(database, ctx.taskId, finalSubagent);
+    if (childTaskId === undefined) return null;
+    const trackers = await deps.trackers.list(ctx.taskId, ctx.ownerId);
+    const task = trackers.flatMap((tracker) => tracker.tasks).find((candidate) => candidate.taskId === childTaskId);
+    if (task === undefined) throw new Error(`Subagent task ${childTaskId} of agent ${ctx.taskId} is in no tracker`);
+    if (task.status === 'completed') return { status: 'completed', text: ReportSchema.parse(task.result).report };
+    return { status: task.status === 'failed' ? 'failed' : 'stopped', text: null };
   }
 
   /** Children not finished yet, and `child_finished` notices pending beyond this step's messages (Notes 6). */
@@ -383,7 +382,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
   return async function modelStep(ctx, session, own, prelude) {
     const startedAt = Date.now();
     // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
-    const { snapshot } = sessionInputOf(ctx.input);
+    const { snapshot, answerFields: askedFields } = sessionInputOf(ctx.input);
     const definition = snapshotDefinition(snapshot);
     const isRoot = ctx.parentId === null;
     const turns = rootTurnReset({
@@ -524,9 +523,8 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       pendingChildNotices: inFlight.pending,
       finalSubagent,
       finalSubagentReport:
-        isRoot || finalSubagent === null
-          ? null
-          : await finalSubagentReport(ctx.taskId, finalSubagent, delivered),
+        isRoot || finalSubagent === null ? null : await finalSubagentReport(ctx, finalSubagent),
+      answerFields: (askedFields ?? []).map((field) => field.name),
       openTasks: tasks.filter((task) => OPEN_TASK_STATUSES.includes(task.status)),
       text: result.text,
       cutOff: result.cutOff,
@@ -553,7 +551,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
           });
         }
         if (ending.missingReport !== undefined) {
-          // Likewise each answer refused for lacking the final subagent's completed report.
+          // Likewise each answer refused for lacking the final subagent's completed answer.
           ctx.logger.info('deep agent reminded of the final subagent report', {
             agentId: ctx.taskId,
             rootId: ctx.rootId,

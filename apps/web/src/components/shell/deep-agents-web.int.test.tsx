@@ -9,7 +9,7 @@
 //   mounts ChatRuntimeProvider + ChatShell + Toaster with mocked next/navigation; MSW server from '@/test/msw-server'
 //   (`onUnhandledRequest: 'error'`); fixtures of '@/test/fixtures', built to pass the schemas of `packages/contracts`.
 // Mock boundary: network (MSW), next/navigation, the event source of LiveStore. Real: the shell, LiveStore, FeedStore, toFeed,
-//   `changedFields`, DecisionCard, DefinitionView, RecordPage, DeepAgentCard, the panel «Схема», RunTaskList and AgentScreen. Do NOT mock
+//   `changedFields`, DecisionCard, DefinitionView, RecordPage, DeepAgentCard, the panel «Схема», SessionTaskList and AgentScreen. Do NOT mock
 //   any of them.
 //
 // Server-side proofs are NOT repeated here: the save's version check and the refusal's path and rule are the API tests of the part
@@ -22,7 +22,7 @@ import {
   type DecisionResponse,
   type LibraryChoices,
   type MyRoleList,
-  type RunTaskView,
+  type SessionTaskView,
   type Subagent,
 } from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
@@ -36,12 +36,13 @@ import {
   deepAgentContent,
   deepAgentOrigin,
   deepAgentRunView,
+  delegation,
   fixtureId,
   fixtureTime,
   historyEntry,
   recordConfirmation,
   recordDetail,
-  runTask,
+  sessionTask,
   threadList,
   threadSummary,
 } from '@/test/fixtures';
@@ -258,11 +259,11 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
   // Catches: a tab that shows a deep agent's list instead of the conversation's, a list read once and never again, and a panel that does not
   //   open on the first task or steals focus - no unit test sees the live note, the shell and the panel together.
   // @category: core-functionality
-  // @dependency: ChatShell, SchemaAutoOpen, SchemaPanel, RunTaskList, FeedStore, LiveStore, MSW, next/navigation mock
+  // @dependency: ChatShell, SchemaAutoOpen, SchemaPanel, SessionTaskList, FeedStore, LiveStore, MSW, next/navigation mock
   // @complexity: medium
   it('WEB-1: the panel opens on the first tasks of the conversation and its tab «Задачи» follows them after each `tree` note', async () => {
     // Arrange: the conversation «a» (root «root») with no task; a deep agent it started keeps a list of its own
-    let tasks: RunTaskView[] = [];
+    let tasks: SessionTaskView[] = [];
     const thread = threadSummary({ id: 'a', title: 'Релизы и инциденты' });
     const view: ConversationView = conversationView({
       thread,
@@ -277,9 +278,12 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
         return HttpResponse.json({ ...view, entries: view.entries.filter((entry) => entry.seq > afterSeq) });
       }),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/run`, () => HttpResponse.json(deepAgentRunView({ origin: deepOrigin() }))),
-      http.get(`${API}/api/agents/root/tasks`, () => HttpResponse.json({ tasks })),
+      http.get(`${API}/api/agents/root/tasks`, () => HttpResponse.json({ tasks, delegations: [] })),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/tasks`, () =>
-        HttpResponse.json({ tasks: [runTask({ id: 1, subject: 'Собрать логи за ночь', status: 'in_progress' })] }),
+        HttpResponse.json({
+          tasks: [sessionTask({ id: 1, subject: 'Собрать логи за ночь', status: 'in_progress' })],
+          delegations: [],
+        }),
       ),
     );
     const { live } = renderWithRuntime({ pathname: '/chat/a', media: DESKTOP });
@@ -288,9 +292,9 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
 
     // Act 1: the chat created three tasks and started the second
     tasks = [
-      runTask({ id: 1, subject: 'Найти релизы за год', status: 'completed' }),
-      runTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'in_progress', activeForm: 'Сравниваю релизы с инцидентами' }),
-      runTask({ id: 3, subject: 'Написать сводку', blockedBy: [2] }),
+      sessionTask({ id: 1, subject: 'Найти релизы за год', status: 'completed' }),
+      sessionTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'in_progress', activeForm: 'Сравниваю релизы с инцидентами' }),
+      sessionTask({ id: 3, subject: 'Написать сводку', blockedBy: [2] }),
     ];
     live.emit('tree', { threadId: 'a' });
 
@@ -311,8 +315,8 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     // Act 2: task 2 is done, task 3 is in progress
     tasks = [
       tasks[0],
-      runTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'completed' }),
-      runTask({ id: 3, subject: 'Написать сводку', status: 'in_progress', activeForm: 'Пишу сводку', blockedBy: [2] }),
+      sessionTask({ id: 2, subject: 'Сравнить с инцидентами', status: 'completed' }),
+      sessionTask({ id: 3, subject: 'Написать сводку', status: 'in_progress', activeForm: 'Пишу сводку', blockedBy: [2] }),
     ];
     live.emit('tree', { threadId: 'a' });
 
@@ -327,34 +331,54 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     expect(within(panel).getByText('В работе · Пишу сводку')).toBeInTheDocument();
   });
 
-  // AC: AC-04.1 "Сотрудник видит план глубокого агента на его странице" (вид); UXRD DA-04 "Выбранная вкладка живёт в адресе"
+  // AC: AC-04.1 "Сотрудник видит план глубокого агента на его странице" (вид); AC-23.3 "Сотрудник видит поручения глубокого агента"
+  //   (вид); UXRD DA-04 "Выбранная вкладка живёт в адресе", DA-09, MC-10, MC-11
   // Behavior: Аня opens the address of the deep agent's tab «Задачи» -> the page shows that tab chosen, its tasks with their statuses
-  //   in place of the feed, and the composer under it.
-  // Catches: an address whose tab is lost (a link or «Назад» lands on «Ход работы»), and a tab that drops the composer.
+  //   in place of the feed, the composer under it, and under the tasks «Поручения · 3» with the summary: «План» done with the start of
+  //   its answer, «Сбор» failed with its reason, «Сбор» running on task 1 - each row a link to its subagent's page.
+  // Catches: an address whose tab is lost (a link or «Назад» lands on «Ход работы»), a tab that drops the composer, a delegation row
+  //   without its status, subagent, link or task label, and a tab count that adds the delegations to the tasks.
   // @category: core-functionality
-  // @dependency: parseShellRoute, AgentScreen, RunTaskList, Thread, MSW, next/navigation mock
-  // @complexity: low
-  it('WEB-1 (d): the deep agent page opened at its «Задачи» address shows the list under the chosen tab', async () => {
-    // Arrange: the deep agent's page and a list of two tasks
+  // @dependency: parseShellRoute, AgentScreen, SessionTaskList, Thread, MSW, next/navigation mock
+  // @complexity: medium
+  it('WEB-1 (d): the deep agent page opened at its «Задачи» address shows the tasks and the delegations under the chosen tab', async () => {
+    // Arrange: the deep agent's page, a list of two tasks and three delegations
     const page = agentPageView({
       agent: { agentId: DEEP_RUN_ID, name: DEEP_AGENT_NAME, origin: deepOrigin(), status: 'working', threadId: 'a' },
       entries: [historyEntry({ kind: 'task', seq: 1, content: { text: 'Почему падают платежи?' } })],
     });
     const tasks = [
-      runTask({ id: 1, subject: 'Собрать логи за ночь', status: 'completed' }),
-      runTask({ id: 2, subject: 'Найти причину отказов' }),
+      sessionTask({ id: 1, subject: 'Собрать логи за ночь', status: 'completed' }),
+      sessionTask({ id: 2, subject: 'Найти причину отказов' }),
+    ];
+    const delegations = [
+      delegation({
+        agentId: 'sub-plan',
+        subagent: 'План',
+        item: 'Разбить вопрос на направления',
+        status: 'completed',
+        answer: 'Три направления: шлюз, банк, антифрод',
+      }),
+      delegation({
+        agentId: 'sub-guides',
+        subagent: 'Сбор',
+        item: 'Гайды дежурных',
+        status: 'failed',
+        reason: 'исчерпан предел шагов',
+      }),
+      delegation({ agentId: 'sub-logs', subagent: 'Сбор', item: 'Логи шлюза', taskId: 1 }),
     ];
     server.use(
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/history`, () => HttpResponse.json(page)),
       http.get(`${API}/api/agents/${DEEP_RUN_ID}/run`, () => HttpResponse.json(deepAgentRunView({ origin: deepOrigin() }))),
-      http.get(`${API}/api/agents/${DEEP_RUN_ID}/tasks`, () => HttpResponse.json({ tasks })),
+      http.get(`${API}/api/agents/${DEEP_RUN_ID}/tasks`, () => HttpResponse.json({ tasks, delegations })),
     );
 
     // Act
     renderWithRuntime({ pathname: `/agents/${DEEP_RUN_ID}/tasks` });
 
-    // Assert (AC-04.1, DA-04): «Задачи · 2» chosen, the tasks with their statuses, the composer stays
+    // Assert 1 (AC-04.1, DA-04): «Задачи · 2» chosen - the count is the tasks only -, the tasks with their statuses, the composer stays
     const tasksTab = await screen.findByRole('tab', { name: 'Задачи · 2' });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Ход работы' })).toHaveAttribute('aria-selected', 'false');
@@ -363,5 +387,19 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
       'Задача 2: Найти причину отказов, Ожидает',
     ]);
     expect(screen.getByRole('textbox')).toBeInTheDocument();
+
+    // Assert 2 (AC-23.3, DA-09, MC-10, MC-11): the heading, the summary of non-zero statuses, a link per delegation to its subagent
+    expect(screen.getByRole('heading', { name: 'Поручения · 3' })).toBeInTheDocument();
+    expect(screen.getByText('в работе 1 · готово 1 · сбой 1')).toBeInTheDocument();
+    const links = within(screen.getByRole('list', { name: 'Поручения' })).getAllByRole('link');
+    expect(links.map((link) => [link.getAttribute('aria-label'), link.getAttribute('href')])).toEqual([
+      ['План: Разбить вопрос на направления, Готово', '/agents/sub-plan'],
+      ['Сбор: Гайды дежурных, Сбой', '/agents/sub-guides'],
+      ['Сбор: Логи шлюза, В работе', '/agents/sub-logs'],
+    ]);
+    expect(within(links[0]).getByText('Готово · Три направления: шлюз, банк, антифрод')).toBeInTheDocument();
+    expect(within(links[1]).getByText('Сбой · исчерпан предел шагов')).toBeInTheDocument();
+    expect(within(links[2]).getByText('задача 1')).toBeInTheDocument();
+    expect(within(links[0]).queryByText('задача 1')).toBeNull();
   });
 });

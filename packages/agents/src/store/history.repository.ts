@@ -25,7 +25,7 @@ import {
 } from 'drizzle-orm';
 
 import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history';
-import { START_AGENT_TOOL } from '../tools/builtin/start-agent';
+import { TASK_TOOL } from '../start/snapshot-definition';
 import type { StoreReader } from './sessions.repository';
 
 /** An entry to append: its kind, its content and, for a `model_answer`, the token ledger row. */
@@ -82,6 +82,18 @@ function promoted(entry: NewHistoryEntry) {
 }
 
 const isResult = eq(agentMessages.kind, 'tool_result');
+
+/**
+ * The result of a single `task` call that ran: a built-in `task` with `description` (not a list) that ended
+ * with the subagent's answer or its failure — a refusal and an interrupt before it was sent ran nothing.
+ */
+const isSingleTaskResult = and(
+  isResult,
+  sql`${agentMessages.content} ->> 'tool' = ${TASK_TOOL}`,
+  sql`${agentMessages.content} ->> 'server' is null`,
+  sql`${agentMessages.content} -> 'args' -> 'description' is not null`,
+  inArray(sql`${agentMessages.content} ->> 'outcome'`, [ToolOutcomeSchema.enum.success, ToolOutcomeSchema.enum.tool_error]),
+);
 
 /** Calls that finished in (`after`, `through`]; `after` null — no lower bound. */
 export interface FinishedWindow {
@@ -210,16 +222,6 @@ export const history = {
     return rows.map(toEntry);
   },
 
-  /** The reports of the agent's children, in order, whatever was compacted since. */
-  async childReports(reader: StoreReader, taskId: string): Promise<HistoryContent<'child_report'>[]> {
-    const rows = await reader
-      .select(ENTRY_COLUMNS)
-      .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), eq(agentMessages.kind, 'child_report')))
-      .orderBy(asc(agentMessages.seq));
-    return rows.map(toEntry).flatMap((entry) => (entry.kind === 'child_report' ? [entry.content] : []));
-  },
-
   /** The records of the given calls, in order. */
   async callRecords(
     reader: StoreReader,
@@ -253,21 +255,39 @@ export const history = {
     return answer?.seq;
   },
 
-  /** How many runs of the named subagent the deep agent's `start_agent` calls started (KD-5, `run_limit`). */
-  async startedCount(tx: RuntimeTx, taskId: string, subagent: string): Promise<number> {
-    const [row] = await tx
-      .select({ started: count() })
+  /**
+   * How many single assignments each subagent got from the deep agent's `task` calls, whatever was compacted
+   * since: what its `maxRuns` counts (deep-agents/design-task.md KD-6). List items and refused or interrupted
+   * calls do not count.
+   */
+  async singleTaskRuns(reader: StoreReader, taskId: string): Promise<Map<string, number>> {
+    const subagent = sql<string>`${agentMessages.content} -> 'args' ->> 'subagentType'`;
+    const rows = await reader
+      .select({ subagent, runs: count() })
+      .from(agentMessages)
+      .where(and(eq(agentMessages.taskId, taskId), isSingleTaskResult))
+      .groupBy(subagent);
+    return new Map(rows.map((row) => [row.subagent, row.runs]));
+  },
+
+  /**
+   * The subagent task of the last single `task` call to the named subagent that finished (KD-6): the final
+   * subagent's answer is read through it; `undefined` — none yet.
+   */
+  async lastSingleTask(reader: StoreReader, taskId: string, subagent: string): Promise<string | undefined> {
+    const [row] = await reader
+      .select({ childTaskId: resultField('childTaskId') })
       .from(agentMessages)
       .where(
         and(
           eq(agentMessages.taskId, taskId),
-          isResult,
-          sql`${agentMessages.content} ->> 'tool' = ${START_AGENT_TOOL}`,
-          sql`${agentMessages.content} ->> 'outcome' = ${ToolOutcomeSchema.enum.success}`,
-          sql`${agentMessages.content} -> 'args' ->> 'agent' = ${subagent}`,
+          isSingleTaskResult,
+          sql`${agentMessages.content} -> 'args' ->> 'subagentType' = ${subagent}`,
         ),
-      );
-    return row?.started ?? 0;
+      )
+      .orderBy(desc(agentMessages.seq))
+      .limit(1);
+    return row?.childTaskId ?? undefined;
   },
 
   /**

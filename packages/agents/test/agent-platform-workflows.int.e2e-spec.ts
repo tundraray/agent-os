@@ -10,9 +10,8 @@
 // agent with `maxTurns` 6 and one subagent `answer` as `finalSubagent`).
 // Isolation: a unique owner `newUser()` per test, each test reads only its own tree. No sleeps for ordering: latches and rows.
 //
-// Not here: a start outside the team, a fork or a deep agent record at a deep agent (the `gateStart` table in tool-gate.spec.ts and
-// agent-platform-agents INT-1 D); the brief card's content and the refusal order of `start_deep_agent` (start-deep-agent.spec.ts); the run
-// view's mapping (deep-agent-run.spec.ts).
+// Not here: the refusals of `task` (delegation-rules.spec.ts); the brief card's content and the refusal order of `start_deep_agent`
+// (start-deep-agent.spec.ts); the run view's mapping (deep-agent-run.spec.ts).
 //
 // AC -> proving test:
 // - AC-03.1 (the deep agent starts only after the brief is approved, once per request; a decline starts nothing): INT-1
@@ -20,16 +19,14 @@
 // - the run view and its isolation between owners: INT-2 B
 
 import { randomUUID } from 'node:crypto';
-import { type AgentHistoryEntry, AgentsError, type AgentTurnMessage, type AgentView, WAITING_RULE } from '@agent-os/agents';
+import { type AgentHistoryEntry, AgentsError, type AgentView, WAITING_RULE } from '@agent-os/agents';
 import {
   createLatch,
   createScriptedModel,
   inputLines,
   modelError,
-  type ReplyFromInput,
   type Script,
   type ScriptedModel,
-  type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import { createFixtureFiles, type FixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { describe, expect, it } from 'vitest';
@@ -39,6 +36,7 @@ import {
   createAgentsHarness,
   deepAgentsUnder,
   historyOf,
+  taskCall,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
   TEST_MODEL_DEFAULT,
@@ -104,6 +102,7 @@ function deepResearchRecord(): TestDeepAgentRecord {
     ],
     finalSubagent: ANSWER_AGENT,
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   });
 }
@@ -115,13 +114,14 @@ const LIMITS_ANSWER_AGENT = 'answer';
 /** `limits-check`: a cheap deep agent with `maxTurns` 6 and one subagent `answer`, started at most twice, as `finalSubagent`. */
 function limitsRecord(): TestDeepAgentRecord {
   return testDeepAgent(LIMITS_DEEP_AGENT, {
-    prompt: 'Start the subagent answer with start_agent and wait for its report.',
+    prompt: 'Give the subagent answer a task and wait for its answer.',
     servers: [],
     model: TEST_MODEL_DEFAULT,
     maxTurns: 6,
     subagents: [testSubagent(LIMITS_ANSWER_AGENT, { description: 'Writes the answer of the limits check.', maxTurns: 2, maxRuns: 2 })],
     finalSubagent: LIMITS_ANSWER_AGENT,
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   });
 }
@@ -207,51 +207,18 @@ function lastToolOutput(script: Script, call: number): { toolName: string; outpu
   return last.results.map((result) => ({ toolName: result.toolName, output: result.output }));
 }
 
-/** A `start_agent` call of a scripted answer. */
-function startAgent(agent: string, description: string, prompt: string): ScriptedToolCall {
-  return { tool: 'start_agent', args: { agent, description, prompt } };
-}
-
-/** Each `start_agent` result of an agent's history as [agent asked for, outcome, refusal reason], in order. */
-function startAgentResults(entries: readonly AgentHistoryEntry[]): [string, string, string | null][] {
+/** Each `task` result of an agent's history as [subagent, outcome, refusal reason], in order. */
+function taskResults(entries: readonly AgentHistoryEntry[]): [string, string, string | null][] {
   return entries.flatMap((entry): [string, string, string | null][] =>
-    entry.kind === 'tool_result' && entry.content.tool === 'start_agent'
-      ? [[(entry.content.args as { agent: string }).agent, entry.content.outcome, entry.content.refusalReason]]
+    entry.kind === 'tool_result' && entry.content.tool === 'task'
+      ? [[(entry.content.args as { subagentType: string }).subagentType, entry.content.outcome, entry.content.refusalReason]]
       : [],
   );
-}
-
-/** The child reports an agent's history holds, in order. */
-function childReportsOfHistory(entries: readonly AgentHistoryEntry[]) {
-  return entries.flatMap((entry) => (entry.kind === 'child_report' ? [entry.content] : []));
 }
 
 /** The direct children of an agent, in creation order. */
 async function childrenOf(harness: AgentsHarness, rootId: string, parentId: string, ownerId: string): Promise<AgentView[]> {
   return (await harness.sessions.list(rootId, ownerId)).filter((view) => view.parentId === parentId);
-}
-
-/** The `start_agent` calls of the model's own earlier answers in a recorded input. */
-function startCallsIn(messages: readonly AgentTurnMessage[]): { agent: string; description: string }[] {
-  return messages.flatMap((message) =>
-    message.role === 'assistant'
-      ? message.toolCalls.flatMap((call) =>
-          call.toolName === 'start_agent' ? [call.args as { agent: string; description: string }] : [],
-        )
-      : [],
-  );
-}
-
-/** The child reports of a recorded input, as the provider gets them (`provider-messages.ts`). */
-function childReportsIn(messages: readonly AgentTurnMessage[]): string[] {
-  return messages.flatMap((message) =>
-    message.role === 'user' && message.content.startsWith('<data source="child agent report"') ? [message.content] : [],
-  );
-}
-
-/** Whether the newest part of a recorded input is the results of the model's own last calls. */
-function endsWithOwnResults(messages: readonly AgentTurnMessage[]): boolean {
-  return messages[messages.length - 1]?.role === 'tool';
 }
 
 // ----- INT-2: the deep-research run (one per test: each test has its own harness and model) -----
@@ -274,58 +241,19 @@ const GATHER_A_DESCRIPTION = 'Сбор · ошибки авторизации';
 const GATHER_B_DESCRIPTION = 'Сбор · таймауты шлюза';
 const ANSWER_DESCRIPTION = 'Ответ ресерча';
 
-const PLAN_TASK = `Plan the research of this brief: ${RUN_TASK}`;
-const GATHER_A_TASK = `Gather data on the direction "authorization errors" of this brief: ${RUN_TASK}`;
-const GATHER_B_TASK = `Gather data on the direction "gateway timeouts" of this brief: ${RUN_TASK}`;
-const ANSWER_TASK =
-  `Write the answer of this brief: ${RUN_TASK}. Direction "authorization errors": issuer declines rose at 10:40. ` +
-  'Direction "gateway timeouts": no data, the gather agent failed (provider_unavailable).';
+/** A subagent's task under the run: the brief of the deep agent's start, then its description (deep-agents/design-task.md C3). */
+function assignment(description: string): string {
+  return [
+    `Question: ${RUN_BRIEF.question}\nBoundaries: ${RUN_BRIEF.boundaries}\nResult: ${RUN_BRIEF.result}`,
+    description,
+  ].join('\n\n');
+}
 
 const PLAN_REPORT = '1. authorization errors - logs\n2. gateway timeouts - logs';
 const GATHER_A_REPORT = 'Issuer declines rose at 10:40 UTC (get_trace).';
 /** The answer agent's report: the run's report, literally. */
 const ANSWER_TEXT =
   'Card payments failed because issuer declines rose at 10:40 UTC. Gateway timeouts: no data, the gather agent failed.';
-
-/** Whether a recorded input holds the report of the child with this description. */
-function reported(messages: readonly AgentTurnMessage[], description: string): boolean {
-  return childReportsIn(messages).some((report) => report.includes(description));
-}
-
-/**
- * The deep agent of INT-2 answers from its own input: results of its own
- * `start_agent` newest -> a short text (it waits); otherwise by what has started and reported: two plan
- * agents in one answer, then both gather agents in one answer, a text while a gather report is missing,
- * then the answer agent, then a closing text. With `maxTurns` 20 the run takes about eight calls, the
- * texts on its own results being calls 2, 4 and 7.
- */
-const deepResearchCoordinator: ReplyFromInput = (messages) => {
-  if (endsWithOwnResults(messages)) return { text: 'Waiting for the agents I started.' };
-  const started = startCallsIn(messages).map((call) => call.description);
-  if (!started.includes(PLAN_DESCRIPTION)) {
-    return {
-      calls: [
-        startAgent(PLAN_AGENT, PLAN_DESCRIPTION, PLAN_TASK),
-        startAgent(PLAN_AGENT, PLAN_DESCRIPTION, PLAN_TASK),
-      ],
-    };
-  }
-  if (!reported(messages, PLAN_DESCRIPTION)) return { text: 'Waiting for the plan.' };
-  if (!started.includes(GATHER_A_DESCRIPTION)) {
-    return {
-      calls: [
-        startAgent(GATHER_AGENT, GATHER_A_DESCRIPTION, GATHER_A_TASK),
-        startAgent(GATHER_AGENT, GATHER_B_DESCRIPTION, GATHER_B_TASK),
-      ],
-    };
-  }
-  if (!reported(messages, GATHER_A_DESCRIPTION) || !reported(messages, GATHER_B_DESCRIPTION)) {
-    return { text: 'Waiting for the other direction.' };
-  }
-  if (!started.includes(ANSWER_DESCRIPTION)) return { calls: [startAgent(ANSWER_AGENT, ANSWER_DESCRIPTION, ANSWER_TASK)] };
-  if (!reported(messages, ANSWER_DESCRIPTION)) return { text: 'Waiting for the answer.' };
-  return { text: 'The answer is ready.' };
-};
 
 /** A deep-research run started through a confirmed brief. */
 interface DeepResearchRun {
@@ -341,11 +269,31 @@ interface DeepResearchRun {
  */
 async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, ownerId: string): Promise<DeepResearchRun> {
   const deepAgentId = harness.library.add(deepResearchRecord());
-  const coordinatorScript = model.script({ task: RUN_TASK }, [], { thereafter: deepResearchCoordinator });
-  model.script({ task: PLAN_TASK }, [{ text: PLAN_REPORT }]);
-  model.script({ task: GATHER_A_TASK }, [{ calls: [{ tool: GET_TRACE, args: TRACE }] }, { text: GATHER_A_REPORT }]);
-  model.script({ task: GATHER_B_TASK }, [], { thereafter: modelError() });
-  model.script({ task: ANSWER_TASK }, [{ text: ANSWER_TEXT }]);
+  // Each answer of the deep agent wakes it once, with every result of its task calls (deep-agents/design-task.md KD-4):
+  // two plans (the second over the limit), both gather subagents at once, the answer, then the closing text.
+  const coordinatorScript = model.script({ task: RUN_TASK }, [
+    {
+      calls: [
+        taskCall({ subagentType: PLAN_AGENT, description: PLAN_DESCRIPTION }),
+        taskCall({ subagentType: PLAN_AGENT, description: PLAN_DESCRIPTION }),
+      ],
+    },
+    {
+      calls: [
+        taskCall({ subagentType: GATHER_AGENT, description: GATHER_A_DESCRIPTION }),
+        taskCall({ subagentType: GATHER_AGENT, description: GATHER_B_DESCRIPTION }),
+      ],
+    },
+    { calls: [taskCall({ subagentType: ANSWER_AGENT, description: ANSWER_DESCRIPTION })] },
+    { text: 'The answer is ready.' },
+  ]);
+  model.script({ task: assignment(PLAN_DESCRIPTION) }, [{ text: PLAN_REPORT }]);
+  model.script({ task: assignment(GATHER_A_DESCRIPTION) }, [
+    { calls: [{ tool: GET_TRACE, args: TRACE }] },
+    { text: GATHER_A_REPORT },
+  ]);
+  model.script({ task: assignment(GATHER_B_DESCRIPTION) }, [], { thereafter: modelError() });
+  model.script({ task: assignment(ANSWER_DESCRIPTION) }, [{ text: ANSWER_TEXT }]);
   const root = await rootWithWaitingBrief(harness, model, ownerId, {
     task: 'Why did card payments fail yesterday?',
     firstReply: 'Root reply one: which period?',
@@ -368,21 +316,6 @@ async function startDeepResearch(harness: AgentsHarness, model: ScriptedModel, o
 // ----- INT-3 B: the deep agent `limits-check` -----
 
 const ANSWER_RUN_TASK = 'Write the answer of the limits check.';
-
-/**
- * The deep agent of INT-3 B answers from its own input, by its starts of `answer` (s) and the failures of
- * `answer` that came (f): s = 0 -> start `answer`; s > f -> text (the child has not ended); s = f = 1 ->
- * start `answer` again; f = 2 -> text. Expected order: call 1 start, 2 text, 3 start, 4 text, 5 and 6
- * text each met by a notice, then `turn_limit`.
- */
-const limitsCoordinator: ReplyFromInput = (messages) => {
-  const starts = startCallsIn(messages).filter((call) => call.agent === LIMITS_ANSWER_AGENT).length;
-  const failures = childReportsIn(messages).filter((report) => report.includes('ended: failed')).length;
-  if (starts === 0) return { calls: [startAgent(LIMITS_ANSWER_AGENT, 'Answer', ANSWER_RUN_TASK)] };
-  if (starts > failures) return { text: 'Waiting for the answer.' };
-  if (failures === 1) return { calls: [startAgent(LIMITS_ANSWER_AGENT, 'Answer, second run', ANSWER_RUN_TASK)] };
-  return { text: 'I could not get the answer.' };
-};
 
 describe('deep-agents / agent-types - the brief and the deep agent run (in-process runtime + agents, real Postgres, real MCP fixture, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -592,11 +525,11 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
   // Catches: (1) a team, tool or MCP wiring that does not make the plan -> gather -> answer chain run against the real loop; (2) the record's
   //   `maxRuns` not reaching the deep agent through `start_deep_agent` (a second plan allowed); (3) the gather subagents running one after
   //   another; (4) a failed gather subagent that kills the run, hides from the deep agent or leaves it without its answer; (5) the root
-  //   getting the deep agent's own closing text instead of the answer subagent's report; (6) a run view that shows other steps than the deep
+  //   getting the deep agent's own closing text instead of the answer subagent's answer; (6) a run view that shows other steps than the deep
   //   agent's children, loses the brief, or answers for another employee's run or an ordinary agent.
   // Rows: A "run to the report" - the second plan is refused `run_limit`; the second gather subagent fails while the first is still working;
-  //   the failure reaches the deep agent as a report with status and reason and it starts the answer subagent after both ended; one run
-  //   under the root; the root gets one `completed` report whose text is the answer subagent's text, literally.
+  //   the failure reaches the deep agent as the error of its task call, in the one wake with the other gather answer; one run under the root;
+  //   the root gets one `completed` report whose text is the answer subagent's text, literally.
   //   B "reading the run" - `sessions.run` returns the origin, the brief, the deep agent, the team, the four steps in creation order and the
   //   one limit refusal; a foreign owner, an ordinary agent and an unknown id get one and the same `RUN_NOT_FOUND`.
   it(
@@ -641,11 +574,11 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
 
         // The record's count of one plan reached the deep agent: the second plan is refused by the limit, no task for it.
         const coordinatorHistory = await historyOf(harness, run.coordinatorId, ownerId);
-        expect(startAgentResults(coordinatorHistory)).toEqual([
+        expect(taskResults(coordinatorHistory)).toEqual([
           ['deep-research-plan', 'success', null],
           ['deep-research-plan', 'refused', 'run_limit'],
           ['deep-research-gather', 'success', null],
-          ['deep-research-gather', 'success', null],
+          ['deep-research-gather', 'tool_error', null],
           ['deep-research-answer', 'success', null],
         ]);
 
@@ -664,27 +597,12 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           ]),
         );
 
-        // The failure came to the coordinator as a report with status and reason, and its next input held it.
-        expect(
-          childReportsOfHistory(coordinatorHistory).map(({ description, status, reason }) => ({ description, status, reason })),
-        ).toEqual(
-          expect.arrayContaining([{ description: 'Сбор · таймауты шлюза', status: 'failed', reason: 'provider_unavailable' }]),
-        );
-        const inputAfterFailure = run.coordinatorScript.calls.find((call) => reported(call.messages, GATHER_B_DESCRIPTION));
-        expect(childReportsIn(inputAfterFailure?.messages ?? []).find((report) => report.includes(GATHER_B_DESCRIPTION))).toContain(
-          'Agent &quot;Сбор · таймауты шлюза&quot; ended: failed (provider_unavailable).',
-        );
-
-        // The coordinator started the answer agent only after both gather agents had ended.
-        const reportSeq = (description: string) =>
-          coordinatorHistory.find((entry) => entry.kind === 'child_report' && entry.content.description === description)?.seq ?? Infinity;
-        const answerStartSeq = coordinatorHistory.find(
-          (entry) =>
-            entry.kind === 'model_answer' &&
-            entry.content.toolCalls.some((call) => (call.args as { agent?: string }).agent === 'deep-research-answer'),
-        )?.seq;
-        expect(answerStartSeq).toBeGreaterThan(reportSeq('Сбор · ошибки авторизации'));
-        expect(answerStartSeq).toBeGreaterThan(reportSeq('Сбор · таймауты шлюза'));
+        // Both gather subagents woke the coordinator once: its third call holds both results, the failure with its reason.
+        expect(run.coordinatorScript.calls).toHaveLength(4);
+        const gatherResults = lastToolOutput(run.coordinatorScript, 3);
+        expect(gatherResults).toHaveLength(2);
+        expect(String(gatherResults[0]?.output)).toContain(GATHER_A_REPORT);
+        expect(String(gatherResults[1]?.output)).toContain('The subagent failed: provider_unavailable.');
 
         // The root received one notification "completed" whose text is the answer agent's text, literally.
         const rootReports = await waitFor(
@@ -748,7 +666,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             { name: 'deep-research-answer', maxRuns: 2, final: true },
           ],
         });
-        // The run's one start over a limit: the second plan.
+        // The run's one task over a limit: the second plan.
         expect(view.limitRefusals).toEqual([{ subagent: 'deep-research-plan', at: expect.any(Date) }]);
         // Exactly the deep agent's four children in creation order, each named by its subagent; nothing of the root.
         expect(
@@ -832,10 +750,14 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
       const harness = await createDeepAgentsHarness(model);
       const limitsId = harness.library.add(limitsRecord());
       try {
+        // Two tasks to `answer` (each fails), then texts until the turn limit: 2 task calls, 4 texts, then turn_limit.
         const coordinatorScript = model.script(
           { task: '{"question":"Does the run fail without its answer (INT-3 B)?","boundaries":"","result":""}' },
-          [],
-          { thereafter: limitsCoordinator },
+          [
+            { calls: [taskCall({ subagentType: LIMITS_ANSWER_AGENT, description: ANSWER_RUN_TASK })] },
+            { calls: [taskCall({ subagentType: LIMITS_ANSWER_AGENT, description: ANSWER_RUN_TASK })] },
+          ],
+          { thereafter: { text: 'I could not get the answer.' } },
         );
         // The answer agent's model fails on every attempt.
         model.script({ agent: LIMITS_ANSWER_AGENT }, [], { thereafter: modelError() });
@@ -877,8 +799,10 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
 
         // Every text answer after the second failure is met by a notice, not by the end of the session.
         const history = await historyOf(harness, coordinator.agentId, ownerId);
-        const secondFailure = history.filter((entry) => entry.kind === 'child_report')[1];
-        expect(secondFailure).toMatchObject({ content: { status: 'failed', reason: 'provider_unavailable' } });
+        const secondFailure = history.filter((entry) => entry.kind === 'tool_result' && entry.content.tool === 'task')[1];
+        expect(secondFailure).toMatchObject({
+          content: { outcome: 'tool_error', text: 'The subagent failed: provider_unavailable.' },
+        });
         const textsAfter = history.flatMap((entry, index) =>
           entry.kind === 'model_answer' && entry.seq > secondFailure.seq && entry.content.toolCalls.length === 0 ? [index] : [],
         );
@@ -887,7 +811,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           expect(history[index + 1]).toMatchObject({
             kind: 'notice',
             content: {
-              text: 'You cannot finish: the last run of subagent "answer" ended as failed. The deep agent ends only with a completed report of subagent "answer"; start it with start_agent.',
+              text: 'You cannot finish: the last task of subagent "answer" ended as failed. The deep agent ends only with a completed answer of subagent "answer"; give it a single task with the task tool.',
             },
           });
         }

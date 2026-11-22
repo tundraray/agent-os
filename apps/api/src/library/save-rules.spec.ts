@@ -51,6 +51,7 @@ function deepAgent(
       })),
       finalSubagent: null,
       taskList: true,
+      listDelegation: true,
       selfLearning: false,
     },
   };

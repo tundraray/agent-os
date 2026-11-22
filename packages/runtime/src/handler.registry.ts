@@ -18,7 +18,7 @@ export interface StepMessage {
   readonly messageId: string;
   /** Position in the recipient's queue; messages come in this order. */
   readonly seq: number;
-  /** Message kind of the upper layer; `child_finished` is the runtime's own. */
+  /** Message kind of the upper layer; `child_finished` and `tasks_finished` are the runtime's own. */
   readonly kind: string;
   /** Task or employee that sent the message. */
   readonly sender: string;
@@ -75,7 +75,7 @@ export interface StepContext {
 /** A message to put in an inbox, by the rules of `inbox.enqueue`; the owner is the task's. */
 export interface EnqueueMessage {
   readonly recipientId: string;
-  /** Upper-layer kind; `child_finished` is reserved by the runtime. */
+  /** Upper-layer kind; `child_finished` and `tasks_finished` are reserved by the runtime. */
   readonly kind: string;
   /** Task or employee that sends the message. */
   readonly sender: string;
@@ -91,13 +91,35 @@ export interface EnqueuedMessage {
   readonly seq: number;
 }
 
+/** Most tasks one tracker takes (deep-agents/design-task.md, KD-6): a limit of the runtime. */
+export const TRACKER_MAX_TASKS = 100;
+
+/** A child task to create, by the rules of `spawn`. */
+export interface ChildTask {
+  readonly type: string;
+  readonly input: unknown;
+}
+
+/** A tracker opened by a step's commit: its id and the ids of its tasks in the order given. */
+export interface OpenedTracker {
+  readonly trackerId: string;
+  readonly taskIds: readonly string[];
+}
+
 /** Writes of the runtime a step may add to its commit transaction. */
 export interface StepEffects {
   /**
    * Creates a child task in `queued` with the same owner and root and one level deeper, and returns
    * its `taskId` at once.
    */
-  spawn(child: { type: string; input: unknown }): Promise<string>;
+  spawn(child: ChildTask): Promise<string>;
+  /**
+   * Opens a tracker (deep-agents/design-task.md, KD-1): creates from one to
+   * {@link TRACKER_MAX_TASKS} tasks as `spawn` does, each linked to a new tracker. Only with the
+   * outcome `wait` and once per commit: the task then waits for its tasks (`tasks`), and one
+   * `tasks_finished` wakes it when the last of them ends. A broken rule is `invalid_step_result`.
+   */
+  openTracker(tasks: readonly ChildTask[]): Promise<OpenedTracker>;
   /** Puts a message in an inbox by the rules of `inbox.enqueue`. */
   enqueue(message: EnqueueMessage): Promise<EnqueuedMessage>;
   /**
@@ -111,7 +133,10 @@ export interface StepEffects {
 export type StepOutcome =
   /** Another step is needed: the task becomes `queued`. */
   | { outcome: 'continue' }
-  /** Nothing to do until the next message: `waiting` (`messages`), or `queued` when one already waits. */
+  /**
+   * Nothing to do until the next message: `waiting` (`messages`), or `queued` when one already
+   * waits. After `openTracker`: `waiting` (`tasks`) whatever waits.
+   */
   | { outcome: 'wait' }
   /** Opens a decision request: `waiting` (`decision`). */
   | { outcome: 'await_decision'; kind: string; payload: unknown }

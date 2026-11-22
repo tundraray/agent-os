@@ -108,6 +108,7 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
         subagents: [testSubagent('helper')],
         finalSubagent: null,
         taskList: true,
+        listDelegation: true,
         selfLearning: false,
       }),
     );

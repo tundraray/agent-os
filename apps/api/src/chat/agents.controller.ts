@@ -23,7 +23,7 @@ import {
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
-  type RunTaskListView,
+  type AgentTasksView,
   type SendMessageRequest,
   type SendMessageResponse,
   type StopResponse,
@@ -124,7 +124,7 @@ export class AgentsController {
   }
 
   @Get(':agentId/tasks')
-  tasks(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<RunTaskListView> {
+  tasks(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<AgentTasksView> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /agents/:agentId/tasks',

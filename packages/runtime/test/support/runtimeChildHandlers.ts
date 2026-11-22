@@ -1,8 +1,14 @@
+import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHandlers';
+import {
+  HANDLER_ROWS_TABLE,
+  scriptedHandler,
+  TRACKER_OPENED_NOTE,
+  writeHandlerRow,
+} from './testHandlers';
 
 /**
  * Handlers of the E2E-1 tree and of the on-demand measurements, shared by the child process (which
@@ -16,6 +22,7 @@ import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHand
  * - `external` — written by the external-action double, in its own autocommit statement: the action
  *   happened, whatever became of the step.
  * - `children:<n>` — the parent's step row: `n` child notices in that step.
+ * - `tracker:opened` — the tracker owner's first step row, written in the commit that opened it.
  */
 
 /** Variable of the child's environment naming the task types it registers (JSON of {@link ChildTypes}). */
@@ -33,6 +40,13 @@ export interface ChildTypes {
   decider?: string;
   /** A step that holds until its signal aborts (measurements). */
   hold?: string;
+  /**
+   * A tracker owner: opens a tracker of `input.tasks` tasks of type `input.taskType`, then completes
+   * with a {@link TrackerOwnerView} of the step that `tasks_finished` woke.
+   */
+  trackerOwner?: string;
+  /** A task of a tracker: one step that commits a `step:done` row and completes with its item. */
+  trackerTask?: string;
 }
 
 export const STEP_DONE = 'step:done';
@@ -155,6 +169,68 @@ function deciderHandler(type: string): TaskHandler {
   };
 }
 
+const TrackerOwnerInputSchema = z.object({
+  tasks: z.number().int().min(1),
+  taskType: z.string(),
+});
+
+/** What the tracker owner's woken step got: its `tasks_finished` payloads and the other payloads. */
+export interface TrackerOwnerView {
+  tasksFinished: unknown[];
+  messages: unknown[];
+}
+
+/**
+ * UC-3 (deep-agents/design-task.md): the first step opens a tracker of `input.tasks` tasks, one item
+ * each, and waits for them; the step woken by `tasks_finished` completes with what it got.
+ */
+function ownerOfTrackerHandler(type: string): TaskHandler {
+  return {
+    type,
+    inputSchema: TrackerOwnerInputSchema,
+    async step(ctx): Promise<StepResult> {
+      const { tasks, taskType } = TrackerOwnerInputSchema.parse(ctx.input);
+      if (ctx.stepNo === 0) {
+        return {
+          outcome: 'wait',
+          commit: async (tx, effects) => {
+            await effects.openTracker(
+              Array.from({ length: tasks }, (_, item) => ({ type: taskType, input: { item } })),
+            );
+            await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)(tx);
+          },
+        };
+      }
+      const view: TrackerOwnerView = {
+        tasksFinished: ctx.messages
+          .filter((message) => message.kind === TASKS_FINISHED_KIND)
+          .map((message) => message.payload),
+        messages: ctx.messages
+          .filter((message) => message.kind !== TASKS_FINISHED_KIND)
+          .map((message) => message.payload),
+      };
+      const commit = writeHandlerRow(ctx, JSON.stringify(view));
+      return view.tasksFinished.length > 0
+        ? { outcome: 'complete', result: view, commit }
+        : { outcome: 'wait', commit };
+    },
+  };
+}
+
+const TrackerTaskInputSchema = z.object({ item: z.number().int() });
+
+/** A task of the owner's tracker: one committed step that completes with its item. */
+function trackerTaskHandler(type: string): TaskHandler {
+  return {
+    type,
+    inputSchema: TrackerTaskInputSchema,
+    async step(ctx): Promise<StepResult> {
+      const { item } = TrackerTaskInputSchema.parse(ctx.input);
+      return { outcome: 'complete', result: { item }, commit: writeHandlerRow(ctx, STEP_DONE) };
+    },
+  };
+}
+
 /** Holds its step until the signal aborts; the late result is fenced. */
 function holdHandler(type: string): TaskHandler {
   return {
@@ -181,5 +257,7 @@ export function handlersFor(types: ChildTypes, db: Database): TaskHandler[] {
   if (types.reader) handlers.push(readerHandler(types.reader));
   if (types.decider) handlers.push(deciderHandler(types.decider));
   if (types.hold) handlers.push(holdHandler(types.hold));
+  if (types.trackerOwner) handlers.push(ownerOfTrackerHandler(types.trackerOwner));
+  if (types.trackerTask) handlers.push(trackerTaskHandler(types.trackerTask));
   return handlers;
 }

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '@agent-os/db';
 import type {
+  ChildTask,
+  OpenedTracker,
   RuntimeTx,
   StepContext,
   StepDecision,
@@ -193,6 +195,43 @@ export function scriptedHandler(options: ScriptedHandlerOptions): TaskHandler {
       if (scripted.gate) await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
       if (scripted.outcome === 'throw') throw scripted.error;
       return { ...outcomeOf(scripted), commit: writeHandlerRow(ctx, note ?? null) };
+    },
+  };
+}
+
+/** Note of the handler row written by the commit that opened a tracker. */
+export const TRACKER_OPENED_NOTE = 'tracker:opened';
+
+export interface TrackerOwnerOptions {
+  type: string;
+  /** The tasks its first step opens a tracker with. */
+  tasks: readonly ChildTask[];
+  /** Receives the view of every step's context, in call order. */
+  seen?: StepView[];
+  /** Receives the tracker the first step's commit opened. */
+  opened?: OpenedTracker[];
+}
+
+/**
+ * The owner of a tracker (deep-agents/design-task.md, KD-1): its first step opens a tracker with
+ * `tasks` and waits for them; every later step records what it got and waits for messages.
+ */
+export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
+  const { type, tasks, seen, opened } = options;
+  return {
+    type,
+    inputSchema: z.record(z.string(), z.unknown()),
+    async step(ctx: StepContext): Promise<StepResult> {
+      seen?.push(viewOf(ctx));
+      if (ctx.stepNo > 0) return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
+      return {
+        outcome: 'wait',
+        commit: async (tx, effects) => {
+          const tracker = await effects.openTracker(tasks);
+          opened?.push(tracker);
+          await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)(tx);
+        },
+      };
     },
   };
 }

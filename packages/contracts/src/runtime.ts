@@ -8,7 +8,10 @@ import { z } from 'zod';
 /** Max UTF-8 size of a runtime event payload (8 KiB). */
 export const EVENT_PAYLOAD_MAX_BYTES = 8 * 1024;
 
-/** `kind` of the message the runtime puts in a parent's inbox when a child task ends. */
+/**
+ * `kind` of the message the runtime puts in a parent's inbox when a child task ends; a task of an
+ * open tracker reports through `tasks_finished` instead.
+ */
 export const CHILD_FINISHED_KIND = 'child_finished';
 
 /** Status of a task. `completed`, `failed` and `stopped` end it; a message with `revive` queues it again. */
@@ -22,9 +25,40 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-/** Why a `waiting` task waits; null in every other status. */
-export const WaitReasonSchema = z.enum(['messages', 'decision', 'interrupted']);
+/** The statuses that end a task. */
+export const TaskEndStatusSchema = TaskStatusSchema.extract(['completed', 'failed', 'stopped']);
+
+/**
+ * Why a `waiting` task waits; null in every other status. `tasks`: the step opened a tracker, and
+ * only its `tasks_finished` wakes the task (deep-agents/design-task.md, KD-3).
+ */
+export const WaitReasonSchema = z.enum(['messages', 'decision', 'interrupted', 'tasks']);
 export type WaitReason = z.infer<typeof WaitReasonSchema>;
+
+/**
+ * `kind` of the one message the runtime puts in a tracker owner's inbox when the last task of the
+ * tracker ends (deep-agents/design-task.md, KD-2). Never with `revive`.
+ */
+export const TASKS_FINISHED_KIND = 'tasks_finished';
+
+/** Status of a task tracker: `finished` once every task of it ended. */
+export const TrackerStatusSchema = z.enum(['open', 'finished']);
+export type TrackerStatus = z.infer<typeof TrackerStatusSchema>;
+
+/**
+ * Payload of `tasks_finished`: the tracker and the end status of each of its tasks, in the order
+ * the step gave them. The results are read with `trackers.list`, not carried here.
+ */
+export const TasksFinishedPayloadSchema = z.object({
+  trackerId: z.uuid(),
+  tasks: z.array(
+    z.object({
+      taskId: z.uuid(),
+      status: TaskEndStatusSchema,
+    }),
+  ),
+});
+export type TasksFinishedPayload = z.infer<typeof TasksFinishedPayloadSchema>;
 
 /** Status of an inbox message: `delivered` once a committed step received it. */
 export const MessageStatusSchema = z.enum(['pending', 'delivered']);

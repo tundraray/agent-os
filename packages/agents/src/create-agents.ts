@@ -30,6 +30,7 @@ import { createModelStep } from './step/model-step';
 import { createToolStep } from './step/tool-step';
 import { toolResults } from './store/tool-results.repository';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index';
+import { createDelegations } from './tools/builtin/task-delegation';
 import { createRunCodeTool } from './tools/builtin/run-code';
 import { createTaskTools } from './tools/builtin/task-tools';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry';
@@ -152,13 +153,14 @@ export function createAgents(options: AgentsOptions): Agents {
   const startDeps = { library, access, providers, audit };
   // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
   const maskSecrets = createSecretMasker([]);
+  const resultSettings = () => toolResults.readSettings(database);
   const runner = createToolRunner({
     client: mcpClient,
     accounts,
     access,
     audit,
     callTimeoutMs: config.mcpCallTimeoutMs,
-    resultSettings: () => toolResults.readSettings(database),
+    resultSettings,
     maskSecrets,
     startChildFor: createStartChild({ maxDepth: config.maxDepth }),
   });
@@ -217,7 +219,18 @@ export function createAgents(options: AgentsOptions): Agents {
   runtime.handlers.register(
     createAgentStepHandler({
       database,
-      toolStep: createToolStep({ registry, runner, access, audit }),
+      toolStep: createToolStep({
+        registry,
+        runner,
+        access,
+        audit,
+        delegations: createDelegations({
+          database,
+          trackers: runtime.trackers,
+          resultSettings,
+          maxDepth: config.maxDepth,
+        }),
+      }),
       modelStep: createModelStep({
         database,
         registry,
@@ -225,6 +238,7 @@ export function createAgents(options: AgentsOptions): Agents {
         audit,
         tasks: runtime.tasks,
         inbox: runtime.inbox,
+        trackers: runtime.trackers,
         vectorStore,
       }),
       compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),

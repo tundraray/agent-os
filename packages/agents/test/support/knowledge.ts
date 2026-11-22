@@ -68,6 +68,7 @@ export function learningDeepAgent(
       subagents,
       finalSubagent: null,
       taskList: true,
+      listDelegation: true,
       selfLearning: true,
     },
   };

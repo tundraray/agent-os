@@ -83,11 +83,11 @@ export async function loggedRoute<T>(
 }
 
 /**
- * The knowledge graph of a workflow (self-learning design-core.md, KD-7, Contract «Для части `web`»): one
+ * The knowledge graph of a record (self-learning design-core.md, KD-7, Contract «Для части `web`»): one
  * route family for the library and the admin panel. Every route first asks
  * `LibraryService.knowledgeTarget` — the only place of the access rule (404 RECORD_NOT_FOUND, 403
  * KNOWLEDGE_FORBIDDEN) — and acts only on the record id it returns; `Agents.knowledge` touches only that
- * workflow's rows. A delete is audited as `knowledge_delete` with the entry's kind and id, never its
+ * record's rows. A delete is audited as `knowledge_delete` with the entry's kind and id, never its
  * text; an entry that is not there answers 204 with no audit (DC-10).
  */
 @Controller('library/:id/knowledge')
@@ -194,7 +194,7 @@ export class KnowledgeController {
     ).then(() => undefined);
   }
 
-  /** The audit of a delete: the workflow, the entry's kind and id — not its text (KD-7, UC-5 PRD). */
+  /** The audit of a delete: the record, the entry's kind and id — not its text (KD-7, UC-5 PRD). */
   private recordDelete(
     actor: string,
     recordId: string,

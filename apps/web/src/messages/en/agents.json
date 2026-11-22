@@ -164,6 +164,24 @@
     "in_progress": "In progress",
     "completed": "Completed"
   },
+  "delegationStatus": {
+    "running": "Running",
+    "completed": "Done",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "delegations": {
+    "title": "Delegations · {count}",
+    "listLabel": "Delegations",
+    "summary": {
+      "running": "running {count}",
+      "completed": "done {count}",
+      "failed": "failed {count}",
+      "cancelled": "cancelled {count}"
+    },
+    "task": "task {number}",
+    "rowLabel": "{subagent}: {item}, {status}"
+  },
   "tasks": {
     "tabs": {
       "activity": "Activity",

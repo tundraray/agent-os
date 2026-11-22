@@ -15,21 +15,19 @@ import { modelDeniedEntry } from '../model/model-client';
 import { providerReadiness } from '../providers/provider-readiness';
 import type { AgentsProviders } from '../providers/provider-registry';
 import type { RecordLibrary } from './record-library';
-import type { DeepAgentSnapshot, RunSnapshot } from './snapshot';
-import { recordSnapshot, snapshotDefinition, subagentSnapshot } from './snapshot-definition';
+import type { RunSnapshot } from './snapshot';
+import { recordSnapshot, snapshotDefinition } from './snapshot-definition';
 
 /**
  * Where a start takes its snapshot (design-runtime.md, «Откуда берётся снимок»). Only `builtin` and
- * `record` ask the library; the others copy a snapshot the run already holds, so a subagent works on
- * its deep agent's copy (AC-16.3).
+ * `record` ask the library; the others copy a snapshot the run already holds. A deep agent's subagents
+ * are not started here: `task` takes their snapshots from the deep agent's (deep-agents/design-task.md KD-6).
  */
 export type StartSource =
   /** The built-in record with this key, such as `chat` for the root of a conversation. */
   | { readonly kind: 'builtin'; readonly builtinKey: string }
   /** A record by its id, and its restart from scratch; a record of another kind is unavailable. */
   | { readonly kind: 'record'; readonly recordId: string; readonly expected: RecordKind }
-  /** A subagent of the deep agent's team, by its name; a name outside the team is unavailable. */
-  | { readonly kind: 'subagent'; readonly deepAgent: DeepAgentSnapshot; readonly name: string }
   /** A fork: the caller's snapshot. */
   | { readonly kind: 'fork'; readonly snapshot: RunSnapshot }
   /** The restart of a subagent or a fork: its own earlier snapshot. */
@@ -122,8 +120,6 @@ async function buildSnapshot(
       const record = await deps.library.resolve(ownerId, source.recordId);
       return snapshotOfRecord(ownerId, record?.kind === source.expected ? record : null, deps);
     }
-    case 'subagent':
-      return subagentSnapshot(source.deepAgent, source.name) ?? RECORD_UNAVAILABLE;
     case 'fork':
     case 'restart':
       return source.snapshot;

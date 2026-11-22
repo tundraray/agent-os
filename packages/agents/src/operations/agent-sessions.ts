@@ -4,8 +4,12 @@ import {
   AgentMessageKindSchema,
   CHAT_BUILTIN_KEY,
   type ChipRecord,
+  type AgentTasksView,
+  DELEGATION_ANSWER_MAX_CHARS,
+  DELEGATION_ITEM_MAX_CHARS,
   type DecisionStatus,
-  type RunTaskListView,
+  type DelegationStatus,
+  type DelegationView,
   type ToolCallState,
   ToolCallStateSchema,
   TaskStatusSchema,
@@ -19,6 +23,7 @@ import {
   RuntimeError,
   type ResolveOutcome,
   type Task,
+  type TrackerTask,
 } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -52,7 +57,7 @@ import type { ToolRegistry } from '../tools/tool-registry';
 import { type DeepAgentRun, readDeepAgentRun } from './deep-agent-run';
 import { stopEntries } from './stop-entries';
 
-const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
+const { queued, running, waiting, stopped, completed, failed } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
 
 /** The root of a conversation (design-runtime.md, «Операции `agents`»): it runs the `chat` record. */
@@ -173,9 +178,10 @@ export interface AgentSessions {
   run(agentId: string, ownerId: string): Promise<DeepAgentRun>;
   /**
    * The task list of the session by number (design-task-list.md, `GET /api/agents/:agentId/tasks`), the root
-   * included; empty for a session without one. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
+   * included, and the tasks of its trackers in order (design-task.md, «Запись и маршрут»); each empty when there
+   * is none. A missing and another owner's agent are alike `AGENT_NOT_FOUND`.
    */
-  taskList(agentId: string, ownerId: string): Promise<RunTaskListView>;
+  taskList(agentId: string, ownerId: string): Promise<AgentTasksView>;
   get(agentId: string, ownerId: string): Promise<AgentView>;
   list(rootId: string, ownerId: string): Promise<AgentView[]>;
   history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
@@ -206,7 +212,7 @@ export interface AgentSessions {
 
 export interface AgentSessionsDeps {
   readonly database: Database;
-  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions'>;
+  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions' | 'trackers'>;
   readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
   /** `resolveStart` asks it for the record of a start or a restart. */
   readonly library: RecordLibrary;
@@ -238,6 +244,38 @@ async function asAgent<T>(work: Promise<T>): Promise<T> {
     }
     throw error;
   }
+}
+
+/** The report of a completed agent task: `{ report }`. */
+const ReportSchema = z.object({ report: z.string() });
+
+/** The status of a delegation (design-task.md, «Запись и маршрут»): the runtime task's, in four. */
+function delegationStatus(status: TrackerTask['status']): DelegationStatus {
+  switch (status) {
+    case completed:
+      return 'completed';
+    case failed:
+      return 'failed';
+    case stopped:
+      return 'cancelled';
+    default:
+      return 'running';
+  }
+}
+
+/** A delegation row: the tracker task, its subagent's session and the task of the list its call named. */
+function delegationView(task: TrackerTask, session: Session, listTask: number | null): DelegationView {
+  const status = delegationStatus(task.status);
+  return {
+    agentId: task.taskId,
+    subagent: session.origin.subagent ?? session.name,
+    item: session.description.slice(0, DELEGATION_ITEM_MAX_CHARS),
+    taskId: listTask,
+    status,
+    answer:
+      status === 'completed' ? ReportSchema.parse(task.result).report.slice(0, DELEGATION_ANSWER_MAX_CHARS) : null,
+    reason: status === 'failed' ? (task.failure?.reason ?? null) : null,
+  };
 }
 
 function agentNotFound(id: string): AgentsError {
@@ -368,6 +406,32 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       sessions.ensureSession(tx, { taskId: agentId, ownerId, parentId, rootId }, input),
     );
     return { agentId };
+  }
+
+  /**
+   * The tasks of the agent's trackers in order, each with its subagent's session and the task of the list its
+   * `task` call named (the call's `tool_sent`). A task whose session is not written yet is left out.
+   */
+  async function delegationsOf(agentId: string, ownerId: string): Promise<DelegationView[]> {
+    const trackers = await runtime.trackers.list(agentId, ownerId);
+    const tasks = trackers.flatMap((tracker) => tracker.tasks);
+    if (tasks.length === 0) return [];
+    const [found, entries] = await Promise.all([
+      sessions.getMany(
+        database,
+        tasks.map((task) => task.taskId),
+      ),
+      history.through(database, agentId, Number.MAX_SAFE_INTEGER),
+    ]);
+    const listTaskOf = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.kind !== 'tool_sent' || entry.content.taskId === undefined) continue;
+      for (const taskId of entry.content.taskIds ?? []) listTaskOf.set(taskId, entry.content.taskId);
+    }
+    return tasks.flatMap((task) => {
+      const session = found.get(task.taskId);
+      return session === undefined ? [] : [delegationView(task, session, listTaskOf.get(task.taskId) ?? null)];
+    });
   }
 
   /** Whether an `interrupt` waits in the agent's queue (KD-3); only a queued or running agent can have one. */
@@ -752,8 +816,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         async () => {
           // The owner check first: the list is read only for the owner's session (AC-17.1).
           await agentTask(agentId, ownerId);
-          const tasks = await sessionTasks.list(database, agentId);
+          const [tasks, delegations] = await Promise.all([
+            sessionTasks.list(database, agentId),
+            delegationsOf(agentId, ownerId),
+          ]);
           return {
+            delegations,
             tasks: tasks.map((task) => ({
               id: task.number,
               subject: task.subject,
@@ -765,7 +833,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
             })),
           };
         },
-        (view) => ({ tasks: view.tasks.length }),
+        (view) => ({ tasks: view.tasks.length, delegations: view.delegations.length }),
       );
     },
 

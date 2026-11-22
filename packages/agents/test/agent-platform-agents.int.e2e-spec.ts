@@ -97,6 +97,7 @@ import {
   ledgerRowsOf,
   setRootRecord,
   START_TEST_DEEP_AGENT,
+  taskCall,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
   TEST_MODEL_DEFAULT,
@@ -298,10 +299,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Row C "turn limit, then continue, then restart" (UC-E3, UC-4): a definition with `maxTurns` 2 under a parent; the script always asks for a tool. Then: exactly two model calls, the agent `failed` with `failureReason` `turn_limit`, the parent holds one notification
   //   with that reason. `agents.send` to the failed agent: it works in the SAME session (same `agentId`, history intact and the new message last), gets the full turn limit again (two more model calls), and its report is a SECOND notification to the parent. Then the
   //   finished agent `agents.restart`s: a NEW `agentId` with the same definition, task text, model, limits and parent, its history starts at the task with nothing of the old one, and the old agent is still in `agents.list`; restarting a working agent answers `NOT_FINISHED`.
-  // - Row D "caller limits and the final agent" (UC-5): a root session always waits at the end of a turn ("Конец хода"), so the session checked is a CHILD of the root: the coordinator of a workflow record whose team is `planner` and `answer`, one run
-  //   each, with final subagent `answer` (custom-agents runtime: the caller limits are the deep agent's team), started by the root through the harness's `start_test_deep_agent`. The script starts `planner` twice, then `gatherer` once, then answers text, then starts `answer`, then (after its report) answers text.
-  //   Then: the second `planner` is refused `run_limit`, `gatherer` (outside the team) `not_allowed`, and NO task was created for either (the session's children are the first planner and `answer` only); the first text answer is met by a `notice`
-  //   entry and a new turn rather than ending the session; the report its parent (the root) receives is `answer`'s report, not the session's own text; the refused calls appear in the history with the reason.
+  // - Row D "the final agent" (UC-5): a root session always waits at the end of a turn ("Конец хода"), so the session checked is a CHILD of the root: a deep agent whose team is `planner` and `answer`, with final subagent `answer`, started
+  //   by the root through the harness's `start_test_deep_agent`. The script gives `planner` a task, answers text, gives `answer` a task, then answers text. Then: the first text answer is met by a `notice` entry and a new turn rather than ending the
+  //   session; the report its parent (the root) receives is `answer`'s last message, not the session's own text. The `task` refusals (run_limit, outside the team) are rows of delegation-rules.spec.ts.
   // - Row E "fork and compaction" (UC-E10, UC-E11): a root with three exchanges calls `start_agent` with `fork`. Then: the fork's first model input holds the root's three exchanges up to the entry before the answer that contains the `start_agent` call, then the task; the root's
   //   history is unchanged (row versions of its entries before and after) and the fork's own history starts at its task. Second case: a model call whose `usage` input tokens are at `AGENT_COMPACT_AT_TOKENS` (set low for the test); the next step writes a `compaction`
   //   entry and a `compacted` event, the call after it gets the summary instead of the older entries, and `agents.history` still returns every entry in order.
@@ -683,9 +683,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-1 D: a start outside the caller limits or over their count is refused without creating a task, a text answer without the final agent\'s report gets a notice, and the final agent\'s report becomes the session\'s report', async () => {
-    // Given: a deep agent record whose team is `planner` and `answer`, one run each, with final subagent `answer`;
-    // the root starts its deep agent; `gatherer` is no subagent of the team
+  it('INT-1 D: a text answer without the final subagent answer gets a notice, and the final subagent answer becomes the session report', async () => {
+    // Given: a deep agent record whose team is `planner` and `answer`, with final subagent `answer`; the root
+    // starts its deep agent
     const ownerId = newUser();
     const library = createLibraryDouble();
     const subagent = (name: string): Subagent => ({
@@ -700,53 +700,45 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     });
     const deepAgentRecordId = library.add({
       kind: 'deep_agent',
-      name: 'limited deep agent',
+      name: 'final deep agent',
       ownerId: TEST_AUTHOR_ID,
       everyone: true,
       offerInChat: true,
       content: {
-        prompt: 'You run the limited deep agent.',
+        prompt: 'You run the deep agent with a final subagent.',
         servers: [],
         model: TEST_MODEL_DEFAULT,
         maxTurns: 20,
         subagents: [subagent('planner'), subagent('answer')],
         finalSubagent: 'answer',
         taskList: true,
+        listDelegation: true,
         selfLearning: false,
       },
     });
-    const atThirdCall = createLatch();
-    const plannerHeld = createLatch();
-    const answerHeld = createLatch();
     const model = createScriptedModel();
     model.script(
-      { task: 'Root of the limited session' },
+      { task: 'Root of the final session' },
       [
         {
           calls: [
             {
               tool: START_TEST_DEEP_AGENT,
-              args: { deepAgent: deepAgentRecordId, prompt: 'Coordinate with limits', description: 'deep agent' },
+              args: { deepAgent: deepAgentRecordId, prompt: 'Coordinate to the end', description: 'deep agent' },
             },
           ],
         },
       ],
       { thereafter: { text: 'noted' } },
     );
-    const deepAgent = model.script({ task: 'Coordinate with limits' }, [
-      { calls: [startAgent({ agent: 'planner', description: 'planner', prompt: 'Plan A' })] },
-      { calls: [startAgent({ agent: 'planner', description: 'second planner', prompt: 'Plan B' })] },
-      {
-        calls: [startAgent({ agent: 'gatherer', description: 'gatherer', prompt: 'Gather' })],
-        latch: atThirdCall,
-      },
+    model.script({ task: 'Coordinate to the end' }, [
+      { calls: [taskCall({ subagentType: 'planner', description: 'Plan A' })] },
       { text: 'my own summary' },
-      { calls: [startAgent({ agent: 'answer', description: 'answer', prompt: 'Write the answer' })] },
-      { text: 'waiting for the answer' },
+      { calls: [taskCall({ subagentType: 'answer', description: 'Write the answer' })] },
       { text: 'session done' },
     ]);
-    model.script({ task: 'Plan A' }, [{ text: 'plan ready', latch: plannerHeld }]);
-    model.script({ task: 'Write the answer' }, [{ text: 'final answer text', latch: answerHeld }]);
+    model.script({ task: 'Plan A' }, [{ text: 'plan ready' }]);
+    model.script({ task: 'Write the answer' }, [{ text: 'final answer text' }]);
     const harness = await createAgentsHarness({
       model,
       access: {},
@@ -757,56 +749,29 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     try {
       const { agentId: rootId } = await harness.sessions.start({
         ownerId,
-        prompt: 'Root of the limited session',
+        prompt: 'Root of the final session',
         description: 'root',
       });
       const agentId = await startedChild(harness, rootId);
 
-      // When: the planner reports while the session's third call runs; then the answer agent reports
-      // while the session waits for it
-      await atThirdCall.reached();
-      const [plannerId] = await startedChildrenOf(harness, agentId);
-      if (plannerId === undefined) throw new Error('the session started no planner');
-      plannerHeld.open();
-      await waitForTaskStatus(harness, plannerId, ownerId, 'completed');
-      atThirdCall.open();
-      await answerHeld.reached();
-      await deepAgent.called(6);
-      await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
-      answerHeld.open();
+      // When: the deep agent gives a task to the planner, answers text, then gives one to `answer`
       await waitForTaskStatus(harness, agentId, ownerId, 'completed');
 
-      // Then: the second planner is refused run_limit, the gatherer not_allowed, and neither created a task
-      const calls = await toolCallRowsOf(harness.db, agentId);
-      expect(calls.map((call) => `${call.tool} ${call.outcome} ${call.refusalReason ?? '-'}`)).toEqual([
-        'start_agent success -',
-        'start_agent refused run_limit',
-        'start_agent refused not_allowed',
-        'start_agent success -',
+      // Then: the text without the final subagent's answer met a notice and a new turn
+      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
+        'task: Coordinate to the end',
+        'model_answer:  [task]',
+        'tool_result: task success',
+        'model_answer: my own summary []',
+        'notice: You cannot finish: there is no answer of subagent "answer" yet. The deep agent ends only with a completed answer of subagent "answer"; give it a single task with the task tool.',
+        'model_answer:  [task]',
+        'tool_result: task success',
+        'model_answer: session done []',
       ]);
       const children = (await harness.sessions.list(rootId, ownerId)).filter((view) => view.parentId === agentId);
       expect(children.map((view) => view.name).sort()).toEqual(['answer', 'planner']);
 
-      // Then: the text without the final agent's report met a notice and a new turn; the refusals are in the history
-      expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
-        'task: Coordinate with limits',
-        'model_answer:  [start_agent]',
-        'tool_result: start_agent success',
-        'model_answer:  [start_agent]',
-        'tool_result: start_agent refused run_limit',
-        'model_answer:  [start_agent]',
-        'tool_result: start_agent refused not_allowed',
-        'child_report: planner completed',
-        'model_answer: my own summary []',
-        'notice: You cannot finish: there is no report of subagent "answer" yet. The deep agent ends only with a completed report of subagent "answer"; start it with start_agent.',
-        'model_answer:  [start_agent]',
-        'tool_result: start_agent success',
-        'model_answer: waiting for the answer []',
-        'child_report: answer completed',
-        'model_answer: session done []',
-      ]);
-
-      // Then: the parent receives the final agent's report, not the session's own text
+      // Then: the parent receives the final subagent's answer, not the session's own text
       expect(noticeSummaries(await childNoticesOf(harness.db, rootId, agentId))).toEqual([
         'completed final answer text',
       ]);

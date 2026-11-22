@@ -1384,12 +1384,8 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
           {
             calls: [
               {
-                tool: 'start_agent',
-                args: {
-                  agent: subagentName,
-                  description: 'INT-7 row 2: сабагент',
-                  prompt: subagentTask,
-                },
+                tool: 'task',
+                args: { subagentType: subagentName, description: subagentTask },
               },
             ],
             latch,
@@ -1397,8 +1393,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         ],
         answered,
       );
+      // The subagent's one `task` entry: the question of the brief as its labelled line, then the assignment
       const subagent = harness.model.script(
-        { task: subagentTask },
+        { task: `Question: ${firstQuestion}\n\n${subagentTask}` },
         [],
         answered,
       );

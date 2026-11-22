@@ -46,6 +46,7 @@ import {
   type LibraryDoubleRecord,
   type ScriptedEmbeddings,
   type ScriptedModel,
+  type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 
 export { toolCallRowsOf } from '@agent-os/agents/testing';
@@ -249,6 +250,18 @@ export async function setRootRecord(library: LibraryDouble, record: TestRecord):
     return;
   }
   library.edit(chat.id, { name: record.name, body });
+}
+
+/** A deep agent's `task` call of a scripted answer (deep-agents/design-task.md, Contract «Инструмент `task`»). */
+export function taskCall(args: {
+  readonly subagentType: string;
+  readonly description?: string;
+  readonly instruction?: string;
+  readonly items?: readonly string[];
+  readonly answerFields?: readonly { readonly name: string; readonly description: string }[];
+  readonly taskId?: number;
+}): ScriptedToolCall {
+  return { tool: 'task', args };
 }
 
 /** The tool {@link AgentsHarnessSettings.deepAgentStarter} registers. */

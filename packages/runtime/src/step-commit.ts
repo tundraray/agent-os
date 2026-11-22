@@ -4,8 +4,12 @@ import {
   CHILD_FINISHED_KIND,
   RuntimeEventTypeSchema,
   RuntimeFailureReasonSchema,
+  TASKS_FINISHED_KIND,
+  TaskEndStatusSchema,
+  type TasksFinishedPayload,
   TaskStatusSchema,
   MessageStatusSchema,
+  TrackerStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import { type Database, runtimeInbox } from '@agent-os/db';
@@ -18,21 +22,25 @@ import type {
   TaskFields,
   TaskRow,
 } from './guarded-transition';
-import type {
-  EnqueueMessage,
-  EnqueuedMessage,
-  HandlerRegistry,
-  StepEffects,
-  StepResult,
+import {
+  type ChildTask,
+  type EnqueueMessage,
+  type EnqueuedMessage,
+  type HandlerRegistry,
+  type OpenedTracker,
+  type StepEffects,
+  type StepResult,
+  TRACKER_MAX_TASKS,
 } from './handler.registry';
 import type { Decisions } from './decisions';
-import { type Inbox, jsonByteLength, payloadTooLarge } from './inbox';
+import { type Inbox, jsonByteLength, payloadTooLarge, reservedKindProblem } from './inbox';
 import { retryingTransaction, type RuntimeTx } from './runtime-tx';
 import { boundTransaction, type TaskStepContext } from './step-context';
 import type { TaskRepository } from './task.repository';
+import type { TrackerRepository } from './tracker.repository';
 
 const { queued, running, completed, failed, stopped } = TaskStatusSchema.enum;
-const { messages, decision } = WaitReasonSchema.enum;
+const { messages, decision, tasks: tasksReason } = WaitReasonSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
 
 /** Retries of a failed commit transaction; then the step is left to its lease expiry (Flow 1). */
@@ -49,6 +57,7 @@ export interface TaskFailure {
 /** Services the end of a task writes through. */
 export interface TaskEndDeps {
   tasks: TaskRepository;
+  trackers: TrackerRepository;
   events: EventLog;
   inbox: Inbox;
 }
@@ -126,6 +135,43 @@ async function notifyParent(
   });
 }
 
+/**
+ * The end of a task of an open tracker (deep-agents/design-task.md, KD-2), under the caller's lock
+ * of the owner, the task's parent: no `child_finished`; when no task of the tracker is unfinished
+ * any more, the tracker is finished and the owner gets its one `tasks_finished`. The unfinished
+ * tasks are counted, not a counter kept: a revived task makes the tracker wait for it again, and
+ * a task that `revives` at once is not reported at all. Returns `false` when the task has no open
+ * tracker, so the caller notifies the parent as usual.
+ */
+async function reportToTracker(
+  tx: RuntimeTx,
+  deps: TaskEndDeps,
+  child: TaskRow,
+  revives: boolean,
+): Promise<boolean> {
+  if (child.trackerId === null) return false;
+  const tracker = await deps.trackers.find(tx, child.trackerId);
+  if (tracker?.status !== TrackerStatusSchema.enum.open) return false;
+  if (revives) return true;
+  const ended: TasksFinishedPayload['tasks'] = [];
+  for (const task of await deps.trackers.taskStatuses(tx, tracker.trackerId)) {
+    const status = TaskEndStatusSchema.safeParse(task.status);
+    if (!status.success) return true;
+    ended.push({ taskId: task.taskId, status: status.data });
+  }
+  await deps.trackers.finish(tx, tracker.trackerId);
+  const payload: TasksFinishedPayload = { trackerId: tracker.trackerId, tasks: ended };
+  await deps.inbox.insertMessage(tx, {
+    recipientId: tracker.taskId,
+    ownerId: child.ownerId,
+    kind: TASKS_FINISHED_KIND,
+    sender: child.taskId,
+    payload,
+    revive: false,
+  });
+  return true;
+}
+
 /** Whether a message with `revive` waits in the task's inbox. */
 async function hasPendingRevive(tx: RuntimeTx, taskId: string): Promise<boolean> {
   const rows = await tx
@@ -144,9 +190,10 @@ async function hasPendingRevive(tx: RuntimeTx, taskId: string): Promise<boolean>
 
 /**
  * The one procedure "a task ends → its parent is told" (KD-3, Invariant 5), in the caller's
- * transaction and under its lock of `task`: the final status with its event, one `child_finished`
- * to the parent, and — when the task completed or failed while a message with `revive` arrived —
- * `queued` again with `task.queued` (Invariant 9). A stop never revives. Returns the last row.
+ * transaction and under its lock of `task` and its parent: the final status with its event, one
+ * `child_finished` to the parent (for a task of an open tracker, the tracker's recount instead),
+ * and — when the task completed or failed while a message with `revive` arrived — `queued` again
+ * with `task.queued` (Invariant 9). A stop never revives. Returns the last row.
  */
 export async function endTask(
   tx: RuntimeTx,
@@ -172,11 +219,11 @@ export async function endTask(
       ...(end.failure && { failure: eventFailure(end.failure) }),
     },
   });
-  await notifyParent(tx, deps.inbox, ended);
-
-  if (end.status === stopped || !(await hasPendingRevive(tx, ended.taskId))) {
-    return ended;
+  const revives = end.status !== stopped && (await hasPendingRevive(tx, ended.taskId));
+  if (!(await reportToTracker(tx, deps, ended, revives))) {
+    await notifyParent(tx, deps.inbox, ended);
   }
+  if (!revives) return ended;
   const revived = await writeLocked(tx, deps.tasks, ended, {
     kind: 'set',
     status: queued,
@@ -215,6 +262,12 @@ class InvalidStepResultError extends Error {
   override readonly name = 'InvalidStepResultError';
 }
 
+/** What a step's `commit` left besides its writes: a broken rule, the tracker it opened. */
+interface EffectsState {
+  problem: string | undefined;
+  tracker: OpenedTracker | undefined;
+}
+
 /** The attempt is no longer current when the commit locks the task. */
 const REJECTED = Symbol('rejected');
 
@@ -247,8 +300,12 @@ export class StepCommitter {
         crashPoints.hit('step.after-commit');
         logger.info('step committed', {
           outcome: result.outcome,
-          status: outcome.status,
+          status: outcome.row.status,
           messageIds: step.messageIds,
+          ...(outcome.tracker && {
+            trackerId: outcome.tracker.trackerId,
+            trackerTaskIds: outcome.tracker.taskIds,
+          }),
           durationMs,
         });
         return 'committed';
@@ -274,7 +331,7 @@ export class StepCommitter {
   private commitOnce(
     step: TaskStepContext,
     result: StepResult,
-  ): Promise<TaskRow | typeof REJECTED> {
+  ): Promise<{ row: TaskRow; tracker: OpenedTracker | undefined } | typeof REJECTED> {
     const { db, tasks, inbox, decisions, events, crashPoints, leaseMs } = this.deps;
     const outcome = outcomeOf(result);
     const endsTask = outcome === 'complete' || outcome === 'fail';
@@ -287,12 +344,14 @@ export class StepCommitter {
       if (task?.status !== running || task.attempt !== step.attempt) return REJECTED;
       this.checkOutcome(result);
 
+      let tracker: OpenedTracker | undefined;
       if (result.commit) {
-        const effects = this.effects(tx, task);
+        const effects = this.effects(tx, task, result.outcome);
         await result.commit(tx, effects.api);
         if (effects.state.problem !== undefined) {
           throw new InvalidStepResultError(effects.state.problem);
         }
+        tracker = effects.state.tracker;
       }
       crashPoints.hit('step.inside-commit');
       await inbox.markDelivered(tx, task, step.messageIds, step.stepNo);
@@ -322,7 +381,7 @@ export class StepCommitter {
       if (result.outcome === 'complete' || result.outcome === 'fail') {
         // The step counters go with the final status; the step event precedes the status event.
         await committedEvent({ ...task, stepNo: task.stepNo + 1 });
-        return endTask(tx, this.deps, task, {
+        const ended = await endTask(tx, this.deps, task, {
           status: result.outcome === 'complete' ? completed : failed,
           result: result.outcome === 'complete' ? result.result : undefined,
           failure:
@@ -331,6 +390,24 @@ export class StepCommitter {
               : undefined,
           fields: stepFields,
         });
+        return { row: ended, tracker };
+      }
+
+      if (tracker) {
+        // KD-3: only the tracker's `tasks_finished` wakes the task; messages pending now or
+        // arriving meanwhile come with it to the next step.
+        const row = await writeLocked(tx, tasks, task, {
+          kind: 'wait',
+          reason: tasksReason,
+          fields: stepFields,
+        });
+        await committedEvent(row);
+        await events.append(tx, {
+          type: EVENT['task.waiting'],
+          task: row,
+          payload: { reason: tasksReason, trackerId: tracker.trackerId },
+        });
+        return { row, tracker };
       }
 
       if (result.outcome === 'await_decision') {
@@ -351,7 +428,7 @@ export class StepCommitter {
           task: row,
           payload: { reason: decision, decisionId: request.decisionId },
         });
-        return row;
+        return { row, tracker };
       }
 
       const pending = await inbox.loadPending(tx, task.taskId);
@@ -372,7 +449,7 @@ export class StepCommitter {
           ? { reason: messages }
           : { cause: 'step', outcome: result.outcome, from: running },
       });
-      return row;
+      return { row, tracker };
     });
   }
 
@@ -423,44 +500,69 @@ export class StepCommitter {
   private effects(
     tx: RuntimeTx,
     task: TaskRow,
-  ): { api: StepEffects; state: { problem: string | undefined } } {
-    const { handlers, tasks, events, inbox, inboxPayloadMaxBytes } = this.deps;
-    const state: { problem: string | undefined } = { problem: undefined };
+    outcome: StepResult['outcome'],
+  ): { api: StepEffects; state: EffectsState } {
+    const { handlers, tasks, trackers, events, inbox, inboxPayloadMaxBytes } = this.deps;
+    const state: EffectsState = { problem: undefined, tracker: undefined };
     const invalid = (problem: string): never => {
       state.problem ??= problem;
       throw new InvalidStepResultError(problem);
     };
+    /** The child's input as its handler parsed it. */
+    const checkChild = ({ type, input }: ChildTask): ChildTask => {
+      const handler = handlers.get(type);
+      if (!handler) return invalid(`unknown child task type "${type}"`);
+      const parsed = handler.inputSchema.safeParse(input);
+      if (!parsed.success) {
+        const [issue] = parsed.error.issues;
+        return invalid(
+          `input of child type "${type}" rejected at ${issue.path.join('.')}: ${issue.message}`,
+        );
+      }
+      return { type, input: parsed.data };
+    };
+    const insertChild = async (child: ChildTask, trackerId: string | null): Promise<string> => {
+      const row = await tasks.insert(tx, {
+        taskId: randomUUID(),
+        type: child.type,
+        ownerId: task.ownerId,
+        parentId: task.taskId,
+        rootId: task.rootId,
+        depth: task.depth + 1,
+        input: child.input,
+        trackerId,
+      });
+      await events.append(tx, {
+        type: EVENT['task.created'],
+        task: row,
+        payload: { type: child.type, parentId: task.taskId, depth: row.depth, trackerId },
+      });
+      return row.taskId;
+    };
     const api: StepEffects = {
-      spawn: async ({ type, input }) => {
-        const handler = handlers.get(type);
-        if (!handler) return invalid(`unknown child task type "${type}"`);
-        const parsed = handler.inputSchema.safeParse(input);
-        if (!parsed.success) {
-          const [issue] = parsed.error.issues;
-          return invalid(
-            `input of child type "${type}" rejected at ${issue.path.join('.')}: ${issue.message}`,
-          );
+      spawn: (child) => insertChild(checkChild(child), null),
+      openTracker: async (children) => {
+        if (outcome !== 'wait') return invalid(`openTracker needs the outcome wait, not ${outcome}`);
+        if (state.tracker) return invalid('a step opens at most one tracker');
+        if (!Array.isArray(children) || children.length === 0) {
+          return invalid('openTracker needs at least one task');
         }
-        const child = await tasks.insert(tx, {
-          taskId: randomUUID(),
-          type,
-          ownerId: task.ownerId,
-          parentId: task.taskId,
-          rootId: task.rootId,
-          depth: task.depth + 1,
-          input: parsed.data,
-        });
-        await events.append(tx, {
-          type: EVENT['task.created'],
-          task: child,
-          payload: { type, parentId: task.taskId, depth: child.depth },
-        });
-        return child.taskId;
+        if (children.length > TRACKER_MAX_TASKS) {
+          return invalid(`openTracker got ${children.length} tasks, over ${TRACKER_MAX_TASKS}`);
+        }
+        const checked = children.map(checkChild);
+        const trackerId = randomUUID();
+        // Marked before the writes, so a second call in this commit is refused even meanwhile.
+        state.tracker = { trackerId, taskIds: [] };
+        await trackers.insert(tx, { trackerId, taskId: task.taskId, ownerId: task.ownerId });
+        const taskIds: string[] = [];
+        for (const child of checked) taskIds.push(await insertChild(child, trackerId));
+        state.tracker = { trackerId, taskIds };
+        return state.tracker;
       },
       enqueue: async (message: EnqueueMessage): Promise<EnqueuedMessage> => {
-        if (message.kind === CHILD_FINISHED_KIND) {
-          return invalid(`message kind "${CHILD_FINISHED_KIND}" is reserved by the runtime`);
-        }
+        const reserved = reservedKindProblem(message.kind);
+        if (reserved !== undefined) return invalid(reserved);
         const tooLarge = payloadTooLarge(message.payload, inboxPayloadMaxBytes);
         if (tooLarge) {
           state.problem ??= tooLarge.message;

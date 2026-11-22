@@ -30,6 +30,7 @@ import type {
 import { endTask, type StepCommitter } from './step-commit';
 import { boundTransaction, TaskStepContext } from './step-context';
 import type { TaskRepository } from './task.repository';
+import type { TrackerRepository } from './tracker.repository';
 
 const { queued, running, waiting, failed, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
@@ -137,6 +138,7 @@ export interface DispatcherDeps {
   logger: Logger;
   handlers: HandlerRegistry;
   tasks: TaskRepository;
+  trackers: TrackerRepository;
   events: EventLog;
   inbox: Inbox;
   decisions: Decisions;
@@ -449,13 +451,13 @@ export class Dispatcher {
     error: unknown,
     startedAt: number,
   ): Promise<void> {
-    const { db, tasks, events, inbox, config } = this.deps;
+    const { db, tasks, config } = this.deps;
     const ended = await db.transaction(async (tx) => {
       await boundTransaction(tx, config.leaseMs);
       // The failure notifies the parent: the parent is locked first (Invariant 6).
       const task = await tasks.lockWithParent(tx, step.taskId);
       if (task?.status !== running || task.attempt !== step.attempt) return undefined;
-      return endTask(tx, { tasks, events, inbox }, task, {
+      return endTask(tx, this.deps, task, {
         status: failed,
         failure: { reason, message: errorMessage(error) },
         fields: { stepClaims: 0, recoveries: 0 },

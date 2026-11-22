@@ -94,6 +94,7 @@ export function deepAgentBody(
     })),
     finalSubagent: null,
     taskList: true,
+    listDelegation: true,
     selfLearning: false,
   };
   return {

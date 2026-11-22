@@ -164,6 +164,24 @@
     "in_progress": "В работе",
     "completed": "Готова"
   },
+  "delegationStatus": {
+    "running": "В работе",
+    "completed": "Готово",
+    "failed": "Сбой",
+    "cancelled": "Отменено"
+  },
+  "delegations": {
+    "title": "Поручения · {count}",
+    "listLabel": "Поручения",
+    "summary": {
+      "running": "в работе {count}",
+      "completed": "готово {count}",
+      "failed": "сбой {count}",
+      "cancelled": "отменено {count}"
+    },
+    "task": "задача {number}",
+    "rowLabel": "{subagent}: {item}, {status}"
+  },
   "tasks": {
     "tabs": {
       "activity": "Ход работы",

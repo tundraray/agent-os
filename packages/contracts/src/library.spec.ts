@@ -109,6 +109,16 @@ describe('deep agent content is refused with the path and the rule', () => {
       content: { subagents: [subagentNamed('Аналитик'), subagentNamed('аналитик')] },
       issue: { path: ['subagents'], code: 'custom', message: 'subagent names repeat' },
     },
+    // deep-agents/design-task.md, Contract «Инструмент `task`»: the built-in subagent's name is not a record's.
+    {
+      label: 'subagent named general-purpose',
+      content: { subagents: [subagentNamed('General-Purpose')] },
+      issue: {
+        path: ['subagents', 0, 'name'],
+        code: 'custom',
+        message: 'general-purpose is the name of the built-in subagent',
+      },
+    },
   ])('$label', ({ content, issue }) => {
     const result = DeepAgentContentSchema.safeParse({ ...deepAgentContent, ...content });
 

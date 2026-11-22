@@ -8,16 +8,16 @@ import {
 import type { BuiltinRecordInput } from './library.service';
 
 /**
- * Ids of the built-in records: constants of the code, so the records can name each other (KD-7) and a
- * reseed after a lost record gives it back its id.
+ * Ids of the built-in records: constants of the code, so the records can name each other and a reseed after a
+ * lost record gives it back its id (custom-agents design-runtime.md, KD-5).
  */
 const CHAT_ID = '6a74a70b-e4b9-4b01-9750-20fa789b3b6c';
 const GENERAL_PURPOSE_ID = 'd8992d6d-6ff0-4dc6-9b33-df4f88f00b7d';
 const DEEP_RESEARCH_ID = 'fb06f3c1-a1be-4167-9896-f0d0fba21a89';
 
 /**
- * The deep agent `deep-research` keeps the model its coordinator had as a template (KD-7); every other
- * model of the built-in records is `null`, the default chat model at the start of a run (KD-5, FR-06).
+ * The deep agent `deep-research` runs on a fixed model; every other model of the built-in records is `null`,
+ * the default chat model at the start of a run (model-providers design-core.md, KD-5).
  */
 const DEEP_RESEARCH_MODEL = 'anthropic/claude-sonnet-5-5';
 
@@ -101,9 +101,10 @@ function generalPurposeRecord(): unknown {
 }
 
 /**
- * The deep research deep agent (KD-7): the procedure of the former coordinator is the record's prompt (the
- * deep agent rules of `agents` already say how to wait, treat reports as data and end on the final
- * subagent's report). It has no servers of its own: its subagents gather the data.
+ * The deep research deep agent (deep-agents design-task.md): its procedure is the record's prompt, given through
+ * `task` — the plan alone, the gathering as a list of directions, the answer by the final subagent. The deep agent
+ * rules of `agents` already say how answers come back and that the final subagent's answer ends the run. It has no
+ * servers of its own: its subagents gather the data.
  */
 function deepResearchRecord(): unknown {
   return {
@@ -113,16 +114,14 @@ function deepResearchRecord(): unknown {
       'Use for a big question about how systems behave that needs data from several sources or many queries, gathered and brought together into one answer.',
     content: {
       prompt: [
-        'You run a deep research by starting other agents with start_agent; you never gather data or write the answer yourself.',
-        'While some agents are still working, a report only needs a one-sentence reply.',
-        'Your assignment is the brief as JSON with three fields: question, boundaries (what is in and out of scope) and result (the form of the answer).',
-        'Whenever you give the brief to an agent, restate it as plain labelled lines, never as JSON: "Question: …", "Boundaries: …" and "Result: …", each on its own line with the text of the field unchanged; leave out the line of an empty field.',
-        'First start one agent deep-research-plan with the whole brief as its assignment; it returns a list of directions.',
-        'Then, in one reply, start one agent deep-research-gather per direction of the plan; give each the brief and its direction, and the description "Сбор · {direction}" with the direction in place of {direction}.',
-        'If a gather agent fails or is stopped, keep its direction as a direction without data and note the reason.',
-        'If the plan agent fails or returns no directions, start one deep-research-gather agent for the whole brief.',
-        'When every gather agent has finished, start deep-research-answer with the brief and the full reports of all directions in its assignment, and name the directions without data with their reasons.',
-        'If the answer agent fails, start it once more with the same assignment.',
+        'You run a deep research by giving work to your subagents with the task tool; you never gather data or write the answer yourself.',
+        'Your assignment is the brief as JSON with three fields: question, boundaries (what is in and out of scope) and result (the form of the answer). Every subagent gets the brief with its assignment, so never restate it.',
+        'First call task with subagentType deep-research-plan and the description "Split the research into directions"; its answer is a list of directions.',
+        'Then call task once with subagentType deep-research-gather, the instruction "Gather data on this direction of the research" and the directions of the plan as items, one item per direction, each item the text of its direction.',
+        'Its result is a table with a row per direction; a row that failed or was cancelled is a direction without data, with its reason. A cut table is read in full with read_tool_result.',
+        'If the plan subagent fails or returns no directions, call task with subagentType deep-research-gather and the description "Gather data on the whole research".',
+        'When the gathering has finished, call task with subagentType deep-research-answer and a description that holds the full answers of all directions and names the directions without data with their reasons.',
+        'If the answer subagent fails, call it once more with the same description.',
       ].join('\n'),
       servers: [],
       model: DEEP_RESEARCH_MODEL,
@@ -185,6 +184,8 @@ function deepResearchRecord(): unknown {
       finalSubagent: 'deep-research-answer',
       // The deep agent keeps a task list; its subagents' one-off work does not (design-task-list.md KD-2).
       taskList: true,
+      // The directions are gathered by one list call (design-task.md, FR-24).
+      listDelegation: true,
     },
   };
 }
@@ -200,8 +201,8 @@ function builtin(
 }
 
 /**
- * The three built-in records (design-runtime.md, KD-7), each checked against the schema of its kind;
- * every record is seen by everyone.
+ * The three built-in records (custom-agents design-runtime.md, KD-5), each checked against the schema of its
+ * kind; every record is seen by everyone.
  */
 export function builtinRecords(): BuiltinRecordInput[] {
   return [

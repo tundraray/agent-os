@@ -16,6 +16,7 @@ import { StepCommitter } from './step-commit';
 import { TaskControl } from './task-control';
 import { TaskRepository } from './task.repository';
 import { TokenLedger } from './token-ledger';
+import { type Tracker, TrackerRepository } from './tracker.repository';
 
 /** What the composition root hands to {@link createRuntime}. */
 export interface RuntimeOptions {
@@ -41,6 +42,11 @@ export interface Runtime {
   readonly inbox: Pick<Inbox, 'enqueue' | 'listPending'>;
   /** Decision requests of steps and their resolution. */
   readonly decisions: Pick<Decisions, 'resolve' | 'get' | 'listTree'>;
+  /** Task trackers a step opened (deep-agents/design-task.md): the owner reads their tasks' outcomes. */
+  readonly trackers: {
+    /** The trackers of the owner's task, oldest first; `[]` for another owner's or a missing task. */
+    list(taskId: string, ownerId: string): Promise<Tracker[]>;
+  };
   /** The event log of a tree. */
   readonly events: Pick<EventLog, 'listAfter'>;
   /** Consumers of outbox events. */
@@ -82,6 +88,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   const eventConsumers = new EventConsumerRegistry();
   const events = new EventLog(db, eventConsumers);
   const tasks = new TaskRepository();
+  const trackers = new TrackerRepository();
   const inbox = new Inbox({
     db,
     tasks,
@@ -100,6 +107,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   const committer = new StepCommitter({
     db,
     tasks,
+    trackers,
     events,
     inbox,
     decisions,
@@ -116,6 +124,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     logger: logger.child({ worker: 'dispatcher' }),
     handlers,
     tasks,
+    trackers,
     events,
     inbox,
     decisions,
@@ -137,6 +146,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     clock,
     logger: logger.child({ worker: 'sweeper' }),
     tasks,
+    trackers,
     events,
     inbox,
     crashPoints,
@@ -156,6 +166,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       db,
       handlers,
       tasks,
+      trackers,
       events,
       inbox,
       running,
@@ -164,6 +175,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     }),
     inbox,
     decisions,
+    trackers: { list: (taskId, ownerId) => trackers.list(db, taskId, ownerId) },
     events,
     eventConsumers,
     ledger,
