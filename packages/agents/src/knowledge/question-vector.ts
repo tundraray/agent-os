@@ -61,7 +61,7 @@ function questionToEmbed(
 }
 
 /**
- * The outcome for the deep agent's vector row (Contract «Строка векторов workflow»): success — no reason;
+ * The outcome for the deep agent's vector row (Contract «Строка векторов»): success — no reason;
  * a refusal — its reason; `owner_disabled` (one employee's refusal) and a thrown error — none, log only.
  */
 function outcomeOf(attempt: EmbedAttempt): EmbeddingOutcome | null {

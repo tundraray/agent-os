@@ -3,7 +3,7 @@ import { ModelIdSchema } from './access';
 import { McpServerNameSchema } from './mcp';
 
 /**
- * Knowledge graph of a self-learning workflow (self-learning design-core.md, Contract Definitions,
+ * Knowledge graph of a self-learning deep agent (self-learning design-core.md, Contract Definitions,
  * «Для части `web`»). No view carries the run or the employee a record came from (DC-2, AC-11.4).
  */
 
@@ -20,7 +20,7 @@ export const KnowledgeItemKindSchema = z.enum(['fact', 'lesson', 'searched_nothi
 export type KnowledgeItemKind = z.infer<typeof KnowledgeItemKindSchema>;
 
 /**
- * `outdated` — marked by the model or its tool is gone from the workflow; `lessons_off` — a lesson
+ * `outdated` — marked by the model or its tool is gone from the deep agent; `lessons_off` — a lesson
  * while lessons are off. An outdated lesson stays `outdated` whatever the lessons setting.
  */
 export const KnowledgeItemStateSchema = z.enum(['active', 'outdated', 'lessons_off']);
@@ -123,7 +123,7 @@ export const KnowledgeItemSchema = z.discriminatedUnion('type', [
 ]);
 export type KnowledgeItem = z.infer<typeof KnowledgeItemSchema>;
 
-/** Last round of any run of the workflow; numbers count operations of a `done` round. */
+/** Last round of any run of the deep agent; numbers count operations of a `done` round. */
 export const LastExtractionSchema = z.object({
   at: z.iso.datetime(),
   model: ModelIdSchema,

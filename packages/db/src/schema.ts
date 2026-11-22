@@ -1063,7 +1063,7 @@ export const librarySettings = app.table(
   {
     /** Always `true`: keeps the table at one row. */
     id: boolean('id').primaryKey().default(true),
-    /** «Максимум шагов» a new agent or workflow starts with; each record may change its own. */
+    /** «Максимум шагов» a new agent or deep agent starts with; each record may change its own. */
     defaultMaxTurns: integer('default_max_turns').notNull().default(RECORD_MAX_TURNS_DEFAULT),
     /** Null while the default stands. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
@@ -1078,10 +1078,10 @@ export const librarySettings = app.table(
 );
 
 // ---------------------------------------------------------------------------------------------
-// Knowledge of self-learning workflows (self-learning/design-core.md, Data Model). Owned by the
-// `agents` package (KD-1). The graph, its vectors and the workflow's vector row reference
+// Knowledge of self-learning deep agents (self-learning/design-core.md, Data Model). Owned by the
+// `agents` package (KD-1). The graph, its vectors and the deep agent's vector row reference
 // `library_records` with cascade — the one exception to package tables not referencing app tables:
-// deleting a workflow by any path takes its knowledge with it, while `agents` never reads `library_*`.
+// deleting a deep agent by any path takes its knowledge with it, while `agents` never reads `library_*`.
 // ---------------------------------------------------------------------------------------------
 
 /** pgvector column without a fixed length (KD-8); the type lives where the extension is installed. */
@@ -1106,7 +1106,7 @@ const knowledgeItemFields = () => ({
   outdated: boolean('outdated').notNull().default(false),
 });
 
-/** An entity of a workflow's graph: always a fact. */
+/** An entity of a deep agent's graph: always a fact. */
 export const agentKnowledgeEntities = app.table(
   'agent_knowledge_entities',
   {
@@ -1180,7 +1180,7 @@ export const agentKnowledgeRelations = app.table(
 
 /**
  * A run that learns (KD-2, KD-3): written with the coordinator session; deleting the conversation
- * deletes it. The workflow has no FK here: the row only answers «which workflow».
+ * deletes it. The deep agent has no FK here: the row only answers «which workflow».
  */
 export const agentKnowledgeRuns = app.table(
   'agent_knowledge_runs',
@@ -1242,7 +1242,7 @@ export const agentKnowledgeQuestions = app.table('agent_knowledge_questions', {
   createdAt: createdAt(),
 });
 
-/** The vector row of a workflow (KD-8): its pass in progress and the last embeddings outcome. */
+/** The vector row of a deep agent (KD-8): its pass in progress and the last embeddings outcome. */
 export const agentKnowledgeEmbedding = app.table(
   'agent_knowledge_embedding',
   {
@@ -1272,7 +1272,7 @@ export const agentKnowledgeEmbedding = app.table(
 );
 
 /**
- * The pgvector store of `KnowledgeVectorStore` (KD-8): the collection is the workflow, one vector
+ * The pgvector store of `KnowledgeVectorStore` (KD-8): the collection is the deep agent, one vector
  * per record key, carrying its model (Invariant 11).
  */
 export const agentKnowledgeVectors = app.table(
