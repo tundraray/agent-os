@@ -33,7 +33,7 @@ import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
 import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
-import { formatMonth, type Formatter } from '@/lib/i18n/formats';
+import { formatMonth, type Formatter } from '@/i18n/formats';
 import { useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';

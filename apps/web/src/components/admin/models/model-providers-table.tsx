@@ -29,7 +29,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { providerKindText } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
-import { formatListTime } from '@/lib/i18n/formats';
+import { formatListTime } from '@/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
@@ -43,7 +43,7 @@ import {
 } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 import { ModelProviderDialog } from './model-provider-dialog';
-import type { ModelsTranslator } from '@/lib/i18n/messages';
+import type { ModelsTranslator } from '@/i18n/catalog';
 
 const CHECK_EVENT = 'admin: model provider check';
 

@@ -13,7 +13,7 @@ import {
   DownloadIcon,
 } from "lucide-react";
 import type { FileMessagePartComponent } from "@assistant-ui/react";
-import type { ChatTranslator, FormatsTranslator } from "@/lib/i18n/messages";
+import type { ChatTranslator, FormatsTranslator } from "@/i18n/catalog";
 import { cn } from "@/lib/utils";
 import { AudioPlayer, VideoPlayer } from "./media-player";
 

@@ -10,7 +10,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantTargetText, orphanGrantIds, serversToRead } from '@/lib/admin/grants';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
-import { formatQuota } from '@/lib/i18n/formats';
+import { formatQuota } from '@/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CONTROL_SIZE, describeRefusal } from '../admin-form';

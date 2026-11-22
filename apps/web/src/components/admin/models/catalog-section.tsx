@@ -17,14 +17,14 @@ import type { Resource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
-import type { Formatter } from '@/lib/i18n/formats';
+import type { Formatter } from '@/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { ModelDialog, PRICES } from './model-dialog';
-import type { ModelsTranslator } from '@/lib/i18n/messages';
+import type { ModelsTranslator } from '@/i18n/catalog';
 
 const priceCells = (format: Formatter, prices: PriceRates): string[] =>
   PRICES.map((field) => format.number(prices[field], 'usdPrice'));

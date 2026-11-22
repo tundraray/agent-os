@@ -17,7 +17,7 @@ import { fieldErrorText, type FieldRuleKey } from "@/lib/admin/form-rules";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
 import { logger } from "@/lib/logger";
-import type { ErrorsTranslator } from "@/lib/i18n/messages";
+import type { ErrorsTranslator } from "@/i18n/catalog";
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
 export const CONTROL_SIZE = "h-7 pointer-coarse:h-11";

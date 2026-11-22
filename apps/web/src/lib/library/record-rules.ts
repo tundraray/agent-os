@@ -8,7 +8,7 @@ import {
   type RunOrigin,
   type Subagent,
 } from '@agent-os/contracts';
-import type { LibraryTranslator } from '@/lib/i18n/messages';
+import type { LibraryTranslator } from '@/i18n/catalog';
 
 /**
  * Rules of the web (design-web.md, «Правила веба»): pure decisions over data the caller has already

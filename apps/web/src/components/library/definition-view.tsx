@@ -18,7 +18,7 @@ import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
 import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
-import { builtinRoleName } from "@/lib/i18n/builtin-name";
+import { builtinRoleName } from "@/i18n/builtin-name";
 import type { ChangedField, RecordField, SubagentField } from "@/lib/library/record-rules";
 import { cn } from "cn";
 

@@ -3,8 +3,8 @@
 import { useMessages, useTranslations, type TranslationValues } from "next-intl";
 import { useStore } from "zustand";
 
-import { builtinToolLabels } from "@/lib/i18n/builtin-name";
-import type { Messages } from "@/lib/i18n/messages";
+import { builtinToolLabels } from "@/i18n/builtin-name";
+import type { Messages } from "@/i18n/catalog";
 import type { AnnouncementValues, AnnouncerStore } from "@/lib/live/announcer-store";
 
 /** Values ready for `t`: a built-in tool reads by its catalogue title, or by its name when the catalogue lacks it. */

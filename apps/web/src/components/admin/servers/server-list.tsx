@@ -9,7 +9,7 @@ import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import { buttonVariants } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import type { ServersTranslator } from '@/lib/i18n/messages';
+import type { ServersTranslator } from '@/i18n/catalog';
 import { adminNewPath, adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';

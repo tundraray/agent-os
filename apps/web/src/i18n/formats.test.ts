@@ -1,7 +1,7 @@
 import { createFormatter, createTranslator } from 'next-intl';
 import { describe, expect, it } from 'vitest';
 import { testFormatter } from '@/test/intl';
-import { messagesOf, type FormatsTranslator } from './messages';
+import { catalogOf, type FormatsTranslator } from './catalog';
 import type { Locale } from './pick-locale';
 import {
   formatDay,
@@ -54,9 +54,9 @@ describe('formats numbers, money and the month by the interface language', () =>
 });
 
 const translatorOf = (locale: Locale): FormatsTranslator =>
-  createTranslator({ locale, messages: messagesOf(locale), namespace: 'formats' });
+  createTranslator({ locale, messages: catalogOf(locale), namespace: 'formats' });
 
-const libraryRu = createTranslator({ locale: 'ru', messages: messagesOf('ru'), namespace: 'library' });
+const libraryRu = createTranslator({ locale: 'ru', messages: catalogOf('ru'), namespace: 'library' });
 
 // UC-4 / AC-04.2, foundations «Длительность» and «Слова при числах»: a count agrees with its noun in every
 // form of the language, and a duration reads by the foundations steps.

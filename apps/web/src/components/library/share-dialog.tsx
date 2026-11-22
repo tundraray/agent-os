@@ -26,8 +26,8 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from "@/hooks/use-debounc
 import { useResource } from "@/hooks/use-resource";
 import { adminApi } from "@/lib/admin/admin-api";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
-import type { Locale } from "@/lib/i18n/pick-locale";
+import { builtinName, builtinRoleName } from "@/i18n/builtin-name";
+import type { Locale } from "@/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
 import { describeLibraryError } from "@/lib/library/library-errors";
 import { recordAction } from "@/lib/library/record-action";

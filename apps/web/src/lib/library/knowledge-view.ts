@@ -5,8 +5,8 @@ import type {
   LastExtraction,
 } from "@agent-os/contracts";
 import { formatModel } from "@/lib/agents/format";
-import { formatDay, type Formatter } from "@/lib/i18n/formats";
-import type { LibraryTranslator } from "@/lib/i18n/messages";
+import { formatDay, type Formatter } from "@/i18n/formats";
+import type { LibraryTranslator } from "@/i18n/catalog";
 
 /**
  * The one place where the knowledge screen's server answer becomes its words (self-learning design-web.md,

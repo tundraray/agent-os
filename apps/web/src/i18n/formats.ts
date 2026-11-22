@@ -1,5 +1,5 @@
 import type { createFormatter, Formats } from 'next-intl';
-import type { FormatsTranslator } from './messages';
+import type { FormatsTranslator } from './catalog';
 
 /**
  * The shared date and number formats the interface-language provider receives (design-web.md, «Форматы»;

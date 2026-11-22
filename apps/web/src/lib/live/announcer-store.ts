@@ -1,7 +1,7 @@
 import type { MessageKeys, NestedKeyOf, TranslationValues } from "next-intl";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
-import type { Messages } from "@/lib/i18n/messages";
+import type { Messages } from "@/i18n/catalog";
 
 /** A full catalog key («announce.copied», «account.language.announced»). */
 export type AnnouncementKey = MessageKeys<Messages, NestedKeyOf<Messages>>;

@@ -1,5 +1,5 @@
 import type { formats } from './formats';
-import type { Messages } from './messages';
+import type { Messages } from './catalog';
 import type { Locale } from './pick-locale';
 
 // Types `useTranslations` keys, `useLocale()` and the named formats of `useFormatter` (design-web.md, KD-5).

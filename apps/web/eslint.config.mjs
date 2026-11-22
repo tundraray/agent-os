@@ -19,7 +19,7 @@ const eslintConfig = defineConfig([
     rules: { "@next/next/no-img-element": "off" },
   },
   {
-    // Interface text lives in the message catalogues (src/messages, not linted);
+    // Interface text lives in the message catalogues (src/i18n/translations, not linted);
     // Russian text or the 'ru-RU' locale in code means a phrase escaped them.
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/**/*.test.{ts,tsx}", "src/test/**"],
@@ -28,15 +28,15 @@ const eslintConfig = defineConfig([
         "error",
         {
           selector: "Literal[value=/[А-Яа-яЁё]/]",
-          message: "Interface text belongs in the message catalogue (src/messages).",
+          message: "Interface text belongs in the message catalogue (src/i18n/translations).",
         },
         {
           selector: "TemplateElement[value.raw=/[А-Яа-яЁё]/]",
-          message: "Interface text belongs in the message catalogue (src/messages).",
+          message: "Interface text belongs in the message catalogue (src/i18n/translations).",
         },
         {
           selector: "JSXText[value=/[А-Яа-яЁё]/]",
-          message: "Interface text belongs in the message catalogue (src/messages).",
+          message: "Interface text belongs in the message catalogue (src/i18n/translations).",
         },
         {
           selector: "Literal[value='ru-RU']",

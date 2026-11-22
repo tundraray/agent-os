@@ -10,7 +10,7 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { adminApi } from "@/lib/admin/admin-api";
 import type { ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName } from "@/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
 import { recordAction } from "@/lib/library/record-action";
 import { knowledgePath, libraryPath, recordPath } from "@/lib/shell-route";

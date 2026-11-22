@@ -8,12 +8,12 @@ import {
   type RecordSummary,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { failedText } from '@/lib/i18n/server-text';
+import { failedText } from '@/i18n/server-text';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { isNotFound } from '@/lib/admin/admin-errors';
 import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
-import type { ErrorsTranslator } from '@/lib/i18n/messages';
+import type { ErrorsTranslator } from '@/i18n/catalog';
 
 /**
  * Texts of the library's errors and refusals and where each one shows (design-web.md, «Ошибки и их

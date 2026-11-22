@@ -37,8 +37,8 @@ import {
   type ModelOption,
 } from "@/lib/admin/model-providers";
 import { formatModel, formatRecordModel } from "@/lib/agents/format";
-import type { FormatsTranslator, ModelsTranslator } from "@/lib/i18n/messages";
-import type { Locale } from "@/lib/i18n/pick-locale";
+import type { FormatsTranslator, ModelsTranslator } from "@/i18n/catalog";
+import type { Locale } from "@/i18n/pick-locale";
 import type { AgentDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";

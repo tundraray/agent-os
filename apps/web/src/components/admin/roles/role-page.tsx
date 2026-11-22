@@ -13,7 +13,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
-import { builtinRoleName } from '@/lib/i18n/builtin-name';
+import { builtinRoleName } from '@/i18n/builtin-name';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';

@@ -17,7 +17,7 @@ import {
   type ProviderFailureReason,
 } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
-import { formatListTime } from "@/lib/i18n/formats";
+import { formatListTime } from "@/i18n/formats";
 import type { EventPartData, AnswerRefusedPartData } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
 

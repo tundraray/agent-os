@@ -34,7 +34,7 @@
 
 #### KD-6: Тексты, которых нет в UXRD
 
-Тексты лежат в каталогах сообщений `src/messages` ([interface-text.md](../../code-system/patterns/interface-text.md)).
+Тексты лежат в каталогах сообщений `src/i18n/translations` ([interface-text.md](../../code-system/patterns/interface-text.md)).
 
 - Причины отказа `unknown_agent`, `unknown_model`, `invalid_arguments` и любая будущая — одна строка «Платформа отказала в вызове»; код причины — в подсказке строки. Остальные причины — тексты MC-22.
 - Причины сбоя вне MC-14 и MC-18 (`handler_error`, `step_timeout`, `recovery_exhausted`, `invalid_step_result`) — «Сбой: ошибка платформы» в строке события и «Причина: ошибка платформы» в отчёте; код — в подсказке.

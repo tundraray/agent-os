@@ -6,8 +6,8 @@ import {
   type ModelPurpose,
   type ModelUnavailableReason,
 } from '@agent-os/contracts';
-import type { ModelsTranslator } from '@/lib/i18n/messages';
-import type { Locale } from '@/lib/i18n/pick-locale';
+import type { ModelsTranslator } from '@/i18n/catalog';
+import type { Locale } from '@/i18n/pick-locale';
 
 /**
  * Model providers in the panel (model-providers design-web.md, KD-5): readiness of a model by the list of

@@ -11,7 +11,7 @@ import {
   signInSettingsRules,
   type SignInSettingsValues,
 } from '@/lib/admin/form-rules';
-import type { Formatter } from '@/lib/i18n/formats';
+import type { Formatter } from '@/i18n/formats';
 import { cn } from '@/lib/utils';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
 import { DataTable, resourceTableState } from '../data-table';

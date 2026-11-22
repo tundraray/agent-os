@@ -35,8 +35,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResource } from "@/hooks/use-resource";
 import { BRIEF_PARTS } from "@/lib/agents/format";
-import { builtinName, toolCallLabels } from "@/lib/i18n/builtin-name";
-import { formatListTime, type Formatter } from "@/lib/i18n/formats";
+import { builtinName, toolCallLabels } from "@/i18n/builtin-name";
+import { formatListTime, type Formatter } from "@/i18n/formats";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
 import { recordCardOf, type RecordSave } from "@/lib/feed/to-feed";
@@ -45,7 +45,7 @@ import { briefTitleName, changedFields, type RecordDefinition } from "@/lib/libr
 import { logger } from "@/lib/logger";
 import { agentPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
-import type { AgentsTranslator, ChatTranslator } from "@/lib/i18n/messages";
+import type { AgentsTranslator, ChatTranslator } from "@/i18n/catalog";
 
 type CanCall = RunCodeConfirmationContent["canCall"];
 

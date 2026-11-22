@@ -7,9 +7,9 @@ import { useStore } from "zustand";
 import type { ChipRecord, RecordKind, RecordSummary, RunOrigin } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
-import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
-import type { LibraryTranslator } from "@/lib/i18n/messages";
-import type { Locale } from "@/lib/i18n/pick-locale";
+import { builtinName, builtinRoleName } from "@/i18n/builtin-name";
+import type { LibraryTranslator } from "@/i18n/catalog";
+import type { Locale } from "@/i18n/pick-locale";
 import { cn } from "cn";
 
 /**

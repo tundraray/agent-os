@@ -24,7 +24,7 @@ import { selectAgent } from "@/lib/feed/to-feed";
 import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
 import { describeLibraryError } from "@/lib/library/library-errors";
 import { agentPath, recordPath } from "@/lib/shell-route";
-import type { AgentsTranslator } from "@/lib/i18n/messages";
+import type { AgentsTranslator } from "@/i18n/catalog";
 
 /**
  * MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»); its

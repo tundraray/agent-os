@@ -13,8 +13,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResource } from "@/hooks/use-resource";
 import { focusShellTarget } from "@/lib/focus";
-import { builtinName } from "@/lib/i18n/builtin-name";
-import type { Locale } from "@/lib/i18n/pick-locale";
+import { builtinName } from "@/i18n/builtin-name";
+import type { Locale } from "@/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
 import { newAgentPath } from "@/lib/shell-route";
 import { LibraryRow } from "./library-row";

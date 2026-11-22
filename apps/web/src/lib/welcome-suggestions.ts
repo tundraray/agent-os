@@ -1,5 +1,5 @@
 import type { SuggestionConfig } from '@assistant-ui/react';
-import type { ChatTranslator } from '@/lib/i18n/messages';
+import type { ChatTranslator } from '@/i18n/catalog';
 
 const STARTERS = ['meetingPlan', 'clientLetter', 'explainOkr', 'teamBuilding'] as const;
 

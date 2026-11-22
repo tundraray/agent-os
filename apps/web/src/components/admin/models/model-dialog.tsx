@@ -20,7 +20,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { fieldErrorText, modelRules, parseDecimal, type ModelValues } from '@/lib/admin/form-rules';
 import { providerKindText } from '@/lib/admin/model-providers';
 import { isApiRequestError } from '@/lib/api/api-request';
-import type { Formatter } from '@/lib/i18n/formats';
+import type { Formatter } from '@/i18n/formats';
 import { cn } from '@/lib/utils';
 import { AdminForm, AdminRadioField, AdminSelectField, AdminTextField, CAPTION, type AdminFormApi } from '../admin-form';
 import { MODEL_DEFAULT_FIELD_ID } from './model-defaults-form';

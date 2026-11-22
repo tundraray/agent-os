@@ -13,7 +13,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { useResource, type Resource } from "@/hooks/use-resource";
 import { adminApi } from "@/lib/admin/admin-api";
 import { focusShellTarget } from "@/lib/focus";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName } from "@/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
 import { isKnowledgeHidden } from "@/lib/library/library-errors";
 import {

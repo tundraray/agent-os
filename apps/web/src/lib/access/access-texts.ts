@@ -5,8 +5,8 @@ import {
   isProviderFailureReason,
   PROVIDER_FAILURE_REASONS,
 } from '@/lib/agents/format';
-import { formatMonth, formatQuota, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
-import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/lib/i18n/messages';
+import { formatMonth, formatQuota, utcMonthOf, type Formatter } from '@/i18n/formats';
+import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/i18n/catalog';
 
 /**
  * Texts of the access refusals and failures (enterprise-access UXRD, MC-10, MC-11, MC-14, MC-17): one

@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
 import { describeApiError } from "@/lib/api/api-request";
-import { formatMonth, formatQuota, utcMonthOf } from "@/lib/i18n/formats";
+import { formatMonth, formatQuota, utcMonthOf } from "@/i18n/formats";
 import { logger } from "@/lib/logger";
 
 const EMPTY_VALUE = "—";

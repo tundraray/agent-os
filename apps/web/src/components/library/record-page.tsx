@@ -17,7 +17,7 @@ import { accessApi } from "@/lib/access/access-api";
 import { isNotFound } from "@/lib/admin/admin-errors";
 import { formatModel, type ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName } from "@/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
 import { canUseInChat, recipientNote, type AgentRecord } from "@/lib/library/record-rules";
 import { adminRecordPath, libraryPath, newAgentPath, recordPath } from "@/lib/shell-route";

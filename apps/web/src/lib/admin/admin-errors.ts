@@ -10,11 +10,11 @@ import {
   ModelProviderInvalidReasonSchema,
   type GrantEffect,
 } from '@agent-os/contracts';
-import { failedText } from '@/lib/i18n/server-text';
+import { failedText } from '@/i18n/server-text';
 import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { fieldErrorText } from './form-rules';
-import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/lib/i18n/messages';
+import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/i18n/catalog';
 
 /** A field of a panel form that a refusal can name. */
 export type AdminFieldTarget = 'login' | 'email' | 'password' | 'name' | 'modelName' | 'quota';

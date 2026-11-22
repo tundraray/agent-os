@@ -14,7 +14,7 @@ import {
 } from '@/lib/admin/model-providers';
 import { AdminForm, AdminSelectField, type AdminSelectOption } from '../admin-form';
 import { DataTable, type DataTableState } from '../data-table';
-import type { ModelsTranslator } from '@/lib/i18n/messages';
+import type { ModelsTranslator } from '@/i18n/catalog';
 
 /** Constant ids, so «Выбрать по умолчанию» of the model dialog can move focus into the field of its purpose. */
 export const MODEL_DEFAULT_FIELD_ID = {

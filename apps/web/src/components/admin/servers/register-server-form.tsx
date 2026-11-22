@@ -13,7 +13,7 @@ import { AdminForm, AdminRadioField, AdminTextField, type AdminRadioOption } fro
 import { useAdminTitles } from '../admin-header';
 import { SecretField } from '../secret-field';
 import { serverModeLabel } from './server-list';
-import type { ServersTranslator } from '@/lib/i18n/messages';
+import type { ServersTranslator } from '@/i18n/catalog';
 
 /** MC-29: the credentials modes, each with what it means under its radio. */
 const modes = (t: ServersTranslator): readonly AdminRadioOption<McpServerMode>[] =>

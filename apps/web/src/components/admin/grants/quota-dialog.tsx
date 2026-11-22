@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { adminApi } from '@/lib/admin/admin-api';
 import { quotaRules, quotaUsdOf } from '@/lib/admin/form-rules';
 import { grantTargetText } from '@/lib/admin/grants';
-import type { Formatter } from '@/lib/i18n/formats';
+import type { Formatter } from '@/i18n/formats';
 import { AdminForm, AdminTextField } from '../admin-form';
 
 /** The quota as the field shows it: the dollars the admin set, the page's decimal mark, no grouping; none → empty. */

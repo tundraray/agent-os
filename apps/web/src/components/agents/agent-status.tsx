@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatListTime } from "@/lib/i18n/formats";
+import { formatListTime } from "@/i18n/formats";
 import { cn } from "@/lib/utils";
 
 /** One turn of a working icon (foundations, Motion: «вращение 1 с на оборот»). */

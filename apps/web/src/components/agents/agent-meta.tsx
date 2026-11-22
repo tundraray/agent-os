@@ -7,8 +7,8 @@ import { AgentStatus } from "@/components/agents/agent-status";
 import { ChangedAfterRun, runRecord, useLiveRecord } from "@/components/agents/run-card";
 import { RecordLabel } from "@/components/library/record-label";
 import { formatModel } from "@/lib/agents/format";
-import { builtinName } from "@/lib/i18n/builtin-name";
-import { formatListTime } from "@/lib/i18n/formats";
+import { builtinName } from "@/i18n/builtin-name";
+import { formatListTime } from "@/i18n/formats";
 import { isDeepAgentRun } from "@/lib/feed/to-feed";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
 

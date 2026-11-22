@@ -9,7 +9,7 @@ import { DataTable, type DataTableColumn, type DataTableRow } from "@/components
 import { StateBadge } from "@/components/state-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import type { LibraryTranslator } from "@/lib/i18n/messages";
+import type { LibraryTranslator } from "@/i18n/catalog";
 import { deleteFailed } from "@/lib/library/library-errors";
 import { libraryApi } from "@/lib/library/library-api";
 import { logger } from "@/lib/logger";

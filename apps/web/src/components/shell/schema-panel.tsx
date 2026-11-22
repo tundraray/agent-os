@@ -16,7 +16,7 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { FeedProvider, useFeedSelector, useFeedStoreSelector } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
 import { recordCardOf } from '@/lib/feed/to-feed';
-import { formatListTime } from '@/lib/i18n/formats';
+import { formatListTime } from '@/i18n/formats';
 import { libraryApi } from '@/lib/library/library-api';
 import type { SchemaTab } from '@/lib/shell/workspace-store';
 import { recordPath } from '@/lib/shell-route';

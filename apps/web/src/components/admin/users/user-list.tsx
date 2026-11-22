@@ -15,9 +15,9 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounc
 import { usePagedResource, type Page } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isListChanged } from '@/lib/admin/admin-errors';
-import { builtinRoleName } from '@/lib/i18n/builtin-name';
-import { formatListTime, type Formatter } from '@/lib/i18n/formats';
-import type { Locale } from '@/lib/i18n/pick-locale';
+import { builtinRoleName } from '@/i18n/builtin-name';
+import { formatListTime, type Formatter } from '@/i18n/formats';
+import type { Locale } from '@/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { AccountDialog } from './account-dialog';

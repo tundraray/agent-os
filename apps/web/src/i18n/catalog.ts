@@ -1,33 +1,36 @@
-import enAccount from '@/messages/en/account.json';
-import enAdmin from '@/messages/en/admin.json';
-import enAgents from '@/messages/en/agents.json';
-import enAnnounce from '@/messages/en/announce.json';
-import enChat from '@/messages/en/chat.json';
-import enCommon from '@/messages/en/common.json';
-import enErrors from '@/messages/en/errors.json';
-import enFormats from '@/messages/en/formats.json';
-import enLibrary from '@/messages/en/library.json';
-import enLogin from '@/messages/en/login.json';
-import enPages from '@/messages/en/pages.json';
-import enShell from '@/messages/en/shell.json';
-import enTools from '@/messages/en/tools.json';
-import ruAccount from '@/messages/ru/account.json';
-import ruAdmin from '@/messages/ru/admin.json';
-import ruAgents from '@/messages/ru/agents.json';
-import ruAnnounce from '@/messages/ru/announce.json';
-import ruChat from '@/messages/ru/chat.json';
-import ruCommon from '@/messages/ru/common.json';
-import ruErrors from '@/messages/ru/errors.json';
-import ruFormats from '@/messages/ru/formats.json';
-import ruLibrary from '@/messages/ru/library.json';
-import ruLogin from '@/messages/ru/login.json';
-import ruPages from '@/messages/ru/pages.json';
-import ruShell from '@/messages/ru/shell.json';
-import ruTools from '@/messages/ru/tools.json';
+import enAccount from './translations/en/account.json';
+import enAdmin from './translations/en/admin.json';
+import enAgents from './translations/en/agents.json';
+import enAnnounce from './translations/en/announce.json';
+import enChat from './translations/en/chat.json';
+import enCommon from './translations/en/common.json';
+import enErrors from './translations/en/errors.json';
+import enFormats from './translations/en/formats.json';
+import enLibrary from './translations/en/library.json';
+import enLogin from './translations/en/login.json';
+import enPages from './translations/en/pages.json';
+import enShell from './translations/en/shell.json';
+import enTools from './translations/en/tools.json';
+import ruAccount from './translations/ru/account.json';
+import ruAdmin from './translations/ru/admin.json';
+import ruAgents from './translations/ru/agents.json';
+import ruAnnounce from './translations/ru/announce.json';
+import ruChat from './translations/ru/chat.json';
+import ruCommon from './translations/ru/common.json';
+import ruErrors from './translations/ru/errors.json';
+import ruFormats from './translations/ru/formats.json';
+import ruLibrary from './translations/ru/library.json';
+import ruLogin from './translations/ru/login.json';
+import ruPages from './translations/ru/pages.json';
+import ruShell from './translations/ru/shell.json';
+import ruTools from './translations/ru/tools.json';
 import type { useTranslations } from 'next-intl';
 import type { Locale } from './pick-locale';
 
-/** One entry per screen area; an area is a next-intl namespace. A new area file is registered here. */
+/**
+ * One entry per screen area; an area is a next-intl namespace. Each language has its folder in `./translations`, with one
+ * file per area under the same name: `en/<area>.json` and `ru/<area>.json`. A new area is registered here.
+ */
 const en = {
   account: enAccount,
   admin: enAdmin,
@@ -100,7 +103,7 @@ function overlay(base: MessageTree, over: MessageTree): MessageTree {
 const RU_OVER_EN = overlay(en, ru);
 
 /** The catalog sent to the browser for `locale`: Russian is laid over English. */
-export function messagesOf(locale: Locale): Messages {
+export function catalogOf(locale: Locale): Messages {
   // Same keys as `en` by construction: `overlay` keeps every key of its base.
   return locale === 'ru' ? (RU_OVER_EN as Messages) : en;
 }

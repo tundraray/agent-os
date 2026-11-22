@@ -29,8 +29,8 @@ import {
   type PriceRates,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
-import type { Formatter } from '@/lib/i18n/formats';
-import type { ErrorsTranslator, Messages } from '@/lib/i18n/messages';
+import type { Formatter } from '@/i18n/formats';
+import type { ErrorsTranslator, Messages } from '@/i18n/catalog';
 
 /**
  * Field rules of the panel's forms (design-admin.md, KD-5): one pure function per form, checked on submit.

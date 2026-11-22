@@ -19,12 +19,12 @@ import { RecordLabel } from "@/components/library/record-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatModel } from "@/lib/agents/format";
-import { builtinName } from "@/lib/i18n/builtin-name";
-import { formatListTime } from "@/lib/i18n/formats";
+import { builtinName } from "@/i18n/builtin-name";
+import { formatListTime } from "@/i18n/formats";
 import { isDeepAgentRun } from "@/lib/feed/to-feed";
 import { focusShellTarget } from "@/lib/focus";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
-import type { Locale } from "@/lib/i18n/pick-locale";
+import type { Locale } from "@/i18n/pick-locale";
 import { cn } from "@/lib/utils";
 
 /** The level indent stops growing after the fourth level (agent-tree.md, Anatomy). */

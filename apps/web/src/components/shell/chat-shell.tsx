@@ -7,7 +7,7 @@ import { useTranslations } from 'next-intl';
 import type { Layout, LayoutChangedMeta } from 'react-resizable-panels';
 import { useStore } from 'zustand';
 import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
-import { LocaleSync } from '@/components/i18n/locale-sync';
+import { LocaleSync } from '@/i18n/locale-sync';
 import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';

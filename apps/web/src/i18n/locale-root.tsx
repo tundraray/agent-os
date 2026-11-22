@@ -2,9 +2,9 @@ import type { ReactNode } from 'react';
 import { cookies, headers } from 'next/headers';
 import { after } from 'next/server';
 import { LOCALE_COOKIE } from '@agent-os/contracts';
-import { IntlProvider } from '@/components/i18n/intl-provider';
-import { messagesOf } from '@/lib/i18n/messages';
-import { pickLocale } from '@/lib/i18n/pick-locale';
+import { IntlProvider } from './intl-provider';
+import { catalogOf } from './catalog';
+import { pickLocale } from './pick-locale';
 import { logger } from '@/lib/logger';
 
 /**
@@ -20,7 +20,7 @@ export async function LocaleRoot({ children }: { children: ReactNode }) {
     <>
       {/* `locale` is from the closed set `en` | `ru`, never request text: the static `lang="en"` is fixed before paint. */}
       <script dangerouslySetInnerHTML={{ __html: `document.documentElement.lang=${JSON.stringify(locale)};` }} />
-      <IntlProvider locale={locale} messages={messagesOf(locale)}>
+      <IntlProvider locale={locale} messages={catalogOf(locale)}>
         {children}
       </IntlProvider>
     </>

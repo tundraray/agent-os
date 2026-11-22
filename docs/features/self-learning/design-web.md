@@ -97,7 +97,7 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 | `DecisionCard`, `SelfLearningNote` | [read-on-open.md](../../code-system/patterns/read-on-open.md) | extended / new | строка SL-02 (KD-6) |
 | `KnowledgeButton` в `editor-header.tsx` | — | new | кнопка MC-7 у глубокого агента в панели |
 | `KnowledgeSettingsForm`, `knowledgeSettingsRules` | [settings-row.md](../../code-system/patterns/settings-row.md) | new / extended | форма AS-01 по образцу `LibrarySettingsForm` (KD-7) |
-| `formatDay` в `lib/i18n/formats.ts`, `formatModel` в `lib/agents/format.ts` | — | reused | день записи, модель в строках состояния |
+| `formatDay` в `i18n/formats.ts`, `formatModel` в `lib/agents/format.ts` | — | reused | день записи, модель в строках состояния |
 
 ## Acceptance Criteria
 

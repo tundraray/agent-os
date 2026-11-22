@@ -19,7 +19,7 @@
 //
 // Proven by the unit tests next to the code, not here: `parseShellRoute` (lib/shell-route.test.ts), `useResource` (hooks/use-resource.test.tsx),
 //   `apiRequest` (lib/api/api-request.test.ts), `describeAdminError` (lib/admin/admin-errors.test.ts), the form rules (lib/admin/form-rules.test.ts),
-//   orphan grants (lib/admin/grants.test.ts), catalogue prices (lib/i18n/formats.test.ts), `DataTable` focus after a removed row
+//   orphan grants (lib/admin/grants.test.ts), catalogue prices (i18n/formats.test.ts), `DataTable` focus after a removed row
 //   (components/admin/data-table.test.tsx) and `AdminForm` focus on the first field with an error (components/admin/admin-form.test.tsx).
 //
 // `not automated`: density, tokens, contrast and the keyboard order across the panel (NFR-05, UC-N1) - the L1 browser table; the loss of a deleted

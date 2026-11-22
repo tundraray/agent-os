@@ -1,5 +1,5 @@
 import { AgentFailureReasonSchema, type AgentFailureReason } from "@agent-os/contracts";
-import type { ErrorsTranslator, FormatsTranslator } from "@/lib/i18n/messages";
+import type { ErrorsTranslator, FormatsTranslator } from "@/i18n/catalog";
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides

@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 import { createFormatter, createTranslator, NextIntlClientProvider, type NamespaceKeys, type NestedKeyOf } from 'next-intl';
-import { formats } from '@/lib/i18n/formats';
-import { messagesOf, type Messages } from '@/lib/i18n/messages';
-import type { Locale } from '@/lib/i18n/pick-locale';
+import { formats } from '@/i18n/formats';
+import { catalogOf, type Messages } from '@/i18n/catalog';
+import type { Locale } from '@/i18n/pick-locale';
 
 /** Component tests render in Russian, so their queries keep matching the visible Russian text (design-web.md, KD-7). */
 const TEST_LOCALE = 'ru';
-const TEST_MESSAGES = messagesOf(TEST_LOCALE);
+const TEST_MESSAGES = catalogOf(TEST_LOCALE);
 /** Same zone as `TZ` in vitest.config.ts: dates format identically in Node and through next-intl. */
 const TEST_TIME_ZONE = 'Europe/Berlin';
 

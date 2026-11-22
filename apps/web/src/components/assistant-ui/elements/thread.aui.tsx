@@ -49,7 +49,7 @@ import { replyFailureText } from "@/lib/access/access-texts";
 import { describeLibraryError } from "@/lib/library/library-errors";
 import { focusShellTarget } from "@/lib/focus";
 import { recordPath } from "@/lib/shell-route";
-import type { ChatTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
+import type { ChatTranslator, ErrorsTranslator } from "@/i18n/catalog";
 import type { SeedTarget } from "@/lib/threads/composer-seed";
 import type { SendFailure } from "@/lib/threads/shell-status-store";
 import { cn } from "@/lib/utils";

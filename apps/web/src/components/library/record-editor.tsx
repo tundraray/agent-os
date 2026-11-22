@@ -13,7 +13,7 @@ import { ThreadNotice } from "@/components/shell/thread-notice";
 import { adminApi } from "@/lib/admin/admin-api";
 import { focusShellTarget } from "@/lib/focus";
 import { libraryApi } from "@/lib/library/library-api";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName } from "@/i18n/builtin-name";
 import { describeLibraryError, type LibraryErrorText } from "@/lib/library/library-errors";
 import { RecordConflictError, recordAction } from "@/lib/library/record-action";
 import { canUseInChat, changedFieldLabel, type AgentDefinition, type AgentRecord } from "@/lib/library/record-rules";

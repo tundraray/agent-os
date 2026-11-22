@@ -1,5 +1,5 @@
 import { BUILTIN_ROLE_KEY, builtinNameIn } from '@agent-os/contracts';
-import { hasMessage, type Messages } from './messages';
+import { hasMessage, type Messages } from './catalog';
 import type { Locale } from './pick-locale';
 
 /**
