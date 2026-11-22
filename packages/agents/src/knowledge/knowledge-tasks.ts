@@ -1,3 +1,4 @@
+import type { AgentKnowledgeRunsRepository, Db, KnowledgeEmbeddingRow } from '@agent-os/db';
 import { PLATFORM_OWNER_ID, type TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -35,4 +36,23 @@ export function isForeignKeyViolation(error: unknown): boolean {
     if ((current as { code?: unknown }).code === FOREIGN_KEY_VIOLATION) return true;
   }
   return false;
+}
+
+/**
+ * The deep agent's vector row, written first in a transaction that goes on to change the deep agent's
+ * graph or the row itself: the other such transactions of the deep agent wait until this one ends
+ * (Invariant 5). In a savepoint: when the deep agent record was deleted meanwhile, the foreign key
+ * fails only the savepoint and the answer is `undefined`.
+ */
+export async function holdKnowledgeOf(
+  db: Db,
+  runRows: AgentKnowledgeRunsRepository,
+  recordId: string,
+): Promise<KnowledgeEmbeddingRow | undefined> {
+  try {
+    return await db.savepoint(() => runRows.ensureEmbeddingRow(recordId));
+  } catch (error) {
+    if (isForeignKeyViolation(error)) return undefined;
+    throw error;
+  }
 }

@@ -23,7 +23,7 @@ import { AGENTS_LOGGER } from '../agents.tokens';
 import { AgentsEmbeddings } from '../embeddings/embeddings';
 import { Sessions } from '../store/sessions';
 import { graphItemsOf, registryToolAlive } from './knowledge-block';
-import { embedPassRequest } from './knowledge-tasks';
+import { embedPassRequest, holdKnowledgeOf } from './knowledge-tasks';
 import { type EmbeddingState, knowledgeViewParts } from './select-knowledge';
 import type { KnowledgeVectorStore } from './vector-store';
 
@@ -187,13 +187,13 @@ export class AgentsKnowledge {
   }
 
   /**
-   * The cleanup of a deleted record's vector (KD-8, Flow 3): in the deletion's transaction.
+   * The cleanup of a deleted record's vector (KD-8, Flow 3): in the deletion's transaction, by the vector row
+   * it started with.
    * No pass in progress — a new pass the platform pays for (`payer_id` `null`: only a deletion
    * asked for it); a pass in progress — only «one more pass», its payer unchanged. The pass removes every key
    * without a graph record, so no vector of the deleted record is found after it (Invariant 10).
    */
-  private async queueVectorCleanup(recordId: string): Promise<VectorCleanup> {
-    const row = await this.knowledgeRunRows.ensureEmbeddingRow(recordId);
+  private async queueVectorCleanup(recordId: string, row: KnowledgeEmbeddingRow): Promise<VectorCleanup> {
     if (row.passTaskId !== null) {
       await this.knowledgeRunRows.updateEmbeddingRow(recordId, { needsPass: true });
       return 'pass_marked';
@@ -204,15 +204,19 @@ export class AgentsKnowledge {
   }
 
   /**
-   * One deletion: the delete, then — only when something was deleted — the vector cleanup, all in one transaction.
+   * One deletion: the deep agent's vector row first, so it never interleaves with a round's commit or the
+   * trigger (Invariant 5), then the delete, then — only when something was deleted — the vector cleanup, all
+   * in one transaction.
    */
   private async deleteWithCleanup<T extends { readonly deleted: boolean }>(
     recordId: string,
     remove: () => Promise<T>,
   ): Promise<{ readonly result: T; readonly cleanup: VectorCleanup | null }> {
     return this.db.transaction(async () => {
+      const row = await holdKnowledgeOf(this.db, this.knowledgeRunRows, recordId);
       const result = await remove();
-      const cleanup = result.deleted ? await this.queueVectorCleanup(recordId) : null;
+      const cleanup =
+        result.deleted && row !== undefined ? await this.queueVectorCleanup(recordId, row) : null;
       return { result, cleanup };
     });
   }

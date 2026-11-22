@@ -88,9 +88,17 @@ export class AgentKnowledgeRunsRepository {
       .onConflictDoNothing({ target: runs.runId });
   }
 
-  /** The run row matching `where` with the owner of its session. */
+  /**
+   * The run row matching `where` with the owner of its session, read by an UPDATE that changes nothing:
+   * inside a transaction the other writers of the row wait until it ends, so the trigger and the round
+   * commit decide on the row one at a time (Invariant 1).
+   */
   private async findRun(where: SQL): Promise<OwnedKnowledgeRunRow | undefined> {
-    const [row] = await this.db.client.select().from(runs).where(where);
+    const [row] = await this.db.client
+      .update(runs)
+      .set({ needsRound: sql`${runs.needsRound}` })
+      .where(where)
+      .returning();
     if (row === undefined) return undefined;
     const [session] = await this.db.client
       .select({ ownerId: agentSessions.ownerId })
@@ -183,27 +191,30 @@ export class AgentKnowledgeRunsRepository {
     return row;
   }
 
-  /** The vector row whose pass is the task — how the trigger recognises a failed pass. */
+  /**
+   * The vector row whose pass is the task — how the trigger recognises a failed pass. Read by an UPDATE
+   * that changes nothing: the other writers of the row wait until the transaction ends.
+   */
   async findEmbeddingByPassTask(taskId: string): Promise<KnowledgeEmbeddingRow | undefined> {
     const [row] = await this.db.client
-      .select()
-      .from(embedding)
-      .where(eq(embedding.passTaskId, taskId));
+      .update(embedding)
+      .set({ needsPass: sql`${embedding.needsPass}` })
+      .where(eq(embedding.passTaskId, taskId))
+      .returning();
     return row;
   }
 
   /**
-   * The deep agent's vector row, created when missing.
+   * The deep agent's vector row, created when missing, in one statement that writes the row either way:
+   * the other writers of the row wait until the transaction ends. The row is the one row per deep agent,
+   * so a transaction that starts with it has the deep agent's graph to itself (Invariant 5).
    */
   async ensureEmbeddingRow(recordId: string): Promise<KnowledgeEmbeddingRow> {
-    await this.db.client
+    const [row] = await this.db.client
       .insert(embedding)
       .values({ recordId })
-      .onConflictDoNothing({ target: embedding.recordId });
-    const [row] = await this.db.client
-      .select()
-      .from(embedding)
-      .where(eq(embedding.recordId, recordId));
+      .onConflictDoUpdate({ target: embedding.recordId, set: { recordId } })
+      .returning();
     if (row === undefined) throw new Error(`knowledge embedding row of ${recordId} is missing`);
     return row;
   }

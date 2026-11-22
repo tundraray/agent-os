@@ -385,12 +385,19 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       const restarted = await createAgentsHarness(options);
       harnesses.push(restarted);
       await waitForTaskStatus(restarted, firstChildId, boris, 'completed');
+      // The root takes the child's report on B while A's only slot is still held
+      await firstAsk.called(2);
+      await waitForTaskStatus(restarted, rootId, boris, 'waiting');
       childHeld.open();
       await waitFor(
         () => notCurrentLogsOf(zombie, firstChildId),
         (records) => records.length > 0,
         'the late step result of instance A to be refused',
       );
+      // Instance A is the dead process: one process executes steps, so its workers stop here. Left running, its
+      // freed slot claims the root's next step on the object A kept from before the takeover, and B's sweeper
+      // requeues that step as a lost one.
+      await zombie.runtime.stop();
 
       // Then: every call of the first child, on A before the takeover and on B after it, ran on version 1 -
       // its prompt, its (empty) tool set, its model - and the call of the tool only version 2 has was refused

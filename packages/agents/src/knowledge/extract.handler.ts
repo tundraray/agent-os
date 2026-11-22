@@ -28,6 +28,7 @@ import { type ExtractionInput, readExtractionInput } from './extraction-input';
 import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
 import { graphItemsOf, registryToolAlive } from './knowledge-block';
 import {
+  holdKnowledgeOf,
   isForeignKeyViolation,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
   KnowledgeExtractInputSchema,
@@ -321,7 +322,8 @@ function rejectionCounts(checked: CheckedOperations): Record<string, number> {
  *    an answer without a good call gets one more attempt, a second bad one is `invalid_answer` (DC-7).
  * 4. New entities: masked, embedded, the store's similar entities; only with candidates one more call
  *    with `choose_entities` (DC-17). So a round makes at most three model calls.
- * 5. The commit — one guarded transaction: the run row re-read, the graph re-read,
+ * 5. The commit — one guarded transaction: the run row re-read, the deep agent's vector row written
+ *    (`holdKnowledgeOf`: rounds and deletions of one deep agent go one after another), the graph re-read,
  *    `checkOperations`, the graph writes in a savepoint (a deleted deep agent drops only them, DC-8), the
  *    outcome with `last_extract_task_id`, the mark moved forward to `readAt` on `done`, and by the run
  *    row: «one more round» set → cleared and the task continues; else `extract_task_id` cleared and
@@ -527,7 +529,13 @@ export function createKnowledgeExtractHandler(deps: KnowledgeExtractHandlerDeps)
       let counts = NO_COUNTS;
       let recordDeleted = false;
       const roundAt = new Date();
-      if (result?.kind === 'answered' && window !== null) {
+      const writesGraph = result?.kind === 'answered' && window !== null;
+      if (writesGraph && (await holdKnowledgeOf(db, knowledgeRunRows, round.recordId)) === undefined) {
+        recordDeleted = true;
+        round.logger.warn('knowledge graph writes dropped: deep agent deleted', {
+          reason: 'record_deleted',
+        });
+      } else if (result?.kind === 'answered' && window !== null) {
         const graph = await knowledgeRows.readGraph(round.recordId);
         const checked = checkOperations({
           graph,

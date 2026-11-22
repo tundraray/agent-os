@@ -16,7 +16,7 @@ import {
 import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
 import {
   embedPassRequest,
-  isForeignKeyViolation,
+  holdKnowledgeOf,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
   type KnowledgeExtractInput,
 } from './knowledge-tasks';
@@ -261,24 +261,7 @@ async function findEmbeddingOfTask(
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   if (run === undefined) return runRows.findEmbeddingByPassTask(taskId);
   if (run.runId === taskId || type !== COMPLETED) return undefined;
-  return ensureEmbeddingRowOfLiveRecord(db, runRows, run.recordId);
-}
-
-/**
- * The deep agent's vector row in a savepoint: when the deep agent record was deleted meanwhile, the
- * foreign key fails only the savepoint and the branch ends quietly (`undefined`).
- */
-async function ensureEmbeddingRowOfLiveRecord(
-  db: Db,
-  runRows: AgentKnowledgeRunsRepository,
-  recordId: string,
-): Promise<KnowledgeEmbeddingRow | undefined> {
-  try {
-    return await db.savepoint(() => runRows.ensureEmbeddingRow(recordId));
-  } catch (error) {
-    if (isForeignKeyViolation(error)) return undefined;
-    throw error;
-  }
+  return holdKnowledgeOf(db, runRows, run.recordId);
 }
 
 function outcomeOf(
