@@ -58,6 +58,6 @@ flowchart LR
 - **Имя** таблицы говорит, что в ней лежит (`conversations`, `messages`, `mcp_servers`, `agent_versions`); файл схемы, символ таблицы, файл и класс репозитория и типы строк называются по таблице (`ConversationsRepository`, `ConversationRow`).
 - **Настройки** платформы — одна таблица `settings`, строка на ключ, и `SettingsRepository` ([keyed-settings.md](../patterns/keyed-settings.md)).
 - **Репозиторий** — класс, который получает `Db` в конструкторе; в нём только запросы и типы строк, без параметра транзакции и без блокировок строк ([repository-over-transaction.md](../patterns/repository-over-transaction.md)). Новый класс добавляется в `REPOSITORIES`.
-- **Типы строк** (`RuntimeTrackerRow` и подобные) экспортирует `@agent-os/db`, и пакеты выше работают с ними, а не объявляют свои.
+- **Типы строк** (`RuntimeTaskRow` и подобные) экспортирует `@agent-os/db`, и пакеты выше работают с ними, а не объявляют свои.
 - **Миграции** применяет команда `apps/api/src/cli/migrate-cli.ts`. Сервер при старте только проверяет, что неприменённых миграций нет (`assertNoPendingMigrations`), и сам их не применяет.
 - Пакет зависит от `contracts`, `common`, `drizzle-orm`, `pg`, `zod`, `@nestjs/common` и `reflect-metadata`.

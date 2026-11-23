@@ -60,7 +60,7 @@ flowchart TB
 | Приложения | HTTP API, вход, права, библиотека записей, аудит, чат; экраны | `apps/api`, `apps/web` | `apps/api` — да; `apps/web` — Next |
 | Агенты | агенты и глубокие агенты, инструменты, MCP, провайдеры моделей, знания | `packages/agents` | да |
 | Исполнитель кода | процесс QuickJS на один скрипт | `packages/code-runner` | нет |
-| Runtime | durable-задачи шагами, сообщения, решения, трекеры, события, журнал токенов | `packages/runtime` | да |
+| Runtime | durable-задачи шагами, сообщения, ждущие дети, вопросы человеку, крючки конца задачи, сигнал изменения дерева, журнал токенов | `packages/runtime` | да |
 | Данные | пул, схема `app`, миграции, репозитории всех таблиц | `packages/db` | да |
 | Контракты | zod-схемы данных, пересекающих границу, и наборы значений для CHECK | `packages/contracts` | нет |
 | Общее | логгер и маска секретов | `packages/common` | нет |
@@ -84,7 +84,7 @@ flowchart TB
 | Модуль | Отдаёт | Кто зовёт |
 |---|---|---|
 | `db` | `DbModule`: `Db` — вход в базу с транзакциями, все репозитории и типы строк, функции миграций | все модули бэкенда |
-| `runtime` | `RuntimeModule`: сервисы задач, сообщений, решений, трекеров, событий, журнала токенов, `LiveTasks` и контракт обработчика шага и живого объекта | `agents`, `apps/api` |
+| `runtime` | `RuntimeModule`: сервисы задач и сообщений, реестр крючков конца задачи, журнала токенов, `LiveTasks` и контракт обработчика шага и живого объекта | `agents`, `apps/api` |
 | `agents` | `AgentsModule`: операции агентов (`StartOperations`, `ControlOperations`, `ViewOperations`), реестр инструментов, сервисы MCP, провайдеров моделей, эмбеддингов, знаний и больших результатов; интерфейсы и токены портов, которые реализует `apps/api` | `apps/api` |
 | `code-runner` | `createCodeRunner` и операция `CodeRunner.run` | только `agents` |
 | `common` | логгер, токен `LOGGER`, маска и память секретов | все |
@@ -100,7 +100,7 @@ flowchart TB
 | Файл | О чём |
 |---|---|
 | [packages/db.md](./packages/db.md) | схема, репозитории, миграции, `DbModule` |
-| [packages/runtime.md](./packages/runtime.md) | задачи и шаги, сообщения, события, воркеры, `RuntimeModule` |
+| [packages/runtime.md](./packages/runtime.md) | задачи и шаги, сообщения, вопросы, сигнал, воркеры, `RuntimeModule` |
 | [packages/agents.md](./packages/agents.md) | классы агентов, шаг агента, инструменты, MCP, провайдеры, знания |
 | [packages/base.md](./packages/base.md) | нижние пакеты без NestJS: `common`, `contracts`, `code-runner` |
 | [packages/api.md](./packages/api.md) | модули `apps/api`: вход, права, библиотека, аудит, чат, связывание пакетов |
@@ -133,7 +133,6 @@ flowchart TB
 |---|---|---|
 | Чистая функция решения | где живёт правило, которое по данным решает «можно ли» или «какой статус» | [pure-decision.md](./patterns/pure-decision.md) |
 | Обработчик шага | как долгая работа идёт шагами, переживает рестарт и держит объект задачи между шагами | [step-handler.md](./patterns/step-handler.md) |
-| Журнал событий с доставкой | как изменение становится видно потребителям и наблюдателям без потерь | [transactional-outbox.md](./patterns/transactional-outbox.md) |
 
 **Агенты**
 
