@@ -62,7 +62,7 @@ flowchart LR
 | `src/ledger/` | `TokenLedger` — журнал токенов и цена вызова модели |
 | `src/` | `RuntimeModule`, токены (`runtime.tokens.ts`), разбор настроек `parseRuntimeConfig`, часы, ошибки |
 
-Запросы к таблицам `runtime_*` лежат в `packages/db/src/repositories/runtime-*.repository.ts`, а сервисы этого пакета работают поверх них ([repository-over-transaction.md](../patterns/repository-over-transaction.md)).
+Запросы к таблицам `runtime_*` лежат в `packages/db/src/repositories/runtime-*.repository.ts`, а сервисы этого пакета работают поверх них ([repository-over-transaction.md](../patterns/repository-over-transaction.md)). Таблиц и SQL пакет не знает: `packages/runtime/.oxlintrc.json` запрещает его коду `drizzle-orm` и любой экспорт `@agent-os/db` с именем со строчной буквы, то есть любую таблицу. `Tasks` решает, какие колонки меняет переход, и передаёт `RuntimeTasksRepository` закрытый набор значений, а SQL строит репозиторий. Номер сообщения даёт метод `RuntimeTasksRepository`, `pg_notify` отправляет `RuntimeEventsRepository.notify`. Типы строки задачи и охраны — `RuntimeTaskRow` и `RuntimeTaskRowGuard` из `@agent-os/db`.
 
 ## Модуль
 
@@ -75,3 +75,4 @@ flowchart LR
 - Шаги исполняет один процесс. `Dispatcher` заносит шаг в `RunningTaskRegistry` (`src/tasks/running-task.registry.ts`) ещё в транзакции захвата. Команда (прерывание, остановка, удаление дерева) после своей транзакции обрывает идущий шаг в этом же процессе: `TaskControl.cutOff` (`src/tasks/task-control.ts`) подаёт сигнал шага через `RunningTaskRegistry.abortTask` и отпускает объект задачи через `LiveTasks.evict`. Задачу в `running`, шага которой нет в реестре, `RecoverySweeper` (`src/workers/recovery.sweeper.ts`) возвращает в очередь при старте и затем раз в `RUNTIME_REAPER_MS` ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)).
 - Объект задачи — кэш над базой: `LiveTasks` держит его после закоммиченного шага и отпускает при любом другом конце шага, после 15 минут простоя и сверх 500 объектов. Задаче без объекта новый строит `restore` её типа.
 - Чужой домен пакет не знает: проверку владельца, удаление беседы и цены моделей ему передают верхние слои параметрами или портом.
+- Владелец задачи — id сотрудника; у работы платформы (`knowledge.embed`) владельца нет. `RuntimeTasksRepository.findOwned(taskId, ownerId)` с `null` находит только задачи без владельца; путь сотрудника всегда передаёт id.

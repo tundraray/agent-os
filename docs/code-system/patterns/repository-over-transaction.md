@@ -73,15 +73,18 @@ flowchart LR
 | Looks like | Use instead |
 |---|---|
 | правило по уже прочитанным строкам | чистая функция в сервисе ([pure-decision.md](./pure-decision.md)) |
-| SQL без таблицы: `pg_notify`, `LISTEN`, `set_config` транзакции | остаётся в коде, которому он нужен |
+| `pg_notify` в открытой транзакции | метод репозитория `RuntimeEventsRepository.notify` |
+| SQL без таблицы на отдельном соединении пула: `LISTEN`, `pg_notify` частей текста вне транзакции | остаётся в коде, которому он нужен |
 | хранилище Mastra или Memory | запрещено: всё состояние — в своих таблицах через этот паттерн |
 
 ## Used In
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — таблицы `runtime_*`, запись обработчика в итоге шага
-- [design-agents.md](../../features/agent-platform/design-agents.md) — таблицы `agent_*` в транзакции итога шага
-- [design-runtime.md](../../features/custom-agents/design-runtime.md) — беседа — корневая сессия в `agent_sessions`, и `apps/api` читает и меняет её операциями пакета `agents`
+- [design-agents.md](../../features/agent-platform/design-agents.md) — таблицы бесед и истории в транзакции итога шага
+- [design-runtime.md](../../features/custom-agents/design-runtime.md) — беседа — строка `conversations` без родителя, и `apps/api` читает и меняет её операциями пакета `agents`
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — таблицы `identity_*` и `audit_events`
-- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — таблицы `agent_mcp_*`; внешний вызов вне транзакции (KD-1)
-- [design-library.md](../../features/custom-agents/design-library.md) — таблицы `library_*` и событие аудита в транзакции изменения
-- [design-task-list.md](../../features/deep-agents/design-task-list.md) — таблица `agent_session_tasks` и счётчик сессии в транзакции коммита шага (KD-1, KD-3)
+- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — таблицы `mcp_servers` и `mcp_accounts`; внешний вызов вне транзакции (KD-1)
+- [design-library.md](../../features/custom-agents/design-library.md) — таблицы каталога и событие аудита в транзакции изменения
+- [design-task-list.md](../../features/deep-agents/design-task-list.md) — таблица `conversation_tasks` и счётчик сессии в транзакции коммита шага (KD-1, KD-3)
+- [design-schema.md](../../features/data-model/design-schema.md) — SQL задач строит `RuntimeTasksRepository` по закрытому набору значений, `pg_notify` — `RuntimeEventsRepository.notify` (KD-6); запросы бесед соединяются с задачей (KD-2)
+- [design-agents.md](../../features/data-model/design-agents.md) — `AgentsRepository`: версия и указатель в одной точке сохранения (KD-2)

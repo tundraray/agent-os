@@ -44,9 +44,9 @@ flowchart LR
 
 | Путь | Что там |
 |---|---|
-| `src/schema/` | модель схемы `app`: файл на таблицу, имя файла — имя таблицы (`runtime-tasks.ts`); `index.ts` собирает все |
+| `src/schema/` | модель схемы `app`: файл на таблицу, имя файла — имя таблицы (`runtime-tasks.ts`); `index.ts` собирает все таблицы, а саму схему `app` не экспортирует: её создаёт мигратор, и генератор не пишет `CREATE SCHEMA` |
 | `src/repositories/` | репозитории всех таблиц, плоско: файл на таблицу или группу таблиц, имя по префиксу таблицы (`runtime-tasks.repository.ts`); `index.ts` экспортирует классы и список `REPOSITORIES`, который `DbModule` отдаёт целиком |
-| `src/migrations/` | SQL-миграции, которые генерирует drizzle-kit |
+| `src/migrations/` | исходный набор миграций: `0000_vector_extension.sql` (custom, расширение `vector`), `0001_schema.sql` (сгенерирована drizzle-kit), `0002_builtin_rows.sql` (custom, встроенные строки) |
 | `src/db.ts` | `Db`: `client`, `transaction`, `savepoint` |
 | `src/database.ts` | пул и клиент Drizzle (`createDatabase`), тип `Database` |
 | `src/db.module.ts`, `src/db.tokens.ts` | `DbModule` и токены `DATABASE_CONNECTION`, `DATABASE` |
@@ -54,7 +54,9 @@ flowchart LR
 
 ## Правила
 
-- **Новая таблица** — файл в `src/schema/`, миграция генерируется здесь же, запросы к ней — в репозитории `src/repositories/`. Миграция меняет только схему, строк данных в ней нет.
+- **Новая таблица** — файл в `src/schema/`, миграция генерируется здесь же, запросы к ней — в репозитории `src/repositories/`. Сгенерированный SQL руками не правят. Что генератор не выражает, лежит в custom-миграции (`drizzle-kit generate --custom`), которую пишут руками. Строки данных лежат только в миграции встроенных строк ([builtin-record.md](../patterns/builtin-record.md)).
+- **Имя** таблицы говорит, что в ней лежит (`conversations`, `messages`, `mcp_servers`, `agent_versions`); файл схемы, символ таблицы, файл и класс репозитория и типы строк называются по таблице (`ConversationsRepository`, `ConversationRow`).
+- **Настройки** платформы — одна таблица `settings`, строка на ключ, и `SettingsRepository` ([keyed-settings.md](../patterns/keyed-settings.md)).
 - **Репозиторий** — класс, который получает `Db` в конструкторе; в нём только запросы и типы строк, без параметра транзакции и без блокировок строк ([repository-over-transaction.md](../patterns/repository-over-transaction.md)). Новый класс добавляется в `REPOSITORIES`.
 - **Типы строк** (`RuntimeTrackerRow` и подобные) экспортирует `@agent-os/db`, и пакеты выше работают с ними, а не объявляют свои.
 - **Миграции** применяет команда `apps/api/src/cli/migrate-cli.ts`. Сервер при старте только проверяет, что неприменённых миграций нет (`assertNoPendingMigrations`), и сам их не применяет.
