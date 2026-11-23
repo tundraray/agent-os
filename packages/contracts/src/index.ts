@@ -10,3 +10,4 @@ export * from './access';
 export * from './library';
 export * from './knowledge';
 export * from './tool-results';
+export * from './settings';

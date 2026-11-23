@@ -1,9 +1,5 @@
 import { sql } from 'drizzle-orm';
-import {
-  identityRoleMembers,
-  identityRoles,
-  identitySettings,
-} from '../schema';
+import { identityRoleMembers, identityRoles } from '../schema';
 
 /** A column written with its table name: drizzle drops it in a query over one table, and the subquery below needs it. */
 const col = (table: string, column: string) =>
@@ -19,9 +15,3 @@ export const IS_ADMIN = sql<boolean>`(${col('identity_users', 'is_admin')} or ex
   join ${identityRoles} on ${col('identity_roles', 'id')} = ${col('identity_role_members', 'role_id')}
   where ${col('identity_role_members', 'user_id')} = ${col('identity_users', 'id')} and ${col('identity_roles', 'is_admin')}
 ))`;
-
-/** The session limit columns of the single `identity_settings` row, for a select or a join. */
-export const sessionLimitColumns = {
-  idleMinutes: identitySettings.idleMinutes,
-  absoluteMinutes: identitySettings.absoluteMinutes,
-};

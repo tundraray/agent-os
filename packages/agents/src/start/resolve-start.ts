@@ -1,4 +1,7 @@
 import {
+  type BuiltinKey,
+  CHAT_BUILTIN_KEY,
+  type ChipRecord,
   modelProvider,
   type RecordKind,
   type ResolvedRecord,
@@ -15,44 +18,54 @@ import { modelDeniedEntry } from '../model/model-client';
 import { providerReadiness } from '../providers/provider-readiness';
 import type { AgentsProviders } from '../providers/provider-registry';
 import type { RecordLibrary } from './record-library';
-import type { RunSnapshot } from './snapshot';
-import { recordSnapshot, snapshotDefinition } from './snapshot-definition';
+import type { RunStart } from './run-definition';
 
 /**
- * Where a start takes its snapshot (design-runtime.md, «Откуда берётся снимок»). Only `builtin` and
- * `record` ask the library; the others copy a snapshot the run already holds. A deep agent's subagents
- * are not started here: `task` takes their snapshots from the deep agent's (deep-agents/design-task.md KD-6).
+ * Where a start takes its version (data-model design-agents.md, «Старт: версия, имя и модель беседы»). Only
+ * `builtin` and `record` ask the library; the others repeat a start the run already holds. A call by name
+ * goes through `resolveNamedStart`. A deep agent's team members are not started here: `task` takes them from
+ * the deep agent's run (deep-agents/design-task.md KD-6).
  */
 export type StartSource =
-  /** The built-in record with this key, such as `chat` for the root of a conversation. */
-  | { readonly kind: 'builtin'; readonly builtinKey: string }
-  /** A record by its id, and its restart from scratch; a record of another kind is unavailable. */
+  /** The default agent with this key, such as `chat` for the root of a conversation. */
+  | { readonly kind: 'builtin'; readonly builtinKey: BuiltinKey }
+  /**
+   * An agent by its id: the restart of an agent or a root from scratch, and `start_test_deep_agent` of the
+   * harness; an agent of another kind is unavailable. `name` — the name the run keeps, a restart's: the
+   * restarted conversation's, so a temporary agent stays under its call's name; absent — the agent's name.
+   */
   | {
       readonly kind: 'record';
       readonly recordId: string;
       readonly expected: RecordKind;
+      readonly name?: string;
     }
-  /** A fork: the caller's snapshot. */
-  | { readonly kind: 'fork'; readonly snapshot: RunSnapshot }
-  /** The restart of a subagent or a fork: its own earlier snapshot. */
-  | { readonly kind: 'restart'; readonly snapshot: RunSnapshot };
+  /** A fork: the caller's start. */
+  | { readonly kind: 'fork'; readonly run: RunStart }
+  /** The restart of a subagent or a fork: the restarted conversation's version, name and model. */
+  | { readonly kind: 'restart'; readonly run: RunStart };
 
 export interface StartRequest {
   /** The employee who starts the run: the library is asked on his behalf, not the author's. */
   readonly ownerId: string;
   readonly source: StartSource;
+  /**
+   * The model of the caller's conversation, the second link of the model chain (KD-3); `null` — the run
+   * is a conversation's root, whose chain goes on to the system model.
+   */
+  readonly callerModel: string | null;
 }
 
 export interface StartDeps {
   readonly library: RecordLibrary;
   readonly access: AccessGate;
-  /** The readiness of the provider of the snapshot's model (model-providers design-core.md KD-2). */
+  /** The readiness of the provider of the run's model (model-providers design-core.md KD-2). */
   readonly providers: Pick<AgentsProviders, 'connection'>;
 }
 
 /**
  * Why a start is refused (DC-5): `model` is the refused model on a model or provider refusal, otherwise
- * `null` — also for `model_not_configured`, where a record's model is the default and none is chosen.
+ * `null` — also for `model_not_configured`, where the chain of KD-3 ends without a model.
  */
 export interface StartRefusal {
   readonly kind: 'refused';
@@ -66,9 +79,28 @@ export interface StartRefusal {
 }
 
 export type StartResolution =
-  { readonly kind: 'snapshot'; readonly snapshot: RunSnapshot } | StartRefusal;
+  { readonly kind: 'started'; readonly run: RunStart } | StartRefusal;
 
-export const RECORD_UNAVAILABLE: StartRefusal = {
+/** A start by the name a call gives (KD-5): the kind the call starts and the caller's model. */
+export interface NamedStartRequest {
+  readonly ownerId: string;
+  readonly name: string;
+  /** `agent` for `start_agent`, `deep_agent` for `start_deep_agent`. */
+  readonly kind: RecordKind;
+  readonly callerModel: string | null;
+  /** The chip of the message the call answers (`History.answeredChip`); `null` — the message carries none. */
+  readonly chip: ChipRecord | null;
+}
+
+/**
+ * The answer of a start by name: a start or a refusal as by id, or `other_kind` — the owner sees no agent of
+ * the asked kind with the name, but one of `found`: the tool refuses it with `not_allowed` and names the tool
+ * that starts it.
+ */
+export type NamedStartResolution =
+  StartResolution | { readonly kind: 'other_kind'; readonly found: RecordKind };
+
+const RECORD_UNAVAILABLE: StartRefusal = {
   kind: 'refused',
   reason: 'record_unavailable',
   model: null,
@@ -83,27 +115,93 @@ const MODEL_NOT_CONFIGURED: StartRefusal = {
 };
 
 /**
- * The one start procedure (KD-2; ADR-0017): source → visibility for the starter → snapshot → model →
- * its provider. It runs before the transaction that starts the run and writes nothing: a refused model
- * comes back with its `access_denied` record, which the caller writes once that refusal is its outcome;
- * a provider refusal and `model_not_configured` have none (model-providers design-core.md KD-2, KD-5).
- * A record's `null` model becomes the default chat model here, once, in the snapshot: subagents, forks
- * and restarts copy it. A spent quota does not stop the start — the run fails at its first call; a
- * disabled owner rejects with `OwnerDisabledError`.
+ * The one start procedure (KD-2; ADR-0017): source → visibility for the starter → version, name and model →
+ * the model's rights → its provider. It runs before the transaction that starts the run and writes nothing:
+ * a refused model comes back with its `access_denied` record, which the caller writes once that refusal is
+ * its outcome; a provider refusal and `model_not_configured` have none (model-providers design-core.md KD-2).
+ * The model is chosen here, once, by the chain of KD-3 (data-model design-agents.md): the version's, else
+ * the caller's, else — only at a root — the system model; a model inherited from the caller is checked like
+ * any other (DC-20). A spent quota does not stop the start — the run fails at its first call; a disabled
+ * owner rejects with `OwnerDisabledError`.
  */
 export async function resolveStart(
-  { ownerId, source }: StartRequest,
+  { ownerId, source, callerModel }: StartRequest,
   deps: StartDeps,
 ): Promise<StartResolution> {
-  const snapshot = await buildSnapshot(ownerId, source, deps);
-  if (snapshot.kind === 'refused') return snapshot;
-  const model = snapshotDefinition(snapshot).model;
+  return checked(
+    ownerId,
+    await startOf(ownerId, source, callerModel, deps),
+    deps,
+  );
+}
+
+/**
+ * The start of the agent a call names (KD-5; data-model design-agents.md, «Старт: версия, имя и модель
+ * беседы»): the record the employee chose for the message, when the call names it (`chosenRecord`); else the
+ * winner of the name among the agents of `kind` the owner sees — either under its own name; else, when
+ * the owner sees an agent of the other kind with the name, `other_kind`; else a temporary agent — the default
+ * agent of `kind` (`agent` or `deep_agent`) under the call's name. An invisible, a deleted and a missing name
+ * all start the temporary agent, so a call never learns that a colleague has an agent of that name. The model
+ * and its provider are checked as in `resolveStart`.
+ */
+export async function resolveNamedStart(
+  request: NamedStartRequest,
+  deps: StartDeps,
+): Promise<NamedStartResolution> {
+  const { ownerId, name, kind, callerModel } = request;
+  const winner =
+    (await chosenRecord(request, deps.library)) ??
+    (await deps.library.resolveByName(ownerId, name, kind));
+  if (winner === null) {
+    const other = await deps.library.resolveByName(
+      ownerId,
+      name,
+      otherKind(kind),
+    );
+    if (other !== null) return { kind: 'other_kind', found: other.kind };
+  }
+  const record = winner ?? {
+    ...(await deps.library.resolveBuiltin(kind)),
+    name,
+  };
+  return checked(ownerId, await startOfRecord(record, callerModel, deps), deps);
+}
+
+/**
+ * The record a call means by the name of its message's chip: the chip names one record of several the owner
+ * may see under that name, so a call of the chip's name — without case, as the name rule compares — starts
+ * that record, read by its id as the owner sees it now. `null` — the name rule decides, exactly as without a
+ * chip: the call names another name, or the record is deleted, hidden from the owner, of another kind than
+ * the call starts, or the chat.
+ */
+async function chosenRecord(
+  { ownerId, name, kind, chip }: NamedStartRequest,
+  library: RecordLibrary,
+): Promise<ResolvedRecord | null> {
+  if (chip === null || chip.name.toLowerCase() !== name.toLowerCase())
+    return null;
+  const record = await library.resolve(ownerId, chip.id);
+  return record?.kind === kind && record.builtinKey !== CHAT_BUILTIN_KEY
+    ? record
+    : null;
+}
+
+function otherKind(kind: RecordKind): RecordKind {
+  return kind === 'agent' ? 'deep_agent' : 'agent';
+}
+
+/** The rights to the run's model and its provider, after the source gave a run. */
+async function checked(
+  ownerId: string,
+  run: StartResolution,
+  deps: StartDeps,
+): Promise<StartResolution> {
+  if (run.kind === 'refused') return run;
+  const { model } = run.run;
   return (
     (await modelRefusal(ownerId, model, deps.access)) ??
-    (await providerRefusal(model, deps.providers)) ?? {
-      kind: 'snapshot',
-      snapshot,
-    }
+    (await providerRefusal(model, deps.providers)) ??
+    run
   );
 }
 
@@ -115,52 +213,68 @@ export async function auditStartRefusal(
   if (refusal.denied !== null) await audit(refusal.denied);
 }
 
-async function buildSnapshot(
+async function startOf(
   ownerId: string,
   source: StartSource,
+  callerModel: string | null,
   deps: StartDeps,
-): Promise<RunSnapshot | StartRefusal> {
+): Promise<StartResolution> {
   switch (source.kind) {
     case 'builtin': {
-      const record = await deps.library.resolveBuiltin(
-        ownerId,
-        source.builtinKey,
-      );
-      return snapshotOfRecord(ownerId, record, deps);
+      const record = await deps.library.resolveBuiltin(source.builtinKey);
+      return startOfRecord(record, callerModel, deps);
     }
     case 'record': {
       const record = await deps.library.resolve(ownerId, source.recordId);
-      return snapshotOfRecord(
-        ownerId,
-        record?.kind === source.expected ? record : null,
+      return startOfRecord(
+        record?.kind === source.expected
+          ? { ...record, name: source.name ?? record.name }
+          : null,
+        callerModel,
         deps,
       );
     }
     case 'fork':
     case 'restart':
-      return source.snapshot;
+      return { kind: 'started', run: source.run };
   }
 }
 
 /**
- * The snapshot of a record the library gave the starter; an agent's `agents` are matched against one
- * `listVisible` of the same starter (plan Notes 9в), a deep agent needs none. The default chat model is
- * read at the start, for the record's `null` models (KD-5).
+ * The start of an agent the library gave the starter: its active version under its name, and the model by
+ * the chain of KD-3. The system model is read only when the version and the caller have none — at a root.
  */
-async function snapshotOfRecord(
-  ownerId: string,
+async function startOfRecord(
   record: ResolvedRecord | null,
+  callerModel: string | null,
   deps: StartDeps,
-): Promise<RunSnapshot | StartRefusal> {
+): Promise<StartResolution> {
   if (record === null) return RECORD_UNAVAILABLE;
-  const [visible, defaultModel] = await Promise.all([
-    record.kind === 'agent' ? deps.library.listVisible(ownerId) : [],
-    deps.access.defaultChatModel(),
-  ]);
-  return recordSnapshot(record, visible, defaultModel) ?? MODEL_NOT_CONFIGURED;
+  const model =
+    record.content.model ??
+    callerModel ??
+    (await deps.access.defaultChatModel());
+  if (model === null) return MODEL_NOT_CONFIGURED;
+  const identity = {
+    id: record.versionId,
+    agentId: record.id,
+    number: record.version,
+  };
+  return {
+    kind: 'started',
+    run: {
+      version:
+        record.kind === 'agent'
+          ? { ...identity, kind: 'agent', content: record.content }
+          : { ...identity, kind: 'deep_agent', content: record.content },
+      name: record.name,
+      subagent: null,
+      model,
+    },
+  };
 }
 
-/** The gate's answer about the snapshot's model, as `start_agent` gives it (design-access.md KD-4). */
+/** The gate's answer about the run's model, as `start_agent` gives it (design-access.md KD-4). */
 async function modelRefusal(
   ownerId: string,
   model: string,

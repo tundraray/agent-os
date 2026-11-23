@@ -8,6 +8,7 @@ import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
   AgentView,
+  RecordKind,
   RecordSummary,
   RunOrigin,
   DeepAgentRunView,
@@ -30,7 +31,11 @@ import { formatListTime } from '@/i18n/formats';
 import { describeApiError } from '@/lib/api/api-request';
 import { useFeedSelector } from '@/lib/feed/feed-context';
 import { isDeepAgentRun, type RunCardPartData } from '@/lib/feed/to-feed';
-import { changedAfterRun, recipientNote } from '@/lib/library/record-rules';
+import {
+  changedAfterRun,
+  recipientNote,
+  recordNamed,
+} from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
 import {
   NEW_THREAD_TARGET,
@@ -61,6 +66,19 @@ export function useLiveRecord(
     if (state.records === null) return undefined;
     return recordId === null ? null : (state.records.get(recordId) ?? null);
   });
+}
+
+/**
+ * The live row of the record a start call names (data-model design-agents.md, KD-5; `recordNamed`): `undefined`
+ * — the list is not read, `null` — no such record, the call starts a temporary agent.
+ */
+export function useRecordNamed(
+  kind: RecordKind,
+  name: string,
+): RecordSummary | null | undefined {
+  const { libraryIndex } = useShellServices();
+  const records = useStore(libraryIndex, (state) => state.records);
+  return recordNamed(records, kind, name);
 }
 
 /**

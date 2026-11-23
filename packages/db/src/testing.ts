@@ -10,7 +10,7 @@ import { applyMigrations } from './migrate';
 
 /**
  * Test support of the Postgres suites of every package (`@agent-os/db/testing`): the database address, a
- * test-unique owner, the Vitest global setups and the polling wait. The child processes of the tests load
+ * test-unique employee, the Vitest global setups and the polling wait. The child processes of the tests load
  * this file under plain `tsx`, outside Vitest: it imports nothing of Vitest but types.
  */
 
@@ -56,9 +56,26 @@ function readEnvFile(): Record<string, string | undefined> {
   return parseEnv(text);
 }
 
-/** A fresh, test-unique resource id: rows of one test never meet another test's. */
-export function newUser(): string {
-  return `e2e-${randomUUID()}`;
+/**
+ * A fresh, test-unique employee: inserts an `identity_users` row with a unique email and login over a short
+ * connection and returns its id, so an owner column's foreign key accepts it (data-model design-schema.md KD-4).
+ * Rows of one test never meet another test's.
+ */
+export async function newUser(): Promise<string> {
+  const unique = `e2e-${randomUUID()}`;
+  const database = createDatabase({
+    connectionString: databaseUrl(),
+    poolMax: 1,
+  });
+  try {
+    const { rows } = await database.pool.query<{ id: string }>(
+      'insert into app.identity_users (email, login) values ($1, $2) returning id',
+      [`${unique}@test.local`, unique],
+    );
+    return rows[0].id;
+  } finally {
+    await database.close();
+  }
 }
 
 /**

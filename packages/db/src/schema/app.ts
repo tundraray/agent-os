@@ -7,7 +7,8 @@ import { pgSchema } from 'drizzle-orm/pg-core';
  *
  * CHECK domains are built from the contract enums in `@agent-os/contracts`, never duplicated here.
  * The cascade starts at the root task: deleting it deletes its tree with its messages, decisions
- * and events. The application marks a tree deleted (`deleted_at`) rather than deleting it; the
- * cascades stay for a future retention purge. The token ledger has no FK and outlives the tree.
+ * and events. The application marks a tree deleted (`runtime_tasks.deleted_at`) rather than
+ * deleting it; the cascades stay for a future retention purge. The token ledger's task reference
+ * sets null, so its rows outlive the tree.
  */
 export const app = pgSchema('app');

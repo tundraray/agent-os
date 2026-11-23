@@ -14,8 +14,9 @@ import { type CallState, isDelegated } from '../history/call-state';
 import { embedQuestion } from '../knowledge/question-vector';
 import {
   type RunDefinition,
-  snapshotDefinition,
-} from '../start/snapshot-definition';
+  runDefinition,
+  type RunStart,
+} from '../start/run-definition';
 import type { Session, SessionInput } from '../store/sessions';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { ToolCaller, ToolDeclaration } from '../tools/tool';
@@ -53,6 +54,7 @@ import {
 import type { StepPrelude } from './step-common';
 import { runToolStep } from './tool-step';
 import { endOfTurn } from './turn-rules';
+import { agentOwner } from './agent-owner';
 
 const { interrupt } = AgentMessageKindSchema.enum;
 const { done } = ToolCallStateSchema.enum;
@@ -64,8 +66,8 @@ const { done } = ToolCallStateSchema.enum;
  * a step does is a method here, with its stage in the file of the same name (`tool-step.ts`, `compaction-step.ts`,
  * `model-step.ts`).
  *
- * The object holds what is fixed for the task — its identity, its parsed input, the definition, the caller and
- * the declaration of its snapshot — and the state of its session (`AgentState`): the row, the history the model
+ * The object holds what is fixed for the task — its identity, its parsed input, the version it names (read once:
+ * a version never changes), the definition, the caller and the declaration — and the state of its session (`AgentState`): the row, the history the model
  * sees and its calls. The database stays the source of truth: a step only reads the state, its writes go to the
  * commit, and the state changes in one place, `absorb`, after the commit succeeded. Any other end of a step
  * makes the runtime drop the object and restore a new one. What rights depend on is never kept and is read on
@@ -75,9 +77,9 @@ const { done } = ToolCallStateSchema.enum;
  * The class is abstract and holds what every agent does. Its three subclasses, one task type each: `Agent`
  * (`agent.ts`) — an agent's record and a deep agent's subagent; `ChatAgent` (`chat-agent.ts`) — a conversation's
  * root; `DeepAgent` (`deep/deep-agent.ts`). The methods below the stages are the points they override; their
- * bodies here are the ordinary agent's: it declares the tools of its snapshot, delegates nothing, ends its turn
- * with its own answer and adds nothing to a new session. What a snapshot hands the model — prompt, tools, flags —
- * is data: `snapshotDefinition`. An agent never picks its tools: it declares them (`declaration`), and the tools
+ * bodies here are the ordinary agent's: it declares the tools of its version, delegates nothing, ends its turn
+ * with its own answer and adds nothing to a new session. What a version hands the model — prompt, tools, flags —
+ * is data: `runDefinition`. An agent never picks its tools: it declares them (`declaration`), and the tools
  * library answers with the session's set for the task's owner.
  */
 export abstract class BaseAgent implements LiveTask {
@@ -89,17 +91,19 @@ export abstract class BaseAgent implements LiveTask {
 
   /** The task the object is of. */
   readonly task: LiveTaskIdentity;
-  /** The task's input, parsed once: the snapshot written at the start (ADR-0017) and the assignment. */
+  /** The task's input, parsed once: the start's version id, name and model, and the assignment. */
   readonly input: SessionInput;
-  /** What the snapshot hands the model. */
+  /** The run's start: the version the input names, with the input's name, team member and model. */
+  readonly run: RunStart;
+  /** What the version hands the model. */
   readonly definition: RunDefinition;
   /** The agent as its tools see it. */
   readonly caller: ToolCaller;
   /**
-   * What the agent declares of its tools, as plain data of its snapshot's definition: its servers, the system
-   * tools it names and the task-list tools when it keeps a task list — a root always does — and whom it may
-   * start or call. A root lists the employee's records, which are read live (`offeredDeclaration`), not those of
-   * its snapshot. The set a step's calls are checked against is built from this.
+   * What the agent declares of its tools, as plain data of its definition: its servers, the system tools it
+   * names and the task-list tools when it keeps a task list — a root always does — and whom it may call when
+   * the version fixes it (a deep agent's team). Whom a root or an agent may start is read live
+   * (`offeredDeclaration`). The set a step's calls are checked against is built from this.
    */
   readonly declaration: ToolDeclaration;
   /** The session as of the last commit; `undefined` until the session exists. Assigned only in `absorb`. */
@@ -109,19 +113,30 @@ export abstract class BaseAgent implements LiveTask {
     protected readonly deps: AgentDeps,
     run: AgentRun,
   ) {
-    const { task, input } = run;
-    const definition = snapshotDefinition(input.snapshot);
+    const { task, input, version } = run;
+    if (version.id !== input.versionId) {
+      throw new Error(
+        `Agent ${task.taskId} is made with version ${version.id}, not its input's ${input.versionId}`,
+      );
+    }
+    this.run = {
+      version,
+      name: input.name,
+      subagent: input.subagent,
+      model: input.model,
+    };
+    const definition = runDefinition(this.run);
     const taskList = this.root || definition.taskList;
     this.task = task;
     this.input = input;
     this.definition = definition;
     this.caller = {
       agentId: task.taskId,
-      ownerId: task.ownerId,
+      ownerId: agentOwner(task),
       rootId: task.rootId,
       root: this.root,
       depth: task.depth,
-      snapshot: input.snapshot,
+      run: this.run,
       servers: definition.servers,
     };
     this.declaration = {
@@ -238,8 +253,13 @@ export abstract class BaseAgent implements LiveTask {
    */
   async createSession(): Promise<void> {
     const created = await this.deps.sessions.ensureSession(
-      this.task,
+      {
+        taskId: this.task.taskId,
+        ownerId: this.caller.ownerId,
+        parentId: this.task.parentId,
+      },
       this.input,
+      this.run.version.agentId,
     );
     if (created) await this.sessionCreated();
   }
@@ -276,7 +296,7 @@ export abstract class BaseAgent implements LiveTask {
       this.deps,
       ctx,
       session,
-      this.input.snapshot,
+      this.definition.learning,
       this.embedsEmployeeMessages,
     );
   }
@@ -306,7 +326,7 @@ export abstract class BaseAgent implements LiveTask {
   }
 
   /**
-   * The model step (KD-1): the definition from the snapshot, the turn limit, the prompt with its knowledge and
+   * The model step (KD-1): the definition from the version, the turn limit, the prompt with its knowledge and
    * task blocks, the session's tools, one model call, the answer entry and the end of the turn (`model-step.ts`).
    */
   modelStep(

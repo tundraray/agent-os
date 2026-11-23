@@ -40,7 +40,8 @@ export interface StepContext {
   readonly rootId: string;
   /** `null` for a root task. */
   readonly parentId: string | null;
-  readonly ownerId: string;
+  /** `null` for the platform's own work (`knowledge.embed`). */
+  readonly ownerId: string | null;
   /** 0 for a root task. */
   readonly depth: number;
   readonly type: string;

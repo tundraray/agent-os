@@ -106,7 +106,7 @@ async function createTree(
   control: RuntimeHarness,
   types: ReturnType<typeof treeTypes>,
 ): Promise<Tree> {
-  const ownerId = newUser();
+  const ownerId = await newUser();
   const parentId = await control.tasks.create({
     type: types.parent,
     ownerId,
@@ -587,7 +587,7 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
       const control = await testRuntime(types);
       const children = new Children();
       try {
-        const ownerId = newUser();
+        const ownerId = await newUser();
         const parentId = await control.tasks.create({
           type: types.parent,
           ownerId,
@@ -682,7 +682,7 @@ describe('agent-platform / runtime - E2E (real Postgres, child processes)', () =
       const control = await testRuntime(types);
       const children = new Children();
       try {
-        const ownerId = newUser();
+        const ownerId = await newUser();
         const parentId = await control.tasks.create({
           type: types.parent,
           ownerId,

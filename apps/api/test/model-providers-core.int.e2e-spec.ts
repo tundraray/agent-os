@@ -47,7 +47,6 @@ import {
   type RecordDetail,
 } from '@agent-os/contracts';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
-import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
 import type { INestApplication } from '@nestjs/common';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -180,7 +179,7 @@ const StartRefusedLineSchema = z.object({
 
 /** One `app.runtime_model_calls` row as the assertions read it; `costUsd` as a number. */
 interface LedgerRow {
-  ownerId: string;
+  ownerId: string | null;
   taskId: string | null;
   model: string;
   inputTokens: number;
@@ -318,7 +317,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     } finally {
       await harness?.close();
       await double?.close();
-      // The models first: a provider is only a name to them, but the catalogue rows name it.
+      // The models first: the foreign key refuses to delete a provider while catalogue rows name it.
       await removeRunRows(database.pool, {
         models: CASE_MODELS,
         roles: roleIds,
@@ -326,11 +325,11 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       });
       // INT-5 row C: the platform's ledger row belongs to no employee.
       await database.pool.query(
-        'DELETE FROM app.runtime_model_calls WHERE owner_id = $1 AND model = ANY($2::text[])',
-        [PLATFORM_OWNER_ID, CASE_MODELS],
+        'DELETE FROM app.runtime_model_calls WHERE owner_id IS NULL AND model = ANY($1::text[])',
+        [CASE_MODELS],
       );
       await database.pool.query(
-        'DELETE FROM app.agent_model_providers WHERE name = ANY($1::text[])',
+        'DELETE FROM app.model_providers WHERE name = ANY($1::text[])',
         [CASE_PROVIDERS],
       );
       await database.close();
@@ -400,9 +399,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     await allowed.add(session);
     return session;
   };
-  /** The ledger rows of `ownerId` (on `model` when given), largest input first. */
+  /** The ledger rows of `ownerId` (`null` — the platform's; on `model` when given), largest input first. */
   const ledgerRows = async (
-    ownerId: string,
+    ownerId: string | null,
     model?: string,
   ): Promise<LedgerRow[]> => {
     const { rows } = await database.pool.query<
@@ -412,7 +411,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
               output_tokens AS "outputTokens", cache_read_tokens AS "cacheReadTokens",
               cache_write_tokens AS "cacheWriteTokens", cost_usd AS "costUsd"
          FROM app.runtime_model_calls
-        WHERE owner_id = $1 AND ($2::text IS NULL OR model = $2)
+        WHERE owner_id IS NOT DISTINCT FROM $1::uuid AND ($2::text IS NULL OR model = $2)
         ORDER BY input_tokens DESC, called_at`,
       [ownerId, model ?? null],
     );
@@ -586,7 +585,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
 
       // Row 4 - When: another instance wrote a provider row with K3 straight into the table, and this one reads it
       await harness.pool.query(
-        `INSERT INTO app.agent_model_providers (name, kind, api_key) VALUES ($1, 'gemini', $2)`,
+        `INSERT INTO app.model_providers (name, kind, api_key) VALUES ($1, 'gemini', $2)`,
         [OTHER_INSTANCE_PROVIDER, INT2_OTHER_INSTANCE_KEY],
       );
       const otherView = await harness.agents.providers.get(
@@ -772,9 +771,10 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // Rows:
   //   1. no chat model chosen by default: the first message of a new conversation -> 409 `START_REFUSED` `model_not_configured`; no conversation
   //      title is created; the reason is in the captured log (DC-3); the scripted model received no call
-  //   2. model chosen, its provider missing (deleted straight in the row), disabled, and Gemini without key -> the same request is refused 409
-  //      `START_REFUSED` `provider_missing`, `provider_disabled`, `provider_key_missing`, each with the `model` field; the scripted model received
-  //      no call
+  //   2. model chosen, its provider disabled, and Gemini without key -> the same request is refused 409 `START_REFUSED` `provider_disabled`,
+  //      `provider_key_missing`, each with the `model` field; the scripted model received no call. `provider_missing` is not exercised here: the
+  //      database forbids a catalogued model without its provider; the reason remains for the race between the catalogue read and the provider
+  //      read and is proven in packages/agents/src/model/retry-policy.spec.ts and packages/agents/src/providers/provider-readiness.spec.ts
   //   3. a run is in progress (the scripted model is held at its second call by a latch); the administrator disables the provider (PATCH
   //      `enabled: false`); the latch is released -> the run ends `failed` with `failureReason` `provider_disabled`, not `model_error`; the
   //      scripted model's second call never happened; then the same with the key removed (`apiKey: null`) -> `provider_key_missing`
@@ -787,7 +787,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // @dependency: resolveStart, providerReadiness, ModelClient, AccessGate.defaultChatModel, AdminModelProvidersController, AuditLog, ConversationsService, scripted AGENT_TURN_CLIENT, Postgres
   // @complexity: high
   it(
-    'INT-4: a missing, disabled or keyless provider refuses a start and fails a running agent with the named reason, writes no access_denied row and sends no model call',
+    'INT-4: a disabled or keyless provider refuses a start and fails a running agent with the named reason, writes no access_denied row and sends no model call',
     async () => {
       const { app } = harness;
       const providerPath = `/admin/model-providers/${REFUSE_PROVIDER}`;
@@ -849,15 +849,6 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
 
       // Row 2 - Given: the case's model is the default chat model
       await putDefaults({ chatModel: REFUSE_MODEL });
-      // When: its provider row is deleted straight in the table (as another instance would) - then registered again
-      await database.pool.query(
-        'DELETE FROM app.agent_model_providers WHERE name = $1',
-        [REFUSE_PROVIDER],
-      );
-      const missing = await refusedFirstMessage(
-        'INT-4 row 2: the provider is missing',
-      );
-      await registerProvider();
       // When: the provider is disabled - then enabled again
       await patchProvider({ enabled: false });
       const disabled = await refusedFirstMessage(
@@ -871,8 +862,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       );
       await patchProvider({ apiKey: INT4_REFUSE_KEY });
       // Then: each start is refused with the provider's reason and the model
-      expect([missing.refusal, disabled.refusal, keyless.refusal]).toEqual([
-        ['START_REFUSED', 'provider_missing', REFUSE_MODEL],
+      expect([disabled.refusal, keyless.refusal]).toEqual([
         ['START_REFUSED', 'provider_disabled', REFUSE_MODEL],
         ['START_REFUSED', 'provider_key_missing', REFUSE_MODEL],
       ]);
@@ -888,7 +878,6 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         .map((fields) => [fields.outcome, fields.refusedModel]);
       expect(refusalsLogged).toEqual([
         ['model_not_configured', null],
-        ['provider_missing', REFUSE_MODEL],
         ['provider_disabled', REFUSE_MODEL],
         ['provider_key_missing', REFUSE_MODEL],
       ]);
@@ -1016,7 +1005,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         (await chatApi(app, session).spend()).costUsd;
       /** One ledger row of an embedding batch on the case's model: input tokens only, at 1 USD per million. */
       const batchRow = (
-        ownerId: string,
+        ownerId: string | null,
         inputTokens: number,
         costUsd: number,
       ) => ({
@@ -1114,7 +1103,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const monthsBeforeC = [await monthSpend(anya), await monthSpend(boris)];
       const requestsBeforeC = harness.embeddings.calls.length;
       const platformVectors = await embed(null, ['a', 'bb', 'ccc']);
-      // Then: vectors returned, one request, one ledger row with the owner `platform`
+      // Then: vectors returned, one request, one ledger row without an owner
       expect(
         platformVectors.kind === 'vectors'
           ? [platformVectors.vectors.length, platformVectors.model]
@@ -1123,9 +1112,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       expect(requestsSince(requestsBeforeC)).toEqual([
         [INT5_EMBEDDING_MODEL, 3, 4],
       ]);
-      expect(await ledgerRows(PLATFORM_OWNER_ID, INT5_EMBEDDING_MODEL)).toEqual(
-        [batchRow('platform', 30, 0.00003)],
-      );
+      expect(await ledgerRows(null, INT5_EMBEDDING_MODEL)).toEqual([
+        batchRow(null, 30, 0.00003),
+      ]);
       // And: no employee's month changed - Аня's nor Борис's
       expect([await monthSpend(anya), await monthSpend(boris)]).toEqual(
         monthsBeforeC,
@@ -1160,7 +1149,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-01.3 "Given в каталоге есть модель провайдера, when администратор удаляет провайдера, then удаление отклоняется с причиной «у провайдера
   //   есть модели в каталоге», и провайдер остаётся"; DC-6 "Удаление модели, выбранной по умолчанию, снимает этот выбор: модели по умолчанию этого
-  //   назначения больше нет, пока администратор не выберет другую". Design: UC-E7, KD-5, Data Model (`access_model_defaults` clears on delete),
+  //   назначения больше нет, пока администратор не выберет другую". Design: UC-E7, KD-5, Data Model (the `model_defaults` key clears on delete),
   //   Invariants 4 and 5.
   // Behavior: the administrator deletes a provider that has a model -> refused; deletes the model chosen as the chat default -> the choice is
   //   cleared in the same step -> the provider is then deletable.
@@ -1174,7 +1163,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // Catches: a provider deleted out from under its models (their runs fail later with `provider_missing` instead of the admin being stopped), a
   //   default pointing at a model that no longer exists (a start on a ghost model), or the choice cleared so late that one more run starts on it.
   // @category: core-functionality
-  // @dependency: Agents.providers (delete with `catalogModels` input), AccessService (catalogue, access_model_defaults), AdminModelProvidersController, catalogue controller, AuditLog, Postgres
+  // @dependency: Agents.providers (delete with `catalogModels` input), AccessService (catalogue, the `model_defaults` key), AdminModelProvidersController, catalogue controller, AuditLog, Postgres
   // @complexity: medium
   it(
     'INT-6: deleting a provider that still has catalogue models is refused, and deleting the default model clears the default',
@@ -1349,7 +1338,12 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const answered = { thereafter: { text: 'INT-7: принято' } };
       const startDeepAgent = (question: string): ScriptedToolCall => ({
         tool: 'start_deep_agent',
-        args: { deepAgent: deepAgent.id, question, boundaries: '', result: '' },
+        args: {
+          deepAgent: deepAgent.name,
+          question,
+          boundaries: '',
+          result: '',
+        },
       });
       /** The deep agent's task: the brief as `start_deep_agent` writes it. */
       const briefTask = (question: string) =>

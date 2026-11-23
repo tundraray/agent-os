@@ -49,7 +49,7 @@
 //   confirmation path is reused by INT-2 and not re-proven
 // - not automated: the web showing the new refusal reason and the English transport text (Out of scope of the part); the first-time check that Google and OpenAI-compatible providers
 //   report `length` on an output-limit stop (design Risks; the plan checks it by hand against the real providers, the `cutOff` field of `agent step finished` shows it afterwards)
-// - not automated: the CHECK of `agent_code_calls.refusal_reason` gets `repeated_call` through the generated migration; the existing `packages/db/test/migrations.e2e-spec.ts` applies every migration to a
+// - not automated: the CHECK of `code_calls.refusal_reason` gets `repeated_call` through the generated migration; the existing `packages/db/test/migrations.e2e-spec.ts` applies every migration to a
 //   scratch database, so a CHECK that does not match the schema set fails there
 //
 // acProof (the same mapping as the JSON of the generation report):
@@ -67,7 +67,7 @@ import {
   createScriptedModel,
   inputLines,
 } from '@agent-os/agents/testing';
-import { agentSessions, agentToolResults } from '@agent-os/db';
+import { conversations, toolResults } from '@agent-os/db';
 import { createFixtureFiles, fixtureCallsOf } from '@agent-os/mcp-fixture';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -143,7 +143,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
   //      entries `{ kind: 'tool_call_refused', actor: <owner>, objectType: 'tool', objectId: '<LOGS_SERVER>/get_trace', outcome: 'rejected', reason: 'invalid_arguments' }`; the next model input
   //      (`toolOutputOf` of each call id) names `traceId` in both texts and says what was expected (required / a string).
   //   B. the loop (AC-06.1, AC-06.2): the fixture's call log holds exactly two `get_trace` entries for TRACE_A (the third never arrived); the second call's text in the model input is the server's
-  //      answer followed by the mark with the first call's id (`toolCallIdOf(script, 1)`), the first call's text has no mark; the stored result row of the second call (`agent_tool_results`, as
+  //      answer followed by the mark with the first call's id (`toolCallIdOf(script, 1)`), the first call's text has no mark; the stored result row of the second call (`tool_results`, as
   //      read in tool-result-reading INT-1) holds the server's answer only, no mark; the third call is `refused repeated_call`, its text names the earlier call ids and gives the hint; the audit capture
   //      gains exactly one entry with reason `repeated_call` (three entries in all). Refused calls of row A are not counted: the first valid call of A in step 2 carries no mark.
   //   C. the journal (AC-07.1, AC-07.2, NFR-01): the `agent step finished` record of step 1 carries `toolsShown` = the number of tools in the recorded model call (`script.calls[0].toolDescriptions`, taken
@@ -163,7 +163,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
     'INT-1: invalid MCP arguments and a third identical call are refused before the server, once each in the audit, the model reads the reason and the second identical call carries the repeat mark, and the journal holds names and numbers only',
     async () => {
       // Given: an agent on the `logs` server whose script makes two invalid calls, then the same valid call three times
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       const looper = model.script({ task: 'Read the trace until it changes' }, [
@@ -282,11 +282,11 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
         expect(calls.get(secondId)?.resultText).toBe(`${firstText}\n\n${mark}`);
         const stored = await harness.db
           .select({
-            callId: agentToolResults.callId,
-            text: agentToolResults.text,
+            callId: toolResults.callId,
+            text: toolResults.text,
           })
-          .from(agentToolResults)
-          .where(eq(agentToolResults.taskId, agentId));
+          .from(toolResults)
+          .where(eq(toolResults.conversationId, agentId));
         expect(stored.map((row) => row.callId).sort()).toEqual(
           [firstId, secondId].sort(),
         );
@@ -365,7 +365,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
     'INT-2: a confirmed create_incident_note that times out ends unknown, and the model reads its text',
     async () => {
       // Given: a writer whose one answer writes a note, on a server that never answers a call
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       fixture.setFaults([
         {
@@ -480,9 +480,9 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
     'INT-3: a child agent whose answer is cut off at the length limit gets a notice and finishes only with its next, complete answer, which is the report its parent receives',
     async () => {
       // Given: a root that starts the child agent `scout`, whose first answer is cut off at the length limit
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
-      const scoutId = library.add(testRecord('scout'));
+      library.add(testRecord('scout'));
       const model = createScriptedModel();
       const root = model.script(
         { task: 'Coordinate the scout' },
@@ -492,7 +492,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
               {
                 tool: 'start_agent',
                 args: {
-                  agent: scoutId,
+                  agent: 'scout',
                   description: 'scout',
                   prompt: 'Scout task',
                 },
@@ -614,7 +614,7 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
     async () => {
       // Given: a root whose first answer reports input tokens at AGENT_COMPACT_AT_TOKENS and whose compaction
       // call returns an empty summary
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const model = createScriptedModel();
       const compactor = model.script({ agent: 'empty-compactor' }, [
         { text: 'first answer', usage: { inputTokens: COMPACT_AT_TOKENS } },
@@ -684,9 +684,9 @@ describe('agent-harness / core - the loop tells the model what went wrong and st
           3,
         );
         const [session] = await harness.db
-          .select({ turns: agentSessions.turns })
-          .from(agentSessions)
-          .where(eq(agentSessions.taskId, agentId));
+          .select({ turns: conversations.turns })
+          .from(conversations)
+          .where(eq(conversations.id, agentId));
         expect(session?.turns).toBe(1);
       } finally {
         await harness.close();

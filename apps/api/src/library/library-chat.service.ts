@@ -6,7 +6,7 @@ import {
   type LibraryRecordCard,
   type RecordBody,
 } from '@agent-os/contracts';
-import { LibraryRecordsRepository } from '@agent-os/db';
+import { AgentsRepository } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import { LibraryRecords, recordFields } from './library-records';
 import { LibrarySave } from './library-save';
@@ -28,7 +28,7 @@ import type {
 } from './library.types';
 import { chatRecordOf, type ChatRecord } from './record-listing';
 import { hasHolders } from './record-view';
-import type { RefusedField } from './save-rules';
+import { decideDelete, type RefusedField } from './save-rules';
 
 /** The field of a create's `system` argument: only an admin creates a system record. */
 const SYSTEM_FIELD: RefusedField = { path: 'system', values: [] };
@@ -92,7 +92,7 @@ function chatScope(
   if (record === undefined) return chatRefused('not_found');
   if (record.ownerId === null) {
     if (!context.actor.isAdmin) return chatRefused('admin_only');
-    if (action === 'delete' && record.builtinKey !== null)
+    if (action === 'delete' && decideDelete(record).kind === 'refused')
       return chatRefused('builtin');
     return { outcome: 'allowed', scope: 'system', record };
   }
@@ -174,7 +174,7 @@ export class LibraryChatService {
   constructor(
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
-    private readonly repository: LibraryRecordsRepository,
+    private readonly repository: AgentsRepository,
   ) {}
 
   /**

@@ -10,7 +10,7 @@ import {
   agentKnowledgeEmbedding,
   agentKnowledgeQuestions,
   agentKnowledgeRuns,
-  agentSessions,
+  conversations,
 } from '../schema';
 
 const runs = agentKnowledgeRuns;
@@ -74,7 +74,7 @@ export interface EmbeddingOutcome {
  * Drizzle queries of the run rows, session questions and deep agent vector rows of self-learning
  * (KD-3, KD-6, KD-8): the only code that reads and writes
  * `agent_knowledge_runs`, `agent_knowledge_questions` and `agent_knowledge_embedding`; besides them it
- * reads only `agent_sessions.owner_id`. No method opens a transaction, logs or decides.
+ * reads only `conversations.owner_id`. No method opens a transaction, logs or decides.
  */
 @Injectable()
 export class AgentKnowledgeRunsRepository {
@@ -112,9 +112,9 @@ export class AgentKnowledgeRunsRepository {
       .returning();
     if (row === undefined) return undefined;
     const [session] = await this.db.client
-      .select({ ownerId: agentSessions.ownerId })
-      .from(agentSessions)
-      .where(eq(agentSessions.taskId, row.runId));
+      .select({ ownerId: conversations.ownerId })
+      .from(conversations)
+      .where(eq(conversations.id, row.runId));
     if (session === undefined) return undefined;
     return { ...row, ownerId: session.ownerId };
   }

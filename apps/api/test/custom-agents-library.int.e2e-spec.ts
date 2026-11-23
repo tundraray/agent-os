@@ -26,7 +26,7 @@
 //   - `test/support/library.ts`: `createRecord(app, session, body)`, `getRecord`, `putRecord`, `shareWith(app, session, id, roleIds)`,
 //     `libraryRoutes(recordId)` (the table of every employee and panel route with its method and body, used by INT-1) and
 //     `auditOfRecord(pool, recordId)` over `app.audit_events` rows of the object type `library_record`.
-//   - the table list of `packages/db/test/migrations.e2e-spec.ts` gets `library_records` and `library_shares` (Appendix: Fact Disposition).
+//   - the table list of `packages/db/test/migrations.e2e-spec.ts` gets `agents`, `agent_versions` and `agent_shares` (data-model design-agents.md).
 //
 // Proven elsewhere, not repeated here (CLAUDE.md: one test at the lowest level that catches the defect):
 //   - 401 without a session and the 403 `ADMIN_REQUIRED` + `access_denied` row of `@AdminOnly()`: the route walk and row 2 of
@@ -92,6 +92,7 @@ import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   auditOfRecord,
+  BUILTIN,
   createRecord,
   createSystemRecord,
   deepAgentBody,
@@ -314,9 +315,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
 
   afterAll(async () => {
     if (harness !== undefined) {
-      // System records have no owner, so no cascade takes them; one open to everyone would stay in the developer's library.
+      // System records have no owner, so no cascade takes them; they are marked deleted, as the panel deletes them
+      // (data-model KD-7): a conversation may still run on one of their versions.
       await harness.pool.query(
-        'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+        'UPDATE app.agents SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
         [[...systemRecordIds]],
       );
       await restoreModels?.();
@@ -359,8 +361,11 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   4. UC-7 (AC-02.3): Given a system agent opened to `everyone` and Вера, who has no role; When Вера reads `GET /api/library`; Then the
   //      agent is not there; When the administrator gives Вера a role (`PUT /api/admin/users/:id/roles/:roleId`) and she reads again;
   //      Then it is there (no restart, no cache).
-  //   5. AC-12.2: Given a built-in system agent; When the administrator calls `DELETE /api/admin/library/:id`; Then 422
-  //      `RECORD_REJECTED`, reason `builtin`, and the record is still in the database.
+  //      Дина with no role sees the three default agents (`chat`, `general-purpose`, the default deep agent) all along (data-model DC-22).
+  //   5. AC-12.2, data-model DC-22: Given the default agent `chat`; When the administrator calls `DELETE /api/admin/library/:id` and
+  //      `PUT /api/admin/library/:id/audience` of it; Then 422 `RECORD_REJECTED` with reason `builtin` and `audience_fixed`, and the
+  //      agent is still in the database, not deleted. One default agent proves the wiring; the rule for any key is the unit rows of
+  //      `save-rules.spec.ts` and `audience-rules.spec.ts`.
   // Catches: a route (existing or added later) that reads a record by number without the visibility condition and so opens a colleague's
   //   or an administrator's view of a personal agent; a body or status that tells "exists but not yours" from "does not exist"; an
   //   administrator right that is treated as visibility; a non-administrator who changes a system record through the employee
@@ -487,7 +492,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       for (const name of [refusedSystemName, systemShapedName]) {
         expect(
           await countRows(
-            'SELECT count(*) FROM app.library_records WHERE owner_id IS NULL AND name = $1',
+            'SELECT count(*) FROM app.agents WHERE owner_id IS NULL AND name = $1',
             name,
           ),
           name,
@@ -497,7 +502,15 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       // Row 4 (UC-7, AC-02.3) - Given: the system agent open to everyone and Дина, who has no role; When: she reads
       // the library; Then: it is not there; When: the administrator gives her a role; Then: it is there at once
       const dina = await newEmployee('dina', 'Дина');
-      expect(await visibleIds(dina)).not.toContain(system.id);
+      const defaults = [
+        BUILTIN.chat,
+        BUILTIN.generalPurpose,
+        BUILTIN.deepAgent,
+      ];
+      const dinaSees = await visibleIds(dina);
+      expect(dinaSees).not.toContain(system.id);
+      // data-model DC-22: the default agents are seen by every enabled employee, one without a role too
+      for (const agent of defaults) expect(dinaSees).toContain(agent.id);
       await expectRefusal(
         apiRequest(app, dina, 'get', `/library/${system.id}`),
         404,
@@ -511,23 +524,36 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(await visibleIds(dina)).toContain(system.id);
       expect((await getRecord(app, dina, system.id)).canEdit).toBe(false);
 
-      // Row 5 (AC-12.2) - Given: a built-in system agent; When: the administrator deletes it through the panel;
-      // Then: 422 RECORD_REJECTED `builtin`, and the record is still there
-      const builtin = await newSystemAgent('Встроенный агент');
-      await harness.pool.query(
-        'UPDATE app.library_records SET builtin_key = $1 WHERE id = $2',
-        [`e2e-builtin-${randomUUID()}`, builtin.id],
-      );
+      // Row 5 (AC-12.2, data-model DC-22) - Given: a default agent; When: the administrator deletes it and sets its
+      // audience through the panel; Then: 422 RECORD_REJECTED `builtin` / `audience_fixed`, and it is still there
+      const defaultAgent = BUILTIN.chat;
       await expectRefusal(
-        apiRequest(app, admin, 'delete', `/admin/library/${builtin.id}`),
+        apiRequest(app, admin, 'delete', `/admin/library/${defaultAgent.id}`),
         422,
         'RECORD_REJECTED',
         'builtin',
       );
+      await expectRefusal(
+        apiRequest(
+          app,
+          admin,
+          'put',
+          `/admin/library/${defaultAgent.id}/audience`,
+          {
+            everyone: false,
+            roleIds: [],
+            userIds: [],
+            offerInChat: true,
+          },
+        ),
+        422,
+        'RECORD_REJECTED',
+        'audience_fixed',
+      );
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE id = $1',
-          builtin.id,
+          'SELECT count(*) FROM app.agents WHERE id = $1 AND deleted_at IS NULL',
+          defaultAgent.id,
         ),
       ).toBe(1);
     },
@@ -565,8 +591,8 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //      (`PUT .../audience` with none) -> the agent is personal, Вера and Борис see nothing.
   //   5. UC-E6 (AC-11.2): Given two agents of Глеб - one personal, one open to «SRE» - and Борис in «SRE» (Борис sees the second);
   //      When the row of Глеб is deleted from `identity_users` in the database; Then Борис sees neither agent (`GET /api/library`, by
-  //      number -> 404), and there is no row of Глеб in `library_records` or of those records in `library_shares`; a role deleted from
-  //      the database takes its `library_shares` rows with it and no `library_*` audit event is written by either cascade.
+  //      number -> 404), and there is no row of Глеб in `agents` or of those records in `agent_shares`; a role deleted from
+  //      the database takes its `agent_shares` rows with it and no `library_*` audit event is written by either cascade.
   // Catches: membership copied into the record at share time (a role change that does not reach the record), an owner who loses his
   //   own record when he leaves the role, a share to a role the sharer is not in that passes, an audience that survives the role or
   //   the account (a missing foreign key cascade), a colleague who can write through a read-only view, a `/me/roles` that returns other
@@ -795,13 +821,13 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       }
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE owner_id = $1',
+          'SELECT count(*) FROM app.agents WHERE owner_id = $1',
           gleb.id,
         ),
       ).toBe(0);
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_shares WHERE record_id = ANY($1::uuid[])',
+          'SELECT count(*) FROM app.agent_shares WHERE agent_id = ANY($1::uuid[])',
           [glebPersonal.id, glebShared.id],
         ),
       ).toBe(0);
@@ -812,7 +838,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       ]);
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_shares WHERE role_id = $1',
+          'SELECT count(*) FROM app.agent_shares WHERE role_id = $1',
           duty.id,
         ),
       ).toBe(0);
@@ -963,7 +989,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       );
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE name = $1',
+          'SELECT count(*) FROM app.agents WHERE name = $1',
           refusedName,
         ),
       ).toBe(0);
@@ -1232,13 +1258,15 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   вторая получает конфликт, и запись остаётся в версии 4"; AC-10.1 "Given Аня создала агента, поправила его, поделилась им,
   //   Борис его скопировал, а Аня закрыла доступ и удалила агента, then в аудите шесть записей, и ни одна не содержит текста
   //   промпта". Design: UC-E5, UC-6, KD-5, KD-7, invariants 6 and 8.
-  // Behavior: the save carries the version it started from -> a conditional update (`version = N`) -> 200 and N+1, or 409 and nothing;
+  // Behavior: the save carries the version it started from -> a new `agent_versions` row and the agent's pointer moved to it only while
+  //   version N is active (data-model design-agents.md KD-2) -> 200 and N+1, or 409 and nothing;
   //   each action writes one event in its own transaction with a field sample that has no prompt.
   // Steps (literal expected values):
   //   1. Given a fresh record `r` of Аня in version 3 (saved twice after create) and `before` = its audit events; When two `PUT
   //      /api/library/:id` with `version: 3` are sent one after another (second with other content); Then the first -> 200,
   //      `version` 4; the second -> 409 `RECORD_VERSION_CONFLICT`, one constant body; the record holds the FIRST content in version 4;
-  //      the second request added no audit event (a conflict leaves no trace) and a stale save with a rejected rule (422) added none.
+  //      the second request added no audit event (a conflict leaves no trace) and a stale save with a rejected rule (422) added none;
+  //      `agent_versions` holds exactly versions 1-4 of the record, each written by Аня, the earlier ones unchanged (data-model DC-16, DC-17).
   //   2. UC-6 on another fresh record: Аня creates an agent with a distinctive prompt phrase, edits it (version 2), shares it with a
   //      role, Борис (in the role) copies it, Аня removes all roles, Аня deletes the agent. The audit rows of object type
   //      `library_record` for this scenario are EXACTLY six, in order: `library_create`, `library_update`, `library_audience`,
@@ -1307,6 +1335,23 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       const stored = await getRecord(app, anya, record.id);
       expect(stored.version).toBe(4);
       expect(stored.content).toMatchObject({ prompt: 'Правка первой вкладки' });
+      // data-model DC-16, DC-17: every save is its own version row by Аня, earlier rows are untouched, and neither
+      // the 409 nor the 422 left a version
+      const { rows: versions } = await pool.query<{
+        number: number;
+        authorId: string | null;
+        prompt: string;
+      }>(
+        `SELECT number, author_id AS "authorId", content->>'prompt' AS prompt FROM app.agent_versions
+          WHERE agent_id = $1 ORDER BY number`,
+        [record.id],
+      );
+      expect(versions).toEqual([
+        { number: 1, authorId: anya.id, prompt: sent.content.prompt },
+        { number: 2, authorId: anya.id, prompt: 'Правка 1' },
+        { number: 3, authorId: anya.id, prompt: 'Правка 2' },
+        { number: 4, authorId: anya.id, prompt: 'Правка первой вкладки' },
+      ]);
       const eventsAfter = await auditOfRecord(pool, record.id);
       expect(eventsAfter).toHaveLength(eventsBefore + 1);
       expect(eventsAfter.at(-1)).toMatchObject({

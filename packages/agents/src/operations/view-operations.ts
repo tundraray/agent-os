@@ -2,6 +2,7 @@ import type { Logger } from '@agent-os/common';
 import {
   AGENT_TASK_TYPES,
   AgentMessageKindSchema,
+  type AgentVersion,
   type AgentTasksView,
   DELEGATION_ANSWER_MAX_CHARS,
   DELEGATION_ITEM_MAX_CHARS,
@@ -11,9 +12,9 @@ import {
   TaskStatusSchema,
 } from '@agent-os/contracts';
 import {
-  AgentMessagesRepository,
-  AgentSessionsRepository,
-  AgentSessionTasksRepository,
+  MessagesRepository,
+  ConversationsRepository,
+  ConversationTasksRepository,
 } from '@agent-os/db';
 import {
   Decisions,
@@ -28,10 +29,10 @@ import { z } from 'zod';
 
 import { type AgentView, toAgentView } from '../agent-view';
 import { ConfirmationResolutionSchema } from '../agent/tool-step';
-import { AGENTS_LOGGER } from '../agents.tokens';
+import { AGENTS_LOGGER, RECORD_LIBRARY } from '../agents.tokens';
 import { type DeepAgentRun, readDeepAgentRun } from '../deep/deep-agent-run';
 import { foldCalls } from '../history/call-state';
-import type { RunSnapshot } from '../start/snapshot';
+import type { RecordLibrary } from '../start/record-library';
 import { History, type PageEntry } from '../store/history';
 import {
   type RootSession,
@@ -58,6 +59,7 @@ import {
   parentOf,
 } from './operation-support';
 import { stopEntries } from './stop-entries';
+import { agentOwner } from '../agent/agent-owner';
 
 const { queued, running, stopped, completed, failed } = TaskStatusSchema.enum;
 const { interrupt } = AgentMessageKindSchema.enum;
@@ -119,13 +121,13 @@ export class ViewOperations {
   constructor(
     /** The sessions, the history and the task lists the operations read after the runtime's owner check. */
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentSessionsRepository)
-    private readonly sessionRows: AgentSessionsRepository,
+    @Inject(ConversationsRepository)
+    private readonly sessionRows: ConversationsRepository,
     @Inject(History) private readonly entries: History,
-    @Inject(AgentMessagesRepository)
-    private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentSessionTasksRepository)
-    private readonly sessionTaskRows: AgentSessionTasksRepository,
+    @Inject(MessagesRepository)
+    private readonly messageRows: MessagesRepository,
+    @Inject(ConversationTasksRepository)
+    private readonly sessionTaskRows: ConversationTasksRepository,
     @Inject(TaskControl)
     private readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     @Inject(Inbox) private readonly inbox: Pick<Inbox, 'listPending'>,
@@ -133,23 +135,38 @@ export class ViewOperations {
     @Inject(Trackers) private readonly trackers: Pick<Trackers, 'list'>,
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, 'displays'>,
+    /** The version a run's task input names, for the view of a run. */
+    @Inject(RECORD_LIBRARY)
+    private readonly library: Pick<RecordLibrary, 'version'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logged = createLogged(logger.child({ service: 'agents.sessions' }));
   }
 
-  /** The run's snapshot, for the view of a run; `null` when the task is not an agent. */
-  snapshot(agentId: string, ownerId: string): Promise<RunSnapshot | null> {
+  /**
+   * The version the agent runs on and the team member it is, for the view of a run; `null` when the task is
+   * not an agent.
+   */
+  version(
+    agentId: string,
+    ownerId: string,
+  ): Promise<{ version: AgentVersion; subagent: string | null } | null> {
     return this.logged(
-      'snapshot',
+      'version',
       { agentId, ownerId },
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
-        return AGENT_TASK_TYPES.includes(task.type)
-          ? sessionInputOf(task.input).snapshot
-          : null;
+        if (!AGENT_TASK_TYPES.includes(task.type)) return null;
+        const input = sessionInputOf(task.input);
+        return {
+          version: await this.library.version(input.versionId),
+          subagent: input.subagent,
+        };
       },
-      (snapshot) => ({ kind: snapshot?.kind ?? null }),
+      (run) => ({
+        versionId: run?.version.id ?? null,
+        kind: run?.version.kind ?? null,
+      }),
     );
   }
 
@@ -417,7 +434,7 @@ export class ViewOperations {
   /** Whether an `interrupt` waits in the agent's queue (KD-3); only a queued or running agent can have one. */
   private async pendingInterrupt(task: Task): Promise<boolean> {
     if (task.status !== queued && task.status !== running) return false;
-    const pending = await this.inbox.listPending(task.taskId, task.ownerId);
+    const pending = await this.inbox.listPending(task.taskId, agentOwner(task));
     return pending.some((message) => message.kind === interrupt);
   }
 
@@ -435,7 +452,7 @@ export class ViewOperations {
     const callIds = answers.flatMap((answer) =>
       answer.content.toolCalls.map((call) => call.callId),
     );
-    // Only the records of the page's calls are read, by `(task_id, call_id)`; the answers go first.
+    // Only the records of the page's calls are read, by `(conversation_id, call_id)`; the answers go first.
     const calls = foldCalls([
       ...answers,
       ...(await this.entries.callRecords(agentId, callIds)),

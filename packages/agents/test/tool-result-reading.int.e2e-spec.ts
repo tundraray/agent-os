@@ -3,7 +3,7 @@
 // Tests are written with their phase and run once, at the end of the part (Phase 5; project rule "Tests only at the end").
 //
 // Environment: the harness of test/support (`agentsHarness.ts`); the model is the scripted double, which records the input of every call (the assertion surface for
-// "the next model call sees X"); the stored results are read from `agent_tool_results` through the harness's pool; the settings row is read, never changed.
+// "the next model call sees X"); the stored results are read from `tool_results` through the harness's pool; the settings row is read, never changed.
 // The secret is a value of the fixture's answer the process remembers (`rememberSecret`) before any agent call, as the provider registry does with a key.
 //
 // Proven elsewhere (not repeated here):
@@ -22,10 +22,11 @@ import {
   type ScriptedAnswer,
 } from '@agent-os/agents/testing';
 import { rememberSecret } from '@agent-os/common';
+import { parseSettingsValue } from '@agent-os/contracts';
 import {
-  agentToolResultSettings,
-  agentToolResults,
+  toolResults,
   createDatabase,
+  settings as settingsTable,
 } from '@agent-os/db';
 import {
   createFixtureFiles,
@@ -126,7 +127,7 @@ async function fixtureAnswer(
   return { text: block.text, value };
 }
 
-/** Reads the settings row and the two answers, remembers the secret and checks what the tests rely on. */
+/** Reads the `tool_result_settings` key and the two answers, remembers the secret and checks what the tests rely on. */
 async function prepare(): Promise<Expected> {
   const database = createDatabase({
     connectionString: databaseUrl(),
@@ -134,18 +135,17 @@ async function prepare(): Promise<Expected> {
   });
   let settings: Settings | undefined;
   try {
-    [settings] = await database.db
-      .select({
-        storeFromChars: agentToolResultSettings.storeFromChars,
-        previewChars: agentToolResultSettings.previewChars,
-        readMaxTokens: agentToolResultSettings.readMaxTokens,
-      })
-      .from(agentToolResultSettings);
+    const [row] = await database.db
+      .select({ value: settingsTable.value })
+      .from(settingsTable)
+      .where(eq(settingsTable.key, 'tool_result_settings'));
+    if (row !== undefined)
+      settings = parseSettingsValue('tool_result_settings', row.value);
   } finally {
     await database.close();
   }
   if (settings === undefined)
-    throw new Error('agent_tool_result_settings has no row');
+    throw new Error('settings has no tool_result_settings row');
 
   const fixture = await startFixtureProcess(
     createFixtureFiles('tool-result-reading'),
@@ -187,12 +187,12 @@ async function prepare(): Promise<Expected> {
 async function storedRowsOf(harness: AgentsHarness, agentId: string) {
   const rows = await harness.db
     .select({
-      callId: agentToolResults.callId,
-      text: agentToolResults.text,
-      value: agentToolResults.value,
+      callId: toolResults.callId,
+      text: toolResults.text,
+      value: toolResults.value,
     })
-    .from(agentToolResults)
-    .where(eq(agentToolResults.taskId, agentId));
+    .from(toolResults)
+    .where(eq(toolResults.conversationId, agentId));
   return new Map(rows.map((row) => [row.callId, row]));
 }
 
@@ -257,9 +257,9 @@ beforeAll(async () => {
 }, TEST_TIMEOUT_MS);
 
 describe('INT-1: a large result - the wrapper, the pages, the search, readResult, the mask', () => {
-  // R-1: "Успешный результат MCP-вызова длиннее порога хранится целиком в `agent_tool_results`; модель получает обёртку: ... размер, `callId` для чтения, превью начала ..."
+  // R-1: "Успешный результат MCP-вызова длиннее порога хранится целиком в `tool_results`; модель получает обёртку: ... размер, `callId` для чтения, превью начала ..."
   // R-2: "`read_tool_result` — страница сохранённого результата по строкам ... с баннером «partial view ...; do not answer from this page alone». `search_tool_result` — строки с подстрокой и их номера, с пределом."
-  // R-4: "`readResult(callId)` в `run_code` отдаёт полное значение без предела из той же таблицы ... строку `agent_tool_results` по-прежнему получает каждый успешный и пустой прямой MCP-вызов"
+  // R-4: "`readResult(callId)` в `run_code` отдаёт полное значение без предела из той же таблицы ... строку `tool_results` по-прежнему получает каждый успешный и пустой прямой MCP-вызов"
   // Secrets (plan decision): every MCP text the model gets, and the stored `text` and `value`, pass the masker.
   // Behavior: one answer calls `search_logs` on WINDOW (about 120 KB) and on one record -> the next input holds the wrapper and the short answer whole; the model reads the
   //   short one and the long one page by page from the banners' offsets, searches the long one, reads it in a script, and answers
@@ -269,7 +269,7 @@ describe('INT-1: a large result - the wrapper, the pages, the search, readResult
     'INT-1: R-1 the model gets the wrapper, reads every page, searches and reads the value, and no known secret gets through',
     async () => {
       // Given: an employee whose agent reads the payment logs; the scripted model follows the stored result to its end
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const prompt = 'Read the large payment log page';
       const done = 'Прочитано целиком';
       const model = createScriptedModel();
@@ -475,8 +475,8 @@ describe("INT-2: a callId that is not the caller's reads as a missing one", () =
     'INT-2: R-2 read_tool_result and search_tool_result answer a foreign session, a foreign owner and an invented callId alike',
     async () => {
       // Given: A's first agent read the window directly, so its large result is stored under its callId
-      const employeeA = newUser();
-      const employeeB = newUser();
+      const employeeA = await newUser();
+      const employeeB = await newUser();
       const model = createScriptedModel();
       const storing = model.script({ task: 'A stores a large result' }, [
         { calls: [{ tool: SEARCH_LOGS, args: WINDOW }] },

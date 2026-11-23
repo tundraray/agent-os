@@ -157,7 +157,9 @@ function agentView(
 }
 
 /** The id of the deep agent record `research` «Исследование» the deep agent fixtures start from. */
-export const DEEP_AGENT_RECORD_ID = '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71';
+const DEEP_AGENT_RECORD_ID = '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71';
+/** Its name: what a brief's `deepAgent` names it by. */
+export const DEEP_AGENT_NAME = 'Исследование';
 
 /** The origin of a deep agent's run: the system deep agent «Исследование», version 1. */
 export function deepAgentOrigin(): RunOrigin {
@@ -165,7 +167,7 @@ export function deepAgentOrigin(): RunOrigin {
     recordId: DEEP_AGENT_RECORD_ID,
     kind: 'deep_agent',
     version: 1,
-    name: 'Исследование',
+    name: DEEP_AGENT_NAME,
     author: null,
     builtinKey: 'research',
     subagent: null,

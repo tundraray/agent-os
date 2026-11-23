@@ -12,9 +12,8 @@ import type {
   FinalSubagentReport,
 } from '../agent/delegation';
 import type { CallState } from '../history/call-state';
-import type { DeepAgentSnapshot, RunSnapshot } from '../start/snapshot';
 import type { SessionTool } from '../tools/tool-registry';
-import { learningRunOf, TASK_TOOL } from './deep-definition';
+import { TASK_TOOL } from './deep-definition';
 import type { TaskArgs } from './delegation-rules';
 import {
   createDelegations,
@@ -23,20 +22,9 @@ import {
   reportOf,
   type TaskCall,
 } from './task-delegation';
+import { agentOwner } from '../agent/agent-owner';
 
 const { refused } = ToolOutcomeSchema.enum;
-
-function deepAgentOf(
-  snapshot: RunSnapshot,
-  agentId: string,
-): DeepAgentSnapshot {
-  if (snapshot.kind !== 'deep_agent') {
-    throw new Error(
-      `Agent ${agentId} runs as a deep agent without a deep agent's snapshot`,
-    );
-  }
-  return snapshot;
-}
 
 /** What a deep agent works with: an agent's, and what `task` needs. */
 export type DeepAgentDeps = AgentDeps & DelegationsDeps;
@@ -52,22 +40,25 @@ export class DeepAgent extends BaseAgent {
   private readonly delegations: Delegations;
   /** The outcomes of the trackers' tasks: the final subagent's answer is read through them. */
   private readonly trackers: DelegationsDeps['trackers'];
-  /** The subagent whose answer ends the run, from the snapshot; `null` — the deep agent's own answer does. */
+  /** The subagent whose answer ends the run, from the version; `null` — the deep agent's own answer does. */
   private readonly finalSubagent: string | null;
 
   constructor(deps: DeepAgentDeps, run: AgentRun) {
     super(deps, run);
     this.delegations = createDelegations(deps);
     this.trackers = deps.trackers;
-    this.finalSubagent = deepAgentOf(
-      run.input.snapshot,
-      run.task.taskId,
-    ).content.finalSubagent;
+    const { version } = run;
+    if (version.kind !== 'deep_agent' || run.input.subagent !== null) {
+      throw new Error(
+        `Agent ${run.task.taskId} runs as a deep agent on ${version.kind} version ${version.id}`,
+      );
+    }
+    this.finalSubagent = version.content.finalSubagent;
   }
 
   /** A run that learns gets its row with its deep agent session, in the same transaction (self-learning KD-2). */
   protected override async sessionCreated(): Promise<void> {
-    const learning = learningRunOf(this.input.snapshot);
+    const { learning } = this.definition;
     if (learning !== null)
       await this.deps.knowledgeRunRows.insertRun({
         runId: this.task.taskId,
@@ -85,7 +76,7 @@ export class DeepAgent extends BaseAgent {
   ): Promise<CallClosing[]> {
     if (calls.length === 0) return [];
     const results = await this.delegations.closings(
-      { taskId: ctx.taskId, ownerId: ctx.ownerId, logger: ctx.logger },
+      { taskId: ctx.taskId, ownerId: agentOwner(ctx), logger: ctx.logger },
       calls,
     );
     return results.map(
@@ -173,7 +164,7 @@ export class DeepAgent extends BaseAgent {
   /**
    * How the last finished single `task` of the final subagent ended, and its last message (DC-4; deep-agents
    * design-task.md KD-6): its call's result names the subagent's task, whose outcome the tracker keeps. Read by
-   * kind, not from the step's entries: the result may stand before the last compaction. `null` — the snapshot
+   * kind, not from the step's entries: the result may stand before the last compaction. `null` — the version
    * names no final subagent, and the deep agent's own answer ends the run.
    */
   protected override async finalAnswer(
@@ -195,7 +186,7 @@ export class DeepAgent extends BaseAgent {
       subagent,
     );
     if (childTaskId === undefined) return null;
-    const trackers = await this.trackers.list(ctx.taskId, ctx.ownerId);
+    const trackers = await this.trackers.list(ctx.taskId, agentOwner(ctx));
     const task = trackers
       .flatMap((tracker) => tracker.tasks)
       .find((candidate) => candidate.taskId === childTaskId);

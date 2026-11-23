@@ -55,16 +55,6 @@ export interface PanelServerFacts extends ServerFacts {
   readonly registryServers: readonly string[];
 }
 
-/** Input of `seedBuiltin`: the caller sets the id, so built-in records can name each other. */
-export interface BuiltinRecordInput {
-  readonly id: string;
-  readonly builtinKey: string;
-  readonly name: string;
-  readonly description: string;
-  readonly everyone: boolean;
-  readonly body: RecordBody;
-}
-
 /** A deep agent whose knowledge graph is open to the actor: what the knowledge routes need. */
 export interface KnowledgeTarget {
   readonly recordId: string;

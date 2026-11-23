@@ -22,7 +22,6 @@ import {
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
 import type { Response } from 'express';
-import { AccessService } from '../access/access.service';
 import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
@@ -40,7 +39,6 @@ import { mcpAnswer } from './mcp.errors';
  * The MCP server registry for an administrator (design-mcp-connect.md, Contract «Реестр — для `admin`»).
  * Every write goes through `AgentsMcp` and is audited after it as `admin_change` on `mcp_server`; no answer
  * carries a token value (AC-13.5). The server's OAuth return address is built from `IdentitySettings.publicUrlFor`.
- * The grants on a removed server are deleted through `AccessService`: the registry does not read `access_*`.
  */
 @Controller('admin/mcp-servers')
 @AdminOnly()
@@ -49,7 +47,6 @@ export class AdminMcpServersController {
     @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
     private readonly settings: IdentitySettings,
     private readonly auditLog: AuditLog,
-    private readonly access: AccessService,
   ) {}
 
   /** The servers by name. */
@@ -154,10 +151,8 @@ export class AdminMcpServersController {
   }
 
   /**
-   * 204: the server, its accounts and the grants on it are removed; 404 MCP_SERVER_NOT_FOUND. The grants
-   * go first, in their own statement: the registry and the grants belong to different owners and share
-   * no transaction, and a failure between the two must leave a server without grants, never grants
-   * without a server.
+   * 204: the server is removed, and its accounts and the grants on it with it by the database's cascade;
+   * 404 MCP_SERVER_NOT_FOUND.
    */
   @Delete(':name')
   @HttpCode(204)
@@ -166,7 +161,6 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
   ): Promise<void> {
     const actor = req.user.id;
-    await this.access.removeServerGrants(actor, name);
     const removal = await mcpAnswer(this.mcp.remove(name));
     await recordServerChange(this.auditLog, {
       actor,

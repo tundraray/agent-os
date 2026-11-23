@@ -71,7 +71,7 @@ describe('deep-agents / task - integration (in-process runtime + real Postgres)'
         ],
       });
       try {
-        const ownerId = newUser();
+        const ownerId = await newUser();
         const ownerTaskId = await harness.tasks.create({
           type: ownerType,
           ownerId,
@@ -179,8 +179,8 @@ describe('deep-agents / task - integration (in-process runtime + real Postgres)'
         ],
       });
       try {
-        const alice = newUser();
-        const bob = newUser();
+        const alice = await newUser();
+        const bob = await newUser();
         const aliceTask = await harness.tasks.create({
           type: ownerType,
           ownerId: alice,
@@ -267,7 +267,7 @@ describe('deep-agents / task - integration (in-process runtime + real Postgres)'
         ],
       });
       try {
-        const ownerId = newUser();
+        const ownerId = await newUser();
         const ownerTaskId = await harness.tasks.create({
           type: ownerType,
           ownerId,

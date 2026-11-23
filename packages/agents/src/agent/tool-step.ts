@@ -232,7 +232,7 @@ export async function runToolStep(
 
   const { caller } = agent;
   // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
-  // whose account went away gets `auth_required` (C3, DC-2). The set comes from the snapshot (ADR-0017).
+  // whose account went away gets `auth_required` (C3, DC-2). The set comes from the version (ADR-0017).
   const sessionTools = await registry.checkTools(agent.declaration);
   const argsOf = (call: CallState): unknown =>
     loggedArgsOf(sessionTools, (name) => registry.toolOf(name), {

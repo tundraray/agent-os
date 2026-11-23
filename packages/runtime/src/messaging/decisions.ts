@@ -13,11 +13,11 @@ import {
   type RuntimeDecisionRow,
   type RuntimeDecisionView,
   RuntimeTasksRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { RuntimeError } from '../errors';
 import { EventLog } from '../events/event-log';
-import type { TaskRow } from '../tasks/guarded-transition';
 import { RUNTIME_LOGGER } from '../runtime.tokens';
 import { writeHeld } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
@@ -90,14 +90,13 @@ export class Decisions {
    * transaction. The caller puts the task in `waiting` (`decision`).
    */
   async open(
-    task: TaskRow,
+    task: RuntimeTaskRow,
     request: DecisionRequest,
   ): Promise<RuntimeDecisionRow> {
     const row = await this.deps.repository.insert({
       decisionId: randomUUID(),
       taskId: task.taskId,
       rootId: task.rootId,
-      ownerId: task.ownerId,
       kind: request.kind,
       payload: request.payload ?? null,
     });

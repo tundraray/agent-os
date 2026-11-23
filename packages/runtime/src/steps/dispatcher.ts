@@ -13,13 +13,13 @@ import {
   type RuntimeInboxRow,
   RuntimeTrackersRepository,
   RuntimeTasksRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type pg from 'pg';
 import type { CancelTimer, Clock } from '../clock';
 import { CrashPoints } from '../crash-points';
 import { EventLog, RUNTIME_EVENTS_CHANNEL } from '../events/event-log';
-import type { TaskRow } from '../tasks/guarded-transition';
 import { HandlerRegistry } from './handler.registry';
 import { LiveTasks } from './live-tasks';
 import type { StepResult } from './step-contract';
@@ -67,7 +67,7 @@ type HandlerEnd = Extract<Execution, { kind: 'returned' | 'threw' }>;
  * decision no committed step has received yet and the step's entry among the running ones.
  */
 interface ClaimedTask {
-  task: TaskRow;
+  task: RuntimeTaskRow;
   messages: RuntimeInboxRow[];
   decision: RuntimeDecisionRow | undefined;
   handle: RunningStepHandle;

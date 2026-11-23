@@ -9,9 +9,6 @@ export interface StoredEvent {
   schemaVersion: number;
   rootId: string;
   taskId: string | null;
-  causationId: string | null;
-  /** `step_no` of the task when the event was written. */
-  stateRevision: number;
   payload: unknown;
   createdAt: Date;
 }

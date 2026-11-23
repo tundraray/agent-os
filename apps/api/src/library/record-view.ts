@@ -1,6 +1,5 @@
 import {
   ALL_SERVERS,
-  CHAT_BUILTIN_KEY,
   type BannedRecord,
   type MissingRight,
   type RecordAudience,
@@ -63,10 +62,13 @@ export function recordHeader(
   return { ...headerFields(record, viewerId), kind: record.body.kind };
 }
 
-/** The answer of `resolve` and `resolveBuiltin`: the header with the content of its kind. */
+/**
+ * The answer of `resolve` and `resolveBuiltin`: the header with the content of its kind; `viewerId` `null` —
+ * read for nobody (a default agent).
+ */
 export function resolvedRecord(
   record: LibraryRecord,
-  viewerId: string,
+  viewerId: string | null,
 ): ResolvedRecord {
   return { ...headerFields(record, viewerId), ...record.body };
 }
@@ -119,16 +121,17 @@ export function banAuditSample(
 
 function headerFields(
   record: LibraryRecord,
-  viewerId: string,
+  viewerId: string | null,
 ): Omit<RecordHeader, 'kind'> {
   return {
     id: record.id,
     name: record.name,
     description: record.description,
     version: record.version,
+    versionId: record.versionId,
     builtinKey: record.builtinKey,
     author: record.author,
-    mine: record.ownerId === viewerId,
+    mine: viewerId !== null && record.ownerId === viewerId,
     shared: hasHolders(record),
     offerInChat: record.offerInChat,
   };
@@ -155,10 +158,7 @@ function viewFields(record: LibraryRecord, context: ViewContext): ViewFields {
         : null,
     missingRights: missingRights(record.body, context),
     canEdit,
-    canShare:
-      canEdit &&
-      record.closedAt === null &&
-      record.builtinKey !== CHAT_BUILTIN_KEY,
+    canShare: canEdit && record.closedAt === null && record.builtinKey === null,
     canDelete: canEdit && record.builtinKey === null,
   };
 }

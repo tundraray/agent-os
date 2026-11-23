@@ -10,7 +10,7 @@ import { apiRequest, type Session } from './session';
  * The knowledge graph of the tests (self-learning design-core.md, Test Strategy UC-8): graph rows written straight
  * into `app.agent_knowledge_*` for a workflow record — the extraction pipeline is not exercised by the API suite —
  * and the default embedding model taken away for a file. The graph rows go with their workflow (cascade from
- * `library_records`), so a suite removes them by removing its employees (`removeRunRows`).
+ * `agents`), so a suite removes them by removing its employees (`removeRunRows`).
  */
 
 type Pool = DatabaseConnection['pool'];

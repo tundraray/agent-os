@@ -11,7 +11,7 @@ import {
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
   AgentKnowledgeVectorsRepository,
-  AgentMcpServersRepository,
+  McpServersRepository,
   Db,
   type KnowledgeEmbeddingRow,
   type KnowledgeSettingsRow,
@@ -91,8 +91,8 @@ export class AgentsKnowledge {
     private readonly knowledgeRows: AgentKnowledgeRepository,
     @Inject(AgentKnowledgeRunsRepository)
     private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
-    @Inject(AgentMcpServersRepository)
-    private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
     /** `create` of a vector pass in the deletion's transaction. */
     @Inject(TaskControl) private readonly tasks: Pick<TaskControl, 'create'>,
     /** Only `model()`: the view never calls the provider. */

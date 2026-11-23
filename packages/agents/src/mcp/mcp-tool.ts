@@ -28,7 +28,7 @@ export interface McpTool {
 }
 
 /**
- * The stored form of an `McpTool` in `agent_mcp_servers.tools` (a list of them): the tool set is built
+ * The stored form of an `McpTool` in `mcp_servers.tools` (a list of them): the tool set is built
  * from it without the network (KD-2).
  */
 const StoredMcpToolSchema = z.object({

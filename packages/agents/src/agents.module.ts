@@ -42,7 +42,6 @@ import { History } from './store/history';
 import { Sessions } from './store/sessions';
 import { RunCodeTool } from './tools/external/run-code';
 import { ToolRegistry } from './tools/tool-registry';
-import { AgentsToolResults } from './tools/tool-result-settings';
 import { ToolRunner } from './tools/tool-runner';
 
 /**
@@ -68,14 +67,12 @@ const PUBLIC_SERVICES = [
   ViewOperations,
   // The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014).
   AgentsMcp,
-  // The model provider registry: the only entry point of `apps/api` to `agent_model_providers` (ADR-0019).
+  // The model provider registry: the only entry point of `apps/api` to `model_providers` (ADR-0019).
   AgentsProviders,
   // Vectors on the default embedding model for the platform's own features (KD-6).
   AgentsEmbeddings,
   // The knowledge graphs of self-learning deep agents and their settings: the only entry point to `agent_knowledge_*`.
   AgentsKnowledge,
-  // The settings of large tool results (tool-result-reading R-5).
-  AgentsToolResults,
   // `completeText`: one call of the default chat model outside any task (the conversation title).
   ModelClient,
 ];
@@ -86,7 +83,7 @@ const PUBLIC_SERVICES = [
  *
  * In memory it keeps only the tool registry, the open MCP connection requests and the token refreshes in
  * flight — the agent objects are the runtime's (`LiveTasks`), a cache over the database; the MCP registry, the
- * accounts and every run's snapshot are in Postgres (ADR-0001, ADR-0017).
+ * accounts and every run's version are in Postgres (ADR-0001, ADR-0017).
  *
  * `onModuleInit` — the registrations in the runtime and in the tools library (`AgentsRegistration`,
  * `SystemToolsRegistration`, `RunCodeTool`, `AgentFactory`); `onApplicationBootstrap` — the tools library closes.

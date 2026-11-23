@@ -15,10 +15,7 @@ import {
   RunCodeConfirmationContentSchema,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import {
-  AgentCodeCallsRepository,
-  AgentToolResultsRepository,
-} from '@agent-os/db';
+import { CodeCallsRepository, ToolResultsRepository } from '@agent-os/db';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import { OwnerDisabledError } from '../../access-gate';
@@ -157,8 +154,8 @@ export interface RunCodeDeps {
   readonly codeRunner: CodeRunner;
   /** The attempts of a read run, the audit rows of the calls a script makes and the results it reads. */
   readonly callRecords: CallRecords;
-  readonly codeCallRows: AgentCodeCallsRepository;
-  readonly toolResultRows: AgentToolResultsRepository;
+  readonly codeCallRows: CodeCallsRepository;
+  readonly toolResultRows: ToolResultsRepository;
   /** The MCP tools a run checks its calls against and the names a script never calls. */
   readonly registry: Pick<ToolRegistry, 'declaredMcpTools' | 'toolNames'>;
   readonly runner: Pick<ToolRunner, 'callFromCode'>;
@@ -526,10 +523,10 @@ export class RunCodeTool implements OnModuleInit {
   constructor(
     @Inject(CODE_RUNNER) private readonly codeRunner: CodeRunner,
     @Inject(CallRecords) private readonly callRecords: CallRecords,
-    @Inject(AgentCodeCallsRepository)
-    private readonly codeCallRows: AgentCodeCallsRepository,
-    @Inject(AgentToolResultsRepository)
-    private readonly toolResultRows: AgentToolResultsRepository,
+    @Inject(CodeCallsRepository)
+    private readonly codeCallRows: CodeCallsRepository,
+    @Inject(ToolResultsRepository)
+    private readonly toolResultRows: ToolResultsRepository,
     @Inject(ToolRegistry) private readonly registry: ToolRegistry,
     @Inject(ToolRunner) private readonly runner: ToolRunner,
     @Inject(AGENTS_CONFIG)

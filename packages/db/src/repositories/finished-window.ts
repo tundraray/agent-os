@@ -1,6 +1,6 @@
 import type { ToolOutcome } from '@agent-os/contracts';
 import { and, gt, isNotNull, lte, type SQL } from 'drizzle-orm';
-import type { agentCodeCalls, agentMessages } from '../schema';
+import type { codeCalls, messages } from '../schema';
 
 /** Calls that finished in (`after`, `through`]; `after` null — no lower bound. */
 export interface FinishedWindow {
@@ -19,8 +19,7 @@ export interface FinishedMcpCall<O extends ToolOutcome> {
 
 /** `finished_at` within the window, for either table of calls. */
 export function finishedIn(
-  finishedAt:
-    typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
+  finishedAt: typeof messages.finishedAt | typeof codeCalls.finishedAt,
   window: FinishedWindow,
 ): SQL | undefined {
   return and(

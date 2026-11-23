@@ -49,8 +49,8 @@ function ask(question: Question): unknown {
   return decideSystemAudience(question.input);
 }
 
-// Flow 2, DC-4: AC-04.1; panel audience (audience_fixed, holder_not_found).
-describe('audience rule: an owner opens a record only to their own roles and not under a ban, a system audience names existing holders and the chat audience is fixed', () => {
+// Flow 2, DC-4: AC-04.1; panel audience (audience_fixed, holder_not_found); data-model DC-22.
+describe('audience rule: an owner opens a record only to their own roles and not under a ban, a system audience names existing holders and the audience of a default agent is fixed', () => {
   it.each<{ name: string; question: Question; expected: unknown }>([
     {
       name: 'the owner opens the record to their role',
@@ -109,7 +109,8 @@ describe('audience rule: an owner opens a record only to their own roles and not
       expected: allowed,
     },
     {
-      name: 'the main-chat record audience is fixed',
+      // data-model design-agents.md KD-4, DC-22: the audience of every default agent is fixed - one branch, any key.
+      name: 'the audience of a default agent is fixed',
       question: {
         kind: 'system',
         input: systemAudience({ builtinKey: 'chat' }),

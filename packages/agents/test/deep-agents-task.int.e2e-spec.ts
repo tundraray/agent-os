@@ -13,7 +13,7 @@
 // - unit, packages/agents/src/agent/turn-rules.spec.ts - UC-6: the answer fields.
 // - integration, packages/runtime/test/deep-agents-task.*.e2e-spec.ts - the tracker itself: restarts, stop, isolation, one wake.
 
-import { agentSessionTasks, agentToolResults } from '@agent-os/db';
+import { conversationTasks, toolResults } from '@agent-os/db';
 import {
   createLibraryDouble,
   createScriptedModel,
@@ -187,7 +187,7 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
     'UC-1 ($row): two task calls wake the deep agent once, the failed one is an error, the other the answer, and task 1 follows its subagent',
     async ({ row, failing }) => {
       // Given: a deep agent whose first answer creates task 1 and whose second gives scout-a (for task 1) and scout-b a task
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const model = createScriptedModel();
       const { harness, recordId } = await delegatingHarness(model);
       const assignmentA = `Find the cause (${row})`;
@@ -278,14 +278,14 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
         // Then: task 1 carries scout-a as its owner and is completed - by the answer, or by the deep agent after the failure
         const [task] = await harness.db
           .select({
-            status: agentSessionTasks.status,
-            owner: agentSessionTasks.owner,
+            status: conversationTasks.status,
+            owner: conversationTasks.owner,
           })
-          .from(agentSessionTasks)
+          .from(conversationTasks)
           .where(
             and(
-              eq(agentSessionTasks.taskId, deepAgentId),
-              eq(agentSessionTasks.number, 1),
+              eq(conversationTasks.conversationId, deepAgentId),
+              eq(conversationTasks.number, 1),
             ),
           );
         expect(task).toEqual({ status: 'completed', owner: SCOUT_A });
@@ -308,7 +308,7 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
     'UC-2: a list of five items starts five subagents and returns a cut table of five rows, the failed one with its reason, the full one read with read_tool_result',
     async () => {
       // Given: five items whose answers are longer than their share of the table; the third item's subagent fails
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const model = createScriptedModel();
       const { harness, recordId } = await delegatingHarness(model);
       const instruction = 'Collect the facts of the city';
@@ -373,12 +373,12 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
 
         // Then: the full table is stored under the call with every whole answer, and read_tool_result reads it
         const [stored] = await harness.db
-          .select({ text: agentToolResults.text })
-          .from(agentToolResults)
+          .select({ text: toolResults.text })
+          .from(toolResults)
           .where(
             and(
-              eq(agentToolResults.taskId, deepAgentId),
-              eq(agentToolResults.callId, callId),
+              eq(toolResults.conversationId, deepAgentId),
+              eq(toolResults.callId, callId),
             ),
           );
         for (const [index, item] of items.entries()) {

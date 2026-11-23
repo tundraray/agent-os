@@ -1,11 +1,11 @@
 import type { Logger } from '@agent-os/common';
-import type { ToolRefusalReason } from '@agent-os/contracts';
+import type { SettingsValue, ToolRefusalReason } from '@agent-os/contracts';
 
 import type { McpAccounts } from '../mcp/mcp-accounts';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client';
 import type { McpFailureReason } from '../mcp/mcp-failure';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome';
-import type { StoredToolResult, ToolResultSettingsRow } from '@agent-os/db';
+import type { StoredToolResult } from '@agent-os/db';
 import { MCP_ARGS_SCHEMA, type McpCall, type ResolvedCall } from './call-check';
 import { cutText, maskValue, wrapperText } from './large-result';
 import { callTarget, loggedArgs } from './tool-registry';
@@ -119,10 +119,10 @@ export interface McpCallOptions {
   /** `MCP_CALL_TIMEOUT_MS`: bounds one call, the handshake included. */
   readonly callTimeoutMs: number;
   /**
-   * The settings row of large results (tool-result-reading R-5), read on every direct MCP call that ends
+   * The settings of large results (tool-result-reading R-5), read on every direct MCP call that ends
    * `success` or `tool_error`: its threshold decides whether the model gets the whole text or the wrapper.
    */
-  readonly resultSettings: () => Promise<ToolResultSettingsRow>;
+  readonly resultSettings: () => Promise<SettingsValue<'tool_result_settings'>>;
   /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
   readonly maskSecrets: (text: string) => string;
 }

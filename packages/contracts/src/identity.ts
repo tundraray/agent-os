@@ -286,10 +286,8 @@ export type UpdateProviderBody = z.infer<typeof UpdateProviderBodySchema>;
 
 export const IDLE_MINUTES_MIN = 15;
 export const IDLE_MINUTES_MAX = 1440;
-export const IDLE_MINUTES_DEFAULT = 480;
 export const ABSOLUTE_MINUTES_MIN = 60;
 export const ABSOLUTE_MINUTES_MAX = 43200;
-export const ABSOLUTE_MINUTES_DEFAULT = 1440;
 
 /** Public address without `/api`: `https://…` or `http://localhost…`, no path. */
 export const PublicUrlSchema = z.string().refine(isPublicUrl, {

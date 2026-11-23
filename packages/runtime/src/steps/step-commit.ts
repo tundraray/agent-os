@@ -6,16 +6,16 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { Db, RuntimeTrackersRepository } from '@agent-os/db';
+import {
+  Db,
+  RuntimeTrackersRepository,
+  type RuntimeTaskRow,
+} from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { CrashPoints } from '../crash-points';
 import { RuntimeError } from '../errors';
 import { EventLog, upperEventProblem } from '../events/event-log';
-import type {
-  TaskFailure,
-  TaskFields,
-  TaskRow,
-} from '../tasks/guarded-transition';
+import type { TaskFailure, TaskValues } from '../tasks/guarded-transition';
 import { isFinished } from '../tasks/guarded-transition';
 import { endTask, type TaskEndDeps, writeHeld } from '../tasks/task-end';
 import {
@@ -103,7 +103,7 @@ interface EffectsState {
 
 /** What one run of the commit transaction wrote. */
 interface CommittedStep {
-  row: TaskRow;
+  row: RuntimeTaskRow;
   tracker: OpenedTracker | undefined;
   adopted: readonly AdoptedTask[];
 }
@@ -248,12 +248,12 @@ export class StepCommitter {
         await decisions.markDelivered(step.decision.decisionId, step.stepNo);
       }
 
-      const stepFields: TaskFields = {
+      const stepFields: TaskValues = {
         stepNo: task.stepNo + 1,
         stepClaims: 0,
         recoveries: 0,
       };
-      const committedEvent = async (row: TaskRow) => {
+      const committedEvent = async (row: RuntimeTaskRow) => {
         await events.append({
           type: EVENT['task.step_committed'],
           task: row,
@@ -402,7 +402,7 @@ export class StepCommitter {
    * result is invalid even when the handler catches the error.
    */
   private effects(
-    task: TaskRow,
+    task: RuntimeTaskRow,
     outcome: StepResult['outcome'],
   ): { api: StepEffects; state: EffectsState } {
     const { handlers, tasks, trackers, events, inbox, inboxPayloadMaxBytes } =
@@ -479,7 +479,6 @@ export class StepCommitter {
         await trackers.insert({
           trackerId,
           taskId: task.taskId,
-          ownerId: task.ownerId,
         });
         const taskIds: string[] = [];
         for (const child of checked)

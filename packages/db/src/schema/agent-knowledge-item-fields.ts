@@ -1,12 +1,12 @@
 import { boolean, integer, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { createdAt } from './helpers';
-import { libraryRecords } from './library-records';
+import { agents } from './agents';
 
 /** Fields of every graph record (KD-5); the runs are kept for review and confirmations, no FK. */
 export const knowledgeItemFields = () => ({
   recordId: uuid('record_id')
     .notNull()
-    .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    .references(() => agents.id, { onDelete: 'cascade' }),
   confirmations: integer('confirmations').notNull().default(1),
   createdAt: createdAt(),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true })

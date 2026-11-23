@@ -39,7 +39,7 @@ import {
   FadeSlot,
   StatusGlyph,
 } from '@/components/agents/agent-status';
-import { useLiveRecord } from '@/components/agents/run-card';
+import { useLiveRecord, useRecordNamed } from '@/components/agents/run-card';
 import { ValueRows } from '@/components/agents/value-rows';
 import { ShellLink } from '@/components/shell/shell-link';
 import { refusalText } from '@/lib/access/access-texts';
@@ -204,24 +204,23 @@ const LIBRARY_TOOLS = new Set<string>([
 ]);
 
 /**
- * The record a library call names and its kind: `agent` of `start_agent` (only a record id — not a fork
- * or a subagent's name), `deepAgent` of `start_deep_agent`.
+ * The name a start call gives and the kind it starts (data-model design-agents.md, KD-5): `agent` of
+ * `start_agent`, `deepAgent` of `start_deep_agent`; an empty name when the argument is not a string.
  */
 function libraryCallOf(
   toolName: string,
   args: unknown,
-): { recordId: string | null; kind: RecordKind } {
-  const arg = (key: string): unknown =>
-    typeof args === 'object' && args !== null
-      ? Reflect.get(args, key)
-      : undefined;
-  const id = (value: unknown): string | null => {
-    const parsed = IdSchema.safeParse(value);
-    return parsed.success ? parsed.data : null;
+): { name: string; kind: RecordKind } {
+  const arg = (key: string): string => {
+    const value: unknown =
+      typeof args === 'object' && args !== null
+        ? Reflect.get(args, key)
+        : undefined;
+    return typeof value === 'string' ? value : '';
   };
   return toolName === START_AGENT_TOOL
-    ? { recordId: id(arg('agent')), kind: 'agent' }
-    : { recordId: id(arg('deepAgent')), kind: 'deep_agent' };
+    ? { name: arg('agent'), kind: 'agent' }
+    : { name: arg('deepAgent'), kind: 'deep_agent' };
 }
 
 function ReasonParagraph({ content }: ReasonLine) {
@@ -238,9 +237,10 @@ function ReasonParagraph({ content }: ReasonLine) {
 const LINK_CLASS = 'text-foreground underline underline-offset-2';
 
 /**
- * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» to the record's page; a refusal
- * without a library text (`model_not_connected`, `invalid_arguments`) keeps the general line. Whose the record
- * is comes from the library list.
+ * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» to the page of the record its name
+ * starts, found in the library list, which also says whose it is. A refusal without a library text
+ * (`model_not_connected`, `invalid_arguments`) and a call no record answers — a temporary agent — keep the
+ * general line.
  */
 function LibraryRefusalLine({
   toolName,
@@ -253,19 +253,17 @@ function LibraryRefusalLine({
 }) {
   const t = useTranslations('errors');
   const call = libraryCallOf(toolName, args);
-  // No list holds an empty id: a call without a record reads as one the list does not hold.
-  const live = useLiveRecord(call.recordId ?? '');
-  const refusal: RefusalText | null = describeRefusal(
-    t,
-    refusalReasonOf(artifact),
-    {
-      tool: toolName,
-      kind: call.kind,
-      model: refusedModel(artifact),
-      recordId: call.recordId,
-      own: live?.mine === true,
-    },
-  );
+  const live = useRecordNamed(call.kind, call.name);
+  const refusal: RefusalText | null =
+    live == null
+      ? null
+      : describeRefusal(t, refusalReasonOf(artifact), {
+          tool: toolName,
+          kind: call.kind,
+          model: refusedModel(artifact),
+          recordId: live.id,
+          own: live.mine,
+        });
   if (refusal === null) return <ReasonParagraph {...refusalOf(t, artifact)} />;
   const { action } = refusal;
   return (

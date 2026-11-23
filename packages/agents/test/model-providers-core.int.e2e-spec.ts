@@ -17,7 +17,7 @@
 //       that answers a scripted reply with a tool call and usage "10 000 input, 8 000 from cache", records each request's URL, key header and
 //       body, and can hold a stream open (the stop row) - built: `test/support/fake-provider.ts`; no fixture tool's schema has `$ref`, `$defs`
 //       or `const`, so row B lists `get_trace` of the fixture's `logs` through a proxy that rewrites only its `tools/list` schema;
-//     - the harness gets provider rows: `agent_model_providers` inserted through `Agents.providers` (or straight), with `baseUrl` of the fake;
+//     - the harness gets provider rows: `model_providers` inserted through `Agents.providers` (or straight), with `baseUrl` of the fake;
 //       the harness has no provider variables any more: providers, keys and addresses are rows (FR-02);
 //     - the access-gate double answers a catalogue price per model of the three providers.
 //   If a wire fake proves too costly, the fallback is the AI SDK's own mock language models under the adapters: that still proves usage and
@@ -478,7 +478,7 @@ describe('model-providers / core - agents integration (real Postgres, provider f
     const { harness, fakes } = opened();
     const row = ROWS[kind];
     const fake = fakes[kind];
-    const ownerId = newUser();
+    const ownerId = await newUser();
     const sent = requestsFromNow(fakes);
     const traceCallsBefore = fixtureCallsOf(harness.fixture.callLog, {
       tool: 'get_trace',
@@ -639,7 +639,7 @@ describe('model-providers / core - agents integration (real Postgres, provider f
     async () => {
       const { harness, fakes } = opened();
       const row = ROWS.anthropic;
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const sent = requestsFromNow(fakes);
       fakes.anthropic.reply({ kind: 'answer', text: ['First answer'] });
       fakes.anthropic.reply({ kind: 'answer', text: ['Second answer'] });
@@ -693,7 +693,7 @@ describe('model-providers / core - agents integration (real Postgres, provider f
     async (kind) => {
       const { harness, fakes } = opened();
       const row = ROWS[kind];
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const sent = requestsFromNow(fakes);
       fakes[kind].reply({ kind: 'hold', text: 'Partial ' });
       await setRootRecord(harness.library, readerRecord(kind));

@@ -1,6 +1,6 @@
 # packages/agents (`@agent-os/agents`)
 
-The agents of the platform: agent classes and their step, the tools library, start by snapshot, the MCP registry, model providers and embeddings, deep-agent knowledge, and the operations `apps/api` calls. Only `apps/api` depends on it; it depends on `runtime`, `db`, `code-runner`, `contracts` and `common`.
+The agents of the platform: agent classes and their step, the tools library, start on an immutable agent version, the MCP registry, model providers and embeddings, deep-agent knowledge, and the operations `apps/api` calls. Only `apps/api` depends on it; it depends on `runtime`, `db`, `code-runner`, `contracts` and `common`.
 
 ## Rules here
 
@@ -11,7 +11,7 @@ The agents of the platform: agent classes and their step, the tools library, sta
 - Registrations (agent classes as task handlers, event consumers, system tools) happen in `onModuleInit`.
 - Another domain arrives as a port: rights, quotas and library records come through `AccessGate`, `AccessAudit` and `RecordLibrary`, which `apps/api` implements. Never import `apps/api`.
 - Mastra (`@mastra/*`) is imported in this package only.
-- No table queries here: they live in `packages/db/src/repositories/agent-*.repository.ts`.
+- No table queries here: they live in `packages/db/src/repositories/`, one file per table (`conversations.repository.ts`, `mcp-servers.repository.ts`).
 - A writing registry operation (MCP servers, providers, knowledge settings) returns "before" and "after" with secrets replaced by a marker; `apps/api` writes the audit.
 - A secret (employee token, provider key) leaves the package only inside the request to its own server.
 
@@ -25,4 +25,4 @@ The agents of the platform: agent classes and their step, the tools library, sta
 ## More
 
 - [docs/code-system/packages/agents.md](../../docs/code-system/packages/agents.md)
-- [tool-declaration.md](../../docs/code-system/patterns/tool-declaration.md), [step-handler.md](../../docs/code-system/patterns/step-handler.md), [run-snapshot.md](../../docs/code-system/patterns/run-snapshot.md)
+- [tool-declaration.md](../../docs/code-system/patterns/tool-declaration.md), [step-handler.md](../../docs/code-system/patterns/step-handler.md), [immutable-versions.md](../../docs/code-system/patterns/immutable-versions.md)

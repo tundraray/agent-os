@@ -3,12 +3,12 @@ import {
   type CatalogModel,
   type CreateCatalogModelBody,
 } from '@agent-os/contracts';
-import type { AccessModelColumns, AccessModelRow } from '@agent-os/db';
+import type { ModelColumns, ModelRow } from '@agent-os/db';
 
 type ChatModel = Extract<CatalogModel, { purpose: 'chat' }>;
 
-/** A row of `access_models` as a catalogue model, by purpose. */
-export function toCatalogModel(row: AccessModelRow): CatalogModel {
+/** A row of `models` as a catalogue model, by purpose. */
+export function toCatalogModel(row: ModelRow): CatalogModel {
   const common = {
     id: row.id,
     name: row.name,
@@ -39,13 +39,13 @@ export function toCatalogModel(row: AccessModelRow): CatalogModel {
 
 /** The catalogue model of a row that may be missing. */
 export function toCatalogModelOrUndefined(
-  row: AccessModelRow | undefined,
+  row: ModelRow | undefined,
 ): CatalogModel | undefined {
   return row === undefined ? undefined : toCatalogModel(row);
 }
 
 /** The long-context tier; the CHECK keeps all five columns set or none. */
-function longContextOf(row: AccessModelRow): ChatModel['longContext'] {
+function longContextOf(row: ModelRow): ChatModel['longContext'] {
   const {
     longContextAboveInputTokens: aboveInputTokens,
     longContextInputUsdPerMTok: inputUsdPerMTok,
@@ -73,9 +73,7 @@ function longContextOf(row: AccessModelRow): ChatModel['longContext'] {
 }
 
 /** The columns a write sets, all but the id: an embedding model has its input price, zeros elsewhere and dimensions (KD-4). */
-export function modelColumnsOf(
-  model: CreateCatalogModelBody,
-): AccessModelColumns {
+export function modelColumnsOf(model: CreateCatalogModelBody): ModelColumns {
   if (model.purpose === 'embedding')
     return {
       name: model.name,

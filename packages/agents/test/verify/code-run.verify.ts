@@ -92,7 +92,7 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
     'pages through search_logs from code, groups the errors by service and returns the right totals in time',
     async () => {
       // Given: an agent of a fresh owner who may use `logs`, whose model asks for one read run of the grouping script
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const prompt = 'Group the errors of the payment logs by service';
       const model = createScriptedModel();
       const script = model.script({ task: prompt }, [

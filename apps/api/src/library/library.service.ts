@@ -1,25 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import type {
-  CopyRecordBody,
-  CopyResult,
-  CreateRecordBody,
-  LibraryChoices,
-  RecordAudienceBody,
-  RecordDetail,
-  RecordHeader,
-  RecordSummary,
-  ResolvedRecord,
-  UpdateRecordBody,
-} from '@agent-os/contracts';
 import {
-  Db,
-  type LibraryRecordKey,
-  LibraryRecordsRepository,
-  LibrarySettingsRepository,
-} from '@agent-os/db';
+  type AgentVersion,
+  type BuiltinKey,
+  type CopyRecordBody,
+  type CopyResult,
+  type CreateRecordBody,
+  type LibraryChoices,
+  nameWinner,
+  type RecordAudienceBody,
+  type RecordDetail,
+  type RecordHeader,
+  type RecordKind,
+  type RecordSummary,
+  type ResolvedRecord,
+  type UpdateRecordBody,
+} from '@agent-os/contracts';
+import { AgentsRepository, Db } from '@agent-os/db';
 import { AccessService } from '../access/access.service';
-import { SYSTEM_ACTOR } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
+import { SettingsService } from '../settings/settings.service';
 import { decideEmployeeAudience } from './audience-rules';
 import { planCopy, replaceModel } from './copy-rules';
 import {
@@ -33,13 +32,13 @@ import {
 import { LibrarySave } from './library-save';
 import { libraryError } from './library.errors';
 import type {
-  BuiltinRecordInput,
   KnowledgeTarget,
   LibraryActor,
   ServerFacts,
 } from './library.types';
 import { contentParts } from './record-content';
 import { recordHeader, recordSummary, resolvedRecord } from './record-view';
+import { recordBody } from './stored-records';
 
 /**
  * The library for the employee and for the `runtime` part (design-library.md, KD-1, KD-2, KD-4–KD-7).
@@ -54,8 +53,8 @@ export class LibraryService {
     private readonly db: Db,
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
-    private readonly repository: LibraryRecordsRepository,
-    private readonly settings: LibrarySettingsRepository,
+    private readonly repository: AgentsRepository,
+    private readonly settings: SettingsService,
     private readonly access: AccessService,
   ) {}
 
@@ -213,7 +212,10 @@ export class LibraryService {
     );
   }
 
-  /** POST /api/library/:id/copy (Flow 3): a personal copy for the viewer; the original stays. */
+  /**
+   * POST /api/library/:id/copy (Flow 3): a personal copy for the viewer — a new agent whose version 1 is
+   * made from the source's active version; the original stays.
+   */
   copy(
     actor: LibraryActor,
     id: string,
@@ -253,6 +255,7 @@ export class LibraryService {
             offerInChat: true,
             kind: plan.body.kind,
             content: plan.body.content,
+            authorId: viewer.id,
           });
           if (inserted.outcome === 'name_taken')
             throw libraryError('RECORD_NAME_TAKEN', 'own');
@@ -286,7 +289,7 @@ export class LibraryService {
     );
   }
 
-  /** DELETE /api/library/:id: only the owner's own record. 404, 403 RECORD_READ_ONLY. */
+  /** DELETE /api/library/:id: only the owner's own record, marked deleted (KD-7). 404, 403 RECORD_READ_ONLY. */
   delete(actor: LibraryActor, id: string): Promise<void> {
     return this.records.logged(
       'delete',
@@ -313,7 +316,7 @@ export class LibraryService {
       const [allowedModels, defaultModel, settings] = await Promise.all([
         this.records.allowedModelIds(actor.id),
         this.access.defaultChatModel(),
-        this.settings.read(),
+        this.settings.read('library_settings'),
       ]);
       return {
         servers: [...facts.usableServers].sort(),
@@ -321,7 +324,7 @@ export class LibraryService {
           defaultModel === null
             ? null
             : replaceModel(defaultModel, { allowedModels, defaultModel }),
-        defaultMaxTurns: settings.defaultMaxTurns,
+        defaultMaxTurns: settings.value.defaultMaxTurns,
       };
     });
   }
@@ -370,15 +373,94 @@ export class LibraryService {
 
   /** The record to start, as the viewer sees it; `null` for an invisible, deleted or missing one. */
   resolve(viewerId: string, recordId: string): Promise<ResolvedRecord | null> {
-    return this.resolveBy('resolve', viewerId, { id: recordId });
+    return this.records.logged(
+      'resolve',
+      { viewerId, recordId },
+      async () => {
+        if (!isUuid(recordId)) return null;
+        const viewer = await this.records.viewerOf(viewerId);
+        const record = await this.records.visibleOne(viewer, recordId);
+        return record === undefined ? null : resolvedRecord(record, viewerId);
+      },
+      (record) =>
+        record === null ? { outcome: 'not_found' } : recordFields(record),
+    );
   }
 
-  /** The same by the key of a built-in record. */
-  resolveBuiltin(
+  /**
+   * The agent of `kind` a call names, as the viewer sees it (data-model design-agents.md, KD-5): the winner
+   * of the name (`nameWinner` of `@agent-os/contracts`, the one place of the rule) among the records the
+   * viewer sees, in the library list's order; `null` alike for an invisible, a deleted and a missing name.
+   */
+  resolveByName(
     viewerId: string,
-    builtinKey: string,
+    name: string,
+    kind: RecordKind,
   ): Promise<ResolvedRecord | null> {
-    return this.resolveBy('resolve_builtin', viewerId, { builtinKey });
+    return this.records.logged(
+      'resolve_by_name',
+      { viewerId, name, kind },
+      async () => {
+        const viewer = await this.records.viewerOf(viewerId);
+        const records = await this.records.visible(viewer);
+        return nameWinner(
+          records.map((record) => resolvedRecord(record, viewerId)),
+          kind,
+          name,
+        );
+      },
+      (record) =>
+        record === null ? { outcome: 'not_found' } : recordFields(record),
+    );
+  }
+
+  /**
+   * The default agent with this key and its active version, without a visibility check: it exists always
+   * (data-model design-agents.md, «Порт `RecordLibrary`»). A missing one is a broken database.
+   */
+  resolveBuiltin(builtinKey: BuiltinKey): Promise<ResolvedRecord> {
+    return this.records.logged(
+      'resolve_builtin',
+      { builtinKey },
+      async () => {
+        const record = await this.records.builtin(builtinKey);
+        if (record === undefined)
+          throw new Error(`The default agent ${builtinKey} is missing`);
+        // No viewer: a default agent is a system one, nobody's own.
+        return resolvedRecord(record, null);
+      },
+      recordFields,
+    );
+  }
+
+  /**
+   * A version by its id with its agent's id and kind and the parsed content, without a visibility check:
+   * a conversation reads the version it started on, whose visibility its start checked (KD-6). A missing
+   * one is a broken database: a conversation's version is kept by its foreign key.
+   */
+  version(versionId: string): Promise<AgentVersion> {
+    return this.records.logged(
+      'version',
+      { versionId },
+      async () => {
+        const row = isUuid(versionId)
+          ? await this.repository.findVersion(versionId)
+          : undefined;
+        if (row === undefined)
+          throw new Error(`Agent version ${versionId} is missing`);
+        return {
+          id: row.id,
+          agentId: row.agentId,
+          number: row.number,
+          ...recordBody(row.kind, row.content),
+        };
+      },
+      (version) => ({
+        agentId: version.agentId,
+        kind: version.kind,
+        number: version.number,
+      }),
+    );
   }
 
   /** Every record the viewer sees, without content: the list of the main chat. */
@@ -392,63 +474,6 @@ export class LibraryService {
         return records.map((record) => recordHeader(record, viewerId));
       },
       (headers) => ({ count: headers.length }),
-    );
-  }
-
-  /**
-   * Adds a built-in system record unless one with its key exists; an existing one is left as the admin
-   * made it. `library_create` from `system`. `false` — it existed (another server seeded it first).
-   */
-  seedBuiltin(input: BuiltinRecordInput): Promise<boolean> {
-    return this.records.logged(
-      'seed_builtin',
-      {
-        actorId: SYSTEM_ACTOR,
-        recordId: input.id,
-        builtinKey: input.builtinKey,
-      },
-      () =>
-        this.db.transaction(async () => {
-          const { body, ...row } = input;
-          const inserted = await this.repository.insertBuiltin({
-            ...row,
-            kind: body.kind,
-            content: body.content,
-            offerInChat: true,
-          });
-          if (!inserted) return false;
-          const record = present(
-            await this.records.panelOne(input.id),
-            input.id,
-          );
-          await this.records.audit(
-            SYSTEM_ACTOR,
-            'library_create',
-            null,
-            record,
-          );
-          return true;
-        }),
-      (created) => ({ created }),
-    );
-  }
-
-  private async resolveBy(
-    operation: string,
-    viewerId: string,
-    key: LibraryRecordKey,
-  ): Promise<ResolvedRecord | null> {
-    return this.records.logged(
-      operation,
-      { viewerId, ...key },
-      async () => {
-        if ('id' in key && !isUuid(key.id)) return null;
-        const viewer = await this.records.viewerOf(viewerId);
-        const [record] = await this.records.visible(viewer, key);
-        return record === undefined ? null : resolvedRecord(record, viewerId);
-      },
-      (record) =>
-        record === null ? { outcome: 'not_found' } : recordFields(record),
     );
   }
 }

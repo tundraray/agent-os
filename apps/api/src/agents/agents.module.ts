@@ -4,6 +4,7 @@ import { AgentsModule as AgentsPackageModule } from '@agent-os/agents';
 import { AccessModule } from '../access/access.module';
 import { IdentityModule } from '../identity/identity.module';
 import { createAppLogger } from '../logging/app-logger';
+import { SettingsModule } from '../settings/settings.module';
 import { AdminMcpServersController } from './admin-mcp-servers.controller';
 import { AdminModelProvidersController } from './admin-model-providers.controller';
 import { AdminToolResultsController } from './admin-tool-results.controller';
@@ -33,11 +34,11 @@ const agentsPackage = AgentsPackageModule.forRootAsync({
  * `onApplicationBootstrap`.
  *
  * Its controllers are the HTTP layer of `AgentsMcp` (an employee's MCP accounts and the admin's registry),
- * of `AgentsProviders` (the admin's model provider registry) and of `AgentsToolResults` (the admin's
- * settings of large tool results).
+ * of `AgentsProviders` (the admin's model provider registry) and the admin's settings of large tool results
+ * (through `SettingsService`).
  */
 @Module({
-  imports: [IdentityModule, AccessModule, agentsPackage],
+  imports: [IdentityModule, AccessModule, SettingsModule, agentsPackage],
   controllers: [
     McpConnectionsController,
     AdminMcpServersController,

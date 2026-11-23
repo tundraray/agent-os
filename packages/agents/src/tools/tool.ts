@@ -3,7 +3,7 @@ import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import type { z } from 'zod';
 
-import type { RunSnapshot } from '../start/snapshot';
+import type { RunStart } from '../start/run-definition';
 import type { SessionTool } from './tool-registry';
 
 /**
@@ -38,13 +38,12 @@ export interface ToolDescription<Args> {
   readonly argsSchema?: z.ZodType<Args>;
 }
 
-/** `agent` of `start_agent` that starts a fork of the caller (KD-7). */
-export const FORK_AGENT = 'fork';
+export { FORK_AGENT } from '@agent-os/contracts';
 
 /** What the spawn helper takes (design-runtime.md, «Операции `agents`»); owner and parent are the caller's. */
 export interface StartChildRequest {
-  /** The child's snapshot, resolved by `resolveStart` before the commit. */
-  readonly snapshot: RunSnapshot;
+  /** The child's version, name and model, resolved by `resolveStart` before the commit. */
+  readonly run: RunStart;
   readonly prompt: string;
   readonly description: string;
   /** Set only by `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
@@ -71,8 +70,8 @@ export interface ToolCaller {
   readonly root: boolean;
   /** 0 for a root session. */
   readonly depth: number;
-  /** The caller's snapshot, from the input of its task (ADR-0017). */
-  readonly snapshot: RunSnapshot;
+  /** The caller's start: its version, read once when its object was made, its name and model (KD-6). */
+  readonly run: RunStart;
   /** The servers the caller declares (`ToolDeclaration.servers`): a `run_code` run checks its calls against their tools. */
   readonly servers: readonly string[];
 }
@@ -203,6 +202,7 @@ export interface InCommitAgentTool<
    * while the transaction holds a connection — the access gate (design-access.md KD-4).
    */
   prepare?(input: {
+    readonly callId: string;
     readonly args: Args;
     readonly caller: ToolCaller;
   }): Promise<Prepared>;

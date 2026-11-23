@@ -185,7 +185,7 @@ describe('conversation view maps confirmations, the agent tree and the pending q
   });
 
   // AC-17.1, AC-15.6: the record a run started from, with its author and subagent, and the first-run
-  // mark; the author's `disabled`, which an origin read from a snapshot may carry, never reaches the web.
+  // mark; the author's `disabled`, which an origin read through a version's agent may carry, never reaches the web.
   it('agent: name, origin with author and subagent, firstRun; no author.disabled; dates are ISO', () => {
     const origin = {
       ...STEP_ORIGIN,

@@ -28,8 +28,6 @@ export const runtimeTrackers = app.table(
       .references((): AnyPgColumn => runtimeTasks.taskId, {
         onDelete: 'cascade',
       }),
-    /** The employee who owns the task. */
-    ownerId: text('owner_id').notNull(),
     status: text('status').notNull().default(TrackerStatusSchema.enum.open),
     createdAt: createdAt(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

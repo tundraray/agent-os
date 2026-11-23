@@ -1,5 +1,6 @@
 import {
   ALL_SERVERS,
+  FORK_AGENT,
   type LibraryRejectReason,
   type RecordBody,
   type RecordNameTakenReason,
@@ -102,6 +103,10 @@ function takenNameReason({
   takenNames,
   choices,
 }: SaveInput): RecordNameTakenReason | null {
+  // `fork` names the fork of `start_agent`, never a record (data-model design-agents.md, «Таблицы каталога»):
+  // it is taken as a system name is, whatever the record was named before.
+  if (isNameTaken(name, [FORK_AGENT]))
+    return choices.scope === 'system' ? 'own' : 'system';
   // An admin's own names are the system records' (design-library.md, RECORD_NAME_TAKEN).
   if (choices.scope === 'system')
     return isNameTaken(name, takenNames.system) ? 'own' : null;
@@ -203,4 +208,18 @@ function refusedIn(
 
 function chosenModels(parts: readonly ContentPart[]): string[] {
   return parts.flatMap((part) => (part.model === null ? [] : [part.model]));
+}
+
+/**
+ * Whether an agent may be deleted (AC-12.2): a default agent never (data-model design-agents.md, KD-4,
+ * DC-22), every other one by whoever may change it.
+ */
+export function decideDelete(agent: {
+  readonly builtinKey: string | null;
+}):
+  | { readonly kind: 'allowed' }
+  | { readonly kind: 'refused'; readonly reason: 'builtin' } {
+  return agent.builtinKey === null
+    ? { kind: 'allowed' }
+    : { kind: 'refused', reason: 'builtin' };
 }

@@ -12,16 +12,13 @@ import {
   RuntimeInboxRepository,
   type RuntimeInboxRow,
   RuntimeTasksRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { CrashPoints } from '../crash-points';
 import { RuntimeError } from '../errors';
 import { EventLog } from '../events/event-log';
-import {
-  isFinished,
-  type TaskChange,
-  type TaskRow,
-} from '../tasks/guarded-transition';
+import { isFinished, type TaskChange } from '../tasks/guarded-transition';
 import type { EnqueuedMessage, StepMessage } from '../steps/step-contract';
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
@@ -85,8 +82,8 @@ const EVENT = RuntimeEventTypeSchema.enum;
 /** A message to write; the caller has checked its kind and payload size. */
 export interface NewMessage {
   recipientId: string;
-  /** Owner of the recipient; another owner's task is as absent as a missing one. */
-  ownerId: string;
+  /** Owner of the recipient; another owner's task is as absent as a missing one. `null` between platform tasks. */
+  ownerId: string | null;
   kind: string;
   /** Task or employee that sends the message. */
   sender: string;
@@ -99,7 +96,7 @@ export interface InsertedMessage {
   messageId: string;
   seq: number;
   /** The recipient after the message, woken or not. */
-  recipient: TaskRow;
+  recipient: RuntimeTaskRow;
 }
 
 interface InboxDeps {
@@ -121,7 +118,7 @@ interface InboxDeps {
  * otherwise (waiting for a decision, queued, running, finished without `revive`) nothing changes.
  */
 function wakeChange(
-  recipient: TaskRow,
+  recipient: RuntimeTaskRow,
   message: { kind: string; revive: boolean },
 ): TaskChange | undefined {
   if (recipient.status === waiting) {
@@ -250,7 +247,6 @@ export class Inbox {
     await repository.insert({
       messageId,
       recipientId: recipient.taskId,
-      ownerId: recipient.ownerId,
       seq,
       kind: message.kind,
       sender: message.sender,
@@ -286,7 +282,7 @@ export class Inbox {
    * Call it in the step's commit transaction.
    */
   async markDelivered(
-    task: TaskRow,
+    task: RuntimeTaskRow,
     messageIds: readonly string[],
     stepNo: number,
   ): Promise<void> {

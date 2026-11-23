@@ -203,7 +203,7 @@ describe('tool-output-shapes / core - the model sees the declared shapes, and a 
       // Given: the three fixture servers registered through the registry (their `tools/list` read and stored), and an
       // employee whose agent may use all three
       const prompt = 'Look at the tools you have';
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const servers = [LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER];
       const model = createScriptedModel();
       const script = model.script({ task: prompt }, [
@@ -284,7 +284,7 @@ describe('tool-output-shapes / core - the model sees the declared shapes, and a 
   //   validates the answer, a wrong-typed `tickets` becomes a `ProtocolError`, and the platform classifies it as a transport failure (outcome other than `success`, the script gets an
   //   error instead of the server's answer). Only this test (real SDK, real server, real shape in the stored list) turns red; the unit table and the audit tests never see the SDK.
   // @category: edge-case
-  // @dependency: McpClient.callTool (real @modelcontextprotocol/client), toOutcome, scriptValueOf, run_code tool, CodeRunner (real process), ToolRunner.callFromCode, tool calls in `agent_messages`, MCP fixture (tracker, fault schedule), ScriptedModel, Postgres
+  // @dependency: McpClient.callTool (real @modelcontextprotocol/client), toOutcome, scriptValueOf, run_code tool, CodeRunner (real process), ToolRunner.callFromCode, tool calls in `messages`, MCP fixture (tracker, fault schedule), ScriptedModel, Postgres
   // @complexity: medium
   it(
     'INT-2: AC-04.1 a search_tickets answer that does not match its declared shape is returned as is and ends success, both from a direct call and from callTool in run_code',
@@ -292,7 +292,7 @@ describe('tool-output-shapes / core - the model sees the declared shapes, and a 
       // Given: `search_tickets` registered with its shape, and the fixture set to answer every call with these
       // arguments with `tickets` as text (after its strict result check)
       const prompt = 'Count the open tickets';
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles('tool-output-shapes');
       fixture.setFaults([
         {

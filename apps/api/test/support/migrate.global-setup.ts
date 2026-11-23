@@ -10,13 +10,9 @@ import { migrateForRun } from '@agent-os/db/testing';
  * roles keep only his own rows.
  */
 export default migrateForRun(async (pool, runRows) => {
-  await pool.query('DELETE FROM app.agent_mcp_servers WHERE name LIKE $1', [
-    runRows,
-  ]);
-  await pool.query('DELETE FROM app.access_models WHERE id LIKE $1', [
-    `${runRows}/%`,
-  ]);
-  await pool.query('DELETE FROM app.agent_model_providers WHERE name LIKE $1', [
+  await pool.query('DELETE FROM app.mcp_servers WHERE name LIKE $1', [runRows]);
+  await pool.query('DELETE FROM app.models WHERE id LIKE $1', [`${runRows}/%`]);
+  await pool.query('DELETE FROM app.model_providers WHERE name LIKE $1', [
     runRows,
   ]);
   await pool.query(

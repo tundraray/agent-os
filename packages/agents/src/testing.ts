@@ -1,18 +1,30 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  AgentContentSchema,
+  type AgentVersion,
+  DeepAgentContentSchema,
   ModelProviderKindSchema,
   McpErrorCode,
+  nameWinner,
   type McpServerMode,
   type ModelProviderState,
   type RecordBody,
   type RecordHeader,
+  RecordKindSchema,
   type ResolvedRecord,
   type ToolCallState,
   type ToolOutcome,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { AgentMessagesRepository, type Database, Db } from '@agent-os/db';
+import {
+  agents,
+  AgentsRepository,
+  agentVersions,
+  MessagesRepository,
+  type Database,
+  Db,
+} from '@agent-os/db';
 import {
   FIXTURE_SHARED_TOKEN,
   type FixtureProcess,
@@ -698,9 +710,17 @@ export interface LibraryDoubleEdit {
 }
 
 /**
- * The `RecordLibrary` double (ADR-0004; design-runtime.md, «Порт `RecordLibrary`»): records in memory and
- * the changes an author or an admin makes while runs go on. A record is visible to its owner always, to
- * others while it is not closed or hidden from them and they are its audience.
+ * The `RecordLibrary` double (ADR-0004; data-model design-agents.md, «Порт `RecordLibrary`»): records and
+ * their versions in memory, and the changes an author or an admin makes while runs go on. A record is visible
+ * to its owner always, to others while they are its audience. A
+ * version is never dropped: a removed record's conversations still read theirs.
+ *
+ * Given a database (`useDatabase`), the double writes the rows of every agent and version it gives out into
+ * `agents` and `agent_versions` at the first read that gives them out (`ON CONFLICT (id) DO NOTHING`), so a
+ * conversation's foreign key on its version holds, and reads a version it does not hold from there — the
+ * version another process's double wrote. The agent rows carry a deletion mark and no key: they take no
+ * unique name or key of the shared test database, and who sees what is still decided here, in memory. The
+ * owner of a row is the record's owner, so it must be a real employee.
  */
 export interface LibraryDouble extends RecordLibrary {
   /** Adds a record at version 1 and returns its id. */
@@ -708,10 +728,11 @@ export interface LibraryDouble extends RecordLibrary {
   /** Saves a new version. */
   edit(recordId: string, change: LibraryDoubleEdit): void;
   remove(recordId: string): void;
-  /** An admin closes the record: only its owner sees it. */
-  close(recordId: string): void;
-  /** The viewer stops seeing the record, as one taken out of its role. */
-  hideFrom(recordId: string, viewerId: string): void;
+  /**
+   * Writes and reads the rows through `db` from now on; the returned release stops that, unless another
+   * database was given since.
+   */
+  useDatabase(db: Database): () => void;
   /** Every `resolve` call in order: who asked for which record. */
   readonly resolveCalls: readonly {
     readonly viewerId: string;
@@ -723,21 +744,34 @@ interface StoredRecord {
   readonly id: string;
   name: string;
   description: string;
-  version: number;
-  body: RecordBody;
+  /** The id of the active version: always the newest. */
+  versionId: string;
   readonly ownerId: string | null;
   readonly ownerName: string;
   readonly everyone: boolean;
   readonly viewers: ReadonlySet<string>;
-  readonly hiddenFrom: Set<string>;
-  closed: boolean;
   readonly shared: boolean;
   readonly offerInChat: boolean;
   readonly builtinKey: string | null;
 }
 
+/** An agent row the double writes: what it was when it gave the agent out first. */
+interface AgentRowOf {
+  readonly id: string;
+  readonly kind: RecordBody['kind'];
+  readonly ownerId: string | null;
+  readonly name: string;
+  readonly description: string;
+}
+
 export function createLibraryDouble(): LibraryDouble {
+  let db: Database | null = null;
   const records = new Map<string, StoredRecord>();
+  /** Every version of every record ever added, by id; never dropped. */
+  const versions = new Map<string, AgentVersion>();
+  /** The agent of each version, as the row is written. */
+  const agentOfVersion = new Map<string, AgentRowOf>();
+  const written = new Set<string>();
   const resolveCalls: { viewerId: string; recordId: string }[] = [];
 
   function stored(recordId: string): StoredRecord {
@@ -747,37 +781,100 @@ export function createLibraryDouble(): LibraryDouble {
     return record;
   }
 
+  function versionOf(versionId: string): AgentVersion {
+    const version = versions.get(versionId);
+    if (version === undefined)
+      throw new Error(`The library double holds no version ${versionId}`);
+    return version;
+  }
+
+  function addVersion(record: StoredRecord, body: RecordBody): string {
+    const previous = versions.get(record.versionId);
+    const version: AgentVersion = {
+      id: randomUUID(),
+      agentId: record.id,
+      number: previous === undefined ? 1 : previous.number + 1,
+      ...structuredClone(body),
+    };
+    versions.set(version.id, version);
+    agentOfVersion.set(version.id, {
+      id: record.id,
+      kind: body.kind,
+      ownerId: record.ownerId,
+      name: record.name,
+      description: record.description,
+    });
+    return version.id;
+  }
+
+  /** Writes the agent row and the version row of `versionId` once; without a database, nothing. */
+  async function persist(versionId: string): Promise<void> {
+    if (db === null || written.has(versionId)) return;
+    const version = versionOf(versionId);
+    const agent = agentOfVersion.get(versionId);
+    if (agent === undefined)
+      throw new Error(
+        `The library double has no agent of version ${versionId}`,
+      );
+    if (!written.has(agent.id)) {
+      await db
+        .insert(agents)
+        .values({ ...agent, deletedAt: new Date() })
+        .onConflictDoNothing({ target: agents.id });
+      written.add(agent.id);
+    }
+    await db
+      .insert(agentVersions)
+      .values({
+        id: version.id,
+        agentId: version.agentId,
+        number: version.number,
+        content: version.content,
+      })
+      .onConflictDoNothing({ target: agentVersions.id });
+    written.add(versionId);
+  }
+
   function visibleTo(record: StoredRecord, viewerId: string): boolean {
     if (record.ownerId === viewerId) return true;
-    if (record.closed || record.hiddenFrom.has(viewerId)) return false;
     return record.everyone || record.viewers.has(viewerId);
   }
 
-  function headerOf(record: StoredRecord, viewerId: string): RecordHeader {
+  function headerOf(
+    record: StoredRecord,
+    viewerId: string | null,
+  ): RecordHeader {
+    const version = versionOf(record.versionId);
     return {
       id: record.id,
-      kind: record.body.kind,
+      kind: version.kind,
       name: record.name,
       description: record.description,
-      version: record.version,
+      version: version.number,
+      versionId: version.id,
       builtinKey: record.builtinKey,
       author:
         record.ownerId === null
           ? null
           : { id: record.ownerId, name: record.ownerName, disabled: false },
-      mine: record.ownerId === viewerId,
+      mine: viewerId !== null && record.ownerId === viewerId,
       shared: record.shared,
       offerInChat: record.offerInChat,
     };
   }
 
-  function resolvedOf(
-    record: StoredRecord | undefined,
-    viewerId: string,
-  ): ResolvedRecord | null {
-    if (record === undefined || !visibleTo(record, viewerId)) return null;
+  async function resolvedOf(
+    record: StoredRecord,
+    viewerId: string | null,
+  ): Promise<ResolvedRecord> {
+    await persist(record.versionId);
     const { kind: _kind, ...header } = headerOf(record, viewerId);
-    return { ...header, ...structuredClone(record.body) };
+    const version = versionOf(record.versionId);
+    const body: RecordBody =
+      version.kind === 'agent'
+        ? { kind: 'agent', content: structuredClone(version.content) }
+        : { kind: 'deep_agent', content: structuredClone(version.content) };
+    return { ...header, ...body };
   }
 
   return {
@@ -790,61 +887,107 @@ export function createLibraryDouble(): LibraryDouble {
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
           : { kind: 'deep_agent', content: record.content };
-      records.set(id, {
+      const stored: StoredRecord = {
         id,
         name: record.name,
         description: record.description ?? `${record.name} description`,
-        version: 1,
-        body: structuredClone(body),
+        versionId: '',
         ownerId: record.ownerId,
         ownerName: record.ownerName ?? record.ownerId ?? 'system',
         everyone: record.everyone ?? false,
         viewers: new Set(record.viewers ?? []),
-        hiddenFrom: new Set(),
-        closed: false,
         shared: record.shared ?? false,
         offerInChat: record.offerInChat ?? false,
         builtinKey: record.builtinKey ?? null,
-      });
+      };
+      stored.versionId = addVersion(stored, body);
+      records.set(id, stored);
       return id;
     },
     edit(recordId, change) {
       const record = stored(recordId);
-      if (change.body !== undefined && change.body.kind !== record.body.kind) {
+      const current = versionOf(record.versionId);
+      if (change.body !== undefined && change.body.kind !== current.kind) {
         throw new Error(
-          `Record ${recordId} is a ${record.body.kind}, not a ${change.body.kind}`,
+          `Record ${recordId} is a ${current.kind}, not a ${change.body.kind}`,
         );
       }
       record.name = change.name ?? record.name;
       record.description = change.description ?? record.description;
-      record.body =
-        change.body === undefined ? record.body : structuredClone(change.body);
-      record.version += 1;
+      const body: RecordBody =
+        change.body ??
+        (current.kind === 'agent'
+          ? { kind: 'agent', content: current.content }
+          : { kind: 'deep_agent', content: current.content });
+      record.versionId = addVersion(record, body);
     },
     remove(recordId) {
       stored(recordId);
       records.delete(recordId);
     },
-    close(recordId) {
-      stored(recordId).closed = true;
-    },
-    hideFrom(recordId, viewerId) {
-      stored(recordId).hiddenFrom.add(viewerId);
+    useDatabase(database) {
+      db = database;
+      return () => {
+        if (db === database) db = null;
+      };
     },
     async resolve(viewerId, recordId) {
       resolveCalls.push({ viewerId, recordId });
-      return resolvedOf(records.get(recordId), viewerId);
+      const record = records.get(recordId);
+      if (record === undefined || !visibleTo(record, viewerId)) return null;
+      return resolvedOf(record, viewerId);
     },
-    async resolveBuiltin(viewerId, builtinKey) {
+    async resolveByName(viewerId, name, kind) {
+      const visible = [...records.values()].filter((record) =>
+        visibleTo(record, viewerId),
+      );
+      // Records are held in the order they were added: the earliest created comes first, as in `listVisible`.
+      const winner = nameWinner(
+        visible.map((record) => headerOf(record, viewerId)),
+        kind,
+        name,
+      );
+      return winner === null ? null : resolvedOf(stored(winner.id), viewerId);
+    },
+    async resolveBuiltin(builtinKey) {
       const record = [...records.values()].find(
         (candidate) => candidate.builtinKey === builtinKey,
       );
-      return resolvedOf(record, viewerId);
+      if (record === undefined)
+        throw new Error(
+          `The library double holds no default agent ${builtinKey}`,
+        );
+      return resolvedOf(record, null);
     },
     async listVisible(viewerId) {
-      return [...records.values()]
-        .filter((record) => visibleTo(record, viewerId))
-        .map((record) => headerOf(record, viewerId));
+      const visible = [...records.values()].filter((record) =>
+        visibleTo(record, viewerId),
+      );
+      for (const record of visible) await persist(record.versionId);
+      return visible.map((record) => headerOf(record, viewerId));
+    },
+    async version(versionId) {
+      if (versions.has(versionId)) {
+        await persist(versionId);
+        return structuredClone(versionOf(versionId));
+      }
+      if (db === null)
+        throw new Error(`The library double holds no version ${versionId}`);
+      const row = await new AgentsRepository(new Db(db)).findVersion(versionId);
+      if (row === undefined)
+        throw new Error(`The database holds no agent version ${versionId}`);
+      const identity = { id: row.id, agentId: row.agentId, number: row.number };
+      return RecordKindSchema.parse(row.kind) === 'agent'
+        ? {
+            ...identity,
+            kind: 'agent',
+            content: AgentContentSchema.parse(row.content),
+          }
+        : {
+            ...identity,
+            kind: 'deep_agent',
+            content: DeepAgentContentSchema.parse(row.content),
+          };
     },
   };
 }
@@ -872,16 +1015,17 @@ export interface ToolCallRow {
 }
 
 /**
- * The tool calls of an agent, by answer and position, folded from its whole history in `agent_messages`
+ * The tool calls of an agent, by answer and position, folded from its whole history in `messages`
  * (every entry after `seq` 0) by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
 export async function toolCallRowsOf(
   db: Database,
   agentId: string,
 ): Promise<ToolCallRow[]> {
-  const entries = await new History(
-    new AgentMessagesRepository(new Db(db)),
-  ).after(agentId, 0);
+  const entries = await new History(new MessagesRepository(new Db(db))).after(
+    agentId,
+    0,
+  );
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {

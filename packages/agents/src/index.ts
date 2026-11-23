@@ -90,17 +90,6 @@ export {
 } from './providers/provider-registry';
 export type { RecordLibrary } from './start/record-library';
 export type { StartResolution } from './start/resolve-start';
-export type {
-  AgentSnapshot,
-  DeepAgentSnapshot,
-  RunSnapshot,
-  SubagentSnapshot,
-} from './start/snapshot';
 export { WAITING_RULE } from './tools/system/start-agent';
 export type { InCommitAgentTool } from './tools/tool';
 export { ToolRegistry } from './tools/tool-registry';
-export {
-  AgentsToolResults,
-  type ToolResultSettingsChange,
-  type ToolResultSettingsUpdate,
-} from './tools/tool-result-settings';

@@ -5,16 +5,17 @@ import {
   DEEP_AGENT_TASK_TYPE,
 } from '@agent-os/contracts';
 import {
-  AgentCodeCallsRepository,
+  CodeCallsRepository,
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
   AgentKnowledgeVectorsRepository,
-  AgentMcpServersRepository,
-  AgentMessagesRepository,
-  AgentSessionsRepository,
-  AgentSessionTasksRepository,
-  AgentToolResultsRepository,
+  McpServersRepository,
+  MessagesRepository,
+  ConversationsRepository,
+  ConversationTasksRepository,
+  ToolResultsRepository,
   Db,
+  SettingsRepository,
 } from '@agent-os/db';
 import {
   EventConsumerRegistry,
@@ -50,11 +51,11 @@ import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { ModelClient } from './model/model-client';
 import { AgentsProviders } from './providers/provider-registry';
 import type { RecordLibrary } from './start/record-library';
-import { auditStartRefusal, resolveStart } from './start/resolve-start';
+import { auditStartRefusal, resolveNamedStart } from './start/resolve-start';
+import { History } from './store/history';
 import { AgentTaskInputSchema, Sessions } from './store/sessions';
 import { createSystemTools } from './tools/system/index';
 import { createTaskListTools } from './tools/system/task-list-tools';
-import { rootMayStartRecord } from './tools/system/tool-gate';
 import { ToolRegistry } from './tools/tool-registry';
 
 /**
@@ -68,12 +69,15 @@ export class SystemToolsRegistration implements OnModuleInit {
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, 'register'>,
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentMessagesRepository)
-    private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentToolResultsRepository)
-    private readonly toolResultRows: AgentToolResultsRepository,
-    @Inject(AgentSessionTasksRepository)
-    private readonly sessionTaskRows: AgentSessionTasksRepository,
+    @Inject(MessagesRepository)
+    private readonly messageRows: MessagesRepository,
+    @Inject(History) private readonly history: History,
+    @Inject(ToolResultsRepository)
+    private readonly toolResultRows: ToolResultsRepository,
+    @Inject(SettingsRepository)
+    private readonly settingsRows: SettingsRepository,
+    @Inject(ConversationTasksRepository)
+    private readonly sessionTaskRows: ConversationTasksRepository,
     @Inject(TaskControl)
     private readonly tasks: Pick<TaskControl, 'listTree' | 'stop'>,
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
@@ -87,7 +91,7 @@ export class SystemToolsRegistration implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const { library, access, providers, audit, logger } = this;
+    const { library, access, providers, audit, history, logger } = this;
     const startDeps = { library, access, providers, audit };
     const tools = [
       ...createSystemTools({
@@ -96,21 +100,19 @@ export class SystemToolsRegistration implements OnModuleInit {
         logger,
         sessions: this.sessions,
         messageRows: this.messageRows,
+        history,
         toolResultRows: this.toolResultRows,
+        settingsRows: this.settingsRows,
         tasks: this.tasks,
       }),
       // Declared by an agent that keeps a task list (design-task-list.md KD-2).
       ...createTaskListTools({ sessionTaskRows: this.sessionTaskRows, logger }),
       // The deep agent's tools: the root's `start_deep_agent` (deep-agents KD-2) and a deep agent's `task`.
       createStartDeepAgentTool({
-        resolveStart: (request) => resolveStart(request, startDeps),
+        resolveNamedStart: (request) => resolveNamedStart(request, startDeps),
+        answeredChip: (agentId, callId) =>
+          history.answeredChip(agentId, callId),
         auditStartRefusal: (refusal) => auditStartRefusal(audit, refusal),
-        rootMayStart: async (ownerId, recordId) =>
-          rootMayStartRecord(
-            await library.listVisible(ownerId),
-            'deep_agent',
-            recordId,
-          ),
         logger,
       }),
       createTaskTool(),
@@ -139,14 +141,14 @@ export class AgentsRegistration
     private readonly registry: Pick<ToolRegistry, 'seal' | 'toolNames'>,
     @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(AgentSessionsRepository)
-    private readonly sessionRows: AgentSessionsRepository,
-    @Inject(AgentMessagesRepository)
-    private readonly messageRows: AgentMessagesRepository,
-    @Inject(AgentCodeCallsRepository)
-    private readonly codeCallRows: AgentCodeCallsRepository,
-    @Inject(AgentMcpServersRepository)
-    private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(ConversationsRepository)
+    private readonly sessionRows: ConversationsRepository,
+    @Inject(MessagesRepository)
+    private readonly messageRows: MessagesRepository,
+    @Inject(CodeCallsRepository)
+    private readonly codeCallRows: CodeCallsRepository,
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
     @Inject(AgentKnowledgeRepository)
     private readonly knowledgeRows: AgentKnowledgeRepository,
     @Inject(AgentKnowledgeRunsRepository)

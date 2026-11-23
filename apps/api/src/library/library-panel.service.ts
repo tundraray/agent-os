@@ -7,7 +7,7 @@ import type {
   SystemRecordAudienceBody,
   UpdateRecordBody,
 } from '@agent-os/contracts';
-import { Db, LibraryRecordsRepository } from '@agent-os/db';
+import { AgentsRepository, Db } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
@@ -48,7 +48,7 @@ export class LibraryPanelService {
     private readonly db: Db,
     private readonly records: LibraryRecords,
     private readonly saving: LibrarySave,
-    private readonly repository: LibraryRecordsRepository,
+    private readonly repository: AgentsRepository,
     private readonly identity: IdentityDirectory,
     private readonly auditLog: AuditLog,
   ) {}

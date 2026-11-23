@@ -503,9 +503,10 @@ function stringField(value: unknown, key: string): string | undefined {
 }
 
 /**
- * The question of the confirmed brief that started a deep agent: the last approved brief of the deep
- * agent's record created not later than it (the run card stands right under that brief). The built
- * `AgentNode` carries no brief, so the feed's own decisions are the source.
+ * The question of the confirmed brief that started a deep agent: the last approved brief created not later than
+ * it whose confirmed deep agent name is the run's, without case (data-model design-agents.md, KD-5: a temporary
+ * deep agent has no record, only its name). The run card stands right under that brief. The built `AgentNode`
+ * carries no brief, so the feed's own decisions are the source.
  */
 function briefQuestionOf(
   decisions: readonly Confirmation[],
@@ -517,7 +518,8 @@ function briefQuestionOf(
       (c) =>
         c.kind === AGENTS_BRIEF_CONFIRMATION &&
         c.resolution?.approve === true &&
-        stringField(c.args, 'deepAgent') === node.origin?.recordId &&
+        stringField(c.resolution.args, 'deepAgent')?.toLowerCase() ===
+          node.name.toLowerCase() &&
         time(c.createdAt) <= time(node.createdAt),
     )
     .sort((a, b) => time(b.createdAt) - time(a.createdAt))[0];

@@ -1,8 +1,9 @@
-import type { AgentToolResultsRepository } from '@agent-os/db';
+import type { ToolResultsRepository, SettingsRepository } from '@agent-os/db';
 import { z } from 'zod';
 
 import { pageOf, RESULT_NOT_FOUND, searchOf } from '../large-result';
 import type { OutsideAgentTool, ToolCaller, ToolRunResult } from '../tool';
+import { readToolResultSettings } from '../tool-result-settings';
 
 const ReadToolResultArgsSchema = z.object({
   callId: z.string().min(1).describe('The callId the stored result names.'),
@@ -55,13 +56,15 @@ function notFound(): ToolRunResult {
 }
 
 export interface ToolResultToolsDeps {
-  /** The stored results and the settings row are read from it on every call. */
-  readonly toolResultRows: AgentToolResultsRepository;
+  /** The stored results, read on every call. */
+  readonly toolResultRows: ToolResultsRepository;
+  /** The key `tool_result_settings`, read on every call. */
+  readonly settingsRows: Pick<SettingsRepository, 'read'>;
 }
 
 /**
  * `read_tool_result` and `search_tool_result` (tool-result-reading R-2): in every session, without a grant.
- * Both read only through `AgentToolResultsRepository.findForRun` with the caller's session and owner, so a result of another
+ * Both read only through `ToolResultsRepository.findForRun` with the caller's session and owner, so a result of another
  * session or owner answers exactly as a missing one. Their own answers are never stored: only the direct MCP
  * path of the runner stores a result.
  */
@@ -71,7 +74,7 @@ export function createToolResultTools(
   OutsideAgentTool<ReadToolResultArgs>,
   OutsideAgentTool<SearchToolResultArgs>,
 ] {
-  const { toolResultRows } = deps;
+  const { toolResultRows, settingsRows } = deps;
 
   /** The stored text of the caller's own call, and the settings, read now. */
   async function storedOf(callId: string, caller: ToolCaller) {
@@ -82,7 +85,10 @@ export function createToolResultTools(
     });
     return found === undefined
       ? undefined
-      : { text: found.text, settings: await toolResultRows.readSettings() };
+      : {
+          text: found.text,
+          settings: await readToolResultSettings(settingsRows),
+        };
   }
 
   const read: OutsideAgentTool<ReadToolResultArgs> = {

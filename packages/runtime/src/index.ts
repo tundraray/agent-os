@@ -11,11 +11,7 @@ export {
 } from './events/event-log';
 export type { CallUsage, ModelPrice } from './ledger/model-cost';
 export { monthOf } from './ledger/month';
-export {
-  type ModelCallRecord,
-  PLATFORM_OWNER_ID,
-  TokenLedger,
-} from './ledger/token-ledger';
+export { type ModelCallRecord, TokenLedger } from './ledger/token-ledger';
 export { Decisions, type ResolveOutcome } from './messaging/decisions';
 export { Inbox, type NewMessage } from './messaging/inbox';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config';

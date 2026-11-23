@@ -48,11 +48,9 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
-  recordDetail,
   threadList,
   threadSummary,
-  DEEP_AGENT_RECORD_ID,
-  deepAgentContent,
+  DEEP_AGENT_NAME,
   deepAgentOrigin,
   deepAgentRunView,
   type Deferred,
@@ -351,7 +349,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   it('AC-24.1 / AC-22.2 / DC-1: live draft is replaced by its history entry, the run card sits under its brief with three steps, and the re-read repeats no entry', async () => {
     // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a deep agent run with two steps
     const briefArgs = {
-      deepAgent: DEEP_AGENT_RECORD_ID,
+      deepAgent: DEEP_AGENT_NAME,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -773,7 +771,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-28T12:00:00+01:00'));
     const briefArgs = {
-      deepAgent: DEEP_AGENT_RECORD_ID,
+      deepAgent: DEEP_AGENT_NAME,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -844,16 +842,6 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     const decisionBodies: { decisionId: string; body: DecisionRequest }[] = [];
     let ticketFailures = 1;
     server.use(
-      // The open brief card reads its deep agent's record for the self-learning line (self-learning KD-6).
-      http.get(`${API}/api/library/${DEEP_AGENT_RECORD_ID}`, () =>
-        HttpResponse.json(
-          recordDetail({
-            id: DEEP_AGENT_RECORD_ID,
-            kind: 'deep_agent',
-            content: deepAgentContent({ selfLearning: false }),
-          }),
-        ),
-      ),
       http.post(
         `${API}/api/decisions/:decisionId`,
         async ({ request, params }) => {
@@ -924,7 +912,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
         body: {
           approve: true,
           args: {
-            deepAgent: DEEP_AGENT_RECORD_ID,
+            deepAgent: DEEP_AGENT_NAME,
             question: 'Почему падает ночная выгрузка?',
             boundaries: 'Только логи за неделю',
             result: 'Короткий отчёт',

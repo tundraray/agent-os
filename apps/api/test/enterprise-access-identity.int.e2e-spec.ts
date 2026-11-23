@@ -561,7 +561,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   //      a cookie-less `POST /api/auth/password` with valid credentials and a foreign `Origin` -> 403 ORIGIN_REJECTED, no session opened
   //   5. `POST /api/auth/sign-out`, then the old cookie on `GET /api/auth/me` -> 401 AUTH_REQUIRED; sign-out without a session -> 204
   //   6. default limits: a session row created more than 1440 min ago, and another idle for more than 480 min (timestamps moved in the
-  //      row; limits come from `identity_settings`) -> 401 AUTH_REQUIRED
+  //      row; limits come from the `sign_in_settings` key) -> 401 AUTH_REQUIRED
   //   7. UC-1 (AC-07.5): Аня's session opened 2 h ago, last request 1 h ago (rows moved); an administrator `PUT
   //      /api/admin/settings/sign-in` (with the current `publicUrl`) and `idleMinutes: 30`, `absoluteMinutes: 61` -> 200 echoing
   //      `SignInSettings`, audit `admin_change` on `sign_in_settings` with old and new limits; Аня's next request with the same cookie

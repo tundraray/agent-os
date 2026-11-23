@@ -1,14 +1,15 @@
 import { createLogger } from '@agent-os/common';
 import {
-  type RecordHeader,
+  type AgentContent,
+  type AgentVersion,
   RUN_CODE_TOOL,
   RunCodeArgsSchema,
 } from '@agent-os/contracts';
 import {
-  AgentCodeCallsRepository,
-  AgentMcpAccountsRepository,
-  AgentMcpServersRepository,
-  AgentMessagesRepository,
+  CodeCallsRepository,
+  McpAccountsRepository,
+  McpServersRepository,
+  MessagesRepository,
   type Database,
   Db,
 } from '@agent-os/db';
@@ -21,7 +22,7 @@ import {
   OwnerDisabledError,
 } from '../../access-gate';
 import type { JsonSchemaObject } from '../../model/mastra-turn';
-import type { AgentSnapshot } from '../../start/snapshot';
+import type { RunStart } from '../../start/run-definition';
 import type { CallState } from '../../history/call-state';
 import type { McpAccounts } from '../../mcp/mcp-accounts';
 import { CallRecords } from '../../store/call-records';
@@ -30,7 +31,7 @@ import type { Session, SessionInput } from '../../store/sessions';
 import type { AgentDeps } from '../../agent/agent-deps';
 import { ChatAgent, type ChatAgentDeps } from '../../agent/chat-agent';
 import type { AgentTool, ToolCaller } from '../tool';
-import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate';
+import { gateStart, type StartGateInput } from './tool-gate';
 import {
   type McpSessionTool,
   type SessionTool,
@@ -39,8 +40,7 @@ import {
 import { ToolRunner } from '../tool-runner';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
-// (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`);
-// deep-agents DC-3 (nobody starts a deep agent with start_agent, the refusal says why);
+// (depth); data-model DC-27 (nobody starts a deep agent's name with start_agent, the refusal says why);
 // design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the server–tool pair, one audit record per
 // refusal).
 const OWNER = 'employee-1';
@@ -52,29 +52,30 @@ function id(n: number): string {
   return `00000000-0000-4000-8000-${n.toString().padStart(12, '0')}`;
 }
 
-/** An agent's snapshot that names no tool and no server (code-execution AC-01.2, UC-3). */
-const NO_TOOLS: AgentSnapshot = {
-  kind: 'agent',
-  name: 'no-tools',
-  origin: {
-    recordId: id(1),
-    kind: 'agent',
-    version: 1,
-    name: 'no-tools',
-    author: { id: id(900), name: 'Аня' },
-    builtinKey: null,
-    subagent: null,
-  },
-  content: {
-    prompt: 'Answer.',
-    servers: [],
-    model: 'anthropic/claude-haiku-5-5',
-    maxTurns: 10,
-    agents: [],
-    tools: [],
-    taskList: false,
-  },
+const MODEL = 'anthropic/claude-haiku-5-5';
+
+const NO_TOOLS_CONTENT: AgentContent = {
+  prompt: 'Answer.',
+  servers: [],
+  model: MODEL,
+  maxTurns: 10,
   agents: [],
+  tools: [],
+  taskList: false,
+};
+
+/** An agent's run whose version names no tool and no server (code-execution AC-01.2, UC-3). */
+const NO_TOOLS: RunStart = {
+  version: {
+    id: id(901),
+    agentId: id(1),
+    number: 1,
+    kind: 'agent',
+    content: NO_TOOLS_CONTENT,
+  },
+  name: 'no-tools',
+  subagent: null,
+  model: MODEL,
 };
 
 const CALLER: ToolCaller = {
@@ -83,7 +84,7 @@ const CALLER: ToolCaller = {
   rootId: 'agent-1',
   root: true,
   depth: 0,
-  snapshot: NO_TOOLS,
+  run: NO_TOOLS,
   servers: [],
 };
 
@@ -141,7 +142,7 @@ const START_AGENT_CALL: CallCheckInput = {
   toolName: 'start_agent',
   sessionTools: [START_AGENT_TOOL],
   ownerPairs: [],
-  args: { description: 'gather', agent: id(2), prompt: 'look' },
+  args: { description: 'gather', agent: 'Сверка', prompt: 'look' },
 };
 
 const NO_SERVER_CALLS = async (): Promise<never> => {
@@ -180,8 +181,8 @@ interface RunnerDoubles {
 function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
   const runner = new ToolRunner(
     new CallRecords(
-      new History(new AgentMessagesRepository(DB)),
-      new AgentCodeCallsRepository(DB),
+      new History(new MessagesRepository(DB)),
+      new CodeCallsRepository(DB),
     ),
     { callTool: NO_SERVER_CALLS },
     { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
@@ -191,11 +192,15 @@ function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
     },
     { mcpCallTimeoutMs: 1000 },
     {
-      readSettings: async () => ({
-        storeFromChars: 50_000,
-        previewChars: 2_000,
-        readMaxTokens: 25_000,
+      read: async () => ({
+        key: 'tool_result_settings',
+        value: {
+          storeFromChars: 50_000,
+          previewChars: 2_000,
+          readMaxTokens: 25_000,
+        },
         updatedAt: null,
+        updatedBy: null,
       }),
     },
     (text) => text,
@@ -251,8 +256,8 @@ async function checkRunCode(
 ): Promise<Gate> {
   const registry = new ToolRegistry(
     // A declaration that names no server reads nothing of the registry.
-    new AgentMcpServersRepository(DB),
-    new AgentMcpAccountsRepository(DB),
+    new McpServersRepository(DB),
+    new McpAccountsRepository(DB),
     gateOf([]),
   );
   registry.useRunCode(RUN_CODE_STUB);
@@ -285,69 +290,18 @@ const INLINE_LINE_BREAKS = [
 ] as const;
 const RUN_CLASSES = ['read', 'write'] as const;
 
-/** A header of the starter's `listVisible`: another's agent the chat offers, unless overridden. */
-function header(
-  n: number,
-  overrides: Partial<RecordHeader> = {},
-): RecordHeader {
-  return {
-    id: id(n),
-    kind: 'agent',
-    name: `Агент ${n}`,
-    description: 'Работает',
-    version: 1,
-    builtinKey: null,
-    author: { id: id(900), name: 'Аня', disabled: false },
-    mine: false,
-    shared: false,
-    offerInChat: true,
-    ...overrides,
-  };
-}
-
-/** The root's set: an offered agent, own and another's records without the switch, a deep agent. */
-const ROOT: LaunchSet = {
-  kind: 'root',
-  tool: 'agent',
-  headers: [
-    header(2),
-    header(3, { mine: true, offerInChat: false }),
-    header(4, { offerInChat: false }),
-    header(5, { kind: 'deep_agent' }),
-  ],
-};
-
-/** An agent whose snapshot's `agents` hold one record. */
-const AGENT_SET: LaunchSet = { kind: 'agents', ids: [id(2)] };
-
-/** DC-3: the text of a refusal of a deep agent's record says who starts it. */
-const DEEP_AGENT_RECORD: Gate = {
+/** DC-27: the text of a refusal of a deep agent's name says who starts it. */
+const DEEP_AGENT_NAME: Gate = {
   kind: 'refused',
   reason: 'not_allowed',
-  text: 'This record is a deep agent: only the main chat starts a deep agent, after the employee approves its brief.',
+  text: 'This name is a deep agent: only the main chat starts a deep agent, with start_deep_agent, after the employee approves its brief.',
 };
 
 const START: StartGateInput = {
-  launchSet: AGENT_SET,
-  target: { kind: 'record', recordId: id(2), recordKind: 'agent' },
+  target: { kind: 'name', recordKind: 'agent' },
   depth: 1,
   maxDepth: 3,
 };
-
-/** `gateStart` of `START` with the given launch set and target, with the refusal's text. */
-function gate(launchSet: LaunchSet, target: StartGateInput['target']): Gate {
-  return gateStart({ ...START, launchSet, target });
-}
-
-/** An agent's record of the given number, as the caller's owner sees it. */
-function agentRecord(n: number): StartGateInput['target'] {
-  return { kind: 'record', recordId: id(n), recordKind: 'agent' };
-}
-
-/** A deep agent's record of the given number. */
-function deepAgentRecord(n: number): StartGateInput['target'] {
-  return { kind: 'record', recordId: id(n), recordKind: 'deep_agent' };
-}
 
 type Gate =
   { kind: 'allowed' } | { kind: 'refused'; reason: string; text?: string };
@@ -449,45 +403,20 @@ describe('a tool call is refused with its reason or allowed', () => {
         { kind: 'allowed' },
       ],
     ),
+    ['a name of an agent', () => gateStart(START), { kind: 'allowed' }],
     [
-      "a record outside the agent's agents",
-      () => gate(AGENT_SET, agentRecord(3)),
-      { kind: 'refused', reason: 'not_allowed' },
+      "a deep agent's name",
+      () =>
+        gateStart({
+          ...START,
+          target: { kind: 'name', recordKind: 'deep_agent' },
+        }),
+      DEEP_AGENT_NAME,
     ],
     [
-      "a record of the agent's agents",
-      () => gate(AGENT_SET, agentRecord(2)),
+      'a fork',
+      () => gateStart({ ...START, target: { kind: 'fork' } }),
       { kind: 'allowed' },
-    ],
-    [
-      "an agent names a deep agent's record",
-      () => gate(AGENT_SET, deepAgentRecord(6)),
-      DEEP_AGENT_RECORD,
-    ],
-    [
-      'a fork at an agent',
-      () => gate(AGENT_SET, { kind: 'fork' }),
-      { kind: 'allowed' },
-    ],
-    [
-      'the root starts an agent the chat offers',
-      () => gate(ROOT, agentRecord(2)),
-      { kind: 'allowed' },
-    ],
-    [
-      'the root starts its own agent without «предлагать в главном чате»',
-      () => gate(ROOT, agentRecord(3)),
-      { kind: 'allowed' },
-    ],
-    [
-      "the root starts another's agent without «предлагать в главном чате»",
-      () => gate(ROOT, agentRecord(4)),
-      { kind: 'refused', reason: 'not_allowed' },
-    ],
-    [
-      'the root starts a deep agent with start_agent',
-      () => gate(ROOT, deepAgentRecord(5)),
-      DEEP_AGENT_RECORD,
     ],
     [
       'a depth over the limit',
@@ -519,15 +448,20 @@ const CHANGING_TOOL: SessionTool = {
   },
 };
 
-/** An agent whose snapshot names the `logs` server. */
-const HELPER: AgentSnapshot = {
-  ...NO_TOOLS,
-  name: 'helper',
-  content: { ...NO_TOOLS.content, servers: ['logs'] },
+/** An agent whose version names the `logs` server. */
+const HELPER_VERSION: AgentVersion = {
+  id: id(902),
+  agentId: id(1),
+  number: 1,
+  kind: 'agent',
+  content: { ...NO_TOOLS_CONTENT, servers: ['logs'] },
 };
 
 const HELPER_INPUT: SessionInput = {
-  snapshot: HELPER,
+  versionId: HELPER_VERSION.id,
+  name: 'helper',
+  subagent: null,
+  model: MODEL,
   prompt: 'Clean up the logs',
   description: 'Clean up',
 };
@@ -551,13 +485,20 @@ const SESSION: Session = {
   taskId: CALLER.agentId,
   parentId: null,
   ownerId: OWNER,
-  name: HELPER.name,
-  origin: HELPER.origin,
+  name: HELPER_INPUT.name,
+  origin: {
+    recordId: id(1),
+    kind: 'agent',
+    version: 1,
+    name: 'helper',
+    author: { id: id(900), name: 'Аня' },
+    builtinKey: null,
+    subagent: null,
+  },
   firstRun: true,
   description: HELPER_INPUT.description,
-  model: HELPER.content.model,
-  prompt: HELPER_INPUT.prompt,
-  forkedFromTaskId: null,
+  model: MODEL,
+  startCallId: null,
   forkedThroughSeq: null,
   turns: 0,
   interrupted: false,
@@ -741,6 +682,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
           const agent = new ChatAgent(deps as ChatAgentDeps, {
             task: ctx,
             input: HELPER_INPUT,
+            version: HELPER_VERSION,
           });
           const result = await agent.toolStep(
             ctx,

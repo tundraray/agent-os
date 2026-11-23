@@ -16,11 +16,7 @@ export class RuntimeTrackersRepository {
   constructor(@Inject(Db) private readonly db: Db) {}
 
   /** Inserts an `open` tracker of the owner task. */
-  async insert(tracker: {
-    trackerId: string;
-    taskId: string;
-    ownerId: string;
-  }): Promise<void> {
+  async insert(tracker: { trackerId: string; taskId: string }): Promise<void> {
     await this.db.client
       .insert(runtimeTrackers)
       .values({ ...tracker, status: open });
@@ -69,8 +65,8 @@ export class RuntimeTrackersRepository {
   }
 
   /**
-   * The trackers of the owner's task, oldest first. Another owner's, a deleted or a missing task
-   * gives `[]`.
+   * The trackers of the owner's task, oldest first; the owner is the task's. Another owner's, a deleted or a
+   * missing task gives `[]`.
    */
   listOwned(taskId: string, ownerId: string) {
     return this.db.client
@@ -85,7 +81,7 @@ export class RuntimeTrackersRepository {
       .where(
         and(
           eq(runtimeTrackers.taskId, taskId),
-          eq(runtimeTrackers.ownerId, ownerId),
+          eq(runtimeTasks.ownerId, ownerId),
           isNull(runtimeTasks.deletedAt),
         ),
       )

@@ -164,7 +164,7 @@ interface BriefConversation {
     readonly boundaries: string;
     readonly result: string;
   };
-  /** Id of the deep agent record the root asks for. */
+  /** Name of the deep agent record the root asks for. */
   readonly deepAgent: string;
 }
 
@@ -400,7 +400,7 @@ async function startDeepResearch(
     followUp: 'Yesterday 10:00-12:00 UTC',
     secondReply: 'Root reply two: here is the brief to confirm.',
     brief: RUN_BRIEF,
-    deepAgent: deepAgentId,
+    deepAgent: DEEP_RESEARCH,
   });
   expect(
     await harness.sessions.resolveConfirmation({
@@ -463,9 +463,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
     'INT-1: a brief waits without starting anything, a confirmed or corrected one starts exactly one deep agent whose only input is that brief, an empty correction is refused and keeps the request open, and a decline starts nothing',
     async () => {
       const model = createScriptedModel();
-      const ownerA = newUser();
-      const ownerB = newUser();
-      const ownerC = newUser();
+      const ownerA = await newUser();
+      const ownerB = await newUser();
+      const ownerC = await newUser();
       // The coordinators' first model calls are held: what the test reads is their input, not their run.
       const coordinatorHeld = createLatch();
       const harness = await createDeepAgentsHarness(model);
@@ -489,12 +489,12 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             boundaries: 'payments service only',
             result: 'a short list of causes',
           },
-          deepAgent: deepAgentId,
+          deepAgent: DEEP_RESEARCH,
         });
 
         // Before the decision: one open request of kind `agents.brief` with the record and the three fields, no deep agent.
         const askedBrief = {
-          deepAgent: deepAgentId,
+          deepAgent: DEEP_RESEARCH,
           question: 'Why did payments fail yesterday (A)?',
           boundaries: 'payments service only',
           result: 'a short list of causes',
@@ -529,7 +529,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             ownerId: ownerA,
             approve: true,
             args: {
-              deepAgent: deepAgentId,
+              deepAgent: DEEP_RESEARCH,
               question:
                 'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
               boundaries: 'payments service only, no refunds',
@@ -625,7 +625,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             boundaries: '',
             result: '',
           },
-          deepAgent: deepAgentId,
+          deepAgent: DEEP_RESEARCH,
         });
         await expect(
           harness.sessions.resolveConfirmation({
@@ -633,7 +633,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             ownerId: ownerB,
             approve: true,
             args: {
-              deepAgent: deepAgentId,
+              deepAgent: DEEP_RESEARCH,
               question: '',
               boundaries: '',
               result: '',
@@ -687,7 +687,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
             boundaries: 'today only',
             result: 'one number',
           },
-          deepAgent: deepAgentId,
+          deepAgent: DEEP_RESEARCH,
         });
         expect(
           await harness.sessions.resolveConfirmation({
@@ -740,7 +740,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
     "INT-2 A: the deep-research deep agent runs plan, two gather subagents at once and the answer, refuses the second plan, goes on after a failed gather subagent, and hands the root the answer subagent's text as the run's report",
     async () => {
       const model = createScriptedModel();
-      const ownerId = newUser();
+      const ownerId = await newUser();
       // The first gather agent's read is held on the fixture until the second gather agent has failed.
       const fixture = createFixtureFiles('agents-e2e');
       const gatherRead = fixture.latch('gather-read');
@@ -899,8 +899,8 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
     'INT-2 B: sessions.run returns the origin, the brief, the team, the four steps of a run in order and its over-limit start, and answers a foreign owner, an ordinary agent and an unknown id the same: RUN_NOT_FOUND',
     async () => {
       const model = createScriptedModel();
-      const ownerId = newUser();
-      const otherOwner = newUser();
+      const ownerId = await newUser();
+      const otherOwner = await newUser();
       const harness = await createDeepAgentsHarness(model);
       try {
         const run = await startDeepResearch(harness, model, ownerId);
@@ -1036,9 +1036,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
     'INT-3 B: a deep agent that finishes in text while the answer subagent has failed twice gets a notice each time, the run ends failed by the turn limit and the root is told with status and reason',
     async () => {
       const model = createScriptedModel();
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const harness = await createDeepAgentsHarness(model);
-      const limitsId = harness.library.add(limitsRecord());
+      harness.library.add(limitsRecord());
       try {
         // Two tasks to `answer` (each fails), then texts until the turn limit: 2 task calls, 4 texts, then turn_limit.
         const coordinatorScript = model.script(
@@ -1070,7 +1070,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           thereafter: modelError(),
         });
         const root = await rootWithWaitingBrief(harness, model, ownerId, {
-          deepAgent: limitsId,
+          deepAgent: LIMITS_DEEP_AGENT,
           task: 'Check the final step (INT-3 B)',
           firstReply: 'Root reply one (INT-3 B).',
           followUp: 'Go on (INT-3 B)',

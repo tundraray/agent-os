@@ -1,15 +1,14 @@
-import type { RunOrigin } from '@agent-os/contracts';
+import type { AgentVersion, RunOrigin } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import type { AgentView } from '../agent-view';
 import { AgentsError } from '../errors';
 import type { AgentHistoryEntry } from '../operations/agent-sessions';
 import type { ViewOperations } from '../operations/view-operations';
-import type { DeepAgentSnapshot } from '../start/snapshot';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
 import { TASK_TOOL } from './deep-definition';
 
-/** One subagent of the run's team, as its snapshot holds it. */
+/** One subagent of the run's team, as its version holds it. */
 export interface DeepAgentTeamMember {
   readonly name: string;
   readonly maxRuns: number;
@@ -22,12 +21,12 @@ export interface DeepAgentTeamMember {
  * `agents` gives them; `apps/api` turns them into the contract.
  */
 export interface DeepAgentRun {
-  /** The deep agent record the run started from, at the version confirmed. */
+  /** The deep agent the run started from, at the version it runs on (read through the version). */
   readonly origin: RunOrigin;
   readonly brief: DeepAgentBrief;
   /** The run's status, model and time are the deep agent's: a run has no state of its own. */
   readonly deepAgent: AgentView;
-  /** The subagents of the snapshot; those outside `steps` were not called. */
+  /** The subagents of the version; those outside `steps` were not called. */
   readonly team: DeepAgentTeamMember[];
   /** The deep agent's direct children in the order they were created, each with `origin.subagent`. */
   readonly steps: AgentView[];
@@ -38,7 +37,7 @@ export interface DeepAgentRun {
 /** The operations of agents the run view reads through. */
 export type DeepAgentRunSessions = Pick<
   ViewOperations,
-  'get' | 'list' | 'history' | 'snapshot'
+  'get' | 'list' | 'history' | 'version'
 >;
 
 /** The `subagentType` of a `task` call: the subagent's name in a refusal the view lists. */
@@ -53,8 +52,10 @@ function runNotFound(agentId: string, cause?: unknown): AgentsError {
   );
 }
 
-function teamOf(snapshot: DeepAgentSnapshot): DeepAgentTeamMember[] {
-  const { subagents, finalSubagent } = snapshot.content;
+function teamOf(
+  version: Extract<AgentVersion, { kind: 'deep_agent' }>,
+): DeepAgentTeamMember[] {
+  const { subagents, finalSubagent } = version.content;
   return subagents.map(({ name, maxRuns }) => ({
     name,
     maxRuns,
@@ -146,9 +147,9 @@ async function limitRefusalsOf(
 
 /**
  * The run view of a deep agent (deep-agents KD-2, «Маршруты» `/run`), read through the agents operations
- * only: a run is the deep agent's session, its team is the snapshot of its task, the brief is its first
- * history entry. A missing agent, another owner's agent and an agent whose snapshot is not a deep agent's
- * get one and the same `RUN_NOT_FOUND`.
+ * only: a run is the deep agent's session, its team is its version's, the brief is its first history entry.
+ * A missing agent, another owner's agent and an agent that is not a deep agent's own run (a team member runs
+ * on its deep agent's version too) get one and the same `RUN_NOT_FOUND`.
  */
 export async function readDeepAgentRun(
   sessions: DeepAgentRunSessions,
@@ -156,15 +157,21 @@ export async function readDeepAgentRun(
   ownerId: string,
 ): Promise<DeepAgentRun> {
   const deepAgent = await asRun(agentId, sessions.get(agentId, ownerId));
-  const snapshot = await asRun(agentId, sessions.snapshot(agentId, ownerId));
-  if (snapshot?.kind !== 'deep_agent') throw runNotFound(agentId);
+  const run = await asRun(agentId, sessions.version(agentId, ownerId));
+  const { origin } = deepAgent;
+  if (
+    run?.version.kind !== 'deep_agent' ||
+    run.subagent !== null ||
+    origin === null
+  )
+    throw runNotFound(agentId);
   const brief = await briefOf(sessions, agentId, ownerId);
   const tree = await sessions.list(deepAgent.rootId, ownerId);
   return {
-    origin: snapshot.origin,
+    origin,
     brief,
     deepAgent,
-    team: teamOf(snapshot),
+    team: teamOf(run.version),
     steps: tree.filter((agent) => agent.parentId === agentId),
     limitRefusals: await limitRefusalsOf(sessions, agentId, ownerId),
   };

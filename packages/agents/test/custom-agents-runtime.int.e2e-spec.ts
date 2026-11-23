@@ -11,8 +11,8 @@
 //   real Postgres, real `RuntimeModule` and `createAgents`, workers on; the scripted `ModelClient` is the only model double and records the
 //   input of every call (the assertion surface for "the next model call carries prompt X"; the system prompt is read by a thin wrapper of
 //   its `turnClient`, below); the MCP fixture process is the real one. The library is `options.library` - a `createLibraryDouble` of
-//   `@agent-os/agents/testing` (records in memory with owner, "visible to all", viewers; operations to edit a record into a new version,
-//   delete it, close it to the runner and hide it from one viewer) passed to `createAgents({ library })`; the access gate double of the
+//   `@agent-os/agents/testing` (records in memory with owner, "visible to all", viewers; operations to edit a record into a new version
+//   and delete it) passed to `createAgents({ library })`; the access gate double of the
 //   harness refuses a model per owner (`ownerModelRefusals`, read on every question) and answers `model_not_connected` for a model
 //   without a price. Mock boundary: the library double stands for `LibraryService` ONLY (its visibility and version rules are proven in
 //   the `library` part against the real service); the runtime, the agents package, the snapshot in `runtime_tasks.input`, the tool gate
@@ -28,7 +28,6 @@
 //   - Process kill and step recovery at the commit boundary: runtime E2E-1 and agents INT-3 row E. Row A here reuses that technique once only to
 //       show the snapshot is in Postgres, not in memory.
 
-import { randomUUID } from 'node:crypto';
 import type { AgentTurnMessage, AgentTurnModelClient } from '@agent-os/agents';
 import {
   createLatch,
@@ -52,7 +51,6 @@ import {
   ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
-  ledgerRowsOf,
   START_TEST_DEEP_AGENT,
   setRootRecord,
   taskCall,
@@ -83,7 +81,7 @@ const MODEL_NOT_ALLOWED = {
 /** A built-in call that needs no server; a record without `list_agents` in its tools gets it refused. */
 const LIST_AGENTS: ScriptedToolCall = { tool: 'list_agents', args: {} };
 
-/** A `start_agent` call of a scripted answer: `agent` is a record id, a subagent's name or `fork`. */
+/** A `start_agent` call of a scripted answer: `agent` is a record's name or `fork`. */
 function startAgent(args: {
   agent: string;
   description: string;
@@ -154,7 +152,7 @@ async function ownerRowCounts(
 ): Promise<{ tasks: number; sessions: number }> {
   const { rows } = await db.execute(sql`
     SELECT (SELECT count(*) FROM app.runtime_tasks WHERE owner_id = ${ownerId})::int AS tasks,
-           (SELECT count(*) FROM app.agent_sessions WHERE owner_id = ${ownerId})::int AS sessions`);
+           (SELECT count(*) FROM app.conversations WHERE owner_id = ${ownerId})::int AS sessions`);
   return { tasks: Number(rows[0]?.tasks), sessions: Number(rows[0]?.sessions) };
 }
 
@@ -313,11 +311,11 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   //   причиной"; AC-14.4 "Given в агенте Ани выбрана модель, на которую у Ани больше нет права, when Аня запускает агента из чата, then
   //   агент не стартует, а Аня видит, какая модель ей недоступна". Design: UC-5, UC-E1, UC-E2, DC-3, DC-4, DC-5, KD-1, KD-2, KD-3,
   //   invariants 1 and 2.
-  // Behavior: a root (the `chat` record of the double) starts a child by a record number -> `resolveStart` asks the library for the RUNNER ->
+  // Behavior: a root (the `chat` record of the double) starts a child by a record's name -> `resolveStart` asks the library for the RUNNER ->
   //   the snapshot is written into the child's task input -> every later step reads only that input; a restart picks its source by kind.
   // Rows (literal expected values; each row has its own owner, records and tree):
   //   A. Frozen copy (AC-13.1, AC-13.3, DC-3). Given Аня's agent R in version 1 shared with Борис, and Борис's root; When Борис's root starts R
-  //      by its number and the child's first model call is held on a latch; Аня saves version 2 of R (another prompt, another tool set) in the
+  //      by its name and the child's first model call is held on a latch; Аня saves version 2 of R (another prompt, another tool set) in the
   //      double, and the administrator edits the `chat` record (another prompt); the second instance takes the child over at its start
   //      and the latch is released; Then the child's model inputs (before and after the takeover) carry the version-1 prompt and its tool set
   //      and never the version-2 prompt; Борис's root starts R again -> that child's inputs carry the version-2 prompt; the run origin of the
@@ -332,19 +330,19 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   //      history; Given the record of a restarted agent is then deleted -> `sessions.restart` is refused `START_REFUSED` with reason
   //      `record_unavailable`, and the number of agents under the parent did not change; Given the agent's model is no longer allowed to its
   //      owner (the access gate double) -> refused with reason `model_not_allowed` and the model's number, again no new agent.
-  //   C. A refused start leaves a reason and nothing else (AC-13.2, AC-14.1, AC-14.3, AC-14.4, DC-5). Given Аня's agent that may start
-  //      Аня's personal "сбор логов" (in its `agents`) running in Борис's tree; When it calls `start_agent` with that record's number; Then
-  //      the call is refused with `record_unavailable` (the library double is asked for Борис, not for Аня), the parent's history holds the tool
-  //      result with that reason, no child task and no `agent_sessions` row of that call exist, and no ledger row was written for it. The same
-  //      refusal for a record deleted, a record closed to the runner, and a runner removed from the record's role (three setups, one assertion
-  //      set). A start whose record's model is not allowed to the runner is refused `model_not_allowed` carrying the model's number, and a model
-  //      with no connection `model_not_connected`; again no child, no ledger row, the root keeps answering.
+  //   C. A name the runner cannot see is a temporary agent, a model he may not use is a refusal (AC-14.1, AC-14.3, AC-14.4, DC-5;
+  //      data-model/design-agents.md KD-5, DC-24). Given Аня's agent running in Борис's tree; When it calls `start_agent` with the name of
+  //      Аня's personal "сбор логов"; Then the call starts a temporary agent - the default agent's version under the name from the call -
+  //      and it does not run on Аня's prompt (the name is looked up for Борис, not for Аня). A deleted record, one closed to the runner
+  //      and one whose role he left are the same branch - a record the runner does not see - and have no target of their own;
+  //      `record_unavailable` is a restart's answer only (row B). A start whose record's model is not allowed to the runner is refused `model_not_allowed` carrying the model's number, and a model with no connection
+  //      `model_not_connected`; no child task and no `conversations` row of those calls exist, the root keeps answering.
   // Catches: a step that reads the library or an in-memory catalog after the start (an edit, a delete or a role change reaches a running
   //   agent); a snapshot kept only in the process (lost with a restart of the server); a restart of a subagent or a fork that asks the library
   //   (and fails when the record is gone, or silently swaps it for the latest version); a record restart that copies the old snapshot (stale
   //   version against UXRD KD-7) or that creates the new agent before the check (a refused restart leaves a stray agent); a start asked
-  //   for the AUTHOR instead of the runner (Борис runs Аня's private record through her agent); a refusal that still writes a child task, a
-  //   session row or a ledger row.
+  //   for the AUTHOR instead of the runner (Борис runs Аня's private record through her agent); a refusal that still writes a child task or a
+  //   session row.
   // @category: core-functionality
   // @dependency: Agents.resolveStart, Agents.sessions.start / restart / snapshot, startChild, tool gate, RecordLibrary (double), AccessGate (double), runtime (tasks.input), Postgres
   // @complexity: high
@@ -353,8 +351,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     async () => {
       // Given: Аня's agent R in version 1 (no tools, the default model), shared with Борис and offered in the chat;
       // Борис's root on chat version 1 starts R; the child's first model call will be held
-      const anya = randomUUID();
-      const boris = newUser();
+      const anya = await newUser();
+      const boris = await newUser();
       const library = createLibraryDouble();
       const recordR = testRecord('log digest', {
         ownerId: anya,
@@ -371,7 +369,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           {
             calls: [
               startAgent({
-                agent: recordId,
+                agent: 'log digest',
                 description: 'digest one',
                 prompt: 'Digest task',
               }),
@@ -386,7 +384,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           {
             calls: [
               startAgent({
-                agent: recordId,
+                agent: 'log digest',
                 description: 'digest two',
                 prompt: 'Second digest task',
               }),
@@ -482,12 +480,13 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           'tool_result: list_agents refused tool_not_in_definition',
           'model_answer: report of the first digest []',
         ]);
-        // Then: instance B reads the snapshot from the task input in Postgres
+        // Then: instance B reads the version the task input names, version 1 of R, from Postgres (DC-18)
         expect(
-          (await restarted.sessions.snapshot(firstChildId, boris))?.content,
+          (await restarted.sessions.version(firstChildId, boris))?.version,
         ).toMatchObject({
-          prompt: 'Digest prompt, version 1.',
-          tools: [],
+          agentId: recordId,
+          number: 1,
+          content: { prompt: 'Digest prompt, version 1.', tools: [] },
         });
 
         // When: Борис's root, created before the chat edit, gets a message and starts R again
@@ -575,7 +574,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       // Given: a deep agent record with the subagent `planner`; an agent record
       // `forker` that forks itself; a `leaf` record. The root starts the deep agent, the forker and the leaf;
       // the deep agent and the forker are then held in a model call, so they stay unfinished parents
-      const boris = newUser();
+      const boris = await newUser();
       const library = createLibraryDouble();
       const deepAgentRecordId = library.add({
         kind: 'deep_agent',
@@ -633,12 +632,12 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
                 },
               },
               startAgent({
-                agent: forkerRecordId,
+                agent: 'forker',
                 description: 'forker',
                 prompt: 'Fork yourself',
               }),
               startAgent({
-                agent: leafRecordId,
+                agent: 'leaf',
                 description: 'leaf',
                 prompt: 'Leaf task',
               }),
@@ -812,45 +811,29 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
   );
 
   it(
-    'INT-1 C: a start refused for a record the runner cannot see or a model he may not use names its reason to the parent and writes no child task, session or ledger row',
+    'INT-1 C: a name the runner cannot see starts a temporary agent without the hidden record, and a start on a model he may not use names its reason to the parent and writes no child task or session',
     async () => {
-      // Given: Аня's agent may start four of her records - her personal "сбор логов", one she will delete, one
-      // the administrator will close and one of a role Борис will leave; it runs in Борис's tree. Борис's root
-      // also starts a record on a model taken from him and one on a model with no connection
-      const anya = randomUUID();
-      const boris = newUser();
+      // Given: Аня's agent names her personal "сбор логов"; it runs in Борис's tree. Борис's root also starts a
+      // record on a model taken from him and one on a model with no connection
+      const anya = await newUser();
+      const boris = await newUser();
       const library = createLibraryDouble();
-      const personalId = library.add(
-        testRecord('сбор логов', { ownerId: anya, everyone: false }),
+      const privatePrompt = 'Private prompt of Anya.';
+      const target = testRecord('сбор логов', {
+        ownerId: anya,
+        everyone: false,
+        prompt: privatePrompt,
+      });
+      library.add(target);
+      library.add(
+        testRecord('agent of Anya', { ownerId: anya, tools: ['start_agent'] }),
       );
-      const deletedId = library.add(
-        testRecord('deleted target', { ownerId: anya }),
-      );
-      const closedId = library.add(
-        testRecord('closed target', { ownerId: anya }),
-      );
-      const roleId = library.add(
-        testRecord('role target', {
-          ownerId: anya,
-          everyone: false,
-          viewers: [boris],
-        }),
-      );
-      const targets = [personalId, deletedId, closedId, roleId];
-      const anyaAgentRecordId = library.add(
-        testRecord('agent of Anya', {
-          ownerId: anya,
-          tools: ['start_agent'],
-          agents: targets,
-        }),
-      );
-      const chosenModelRecordId = library.add(
+      library.add(
         testRecord('chosen model agent', { model: TEST_MODEL_CHOSEN }),
       );
-      const unconnectedRecordId = library.add(
+      library.add(
         testRecord('unconnected model agent', { model: UNCONNECTED_MODEL }),
       );
-      const anyaHeld = createLatch();
       const model = createScriptedModel();
       const root = model.script(
         { task: 'Start the agents of Anya' },
@@ -858,17 +841,17 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           {
             calls: [
               startAgent({
-                agent: anyaAgentRecordId,
+                agent: 'agent of Anya',
                 description: 'agent of anya',
                 prompt: 'Collect the logs for Boris',
               }),
               startAgent({
-                agent: chosenModelRecordId,
+                agent: 'chosen model agent',
                 description: 'chosen model',
                 prompt: 'Work on the chosen model',
               }),
               startAgent({
-                agent: unconnectedRecordId,
+                agent: 'unconnected model agent',
                 description: 'unconnected model',
                 prompt: 'Work unconnected',
               }),
@@ -877,18 +860,23 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         ],
         { thereafter: { text: 'noted' } },
       );
-      model.script({ task: 'Collect the logs for Boris' }, [
-        {
-          latch: anyaHeld,
-          calls: targets.map((agent, index) =>
-            startAgent({
-              agent,
-              description: `target ${index + 1}`,
-              prompt: `Target task ${index + 1}`,
-            }),
-          ),
-        },
-        { text: 'nothing started' },
+      model.script(
+        { task: 'Collect the logs for Boris' },
+        [
+          {
+            calls: [
+              startAgent({
+                agent: target.name,
+                description: 'target',
+                prompt: 'Target task',
+              }),
+            ],
+          },
+        ],
+        { thereafter: { text: 'reports read' } },
+      );
+      const temporary = model.script({ task: 'Target task' }, [
+        { text: 'report of target' },
       ]);
       const harness = await createAgentsHarness({
         model,
@@ -905,50 +893,29 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           prompt: 'Start the agents of Anya',
           description: 'conversation of Boris',
         });
+        // When: Аня's agent starts "сбор логов" by its name
         const anyaAgentId = await startedChild(harness, rootId);
-        await anyaHeld.reached();
-        await root.called(2);
-        await waitForTaskStatus(harness, rootId, boris, 'waiting');
+        const temporaryId = await startedChild(harness, anyaAgentId);
+        await temporary.called(1);
 
-        // When: while Аня's agent is in its model call, one target is deleted, one closed and Борис leaves the
-        // role of another; then the agent starts all four
-        library.remove(deletedId);
-        library.close(closedId);
-        library.hideFrom(roleId, boris);
-        anyaHeld.open();
-        await waitForTaskStatus(harness, anyaAgentId, boris, 'completed');
-        await root.called(3);
-        await waitForTaskStatus(harness, rootId, boris, 'waiting');
-
-        // Then: each start is refused `record_unavailable` with no child, and the library was asked for Борис only
+        // Then (DC-24, KD-5): the name Борис cannot see started a temporary agent - the default agent's version
+        // under the name from the call - and it did not run on Аня's prompt: the name was looked up for the runner
+        const general = await library.resolveBuiltin('agent');
         expect(
           (await toolCallRowsOf(harness.db, anyaAgentId)).map(
-            (call) =>
-              `${call.tool} ${call.outcome} ${call.refusalReason} ${call.childTaskId}`,
+            (call) => `${call.tool} ${call.outcome}`,
           ),
-        ).toEqual(
-          Array<string>(4).fill('start_agent refused record_unavailable null'),
+        ).toEqual(['start_agent success']);
+        const view = await harness.sessions.get(temporaryId, boris);
+        const pinned = await harness.sessions.version(temporaryId, boris);
+        expect(`${view.name} ${pinned?.version.agentId}`).toBe(
+          `${target.name} ${general.id}`,
         );
-        expect(
-          library.resolveCalls
-            .filter((call) => targets.includes(call.recordId))
-            .map((call) => `${call.viewerId} ${call.recordId}`)
-            .sort(),
-        ).toEqual(targets.map((id) => `${boris} ${id}`).sort());
-        // Then: the agent's history holds the four refusals with their reason, and it went on
-        expect(
-          historyLines(await historyOf(harness, anyaAgentId, boris)),
-        ).toEqual([
-          'task: Collect the logs for Boris',
-          'model_answer:  [start_agent, start_agent, start_agent, start_agent]',
-          ...Array<string>(4).fill(
-            'tool_result: start_agent refused record_unavailable',
-          ),
-          'model_answer: nothing started []',
-        ]);
+        expect(temporary.calls[0]?.instructions.includes(privatePrompt)).toBe(
+          false,
+        );
 
-        // Then: the root's starts on a withdrawn and an unconnected model are refused with the model's number,
-        // and the root kept answering
+        // Then: the root's starts on a withdrawn and an unconnected model are refused with the model's number
         expect(
           (await toolCallRowsOf(harness.db, rootId)).map(
             (call) =>
@@ -959,33 +926,23 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           `start_agent refused model_not_allowed {"model":"${TEST_MODEL_CHOSEN}"}`,
           `start_agent refused model_not_connected {"model":"${UNCONNECTED_MODEL}"}`,
         ]);
-        expect(historyLines(await historyOf(harness, rootId, boris))).toEqual([
+        expect(
+          historyLines(await historyOf(harness, rootId, boris)).slice(0, 5),
+        ).toEqual([
           'task: Start the agents of Anya',
           'model_answer:  [start_agent, start_agent, start_agent]',
           'tool_result: start_agent success',
           'tool_result: start_agent refused model_not_allowed',
           'tool_result: start_agent refused model_not_connected',
-          'model_answer: noted []',
-          'child_report: agent of anya completed',
-          'model_answer: noted []',
         ]);
+        await root.called(1);
 
-        // Then: Борис has the root and Аня's agent only - no other task or session - and ledger rows of their
-        // model calls only
+        // Then: Борис has the root, Аня's agent and its temporary agent - the refused starts wrote no task or session
         expect(await ownerRowCounts(harness.db, boris)).toEqual({
-          tasks: 2,
-          sessions: 2,
+          tasks: 3,
+          sessions: 3,
         });
-        const ledgerTaskIds = (await ledgerRowsOf(harness.db, boris)).map(
-          (row) => String(row.taskId),
-        );
-        expect(ledgerTaskIds.sort((a, b) => a.localeCompare(b))).toEqual(
-          [rootId, rootId, rootId, anyaAgentId, anyaAgentId].sort((a, b) =>
-            a.localeCompare(b),
-          ),
-        );
       } finally {
-        anyaHeld.open();
         await harness.close();
       }
     },
@@ -1009,8 +966,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
     'INT-2 A: a deep agent runs on one copy of its whole team whatever the author edits, ends with its own answer, and the next run takes the new version',
     async () => {
       // Given: Аня's deep agent version 1, open to Борис and offered in his chat
-      const boris = newUser();
-      const ana = randomUUID();
+      const boris = await newUser();
+      const ana = await newUser();
       const library = createLibraryDouble();
       const deepAgentId = library.add(
         testDeepAgent(TEAM_NAME, teamV1(), {

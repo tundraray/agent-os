@@ -1,23 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { Db } from '../db';
 import { runtimeEvents, runtimeTasks } from '../schema';
 
 export type NewRuntimeEventRow = Pick<
   typeof runtimeEvents.$inferInsert,
-  | 'eventId'
-  | 'type'
-  | 'schemaVersion'
-  | 'rootId'
-  | 'taskId'
-  | 'causationId'
-  | 'stateRevision'
-  | 'payload'
+  'eventId' | 'type' | 'schemaVersion' | 'rootId' | 'taskId' | 'payload'
 >;
 
 /**
  * Drizzle queries of `runtime_events`. The runtime's `EventLog` is
- * the only writer: it adds the deliveries and the NOTIFY of an event in the same transaction.
+ * the only writer: it adds the deliveries and the NOTIFY ({@link notify}) of an event in the same
+ * transaction.
  */
 @Injectable()
 export class RuntimeEventsRepository {
@@ -75,13 +69,16 @@ export class RuntimeEventsRepository {
         schemaVersion: runtimeEvents.schemaVersion,
         rootId: runtimeEvents.rootId,
         taskId: runtimeEvents.taskId,
-        causationId: runtimeEvents.causationId,
-        stateRevision: runtimeEvents.stateRevision,
         payload: runtimeEvents.payload,
         createdAt: runtimeEvents.createdAt,
       })
       .from(runtimeEvents)
       .where(eq(runtimeEvents.eventId, eventId));
     return row;
+  }
+
+  /** `pg_notify` in the open transaction: listeners get it when the transaction commits. */
+  async notify(channel: string, payload: string): Promise<void> {
+    await this.db.client.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 }

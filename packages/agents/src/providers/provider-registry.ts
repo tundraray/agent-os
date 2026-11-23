@@ -8,7 +8,7 @@ import {
   type UpdateModelProviderBody,
 } from '@agent-os/contracts';
 import {
-  AgentModelProvidersRepository,
+  ModelProvidersRepository,
   Db,
   type ModelProviderRow,
 } from '@agent-os/db';
@@ -135,8 +135,8 @@ export class AgentsProviders {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentModelProvidersRepository)
-    private readonly providerRows: AgentModelProvidersRepository,
+    @Inject(ModelProvidersRepository)
+    private readonly providerRows: ModelProvidersRepository,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.providers' });

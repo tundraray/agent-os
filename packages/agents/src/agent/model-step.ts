@@ -40,6 +40,7 @@ import {
   type EndOfTurnInput,
   noticeContent,
 } from './turn-rules';
+import { agentOwner } from './agent-owner';
 
 /** Tasks that keep an agent from finishing its turn (design-task-list.md KD-4). */
 const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
@@ -101,12 +102,15 @@ export async function childrenInFlight(
   deps: Pick<AgentDeps, 'tasks' | 'inbox'>,
   ctx: StepContext,
 ): Promise<ChildrenInFlight> {
-  const tree = await deps.tasks.listTree(ctx.rootId, ctx.ownerId);
+  const tree = await deps.tasks.listTree(ctx.rootId, agentOwner(ctx));
   const unfinished = tree.filter(
     (task) => task.parentId === ctx.taskId && !isFinished(task.status),
   ).length;
   const delivered = new Set(ctx.messages.map((message) => message.messageId));
-  const pendingMessages = await deps.inbox.listPending(ctx.taskId, ctx.ownerId);
+  const pendingMessages = await deps.inbox.listPending(
+    ctx.taskId,
+    agentOwner(ctx),
+  );
   const pending = pendingMessages.filter(
     (message) =>
       message.kind === CHILD_FINISHED_KIND && !delivered.has(message.messageId),
@@ -151,8 +155,8 @@ export async function runModelStep(
 ): Promise<StepResult> {
   const { registry, modelClient, audit } = deps;
   const startedAt = Date.now();
-  // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
-  const { snapshot, answerFields: askedFields } = agent.input;
+  // The run's definition comes from its version only, never from the library now (ADR-0017; KD-6).
+  const { answerFields: askedFields } = agent.input;
   const { definition } = agent;
   const turns = agent.turnsAfterDelivery(
     prelude?.patch.turns ?? session.turns,
@@ -165,7 +169,7 @@ export async function runModelStep(
   ];
   const basePatch: SessionPatch = { ...prelude?.patch };
 
-  // The snapshot's `maxTurns` is spent: the step fails instead of calling the model.
+  // The version's `maxTurns` is spent: the step fails instead of calling the model.
   if (turns >= definition.maxTurns) {
     logStep(ctx, STEP_KIND, startedAt, 'fail', {
       reason: FAILURE_REASONS.turn_limit,
@@ -185,9 +189,9 @@ export async function runModelStep(
     ...(prelude?.entries ?? []),
     ...delivered,
   ]);
-  // The graph is live data read beside the snapshot on every step (KD-6); a failed read fails the step.
+  // The graph is live data read beside the version on every step (KD-6); a failed read fails the step.
   const knowledge = await knowledgeBlock(deps, {
-    snapshot,
+    learning: definition.learning,
     taskId: ctx.taskId,
     logger: ctx.logger,
   });
@@ -196,10 +200,10 @@ export async function runModelStep(
   const declaration = await agent.offeredDeclaration(ctx);
   const tasks = await tasksOf(deps, ctx.taskId, declaration.taskList);
   // The owner the runtime names and what the agent declares: the library answers with the session's tools.
-  const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
+  const sessionTools = await registry.toolsFor(agentOwner(ctx), declaration);
   const result = await callUnlessAborted(ctx, () =>
     modelClient.call({
-      ownerId: ctx.ownerId,
+      ownerId: agentOwner(ctx),
       rootId: ctx.rootId,
       taskId: ctx.taskId,
       agentName: definition.name,
@@ -259,7 +263,6 @@ export async function runModelStep(
         args: call.args,
       })),
     },
-    modelCallId: result.modelCallId,
   };
   const callPatch: SessionPatch = {
     ...basePatch,

@@ -26,22 +26,30 @@ export const SUBAGENT_MAX_RUNS_MAX = 20;
 export const GENERAL_PURPOSE_SUBAGENT = 'general-purpose';
 export const RECORD_MAX_TURNS_MIN = 1;
 export const RECORD_MAX_TURNS_MAX = 200;
-/** «Максимум шагов» of a new record until an administrator sets another (`library_settings`). */
-export const RECORD_MAX_TURNS_DEFAULT = 40;
 
-/** Built-in key of the main-chat record: every enabled employee sees it, its audience is fixed. */
-export const CHAT_BUILTIN_KEY = 'chat';
+/**
+ * Keys of the default agents, one per task type (data-model design-agents.md, KD-4): every enabled employee
+ * sees them, their audience is fixed and they cannot be deleted.
+ */
+export const BuiltinKeySchema = z.enum(['chat', 'agent', 'deep_agent']);
+export type BuiltinKey = z.infer<typeof BuiltinKeySchema>;
+
+/** Built-in key of the main-chat agent, the root of every conversation. */
+export const CHAT_BUILTIN_KEY = BuiltinKeySchema.enum.chat;
 /** Key of the built-in role in `BUILTIN_NAMES`: the role has no `builtinKey`, it is known by its name. */
 export const BUILTIN_ROLE_KEY = 'super-admin';
 
 /**
  * Names of the built-in records by `builtinKey` and of the built-in role, in each interface language
- * (i18n design-web.md, KD-6; UXRD MC-7). `ru` is the name the record is seeded with and the role is
- * created with by the migration: a name equal to it was not renamed and is shown in the page's language.
+ * (i18n design-web.md, KD-6; UXRD MC-7). `ru` is the name the built-in rows migration gives the agent and
+ * the role: a name equal to it was not renamed and is shown in the page's language.
  */
 export const BUILTIN_NAMES = {
   [CHAT_BUILTIN_KEY]: { ru: 'Главный чат', en: 'Main chat' },
-  'deep-research': { ru: 'Глубокий ресерч', en: 'Deep research' },
+  [BuiltinKeySchema.enum.deep_agent]: {
+    ru: 'Глубокий агент',
+    en: 'Deep agent',
+  },
   [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
 } as const satisfies Record<string, Record<Language, string>>;
 
@@ -111,6 +119,11 @@ export type RecordTool = z.infer<typeof RecordToolSchema>;
 /** The names of the two start tools, as the API registers them and the web recognises them in a feed. */
 export const START_AGENT_TOOL = RecordToolSchema.enum.start_agent;
 export const START_DEEP_AGENT_TOOL = 'start_deep_agent';
+/**
+ * `agent` of `start_agent` that starts a fork of the caller; no record may take this name (data-model
+ * design-agents.md, «Таблицы каталога»).
+ */
+export const FORK_AGENT = 'fork';
 
 /** The names of the record tools of the main chat (deep-agents design-agent-types.md, «Инструменты записей»). */
 export const LIST_RECORDS_TOOL = 'list_records';
@@ -278,8 +291,14 @@ export type RecordBody =
 
 // ---------- Bodies ----------
 
+/**
+ * The name of a record: also the argument that names an agent in `start_agent`, `start_deep_agent` and `task`
+ * (data-model design-agents.md, «Инструменты модели»).
+ */
+export const RecordNameSchema = nameSchema(RECORD_NAME_MAX_LENGTH);
+
 const recordTextFields = {
-  name: nameSchema(RECORD_NAME_MAX_LENGTH),
+  name: RecordNameSchema,
   /** May hold line breaks: a tool description collapses them when it builds the record's line. */
   description: z.string().trim().min(1).max(RECORD_DESCRIPTION_MAX_LENGTH),
 };
@@ -449,13 +468,18 @@ export type MyRoleList = z.infer<typeof MyRoleListSchema>;
 
 // ---------- Port for the runtime part ----------
 
-/** Row of `listVisible(viewerId)`; `shared` — the record has at least one holder. */
+/**
+ * Row of `listVisible(viewerId)`; `version` and `versionId` — the number and the id of the active version;
+ * `shared` — the record has at least one holder. `listVisible` lists them by name without case, agents of
+ * one name earliest created first (the name winner of KD-5 takes the first of several colleagues' agents).
+ */
 export type RecordHeader = {
   id: string;
   kind: RecordKind;
   name: string;
   description: string;
   version: number;
+  versionId: string;
   builtinKey: string | null;
   author: RecordAuthor | null;
   mine: boolean;
@@ -463,5 +487,62 @@ export type RecordHeader = {
   offerInChat: boolean;
 };
 
-/** Answer of `resolve` and `resolveBuiltin`: the header and the content of its kind. */
+/** What the name rule (KD-5) reads of a record: a header of `listVisible` or a row of the library list. */
+export type NameCandidate = Pick<
+  RecordHeader,
+  'kind' | 'name' | 'builtinKey' | 'mine' | 'author'
+>;
+
+/** The rank of KD-5: the viewer's own agent, then a colleague's, then a system one. */
+function nameRank(record: NameCandidate): number {
+  if (record.mine) return 0;
+  return record.author === null ? 2 : 1;
+}
+
+/**
+ * The agents a name starts (data-model design-agents.md, KD-5) — the one place of the rule for the start, the
+ * tool listings and the web: of the records of one kind and one name without case, the viewer's own, else the
+ * colleague's that comes first, else the system one. `records` come in the order of the library list, agents
+ * of one name earliest created first. The chat is never started by name.
+ */
+export function nameWinners<T extends NameCandidate>(
+  records: Iterable<T>,
+): T[] {
+  const winners = new Map<string, T>();
+  for (const record of records) {
+    if (record.builtinKey === CHAT_BUILTIN_KEY) continue;
+    const key = `${record.kind}:${record.name.toLowerCase()}`;
+    const current = winners.get(key);
+    if (current === undefined || nameRank(record) < nameRank(current))
+      winners.set(key, record);
+  }
+  return [...winners.values()];
+}
+
+/** The record a start of `kind` by `name` starts (`nameWinners`); `null` — none, a temporary agent starts. */
+export function nameWinner<T extends NameCandidate>(
+  records: Iterable<T>,
+  kind: RecordKind,
+  name: string,
+): T | null {
+  const key = name.toLowerCase();
+  const [winner] = nameWinners(
+    [...records].filter(
+      (record) => record.kind === kind && record.name.toLowerCase() === key,
+    ),
+  );
+  return winner ?? null;
+}
+
+/** Answer of `resolve` and `resolveBuiltin`: the header and the content of its active version. */
 export type ResolvedRecord = Omit<RecordHeader, 'kind'> & RecordBody;
+
+/**
+ * Answer of `version(versionId)` (data-model design-agents.md, «Порт `RecordLibrary`»): an immutable version
+ * with its agent's id and kind and the parsed content, read without a visibility check.
+ */
+export type AgentVersion = {
+  id: string;
+  agentId: string;
+  number: number;
+} & RecordBody;

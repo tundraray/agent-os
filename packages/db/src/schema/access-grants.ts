@@ -3,7 +3,8 @@ import { sql } from 'drizzle-orm';
 import { check, index, numeric, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { createdAt, isOneOf, literal } from './helpers';
-import { accessModels } from './access-models';
+import { mcpServers } from './mcp-servers';
+import { models } from './models';
 import { identityRoles } from './identity-roles';
 import { identityUsers } from './identity-users';
 
@@ -20,9 +21,13 @@ export const accessGrants = app.table(
     }),
     effect: text('effect').notNull(),
     targetKind: text('target_kind').notNull(),
-    server: text('server'),
+    /** Removing the server removes its grants and the grants on its tools. */
+    server: text('server').references(() => mcpServers.name, {
+      onDelete: 'cascade',
+    }),
+    /** No FK: a tool is an item of its server's list, not a row. */
     tool: text('tool'),
-    model: text('model').references(() => accessModels.id, {
+    model: text('model').references(() => models.id, {
       onDelete: 'cascade',
     }),
     /** Monthly quota of a model allow; null — no quota. */
@@ -35,6 +40,8 @@ export const accessGrants = app.table(
       .nullsNotDistinct(),
     /** The cascade from a role is served by the unique key above: `role_id` is its first column. */
     index('access_grants_user_idx').on(t.userId),
+    /** The cascade from a server. */
+    index('access_grants_server_idx').on(t.server),
     check(
       'access_grants_effect_check',
       isOneOf(t.effect, GrantEffectSchema.options),

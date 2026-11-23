@@ -116,7 +116,7 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
     async () => {
       // Given: a deep agent record with one subagent and the `logs` server; the root starts it; the deep agent's
       // first read call is held on the fixture, and its second model call is held by a latch
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
       const deepAgentRecordId = library.add(
         testDeepAgent('planning deep agent', {

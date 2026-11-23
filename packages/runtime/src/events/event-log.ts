@@ -4,17 +4,15 @@ import {
   type RuntimeEventType,
 } from '@agent-os/contracts';
 import {
-  Db,
   RuntimeEventDeliveriesRepository,
   RuntimeEventsRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
 import {
   EventConsumerRegistry,
   type StoredEvent,
 } from './event-consumer.registry';
-import type { TaskRow } from '../tasks/guarded-transition';
 
 /**
  * `LISTEN` channel of the runtime. The payload is JSON `{"rootId","taskId","type"}`: the dispatcher
@@ -38,15 +36,14 @@ export type TreeEvent = Pick<
   'seq' | 'type' | 'taskId' | 'createdAt' | 'payload'
 >;
 
-/** The task an event is about: it gives the tree, the task and the revision. */
-export type EventTask = Pick<TaskRow, 'taskId' | 'rootId' | 'stepNo'>;
+/** The task an event is about: it gives the tree and the task. */
+export type EventTask = Pick<RuntimeTaskRow, 'taskId' | 'rootId'>;
 
 /** What the writer of an event decides; ids, version and time come from the log. */
 export interface NewEvent<Type extends string = RuntimeEventType> {
   type: Type;
   task: EventTask;
   payload: unknown;
-  causationId?: string | null;
 }
 
 /**
@@ -98,7 +95,6 @@ export function upperEventProblem(
 @Injectable()
 export class EventLog {
   constructor(
-    @Inject(Db) private readonly db: Db,
     @Inject(RuntimeEventsRepository)
     private readonly rows: RuntimeEventsRepository,
     @Inject(RuntimeEventDeliveriesRepository)
@@ -145,16 +141,13 @@ export class EventLog {
   /** The one way an event, its deliveries and its NOTIFY are written. */
   private async write(event: NewEvent<string>): Promise<StoredEvent> {
     const eventId = randomUUID();
-    const { taskId, rootId, stepNo } = event.task;
-    const causationId = event.causationId ?? null;
+    const { taskId, rootId } = event.task;
     const row = await this.rows.insert({
       eventId,
       type: event.type,
       schemaVersion: RUNTIME_EVENT_SCHEMA_VERSION,
       rootId,
       taskId,
-      causationId,
-      stateRevision: stepNo,
       payload: event.payload,
     });
 
@@ -163,9 +156,7 @@ export class EventLog {
       await this.deliveries.insert(eventId, consumerNames);
     }
     const notice = JSON.stringify({ rootId, taskId, type: event.type });
-    await this.db.client.execute(
-      sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`,
-    );
+    await this.rows.notify(RUNTIME_EVENTS_CHANNEL, notice);
 
     return {
       eventId,
@@ -174,8 +165,6 @@ export class EventLog {
       schemaVersion: RUNTIME_EVENT_SCHEMA_VERSION,
       rootId,
       taskId,
-      causationId,
-      stateRevision: stepNo,
       payload: event.payload,
       createdAt: row.createdAt,
     };

@@ -6,18 +6,16 @@ import {
   type ChatListing,
   chatListing,
 } from '../chat-listing';
-import type { RecordLibrary } from '../start/record-library';
 import type { ToolDeclaration } from '../tools/tool';
 import type { AgentDeps } from './agent-deps';
 import type { AgentRun } from './agent-state';
 import { BaseAgent } from './base-agent';
 import { chatTurns } from './deliver';
 import type { TurnEnd } from './model-step';
+import { agentOwner } from './agent-owner';
 
-/** What the chat works with: an agent's, and what its listing is read from. */
+/** What the chat works with: an agent's, and the logger of its listing. */
 export interface ChatAgentDeps extends AgentDeps {
-  /** The chat listing reads the owner's `listVisible` from it (KD-4). */
-  readonly library: Pick<RecordLibrary, 'listVisible'>;
   /** Logs the chat listing of each model call. */
   readonly logger: Logger;
 }
@@ -65,8 +63,8 @@ export class ChatAgent extends BaseAgent {
   private async listing(ctx: StepContext): Promise<ChatListing> {
     const { library, sessionRows } = this.chatDeps;
     const startedAt = Date.now();
-    const headers = await library.listVisible(ctx.ownerId);
-    const counts = await sessionRows.recordCounts(ctx.ownerId);
+    const headers = await library.listVisible(agentOwner(ctx));
+    const counts = await sessionRows.recordCounts(agentOwner(ctx));
     const sessionCounts = new Map(
       counts.map((row) => [row.recordId, row.sessions]),
     );

@@ -25,4 +25,4 @@ The HTTP API on NestJS and the composition point of the backend: `AppModule` wir
 ## More
 
 - [docs/code-system/packages/api.md](../../docs/code-system/packages/api.md)
-- [auth-boundary.md](../../docs/code-system/patterns/auth-boundary.md), [port-module-split.md](../../docs/code-system/patterns/port-module-split.md), [settings-row.md](../../docs/code-system/patterns/settings-row.md)
+- [auth-boundary.md](../../docs/code-system/patterns/auth-boundary.md), [port-module-split.md](../../docs/code-system/patterns/port-module-split.md), [keyed-settings.md](../../docs/code-system/patterns/keyed-settings.md)

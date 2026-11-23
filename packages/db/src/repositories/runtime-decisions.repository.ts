@@ -2,13 +2,13 @@ import { DecisionStatusSchema } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Db } from '../db';
-import { runtimeDecisions } from '../schema';
+import { runtimeDecisions, runtimeTasks } from '../schema';
 
 export type RuntimeDecisionRow = typeof runtimeDecisions.$inferSelect;
 
 export type NewRuntimeDecisionRow = Pick<
   typeof runtimeDecisions.$inferInsert,
-  'decisionId' | 'taskId' | 'rootId' | 'ownerId' | 'kind' | 'payload'
+  'decisionId' | 'taskId' | 'rootId' | 'kind' | 'payload'
 >;
 
 /** The columns of a request an employee reads: no owner, no delivery mark. */
@@ -87,7 +87,10 @@ export class RuntimeDecisionsRepository {
       );
   }
 
-  /** The owner's request in any status; `undefined` for a missing or another owner's one. */
+  /**
+   * The owner's request in any status, the owner being its task's; `undefined` for a missing or another owner's
+   * one.
+   */
   async findOwned(
     decisionId: string,
     ownerId: string,
@@ -95,24 +98,26 @@ export class RuntimeDecisionsRepository {
     const [row] = await this.db.client
       .select(VIEW_COLUMNS)
       .from(runtimeDecisions)
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, runtimeDecisions.taskId))
       .where(
         and(
           eq(runtimeDecisions.decisionId, decisionId),
-          eq(runtimeDecisions.ownerId, ownerId),
+          eq(runtimeTasks.ownerId, ownerId),
         ),
       );
     return row;
   }
 
-  /** All requests of the owner's tree in any status, in creation order. */
+  /** All requests of the owner's tree in any status, in creation order; the owner is the root task's. */
   listTree(rootId: string, ownerId: string): Promise<RuntimeDecisionView[]> {
     return this.db.client
       .select(VIEW_COLUMNS)
       .from(runtimeDecisions)
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, runtimeDecisions.rootId))
       .where(
         and(
           eq(runtimeDecisions.rootId, rootId),
-          eq(runtimeDecisions.ownerId, ownerId),
+          eq(runtimeTasks.ownerId, ownerId),
         ),
       )
       .orderBy(
@@ -121,16 +126,17 @@ export class RuntimeDecisionsRepository {
       );
   }
 
-  /** The task and the owner of a request. */
+  /** The task of a request and that task's owner. */
   async findTaskAndOwner(
     decisionId: string,
-  ): Promise<{ taskId: string; ownerId: string } | undefined> {
+  ): Promise<{ taskId: string; ownerId: string | null } | undefined> {
     const [row] = await this.db.client
       .select({
         taskId: runtimeDecisions.taskId,
-        ownerId: runtimeDecisions.ownerId,
+        ownerId: runtimeTasks.ownerId,
       })
       .from(runtimeDecisions)
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, runtimeDecisions.taskId))
       .where(eq(runtimeDecisions.decisionId, decisionId));
     return row;
   }

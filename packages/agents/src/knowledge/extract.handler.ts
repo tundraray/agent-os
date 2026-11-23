@@ -4,11 +4,11 @@ import type {
   LastExtractionStatus,
 } from '@agent-os/contracts';
 import type {
-  AgentCodeCallsRepository,
+  CodeCallsRepository,
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
-  AgentMcpServersRepository,
-  AgentMessagesRepository,
+  McpServersRepository,
+  MessagesRepository,
   Db,
   NewKnowledgeRelation,
 } from '@agent-os/db';
@@ -118,9 +118,9 @@ export interface KnowledgeExtractHandlerDeps {
   readonly sessions: Sessions;
   readonly knowledgeRows: AgentKnowledgeRepository;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
-  readonly mcpServerRows: AgentMcpServersRepository;
-  readonly messageRows: AgentMessagesRepository;
-  readonly codeCallRows: AgentCodeCallsRepository;
+  readonly mcpServerRows: McpServersRepository;
+  readonly messageRows: MessagesRepository;
+  readonly codeCallRows: CodeCallsRepository;
   /** The deep agent's subtree for the round's input (`readExtractionInput`). */
   readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
   /** The only way to the model: access check, ledger row and monthly spend of an ordinary call. */

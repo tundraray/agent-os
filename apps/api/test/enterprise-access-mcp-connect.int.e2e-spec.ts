@@ -92,7 +92,7 @@ const WRONG_TOKEN_SERVER = runName('logs-wrong-token');
 const NO_OAUTH_SERVER = runName('logs-oauth');
 /** Deletes every server this case names; the servers take their accounts with them. */
 const deleteRunServers = (pool: DatabaseConnection['pool']) =>
-  pool.query('DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)', [
+  pool.query('DELETE FROM app.mcp_servers WHERE name = ANY($1)', [
     [
       LOGS_SERVER,
       BACKOFFICE_SERVER,
@@ -307,7 +307,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //   AC-14.6 "у Ани нет права на сервер с личным OAuth: этого сервера в списке нет"; NFR-02 "ни в логах, ни в аудите, ни в ответах, ни в
   //   истории агентов". Design: DC-5, DC-6, DC-7, DC-13, KD-6; UC-1 and UC-2 (registration and connect), UC-E1, UC-E2, UC-E3, UC-E5.
   // Behavior: admin and employee HTTP calls -> the server is checked over HTTP before anything is saved -> the stored view, status and audit
-  //   row; the browser's connect and return go through the session-guarded `/api/mcp/...` routes -> `agent_mcp_accounts` row or a refusal
+  //   row; the browser's connect and return go through the session-guarded `/api/mcp/...` routes -> `mcp_accounts` row or a refusal
   //   redirect; one scripted agent run and a scan of every outward channel for the known secret values.
   // Binding note (the OAuth callback is a GET that changes state, so it must not act without the browser's own binding): the design binds it
   //   with the session itself plus a one-time `state` that belongs to the employee who began it (KD-6, DC-5); there is no separate cookie
@@ -321,7 +321,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //      422 `MCP_SERVER_CHECK_FAILED` reason `unauthorized`, the stored token still works (the list is read with it).
   //   2. AC-12.2 / DC-6 (UC-E1): an address nobody answers -> 422 `unreachable`; `logs`-source with a wrong shared token -> `unauthorized`;
   //      the shared-token path (no OAuth metadata) registered as oauth -> `oauth_not_supported`; the name `logs` again (at an address
-  //      nobody answers) -> 409 `MCP_SERVER_NAME_TAKEN`, so no check ran; the table `agent_mcp_servers` has not grown.
+  //      nobody answers) -> 409 `MCP_SERVER_NAME_TAKEN`, so no check ran; the table `mcp_servers` has not grown.
   //   3. AC-13.4 / DC-7: `POST` `backoffice`, mode `oauth` -> 201, status `awaiting_admin_account`; `PATCH enabled:true` -> 409
   //      `MCP_SERVER_INCOMPLETE`; Аня's `GET /api/mcp/connections` does not list it. The admin's `GET /api/admin/mcp-servers/backoffice/connect`
   //      -> 302 to the fixture authorization URL; his return with his cookie -> 302 `/admin/servers/backoffice?connected=1`; the view is
@@ -347,7 +347,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //       tokens; one scripted run of her chat calls `logs` (success) and `backoffice` (the account is lost on the call: `auth_required`).
   //   deletion
   //   10. AC-13.6: Аня, Борис and the administrator have accounts on `backoffice`; `DELETE /api/admin/mcp-servers/backoffice` -> 204; no row of
-  //       `agent_mcp_accounts` names `backoffice` any more; tool calls in `agent_messages` history rows of the server stay with the name as text.
+  //       `mcp_accounts` names `backoffice` any more; tool calls in `messages` history rows of the server stay with the name as text.
   //   secrets
   //   11. NFR-02 (UC-E3): the known values (the shared token before and after the administrator replaced it, the wrong token, every access
   //       and refresh token stored, the OAuth client secret if the fixture issued one, every `state` and authorization `code`, the session
@@ -434,7 +434,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       };
       const ownersOn = async (server: string): Promise<string[]> => {
         const rows = await pool.query<{ owner_id: string }>(
-          'SELECT owner_id FROM app.agent_mcp_accounts WHERE server = $1 ORDER BY owner_id',
+          'SELECT owner_id FROM app.mcp_accounts WHERE server = $1 ORDER BY owner_id',
           [server],
         );
         return rows.rows.map((row) => row.owner_id);
@@ -447,7 +447,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
           access_token: string;
           refresh_token: string | null;
         }>(
-          'SELECT owner_id, server, access_token, refresh_token FROM app.agent_mcp_accounts WHERE server = ANY($1)',
+          'SELECT owner_id, server, access_token, refresh_token FROM app.mcp_accounts WHERE server = ANY($1)',
           [[BACKOFFICE_SERVER, SECOND_OAUTH_SERVER]],
         );
         for (const row of accounts.rows) {
@@ -464,7 +464,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
           name: string;
           oauth_client_secret: string | null;
         }>(
-          'SELECT name, oauth_client_secret FROM app.agent_mcp_servers WHERE name = ANY($1)',
+          'SELECT name, oauth_client_secret FROM app.mcp_servers WHERE name = ANY($1)',
           [[BACKOFFICE_SERVER, SECOND_OAUTH_SERVER]],
         );
         for (const row of servers.rows)
@@ -488,7 +488,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         );
       const runServerCount = async (): Promise<number> => {
         const rows = await pool.query<{ count: string }>(
-          'SELECT count(*) FROM app.agent_mcp_servers WHERE name LIKE $1',
+          'SELECT count(*) FROM app.mcp_servers WHERE name LIKE $1',
           [`%${LOGS_SERVER.slice('logs'.length)}`],
         );
         return Number(rows.rows[0]?.count);
@@ -1004,24 +1004,16 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         (await call(admin, 'delete', `/admin/mcp-servers/${BACKOFFICE_SERVER}`))
           .status,
       ).toBe(204);
-      // Then: no account and no grant names it; the history of its calls stays with the name as text
+      // Then: no account names it; the history of its calls stays with the name as text
       expect(await ownersOn(BACKOFFICE_SERVER)).toEqual([]);
-      expect(
-        (
-          await pool.query(
-            'SELECT id FROM app.access_grants WHERE server = $1',
-            [BACKOFFICE_SERVER],
-          )
-        ).rows,
-      ).toEqual([]);
       const history = await pool.query<{
         server: string | null;
         tool: string;
         outcome: string | null;
       }>(
         `SELECT c.content ->> 'server' AS server, c.content ->> 'tool' AS tool, c.content ->> 'outcome' AS outcome
-           FROM app.agent_messages c
-           JOIN app.agent_sessions s ON s.task_id = c.task_id
+           FROM app.messages c
+           JOIN app.conversations s ON s.id = c.conversation_id
           WHERE s.owner_id = $1 AND c.kind = 'tool_result' ORDER BY c.created_at, c.seq`,
         [anya.id],
       );
@@ -1041,8 +1033,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       // The administrator's, Аня's three (rows 6, 11a, 10) and Борис's.
       expect(tokenLabels.length).toBe(5);
       const agentRows = await pool.query<{ content: unknown }>(
-        `SELECT to_jsonb(m) AS content FROM app.agent_messages m
-           JOIN app.agent_sessions s ON s.task_id = m.task_id WHERE s.owner_id = $1`,
+        `SELECT to_jsonb(m) AS content FROM app.messages m
+           JOIN app.conversations s ON s.id = m.conversation_id WHERE s.owner_id = $1`,
         [anya.id],
       );
       const audit = await pool.query<{ row: unknown }>(

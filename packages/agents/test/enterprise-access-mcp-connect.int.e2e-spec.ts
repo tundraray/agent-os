@@ -48,7 +48,7 @@ import {
   registerServer,
   removeServer,
 } from '@agent-os/agents/testing';
-import { agentMcpAccounts, agentSessions } from '@agent-os/db';
+import { mcpAccounts, conversations } from '@agent-os/db';
 import {
   FIXTURE_SHARED_TOKEN,
   createFixtureFiles,
@@ -258,9 +258,9 @@ async function auditOf(
 ): Promise<string[]> {
   // The calls are folded from the agent's history; their owner is the owner of its session row.
   const [session] = await harness.db
-    .select({ ownerId: agentSessions.ownerId })
-    .from(agentSessions)
-    .where(eq(agentSessions.taskId, agentId));
+    .select({ ownerId: conversations.ownerId })
+    .from(conversations)
+    .where(eq(conversations.id, agentId));
   const rows = await toolCallRowsOf(harness.db, agentId);
   return rows.map((row) =>
     [
@@ -321,13 +321,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   пропадают у него со следующего вызова модели, а статус - «нужна аутентификация»". Design: DC-1, DC-2, DC-11; UC-1, UC-2 (calls), UC-4, UC-E4.
   // Behavior: an admin or employee operation on `Agents.mcp` -> the next model call of a running agent builds its set from the database ->
   //   the scripted model asks for tools -> `ToolRunner` asks the one access function, then opens ONE connection with the owner's token ->
-  //   fixture journal and tool calls in `agent_messages`.
+  //   fixture journal and tool calls in `messages`.
   // Steps (one story, literal expectations; the registry is empty at the start; Аня and Борис are permitted `logs` and `backoffice` and Глеб
   //   nothing, server rights of the access gate double keyed by their ids; the definitions name `*` and also `ghost`, which is never registered; an agent of Аня is running):
   //   1. DC-11: startup passed with `ghost` in the definitions; `ghost` yields no tool in any set.
   //   2. AC-12.5 / AC-13.1: the admin registers `logs` (shared token); at Аня's next model call her set holds the `logs` tools, no restart.
   //      Аня's and Борис's agents each call one `logs` tool -> the journal holds two calls with the shared identity, and each
-  //      tool calls in `agent_messages` belongs to its own agent and `ownerId`.
+  //      tool calls in `messages` belongs to its own agent and `ownerId`.
   //   3. AC-14.2 / AC-14.3: `backoffice` (personal OAuth) is registered and the admin account is connected. Аня has no account: the set of her
   //      next model call has no `backoffice` tool and her agent keeps working (the scripted model finishes the turn). Аня and Борис connect;
   //      at their next model calls the sets hold the `backoffice` tools.
@@ -353,10 +353,10 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       // Given: no server of this run in the registry; Аня and Борис may use `logs`, `backoffice` and `ghost`, Глеб
       // nothing; Аня's definition names every server (`*`), Борис's names `logs`, `backoffice` and `ghost`, which
       // is never registered
-      const anya = newUser();
-      const boris = newUser();
-      const gleb = newUser();
-      const admin = newUser();
+      const anya = await newUser();
+      const boris = await newUser();
+      const gleb = await newUser();
+      const admin = await newUser();
       const everyServer = testRecord('every-server', { servers: ['*'] });
       const namedServers = testRecord('named-servers', {
         servers: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER],
@@ -728,7 +728,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //      the same new access token, the stored account holds the new tokens. Nothing asks Аня anything.
   //   2. DC-3 / AC-14.5: the fixture revokes Аня's refresh tokens and her `expires_at` is moved into the past again -> her agent calls the
   //      tool -> outcome `auth_required` (not `refused`, not `transport_failure`), the text the model gets names «Мой доступ», the journal
-  //      got no request for this call, the `agent_mcp_accounts` row is deleted, `connections(anya)` is `needs_auth`, her next model call has
+  //      got no request for this call, the `mcp_accounts` row is deleted, `connections(anya)` is `needs_auth`, her next model call has
   //      no `backoffice` tool and the agent stays running. Борис's account and call are untouched.
   //   3. the same loss through the other door: a still-valid access token which the server answers 401 to, and a refresh that then fails
   //      -> `auth_required`, row deleted.
@@ -737,7 +737,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   5. UC-E4: a `drop_connection` rule on one `logs` call -> `transport_failure`, the step does not fail and the agent goes on to its next
   //      model call (the real SDK failure class, which the unit map cannot show).
   //   6. owner gate inside a script: Аня's agent runs a `write`-class `run_code` script that calls a `logs` tool twice; the first call is held
-  //      on the fixture; the access gate double is switched to refusing; the first call is released -> `agent_code_calls`: seq 1 `success`,
+  //      on the fixture; the access gate double is switched to refusing; the first call is released -> `code_calls`: seq 1 `success`,
   //      seq 2 `interrupted` (not `unknown`, although the run is `write`) with no `refusalReason`; the journal holds no second `logs` call
   //      from Аня; the agent's task ends `failed` with reason `owner_disabled`.
   // Catches: a refresh token spent twice (one per simultaneous call) so a rotating authorization server revokes the whole chain and the
@@ -754,9 +754,9 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       // Given: `logs` and `tracker` with the shared token, `backoffice` with personal OAuth; the admin, Аня and
       // Борис have connected their `backoffice` accounts; Аня runs two agents that name every server. The owner
       // gate lets everyone through until the test refuses Аня (row 6)
-      const anya = newUser();
-      const boris = newUser();
-      const admin = newUser();
+      const anya = await newUser();
+      const boris = await newUser();
+      const admin = await newUser();
       const everyServer = testRecord('every-server', { servers: ['*'] });
       const fixture = createFixtureFiles('mcp-connect');
       const model = createScriptedModel();
@@ -1111,15 +1111,15 @@ async function expireAccount(
   ownerId: string,
 ): Promise<void> {
   const moved = await harness.db
-    .update(agentMcpAccounts)
+    .update(mcpAccounts)
     .set({ expiresAt: new Date(Date.now() - 60_000) })
     .where(
       and(
-        eq(agentMcpAccounts.ownerId, ownerId),
-        eq(agentMcpAccounts.server, BACKOFFICE_SERVER),
+        eq(mcpAccounts.ownerId, ownerId),
+        eq(mcpAccounts.server, BACKOFFICE_SERVER),
       ),
     )
-    .returning({ ownerId: agentMcpAccounts.ownerId });
+    .returning({ ownerId: mcpAccounts.ownerId });
   if (moved.length !== 1)
     throw new Error(`${ownerId} has no ${BACKOFFICE_SERVER} account to expire`);
 }
@@ -1128,11 +1128,11 @@ async function expireAccount(
 async function accountRowOf(harness: AgentsHarness, ownerId: string) {
   const [row] = await harness.db
     .select()
-    .from(agentMcpAccounts)
+    .from(mcpAccounts)
     .where(
       and(
-        eq(agentMcpAccounts.ownerId, ownerId),
-        eq(agentMcpAccounts.server, BACKOFFICE_SERVER),
+        eq(mcpAccounts.ownerId, ownerId),
+        eq(mcpAccounts.server, BACKOFFICE_SERVER),
       ),
     );
   return row;

@@ -21,7 +21,6 @@ export const runtimeInbox = app.table(
     recipientId: uuid('recipient_id')
       .notNull()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-    ownerId: text('owner_id').notNull(),
     /** Grows within the recipient and orders delivery. */
     seq: integer('seq').notNull(),
     kind: text('kind').notNull(),

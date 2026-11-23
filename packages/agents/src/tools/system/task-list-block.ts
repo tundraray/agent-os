@@ -1,4 +1,4 @@
-import type { AgentSessionTasksRepository, SessionTask } from '@agent-os/db';
+import type { ConversationTasksRepository, SessionTask } from '@agent-os/db';
 import { SessionTaskStatusSchema } from '@agent-os/contracts';
 
 /**
@@ -41,7 +41,7 @@ export function taskBlock(tasks: readonly SessionTask[]): string | null {
  * list (`ToolDeclaration.taskList`) reads nothing.
  */
 export function tasksOf(
-  deps: { readonly sessionTaskRows: AgentSessionTasksRepository },
+  deps: { readonly sessionTaskRows: ConversationTasksRepository },
   agentId: string,
   taskList: boolean,
 ): Promise<SessionTask[]> {

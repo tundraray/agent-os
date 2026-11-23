@@ -1,30 +1,32 @@
 import type { Logger } from '@agent-os/common';
+import type { AgentVersion } from '@agent-os/contracts';
 import type { LiveTask, LiveTaskIdentity } from '@agent-os/runtime';
 
 import { AgentsError } from '../../errors';
 import type { StartResolution, StartSource } from '../../start/resolve-start';
-import type { RunSnapshot } from '../../start/snapshot';
-import type { SessionInput } from '../../store/sessions';
+import type { RunStart } from '../../start/run-definition';
+import { type SessionInput, startFieldsOf } from '../../store/sessions';
 import type { StartChild } from '../tool';
 import type { StartChildScope } from '../tool-runner';
 
 export interface StartChildDeps {
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
-  /** The task type the child's snapshot runs as (`childTypeOf`). */
-  readonly childType: (snapshot: RunSnapshot) => string;
+  /** The task type the child's run runs as (`childTypeOf`). */
+  readonly childType: (run: RunStart) => string;
   /** Makes the child's object with its session inside the commit (`AgentFactory.createIn`). */
   readonly createIn: (
     type: string,
     task: Omit<LiveTaskIdentity, 'type' | 'input'>,
     input: SessionInput,
+    version: AgentVersion,
   ) => Promise<LiveTask>;
 }
 
 /**
  * The only start of a child agent inside a step's commit transaction (design-runtime.md, «Операции
  * `agents`»): the child is not deeper than `AGENT_MAX_DEPTH` (`DEPTH_LIMIT`), then `effects.spawn` of a
- * task of the child's type (`childType`) with the snapshot in its input, then the child's object with its session and
+ * task of the child's type (`childType`) with its start in its input, then the child's object with its session and
  * `task` entry in the same transaction (plan Notes 11), handed to the runtime with `effects.adopt`: it keeps the
  * object once the commit succeeds, and the child's first step runs on it. The caller gets the `agentId` at once.
  * Owner and parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
@@ -32,8 +34,8 @@ export interface StartChildDeps {
 export function createStartChild(
   deps: StartChildDeps,
 ): (scope: StartChildScope) => StartChild {
-  return ({ effects, caller }) =>
-    async ({ snapshot, prompt, description, forkedFrom }) => {
+  return ({ effects, caller, callId }) =>
+    async ({ run, prompt, description, forkedFrom }) => {
       if (caller.depth + 1 > deps.maxDepth) {
         throw new AgentsError(
           'DEPTH_LIMIT',
@@ -41,12 +43,13 @@ export function createStartChild(
         );
       }
       const input: SessionInput = {
-        snapshot,
+        ...startFieldsOf(run),
         prompt,
         description,
         ...(forkedFrom === undefined ? {} : { forkedFrom }),
+        startCallId: callId,
       };
-      const type = deps.childType(snapshot);
+      const type = deps.childType(run);
       const agentId = await effects.spawn({ type, input });
       const child = await deps.createIn(
         type,
@@ -58,6 +61,7 @@ export function createStartChild(
           depth: caller.depth + 1,
         },
         input,
+        run.version,
       );
       effects.adopt(agentId, child);
       return { agentId };
@@ -71,11 +75,15 @@ export interface StartLogEntry {
   readonly parentId: string | null;
   /** The started agent; `null` when the start was refused. */
   readonly agentId: string | null;
-  /** The kind of the snapshot's source; `null` when nothing was resolved. */
-  readonly source: StartSource['kind'] | null;
-  /** The record the call named, when it named one by id. */
+  /** The kind of the start's source, `name` for a call by name; `null` when nothing was resolved. */
+  readonly source: StartSource['kind'] | 'name' | null;
+  /** The record the start named, when it named one by id. */
   readonly recordId?: string;
-  /** What the start procedure answered; `null` when the gate refused before it. */
+  /** The name a call gave. */
+  readonly name?: string;
+  /** The record of the chip of the message a call by name answers; absent — no chip. */
+  readonly chipRecordId?: string;
+  /** What the start procedure answered; `null` when it found a name of another kind. */
   readonly resolution: StartResolution | null;
   /** The refusal of the start, when it was refused. */
   readonly refusal: string | null;
@@ -84,10 +92,8 @@ export interface StartLogEntry {
 
 /** Logs a start or its refusal with the record, its version and the subagent (design-runtime.md, «Логирование»). */
 export function logStart(logger: Logger, entry: StartLogEntry): void {
-  const origin =
-    entry.resolution?.kind === 'snapshot'
-      ? entry.resolution.snapshot.origin
-      : null;
+  const run =
+    entry.resolution?.kind === 'started' ? entry.resolution.run : null;
   logger.info(
     entry.refusal === null ? 'agents start done' : 'agents start refused',
     {
@@ -96,9 +102,13 @@ export function logStart(logger: Logger, entry: StartLogEntry): void {
       parentId: entry.parentId,
       agentId: entry.agentId,
       source: entry.source,
-      recordId: origin?.recordId ?? entry.recordId ?? null,
-      version: origin?.version ?? null,
-      subagent: origin?.subagent ?? null,
+      recordId: run?.version.agentId ?? entry.recordId ?? null,
+      name: run?.name ?? entry.name ?? null,
+      chipRecordId: entry.chipRecordId ?? null,
+      versionId: run?.version.id ?? null,
+      version: run?.version.number ?? null,
+      subagent: run?.subagent ?? null,
+      model: run?.model ?? null,
       outcome: entry.refusal ?? 'started',
       refusedModel:
         entry.resolution?.kind === 'refused' ? entry.resolution.model : null,

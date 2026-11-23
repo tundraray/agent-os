@@ -1,11 +1,15 @@
 import type { Logger } from '@agent-os/common';
-import { AGENT_TASK_TYPE, ToolOutcomeSchema } from '@agent-os/contracts';
+import {
+  AGENT_TASK_TYPE,
+  RecordNameSchema,
+  ToolOutcomeSchema,
+  type SettingsValue,
+} from '@agent-os/contracts';
 import type {
-  AgentMessagesRepository,
-  AgentSessionTasksRepository,
-  AgentToolResultsRepository,
+  MessagesRepository,
+  ConversationTasksRepository,
+  ToolResultsRepository,
   StoredToolResult,
-  ToolResultSettingsRow,
 } from '@agent-os/db';
 import type {
   Trackers,
@@ -18,14 +22,14 @@ import { z } from 'zod';
 import { descriptionLine } from '../chat-listing';
 import type { CallState } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import type { DeepAgentSnapshot } from '../start/snapshot';
-import { snapshotDefinition } from '../start/snapshot-definition';
+import { type RunStart, runDefinition } from '../start/run-definition';
 import type { CallEnding, CallRecords } from '../store/call-records';
 import type { History } from '../store/history';
 import {
   AnswerFieldSchema,
   type SessionInput,
   type Sessions,
+  startFieldsOf,
 } from '../store/sessions';
 import { wrapperText } from '../tools/large-result';
 import { decideTaskChange } from '../tools/system/task-list-rules';
@@ -35,7 +39,12 @@ import type {
   ToolDeclaration,
 } from '../tools/tool';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
-import { delegationTeam, subagentSnapshot, TASK_TOOL } from './deep-definition';
+import {
+  type DeepAgentVersion,
+  delegationTeam,
+  subagentStart,
+  TASK_TOOL,
+} from './deep-definition';
 import {
   type AcceptedDelegation,
   type AnswerField,
@@ -55,10 +64,9 @@ const ANSWER_FIELDS_MAX = 10;
 
 /** The arguments of `task` with every field; a session gets the fields its flags allow (`taskArgsSchema`). */
 const TaskArgsSchema = z.strictObject({
-  subagentType: z
-    .string()
-    .min(1)
-    .describe('The name of the subagent, as the list below gives it'),
+  subagentType: RecordNameSchema.describe(
+    'The name of the subagent, as the list below gives it; any other name starts general-purpose under that name',
+  ),
   description: z
     .string()
     .trim()
@@ -237,25 +245,30 @@ export interface DelegationsDeps {
   /** The session of each subagent, the `tool_sent` and the closing of each call, and the deep agent's task list. */
   readonly sessions: Sessions;
   readonly history: History;
-  readonly messageRows: AgentMessagesRepository;
+  readonly messageRows: MessagesRepository;
   readonly callRecords: CallRecords;
-  readonly sessionTaskRows: AgentSessionTasksRepository;
-  readonly toolResultRows: AgentToolResultsRepository;
+  readonly sessionTaskRows: ConversationTasksRepository;
+  readonly toolResultRows: ToolResultsRepository;
   /** The outcomes of the tracker's tasks (`Trackers.list`). */
   readonly trackers: Pick<Trackers, 'list'>;
   /** The threshold of a stored result, as for an MCP result (tool-result-reading R-5). */
-  readonly resultSettings: () => Promise<ToolResultSettingsRow>;
+  readonly resultSettings: () => Promise<SettingsValue<'tool_result_settings'>>;
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
 }
 
-function deepAgentOf(caller: ToolCaller): DeepAgentSnapshot {
-  if (caller.snapshot.kind !== 'deep_agent') {
+/** The deep agent's run of the caller: `task` is a deep agent's tool. */
+function deepAgentOf(caller: ToolCaller): {
+  readonly run: RunStart;
+  readonly version: DeepAgentVersion;
+} {
+  const { run } = caller;
+  if (run.version.kind !== 'deep_agent' || run.subagent !== null) {
     throw new Error(
-      `Agent ${caller.agentId} calls task without a deep agent's snapshot`,
+      `Agent ${caller.agentId} calls task without a deep agent's version`,
     );
   }
-  return caller.snapshot;
+  return { run, version: run.version };
 }
 
 /** The brief of a deep agent `start_deep_agent` started: its first entry; `null` for any other task. */
@@ -372,7 +385,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
   function singleEnding(
     call: CallState,
     task: TrackerTask,
-    settings: ToolResultSettingsRow,
+    settings: SettingsValue<'tool_result_settings'>,
     listLine: string | null,
   ): Pick<DelegationClosing, 'ending' | 'stored'> {
     const childTaskId = task.taskId;
@@ -463,7 +476,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
   return {
     async decide(caller, calls) {
       const deepAgent = deepAgentOf(caller);
-      const definition = snapshotDefinition(deepAgent);
+      const definition = runDefinition(deepAgent.run);
       const [runs, tasks] = await Promise.all([
         messageRows.singleTaskRuns(caller.agentId, TASK_TOOL),
         definition.taskList
@@ -476,7 +489,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       }));
       return decideDelegations({
         calls: delegationCalls,
-        team: delegationTeam(deepAgent),
+        team: delegationTeam(deepAgent.version.content),
         singleRuns: new Map(runs.map((row) => [row.subagent, row.runs])),
         tasks,
         childTooDeep: caller.depth + 1 > maxDepth,
@@ -488,15 +501,16 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       const brief = await briefOf(history, caller.agentId);
       const children = accepted.flatMap((delegation) =>
         partsOf(delegation).map(({ description, body }) => {
-          const snapshot = subagentSnapshot(deepAgent, delegation.subagent);
-          if (snapshot === null)
+          const run = subagentStart(deepAgent.run, delegation);
+          if (run === null)
             throw new Error(
               `Subagent ${delegation.subagent} left the team of ${caller.agentId}`,
             );
           const input: SessionInput = {
-            snapshot,
+            ...startFieldsOf(run),
             prompt: assignmentOf(brief, body, delegation.answerFields),
             description,
+            startCallId: delegation.callId,
             ...(delegation.answerFields.length === 0
               ? {}
               : { answerFields: [...delegation.answerFields] }),
@@ -519,9 +533,9 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
             taskId,
             ownerId: caller.ownerId,
             parentId: caller.agentId,
-            rootId: caller.rootId,
           },
           input,
+          deepAgent.version.agentId,
         );
         logger.info('task delegation started', {
           agentId: caller.agentId,
@@ -531,7 +545,10 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
           trackerId,
           taskId,
           subagent: delegation.subagent,
-          version: input.snapshot.origin.version,
+          name: delegation.name,
+          versionId: input.versionId,
+          version: deepAgent.version.number,
+          model: input.model,
           listTask: delegation.listTask,
         });
       }
@@ -562,7 +579,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
             delegation.listTask,
             {
               status: 'in_progress',
-              owner: delegation.subagent,
+              owner: delegation.name,
             },
           );
         }
@@ -639,7 +656,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
  * the deep agent's steps write its list, and the call was checked against it, so a refusal here is a defect.
  */
 async function changeListTask(
-  sessionTaskRows: AgentSessionTasksRepository,
+  sessionTaskRows: ConversationTasksRepository,
   agentId: string,
   taskId: number,
   change: {

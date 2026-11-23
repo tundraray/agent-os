@@ -12,7 +12,7 @@ const AT = new Date(0);
 
 const SESSION = {
   taskId: AGENT,
-  forkedFromTaskId: PARENT,
+  parentId: PARENT,
   forkedThroughSeq: 1,
   turns: 0,
 } as Session;
@@ -81,7 +81,7 @@ const ENTRIES: HistoryEntry[] = [
   },
 ];
 
-/** The stores over the first `written` entries of the agent, with the queries of `AgentMessagesRepository`. */
+/** The stores over the first `written` entries of the agent, with the queries of `MessagesRepository`. */
 function storesAt(
   written: number,
   turns: number,

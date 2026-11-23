@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
-import { AgentToolResultsRepository } from '@agent-os/db';
+import { SettingsRepository } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -42,6 +42,7 @@ import {
   type NotSent,
   type ToolExecution,
 } from './tool-execution';
+import { readToolResultSettings } from './tool-result-settings';
 import { callTarget, isMcp, type SessionTool } from './tool-registry';
 
 /** What `planInCommit` gives the step: run inside `commit(effects)`. */
@@ -80,10 +81,11 @@ export type ConfirmationCard =
   | { readonly kind: 'request'; readonly request: ConfirmationRequest }
   | Extract<ToolReview, { readonly kind: 'refused' }>;
 
-/** What the spawn helper of one in-commit call is bound to. */
+/** What the spawn helper of one in-commit call is bound to: the call's id becomes the child's `start_call_id`. */
 export interface StartChildScope {
   readonly effects: StepEffects;
   readonly caller: ToolCaller;
+  readonly callId: string;
 }
 
 /** The step context the runner needs for an outside call; the tool gets it in its input. */
@@ -126,9 +128,9 @@ export class ToolRunner {
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
     /** `mcpCallTimeoutMs` bounds one MCP call, the handshake included. */
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'mcpCallTimeoutMs'>,
-    /** The settings row of large results (tool-result-reading R-5), read on every direct MCP call. */
-    @Inject(AgentToolResultsRepository)
-    toolResultRows: Pick<AgentToolResultsRepository, 'readSettings'>,
+    /** The settings of large results (tool-result-reading R-5), the key read on every direct MCP call. */
+    @Inject(SettingsRepository)
+    settingsRows: Pick<SettingsRepository, 'read'>,
     /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
     @Inject(MASK_SECRETS) maskSecrets: (text: string) => string,
   ) {
@@ -136,7 +138,7 @@ export class ToolRunner {
       client,
       accounts,
       callTimeoutMs: config.mcpCallTimeoutMs,
-      resultSettings: () => toolResultRows.readSettings(),
+      resultSettings: () => readToolResultSettings(settingsRows),
       maskSecrets,
     });
     this.codeCall = createCodeCall({
@@ -378,7 +380,11 @@ export class ToolRunner {
       args: call.args,
       caller: call.caller,
       effects,
-      startChild: this.startChildFor({ effects, caller: call.caller }),
+      startChild: this.startChildFor({
+        effects,
+        caller: call.caller,
+        callId: call.callId,
+      }),
       prepared,
       ...(confirmed === undefined ? {} : { confirmed }),
     });
@@ -388,7 +394,10 @@ export class ToolRunner {
 /** The tool's `prepare`, run before the commit transaction opens. */
 function prepareInCommit(call: InCommitCall): Promise<unknown> {
   return (
-    call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ??
-    Promise.resolve(undefined)
+    call.tool.tool.prepare?.({
+      callId: call.callId,
+      args: call.args,
+      caller: call.caller,
+    }) ?? Promise.resolve(undefined)
   );
 }

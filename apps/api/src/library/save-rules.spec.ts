@@ -1,5 +1,6 @@
 import type { AgentContent, RecordBody } from '@agent-os/contracts';
 import {
+  decideDelete,
   decideSave,
   type SaveChoices,
   type SaveDecision,
@@ -133,6 +134,17 @@ describe('save rule: names unique per owner and against system records, only add
       expected: nameTaken('system', 'general-purpose'),
     },
     {
+      // data-model «Таблицы каталога»: a record named `fork` could never be started by name.
+      name: 'an employee record takes the name of the fork in any case',
+      input: save({ name: 'Fork' }),
+      expected: nameTaken('system', 'Fork'),
+    },
+    {
+      name: 'a system record takes the name of the fork',
+      input: save({ name: 'fork', choices: admin }),
+      expected: nameTaken('own', 'fork'),
+    },
+    {
       name: 'AC-07.1: an added server the author may not use',
       input: save({ body: agent({ servers: ['sentry', 'gmail'] }) }),
       expected: refused('server_not_allowed', 'servers', ['gmail']),
@@ -237,5 +249,15 @@ describe('save rule: names unique per owner and against system records, only add
     },
   ])('$name', ({ input, expected }) => {
     expect(decideSave(input)).toEqual(expected);
+  });
+});
+
+// AC-12.2; data-model design-agents.md KD-4, DC-22: no default agent can be deleted - one branch, any key.
+describe('delete rule: a default agent is never deleted, any other agent is', () => {
+  it.each<{ builtinKey: string | null; expected: unknown }>([
+    { builtinKey: 'chat', expected: { kind: 'refused', reason: 'builtin' } },
+    { builtinKey: null, expected: { kind: 'allowed' } },
+  ])('key $builtinKey', ({ builtinKey, expected }) => {
+    expect(decideDelete({ builtinKey })).toEqual(expected);
   });
 });

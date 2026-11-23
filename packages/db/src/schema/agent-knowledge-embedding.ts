@@ -10,7 +10,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { isOneOf } from './helpers';
-import { libraryRecords } from './library-records';
+import { agents } from './agents';
 
 /** The vector row of a deep agent (KD-8): its pass in progress and the last embeddings outcome. */
 export const agentKnowledgeEmbedding = app.table(
@@ -18,7 +18,7 @@ export const agentKnowledgeEmbedding = app.table(
   {
     recordId: uuid('record_id')
       .primaryKey()
-      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+      .references(() => agents.id, { onDelete: 'cascade' }),
     /** Pass task in progress (Invariant 13). */
     passTaskId: uuid('pass_task_id'),
     needsPass: boolean('needs_pass').notNull().default(false),

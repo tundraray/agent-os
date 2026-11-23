@@ -2,7 +2,7 @@ import { KnowledgeItemTypeSchema } from '@agent-os/contracts';
 import { check, customType, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { isOneOf } from './helpers';
-import { libraryRecords } from './library-records';
+import { agents } from './agents';
 
 /** pgvector column without a fixed length (KD-8); the type lives where the extension is installed. */
 const vector = customType<{ data: number[]; driverData: string }>({
@@ -20,7 +20,7 @@ export const agentKnowledgeVectors = app.table(
   {
     recordId: uuid('record_id')
       .notNull()
-      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+      .references(() => agents.id, { onDelete: 'cascade' }),
     /** Record key: `e12`, `r7`. */
     key: text('key').notNull(),
     keyKind: text('key_kind').notNull(),

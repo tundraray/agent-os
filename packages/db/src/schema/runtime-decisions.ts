@@ -21,8 +21,9 @@ export const runtimeDecisions = app.table(
     taskId: uuid('task_id')
       .notNull()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-    rootId: uuid('root_id').notNull(),
-    ownerId: text('owner_id').notNull(),
+    rootId: uuid('root_id')
+      .notNull()
+      .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
     kind: text('kind').notNull(),
     payload: jsonb('payload').notNull(),
     status: text('status').notNull().default(DecisionStatusSchema.enum.open),

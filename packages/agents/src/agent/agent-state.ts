@@ -1,3 +1,4 @@
+import type { AgentVersion } from '@agent-os/contracts';
 import type { LiveTaskIdentity } from '@agent-os/runtime';
 
 import { type CallState, foldCalls } from '../history/call-state';
@@ -6,10 +7,14 @@ import type { ForkPrefix } from '../model/provider-messages';
 import type { Session, SessionInput } from '../store/sessions';
 import type { AgentDeps } from './agent-deps';
 
-/** What an agent object is made for: its task and the task's parsed input. Never changes. */
+/**
+ * What an agent object is made for: its task, the task's parsed input and the version the input names, read
+ * once when the object is made (data-model design-agents.md, KD-6: a version never changes). Never changes.
+ */
 export interface AgentRun {
   readonly task: LiveTaskIdentity;
   readonly input: SessionInput;
+  readonly version: AgentVersion;
 }
 
 /** The history the model sees: the fork prefix and the own entries. */
@@ -63,14 +68,12 @@ export async function loadState(
   const entries = await deps.history.visible(taskId);
   const compacted = entries.some((entry) => entry.kind === 'compaction');
   const forkPrefix: ForkPrefix | undefined =
-    compacted ||
-    session.forkedFromTaskId === null ||
-    session.forkedThroughSeq === null
+    compacted || session.parentId === null || session.forkedThroughSeq === null
       ? undefined
       : {
           throughSeq: session.forkedThroughSeq,
           entries: await deps.history.through(
-            session.forkedFromTaskId,
+            session.parentId,
             session.forkedThroughSeq,
           ),
         };

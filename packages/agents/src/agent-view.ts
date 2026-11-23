@@ -43,7 +43,7 @@ export interface AgentView {
   readonly parentId: string | null;
   readonly rootId: string;
   readonly depth: number;
-  /** The run's name from its snapshot. */
+  /** The run's name, as its start gave it. */
   readonly name: string;
   /**
    * The record the run started from; `null` for a root, which the employee sees as the conversation
@@ -91,9 +91,9 @@ export function toAgentView(
     status,
     failureReason: status === 'failed' ? (task.failure?.reason ?? null) : null,
     forkedFrom:
-      session.forkedFromTaskId !== null && session.forkedThroughSeq !== null
+      session.parentId !== null && session.forkedThroughSeq !== null
         ? {
-            agentId: session.forkedFromTaskId,
+            agentId: session.parentId,
             throughSeq: session.forkedThroughSeq,
           }
         : null,

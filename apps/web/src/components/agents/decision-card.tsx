@@ -33,13 +33,12 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { z } from 'zod';
-import { useStore } from 'zustand';
 import {
   AgentStatus,
   FadeSlot,
   StatusGlyph,
 } from '@/components/agents/agent-status';
-import { useCardThread } from '@/components/agents/run-card';
+import { useCardThread, useRecordNamed } from '@/components/agents/run-card';
 import { ValueRows } from '@/components/agents/value-rows';
 import { DefinitionView } from '@/components/library/definition-view';
 import { RecordLabel } from '@/components/library/record-label';
@@ -139,7 +138,7 @@ type BriefText = Record<BriefField, string>;
 
 /**
  * `start_deep_agent` arguments as the confirmation carries them, and the brief card content of the same
- * shape: the deep agent record id travels inside `args` and goes back unchanged with the three fields
+ * shape: the deep agent's name travels inside `args` and goes back unchanged with the three fields
  * (design-runtime.md, § Маршруты).
  */
 const BriefSchema = z.object({
@@ -538,23 +537,20 @@ function DecisionButton({
 }
 
 /**
- * RN-05, deep-agents MC-22: «Задание · {имя}» by the deep agent of the brief's content (design-web.md, «Имя в
- * заголовке задания»), «Задание» while the library list is not read or has no such record; under it the deep agent's
- * record label. The run's origin does not exist before the confirmation, so the live list is the source.
+ * RN-05, deep-agents MC-22: «Задание · {имя}» by the name of the brief's content (design-web.md, «Имя в
+ * заголовке задания»); under it the label of the deep agent record that name starts, from the live list (the
+ * run's origin does not exist before the confirmation), none for a temporary one.
  */
-function BriefHeading({ deepAgentId }: { deepAgentId: string }) {
-  const { libraryIndex } = useShellServices();
+function BriefHeading({ deepAgentName }: { deepAgentName: string }) {
   const locale = useLocale();
   const tLibrary = useTranslations('library');
-  // Subscribes to the list: the title follows a read that lands after the card.
-  useStore(libraryIndex, (state) => state.records);
-  const found = libraryIndex.summaryOf(deepAgentId);
+  const found = useRecordNamed('deep_agent', deepAgentName);
   const live =
     found == null ? found : { ...found, name: builtinName(found, locale) };
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <h3 className="text-base leading-6 font-semibold break-words">
-        {briefTitleName(tLibrary, deepAgentId, { summaryOf: () => live })}
+        {briefTitleName(tLibrary, deepAgentName)}
       </h3>
       {live != null && (
         <RecordLabel
@@ -568,11 +564,20 @@ function BriefHeading({ deepAgentId }: { deepAgentId: string }) {
 }
 
 /**
- * SL-02, MC-9 (self-learning design-web.md, KD-6): the summary in the library list carries no content, so
- * the deep agent's record is read once on mount. While the read is in flight, when it fails (the log is
- * `useResource`'s) and when the flag is off there is no line, and the card decides as before (DC-4).
+ * SL-02, MC-9 (self-learning design-web.md, KD-6) for the deep agent record the brief's name starts; a
+ * temporary deep agent has no record and learns nothing, so it has no line.
  */
-function SelfLearningNote({ deepAgentId }: { deepAgentId: string }) {
+function SelfLearningNote({ deepAgentName }: { deepAgentName: string }) {
+  const found = useRecordNamed('deep_agent', deepAgentName);
+  return found == null ? null : <SelfLearningLine deepAgentId={found.id} />;
+}
+
+/**
+ * The summary in the library list carries no content, so the deep agent's record is read once on mount. While
+ * the read is in flight, when it fails (the log is `useResource`'s) and when the flag is off there is no line,
+ * and the card decides as before (DC-4).
+ */
+function SelfLearningLine({ deepAgentId }: { deepAgentId: string }) {
   const t = useTranslations('agents');
   const record = useResource(
     () => libraryApi.get(deepAgentId),
@@ -901,7 +906,7 @@ export function DecisionCard({
     const errorId = `${fieldId}-question-error`;
     body = (
       <>
-        <BriefHeading deepAgentId={brief.deepAgent} />
+        <BriefHeading deepAgentName={brief.deepAgent} />
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
           {BRIEF_PARTS.map((field) => {
             const id = `${fieldId}-${field}`;
@@ -959,7 +964,7 @@ export function DecisionCard({
   } else {
     body = (
       <>
-        <BriefHeading deepAgentId={brief.deepAgent} />
+        <BriefHeading deepAgentName={brief.deepAgent} />
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           {BRIEF_PARTS.map((field) => (
             <div key={field} className="contents">
@@ -1027,7 +1032,7 @@ export function DecisionCard({
       {body}
       {/* Mounted here, outside the branches, so «Правка» and back keep the one read; a decided card drops it. */}
       {brief !== null && outcome === null && (
-        <SelfLearningNote deepAgentId={brief.deepAgent} />
+        <SelfLearningNote deepAgentName={brief.deepAgent} />
       )}
       {errorLine}
       {actions !== null && (

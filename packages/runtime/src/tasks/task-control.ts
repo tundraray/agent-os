@@ -12,6 +12,7 @@ import {
   RuntimeDecisionsRepository,
   RuntimeTrackersRepository,
   RuntimeTasksRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { RuntimeError } from '../errors';
@@ -20,7 +21,6 @@ import {
   isFinished,
   type TaskChange,
   type TaskFailure,
-  type TaskRow,
   UNFINISHED_STATUSES,
 } from './guarded-transition';
 import { HandlerRegistry } from '../steps/handler.registry';
@@ -56,7 +56,8 @@ export type InterruptMessage = Omit<EnqueueMessage, 'recipientId'>;
 export interface Task {
   readonly taskId: string;
   readonly type: string;
-  readonly ownerId: string;
+  /** `null` for the platform's own work, which no employee sees. */
+  readonly ownerId: string | null;
   /** `null` for a root task. */
   readonly parentId: string | null;
   readonly rootId: string;
@@ -81,7 +82,8 @@ export interface Task {
 /** What `tasks.create` takes. */
 export interface CreateTask {
   type: string;
-  ownerId: string;
+  /** `null` for the platform's own work (`knowledge.embed`). */
+  ownerId: string | null;
   input: unknown;
   /** Creates a child of this task, outside a step; the parent must be the owner's and not finished. */
   parentId?: string;
@@ -112,14 +114,14 @@ interface TaskControlDeps {
  * interrupt. One waiting for a decision or for its tasks (deep-agents/design-task.md, KD-3) is
  * woken only by them.
  */
-const isInterruptible = (task: TaskRow): boolean =>
+const isInterruptible = (task: RuntimeTaskRow): boolean =>
   task.status === queued ||
   task.status === running ||
   (task.status === waiting &&
     task.waitReason !== WaitReasonSchema.enum.decision &&
     task.waitReason !== WaitReasonSchema.enum.tasks);
 
-function toTask(row: TaskRow): Task {
+function toTask(row: RuntimeTaskRow): Task {
   return {
     taskId: row.taskId,
     type: row.type,
@@ -333,8 +335,8 @@ export class TaskControl {
   /**
    * Stops the tree as {@link stop} does and marks every task of it deleted: from then on each
    * answers as a missing one. The rows, their messages, requests and events and the token ledger
-   * stay (KD-5); a conversation is deleted by `agents.sessions.deleteRoot`, which also marks its
-   * root session. Only a root can be deleted: another task, a missing, another owner's or an
+   * stay (KD-5). This is the only deletion mark: what an upper layer keeps for the tree answers as
+   * missing through it (KD-2). Only a root can be deleted: another task, a missing, another owner's or an
    * already deleted one gives `TASK_NOT_FOUND`.
    *
    * This process's steps of the stopped tasks are cut off right after the write, also when the
@@ -371,7 +373,7 @@ export class TaskControl {
   private async deleteTreeIn(
     rootId: string,
     ownerId: string,
-  ): Promise<TaskRow[]> {
+  ): Promise<RuntimeTaskRow[]> {
     const { taskRows } = this.deps;
     const root = await taskRows.findOwned(rootId, ownerId);
     if (!root || root.parentId !== null) {
@@ -386,7 +388,7 @@ export class TaskControl {
   private async createIn(
     request: CreateTask,
     input: unknown,
-  ): Promise<TaskRow> {
+  ): Promise<RuntimeTaskRow> {
     const { tasks, taskRows, events } = this.deps;
     const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
@@ -440,7 +442,9 @@ export class TaskControl {
     taskId: string,
     ownerId: string,
     message: InterruptMessage | undefined,
-  ): Promise<{ task: TaskRow; messageId: string | undefined } | undefined> {
+  ): Promise<
+    { task: RuntimeTaskRow; messageId: string | undefined } | undefined
+  > {
     const { tasks, taskRows, events, inbox } = this.deps;
     const found = await taskRows.findOwned(taskId, ownerId);
     if (!found)
@@ -486,11 +490,11 @@ export class TaskControl {
    * read after that. A commit or a creation that adds a child writes the parent's row too, so it
    * came before the parent's stop, and its child is read here, or it comes after and is refused.
    */
-  private async stopTree(top: TaskRow): Promise<TaskRow[]> {
+  private async stopTree(top: RuntimeTaskRow): Promise<RuntimeTaskRow[]> {
     const { tasks, taskRows } = this.deps;
-    const stoppedTasks: TaskRow[] = [];
+    const stoppedTasks: RuntimeTaskRow[] = [];
     for (
-      let level: readonly TaskRow[] = [top];
+      let level: readonly RuntimeTaskRow[] = [top];
       level.length > 0;
       level = await taskRows.listChildren(level.map((task) => task.taskId))
     ) {
@@ -519,7 +523,10 @@ export class TaskControl {
    * Cuts off this process's steps of the tasks whose attempt the command raised, and lets their
    * live objects go: a cut-off step may have written what its object has not taken in.
    */
-  private cutOff(changed: readonly TaskRow[], reason: StepSignalReason): void {
+  private cutOff(
+    changed: readonly RuntimeTaskRow[],
+    reason: StepSignalReason,
+  ): void {
     for (const task of changed) {
       // Not awaited: the steps end when their handlers answer the signal.
       void this.deps.running.abortTask(task.taskId, reason, task.attempt);

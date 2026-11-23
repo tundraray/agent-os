@@ -30,7 +30,7 @@
 // - Support to write alongside (test/support): agentsHarness.ts (database + runtime + agents, scripted double, fixture config, second instance, `ZOMBIE_RUNTIME`), scriptedModel.ts (scenarios, latches, recorded inputs), fixtureLog.ts (read and filter the call log).
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
-//   INT-4 unique defect: an `agents` operation that reads `agent_sessions`, `agent_messages` or tool calls in `agent_messages` by id (history, list, restart, confirmations) before, or without, the runtime owner check - the runtime's own INT-4 covers only the `runtime_*`
+//   INT-4 unique defect: an `agents` operation that reads `conversations`, `messages` or tool calls in `messages` by id (history, list, restart, confirmations) before, or without, the runtime owner check - the runtime's own INT-4 covers only the `runtime_*`
 //   tables and cannot see these three. CLAUDE.md lists isolation first and NFR-06 asks one two-user test per access point.
 //
 // E2E: 0 of 1-2 - the file `agent-platform-agents.e2e-spec.ts` is deliberately not generated. The one thing only a dead process proves - the step commit boundary - is runtime E2E-1, which already kills the runtime at every commit point with a generic handler.
@@ -73,7 +73,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentTurnMessage } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
 import type { RecordTool, Subagent } from '@agent-os/contracts';
-import { agentSessionTasks } from '@agent-os/db';
+import { conversationTasks } from '@agent-os/db';
 import {
   createLatch,
   createLibraryDouble,
@@ -364,7 +364,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Given: a root that starts two general-purpose children in one answer (child one from a record on the chosen
       // model), then holds a read call on the fixture; child one reads and reports, child two starts a grandchild and
       // reports after it
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
       const generalId = randomUUID();
       const general = {
@@ -373,9 +373,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         agents: [generalId],
         maxTurns: 40,
       };
-      library.add(testRecord('general-purpose', { ...general, id: generalId }));
-      const chosenId = library.add(
-        testRecord('general-purpose-chosen', {
+      library.add(testRecord('general', { ...general, id: generalId }));
+      library.add(
+        testRecord('general-chosen', {
           ...general,
           model: TEST_MODEL_CHOSEN,
         }),
@@ -390,12 +390,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         {
           calls: [
             startAgent({
-              agent: chosenId,
+              agent: 'general-chosen',
               description: 'child one',
               prompt: 'Child one task',
             }),
             startAgent({
-              agent: generalId,
+              agent: 'general',
               description: 'child two',
               prompt: 'Child two task',
             }),
@@ -413,7 +413,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         {
           calls: [
             startAgent({
-              agent: generalId,
+              agent: 'general',
               description: 'grandchild',
               prompt: 'Grandchild task',
             }),
@@ -618,7 +618,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-1 B: messages sent to an agent while its read call runs stand in the history after that result in the order sent, the next model call sees them, and a message to a waiting root starts its turn',
     async () => {
       // Given: a root whose read call is held on the fixture
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const held = fixture.latch('read');
       fixture.setFaults([holdCall('get_trace', TRACE_A, held)]);
@@ -723,9 +723,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-1 C: an agent that hits its turn limit fails with turn_limit and tells its parent, is continued by a message in the same session with a full limit, and a finished agent restarts as a new one with the same definition, task, model and parent',
     async () => {
       // Given: under a parent, an agent with maxTurns 2 whose script always asks for a tool; the parent starts it
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
-      const limitedId = library.add(
+      library.add(
         testRecord('limited', { tools: ['list_agents'], maxTurns: 2 }),
       );
       const model = createScriptedModel();
@@ -735,7 +735,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           {
             calls: [
               startAgent({
-                agent: limitedId,
+                agent: 'limited',
                 description: 'limited',
                 prompt: 'Limited task',
               }),
@@ -863,7 +863,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     async () => {
       // Given: a deep agent record whose team is `planner` and `answer`, with final subagent `answer`; the root
       // starts its deep agent
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
       const subagent = (name: string): Subagent => ({
         name,
@@ -986,7 +986,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     async () => {
       // Given: a root with three exchanges whose third answer starts a fork; a second root whose first call
       // reports input tokens at AGENT_COMPACT_AT_TOKENS
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const forkHeld = createLatch();
       const model = createScriptedModel();
       const forker = model.script(
@@ -1134,9 +1134,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     "INT-1 F: a revive message that arrives during a child's last step finishes the task, notifies the parent once and requeues the task with that message",
     async () => {
       // Given: a child the root started holds its last model call, which answers text without calls
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
-      const childId = library.add(testRecord('last-step'));
+      library.add(testRecord('last-step'));
       const lastStep = createLatch();
       const model = createScriptedModel();
       model.script(
@@ -1145,7 +1145,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           {
             calls: [
               startAgent({
-                agent: childId,
+                agent: 'last-step',
                 description: 'last step',
                 prompt: 'Last step task',
               }),
@@ -1255,7 +1255,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Verification items (table-driven by command):
   // - Row A "interrupt" (UC-E1; two cases): Case 1, the agent waits for a slow read call held on the fixture: `agents.get` read right after the command (call still held) shows `interrupted`; once the step runs, the open call has outcome
   //   `interrupted`, the history ends with the `interrupted` event, the model double gets NO further call (counter unchanged) until `agents.send`; the message then clears the mark, the agent continues, and its status is `working`; the slow server's late answer
-  //   (released afterwards) writes no result and no second row (one tool calls in `agent_messages` for the call). Case 2, the call is a confirmed mutating one already in `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
+  //   (released afterwards) writes no result and no second row (one tool calls in `messages` for the call). Case 2, the call is a confirmed mutating one already in `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
   // - Row B "stop of a subtree" (UC-E2): agent R (with a parent P) has child C (waiting on a held read call, with an open confirmation request from a second call) and grandchild G; the row stops R. Then: R, C and G read
   //   `stopped` right after the command; C's open call has outcome `interrupted` and its confirmation is no longer in `confirmations`; `agents.history` of R ends with `stopped`, of C and G with `stopped_with_parent`; the model double's call counter is
   //   unchanged after the command even when the held calls are released and workers run again; R's parent holds exactly one notification with status `stopped`; `agents.stop` on R again returns an empty list.
@@ -1264,7 +1264,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     async () => {
       // Given: two agents of one owner, each with a call held on the fixture: a read call and a confirmed
       // create_incident_note already sending
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const readHeld = fixture.latch('read-held');
       const noteSending = fixture.latch('note-sending');
@@ -1443,7 +1443,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Given: P (a root) has child R; R holds its model call and has child C; C has a pending confirmation of
       // create_incident_note and an open read call; C has grandchild G whose read call is held on the fixture.
       // Each parent starts its child with its first answer
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const library = createLibraryDouble();
       const grandchildRecord = library.add(
         testRecord('grandchild', { servers: [LOGS_SERVER] }),
@@ -1455,7 +1455,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           agents: [grandchildRecord],
         }),
       );
-      const stoppedRecord = library.add(
+      library.add(
         testRecord('stopped', {
           tools: ['start_agent'],
           agents: [childRecord],
@@ -1472,7 +1472,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           {
             calls: [
               startAgent({
-                agent: stoppedRecord,
+                agent: 'stopped',
                 description: 'stopped',
                 prompt: 'Agent to stop',
               }),
@@ -1485,7 +1485,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         {
           calls: [
             startAgent({
-              agent: childRecord,
+              agent: 'child',
               description: 'child',
               prompt: 'Child of the stopped agent',
             }),
@@ -1497,7 +1497,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         {
           calls: [
             startAgent({
-              agent: grandchildRecord,
+              agent: 'grandchild',
               description: 'grandchild',
               prompt: 'Grandchild of the stopped agent',
             }),
@@ -1676,7 +1676,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @dependency: RuntimeModule x1-2, createAgents (tool gate, McpClients, ToolAccess, guard intent, confirmations, resolveConfirmation), scripted model double, MCP fixture processes with `FIXTURE_CALL_LOG` and fault schedule, Postgres
   // @complexity: high
   //
-  // Verification items (table-driven by row; every row reads the fixture journal and the tool calls in `agent_messages` of its agent):
+  // Verification items (table-driven by row; every row reads the fixture journal and the tool calls in `messages` of its agent):
   // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): the access gate double gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__${LOGS_SERVER}__<read tool>`. Then: U1's model input lists the
   //   `logs` tools and the call succeeds (outcome `success`, one journal entry); U2's model input does not list them, and the scripted forced call is refused: outcome `refused`, reason `no_access`, ZERO journal entries for U2, the refusal in U2's history. A second case in
   //   U1's run: a tool name not in the definition's `tools` gets `tool_not_in_definition` and no journal entry.
@@ -1694,8 +1694,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     async () => {
       // Given: the access table gives U1 the `logs` server and U2 nothing; both run a definition with every
       // server; U1's answer also names a tool its definition does not have
-      const allowedOwner = newUser();
-      const deniedOwner = newUser();
+      const allowedOwner = await newUser();
+      const deniedOwner = await newUser();
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       const allowed = model.script({ task: 'Read as an allowed owner' }, [
@@ -1805,7 +1805,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-3 B: a read call runs without a question while a mutating call sends nothing to the server and shows the employee one request with agent, tool and arguments',
     async () => {
       // Given: a writer whose one answer calls the read tool, then create_incident_note
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       model.script({ task: 'Read, then write the note' }, [
@@ -1876,7 +1876,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-3 C: approving after the server restarted on another instance sends the mutating call exactly once and the agent continues',
     async () => {
       // Given: a writer awaiting confirmation of create_incident_note on the first instance
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       const writer = model.script({ task: 'Write the note across a restart' }, [
@@ -1999,7 +1999,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-3 D: rejecting sends nothing, records the rejection and the agent continues',
     async () => {
       // Given: a writer awaiting confirmation of create_incident_note
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       const writer = model.script(
@@ -2074,7 +2074,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     async () => {
       // Given: on instance A (one slot, a sweeper that never passes again) a writer
       // whose one answer is create_incident_note, then a read call; the note is held on the fixture
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const noteHeld = fixture.latch('note-held');
       fixture.setFaults([
@@ -2226,7 +2226,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     'INT-3 F: a failing MCP server becomes a transport_failure result in the history and the agent carries on',
     async () => {
       // Given: the `logs` server drops the connection on the agent's first read call; the agent reads again afterwards
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const fixture = createFixtureFiles();
       fixture.setFaults([
         {
@@ -2316,7 +2316,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Contract Definitions: "Все операции принимают владельца (`ownerId`). Агент чужого владельца отвечает так же, как несуществующий: `AGENT_NOT_FOUND`. Владельца проверяет runtime в каждой операции, которую `agents` вызывает первой."
   // Use case: UC-E7. EARS: If-then. Design flow: Contract Definitions ("Операции агентов"), Security Considerations.
   //
-  // Catches: one operation of the part that reads `agent_sessions`, `agent_messages` or tool calls in `agent_messages` by id before - or without - the runtime owner check: another employee reads an agent's history or its tool arguments, lists a foreign tree, learns of its pending
+  // Catches: one operation of the part that reads `conversations`, `messages` or tool calls in `messages` by id before - or without - the runtime owner check: another employee reads an agent's history or its tool arguments, lists a foreign tree, learns of its pending
   //   confirmations, restarts it (copying its definition and task into a new agent) or resolves its confirmation; or answers that differ between "foreign" and "missing" (a leak in itself). (`start` takes no parent: a child starts only from its parent's own step.)
   // Not re-checked here: the owner check of the `runtime_*` operations (runtime INT-4), authentication and the HTTP edge (the `chat` part's API), the MCP access table (INT-3 row A).
   // Behavior: owner B calls each operation on owner A's agent, tree and confirmation -> the answer equals the answer for an id that exists for nobody -> nothing of A's changed
@@ -2328,16 +2328,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `taskList` (deep-agents task-list UC-2: A's root, the chat, has three tasks; its child sees none of them), `resolveConfirmation` (approve and reject).
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`AGENT_NOT_FOUND`, and `DECISION_NOT_FOUND` for the confirmation), with nothing of A's data
   //   (no definition, task text, argument or count) in the answer or the error message.
-  // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, tool calls in `agent_messages` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
+  // - After all rows: a row-version snapshot of A's `conversations`, `messages`, tool calls in `messages` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
   it(
     "INT-4: every agents operation called as another owner answers exactly as for a missing agent or decision, leaks nothing of the owner's data and changes none of the owner's rows",
     async () => {
       // Given: owner A has a root awaiting confirmation of create_incident_note (history with a tool call)
       // and a completed child the root started first; owner B is another employee
-      const ownerA = newUser();
-      const ownerB = newUser();
+      const ownerA = await newUser();
+      const ownerB = await newUser();
       const library = createLibraryDouble();
-      const childRecord = library.add(testRecord('owned-child'));
+      library.add(testRecord('owned-child'));
       const fixture = createFixtureFiles();
       const model = createScriptedModel();
       model.script(
@@ -2346,7 +2346,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           {
             calls: [
               startAgent({
-                agent: childRecord,
+                agent: 'owned-child',
                 description: 'child of A',
                 prompt: 'Child task of owner A',
               }),
@@ -2389,9 +2389,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           throw new Error('A has no confirmation request');
         // deep-agents task-list UC-2, AC-13.2, AC-17.1 (isolation): three tasks of A's chat, as `task_create` and
         // `task_update` would leave them
-        await harness.db.insert(agentSessionTasks).values([
+        await harness.db.insert(conversationTasks).values([
           {
-            taskId: rootId,
+            conversationId: rootId,
             number: 1,
             subject: 'task one of A',
             description: 'd1',
@@ -2399,13 +2399,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
             status: 'in_progress',
           },
           {
-            taskId: rootId,
+            conversationId: rootId,
             number: 2,
             subject: 'task two of A',
             description: 'd2',
           },
           {
-            taskId: rootId,
+            conversationId: rootId,
             number: 3,
             subject: 'task three of A',
             description: 'd3',

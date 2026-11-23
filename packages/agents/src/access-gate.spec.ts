@@ -4,15 +4,15 @@
 // an agent with an empty history.
 import type { Logger } from '@agent-os/common';
 import {
-  AgentCodeCallsRepository,
+  CodeCallsRepository,
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
-  AgentMcpAccountsRepository,
-  AgentMcpServersRepository,
-  AgentMessagesRepository,
-  AgentSessionsRepository,
-  AgentSessionTasksRepository,
-  AgentToolResultsRepository,
+  McpAccountsRepository,
+  McpServersRepository,
+  MessagesRepository,
+  ConversationsRepository,
+  ConversationTasksRepository,
+  ToolResultsRepository,
   type Database,
   Db,
 } from '@agent-os/db';
@@ -22,6 +22,7 @@ import {
   type StepResult,
   systemClock,
 } from '@agent-os/runtime';
+import type { AgentVersion } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import type {
@@ -33,7 +34,6 @@ import type { CallState } from './history/call-state';
 import { ChatAgent } from './agent/chat-agent';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { ModelClient } from './model/model-client';
-import type { AgentSnapshot } from './start/snapshot';
 import { CallRecords } from './store/call-records';
 import { History } from './store/history';
 import { type Session, type SessionInput, Sessions } from './store/sessions';
@@ -82,21 +82,14 @@ function emptyDatabase(): Database {
   return query as Database;
 }
 
-/** The built-in tool the agent's snapshot names; the test's double stands for it. */
+/** The built-in tool the agent's version names; the test's double stands for it. */
 const LOOKUP = 'list_agents';
 
-const SNAPSHOT: AgentSnapshot = {
+const VERSION: AgentVersion = {
+  id: '00000000-0000-4000-8000-000000000003',
+  agentId: '00000000-0000-4000-8000-000000000001',
+  number: 1,
   kind: 'agent',
-  name: 'helper',
-  origin: {
-    recordId: '00000000-0000-4000-8000-000000000001',
-    kind: 'agent',
-    version: 1,
-    name: 'helper',
-    author: { id: '00000000-0000-4000-8000-000000000002', name: 'Аня' },
-    builtinKey: null,
-    subagent: null,
-  },
   content: {
     prompt: 'Help.',
     servers: [],
@@ -106,11 +99,13 @@ const SNAPSHOT: AgentSnapshot = {
     tools: [LOOKUP],
     taskList: false,
   },
-  agents: [],
 };
 
 const INPUT: SessionInput = {
-  snapshot: SNAPSHOT,
+  versionId: VERSION.id,
+  name: 'helper',
+  subagent: null,
+  model: MODEL,
   prompt: 'Look it up',
   description: 'Look up',
 };
@@ -119,13 +114,20 @@ const SESSION: Session = {
   taskId: AGENT,
   parentId: null,
   ownerId: OWNER,
-  name: SNAPSHOT.name,
-  origin: SNAPSHOT.origin,
+  name: INPUT.name,
+  origin: {
+    recordId: VERSION.agentId,
+    kind: 'agent',
+    version: 1,
+    name: 'helper',
+    author: { id: '00000000-0000-4000-8000-000000000002', name: 'Аня' },
+    builtinKey: null,
+    subagent: null,
+  },
   firstRun: true,
   description: 'Look up',
   model: MODEL,
-  prompt: 'Look it up',
-  forkedFromTaskId: null,
+  startCallId: null,
   forkedThroughSeq: null,
   turns: 0,
   interrupted: false,
@@ -177,7 +179,7 @@ function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
   const db = new Db(emptyDatabase());
   const model = createScriptedModel();
-  model.script({ agent: SNAPSHOT.name }, [], {
+  model.script({ agent: INPUT.name }, [], {
     thereafter: { text: 'answer' },
   });
   const audits: AuditRecord[] = [];
@@ -201,24 +203,24 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AuditRecord) => {
     audits.push(entry);
   };
-  const sessionRows = new AgentSessionsRepository(db);
-  const messageRows = new AgentMessagesRepository(db);
+  const sessionRows = new ConversationsRepository(db);
+  const messageRows = new MessagesRepository(db);
   const history = new History(messageRows);
   const stores = {
     sessions: new Sessions(sessionRows),
     sessionRows,
     history,
     messageRows,
-    callRecords: new CallRecords(history, new AgentCodeCallsRepository(db)),
-    toolResultRows: new AgentToolResultsRepository(db),
-    sessionTaskRows: new AgentSessionTasksRepository(db),
+    callRecords: new CallRecords(history, new CodeCallsRepository(db)),
+    toolResultRows: new ToolResultsRepository(db),
+    sessionTaskRows: new ConversationTasksRepository(db),
     knowledgeRows: new AgentKnowledgeRepository(db),
     knowledgeRunRows: new AgentKnowledgeRunsRepository(db),
-    mcpServerRows: new AgentMcpServersRepository(db),
+    mcpServerRows: new McpServersRepository(db),
   };
   const registry = new ToolRegistry(
     stores.mcpServerRows,
-    new AgentMcpAccountsRepository(db),
+    new McpAccountsRepository(db),
     access,
   );
   registry.useRunCode({ ...lookup, name: 'run_code' });
@@ -238,11 +240,15 @@ function refusedAgent(refusal: Refusal) {
     audit,
     { mcpCallTimeoutMs: 1000 },
     {
-      readSettings: async () => ({
-        storeFromChars: 50_000,
-        previewChars: 2_000,
-        readMaxTokens: 25_000,
+      read: async () => ({
+        key: 'tool_result_settings',
+        value: {
+          storeFromChars: 50_000,
+          previewChars: 2_000,
+          readMaxTokens: 25_000,
+        },
         updatedAt: null,
+        updatedBy: null,
       }),
     },
     (text) => text,
@@ -258,7 +264,7 @@ function refusedAgent(refusal: Refusal) {
     audit,
     systemClock,
   );
-  // The agent's snapshot does not learn: the knowledge block never reaches the store.
+  // The agent's version does not learn: the knowledge block never reaches the store.
   const notCalled = async (): Promise<never> => {
     throw new Error(
       'the vector store is not called for a session that does not learn',
@@ -289,7 +295,7 @@ function refusedAgent(refusal: Refusal) {
       library: createLibraryDouble(),
       logger,
     },
-    { task: ctx, input: INPUT },
+    { task: ctx, input: INPUT, version: VERSION },
   );
   return {
     ctx,

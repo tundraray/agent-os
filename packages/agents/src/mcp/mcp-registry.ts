@@ -12,7 +12,7 @@ import {
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
 import {
-  AgentMcpServersRepository,
+  McpServersRepository,
   Db,
   type McpServerPatch,
   type McpServerRow,
@@ -250,8 +250,8 @@ export class McpRegistry {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentMcpServersRepository)
-    private readonly mcpServerRows: AgentMcpServersRepository,
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
     @Inject(McpClient) private readonly client: McpClient,
     @Inject(AGENTS_LOGGER) logger: Logger,
     @Inject(AGENTS_CONFIG)

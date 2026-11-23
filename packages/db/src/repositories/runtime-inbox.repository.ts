@@ -2,20 +2,13 @@ import { MessageStatusSchema } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Db } from '../db';
-import { runtimeInbox } from '../schema';
+import { runtimeInbox, runtimeTasks } from '../schema';
 
 export type RuntimeInboxRow = typeof runtimeInbox.$inferSelect;
 
 export type NewRuntimeInboxRow = Pick<
   typeof runtimeInbox.$inferInsert,
-  | 'messageId'
-  | 'recipientId'
-  | 'ownerId'
-  | 'seq'
-  | 'kind'
-  | 'sender'
-  | 'payload'
-  | 'revive'
+  'messageId' | 'recipientId' | 'seq' | 'kind' | 'sender' | 'payload' | 'revive'
 >;
 
 const { pending, delivered } = MessageStatusSchema.enum;
@@ -49,22 +42,30 @@ export class RuntimeInboxRepository {
       .orderBy(asc(runtimeInbox.seq));
   }
 
-  /** The owner's pending messages of the task by `seq`; `[]` for another owner's or a missing task. */
-  listPendingOwned(
+  /**
+   * The owner's pending messages of the task by `seq`, the owner being the recipient task's; `[]` for another
+   * owner's or a missing task.
+   */
+  async listPendingOwned(
     taskId: string,
     ownerId: string,
   ): Promise<RuntimeInboxRow[]> {
-    return this.db.client
-      .select()
+    const rows = await this.db.client
+      .select({ message: runtimeInbox })
       .from(runtimeInbox)
+      .innerJoin(
+        runtimeTasks,
+        eq(runtimeTasks.taskId, runtimeInbox.recipientId),
+      )
       .where(
         and(
           eq(runtimeInbox.recipientId, taskId),
-          eq(runtimeInbox.ownerId, ownerId),
+          eq(runtimeTasks.ownerId, ownerId),
           eq(runtimeInbox.status, pending),
         ),
       )
       .orderBy(asc(runtimeInbox.seq));
+    return rows.map((row) => row.message);
   }
 
   /** Marks the task's pending messages as delivered to step `stepNo`; returns the ones it marked. */

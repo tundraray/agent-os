@@ -4,15 +4,11 @@ import {
   RecordKindSchema,
   type RecordBody,
 } from '@agent-os/contracts';
-import type {
-  LibraryBanRow,
-  LibraryRecordRow,
-  LibraryShareRow,
-} from '@agent-os/db';
+import type { AgentBanRow, AgentRecordRow, AgentShareRow } from '@agent-os/db';
 
 /**
- * The rows of `library_records` and `library_shares` as the library's services read them: the kind
- * and the content checked by the kind's schema, the holder rows folded into one audience. Authors and
+ * The rows of `agents` with their active versions and of `agent_shares` as the library's services read
+ * them: the kind and the content checked by the kind's schema, the holder rows folded into one audience. Authors and
  * holders come by id: their names live in `identity` and are added by `LibraryRecords`.
  */
 
@@ -32,6 +28,8 @@ export interface StoredRecord {
   readonly description: string;
   readonly offerInChat: boolean;
   readonly builtinKey: string | null;
+  /** The id and the number of the active version. */
+  readonly versionId: string;
   readonly version: number;
   /** When an admin closed sharing; `null` — not closed. */
   readonly closedAt: Date | null;
@@ -53,7 +51,7 @@ export interface StoredBan {
 const NO_HOLDERS: StoredHolders = { everyone: false, roleIds: [], userIds: [] };
 
 /** The kind and the content of a stored row, checked by the kind's schema. */
-function recordBody(kind: string, content: unknown): RecordBody {
+export function recordBody(kind: string, content: unknown): RecordBody {
   return RecordKindSchema.parse(kind) === 'agent'
     ? { kind: 'agent', content: AgentContentSchema.parse(content) }
     : { kind: 'deep_agent', content: DeepAgentContentSchema.parse(content) };
@@ -61,12 +59,12 @@ function recordBody(kind: string, content: unknown): RecordBody {
 
 /** The holders of the records, by record id; roles and employees each in the order the holder rows came in. */
 function holdersByRecord(
-  shares: readonly LibraryShareRow[],
+  shares: readonly AgentShareRow[],
 ): Map<string, StoredHolders> {
   const result = new Map<string, StoredHolders>();
   for (const row of shares) {
-    const current = result.get(row.recordId) ?? NO_HOLDERS;
-    result.set(row.recordId, {
+    const current = result.get(row.agentId) ?? NO_HOLDERS;
+    result.set(row.agentId, {
       everyone: current.everyone || row.everyone,
       roleIds:
         row.roleId === null
@@ -83,8 +81,8 @@ function holdersByRecord(
 
 /** The record rows with their holder rows as stored records; the order of the records stays. */
 export function toStoredRecords(
-  rows: readonly LibraryRecordRow[],
-  shares: readonly LibraryShareRow[],
+  rows: readonly AgentRecordRow[],
+  shares: readonly AgentShareRow[],
 ): StoredRecord[] {
   const holders = holdersByRecord(shares);
   return rows.map((record) => ({
@@ -94,6 +92,7 @@ export function toStoredRecords(
     description: record.description,
     offerInChat: record.offerInChat,
     builtinKey: record.builtinKey,
+    versionId: record.versionId,
     version: record.version,
     closedAt: record.closedAt,
     updatedAt: record.updatedAt,
@@ -102,9 +101,9 @@ export function toStoredRecords(
   }));
 }
 
-export function toStoredBan(row: LibraryBanRow): StoredBan {
+export function toStoredBan(row: AgentBanRow): StoredBan {
   if (row.closedAt === null)
-    throw new Error(`library_records ban row ${row.id} is broken`);
+    throw new Error(`agents ban row ${row.id} is broken`);
   return {
     id: row.id,
     kind: RecordKindSchema.parse(row.kind),

@@ -9,7 +9,7 @@ const SERVER_DESCRIPTION = 'Searches tickets.';
 const HEADER = 'Result structure (structuredContent):';
 const TRUNCATED = '(result structure truncated)';
 
-/** An item of a stored tool list, as `storedMcpTools` reads it from `agent_mcp_servers.tools`. */
+/** An item of a stored tool list, as `storedMcpTools` reads it from `mcp_servers.tools`. */
 function stored(outputSchema?: Record<string, unknown>): unknown {
   return {
     name: 'mcp__tracker__search_tickets',

@@ -1,9 +1,9 @@
 import { createLogger } from '@agent-os/common';
-import { CHAT_BUILTIN_KEY, type RunOrigin } from '@agent-os/contracts';
+import type { AgentVersion, DeepAgentContent } from '@agent-os/contracts';
 import {
-  AgentMcpAccountsRepository,
-  AgentMcpServersRepository,
-  AgentSessionsRepository,
+  McpAccountsRepository,
+  McpServersRepository,
+  ConversationsRepository,
   type Database,
   Db,
 } from '@agent-os/db';
@@ -11,13 +11,9 @@ import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { DeepAgent, type DeepAgentDeps } from '../deep/deep-agent';
-import { subagentSnapshot } from '../deep/deep-definition';
+import { type DeepAgentVersion, subagentStart } from '../deep/deep-definition';
 import { createTaskTool } from '../deep/task-delegation';
-import type {
-  AgentSnapshot,
-  DeepAgentSnapshot,
-  RunSnapshot,
-} from '../start/snapshot';
+import type { RunStart } from '../start/run-definition';
 import { createLibraryDouble } from '../testing';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { AgentTool } from '../tools/tool';
@@ -30,7 +26,7 @@ import { ChatAgent, type ChatAgentDeps } from './chat-agent';
 
 // design-runtime.md KD-6, Invariant 4, UC-E6, AC-18.4 (rule): the root's tools — the built-in
 // `start_deep_agent` and a tool `apps/api` registers — go to a session without a parent only; a child agent, a subagent and a deep agent get
-// none of them. deep-agents design-task-list.md UC-5 (AC-16.1, DC-4): the four task tools follow the snapshot's
+// none of them. deep-agents design-task-list.md UC-5 (AC-16.1, DC-4): the four task tools follow the version's
 // `taskList` flag, except at the root, which keeps them with the flag off.
 const OWNER = 'employee-1';
 const MODEL = 'anthropic/claude-haiku-5-5';
@@ -49,17 +45,17 @@ function emptyDatabase(): Database {
   return query as Database;
 }
 
-// A declaration reads only the snapshot; the chat's listing also reads the library and the owner's sessions.
+// A declaration reads only the version; the chat's listing also reads the library and the owner's sessions.
 const DB = new Db(emptyDatabase());
 const DEPS = {
   db: DB,
-  sessionRows: new AgentSessionsRepository(DB),
+  sessionRows: new ConversationsRepository(DB),
   library: createLibraryDouble(),
   logger: SILENT,
 };
-/** The agent of each class for a snapshot: a declaration is data of the run the object is made for. */
-type AgentOf = (snapshot: RunSnapshot) => BaseAgent;
-const runOf = (snapshot: RunSnapshot): AgentRun => ({
+/** The agent of each class for a run: a declaration is data of the run the object is made for. */
+type AgentOf = (run: RunStart) => BaseAgent;
+const runOf = (run: RunStart): AgentRun => ({
   task: {
     taskId: CTX.taskId,
     rootId: CTX.taskId,
@@ -69,14 +65,22 @@ const runOf = (snapshot: RunSnapshot): AgentRun => ({
     type: 'stub',
     input: null,
   },
-  input: { snapshot, prompt: 'Do it', description: 'Do it' },
+  input: {
+    versionId: run.version.id,
+    name: run.name,
+    subagent: run.subagent,
+    model: run.model,
+    prompt: 'Do it',
+    description: 'Do it',
+  },
+  version: run.version,
 });
-const CHAT: AgentOf = (snapshot) =>
-  new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(snapshot));
-const AGENT: AgentOf = (snapshot) =>
-  new Agent(DEPS as unknown as AgentDeps, runOf(snapshot));
-const DEEP: AgentOf = (snapshot) =>
-  new DeepAgent(DEPS as unknown as DeepAgentDeps, runOf(snapshot));
+const CHAT: AgentOf = (run) =>
+  new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(run));
+const AGENT: AgentOf = (run) =>
+  new Agent(DEPS as unknown as AgentDeps, runOf(run));
+const DEEP: AgentOf = (run) =>
+  new DeepAgent(DEPS as unknown as DeepAgentDeps, runOf(run));
 
 function stubTool(name: string, rootOnly = false): AgentTool {
   return {
@@ -89,27 +93,15 @@ function stubTool(name: string, rootOnly = false): AgentTool {
   };
 }
 
-function origin(overrides: Partial<RunOrigin> = {}): RunOrigin {
-  return {
-    recordId: '00000000-0000-4000-8000-000000000001',
-    kind: 'agent',
-    version: 1,
-    name: 'Помощник',
-    author: null,
-    builtinKey: null,
-    subagent: null,
-    ...overrides,
-  };
-}
+const AGENT_ID = '00000000-0000-4000-8000-000000000001';
+const VERSION_ID = '00000000-0000-4000-8000-000000000002';
 
-function agentSnapshot(
-  builtinKey: string | null,
-  taskList: boolean,
-): AgentSnapshot {
-  return {
+function agentRun(taskList: boolean): RunStart {
+  const version: AgentVersion = {
+    id: VERSION_ID,
+    agentId: AGENT_ID,
+    number: 1,
     kind: 'agent',
-    name: 'Помощник',
-    origin: origin({ builtinKey }),
     content: {
       prompt: 'Help.',
       servers: [],
@@ -119,56 +111,67 @@ function agentSnapshot(
       tools: ['start_agent', 'list_agents'],
       taskList,
     },
-    agents: [],
   };
+  return { version, name: 'Помощник', subagent: null, model: MODEL };
 }
 
-const DEEP_AGENT: DeepAgentSnapshot = {
-  kind: 'deep_agent',
-  name: 'Ресерч',
-  origin: origin({ kind: 'deep_agent', name: 'Ресерч' }),
-  content: {
-    prompt: 'Research.',
-    servers: [],
-    model: MODEL,
-    maxTurns: 10,
-    subagents: [
-      {
-        name: 'searcher',
-        description: 'Searches',
-        prompt: 'Search.',
-        servers: [],
-        model: MODEL,
-        maxTurns: 5,
-        maxRuns: 2,
-        taskList: false,
-      },
-    ],
-    finalSubagent: null,
-    taskList: true,
-    listDelegation: true,
-    selfLearning: false,
-  },
+const DEEP_CONTENT: DeepAgentContent = {
+  prompt: 'Research.',
+  servers: [],
+  model: MODEL,
+  maxTurns: 10,
+  subagents: [
+    {
+      name: 'searcher',
+      description: 'Searches',
+      prompt: 'Search.',
+      servers: [],
+      model: MODEL,
+      maxTurns: 5,
+      maxRuns: 2,
+      taskList: false,
+    },
+  ],
+  finalSubagent: null,
+  taskList: true,
+  listDelegation: true,
+  selfLearning: false,
 };
 
-const SUBAGENT = subagentSnapshot(DEEP_AGENT, 'searcher');
+function deepRun(content: DeepAgentContent): RunStart {
+  const version: DeepAgentVersion = {
+    id: VERSION_ID,
+    agentId: AGENT_ID,
+    number: 1,
+    kind: 'deep_agent',
+    content,
+  };
+  return { version, name: 'Ресерч', subagent: null, model: MODEL };
+}
+
+const DEEP_AGENT = deepRun(DEEP_CONTENT);
+
+const SUBAGENT = subagentStart(DEEP_AGENT, {
+  subagent: 'searcher',
+  name: 'searcher',
+});
 if (SUBAGENT === null)
   throw new Error('the deep agent has the subagent searcher');
 
-/** The tools of a model call: what the agent declares for its snapshot, answered by the library for the owner. */
-async function toolsOf(agentOf: AgentOf, snapshot: RunSnapshot) {
+/** The tools of a model call: what the agent declares for its run, answered by the library for the owner. */
+async function toolsOf(agentOf: AgentOf, run: RunStart) {
   return registryOfStubs().toolsFor(
     OWNER,
-    await agentOf(snapshot).offeredDeclaration(CTX),
+    await agentOf(run).offeredDeclaration(CTX),
   );
 }
 
 describe('the root alone gets the root tools; the task tools follow the flag, and the root always has them', () => {
-  it.each<[string, AgentOf, RunSnapshot, readonly string[]]>([
+  it.each<[string, AgentOf, RunStart, readonly string[]]>([
     [
-      "a conversation's root with the task list off in its record",
+      "a conversation's root with the task list off in its version",
       CHAT,
-      agentSnapshot(CHAT_BUILTIN_KEY, false),
+      agentRun(false),
       [
         'start_agent',
         'list_agents',
@@ -181,7 +184,7 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
     [
       'a child agent with the task list off',
       AGENT,
-      agentSnapshot(null, false),
+      agentRun(false),
       ['start_agent', 'list_agents', 'run_code'],
     ],
     ['a subagent with the task list off', AGENT, SUBAGENT, ['run_code']],
@@ -192,8 +195,8 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
       DEEP_AGENT,
       ['task', ...TASK_LIST_TOOLS, 'run_code'],
     ],
-  ])('%s', async (_, agent, snapshot, expected) => {
-    const tools = await toolsOf(agent, snapshot);
+  ])('%s', async (_, agent, run, expected) => {
+    const tools = await toolsOf(agent, run);
 
     expect(tools.map((tool) => tool.name)).toEqual(expected);
   });
@@ -201,8 +204,8 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
 
 function registryOfStubs() {
   const registry = new ToolRegistry(
-    new AgentMcpServersRepository(DB),
-    new AgentMcpAccountsRepository(DB),
+    new McpServersRepository(DB),
+    new McpAccountsRepository(DB),
     {
       tools: async () => ({ kind: 'allowed', allows: () => true }),
     },
@@ -223,16 +226,13 @@ function registryOfStubs() {
   return registry;
 }
 
-// deep-agents/design-task.md AC-20.1, AC-20.2, AC-24.1, DC-6 — data of the snapshot: task lists the record's
+// deep-agents/design-task.md AC-20.1, AC-20.2, AC-24.1, DC-6 — data of the version: task lists the version's
 // subagents and general-purpose with their limits; the list fields exist only with the list form on, taskId only
 // with a task list, and any other key is refused.
-describe("a deep agent's task follows its snapshot", () => {
-  async function taskOf(content: Partial<DeepAgentSnapshot['content']>) {
-    const snapshot: DeepAgentSnapshot = {
-      ...DEEP_AGENT,
-      content: { ...DEEP_AGENT.content, ...content },
-    };
-    const task = (await toolsOf(DEEP, snapshot)).find(
+describe("a deep agent's task follows its version", () => {
+  async function taskOf(content: Partial<DeepAgentContent>) {
+    const run = deepRun({ ...DEEP_CONTENT, ...content });
+    const task = (await toolsOf(DEEP, run)).find(
       (tool) => tool.name === 'task',
     );
     if (task?.kind !== 'system') throw new Error('the deep agent has no task');
@@ -255,7 +255,7 @@ describe("a deep agent's task follows its snapshot", () => {
     ]);
   });
 
-  it.each<[string, Partial<DeepAgentSnapshot['content']>, object, boolean]>([
+  it.each<[string, Partial<DeepAgentContent>, object, boolean]>([
     [
       'the list form on takes instruction and items',
       { listDelegation: true },

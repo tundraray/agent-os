@@ -6,10 +6,9 @@ import type {
   RecordDetail,
 } from '@agent-os/contracts';
 import {
-  type LibraryPanelQuery,
-  type LibraryRecordKey,
-  type LibraryRecordRow,
-  LibraryRecordsRepository,
+  type AgentPanelQuery,
+  type AgentRecordRow,
+  AgentsRepository,
   type LibraryViewer,
 } from '@agent-os/db';
 import { AccessService } from '../access/access.service';
@@ -26,6 +25,7 @@ import type {
   ServerFacts,
 } from './library.types';
 import { auditSample, recordDetail, type ViewContext } from './record-view';
+import { decideDelete } from './save-rules';
 import {
   toStoredBan,
   toStoredRecords,
@@ -121,7 +121,7 @@ function authorOf(user: UserName): RecordAuthor {
 @Injectable()
 export class LibraryRecords {
   constructor(
-    private readonly repository: LibraryRecordsRepository,
+    private readonly repository: AgentsRepository,
     private readonly identity: IdentityDirectory,
     private readonly access: AccessService,
     private readonly auditLog: AuditLog,
@@ -130,18 +130,22 @@ export class LibraryRecords {
 
   // ---------- Reads ----------
 
-  /** The records the viewer sees, or the one with this id or built-in key when it is visible (KD-2). */
-  async visible(
-    viewer: LibraryViewer,
-    key?: LibraryRecordKey,
-  ): Promise<LibraryRecord[]> {
+  /** The records the viewer sees, or the one with this id when it is visible (KD-2). */
+  async visible(viewer: LibraryViewer, id?: string): Promise<LibraryRecord[]> {
     return this.named(
-      await this.stored(await this.repository.findVisible(viewer, key)),
+      await this.stored(await this.repository.findVisible(viewer, id)),
     );
   }
 
+  /** The default agent with this key, without a visibility check (data-model design-agents.md, «Порт `RecordLibrary`»). */
+  async builtin(builtinKey: string): Promise<LibraryRecord | undefined> {
+    const row = await this.repository.findBuiltin(builtinKey);
+    const [record] = await this.named(await this.stored(row ? [row] : []));
+    return record;
+  }
+
   /** The records of the admin panel: all of them, one list, or one by id when the panel shows it. */
-  async panel(query?: LibraryPanelQuery): Promise<LibraryRecord[]> {
+  async panel(query?: AgentPanelQuery): Promise<LibraryRecord[]> {
     return this.named(
       await this.stored(await this.repository.findInPanel(query)),
     );
@@ -216,7 +220,7 @@ export class LibraryRecords {
     viewer: LibraryViewer,
     id: string,
   ): Promise<LibraryRecord | undefined> {
-    const [record] = await this.visible(viewer, { id });
+    const [record] = await this.visible(viewer, id);
     return record;
   }
 
@@ -254,7 +258,7 @@ export class LibraryRecords {
 
   /** The record rows with their holders; the order of the records stays. */
   private async stored(
-    rows: readonly LibraryRecordRow[],
+    rows: readonly AgentRecordRow[],
   ): Promise<StoredRecord[]> {
     const shares = await this.repository.sharesOf(
       rows.map((record) => record.id),
@@ -283,7 +287,7 @@ export class LibraryRecords {
       const { ownerId } = record;
       const owner = ownerId === null ? null : userById.get(ownerId);
       if (owner === undefined)
-        throw new Error(`library_records owner ${ownerId} is missing`);
+        throw new Error(`agents owner ${ownerId} is missing`);
       return {
         ...record,
         author: owner && authorOf(owner.row),
@@ -312,11 +316,15 @@ export class LibraryRecords {
 
   // ---------- Writes ----------
 
-  /** Deletes the record unless it is built-in (AC-12.2); its holders go by cascade. */
+  /**
+   * Marks the record deleted unless it is a default agent (AC-12.2; data-model design-agents.md, KD-7):
+   * its versions stay for the conversations that run on them.
+   */
   async deleteChecked(actorId: string, record: LibraryRecord): Promise<void> {
-    if (record.builtinKey !== null)
-      throw libraryError('RECORD_REJECTED', 'builtin');
-    await this.repository.delete(record.id);
+    const decision = decideDelete(record);
+    if (decision.kind === 'refused')
+      throw libraryError('RECORD_REJECTED', decision.reason);
+    await this.repository.markDeleted(record.id);
     await this.audit(actorId, 'library_delete', record, null);
   }
 

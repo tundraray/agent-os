@@ -6,15 +6,10 @@ import {
   type TasksFinishedPayload,
   TaskStatusSchema,
 } from '@agent-os/contracts';
-import type { RuntimeTrackersRepository } from '@agent-os/db';
+import type { RuntimeTrackersRepository, RuntimeTaskRow } from '@agent-os/db';
 import type { EventLog } from '../events/event-log';
 import type { Inbox } from '../messaging/inbox';
-import type {
-  TaskChange,
-  TaskFailure,
-  TaskFields,
-  TaskRow,
-} from './guarded-transition';
+import type { TaskChange, TaskFailure, TaskValues } from './guarded-transition';
 import type { Tasks } from './tasks';
 
 const { queued, completed, failed, stopped } = TaskStatusSchema.enum;
@@ -39,7 +34,7 @@ export interface TaskEnd {
   /** The reason of a `failed` task. */
   failure?: TaskFailure;
   /** Further columns of the same write, e.g. the step counters. */
-  fields?: TaskFields;
+  fields?: TaskValues;
   /** `attempt + 1`: the step in flight, if any, is no longer current (Invariant 1). */
   fence?: boolean;
 }
@@ -62,9 +57,9 @@ const eventFailure = (failure: TaskFailure): TaskFailure => ({
  */
 export async function writeHeld(
   tasks: Tasks,
-  task: TaskRow,
+  task: RuntimeTaskRow,
   change: TaskChange,
-): Promise<TaskRow> {
+): Promise<RuntimeTaskRow> {
   const row = await tasks.transition(
     {
       taskId: task.taskId,
@@ -81,7 +76,10 @@ export async function writeHeld(
  * The child's end notice in the parent's inbox (design-runtime.md, Очередь): never with `revive`,
  * so it does not wake a finished parent.
  */
-async function notifyParent(inbox: Inbox, child: TaskRow): Promise<void> {
+async function notifyParent(
+  inbox: Inbox,
+  child: RuntimeTaskRow,
+): Promise<void> {
   if (child.parentId === null) return;
   const finishedAt = child.finishedAt ?? new Date();
   const status = TaskStatusSchema.parse(child.status);
@@ -115,7 +113,7 @@ async function notifyParent(inbox: Inbox, child: TaskRow): Promise<void> {
  */
 async function reportToTracker(
   deps: TaskEndDeps,
-  child: TaskRow,
+  child: RuntimeTaskRow,
   revives: boolean,
 ): Promise<boolean> {
   if (child.trackerId === null) return false;
@@ -154,9 +152,9 @@ async function reportToTracker(
  */
 export async function endTask(
   deps: TaskEndDeps,
-  task: TaskRow,
+  task: RuntimeTaskRow,
   end: TaskEnd,
-): Promise<TaskRow> {
+): Promise<RuntimeTaskRow> {
   const ended = await writeHeld(deps.tasks, task, {
     kind: 'set',
     status: end.status,

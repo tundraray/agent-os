@@ -1,7 +1,4 @@
-import type {
-  AgentCodeCallsRepository,
-  AgentMessagesRepository,
-} from '@agent-os/db';
+import type { CodeCallsRepository, MessagesRepository } from '@agent-os/db';
 import type { TaskControl } from '@agent-os/runtime';
 
 import { envelope } from '../model/provider-messages';
@@ -41,8 +38,8 @@ export type ExtractionRun = Pick<
 >;
 
 export interface ExtractionInputDeps {
-  readonly messageRows: AgentMessagesRepository;
-  readonly codeCallRows: AgentCodeCallsRepository;
+  readonly messageRows: MessagesRepository;
+  readonly codeCallRows: CodeCallsRepository;
   readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
 }
 

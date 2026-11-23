@@ -1,4 +1,4 @@
-import type { AgentSessionTasksRepository, SessionTask } from '@agent-os/db';
+import type { ConversationTasksRepository, SessionTask } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
 import { SessionTaskStatusSchema } from '@agent-os/contracts';
 import { z } from 'zod';
@@ -179,7 +179,7 @@ function taskDetails(task: SessionTask, tasks: readonly SessionTask[]): string {
  * the numbers, statuses and field names only; `loggedArgs` likewise.
  */
 export function createTaskListTools(deps: {
-  readonly sessionTaskRows: AgentSessionTasksRepository;
+  readonly sessionTaskRows: ConversationTasksRepository;
   readonly logger: Logger;
 }): [
   InCommitAgentTool<TaskCreateInput>,

@@ -67,7 +67,7 @@ const PING = messageEvent({ type: 'ping', data: {} });
  * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
  *
  * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
- * by the tree's root id, and its owner is read for every note — one row of `agent_sessions` by its
+ * by the tree's root id, and its owner is read for every note — one row of `conversations` by its
  * primary key, and never remembered. A deleted conversation's root is marked and so has no owner
  * (`rootOwner` answers `undefined`): the notes of its tree go to nobody, on this or another API
  * instance, from the moment the deletion commits. A root that is no conversation (a tree of another

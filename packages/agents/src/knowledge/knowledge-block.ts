@@ -3,14 +3,13 @@ import { ALL_SERVERS, KnowledgeItemKindSchema } from '@agent-os/contracts';
 import type {
   AgentKnowledgeRepository,
   AgentKnowledgeRunsRepository,
-  AgentMcpServersRepository,
+  McpServersRepository,
   KnowledgeGraph,
 } from '@agent-os/db';
 
 import { storedMcpTools } from '../mcp/mcp-tool';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
-import { type LearningRun, learningRunOf } from '../deep/deep-definition';
-import type { RunSnapshot } from '../start/snapshot';
+import type { LearningRun } from '../deep/deep-definition';
 import { knowledgeText } from './knowledge-text';
 import {
   type GraphItem,
@@ -23,13 +22,16 @@ export interface KnowledgeBlockDeps {
   /** Reads the graph, the settings, the registry and the question row on every step (KD-6). */
   readonly knowledgeRows: AgentKnowledgeRepository;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
-  readonly mcpServerRows: AgentMcpServersRepository;
+  readonly mcpServerRows: McpServersRepository;
   readonly vectorStore: KnowledgeVectorStore;
 }
 
 export interface KnowledgeBlockInput {
-  /** The run's snapshot: whether the session learns and the team's servers come from it only (ADR-0017). */
-  readonly snapshot: RunSnapshot;
+  /**
+   * The run's learning, from its version only (data-model design-agents.md, KD-6): the deep agent and the
+   * servers of its lessons; `null` — the session does not learn.
+   */
+  readonly learning: LearningRun | null;
   /** The session's task: the key of its question row. */
   readonly taskId: string;
   readonly logger: Logger;
@@ -48,9 +50,8 @@ export interface KnowledgeBlockInput {
  */
 export async function knowledgeBlock(
   deps: KnowledgeBlockDeps,
-  { snapshot, taskId, logger }: KnowledgeBlockInput,
+  { learning, taskId, logger }: KnowledgeBlockInput,
 ): Promise<string | null> {
-  const learning = sessionLearningOf(snapshot);
   if (learning === null) return null;
 
   const startedAt = Date.now();
@@ -99,23 +100,6 @@ export async function knowledgeBlock(
     durationMs: Date.now() - startedAt,
   });
   return block;
-}
-
-/**
- * The deep agent the session learns for and the servers of its lessons (KD-2, KD-5; deep-agents KD-1),
- * decided by the snapshot: a deep agent — by the flag of its snapshot, its own servers and those of its
- * subagents; a subagent — by `learning`. `null` — the session does not learn.
- */
-export function sessionLearningOf(snapshot: RunSnapshot): LearningRun | null {
-  if (snapshot.kind === 'subagent') {
-    return snapshot.learning === null
-      ? null
-      : {
-          recordId: snapshot.origin.recordId,
-          servers: snapshot.learning.servers,
-        };
-  }
-  return learningRunOf(snapshot);
 }
 
 /**

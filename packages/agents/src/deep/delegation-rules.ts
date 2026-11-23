@@ -1,3 +1,4 @@
+import { GENERAL_PURPOSE_SUBAGENT } from '@agent-os/contracts';
 import { TRACKER_MAX_TASKS } from '@agent-os/runtime';
 
 import { descriptionLine } from '../chat-listing';
@@ -54,7 +55,10 @@ export interface DelegationInput {
   readonly calls: readonly DelegationCall[];
   /** The deep agent's subagents and `general-purpose`. */
   readonly team: readonly DelegationTeamMember[];
-  /** Single assignments each subagent got before this answer; list items do not count (KD-6). */
+  /**
+   * Single assignments each `subagentType` got before this answer; list items do not count (KD-6). A name
+   * outside the team was a temporary subagent: it counts for `general-purpose`.
+   */
   readonly singleRuns: ReadonlyMap<string, number>;
   /** The deep agent's task list; `null` — it keeps none. */
   readonly tasks: TaskListState | null;
@@ -65,7 +69,10 @@ export interface DelegationInput {
 /** An accepted call: whom it starts, with what, and the task of the list it names. */
 export interface AcceptedDelegation {
   readonly callId: string;
+  /** The team member that runs: the named one, or `general-purpose` for a temporary subagent. */
   readonly subagent: string;
+  /** The name of the run: the call's `subagentType`. */
+  readonly name: string;
   readonly form: DelegationForm;
   readonly answerFields: readonly AnswerField[];
   /** The number of the task of the list the subagents work on; `null` — none named. */
@@ -75,8 +82,7 @@ export interface AcceptedDelegation {
 /** A refused call: nothing starts; the text names the field and the rule, `rule` goes to the log. */
 export interface RefusedDelegation {
   readonly callId: string;
-  readonly reason:
-    'not_allowed' | 'run_limit' | 'invalid_arguments' | 'depth_limit';
+  readonly reason: 'run_limit' | 'invalid_arguments' | 'depth_limit';
   readonly rule: string;
   readonly text: string;
 }
@@ -178,9 +184,10 @@ function listTaskRefusal(
 
 /**
  * The `task` calls of one answer, checked together (deep-agents/design-task.md KD-4 – KD-6, KD-8, Contract
- * «Инструмент `task`»; pure-decision.md). Each call is refused with a text that names the field and the rule —
- * a subagent outside the team (`not_allowed`), its `maxRuns` of single assignments spent (`run_limit`; list
- * items never count), forms mixed or missing, a list empty or longer than `TRACKER_MAX_TASKS`, a repeated
+ * «Инструмент `task`»; pure-decision.md). A name outside the team starts a temporary subagent: `general-purpose`
+ * under that name, its runs counted in the limit of `general-purpose` (data-model design-agents.md, KD-5, rule
+ * 2). Each call is refused with a text that names the field and the rule — the member's `maxRuns` of single
+ * assignments spent (`run_limit`; list items never count), forms mixed or missing, a list empty or longer than `TRACKER_MAX_TASKS`, a repeated
  * answer field, a task of the list that is missing, completed, blocked or named by another call of the answer,
  * the calls of the answer together over `TRACKER_MAX_TASKS`, a subagent past `AGENT_MAX_DEPTH`
  * (`depth_limit`) — or accepted with what it starts. A refused call starts nothing.
@@ -188,7 +195,21 @@ function listTaskRefusal(
 export function decideDelegations(input: DelegationInput): DelegationDecision {
   const accepted: AcceptedDelegation[] = [];
   const refused: RefusedDelegation[] = [];
-  const singleRuns = new Map(input.singleRuns);
+  const memberOf = (name: string): DelegationTeamMember => {
+    const member =
+      input.team.find((candidate) => candidate.name === name) ??
+      input.team.find(
+        (candidate) => candidate.name === GENERAL_PURPOSE_SUBAGENT,
+      );
+    if (member === undefined)
+      throw new Error(`The team has no ${GENERAL_PURPOSE_SUBAGENT}`);
+    return member;
+  };
+  const singleRuns = new Map<string, number>();
+  for (const [name, runs] of input.singleRuns) {
+    const member = memberOf(name).name;
+    singleRuns.set(member, (singleRuns.get(member) ?? 0) + runs);
+  }
   const named = input.calls.flatMap((call) =>
     call.args.taskId === undefined ? [] : [call.args.taskId],
   );
@@ -213,7 +234,7 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
   function decideOne(
     call: DelegationCall,
   ): AcceptedDelegation | RefusedDelegation {
-    const { subagentType: subagent, taskId } = call.args;
+    const { subagentType: name, taskId } = call.args;
     if (input.childTooDeep) {
       return refusal(
         call.callId,
@@ -222,16 +243,8 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
         'A subagent here would be deeper than agents may go.',
       );
     }
-    const member = input.team.find((candidate) => candidate.name === subagent);
-    if (member === undefined) {
-      const names = input.team.map((candidate) => candidate.name).join(', ');
-      return refusal(
-        call.callId,
-        'not_allowed',
-        'unknown_subagent',
-        `subagentType: there is no subagent "${descriptionLine(subagent)}"; call one of: ${names}.`,
-      );
-    }
+    const member = memberOf(name);
+    const subagent = member.name;
     const form = formOf(call);
     if ('reason' in form) return form;
     const runs = singleRuns.get(subagent) ?? 0;
@@ -260,7 +273,7 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
         taskId,
         input.tasks,
         namedTwice,
-        subagent,
+        name,
       );
       if (listRefusal !== null) return listRefusal;
     }
@@ -275,6 +288,7 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
     return {
       callId: call.callId,
       subagent,
+      name,
       form,
       answerFields,
       listTask: taskId ?? null,

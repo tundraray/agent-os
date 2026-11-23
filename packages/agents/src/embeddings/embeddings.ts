@@ -8,7 +8,6 @@ import {
   CLOCK,
   type Clock,
   type ModelPrice,
-  PLATFORM_OWNER_ID,
   TokenLedger,
 } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -45,7 +44,7 @@ export interface EmbedRequest {
   /** Their order is the order of the vectors; an empty list is answered without a provider request. */
   readonly texts: readonly string[];
   readonly inputType: EmbeddingInputType;
-  /** The employee whose spend it is, or `null` — the platform's own (`PLATFORM_OWNER_ID`). */
+  /** The employee whose spend it is, or `null` — the platform's own, which no employee's month counts. */
   readonly ownerId: string | null;
   /** The task of the ledger rows, or `null`. */
   readonly taskId: string | null;
@@ -92,8 +91,8 @@ export type EmbeddingModelChoice =
 /** One `embed` past the gate and the provider's readiness. */
 interface EmbedCall {
   readonly request: EmbedRequest;
-  /** The ledger row's owner: the employee or `PLATFORM_OWNER_ID`. */
-  readonly owner: string;
+  /** The ledger row's owner: the employee, or `null` for the platform. */
+  readonly owner: string | null;
   readonly model: string;
   readonly price: ModelPrice;
   readonly dimensions: number;
@@ -193,7 +192,7 @@ export class AgentsEmbeddings {
    */
   async embed(request: EmbedRequest): Promise<EmbedResult> {
     const startedAt = this.clock.now().getTime();
-    const owner = request.ownerId ?? PLATFORM_OWNER_ID;
+    const owner = request.ownerId;
     const { logger, taskId } = request;
     const prepared = await this.callOf(request, owner);
     let result: EmbedResult;
@@ -397,7 +396,7 @@ export class AgentsEmbeddings {
   /** The verdict, the empty list and the provider's readiness: everything decided without a request. */
   private async callOf(
     request: EmbedRequest,
-    owner: string,
+    owner: string | null,
   ): Promise<EmbedCall | EmbedResult> {
     const verdict = await this.access.embedding(request.ownerId);
     if (verdict.kind === 'refused') {

@@ -1,8 +1,12 @@
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
-import type { Db, RuntimeDecisionRow, RuntimeInboxRow } from '@agent-os/db';
+import type {
+  Db,
+  RuntimeDecisionRow,
+  RuntimeInboxRow,
+  RuntimeTaskRow,
+} from '@agent-os/db';
 import type { CrashPoints } from '../crash-points';
-import type { TaskRow } from '../tasks/guarded-transition';
 import type { Tasks } from '../tasks/tasks';
 import type {
   GuardResult,
@@ -26,7 +30,7 @@ export interface StepContextDeps {
 /** What the claim knows about the step. */
 export interface ClaimedStep {
   /** The task row right after the claim (`running`, its new attempt). */
-  task: TaskRow;
+  task: RuntimeTaskRow;
   /** Messages pending at the start of the step, read in the claim transaction. */
   messages: readonly RuntimeInboxRow[];
   /**
@@ -45,7 +49,7 @@ export class TaskStepContext implements StepContext {
   readonly taskId: string;
   readonly rootId: string;
   readonly parentId: string | null;
-  readonly ownerId: string;
+  readonly ownerId: string | null;
   readonly depth: number;
   readonly type: string;
   readonly input: unknown;

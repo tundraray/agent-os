@@ -1,15 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import {
-  IdentitySessionsRepository,
-  IdentitySettingsRepository,
-} from '@agent-os/db';
+import { IdentitySessionsRepository } from '@agent-os/db';
 import {
   LanguageSchema,
+  parseSettingsValue,
   UserStatusSchema,
   type Language,
   type UserStatus,
 } from '@agent-os/contracts';
+import { SettingsService } from '../settings/settings.service';
 import { isSessionExpired, needsTouch } from './session-lifetime';
 
 /** Random bytes of a session token (KD-2). */
@@ -54,21 +53,22 @@ export const ENDED_BY_BLOCK = 'account_disabled';
 
 /**
  * Sessions as rows of `identity_sessions` (KD-2, ADR-0001): the browser holds 32 random bytes in
- * base64url, the database their SHA-256. Limits are not stored in the row: they are read from
- * `identity_settings` with the session, so a new value applies from the next request. The request
+ * base64url, the database their SHA-256. Limits are not stored in the row: the value of the
+ * `sign_in_settings` key is read with the session and parsed by its schema on every request, so a new value
+ * applies from the next request. The request
  * path's own reads and writes, on the pool; the queries are in `IdentitySessionsRepository`.
  */
 @Injectable()
 export class SessionStore {
   constructor(
     private readonly sessions: IdentitySessionsRepository,
-    private readonly settings: IdentitySettingsRepository,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Opens a session of the employee and deletes his rows older than the absolute limit. */
   async open(userId: string): Promise<OpenedSession> {
-    const limits = await this.settings.readSessionLimits();
-    await this.sessions.deleteOlderThan(userId, limits.absoluteMinutes);
+    const { value } = await this.settings.read('sign_in_settings');
+    await this.sessions.deleteOlderThan(userId, value.absoluteMinutes);
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
     const sessionId = await this.sessions.insert(userId, hashToken(token));
     return { sessionId, token };
@@ -89,15 +89,15 @@ export class SessionStore {
       isAdmin,
       hasPassword,
       language,
-      idleMinutes,
-      absoluteMinutes,
+      signInSettings,
     } = row;
+    const limits = parseSettingsValue('sign_in_settings', signInSettings);
     return {
       sessionId: row.sessionId,
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt,
       endedReason: row.endedReason,
-      expired: isSessionExpired(row, { idleMinutes, absoluteMinutes }, now),
+      expired: isSessionExpired(row, limits, now),
       user: {
         id: userId,
         email,

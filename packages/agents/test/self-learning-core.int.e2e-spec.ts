@@ -3,9 +3,9 @@
 //   PRD: docs/features/self-learning/prd.md (v1.3: AC-01.1 .. AC-20.1, NFR-01, NFR-02).
 // Generated: 2026-11-19 as skeletons; updated 2026-11-20 for Design Doc v1.2 (vector store, `knowledge.embed`, two-pass selection, question
 //   vector per session, similar entities, `placement` / `state` / `selection` / `counts`); implemented 2026-11-20 (Tasks 8.2 .. 8.4).
-// Part: core. Budget Used: 11 integration tests here (INT-1 .. INT-8, INT-10 .. INT-12) + 1 in apps/api/test/self-learning-core.int.e2e-spec.ts (INT-9)
-//   = 12 for the part (the owner's cap for this part is 12 after v1.2; the skill's default is 3, up to 5 when each extra names its defect - every
-//   test has a `Catches:` line). v1.2 added three cases (INT-10 .. INT-12) and merged the rest of its Test Strategy into INT-1, INT-5, INT-6, INT-8, INT-9.
+// Part: core. Budget Used: 10 integration tests here (INT-1 .. INT-4, INT-6 .. INT-8, INT-10 .. INT-12) + 1 in apps/api/test/self-learning-core.int.e2e-spec.ts (INT-9)
+//   = 11 for the part (the owner's cap for this part is 12 after v1.2; the skill's default is 3, up to 5 when each extra names its defect - every
+//   test has a `Catches:` line). v1.2 added three cases (INT-10 .. INT-12) and merged the rest of its Test Strategy into INT-1, INT-6, INT-8, INT-9.
 //   0 E2E: the part has no screen; the journey through the screens is the `web` part's.
 // Test Type: Integration. Run with `pnpm --filter @agent-os/agents test:e2e` (`vitest.config.e2e.ts`, `*.e2e-spec.ts`).
 //
@@ -17,13 +17,13 @@
 //   double under the embeddings service (`harness.embeddings`: every provider request with its `inputType`, model and texts - each retry of the
 //   service is a request of its own -, `vectorOf` for vectors by topic, `failure` for a 5xx). A second instance over a zombie (`ZOMBIE_RUNTIME`) is
 //   the restarted server (INT-4 row B).
-//   Support (test/support/knowledge.ts): `withLibraryRow` - the real `app.library_records` row the graph hangs on by its cascading key (KD-1),
+//   Support (test/support/knowledge.ts): `withLibraryRow` - the real `app.agents` row the graph hangs on by its cascading key (KD-1),
 //   removed afterwards with the run and question rows; `learningDeepAgent` - the double's record of the same id; `seedGraph` - graph rows and their
 //   vectors straight into the tables (the graphs over the size cap of INT-8, INT-10 .. INT-12); `withKnowledgeLimit` - the cap at
 //   `KNOWLEDGE_LIMIT_TOKENS_MIN`, the settings row put back afterwards; `waitForRound` / `waitForEmbedPass` - waits on the rows, never sleeps;
 //   `knowledgeTasksOf`, `knowledgeView` (`Agents.knowledge.view`), the package's reads (`readGraph`, `readQuestion`, `findRunById`). The real
 //   `KnowledgeVectorStore` is read through `list(collection)`, never doubled. The token ledger is read by owner and task (`ledgerRowsOf`,
-//   `PLATFORM_OWNER_ID` for the platform's rows).
+//   `null` for the platform's rows).
 //   Isolation: a unique runner `newUser()` and a unique deep agent record per test. The settings row is one per database: a case that sets the cap
 //   does it through `withKnowledgeLimit` and puts it back; a run of the apps/api suite at the same time would see the changed cap.
 //
@@ -53,24 +53,25 @@
 // `provenAt: not automated`:
 //   - AC-07.2 (the answer does not name the graph as a source) is the model's behaviour; INT-1 and INT-8 check the rule stands in the block,
 //       the owner checks the answer against the PRD success criteria.
-//   - AC-02.2 / AC-02.1 / copy half of AC-02.3: the graph is keyed by the record number only, so a flag switch, a new version and a copy cannot
-//       touch it by construction; INT-8 row 3 reads the same graph after a flag round trip, INT-5 proves the delete half.
+//   - AC-02.2 / AC-02.1 / AC-02.3: the graph is keyed by the record number only, so a flag switch, a new version and a copy cannot
+//       touch it by construction; INT-8 row 3 reads the same graph after a flag round trip. A deletion only marks the agent and keeps its
+//       knowledge (data-model/design-agents.md, KD-7), so no deletion removes the graph.
 //   - A task of extraction failing in the runtime (`task.failed` -> `interrupted`, a new task when the mark stands): one consumer decision,
 //       a branch of `knowledge-trigger`, left to its unit table. The same for `knowledge.embed` (one task per deep agent, a second request
 //       while it runs only sets the "another pass" mark; Invariant 13): a branch of its consumer, left to its unit table.
 //   - The vector store port as such (`upsert` replaces the vector of a key, `query` is cosine within one model and honours `kind`, `list`):
-//       one contract table against real pgvector; INT-8 row 4, INT-10, INT-11 and INT-5 row B use the store only through the real wiring.
+//       one contract table against real pgvector; INT-8 row 4, INT-10 and INT-11 use the store only through the real wiring.
 //   - Restart in the middle of an embedding pass (the step recounts only what is still missing, Flow 4): the same recovery technique as
 //       INT-4 row B on a step that is idempotent by construction; no case of its own.
 //
 // acProof (the one proof of every criterion; `unit` = the tables above):
-//   AC-01.1 INT-1 · AC-01.2 INT-8 · AC-02.1 not automated · AC-02.2 INT-8 · AC-02.3 INT-5 + not automated · AC-03.1 INT-1 · AC-03.2 INT-2 ·
+//   AC-01.1 INT-1 · AC-01.2 INT-8 · AC-02.1 not automated · AC-02.2 INT-8 · AC-02.3 not automated · AC-03.1 INT-1 · AC-03.2 INT-2 ·
 //   AC-03.3 INT-3 · AC-03.4 INT-6 · AC-04.1 unit · AC-04.2 INT-7 · AC-04.3 unit · AC-04.4 INT-4 · AC-05.1 unit (+ one row in INT-7) ·
 //   AC-06.1 unit · AC-06.2 unit · AC-06.3 unit · AC-07.1 INT-8 · AC-07.2 not automated · AC-07.3 INT-1 + INT-8 ·
 //   AC-08.1 INT-1 (extraction) + INT-12 (embeddings of sessions and of the pass, on the starter) + INT-11 (recomputation, on the platform) ·
 //   AC-08.2 INT-6 · AC-08.3 INT-1 · AC-09.1 INT-9 · AC-09.2 INT-8 (delete -> next step) + INT-9 (delete route) · AC-09.3 INT-9 · AC-15.1 INT-1 ·
 //   AC-15.2 INT-1 · AC-15.3 unit · AC-16.1 unit · AC-16.2 INT-7 · AC-17.1 unit · AC-18.1 INT-8 (wiring) + unit (ordering) ·
-//   AC-18.2 INT-12 · AC-18.3 INT-10 · AC-18.4 INT-11 · AC-19.1 INT-8 row 4 (entity) + INT-5 row B (deep agent) · AC-20.1 unit ·
+//   AC-18.2 INT-12 · AC-18.3 INT-10 · AC-18.4 INT-11 · AC-19.1 INT-8 row 4 (entity) · AC-20.1 unit ·
 //   NFR-01 INT-1 · NFR-02 INT-4.
 //
 // Charging rule (design-core v1.3): the `knowledge.embed` task is owned by the platform; each `embed` call decides who pays — items that
@@ -103,14 +104,12 @@ import {
   type Subagent,
 } from '@agent-os/contracts';
 import {
-  agentMessages,
+  messages,
   createDatabase,
   type Database,
   type DatabaseConnection,
   type KnowledgeGraph,
-  libraryRecords,
 } from '@agent-os/db';
-import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
 import { eq, max } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -139,7 +138,6 @@ import {
 import { databaseUrl, newUser, waitFor } from '@agent-os/db/testing';
 import {
   createPgvectorStore,
-  findEmbeddingRow,
   findRunById,
   KNOWLEDGE_EXTRACT_AGENT,
   type KnowledgeTask,
@@ -442,11 +440,11 @@ async function writeEmptyCall(
   const at = new Date();
   const callId = `empty-${randomUUID()}`;
   const [last] = await db
-    .select({ seq: max(agentMessages.seq) })
-    .from(agentMessages)
-    .where(eq(agentMessages.taskId, taskId));
-  await db.insert(agentMessages).values({
-    taskId,
+    .select({ seq: max(messages.seq) })
+    .from(messages)
+    .where(eq(messages.conversationId, taskId));
+  await db.insert(messages).values({
+    conversationId: taskId,
     seq: (last?.seq ?? 0) + 1,
     kind: 'tool_result',
     callId,
@@ -593,50 +591,6 @@ async function roundAfterTurn(
   });
   return waitForRound(harness.db, turn.runId, after.lastAt);
 }
-
-/** The author deletes the deep agent: its `app.library_records` row goes, and every key to it cascades. */
-async function deleteLibraryRow(db: Database, recordId: string): Promise<void> {
-  await db.delete(libraryRecords).where(eq(libraryRecords.id, recordId));
-}
-
-/** What the graph tables and the vector store keep of a deep agent. */
-async function knowledgeLeftOf(db: Database, recordId: string) {
-  const graph = await readGraph(db, recordId);
-  return {
-    entities: graph.entities.length,
-    relations: graph.relations.length,
-    vectors: await createPgvectorStore(db).list(recordId),
-    embeddingRow: await findEmbeddingRow(db, recordId),
-  };
-}
-
-const NOTHING_LEFT = {
-  entities: 0,
-  relations: 0,
-  vectors: [],
-  embeddingRow: undefined,
-};
-
-/**
- * What would show a broken step or a broken delivery of the round's task: an error record of the task, its guarded
- * commit rolled back, or a failed or parked delivery of the knowledge trigger.
- */
-function troublesOf(harness: AgentsHarness, taskId: string): string[] {
-  return harness.logs
-    .filter(
-      (record) =>
-        (record.fields.taskId === taskId &&
-          (record.level === 'error' ||
-            record.message === 'guard rolled back')) ||
-        (record.fields.consumer === KNOWLEDGE_TRIGGER &&
-          (record.message === 'delivery failed' ||
-            record.message === 'delivery needs attention')),
-    )
-    .map((record) => `${record.level} ${record.message}`);
-}
-
-/** The consumer that creates and closes the knowledge tasks (`knowledge-trigger.ts`). */
-const KNOWLEDGE_TRIGGER = 'agents.knowledge-trigger';
 
 /** A spent monthly quota as the access gate refuses it (INT-6 row A). */
 const QUOTA_SPENT = {
@@ -922,7 +876,7 @@ function embeddingRequestsOf(
 /** The ledger rows of the embedding models of an owner's task as `<model> <input tokens>`. */
 async function embeddingSpendOf(
   db: Database,
-  ownerId: string,
+  ownerId: string | null,
   taskId: string,
 ): Promise<string[]> {
   return (await ledgerRowsOf(db, ownerId, taskId))
@@ -982,8 +936,8 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
       library.add(learningDeepAgent(failingId, [SCOUT]));
-      const starter = newUser();
-      const failingStarter = newUser();
+      const starter = await newUser();
+      const failingStarter = await newUser();
       const endHeld = createLatch();
       const roundHeld = createLatch();
       const model = createScriptedModel();
@@ -1089,11 +1043,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             ).toEqual([`${TEST_MODEL_DEFAULT} 1000 0.0015`]);
             expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual([]);
             expect(
-              await ledgerRowsOf(
-                database.db,
-                PLATFORM_OWNER_ID,
-                extract.taskId,
-              ),
+              await ledgerRowsOf(database.db, null, extract.taskId),
             ).toEqual([]);
             // Then: the run's final state and its history are as the end left them; its one task completed
             expect(
@@ -1266,7 +1216,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const library = createLibraryDouble();
       library.add(learningDeepAgent(idleId, [SCOUT]));
       library.add(learningDeepAgent(inFlightId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const scoutHeld = createLatch();
       const roundHeld = createLatch();
       const continuedScoutHeld = createLatch();
@@ -1475,7 +1425,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const recordId = randomUUID();
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const firstHeld = createLatch();
       const model = createScriptedModel();
       const extraction = model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
@@ -1642,7 +1592,11 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
       library.add(learningDeepAgent(restartId, [SCOUT]));
-      const [first, second, restartStarter] = [newUser(), newUser(), newUser()];
+      const [first, second, restartStarter] = [
+        await newUser(),
+        await newUser(),
+        await newUser(),
+      ];
       const bothHeld = createLatch();
       const model = createScriptedModel();
       const ledger = {
@@ -1860,177 +1814,6 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   );
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-5: the deep agent record is deleted while its round waits for the model, or after it - graph and vectors go with it
-  // ---------------------------------------------------------------------------------------------------------------
-  // AC: AC-04.2 "Given модель предложила изменение, которое нельзя применить, например к уже удалённой записи, then остальные изменения этого
-  //   извлечения записаны"; AC-02.3 "when автор удаляет workflow, then его граф удалён"; AC-19.1 (workflow half: "после удаления workflow его
-  //   коллекция пуста", DC-16). Design: UC-E5, UC-E9 (workflow row), DC-8, DC-16, KD-1 (the cascading key), KD-8 (pgvector carries the vectors by cascade).
-  // Behavior: the round waits on the model -> the author deletes the deep agent -> the model answers -> the commit's writes hit the missing
-  //   record -> they are undone at their save point, the task completes, `record_deleted` goes to the log.
-  // Rows:
-  //   A. delete before the answer: no graph rows, no vectors and no vector row for the record, no error of the step and no failed or parked
-  //      delivery of the knowledge trigger, the extraction task is completed, the log has `record_deleted` (the round's dropped writes) and
-  //      the trigger ignores the extraction's end as `record_deleted` (no vector pass). As built: the run row has no key to the record (it is
-  //      keyed by the run and goes with the conversation), so it stays with the round's `done` and zero counts.
-  //   B. delete after a finished round and a finished embedding pass (items with vectors of model A in the store): every entity and relation
-  //      of the record is gone with it (the key cascades), and `list(collection)` of the record's vector collection is empty - no vector
-  //      that `query` could find is left - and the vector row is gone.
-  // Catches: a key violation that fails the whole step and retries it forever (or parks the delivery), a graph left orphaned after its
-  //   deep agent is deleted, and vectors of a deleted deep agent left in the store (a later query would still return their keys).
-  // @category: edge-case
-  // @dependency: knowledge.extract handler, graph repository, KnowledgeVectorStore (real pgvector), app.library_records (real row), runtime tasks, Postgres
-  // @complexity: medium
-  it(
-    'INT-5: a deep agent deleted during the round leaves no graph rows, no step error and a completed extraction task; deleted after it, no graph rows and no vectors',
-    async () => {
-      // Given: two learning deep agents, one per row; the first round's model call will be held; embeddings on model A
-      const midRoundId = randomUUID();
-      const afterRoundId = randomUUID();
-      const library = createLibraryDouble();
-      library.add(learningDeepAgent(midRoundId, [SCOUT]));
-      library.add(learningDeepAgent(afterRoundId, [SCOUT]));
-      const starter = newUser();
-      const roundHeld = createLatch();
-      const model = createScriptedModel();
-      const learned: readonly unknown[] = [
-        {
-          op: 'add_entity',
-          ref: 'pay',
-          name: 'payment-api',
-          description: 'the payment service of the shop',
-          evidence: ['c1'],
-        },
-        lessonOf('payment-api'),
-      ];
-      model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
-        { calls: [recordKnowledge(learned)], latch: roundHeld },
-        { calls: [recordKnowledge(learned)] },
-      ]);
-      scoutScript(model, 'Scout the run deleted mid-round', ['payment-api']);
-      scoutScript(model, 'Scout the run deleted after its round', [
-        'payment-api',
-      ]);
-      const embeddingModel = TEST_EMBEDDING_MODEL_A;
-      if (embeddingModel.kind !== 'allowed')
-        throw new Error('model A is not an allowed embedding model');
-
-      await withLibraryRow(database.db, midRoundId, () =>
-        withLibraryRow(database.db, afterRoundId, async () => {
-          const harness = await learningHarness(model, library);
-          harness.embeddingVerdict = embeddingModel;
-          try {
-            // When (row A): the run ends, its round's model call is held, the author deletes the deep agent, the model answers
-            const midRound = await startLearningRun(harness, model, {
-              ownerId: starter,
-              recordId: midRoundId,
-              turns: [
-                {
-                  text: 'Coordinate the run deleted mid-round',
-                  scout: 'Scout the run deleted mid-round',
-                },
-              ],
-            });
-            await roundHeld.reached();
-            await deleteLibraryRow(database.db, midRoundId);
-            roundHeld.open();
-            const dropped = await waitForRound(
-              database.db,
-              midRound.deepAgentId,
-            );
-            const [extract, ...moreExtracts] = await completedExtractsOf(
-              database.db,
-              midRound.deepAgentId,
-            );
-            if (extract === undefined)
-              throw new Error('the run of row A has no extraction task');
-
-            // Then (AC-04.2, DC-8): the round's writes were undone at their save point and the round still ended `done`; the
-            // task completed, nothing failed or was parked, and the extraction's end queued no vector pass
-            expect(moreExtracts).toEqual([]);
-            expect([
-              dropped.lastStatus,
-              dropped.lastReason,
-              dropped.lastAdded,
-              dropped.lastConfirmed,
-              dropped.lastOutdated,
-              dropped.lastExtractTaskId,
-            ]).toEqual(['done', null, 0, 0, 0, extract.taskId]);
-            expect(
-              (
-                await logFieldsOf(
-                  harness,
-                  'knowledge graph writes dropped: deep agent deleted',
-                  extract.taskId,
-                )
-              ).reason,
-            ).toBe('record_deleted');
-            const decided = await triggerDecisionOf(harness, extract.taskId);
-            expect([decided.decision, decided.reason]).toEqual([
-              'ignore',
-              'record_deleted',
-            ]);
-            expect(await knowledgeLeftOf(database.db, midRoundId)).toEqual(
-              NOTHING_LEFT,
-            );
-            expect(
-              await knowledgeTasksOf(database.db, { recordId: midRoundId }),
-            ).toEqual([]);
-            expect(troublesOf(harness, extract.taskId)).toEqual([]);
-
-            // When (row B): a run of the second deep agent ends, its round writes, the vector pass embeds its items on model A
-            const finished = await startLearningRun(harness, model, {
-              ownerId: starter,
-              recordId: afterRoundId,
-              turns: [
-                {
-                  text: 'Coordinate the run deleted after its round',
-                  scout: 'Scout the run deleted after its round',
-                },
-              ],
-            });
-            const round = await waitForRound(database.db, finished.deepAgentId);
-            const pass = await waitForEmbedPass(
-              database.db,
-              afterRoundId,
-              round.lastAt ?? new Date(0),
-            );
-            const graph = await readGraph(database.db, afterRoundId);
-            const keys = [
-              ...graph.entities.map((entity) => `e${entity.id}`),
-              ...graph.relations.map((relation) => `r${relation.id}`),
-            ];
-            expect([
-              round.lastStatus,
-              round.lastAdded,
-              pass.lastReason,
-              keys.length,
-            ]).toEqual(['done', 2, null, 2]);
-            expect(
-              (await createPgvectorStore(database.db).list(afterRoundId))
-                .map((entry) => `${entry.key} ${entry.model}`)
-                .sort(),
-            ).toEqual(
-              keys.map((key) => `${key} ${embeddingModel.model}`).sort(),
-            );
-
-            // When: the author deletes the deep agent
-            await deleteLibraryRow(database.db, afterRoundId);
-
-            // Then (AC-02.3, AC-19.1, DC-16): its graph, its vectors and its vector row went with the record
-            expect(await knowledgeLeftOf(database.db, afterRoundId)).toEqual(
-              NOTHING_LEFT,
-            );
-          } finally {
-            roundHeld.open();
-            await closeAll([harness]);
-          }
-        }),
-      );
-    },
-    TEST_TIMEOUT_MS,
-  );
-
-  // ---------------------------------------------------------------------------------------------------------------
   // INT-6: the model cannot be used - the round ends with a named state and the graph and the run stay as they were
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-03.4 "Given извлечение закончилось ошибкой модели, then граф не изменился, запуск остался завершённым, а ответ сотрудник получил
@@ -2070,7 +1853,11 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
           content: { ...content, model: TEST_MODEL_CHOSEN },
         },
       });
-      const [refused, failing, unparsable] = [newUser(), newUser(), newUser()];
+      const [refused, failing, unparsable] = [
+        await newUser(),
+        await newUser(),
+        await newUser(),
+      ];
       const refusals: Record<string, Record<string, typeof QUOTA_SPENT>> = {};
       const endHeld = createLatch();
       const model = createScriptedModel();
@@ -2374,7 +2161,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const recordId = randomUUID();
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const model = createScriptedModel();
       scoutScript(model, 'Scout the payment service', ['payment-api']);
 
@@ -2549,7 +2336,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
             content: { ...learningContent(recordId), selfLearning },
           },
         });
-      const starter = newUser();
+      const starter = await newUser();
       const compactionHeld = createLatch();
       const reportHeld = createLatch();
       const model = createScriptedModel();
@@ -2755,7 +2542,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const library = createLibraryDouble();
       library.add(learningDeepAgent(unselectedId, [SCOUT]));
       library.add(learningDeepAgent(failingId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const model = createScriptedModel();
       model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], {
         thereafter: RECORDS_NOTHING,
@@ -2952,7 +2739,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const recordId = randomUUID();
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const endHeld = createLatch();
       const model = createScriptedModel();
       model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [
@@ -3052,10 +2839,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
                 { recordId },
               );
               if (passTask === undefined) throw new Error('no vector pass');
-              expect([passTask.ownerId, morePasses]).toEqual([
-                PLATFORM_OWNER_ID,
-                [],
-              ]);
+              expect([passTask.ownerId, morePasses]).toEqual([null, []]);
               expect(
                 embeddingRequestsOf(harness, 'document').map(
                   (call) => `${call.model} ${call.texts.length}`,
@@ -3065,11 +2849,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
                 await embeddingSpendOf(database.db, starter, passTask.taskId),
               ).toEqual([`${MODEL_B} 10`]);
               expect(
-                await embeddingSpendOf(
-                  database.db,
-                  PLATFORM_OWNER_ID,
-                  passTask.taskId,
-                ),
+                await embeddingSpendOf(database.db, null, passTask.taskId),
               ).toEqual([`${MODEL_B} 70`]);
               expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual(
                 [],
@@ -3119,7 +2899,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
       const recordId = randomUUID();
       const library = createLibraryDouble();
       library.add(learningDeepAgent(recordId, [SCOUT]));
-      const starter = newUser();
+      const starter = await newUser();
       const refundsMessage = 'Now look into the refunds';
       const model = createScriptedModel();
       model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [], {
@@ -3231,11 +3011,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
                 passTask.taskId,
               ]) {
                 expect(
-                  await embeddingSpendOf(
-                    database.db,
-                    PLATFORM_OWNER_ID,
-                    taskId,
-                  ),
+                  await embeddingSpendOf(database.db, null, taskId),
                 ).toEqual([]);
               }
               expect(await ledgerRowsOf(database.db, TEST_AUTHOR_ID)).toEqual(

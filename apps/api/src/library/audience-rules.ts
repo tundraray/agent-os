@@ -1,7 +1,4 @@
-import {
-  CHAT_BUILTIN_KEY,
-  type LibraryRejectReason,
-} from '@agent-os/contracts';
+import type { LibraryRejectReason } from '@agent-os/contracts';
 
 type Refused<Reason extends LibraryRejectReason> = {
   readonly kind: 'refused';
@@ -50,13 +47,13 @@ export interface SystemAudienceInput {
 }
 
 /**
- * Whether the admin may set this audience of a system record: the main-chat record's audience is
- * fixed, and every role and employee named must exist.
+ * Whether the admin may set this audience of a system record: a default agent's audience is fixed
+ * (data-model design-agents.md, KD-4), and every role and employee named must exist.
  */
 export function decideSystemAudience(
   input: SystemAudienceInput,
 ): Allowed | Refused<'audience_fixed' | 'holder_not_found'> {
-  if (input.builtinKey === CHAT_BUILTIN_KEY)
+  if (input.builtinKey !== null)
     return { kind: 'refused', reason: 'audience_fixed' };
   const roles = new Set(input.existingRoleIds);
   const users = new Set(input.existingUserIds);

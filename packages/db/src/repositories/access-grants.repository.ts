@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
 import { Db } from '../db';
-import { accessGrants, accessModels } from '../schema';
+import { accessGrants, models } from '../schema';
 
 /** A row of `access_grants`; the api reads its target and holder out of the columns. */
 export type AccessGrantRow = typeof accessGrants.$inferSelect;
@@ -77,23 +77,14 @@ export class AccessGrantsRepository {
     await this.db.client.delete(accessGrants).where(eq(accessGrants.id, id));
   }
 
-  /** Deletes every grant on the server and its tools; returns how many there were. */
-  async deleteOfServer(server: string): Promise<number> {
-    const rows = await this.db.client
-      .delete(accessGrants)
-      .where(eq(accessGrants.server, server))
-      .returning({ id: accessGrants.id });
-    return rows.length;
-  }
-
   /** Grants meeting the condition with the catalogue name of a model target, by creation time, then id. */
   private withModelName(
     where: SQL | undefined,
   ): Promise<AccessGrantWithModelName[]> {
     return this.db.client
-      .select({ grant: accessGrants, modelName: accessModels.name })
+      .select({ grant: accessGrants, modelName: models.name })
       .from(accessGrants)
-      .leftJoin(accessModels, eq(accessModels.id, accessGrants.model))
+      .leftJoin(models, eq(models.id, accessGrants.model))
       .where(where)
       .orderBy(asc(accessGrants.createdAt), asc(accessGrants.id));
   }

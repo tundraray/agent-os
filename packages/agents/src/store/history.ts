@@ -1,9 +1,10 @@
 import {
   CALL_RECORD_KINDS,
+  type ChipRecord,
   type HistoryEntryKind,
   HistoryEntryKindSchema,
 } from '@agent-os/contracts';
-import { type AgentMessageRow, AgentMessagesRepository } from '@agent-os/db';
+import { type MessageRow, MessagesRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 
 import {
@@ -12,12 +13,11 @@ import {
   type HistoryEntry,
 } from '../history/history';
 
-/** An entry to append: its kind, its content and, for a `model_answer`, the token ledger row. */
+/** An entry to append: its kind and its content. */
 export type NewHistoryEntry = {
   readonly [K in HistoryEntryKind]: {
     readonly kind: K;
     readonly content: HistoryContent<K>;
-    readonly modelCallId?: string;
   };
 }[HistoryEntryKind];
 
@@ -37,7 +37,7 @@ export type PageEntry = Exclude<
 >;
 
 /** Reads a row back as an entry; the content is checked against the schema of its kind. */
-function toEntry(row: AgentMessageRow): HistoryEntry {
+function toEntry(row: MessageRow): HistoryEntry {
   const kind = HistoryEntryKindSchema.parse(row.kind);
   const content = HistoryContentSchemas[kind].parse(row.content);
   // The kind and its content were checked together just above; TypeScript cannot correlate them.
@@ -51,7 +51,7 @@ function toEntry(row: AgentMessageRow): HistoryEntry {
 
 /**
  * The promoted columns of an entry: the call it is about, and the end time of a result — a stored
- * result always has one (`agent_messages_finished_at_check`).
+ * result always has one (`messages_finished_at_check`).
  */
 function promoted(entry: NewHistoryEntry) {
   const finishedAt =
@@ -63,7 +63,7 @@ function promoted(entry: NewHistoryEntry) {
 }
 
 /**
- * The history of a session as entries, over the queries of `AgentMessagesRepository`, inside the
+ * The history of a session as entries, over the queries of `MessagesRepository`, inside the
  * caller's transaction: an entry is written with its promoted columns and read back checked against
  * the schema of its kind. Tool calls live here too: a call is an item of its `model_answer`, and what
  * happened to it are later call records. Reads that give no entry — a count, a `seq`, the calls of many
@@ -72,8 +72,8 @@ function promoted(entry: NewHistoryEntry) {
 @Injectable()
 export class History {
   constructor(
-    @Inject(AgentMessagesRepository)
-    private readonly rows: AgentMessagesRepository,
+    @Inject(MessagesRepository)
+    private readonly rows: MessagesRepository,
   ) {}
 
   /**
@@ -89,11 +89,10 @@ export class History {
     const lastSeq = await this.rows.lastSeq(taskId);
     const rows = await this.rows.insert(
       entries.map((entry, index) => ({
-        taskId,
+        conversationId: taskId,
         seq: lastSeq + index + 1,
         kind: entry.kind,
         content: entry.content,
-        modelCallId: entry.modelCallId ?? null,
         ...promoted(entry),
       })),
     );
@@ -134,6 +133,38 @@ export class History {
     return rows.map(toEntry) as Extract<HistoryEntry, { kind: 'tool_sent' }>[];
   }
 
+  /**
+   * The session's assignment: the text of its `task` entry, its first own entry (data-model design-agents.md,
+   * KD-6). A session without one is broken.
+   */
+  async taskText(taskId: string): Promise<string> {
+    const [first] = await this.through(taskId, 1);
+    if (first?.kind !== 'task')
+      throw new Error(`Session ${taskId} has no task entry first`);
+    return first.content.text;
+  }
+
+  /**
+   * The chip of the message a tool call answers: of the session's last `task` or `user_message` entry before
+   * the `model_answer` that requested the call, whatever was compacted since; `null` — that message carries
+   * none, so the chip of an earlier message never reaches a later one.
+   */
+  async answeredChip(
+    taskId: string,
+    callId: string,
+  ): Promise<ChipRecord | null> {
+    const answerSeq = await this.rows.answerSeqOf(taskId, callId);
+    if (answerSeq === undefined)
+      throw new Error(`No answer of agent ${taskId} requested call ${callId}`);
+    const message = (await this.through(taskId, answerSeq)).findLast(
+      (
+        entry,
+      ): entry is Extract<HistoryEntry, { kind: 'task' | 'user_message' }> =>
+        entry.kind === 'task' || entry.kind === 'user_message',
+    );
+    return message?.content.record ?? null;
+  }
+
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */
   async through(taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
     return (await this.rows.through(taskId, throughSeq)).map(toEntry);
@@ -145,7 +176,7 @@ export class History {
     callIds: readonly string[],
   ): Promise<CallRecord[]> {
     const rows = await this.rows.callRecords(taskId, callIds);
-    // Only call records carry a `call_id` (`agent_messages_call_id_check`).
+    // Only call records carry a `call_id` (`messages_call_id_check`).
     return rows.map(toEntry) as CallRecord[];
   }
 }

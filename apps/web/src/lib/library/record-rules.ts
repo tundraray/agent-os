@@ -2,8 +2,10 @@ import {
   CHAT_BUILTIN_KEY,
   type AgentContent,
   type DeepAgentContent,
+  nameWinner,
   type RecordBody,
   type RecordDetail,
+  type RecordKind,
   type RecordSummary,
   type RunOrigin,
   type Subagent,
@@ -60,19 +62,32 @@ export function recipientNote(
   };
 }
 
-/** Reads a record of the library list by id (`libraryIndex.summaryOf`). */
-export type SummaryLookup = { summaryOf(recordId: string): LiveRecord<'name'> };
-
-/** Title of a deep agent's brief card (MC-22): «Задание · {имя}», or «Задание» while the record is unknown. */
+/**
+ * Title of a deep agent's brief card (MC-22): «Задание · {имя}» by the name the call gives (data-model
+ * design-agents.md, KD-5) — a temporary deep agent has no record, yet its name is the run's — or «Задание»
+ * without one.
+ */
 export function briefTitleName(
   t: LibraryTranslator,
-  deepAgentId: string | null | undefined,
-  index: SummaryLookup,
+  deepAgentName: string | null | undefined,
 ): string {
-  const live = deepAgentId ? index.summaryOf(deepAgentId) : null;
-  return live == null
-    ? t('brief.title')
-    : t('brief.titleNamed', { name: live.name });
+  return deepAgentName
+    ? t('brief.titleNamed', { name: deepAgentName })
+    : t('brief.title');
+}
+
+/**
+ * The record a start call names (data-model design-agents.md, KD-5): the winner of the name among the records
+ * of `kind` in the library list, by the backend's own rule (`nameWinner`). `null` — none (the call starts a
+ * temporary agent, which has no record); `undefined` — the list is not read yet.
+ */
+export function recordNamed(
+  records: ReadonlyMap<string, RecordSummary> | null,
+  kind: RecordKind,
+  name: string,
+): RecordSummary | null | undefined {
+  if (records === null) return undefined;
+  return nameWinner(records.values(), kind, name);
 }
 
 /**

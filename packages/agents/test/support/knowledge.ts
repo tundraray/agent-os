@@ -5,17 +5,19 @@ import type {
 } from '@agent-os/agents/testing';
 import type { DeepAgentContent, KnowledgeView } from '@agent-os/contracts';
 import {
+  agentKnowledgeEmbedding,
   agentKnowledgeEntities,
   AgentKnowledgeRepository,
   agentKnowledgeRelations,
   agentKnowledgeRuns,
   AgentKnowledgeRunsRepository,
   agentKnowledgeSettings,
+  agentKnowledgeVectors,
   AgentKnowledgeVectorsRepository,
   type Database,
   Db,
   type KnowledgeEmbeddingRow,
-  libraryRecords,
+  agents,
   runtimeTasks,
 } from '@agent-os/db';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -41,7 +43,7 @@ import {
 } from './agentsHarness';
 
 /**
- * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.library_records` row the
+ * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.agents` row the
  * graph hangs on, graph rows and vectors written straight into the tables, the size cap, waits on the rows of
  * the background work, and the reads the cases assert on. The reads are the queries of the `@agent-os/db`
  * repositories and the store the package itself uses, so a case has one import place.
@@ -55,7 +57,7 @@ export const readGraph = (db: Database, recordId: string) =>
   knowledgeRows(db).readGraph(recordId);
 export const findRunById = async (db: Database, runId: string) =>
   knowledgeRunOf(await knowledgeRunRows(db).findRunById(runId));
-export const findEmbeddingRow = (db: Database, recordId: string) =>
+const findEmbeddingRow = (db: Database, recordId: string) =>
   knowledgeRunRows(db).findEmbeddingRow(recordId);
 export const readQuestion = (db: Database, taskId: string) =>
   knowledgeRunRows(db).readQuestion(taskId);
@@ -102,10 +104,10 @@ export function learningDeepAgent(
 }
 
 /**
- * Runs `body` with a real `app.library_records` row of id `recordId` — the graph and its vectors
+ * Runs `body` with a real `app.agents` row of id `recordId` — the graph and its vectors
  * reference it by a cascading key (KD-1, KD-8) — and afterwards, also when `body` fails, removes what the
  * deep agent left: the question rows of its runs' sessions and their run rows (they reference the sessions,
- * not the record), then the row itself, whose cascade takes the graph, the vectors and the vector row. A
+ * not the record), the graph, the vectors and the vector row, and marks the row itself deleted. A
  * system deep agent row, named by its id. `db` must outlive the harnesses: close them inside `body`, so no
  * worker writes after the cleanup.
  */
@@ -114,13 +116,13 @@ export async function withLibraryRow<T>(
   recordId: string,
   body: () => Promise<T>,
 ): Promise<T> {
-  await db.insert(libraryRecords).values({
+  // No version: the knowledge keys reference the agent alone, and an agent without one is in no catalogue read.
+  await db.insert(agents).values({
     id: recordId,
     kind: 'deep_agent',
     ownerId: null,
     name: `knowledge-test-${recordId}`,
     description: 'Self-learning test deep agent',
-    content: {},
   });
   try {
     return await body();
@@ -134,7 +136,24 @@ export async function withLibraryRow<T>(
     await db
       .delete(agentKnowledgeRuns)
       .where(eq(agentKnowledgeRuns.recordId, recordId));
-    await db.delete(libraryRecords).where(eq(libraryRecords.id, recordId));
+    // The conversations of the run keep the versions the double wrote, so the agent row stays, marked deleted
+    // (data-model design-agents.md, KD-7); what its cascade took goes here.
+    await db
+      .delete(agentKnowledgeRelations)
+      .where(eq(agentKnowledgeRelations.recordId, recordId));
+    await db
+      .delete(agentKnowledgeEntities)
+      .where(eq(agentKnowledgeEntities.recordId, recordId));
+    await db
+      .delete(agentKnowledgeVectors)
+      .where(eq(agentKnowledgeVectors.recordId, recordId));
+    await db
+      .delete(agentKnowledgeEmbedding)
+      .where(eq(agentKnowledgeEmbedding.recordId, recordId));
+    await db
+      .update(agents)
+      .set({ deletedAt: sql`now()` })
+      .where(eq(agents.id, recordId));
   }
 }
 
@@ -369,7 +388,8 @@ export function waitForEmbedPass(
 export interface KnowledgeTask {
   readonly taskId: string;
   readonly type: string;
-  readonly ownerId: string;
+  /** `null` for a `knowledge.embed` pass: the platform's own work. */
+  readonly ownerId: string | null;
   readonly status: string;
   readonly createdAt: Date;
 }

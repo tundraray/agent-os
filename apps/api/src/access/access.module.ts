@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
+import { SettingsModule } from '../settings/settings.module';
 import { AccessService } from './access.service';
 
 /**
@@ -9,7 +10,7 @@ import { AccessService } from './access.service';
  * `AccessAdminModule`.
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, SettingsModule],
   providers: [AccessService],
   exports: [AccessService],
 })

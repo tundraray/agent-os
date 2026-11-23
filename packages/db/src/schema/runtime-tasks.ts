@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { createdAt, isOneOf, literal } from './helpers';
+import { identityUsers } from './identity-users';
 import { runtimeTrackers } from './runtime-trackers';
 
 export const runtimeTasks = app.table(
@@ -20,7 +21,10 @@ export const runtimeTasks = app.table(
   {
     taskId: uuid('task_id').primaryKey(),
     type: text('type').notNull(),
-    ownerId: text('owner_id').notNull(),
+    /** The employee the tree runs for; null for the platform's own work (`knowledge.embed`), which nobody sees. */
+    ownerId: uuid('owner_id').references(() => identityUsers.id, {
+      onDelete: 'cascade',
+    }),
     parentId: uuid('parent_id').references(
       (): AnyPgColumn => runtimeTasks.taskId,
       {

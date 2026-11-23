@@ -71,7 +71,7 @@ async function createOwner(
   control: RuntimeHarness,
   types: Types,
 ): Promise<Owner> {
-  const ownerId = newUser();
+  const ownerId = await newUser();
   const taskId = await control.tasks.create({
     type: types.trackerOwner,
     ownerId,

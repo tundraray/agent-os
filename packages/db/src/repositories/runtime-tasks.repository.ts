@@ -22,6 +22,52 @@ export interface RuntimeTaskRowGuard {
   waitReason?: WaitReason;
 }
 
+/**
+ * The closed set of a guarded write: the runtime says what changes, this repository builds the SQL.
+ * An empty set holds the row (`updated_at` only).
+ */
+export interface RuntimeTaskWrite {
+  /**
+   * The new status. With it `wait_reason` becomes `waitReason` (null without one) and `finished_at`
+   * becomes `now()` with `finishedNow`, null without it.
+   */
+  status?: TaskStatus;
+  waitReason?: WaitReason;
+  finishedNow?: boolean;
+  /** `attempt + 1`: the step in flight, if any, is no longer current. */
+  nextAttempt?: boolean;
+  /** `step_claims + 1`. */
+  countClaim?: boolean;
+  stepNo?: number;
+  stepClaims?: number;
+  recoveries?: number;
+  result?: unknown;
+  failure?: unknown;
+}
+
+function writeColumns(
+  write: RuntimeTaskWrite,
+): PgUpdateSetSource<typeof runtimeTasks> {
+  const {
+    status,
+    waitReason,
+    finishedNow,
+    nextAttempt,
+    countClaim,
+    ...values
+  } = write;
+  return {
+    ...values,
+    ...(status !== undefined && {
+      status,
+      waitReason: waitReason ?? null,
+      finishedAt: finishedNow ? sql`now()` : null,
+    }),
+    ...(nextAttempt && { attempt: sql`${runtimeTasks.attempt} + 1` }),
+    ...(countClaim && { stepClaims: sql`${runtimeTasks.stepClaims} + 1` }),
+  };
+}
+
 const { queued, running } = TaskStatusSchema.enum;
 
 export type NewRuntimeTaskRow = Pick<
@@ -64,10 +110,13 @@ export class RuntimeTasksRepository {
       .orderBy(asc(runtimeTasks.taskId));
   }
 
-  /** The owner's task; another owner's or a deleted one answers as a missing one. */
+  /**
+   * The owner's task; another owner's or a deleted one answers as a missing one. A `null` owner finds only a task
+   * of the platform's own work: the runtime passes it for a message between such tasks, an employee never has it.
+   */
   async findOwned(
     taskId: string,
-    ownerId: string,
+    ownerId: string | null,
   ): Promise<RuntimeTaskRow | undefined> {
     const [row] = await this.db.client
       .select()
@@ -75,7 +124,9 @@ export class RuntimeTasksRepository {
       .where(
         and(
           eq(runtimeTasks.taskId, taskId),
-          eq(runtimeTasks.ownerId, ownerId),
+          ownerId === null
+            ? isNull(runtimeTasks.ownerId)
+            : eq(runtimeTasks.ownerId, ownerId),
           isNull(runtimeTasks.deletedAt),
         ),
       );
@@ -180,19 +231,19 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * The only write of a `runtime_tasks` row besides {@link insert} and {@link markDeleted}: one
-   * UPDATE of `columns` and `updated_at`, guarded by the allowed source statuses and, when given,
-   * by the attempt (fencing, ADR-0001) and the wait reason. Returns the updated row, or `undefined`
+   * The only write of a `runtime_tasks` row besides {@link insert}, {@link markDeleted} and
+   * {@link takeMessageSeq}: one UPDATE of the columns of `write` and `updated_at`, guarded by the
+   * allowed source statuses and, when given, by the attempt (fencing, ADR-0001) and the wait reason. Returns the updated row, or `undefined`
    * when the guard matched nothing — the write is fenced and dropped. Which columns a change sets
    * and which changes are allowed is the rule of the runtime's `Tasks`, the only caller.
    */
   async updateGuarded(
     guard: RuntimeTaskRowGuard,
-    columns: PgUpdateSetSource<typeof runtimeTasks>,
+    write: RuntimeTaskWrite,
   ): Promise<RuntimeTaskRow | undefined> {
     const [row] = await this.db.client
       .update(runtimeTasks)
-      .set({ ...columns, updatedAt: sql`now()` })
+      .set({ ...writeColumns(write), updatedAt: sql`now()` })
       .where(
         and(
           eq(runtimeTasks.taskId, guard.taskId),
@@ -205,6 +256,23 @@ export class RuntimeTasksRepository {
             : eq(runtimeTasks.waitReason, guard.waitReason),
         ),
       )
+      .returning();
+    return row;
+  }
+
+  /**
+   * Takes the task's next message number in one UPDATE (`next_message_seq + 1`), whatever its
+   * status: two senders never get the same number. Returns the row after the write — the number
+   * taken is its `nextMessageSeq - 1` — or `undefined` for a missing task.
+   */
+  async takeMessageSeq(taskId: string): Promise<RuntimeTaskRow | undefined> {
+    const [row] = await this.db.client
+      .update(runtimeTasks)
+      .set({
+        nextMessageSeq: sql`${runtimeTasks.nextMessageSeq} + 1`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(runtimeTasks.taskId, taskId))
       .returning();
     return row;
   }

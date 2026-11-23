@@ -4,7 +4,7 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { AgentSessionsRepository, Db } from '@agent-os/db';
+import { ConversationsRepository, Db } from '@agent-os/db';
 import {
   Decisions,
   Inbox,
@@ -46,8 +46,8 @@ export class ControlOperations {
 
   constructor(
     @Inject(Db) private readonly db: Db,
-    @Inject(AgentSessionsRepository)
-    private readonly sessionRows: AgentSessionsRepository,
+    @Inject(ConversationsRepository)
+    private readonly sessionRows: ConversationsRepository,
     @Inject(TaskControl)
     private readonly tasks: Pick<
       TaskControl,
@@ -218,8 +218,9 @@ export class ControlOperations {
   }
 
   /**
-   * Stops the conversation's tree and marks it and its root session deleted, in one transaction: from
-   * then on the conversation answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
+   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`), in one
+   * transaction: the deletion mark lives on the tasks only (KD-2), and from then on the conversation
+   * answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
    * a missing, another owner's or an already deleted root.
    */
   deleteRoot(rootId: string, ownerId: string): Promise<void> {
@@ -227,7 +228,6 @@ export class ControlOperations {
       asAgent(
         this.db.transaction(async () => {
           await this.tasks.deleteTree(rootId, ownerId);
-          await this.sessionRows.markDeleted(rootId);
         }),
       ),
     );

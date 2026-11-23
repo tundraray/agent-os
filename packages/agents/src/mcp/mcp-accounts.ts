@@ -1,8 +1,8 @@
 import type { LogFields, Logger } from '@agent-os/common';
 import { McpServerModeSchema, type McpConnection } from '@agent-os/contracts';
 import {
-  AgentMcpAccountsRepository,
-  AgentMcpServersRepository,
+  McpAccountsRepository,
+  McpServersRepository,
   type McpAccountRow,
   type McpServerRow,
   type McpTokens,
@@ -187,7 +187,7 @@ function isExchangeFailure(error: unknown): boolean {
 /**
  * Accounts of employees on `oauth` servers (KD-4, KD-5, KD-6): the connection by OAuth with PKCE, the token
  * read from the database at the moment of the call and refreshed before it, and the account deleted when it
- * can no longer be refreshed. Tokens live in `agent_mcp_accounts` only; in process memory are the connection
+ * can no longer be refreshed. Tokens live in `mcp_accounts` only; in process memory are the connection
  * requests and the refreshes in flight (ADR-0001). The authorization server is called outside any
  * transaction (repository-over-transaction.md). No operation returns a token, and none is logged.
  */
@@ -202,10 +202,10 @@ export class McpAccounts {
   private readonly allowHttp: boolean;
 
   constructor(
-    @Inject(AgentMcpServersRepository)
-    private readonly mcpServerRows: AgentMcpServersRepository,
-    @Inject(AgentMcpAccountsRepository)
-    private readonly mcpAccountRows: AgentMcpAccountsRepository,
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
+    @Inject(McpAccountsRepository)
+    private readonly mcpAccountRows: McpAccountsRepository,
     @Inject(ConnectRequests) private readonly requests: ConnectRequests,
     /** The one access check (Contract «Для `access`»): the same as in the tool set and the call check. */
     @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,

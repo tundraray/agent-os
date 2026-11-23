@@ -1,8 +1,12 @@
+import type { SettingsKey } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { Db } from '../db';
-import { identitySessions, identitySettings, identityUsers } from '../schema';
-import { IS_ADMIN, sessionLimitColumns } from './identity-columns';
+import { identitySessions, identityUsers, settings } from '../schema';
+import { IS_ADMIN } from './identity-columns';
+
+/** The settings key the session check reads its limits from. */
+const SIGN_IN_SETTINGS: SettingsKey = 'sign_in_settings';
 
 /**
  * Drizzle queries of `identity_sessions`. Tokens and expiry rules live in the api's `SessionStore`.
@@ -63,7 +67,10 @@ export class IdentitySessionsRepository {
       .where(eq(identitySessions.userId, userId));
   }
 
-  /** The session of the token hash with its employee, admin right and the current session limits, in one query. */
+  /**
+   * The session of the token hash with its employee, admin right and the value of the `sign_in_settings` key as
+   * stored (the caller parses it), in one query.
+   */
   async findByTokenHash(tokenHash: string) {
     const [row] = await this.db.client
       .select({
@@ -78,11 +85,11 @@ export class IdentitySessionsRepository {
         isAdmin: IS_ADMIN,
         hasPassword: sql<boolean>`${identityUsers.passwordHash} is not null`,
         language: identityUsers.language,
-        ...sessionLimitColumns,
+        signInSettings: settings.value,
       })
       .from(identitySessions)
       .innerJoin(identityUsers, eq(identityUsers.id, identitySessions.userId))
-      .innerJoin(identitySettings, sql`true`)
+      .innerJoin(settings, eq(settings.key, SIGN_IN_SETTINGS))
       .where(eq(identitySessions.tokenHash, tokenHash));
     return row;
   }

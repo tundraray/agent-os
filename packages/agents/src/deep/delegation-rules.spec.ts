@@ -50,12 +50,17 @@ function call(callId: string, args: DelegationCall['args']): DelegationCall {
 const items = (count: number) =>
   Array.from({ length: count }, (_, index) => `пункт ${index + 1}`);
 
-/** The decision as lines: `callId accepted <subagent> <form> <tasks> [task N]` or `callId <reason>: <text>`. */
+/**
+ * The decision as lines: `callId accepted <name> [as <member>] <form> <tasks> [task N]` or
+ * `callId <reason>: <text>`; `as` only when the run's name is not the member's.
+ */
 function lines(decision: DelegationDecision): string[] {
   return [
     ...decision.accepted.map(
       (accepted) =>
-        `${accepted.callId} accepted ${accepted.subagent} ${accepted.form.kind} ${
+        `${accepted.callId} accepted ${accepted.name}${
+          accepted.name === accepted.subagent ? '' : ` as ${accepted.subagent}`
+        } ${accepted.form.kind} ${
           accepted.form.kind === 'single' ? 1 : accepted.form.items.length
         }${accepted.listTask === null ? '' : ` task ${accepted.listTask}`}`,
     ),
@@ -70,13 +75,33 @@ function lines(decision: DelegationDecision): string[] {
 // ask for, or a list that never runs.
 describe('the task calls of one answer are refused with field and rule, or accepted', () => {
   it.each<[string, Partial<DelegationInput>, string[]]>([
+    // data-model DC-26 (KD-5, rule 2): a name outside the team starts general-purpose under that name instead of a
+    // refusal, and its runs count in the limit of general-purpose.
     [
-      'a subagent outside the record is refused with the names to call',
+      'a name outside the team starts general-purpose under that name',
       {
         calls: [call('c1', { subagentType: 'review', description: 'Проверь' })],
       },
+      ['c1 accepted review as general-purpose single 1'],
+    ],
+    [
+      'temporary subagents spend the runs of general-purpose',
+      {
+        singleRuns: new Map([
+          ['general-purpose', 18],
+          ['review', 1],
+        ]),
+        calls: [
+          call('c1', { subagentType: 'audit', description: 'Проверь' }),
+          call('c2', {
+            subagentType: 'general-purpose',
+            description: 'Сделай',
+          }),
+        ],
+      },
       [
-        'c1 not_allowed: subagentType: there is no subagent "review"; call one of: gather, answer, general-purpose.',
+        'c1 accepted audit as general-purpose single 1',
+        'c2 run_limit: subagentType: general-purpose got 20 single assignments, the most it may get (20); give the work to another subagent.',
       ],
     ],
     [

@@ -27,11 +27,9 @@ export const runtimeEvents = app.table(
     rootId: uuid('root_id')
       .notNull()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-    taskId: uuid('task_id'),
-    /** Kept for incident analysis; no code reads it. */
-    causationId: uuid('causation_id'),
-    /** Kept for incident analysis; no code reads it. */
-    stateRevision: integer('state_revision').notNull(),
+    taskId: uuid('task_id').references(() => runtimeTasks.taskId, {
+      onDelete: 'cascade',
+    }),
     payload: jsonb('payload').notNull(),
     createdAt: createdAt(),
   },
@@ -41,5 +39,7 @@ export const runtimeEvents = app.table(
       sql`octet_length(${t.payload}::text) <= ${sql.raw(String(EVENT_PAYLOAD_MAX_BYTES))}`,
     ),
     index('runtime_events_root_seq_idx').on(t.rootId, t.seq),
+    /** The cascade from a task that is not the root. */
+    index('runtime_events_task_idx').on(t.taskId),
   ],
 );

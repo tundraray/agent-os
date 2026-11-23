@@ -8,10 +8,10 @@ import type {
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
+import type { LearningRun } from '../deep/deep-definition';
 import type { AgentsEmbeddings, EmbedResult } from '../embeddings/embeddings';
-import type { RunSnapshot } from '../start/snapshot';
+import type { History } from '../store/history';
 import type { Session } from '../store/sessions';
-import { sessionLearningOf } from './knowledge-block';
 
 /** The `source` of a question taken from the session's `task`; otherwise it is the employee message's id. */
 const TASK_QUESTION_SOURCE = 'task';
@@ -32,6 +32,8 @@ export interface QuestionVectorDeps {
   readonly db: Db;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly embeddings: Pick<AgentsEmbeddings, 'embed'>;
+  /** The session's `task` entry: the first question (data-model design-agents.md, KD-6). */
+  readonly history: Pick<History, 'taskText'>;
 }
 
 /** What the embeddings call gave: its result, or the error it threw while the step was not cancelled. */
@@ -42,15 +44,17 @@ type EmbedAttempt =
  * The question to embed now (KD-6, Invariant 12), for a session that learns: a step of an agent that embeds
  * the employee's messages (a deep agent) that delivers a `user_message` other than the stored source — the
  * last such message; no question row yet
- * (the session may exist before its first step) — the session's `task`; otherwise nothing. A step that
- * is both the first and delivers a message embeds only the message: it is the newer question.
+ * (the session may exist before its first step) — the session's `task`, read from its history; otherwise
+ * nothing. A step that is both the first and delivers a message embeds only the message: it is the newer
+ * question.
  */
-function questionToEmbed(
+async function questionToEmbed(
+  history: QuestionVectorDeps['history'],
   session: Session,
   embedsEmployeeMessages: boolean,
   messages: readonly StepMessage[],
   stored: KnowledgeQuestionRow | undefined,
-): SessionQuestion | null {
+): Promise<SessionQuestion | null> {
   const employees = embedsEmployeeMessages
     ? messages.filter((message) => message.kind === userMessage)
     : [];
@@ -62,7 +66,10 @@ function questionToEmbed(
     };
   }
   if (stored === undefined)
-    return { source: TASK_QUESTION_SOURCE, text: session.prompt };
+    return {
+      source: TASK_QUESTION_SOURCE,
+      text: await history.taskText(session.taskId),
+    };
   return null;
 }
 
@@ -89,17 +96,17 @@ export async function embedQuestion(
   deps: QuestionVectorDeps,
   ctx: StepContext,
   session: Session,
-  /** The snapshot of the run: whether its session learns. */
-  snapshot: RunSnapshot,
+  /** The run's learning, from its version: whether its session learns. */
+  learning: LearningRun | null,
   /** The agent embeds the employee's messages as new questions (a deep agent). */
   embedsEmployeeMessages: boolean,
 ): Promise<boolean> {
-  const learning = sessionLearningOf(snapshot);
   if (learning === null) return true;
   const { recordId } = learning;
 
   const stored = await deps.knowledgeRunRows.readQuestion(ctx.taskId);
-  const question = questionToEmbed(
+  const question = await questionToEmbed(
+    deps.history,
     session,
     embedsEmployeeMessages,
     ctx.messages,

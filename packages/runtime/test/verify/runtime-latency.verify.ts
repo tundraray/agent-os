@@ -109,7 +109,7 @@ describe('UC-N1: a step killed with its process starts again within 60 s', () =>
       const holdType = uniqueType('n1-hold');
       const control = await holdRuntime(holdType);
       const children = new Children();
-      const ownerId = newUser();
+      const ownerId = await newUser();
       try {
         const first = await children.start({
           types: { hold: holdType },
@@ -153,7 +153,7 @@ describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', 
         handlers: [],
         startWorkers: false,
       });
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const interrupted: string[] = [];
       try {
         for (const handler of handlersFor(

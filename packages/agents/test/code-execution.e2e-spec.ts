@@ -78,7 +78,7 @@ interface Scene {
 async function openScene(
   holds: (latch: FileLatch) => FixtureFaultRule[],
 ): Promise<Scene> {
-  const ownerId = newUser();
+  const ownerId = await newUser();
   const fixture = createFixtureFiles('code-run-restart');
   fixture.setFaults(holds(fixture.latch(HOLD)));
   const access = { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] };

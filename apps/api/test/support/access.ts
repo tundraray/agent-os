@@ -31,7 +31,7 @@ import { apiRequest, type Session } from './session';
  * `runEmbeddingProvider()` (never the developer's `anthropic`), its models `runModel(base)` and
  * `runEmbeddingModel(base)`, its roles `<name>-t<runId>`, all made through the admin operations.
  *
- * The one shared row a suite changes is the default models (`access_model_defaults`, one row per database):
+ * The one shared row a suite changes is the default models (the key `model_defaults` of `settings`, one row per database):
  * `useRunModels` points them at the run's models and returns the restore, which the suite runs in `afterAll` before
  * `removeRunRows`. Who creates and who removes what:
  *   - run providers: created by `useRunModels` (once per run; a later suite finds them), removed by the global teardown
@@ -323,8 +323,10 @@ export async function allowRole(
 
 /**
  * Deletes the rows a suite made, by id: models (their grants go by cascade), roles (their members and grants go
- * by cascade) and employees with what they own — conversations, agent trees, ledger rows, audit records, sessions,
- * role memberships and personal grants. Run it after the app is closed, so no worker writes behind it.
+ * by cascade) and employees with their audit records; what an employee owns — conversations, agent trees, ledger
+ * rows, sessions, role memberships and personal grants — goes by the cascade of the owner's foreign keys. Run it after the app is closed, so no worker writes behind it.
+ * The employees' conversations go first: a conversation holds its agent version by a restrict key, and one employee's
+ * conversation may stand on a version of another employee's agent, which the cascade of that owner would delete.
  */
 export async function removeRunRows(
   pool: DatabaseConnection['pool'],
@@ -336,22 +338,18 @@ export async function removeRunRows(
 ): Promise<void> {
   const users = rows.users ?? [];
   await pool.query(
-    'DELETE FROM app.runtime_tasks WHERE owner_id = ANY($1::text[])',
-    [users],
-  );
-  await pool.query(
-    'DELETE FROM app.runtime_model_calls WHERE owner_id = ANY($1::text[])',
-    [users],
-  );
-  await pool.query(
     'DELETE FROM app.audit_events WHERE actor = ANY($1::text[]) OR object_id = ANY($1::text[])',
+    [users],
+  );
+  await pool.query(
+    'DELETE FROM app.conversations WHERE owner_id = ANY($1::uuid[])',
     [users],
   );
   await pool.query(
     'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
     [users],
   );
-  await pool.query('DELETE FROM app.access_models WHERE id = ANY($1::text[])', [
+  await pool.query('DELETE FROM app.models WHERE id = ANY($1::text[])', [
     rows.models,
   ]);
   await pool.query(

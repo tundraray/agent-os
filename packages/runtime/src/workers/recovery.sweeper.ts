@@ -8,12 +8,12 @@ import {
   Db,
   RuntimeTrackersRepository,
   RuntimeTasksRepository,
+  type RuntimeTaskRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '../clock';
 import { CrashPoints } from '../crash-points';
 import { EventLog } from '../events/event-log';
-import type { TaskRow } from '../tasks/guarded-transition';
 import { Inbox } from '../messaging/inbox';
 import { WorkerLoop } from './worker-loop';
 import type { RuntimeConfig } from '../runtime-config';
@@ -41,8 +41,8 @@ interface RecoverySweeperDeps {
 
 /** What the sweeper did with one lost task. */
 type Recovery =
-  | { kind: 'requeued'; row: TaskRow }
-  | { kind: 'exhausted'; row: TaskRow }
+  | { kind: 'requeued'; row: RuntimeTaskRow }
+  | { kind: 'exhausted'; row: RuntimeTaskRow }
   /** The step was written meanwhile. */
   | { kind: 'skipped' };
 

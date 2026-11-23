@@ -1,4 +1,4 @@
-import { AgentCodeCallsRepository, type CallKey } from '@agent-os/db';
+import { CodeCallsRepository, type CallKey } from '@agent-os/db';
 import {
   RunCodeArgsSchema,
   type ToolOutcome,
@@ -132,18 +132,18 @@ export function interruptedResults(
 }
 
 /**
- * The records of tool calls in `agent_messages`, over the session's `History` and the queries of
- * `AgentCodeCallsRepository`: every change of a call is an appended record, written in a step's
+ * The records of tool calls in `messages`, over the session's `History` and the queries of
+ * `CodeCallsRepository`: every change of a call is an appended record, written in a step's
  * commit or its `guard`. Each write first reads the call's records, so a closed call
  * gets no second result and a sent call no second intent (Invariants 1, 2); the unique index
- * `agent_messages_call_once_idx` holds the same.
+ * `messages_call_once_idx` holds the same.
  */
 @Injectable()
 export class CallRecords {
   constructor(
     @Inject(History) private readonly history: History,
-    @Inject(AgentCodeCallsRepository)
-    private readonly codeCallRows: AgentCodeCallsRepository,
+    @Inject(CodeCallsRepository)
+    private readonly codeCallRows: CodeCallsRepository,
   ) {}
 
   /**

@@ -22,22 +22,20 @@ import type {
 } from '@agent-os/contracts';
 import {
   AccessGrantsRepository,
-  type AccessModelDefaultsRow,
-  AccessModelsRepository,
+  ModelsRepository,
   type GrantHolderQuery,
   Db,
 } from '@agent-os/db';
-import {
-  CLOCK,
-  monthOf,
-  PLATFORM_OWNER_ID,
-  TokenLedger,
-  type Clock,
-} from '@agent-os/runtime';
+import { CLOCK, monthOf, TokenLedger, type Clock } from '@agent-os/runtime';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
 import { identityError } from '../identity/identity.errors';
+import {
+  SettingsService,
+  settingsResponse,
+  type StoredSettings,
+} from '../settings/settings.service';
 import {
   accessError,
   foreignFieldsError,
@@ -84,25 +82,24 @@ export type ProviderReadinessOf = (
 
 type ChatModel = Extract<CatalogModel, { purpose: 'chat' }>;
 
-const MODEL_DEFAULTS_OBJECT_TYPE = 'model_defaults';
+/** The settings key of the default models; also the `objectType` of their `admin_change`. */
+const MODEL_DEFAULTS = 'model_defaults';
 
-type AuditObjectType = 'model' | 'grant' | typeof MODEL_DEFAULTS_OBJECT_TYPE;
-
-/** The two default models as the audit and the log show them, «было» and «стало». */
-type DefaultModels = Pick<
-  AccessModelDefaultsRow,
-  'chatModel' | 'embeddingModel'
->;
-
-function defaultModelsOf(row: AccessModelDefaultsRow): DefaultModels {
-  return { chatModel: row.chatModel, embeddingModel: row.embeddingModel };
+function toModelDefaults(
+  stored: StoredSettings<typeof MODEL_DEFAULTS>,
+): ModelDefaults {
+  return { ...settingsResponse(stored), updatedBy: stored.updatedBy };
 }
 
-function toModelDefaults(row: AccessModelDefaultsRow): ModelDefaults {
+/** The default models with every field that names the model cleared. */
+function withoutModel(
+  defaults: UpdateModelDefaultsBody,
+  model: string,
+): UpdateModelDefaultsBody {
   return {
-    ...defaultModelsOf(row),
-    updatedAt: row.updatedAt?.toISOString() ?? null,
-    updatedBy: row.updatedBy,
+    chatModel: defaults.chatModel === model ? null : defaults.chatModel,
+    embeddingModel:
+      defaults.embeddingModel === model ? null : defaults.embeddingModel,
   };
 }
 
@@ -156,7 +153,8 @@ export class AccessService implements AccessGate {
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly identity: IdentityDirectory,
     private readonly grants: AccessGrantsRepository,
-    private readonly models: AccessModelsRepository,
+    private readonly models: ModelsRepository,
+    private readonly settings: SettingsService,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
@@ -231,7 +229,7 @@ export class AccessService implements AccessGate {
 
   /** The id of the default chat model, or `null` while none is chosen (KD-5); read at each call. */
   async defaultChatModel(): Promise<string | null> {
-    const { chatModel } = await this.models.readDefaults();
+    const { chatModel } = (await this.settings.read(MODEL_DEFAULTS)).value;
     this.logger.info('default chat model read', { model: chatModel });
     return chatModel;
   }
@@ -244,7 +242,7 @@ export class AccessService implements AccessGate {
     const startedAt = Date.now();
     const [active, model] = await Promise.all([
       ownerId === null ? true : this.identity.isActive(ownerId),
-      this.models.findDefaultEmbedding().then(toCatalogModelOrUndefined),
+      this.defaultEmbeddingModel(),
     ]);
     if (model !== undefined && model.purpose !== 'embedding')
       throw new Error(`default embedding model ${model.id} is a chat model`);
@@ -259,7 +257,7 @@ export class AccessService implements AccessGate {
             dimensions: model.dimensions,
           };
     this.logger.info('embedding access checked', {
-      ownerId: ownerId ?? PLATFORM_OWNER_ID,
+      ownerId,
       model: model?.id ?? null,
       verdict: verdict.kind === 'allowed' ? 'allowed' : verdict.reason,
       durationMs: Date.now() - startedAt,
@@ -395,11 +393,15 @@ export class AccessService implements AccessGate {
     return updated;
   }
 
-  /** The model's grants go by cascade, a default on it is cleared (DC-6). 404 MODEL_NOT_FOUND. */
+  /**
+   * The model's grants go by cascade; a default that names it is cleared in the same transaction by the settings
+   * service's conditional replace, without its own audit (data-model DC-7). 404 MODEL_NOT_FOUND.
+   */
   async deleteModel(actorId: string, id: string): Promise<void> {
     await this.db.transaction(async () => {
       const deleted = toCatalogModelOrUndefined(await this.models.delete(id));
       if (deleted === undefined) throw accessError('MODEL_NOT_FOUND');
+      await this.clearDefault(id);
       await this.audit(actorId, 'model', id, deleted, null);
     });
     this.logChange(actorId, 'model', id, 'delete');
@@ -409,25 +411,24 @@ export class AccessService implements AccessGate {
 
   /** GET /api/admin/model-defaults. */
   async modelDefaults(): Promise<ModelDefaults> {
-    return toModelDefaults(await this.models.readDefaults());
+    return toModelDefaults(await this.settings.read(MODEL_DEFAULTS));
   }
 
   /**
    * PUT /api/admin/model-defaults: each value is a catalogue model of its purpose or `null` (AC-06.2,
-   * Invariant 3), checked and written in one transaction with its `admin_change` record
-   * (settings-row.md). 422 MODEL_DEFAULT_INVALID with the rejected id.
+   * Invariant 3), checked before the write in the transaction in which `SettingsService` writes the key with its
+   * `admin_change` record. 422 MODEL_DEFAULT_INVALID with the rejected id.
    */
   async setModelDefaults(
     actorId: string,
     body: UpdateModelDefaultsBody,
   ): Promise<ModelDefaults> {
-    const startedAt = Date.now();
-    const { before, after } = await this.db.transaction(async () => {
+    const { after } = await this.db.transaction(async () => {
       const rule = modelDefaultsRule(await this.defaultChoicesOf(body));
       if (rule.kind === 'invalid') {
         this.logger.info('model defaults update refused', {
           actorId,
-          objectType: MODEL_DEFAULTS_OBJECT_TYPE,
+          objectType: MODEL_DEFAULTS,
           requested: body,
           outcome: 'refused',
           reason: rule.reason,
@@ -435,26 +436,34 @@ export class AccessService implements AccessGate {
         });
         throw modelDefaultError(rule.reason, rule.model);
       }
-      const previous = await this.models.readDefaults();
-      const updated = await this.models.writeDefaults(body, actorId);
-      await this.audit(
-        actorId,
-        MODEL_DEFAULTS_OBJECT_TYPE,
-        undefined,
-        defaultModelsOf(previous),
-        defaultModelsOf(updated),
-      );
-      return { before: previous, after: updated };
-    });
-    this.logger.info('model defaults updated', {
-      actorId,
-      objectType: MODEL_DEFAULTS_OBJECT_TYPE,
-      before: defaultModelsOf(before),
-      after: defaultModelsOf(after),
-      outcome: 'ok',
-      durationMs: Date.now() - startedAt,
+      return this.settings.write(MODEL_DEFAULTS, body, actorId);
     });
     return toModelDefaults(after);
+  }
+
+  /** The catalogue row of the default embedding model; `undefined` while none is chosen. */
+  private async defaultEmbeddingModel(): Promise<CatalogModel | undefined> {
+    const { embeddingModel } = (await this.settings.read(MODEL_DEFAULTS)).value;
+    return embeddingModel === null ? undefined : this.findModel(embeddingModel);
+  }
+
+  /** Clears every default that names the deleted model; a JSON value has no foreign key to do it. */
+  private async clearDefault(model: string): Promise<void> {
+    const { value } = await this.settings.read(MODEL_DEFAULTS);
+    const cleared = withoutModel(value, model);
+    if (
+      cleared.chatModel === value.chatModel &&
+      cleared.embeddingModel === value.embeddingModel
+    )
+      return;
+    if (!(await this.settings.replaceIf(MODEL_DEFAULTS, value, cleared)))
+      this.logger.warn(
+        'default model not cleared: defaults changed meanwhile',
+        {
+          model,
+          objectType: MODEL_DEFAULTS,
+        },
+      );
   }
 
   /** The values of the body that name a model, with their catalogue rows read in the write's transaction. */
@@ -559,29 +568,15 @@ export class AccessService implements AccessGate {
   }
 
   /**
-   * Deletes the grants on an MCP server that is being removed from the registry: a grant names its
-   * server as text without FK, so a grant left behind would attach to a new server of the same name.
-   * The removal of the server is the audited change; the grants go with it, as a cascade does.
-   */
-  async removeServerGrants(actorId: string, server: string): Promise<void> {
-    const grants = await this.grants.deleteOfServer(server);
-    this.logger.info('grants of a removed mcp server deleted', {
-      actorId,
-      server,
-      grants,
-    });
-  }
-
-  /**
    * `admin_change` with «было» and «стало» in the transaction of the write it records (design-access.md,
    * Contract «Операции администратора»), as identity does: a write without its record is rolled back.
    */
   private audit(
     actorId: string,
-    objectType: AuditObjectType,
-    objectId: string | undefined,
-    before: CatalogModel | Grant | DefaultModels | null,
-    after: CatalogModel | Grant | DefaultModels | null,
+    objectType: 'model' | 'grant',
+    objectId: string,
+    before: CatalogModel | Grant | null,
+    after: CatalogModel | Grant | null,
   ): Promise<void> {
     return this.auditLog.record({
       kind: 'admin_change',

@@ -1,7 +1,7 @@
 import { ALL_SERVERS, McpServerModeSchema } from '@agent-os/contracts';
 import {
-  AgentMcpAccountsRepository,
-  AgentMcpServersRepository,
+  McpAccountsRepository,
+  McpServersRepository,
   type McpServerRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
@@ -109,10 +109,10 @@ export class ToolRegistry {
 
   constructor(
     /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
-    @Inject(AgentMcpServersRepository)
-    private readonly mcpServerRows: AgentMcpServersRepository,
-    @Inject(AgentMcpAccountsRepository)
-    private readonly mcpAccountRows: AgentMcpAccountsRepository,
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
+    @Inject(McpAccountsRepository)
+    private readonly mcpAccountRows: McpAccountsRepository,
     /** The one access check: the same in the tool set, in the call check and in the connections list. */
     @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,
   ) {}

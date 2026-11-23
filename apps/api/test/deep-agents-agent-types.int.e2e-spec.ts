@@ -89,8 +89,8 @@ let harness: TestApp;
 let admin: Session;
 let restoreModels: (() => Promise<void>) | undefined;
 let restoreBuiltins: (() => Promise<void>) | undefined;
-/** The built-in research as it was, so its prompt and flag go back after INT-1 A and INT-2 B. */
-let researchBefore: RecordDetail | undefined;
+/** The default deep agent as it was, so its prompt and flag go back after INT-1 A and INT-2 B. */
+let defaultBefore: RecordDetail | undefined;
 /** The role that gives the administrator the chat's model. */
 let adminRole: RunRole;
 const made = {
@@ -163,9 +163,9 @@ function deepAgentUpdate(
   };
 }
 
-/** The built-in research with its self-learning flag on, turned on by the administrator through the panel. */
-async function researchLearning(): Promise<RecordDetail> {
-  const research = await panelRecord(BUILTIN.deepResearch.id);
+/** The default deep agent with its self-learning flag on, turned on by the administrator through the panel. */
+async function defaultDeepAgentLearning(): Promise<RecordDetail> {
+  const research = await panelRecord(BUILTIN.deepAgent.id);
   if (research.kind === 'deep_agent' && research.content.selfLearning)
     return research;
   return putPanelRecord(
@@ -256,7 +256,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       chat: { id: MODEL, ...HAIKU_TEST_PRICES },
     });
     restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL);
-    researchBefore = await panelRecord(BUILTIN.deepResearch.id);
+    defaultBefore = await panelRecord(BUILTIN.deepAgent.id);
     adminRole = await newRole('records-admin');
     await adminRole.add(admin);
   }, TEST_TIMEOUT_MS);
@@ -265,21 +265,22 @@ describe('deep-agents / agent-types - the chat is a second door into the library
     if (harness === undefined) return;
     try {
       try {
-        if (researchBefore?.kind === 'deep_agent') {
-          const current = await panelRecord(BUILTIN.deepResearch.id);
+        if (defaultBefore?.kind === 'deep_agent') {
+          const current = await panelRecord(BUILTIN.deepAgent.id);
           await putPanelRecord(
             current.id,
             deepAgentUpdate(current, {
-              prompt: researchBefore.content.prompt,
-              selfLearning: researchBefore.content.selfLearning,
+              prompt: defaultBefore.content.prompt,
+              selfLearning: defaultBefore.content.selfLearning,
             }),
           );
         }
       } finally {
         await restoreBuiltins?.();
         await restoreModels?.();
+        // System records have no owner, so no cascade takes them; they are marked deleted, as the panel deletes them.
         await harness.pool.query(
-          'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+          'UPDATE app.agents SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
           [made.systemRecords],
         );
         await removeRunRows(harness.pool, {
@@ -305,7 +306,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
     'INT-1 A "rights": the chat of a non-administrator is refused read_only, shared and admin_only before any card, the administrator is refused builtin, and no record, version, flag or audit changes',
     async () => {
       // Given: A (no admin) and B share role «A»; A is also in «SRE». B's R1 is opened to «A»; A's R2 to «SRE»; S is a system record opened to «A»;
-      // the built-in research has its self-learning flag on (set by the administrator through the panel).
+      // the default deep agent (data-model design-agents.md KD-4) has its self-learning flag on (set by the administrator through the panel).
       const roleA = await newRole('records-int1a');
       const sre = await newRole('records-int1a-sre');
       const a = await newEmployee([roleA, sre]);
@@ -332,8 +333,8 @@ describe('deep-agents / agent-types - the chat is a second door into the library
         everyone: false,
         roleIds: [roleA.id],
       });
-      await researchLearning();
-      const ids = [r1.id, r2.id, system.id, BUILTIN.deepResearch.id];
+      await defaultDeepAgentLearning();
+      const ids = [r1.id, r2.id, system.id, BUILTIN.deepAgent.id];
       const before = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
       const auditBefore = await Promise.all(
         ids.map((id) => auditOfRecord(harness.pool, id)),
@@ -375,12 +376,12 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       }
       expect(recordCardsOf(aView)).toEqual([]);
 
-      // When: the administrator's chat deletes the built-in research; Then: `builtin` before any card
+      // When: the administrator's chat deletes the default deep agent; Then: `builtin` before any card
       const cThread = await chat(admin, [
         {
           calls: [
             recordToolCall('delete_record', {
-              recordId: BUILTIN.deepResearch.id,
+              recordId: BUILTIN.deepAgent.id,
             }),
           ],
         },
@@ -389,7 +390,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       expect(reasonsOf(cView, 'delete_record')).toEqual(['builtin']);
       expect(recordCardsOf(cView)).toEqual([]);
 
-      // Then: every record as before - version, content, the research's flag on - and no audit event after the start
+      // Then: every record as before - version, content, the default deep agent's flag on - and no audit event after the start
       const after = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
       expect(after.map(stateOf)).toEqual(before.map(stateOf));
       const research = after[3];
@@ -465,7 +466,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       ).toEqual([['record_unavailable', UNAVAILABLE]]);
       expect(recordCardsOf(aView)).toEqual([]);
 
-      // Then: the list holds A's own, the one opened to A's role and the built-in research; not the private one, not S
+      // Then: the list holds A's own, the one opened to A's role and `deep-research`, shared with everyone; not the private one, not S
       const [list] = toolResultsOf(aView, 'list_records');
       expect(list?.outcome).toBe('success');
       const text = list?.text ?? '';
@@ -583,12 +584,12 @@ describe('deep-agents / agent-types - the chat is a second door into the library
   );
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-2: nothing is saved without the approved card, and what is saved is what the employee saw - reject, stale version, administrator edit of the built-in research
+  // INT-2: nothing is saved without the approved card, and what is saved is what the employee saw - reject, stale version, administrator edit of the default deep agent
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-06.2, AC-06.6, DC-5, Invariant 3. Design: UC-3 (administrator half), UC-4 (reject and stale halves); KD-3 (`review`, `confirmed`); Flow 1.
   // Catches: (1) a record created or changed before the decision, or after a rejection; (2) a lost update - an old card's approval overwriting an edit made in the library
   //   after the card was shown; (3) a chat edit by the administrator that does not bump the version, writes no audit event, or is not what the employees read next; (4) the
-  //   stored `selfLearning: true` of the research lost by the chat edit.
+  //   stored `selfLearning: true` of the default deep agent lost by the chat edit.
   it(
     'INT-2 A "reject": a rejected card saves nothing, the next approved card saves exactly one record with the id that card carried and the flag off',
     async () => {
@@ -672,15 +673,15 @@ describe('deep-agents / agent-types - the chat is a second door into the library
   );
 
   it(
-    'INT-2 B "administrator edit": the administrator\'s approved edit of the built-in research bumps its version once, keeps its self-learning flag, writes one prompt-free audit event and is what an employee reads next',
+    'INT-2 B "administrator edit": the administrator\'s approved edit of the default deep agent bumps its version once, keeps its self-learning flag, writes one prompt-free audit event and is what an employee reads next',
     async () => {
       const role = await newRole('records-int2b');
       const b = await newEmployee([role]);
-      const research = await researchLearning();
+      const research = await defaultDeepAgentLearning();
       const prompt = `Новый промпт ресерча ${randomUUID()}`;
       const auditBefore = await auditOfRecord(harness.pool, research.id);
 
-      // When: the administrator's chat edits the research with a new prompt (the whole content, no flag)
+      // When: the administrator's chat edits the default deep agent with a new prompt (the whole content, no flag)
       const thread = await chat(admin, [
         {
           calls: [
@@ -722,7 +723,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       ).toEqual([{ kind: 'library_update', actor: admin.id, outcome: 'ok' }]);
       expect(JSON.stringify(added)).not.toContain(prompt);
 
-      // Then: an employee who sees the built-in research reads the new version
+      // Then: an employee, who sees every default agent, reads the new version
       const read = await getRecord(harness.app, b, research.id);
       expect(read.version).toBe(research.version + 1);
       expect(read.kind === 'deep_agent' && read.content.prompt).toBe(prompt);

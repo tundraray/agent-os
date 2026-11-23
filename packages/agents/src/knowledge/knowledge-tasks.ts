@@ -3,7 +3,7 @@ import type {
   Db,
   KnowledgeEmbeddingRow,
 } from '@agent-os/db';
-import { PLATFORM_OWNER_ID, type TaskControl } from '@agent-os/runtime';
+import type { TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
 /*
@@ -26,14 +26,14 @@ export const KnowledgeEmbedInputSchema = z.object({ recordId: z.uuid() });
 export type KnowledgeEmbedInput = z.infer<typeof KnowledgeEmbedInputSchema>;
 
 /**
- * The request of a vector pass of the deep agent. The pass belongs to the platform; who pays is the
- * vector row's `payer_id`, decided per embed call (KD-8).
+ * The request of a vector pass of the deep agent. The pass belongs to the platform, so its task has no owner
+ * (data-model design-schema.md KD-4); who pays is the vector row's `payer_id`, decided per embed call (KD-8).
  */
 export function embedPassRequest(
   recordId: string,
 ): Parameters<TaskControl['create']>[0] {
   const input: KnowledgeEmbedInput = { recordId };
-  return { type: KNOWLEDGE_EMBED_TASK_TYPE, ownerId: PLATFORM_OWNER_ID, input };
+  return { type: KNOWLEDGE_EMBED_TASK_TYPE, ownerId: null, input };
 }
 
 /** SQLSTATE foreign_key_violation: the deep agent record was deleted meanwhile (DC-8). */

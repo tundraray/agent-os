@@ -41,7 +41,7 @@ export type TaskChangeCall =
 /** The session's list as the step's transaction read it. */
 export interface TaskListState {
   readonly tasks: readonly SessionTask[];
-  /** `agent_sessions.last_task_number`: the last number given, 0 before the first task. */
+  /** `conversations.last_task_number`: the last number given, 0 before the first task. */
   readonly lastNumber: number;
 }
 

@@ -7,15 +7,10 @@ import { CLOCK, RUNTIME_LOGGER } from '../runtime.tokens';
 import { type CallUsage, callCostUsd, type ModelPrice } from './model-cost';
 import { monthWindowUtc } from './month';
 
-/**
- * The owner of a ledger row without an employee: the platform's own embeddings call (design-core.md KD-6).
- * Employee ids are uuids, so it is nobody's spend; a background task may be owned by it too.
- */
-export const PLATFORM_OWNER_ID = 'platform';
-
 /** One finished model call as the caller reports it. */
 export interface ModelCallRecord {
-  ownerId: string;
+  /** The employee whose spend it is; `null` for the platform's own call, which no employee's month counts. */
+  ownerId: string | null;
   /** The task that made the call; absent for a call outside a task. */
   taskId?: string;
   /** `<provider/model>`, an id of the model catalogue. */

@@ -1,4 +1,4 @@
-import type { AgentMessagesRepository } from '@agent-os/db';
+import type { MessagesRepository } from '@agent-os/db';
 import type { Task } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
@@ -30,7 +30,7 @@ export interface StopEntriesInput {
 export async function stopEntries(
   deps: {
     readonly history: History;
-    readonly messageRows: AgentMessagesRepository;
+    readonly messageRows: MessagesRepository;
   },
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {

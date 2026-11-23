@@ -3,10 +3,7 @@ import {
   type TaskStatus,
   type WaitReason,
 } from '@agent-os/contracts';
-import type { runtimeTasks } from '@agent-os/db';
-import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
-
-export type TaskRow = typeof runtimeTasks.$inferSelect;
+import type { RuntimeTaskRowGuard, RuntimeTaskWrite } from '@agent-os/db';
 
 /** Why a failed task failed: a runtime reason (`handler_error`, …) or the upper layer's own. */
 export interface TaskFailure {
@@ -44,37 +41,10 @@ const ALLOWED_TARGETS: Record<TaskStatus, readonly TaskStatus[]> = {
   stopped: [queued],
 };
 
-/** Which row a guarded write may touch. */
-export interface TaskGuard {
-  taskId: string;
-  /** Statuses the row must be in. */
-  from: readonly TaskStatus[];
-  /**
-   * Fencing token: the row matches only with this `attempt`. Required when `from` includes
-   * `running`, so that a step that is no longer current writes nothing (Invariant 1).
-   */
-  attempt?: number;
-  /** The row matches only while it waits for this reason. */
-  waitReason?: WaitReason;
-}
-
-/** Identity and input never change; the guarded columns are set only by `Tasks.transition`. */
-type ImmutableColumn =
-  | 'taskId'
-  | 'type'
-  | 'ownerId'
-  | 'parentId'
-  | 'rootId'
-  | 'depth'
-  | 'input'
-  | 'createdAt';
-type GuardedColumn =
-  'status' | 'waitReason' | 'attempt' | 'updatedAt' | 'finishedAt';
-
-/** Columns a guarded write may set freely (values or SQL over the row). */
-export type TaskFields = Omit<
-  PgUpdateSetSource<typeof runtimeTasks>,
-  ImmutableColumn | GuardedColumn
+/** Plain column values a change may set besides its status and counters. */
+export type TaskValues = Pick<
+  RuntimeTaskWrite,
+  'stepNo' | 'stepClaims' | 'recoveries' | 'result' | 'failure'
 >;
 
 export type TaskChange =
@@ -84,7 +54,7 @@ export type TaskChange =
   | {
       kind: 'wait';
       reason: WaitReason;
-      fields?: TaskFields;
+      fields?: TaskValues;
       /** `attempt + 1`: the step in flight, if any, is no longer current. */
       fence?: boolean;
     }
@@ -95,7 +65,7 @@ export type TaskChange =
   | {
       kind: 'set';
       status?: Exclude<TaskStatus, 'running' | 'waiting'>;
-      fields?: TaskFields;
+      fields?: TaskValues;
       /** `attempt + 1`: the step in flight, if any, is no longer current. */
       fence?: boolean;
     };
@@ -106,8 +76,14 @@ function targetStatus(change: TaskChange): TaskStatus | undefined {
   return change.status;
 }
 
-/** Throws on a guarded write the state diagram forbids or one of a running task without its attempt. */
-export function assertAllowed(guard: TaskGuard, change: TaskChange): void {
+/**
+ * Throws on a guarded write the state diagram forbids or one of a running task without its attempt:
+ * the attempt is the fencing token, so a step that is no longer current writes nothing (Invariant 1).
+ */
+export function assertAllowed(
+  guard: RuntimeTaskRowGuard,
+  change: TaskChange,
+): void {
   if (guard.from.length === 0) {
     throw new Error(
       `Guarded write of task ${guard.taskId} has no source status`,

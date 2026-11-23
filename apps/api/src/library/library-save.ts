@@ -1,6 +1,6 @@
 import { type HttpException, Injectable } from '@nestjs/common';
 import type { RecordDetail } from '@agent-os/contracts';
-import { Db, LibraryRecordsRepository, type LibraryViewer } from '@agent-os/db';
+import { AgentsRepository, Db, type LibraryViewer } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import {
   LibraryRecords,
@@ -55,15 +55,17 @@ export class LibrarySave {
   constructor(
     private readonly db: Db,
     private readonly records: LibraryRecords,
-    private readonly repository: LibraryRecordsRepository,
+    private readonly repository: AgentsRepository,
   ) {}
 
   /**
    * The one save path of POST and PUT (employee and panel) and of the chat's save (Flow 1): visibility →
-   * the right to change → the rule → the versioned write and its audit event in one transaction. A refusal
-   * writes nothing. With no transaction open the write opens its own; inside the caller's
-   * transaction it is a savepoint, so a `name_taken` from the database rolls back only the save and
-   * the caller's transaction goes on.
+   * the right to change → the rule → the versioned write and its audit event in one transaction. An edit
+   * writes two rows (data-model design-agents.md, KD-2): a new version by the author, and the agent pointed
+   * at it with its name and description, only while the version the edit started from is still active. A
+   * refusal writes nothing. With no transaction open the write opens its own; inside the caller's
+   * transaction it is a savepoint, so a refusal after a write rolls back only the save and the caller's
+   * transaction goes on.
    */
   async save(request: SaveRequest): Promise<SaveResult> {
     const check = await this.checkSave(request);
@@ -168,6 +170,7 @@ export class LibrarySave {
       offerInChat: true,
       kind: body.kind,
       content: body.content,
+      authorId: author.id,
     });
     if (inserted.outcome === 'name_taken') throw new SaveRefused('name_taken');
     const record = present(
@@ -179,21 +182,25 @@ export class LibrarySave {
   }
 
   /**
-   * `name_taken` aborts the transaction, so it is thrown and the transaction rolled back.
+   * Every refusal is thrown, so the savepoint rolls back the version it may have written: `name_taken`
+   * aborts the transaction, a `stale` one leaves nothing behind (DC-17).
    */
   private async updateSaved(
     request: SaveRequest,
     previous: LibraryRecord,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const updated = await this.repository.updateContent({
-      id: previous.id,
-      version: request.target?.version ?? previous.version,
+    const updated = await this.repository.insertVersion({
+      agentId: previous.id,
+      fromNumber: request.target?.version ?? previous.version,
       name: body.name,
       description: body.description,
       content: body.content,
+      authorId: author.id,
     });
     if (updated.outcome === 'name_taken') throw new SaveRefused('name_taken');
+    if (updated.outcome === 'number_taken')
+      throw new SaveRefused('version_conflict');
     const current = await this.readOne(scope, author, previous.id);
     if (updated.outcome === 'stale')
       throw new SaveRefused(

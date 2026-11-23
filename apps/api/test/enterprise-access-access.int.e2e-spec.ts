@@ -238,11 +238,11 @@ const QuotaRefusalRecordSchema = z.object({
   }),
 });
 
-/** A `start_agent` call of a scripted answer: the agent record `agent` runs on its own model; by default the general agent on `A`. */
+/** A `start_agent` call of a scripted answer: the agent record named `agent` runs on its own model; by default the general agent on `A`. */
 function startAgent(
   description: string,
   prompt: string,
-  agent: string = BUILTIN.generalPurpose.id,
+  agent: string = BUILTIN.generalPurpose.name,
 ): ScriptedToolCall {
   return { tool: 'start_agent', args: { agent, description, prompt } };
 }
@@ -414,14 +414,15 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   }
 
   /**
-   * A system agent record on `model` that only `viewer` sees, offered in the chat: the chat starts it by id and the
-   * start runs on the record's model. Like the general agent it stands in for, it may list its agents.
+   * A system agent record on `model` that only `viewer` sees, offered in the chat; returns its name. The chat starts
+   * it by that name and the start runs on the record's model. Like the general agent it stands in for, it may list its agents.
    */
   async function agentOn(model: string, viewer: Session): Promise<string> {
+    const name = recordName(`agent on ${model}`);
     const { id } = await createSystemRecord(
       harness.app,
       admin,
-      agentBody(recordName(`agent on ${model}`), {
+      agentBody(name, {
         model,
         tools: ['list_agents'],
       }),
@@ -431,7 +432,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       everyone: false,
       userIds: [viewer.id],
     });
-    return id;
+    return name;
   }
 
   /** `GET /api/access/models` of the employee. */
@@ -528,14 +529,14 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       }
     } finally {
       // The servers take their accounts; the users their sessions, memberships, personal grants, conversations,
-      // agents, own records, ledger rows and audit records; the roles and models their grants; the system records
-      // their holders.
+      // agents, own records, ledger rows and audit records; the roles and models their grants. The system records
+      // have no owner: they are marked deleted, as the panel deletes them (a conversation may still run on their versions).
       await database.pool.query(
-        'DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)',
+        'DELETE FROM app.mcp_servers WHERE name = ANY($1)',
         [[LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER]],
       );
       await database.pool.query(
-        'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+        'UPDATE app.agents SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
         [madeRecords],
       );
       await removeRunRows(database.pool, made);
@@ -558,7 +559,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   инструменты и те же отказы, что главный чат". Design: DC-1, DC-2, DC-4 (the tool half); UC-1, and the target-existence and duplicate rows of UC-7.
   // Behavior: the administrator makes rights through the admin operations -> the employees' agents run (workers on, scripted model) -> the set offered
   //   to the model, the check at the call (direct, after confirmation, from `run_code`, from a workflow agent) and the changes made while agents run all
-  //   answer from the rights of that moment -> the fixture journal, tool calls in `agent_messages` / `agent_code_calls` rows and the audit.
+  //   answer from the rights of that moment -> the fixture journal, tool calls in `messages` / `code_calls` rows and the audit.
   // Steps (one story, literal expectations; the registry holds `backoffice` with the mutating tool `create_incident_note` and the read tools
   //   `get_order`, `search_orders`, `logs` with `aggregate_logs`, `get_trace`, `search_logs`, and `tracker` with `search_tickets`; shared-token servers,
   //   so no account of an employee is involved):
@@ -629,12 +630,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           `SELECT s.owner_id AS owner, 'call' AS door,
                   coalesce(c.content ->> 'server' || '/' || (c.content ->> 'tool'), c.content ->> 'tool') AS target,
                   c.content ->> 'refusalReason' AS reason
-             FROM app.agent_messages c JOIN app.agent_sessions s USING (task_id)
-            WHERE s.owner_id = ANY($1::text[]) AND c.kind = 'tool_result' AND c.content ->> 'outcome' = 'refused'
+             FROM app.messages c JOIN app.conversations s ON s.id = c.conversation_id
+            WHERE s.owner_id = ANY($1::uuid[]) AND c.kind = 'tool_result' AND c.content ->> 'outcome' = 'refused'
            UNION ALL
            SELECT s.owner_id, 'code', k.server || '/' || k.tool, k.refusal_reason
-             FROM app.agent_code_calls k JOIN app.agent_sessions s USING (task_id)
-            WHERE s.owner_id = ANY($1::text[]) AND k.outcome = 'refused'`,
+             FROM app.code_calls k JOIN app.conversations s ON s.id = k.conversation_id
+            WHERE s.owner_id = ANY($1::uuid[]) AND k.outcome = 'refused'`,
           [[...names.keys()]],
         );
         return rows
@@ -816,7 +817,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
               {
                 tool: 'start_deep_agent',
                 args: {
-                  deepAgent: accessCheck.id,
+                  deepAgent: accessCheck.name,
                   question,
                   boundaries: '',
                   result: '',

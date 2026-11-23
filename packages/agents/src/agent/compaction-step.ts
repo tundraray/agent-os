@@ -22,6 +22,7 @@ import {
   type StepPrelude,
   withStepBlocks,
 } from './step-common';
+import { agentOwner } from './agent-owner';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'compaction';
@@ -72,7 +73,6 @@ export async function runCompactionStep(
   const { registry, modelClient, audit, history, messageRows, sessionRows } =
     deps;
   const startedAt = Date.now();
-  const { snapshot } = agent.input;
   const { definition } = agent;
   const delivered = await entriesOf(deps, ctx.messages);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
@@ -80,7 +80,7 @@ export async function runCompactionStep(
   // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
   // the summary would be written without the task list (design-task-list.md KD-2).
   const knowledge = await knowledgeBlock(deps, {
-    snapshot,
+    learning: definition.learning,
     taskId: ctx.taskId,
     logger: ctx.logger,
   });
@@ -89,11 +89,11 @@ export async function runCompactionStep(
     await tasksOf(deps, ctx.taskId, declaration.taskList),
   );
   // History holds tool calls, and the provider takes them only with the tools defined.
-  const sessionTools = await registry.toolsFor(ctx.ownerId, declaration);
+  const sessionTools = await registry.toolsFor(agentOwner(ctx), declaration);
 
   const result = await callUnlessAborted(ctx, () =>
     modelClient.call({
-      ownerId: ctx.ownerId,
+      ownerId: agentOwner(ctx),
       rootId: ctx.rootId,
       taskId: ctx.taskId,
       agentName: definition.name,

@@ -11,7 +11,7 @@
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup (`test/support/migrate.global-setup.ts`). Real `RuntimeModule` over a real pool; `RUNTIME_WORKERS` on. No mocks of
 //   Postgres or runtime components. The only doubles are test handlers (`TaskHandler`: scripted outcomes, gates and latches) and, for the clock rows, the injected `Clock`. No model is called.
-// - Isolation (project convention, no truncate): a unique `ownerId = 'e2e-' + randomUUID()` (`newUser()`) and a unique task type per test (a worker claims only types in its own `handlers` registry, so another file's workers never touch these
+// - Isolation (project convention, no truncate): a unique owner, a real employee row (`await newUser()`), and a unique task type per test (a worker claims only types in its own `handlers` registry, so another file's workers never touch these
 //   rows); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on gates the handler waits on and on rows (`runtimeWorkSettled`-style). "Status changed within the command" (NFR-01) is asserted as: the status read right after the command's
 //   response, while the handler is still held; the 5 s p95 is the on-demand script `test/verify/runtime-latency.verify.ts` (UC-N2), not this file.
@@ -243,7 +243,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-1 A: a three-step task writes one row per step, ends completed, and its parent holds exactly one child_finished with the result',
     async () => {
       // Given: a child of three steps under a parent that waits for messages
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int1a-parent');
       const childType = uniqueType('int1a-child');
       const harness = await createRuntimeHarness({
@@ -308,7 +308,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     "INT-1 B: a throwing handler fails the task with handler_error, applies none of that step's rows, and notifies the parent once",
     async () => {
       // Given: a child whose first step throws an error with a cause
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int1b-parent');
       const childType = uniqueType('int1b-child');
       const error = new Error('step exploded', {
@@ -422,7 +422,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-2 A: a message sent during a step is invisible to it, comes in the next step in the order sent, and is not delivered again',
     async () => {
       // Given: a task whose first step holds on a gate and continues; then it continues once and waits
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const type = uniqueType('int2a');
       const gate = createGate();
       const seen: StepView[] = [];
@@ -492,7 +492,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-2 B: a message to a task waiting for messages makes it queued in the same transaction, and its next step receives it',
     async () => {
       // Given: a task that waits for messages, and (the decision half) a task that asks for a decision
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const messagesType = uniqueType('int2b-messages');
       const decisionType = uniqueType('int2b-decision');
       const seenByMessages: StepView[] = [];
@@ -641,7 +641,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-2 C: a finished task stays finished for a message without revive and comes back, with both messages in order, for one with revive',
     async () => {
       // Given: a task that completes in its first step and waits in the next; workers paused after it
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const type = uniqueType('int2c');
       const seen: StepView[] = [];
       const harness = await createRuntimeHarness({
@@ -727,7 +727,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     "INT-2 D: a child's finish notification does not revive a stopped or completed parent",
     async () => {
       // Given: a parent whose child holds its step; a parent that completes while its child still runs
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int2d-parent');
       const heldChildType = uniqueType('int2d-held-child');
       const finishingType = uniqueType('int2d-finishing');
@@ -883,7 +883,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-2 E: messages racing the end of a step and an interrupt, 100 times, never leave a waiting task over a pending message and never deliver twice or out of order',
     async () => {
       // Given: a task type whose first step holds on its task's gate and every step returns `wait`
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const type = uniqueType('int2e');
       const senders = 8;
       const messagesPerSender = 3;
@@ -992,7 +992,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-2 F: a revive message that arrives during the step that completes the task notifies the parent once and queues the same task again with both messages in order',
     async () => {
       // Given: a child whose first step holds on a gate and completes; its next step holds, then waits
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int2f-parent');
       const childType = uniqueType('int2f-child');
       const lastStep = createGate();
@@ -1121,7 +1121,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     async () => {
       // Given: the runtime runs one step at a time, so the held step keeps its only slot. The step
       // wrote an intent row through `guard` and recorded a model call.
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const type = uniqueType('int3a');
       const held = createGate();
       const next = createGate();
@@ -1270,7 +1270,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     async () => {
       // Given: parent P waits for messages; child C waits for a decision; grandchild G holds a step
       // deaf to its signal
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int3b-parent');
       const childType = uniqueType('int3b-child');
       const grandchildType = uniqueType('int3b-grandchild');
@@ -1419,7 +1419,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-3 C: stop racing a spawn and a create never leaves an unfinished task in the tree and answers PARENT_FINISHED to the loser',
     async () => {
       // Given: a parent type whose step holds on its task's gate and spawns a child in its commit
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int3c-parent');
       const childType = uniqueType('int3c-child');
       const spawnSteps = createGateBook();
@@ -1507,7 +1507,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     'INT-3 D: children spawned in one commit come back from listTree in the order they were spawned',
     async () => {
       // Given: a parent whose first step spawns five children in its commit
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const parentType = uniqueType('int3d-parent');
       const childType = uniqueType('int3d-child');
       const spawnedIds: string[] = [];
@@ -1587,8 +1587,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     async () => {
       // Given: owner A's tree - a root waiting for its open decision with a pending message, a child
       // waiting for messages, their events - with the workers paused so that only the calls act
-      const ownerA = newUser();
-      const ownerB = newUser();
+      const ownerA = await newUser();
+      const ownerB = await newUser();
       const rootType = uniqueType('int4-root');
       const childType = uniqueType('int4-child');
       const harness = await createRuntimeHarness({
@@ -1794,7 +1794,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     "INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model's price",
     async () => {
       // Given: a task of owner A and a clock in November 2026
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const type = uniqueType('int5a');
       const calledAt = new Date('2026-11-14T10:00:00Z');
       const harness = await createRuntimeHarness({
@@ -1873,8 +1873,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     "INT-5 B: the month spend is the owner's own sum for the UTC month, excluding the boundary seconds on either side and other owners",
     async () => {
       // Given: owner A's calls on both sides of November's edges, owner B's call in November
-      const ownerA = newUser();
-      const ownerB = newUser();
+      const ownerA = await newUser();
+      const ownerB = await newUser();
       const clock = settableClock(new Date('2026-11-01T00:00:00Z'));
       const harness = await createRuntimeHarness({
         handlers: [],
@@ -1952,7 +1952,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     async () => {
       // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
       // call recorded for each task in November 2026
-      const ownerId = newUser();
+      const ownerId = await newUser();
       const rootType = uniqueType('int5d-root');
       const childType = uniqueType('int5d-child');
       const harness = await createRuntimeHarness({

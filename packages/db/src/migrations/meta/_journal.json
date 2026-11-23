@@ -5,50 +5,22 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1795216980700,
-      "tag": "0000_baseline",
+      "when": 1795403339444,
+      "tag": "0000_vector_extension",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1795257457411,
-      "tag": "0001_identity_users_language",
+      "when": 1795403340284,
+      "tag": "0001_schema",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1795286554401,
-      "tag": "0002_tool_refusal_repeated_call",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1795331857374,
-      "tag": "0003_deep_agent_record_kind",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1795350318933,
-      "tag": "0004_session_task_list",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1795354319413,
-      "tag": "0005_task_tracker",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1795388905395,
-      "tag": "0006_drop_task_lease",
+      "when": 1795403341102,
+      "tag": "0002_builtin_rows",
       "breakpoints": true
     }
   ]

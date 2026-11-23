@@ -20,6 +20,7 @@ import { buildProviderMessages } from '../model/provider-messages';
 import type { NewHistoryEntry } from '../store/history';
 import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
+import { agentOwner } from './agent-owner';
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
 export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
@@ -185,7 +186,7 @@ export async function refusedResult(input: {
 }): Promise<StepResult> {
   const { ctx, model, refusal } = input;
   if (refusal.reason !== FAILURE_REASONS.owner_disabled) {
-    await input.audit(modelDeniedEntry(ctx.ownerId, model, refusal));
+    await input.audit(modelDeniedEntry(agentOwner(ctx), model, refusal));
   }
   logStep(ctx, input.stepKind, input.startedAt, 'fail', {
     model,
@@ -195,7 +196,7 @@ export async function refusedResult(input: {
     deps: input.deps,
     ctx,
     reason: refusal.reason,
-    message: `Agent ${ctx.taskId}: ${modelRefusalMessage(ctx.ownerId, model, refusal)}`,
+    message: `Agent ${ctx.taskId}: ${modelRefusalMessage(agentOwner(ctx), model, refusal)}`,
     writeEntries: input.writeEntries,
     patch: input.patch,
   });

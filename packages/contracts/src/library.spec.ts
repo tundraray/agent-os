@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CreateRecordBodySchema, DeepAgentContentSchema } from './library';
+import {
+  CreateRecordBodySchema,
+  DeepAgentContentSchema,
+  type NameCandidate,
+  nameWinner,
+} from './library';
 
 const MODEL = 'anthropic/claude-haiku-5-5';
 
@@ -203,5 +208,39 @@ describe('deep agent content is refused with the path and the rule', () => {
     });
 
     expect(result.error?.issues).toContainEqual(expect.objectContaining(issue));
+  });
+});
+
+// data-model design-agents.md KD-5 (DC-25): the one place of the name rule, so the order is proven here once —
+// a wrong rank starts another agent under the employee’s rights.
+describe('the agent a name starts among agents of one name', () => {
+  it('is the viewer’s own, else the earliest colleague’s, else the system one', () => {
+    const author = {
+      id: '0b6f3c1e-4d2a-4c8b-9f3e-1a2b3c4d5e6f',
+      name: 'Аня',
+      disabled: false,
+    };
+    const named = (
+      label: string,
+      whose: Pick<NameCandidate, 'mine' | 'author'>,
+    ): NameCandidate & { label: string } => ({
+      label,
+      kind: 'agent',
+      name: 'Отчёт',
+      builtinKey: null,
+      ...whose,
+    });
+    // In the order of the library list: the earliest created first.
+    const others = [
+      named('system', { mine: false, author: null }),
+      named('colleague', { mine: false, author }),
+      named('later colleague', { mine: false, author }),
+    ];
+    const own = named('own', { mine: true, author });
+
+    expect({
+      withOwn: nameWinner([...others, own], 'agent', 'отчёт')?.label,
+      withoutOwn: nameWinner(others, 'agent', 'отчёт')?.label,
+    }).toEqual({ withOwn: 'own', withoutOwn: 'colleague' });
   });
 });

@@ -1,13 +1,18 @@
-import type { AgentContent, MissingRight } from '@agent-os/contracts';
+import type {
+  AgentContent,
+  MissingRight,
+  RecordSummary,
+} from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
+import { fixtureId, recordSummary } from '@/test/fixtures';
 import { testTranslator } from '@/test/intl';
 import {
-  briefTitleName,
   canUseInChat,
   changedAfterRun,
   changedFieldLabel,
   changedFields,
   recipientNote,
+  recordNamed,
   type AgentDefinition,
 } from './record-rules';
 
@@ -17,7 +22,6 @@ const labelsOf = (before: AgentDefinition, after: AgentDefinition): string[] =>
   changedFields(before, after).map((field) => changedFieldLabel(t, field));
 
 const MODEL = 'anthropic/claude-haiku-4-5';
-const SOURCE_ID = '7f3c1a52-4b8e-4c1d-9a0e-2d6b5f8e1c40';
 
 const inChat = (fields: {
   builtinKey?: string | null;
@@ -72,10 +76,31 @@ const agent = (
   content: { ...agentContent, ...content },
 });
 
-const index = {
-  summaryOf: (id: string) =>
-    id === SOURCE_ID ? { name: 'Разбор инцидента' } : null,
-};
+/**
+ * The library list of the name rows, in the order of the list: a colleague's deep agent «Отчёт», the viewer's own
+ * «отчёт», an agent «Сводка», and the main chat.
+ */
+const NAMED: ReadonlyMap<string, RecordSummary> = new Map(
+  [
+    recordSummary({
+      id: fixtureId(61),
+      kind: 'deep_agent',
+      name: 'Отчёт',
+      mine: false,
+    }),
+    recordSummary({ id: fixtureId(62), kind: 'deep_agent', name: 'отчёт' }),
+    recordSummary({ id: fixtureId(63), name: 'Сводка', mine: false }),
+    recordSummary({
+      id: fixtureId(64),
+      name: 'Главный чат',
+      builtinKey: 'chat',
+      author: null,
+      mine: false,
+    }),
+  ].map((record) => [record.id, record]),
+);
+const namedId = (kind: RecordSummary['kind'], name: string) =>
+  recordNamed(NAMED, kind, name)?.id ?? null;
 
 // Catches: a rule shows an action where it is forbidden or hides it where it is allowed (AC-26.2, AC-28.1, AC-29.1).
 describe('web rules (design-web.md, «Правила веба»)', () => {
@@ -168,21 +193,27 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
       null,
     ],
 
-    // Заголовок задания — MC-22
+    // Запись по имени вызова — data-model KD-5: the card finds the record by name, never by an id; who wins a
+    // name is the backend's rule (its row in `packages/contracts/src/library.spec.ts`)
     [
-      'brief title: record in the list → with its name',
-      () => briefTitleName(t, SOURCE_ID, index),
-      'Задание · Разбор инцидента',
+      'record by name: the winner of the name among the records of the kind, whatever the case',
+      () => namedId('deep_agent', 'ОТЧЁТ'),
+      fixtureId(62),
     ],
     [
-      'brief title: record not in the list → «Задание»',
-      () => briefTitleName(t, 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index),
-      'Задание',
+      'record by name: an agent’s name asked as a deep agent → none (a temporary deep agent)',
+      () => namedId('deep_agent', 'Сводка'),
+      null,
     ],
     [
-      'brief title: list not read → «Задание»',
-      () => briefTitleName(t, SOURCE_ID, { summaryOf: () => undefined }),
-      'Задание',
+      'record by name: the main chat is never named',
+      () => namedId('agent', 'Главный чат'),
+      null,
+    ],
+    [
+      'record by name: list not read → unknown',
+      () => recordNamed(null, 'agent', 'Сводка'),
+      undefined,
     ],
 
     // Изменённые поля — MC-7, MC-10

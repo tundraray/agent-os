@@ -282,11 +282,11 @@ function subagentTask(question: string, description: string): string {
   return `Question: ${question}\n\n${description}`;
 }
 
-/** A `start_agent` call of a scripted answer: a record id or {@link FORK}. */
+/** A `start_agent` call of a scripted answer: a record's name or {@link FORK}. */
 function startAgent(
   description: string,
   prompt: string,
-  agent: string = GENERAL_PURPOSE.id,
+  agent: string = GENERAL_PURPOSE.name,
 ): ScriptedToolCall {
   return { tool: START_AGENT, args: { agent, description, prompt } };
 }
@@ -298,7 +298,12 @@ function briefArgs(question: string): {
   boundaries: string;
   result: string;
 } {
-  return { deepAgent: DEEP_RESEARCH.id, question, boundaries: '', result: '' };
+  return {
+    deepAgent: DEEP_RESEARCH.name,
+    question,
+    boundaries: '',
+    result: '',
+  };
 }
 
 /** The deep agent's task: the brief as `start_deep_agent` writes it (question, boundaries, result). */
@@ -447,7 +452,7 @@ async function treeSnapshot(
     (await harness.pool.query(sql, params)).rows;
   return {
     conversation: await read(
-      'SELECT task_id, parent_id, root_id, owner_id, title, updated_at, xmin::text AS version FROM app.agent_sessions WHERE task_id = $1',
+      'SELECT id, parent_id, owner_id, title, updated_at, xmin::text AS version FROM app.conversations WHERE id = $1',
       [threadId],
     ),
     tasks: await read(
@@ -460,8 +465,9 @@ async function treeSnapshot(
       [rootId],
     ),
     history: await read(
-      `SELECT m.task_id, count(*)::int AS entries FROM app.agent_messages m
-         JOIN app.runtime_tasks t ON t.task_id = m.task_id WHERE t.root_id = $1 GROUP BY m.task_id ORDER BY m.task_id`,
+      `SELECT m.conversation_id, count(*)::int AS entries FROM app.messages m
+         JOIN app.runtime_tasks t ON t.task_id = m.conversation_id WHERE t.root_id = $1
+         GROUP BY m.conversation_id ORDER BY m.conversation_id`,
       [rootId],
     ),
     decisions: await read(
@@ -512,11 +518,13 @@ async function deletedTreeState(
 }
 
 /**
- * Root sessions of the owner: sessions without a parent, each its own root and a run of the `chat` record. Every
- * one is a conversation.
+ * Root sessions of the owner: sessions without a parent, each a run of the `chat` record. Every one is a
+ * conversation.
  */
-const OWNER_ROOT_SESSIONS = `FROM app.agent_sessions s
-       WHERE s.owner_id = $1 AND s.parent_id IS NULL AND s.root_id = s.task_id AND s.builtin_key = 'chat'`;
+const OWNER_ROOT_SESSIONS = `FROM app.conversations s
+       JOIN app.agent_versions v ON v.id = s.agent_version_id
+       JOIN app.agents a ON a.id = v.agent_id
+       WHERE s.owner_id = $1 AND s.parent_id IS NULL AND a.builtin_key = 'chat'`;
 
 describe('agent-platform / chat - integration (real AppModule + real Postgres + real MCP fixture, scripted model)', () => {
   // One boot of `AppModule` per file (plan Notes 4): two apps with workers over one database would step
@@ -772,7 +780,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
             {
               tool: 'start_agent',
               args: {
-                agent: GENERAL_PURPOSE.id,
+                agent: GENERAL_PURPOSE.name,
                 description: 'incident writer',
                 prompt: writerTask,
               },
@@ -2321,6 +2329,11 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       );
 
       // When: the conversation is deleted
+      const conversationRow =
+        'SELECT *, xmin::text AS version FROM app.conversations WHERE id = $1';
+      const conversationBefore = (
+        await harness.pool.query(conversationRow, [bottom])
+      ).rows;
       await api.deleteThread(bottom);
       const rightAfterDelete = await deletedTreeState(harness, bottom);
 
@@ -2352,14 +2365,16 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'SELECT status, deleted_at IS NOT NULL AS deleted FROM app.runtime_tasks WHERE task_id = $1',
         ),
       ).toEqual([{ status: 'stopped', deleted: true }]);
+      // And (data-model DC-4): the one mark is on every task of the tree; the conversation's row is not written
       expect(
         await read(
-          'SELECT deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1',
+          'SELECT count(*)::int AS live FROM app.runtime_tasks WHERE root_id = $1 AND deleted_at IS NULL',
         ),
-      ).toEqual([{ deleted: true }]);
+      ).toEqual([{ live: 0 }]);
+      expect(await read(conversationRow)).toEqual(conversationBefore);
       // Four entries were shown before the delete: two messages and their two answers.
       const [history] = await read(
-        'SELECT count(*)::int AS entries FROM app.agent_messages WHERE task_id = $1',
+        'SELECT count(*)::int AS entries FROM app.messages WHERE conversation_id = $1',
       );
       expect((history as { entries: number }).entries).toBeGreaterThanOrEqual(
         4,
@@ -3001,7 +3016,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(
           (
             await harness.pool.query(
-              'SELECT owner_id, deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1',
+              `SELECT c.owner_id, t.deleted_at IS NOT NULL AS deleted
+                 FROM app.conversations c JOIN app.runtime_tasks t ON t.task_id = c.id WHERE c.id = $1`,
               [aThread.id],
             )
           ).rows,

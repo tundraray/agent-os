@@ -244,7 +244,7 @@ describe('deep-agents / agent-types - a deep agent made in chat is the same reco
               {
                 tool: 'start_deep_agent',
                 args: {
-                  deepAgent: createdId,
+                  deepAgent: name,
                   question: QUESTION,
                   boundaries: '',
                   result: '',

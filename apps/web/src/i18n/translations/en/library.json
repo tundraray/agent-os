@@ -135,7 +135,7 @@
   "recordPage": {
     "colleagueHint": "Or name the {kind, select, agent {agent} other {deep agent}} in chat — the chat will start it itself.",
     "ownNamesake": "You have your own {kind, select, agent {agent} other {deep agent}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
-    "severalNamesakes": "Several have this name: name it in chat and the chat will choose by description. To start this one, press “Use in chat”.",
+    "severalNamesakes": "Several have this name: name it in chat and the one a colleague created earliest will start, a system one only when no other has the name. To start this one, press “Use in chat”.",
     "readOnly": "The author opened the {kind, select, agent {agent} other {deep agent}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
     "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you. The copy gets your model.",
     "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {deep agent}} nor its copy will run."

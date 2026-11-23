@@ -15,8 +15,8 @@ import { TitleService } from './title.service';
 
 /**
  * The conversations of the agent platform (design-chat.md, C3 `api`). The root of a conversation starts
- * from the library record with the key `chat` (design-runtime.md, KD-7, DC-2), seeded by
- * `BuiltinRecordsSeeder`; `start_deep_agent`, a tool of the root, is a built-in tool of `agents`.
+ * from the default agent with the key `chat`, a row of the built-in rows migration (data-model
+ * design-agents.md, KD-4); `start_deep_agent`, a tool of the root, is a built-in tool of `agents`.
  * A message's record chip is checked through `LibraryModule`. `LiveHub` opens its `LISTEN` connection
  * at application bootstrap and closes the streams and the connection before shutdown.
  */

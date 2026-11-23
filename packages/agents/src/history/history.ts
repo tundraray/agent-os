@@ -27,7 +27,7 @@ export type AnswerCall = z.infer<typeof AnswerCallSchema>;
 
 /**
  * The content of a history entry by its kind (design-agents.md, Contract «HistoryEntry»): the `content`
- * of an `agent_messages` row. A tool call is an item of its `model_answer`; what happened to it are the
+ * of an `messages` row. A tool call is an item of its `model_answer`; what happened to it are the
  * later call records with its `callId` (`CALL_RECORD_KINDS`), and its state is which of them exist
  * (`foldCalls`). Nothing is updated in place.
  */

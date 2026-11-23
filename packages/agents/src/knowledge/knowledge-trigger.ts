@@ -1,7 +1,7 @@
 import type {
   AgentKnowledgeRunsRepository,
   Db,
-  AgentSessionsRepository,
+  ConversationsRepository,
   KnowledgeEmbeddingRow,
   RoundOutcome,
 } from '@agent-os/db';
@@ -134,7 +134,7 @@ export interface KnowledgeTriggerDeps {
   /** The savepoint of the vector row of a deep agent that may have been deleted. */
   readonly db: Db;
   readonly tasks: Pick<TaskControl, 'create'>;
-  readonly sessionRows: AgentSessionsRepository;
+  readonly sessionRows: ConversationsRepository;
   readonly knowledgeRunRows: AgentKnowledgeRunsRepository;
   readonly logger: Logger;
 }

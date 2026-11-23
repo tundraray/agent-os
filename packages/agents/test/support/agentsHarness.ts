@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   AGENT_TURN_CLIENT,
   type AgentHistoryEntry,
@@ -25,20 +24,21 @@ import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
 import {
   type AgentContent,
+  BuiltinKeySchema,
   CHAT_BUILTIN_KEY,
   type DeepAgentContent,
 } from '@agent-os/contracts';
 import {
-  agentCodeCalls,
-  agentModelProviders,
-  agentSessionTasks,
+  codeCalls,
+  modelProviders,
+  conversationTasks,
   DATABASE,
   type Database,
   runtimeEvents,
   runtimeInbox,
   runtimeModelCalls,
 } from '@agent-os/db';
-import { databaseUrl, waitFor } from '@agent-os/db/testing';
+import { databaseUrl, newUser, waitFor } from '@agent-os/db/testing';
 import {
   createFixtureFiles,
   type FixtureFiles,
@@ -72,7 +72,7 @@ import {
 } from '@agent-os/runtime';
 import { runtimeModules } from '@agent-os/runtime/testing';
 import { Test } from '@nestjs/testing';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { resolveStart, type StartDeps } from '../../src/start/resolve-start';
 import { TASK_BLOCK_HEADING } from '../../src/tools/system/task-list-block';
@@ -160,10 +160,11 @@ export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = {
 const HISTORY_PAGE = 500;
 
 /**
- * The author of every test record: an employee of no test. A record's author id is a uuid (it is the
- * `author.id` of a run's origin, which the snapshot schema checks), while the tests' owners are not.
+ * The author of every test record: a real employee of no test, made once per test file — the library double
+ * writes its records' rows with their owners (data-model design-agents.md, KD-6), so the owner's foreign key
+ * must hold.
  */
-export const TEST_AUTHOR_ID = randomUUID();
+export const TEST_AUTHOR_ID = await newUser();
 
 /** An agent record of the library double. */
 export type TestRecord = Extract<LibraryDoubleRecord, { kind: 'agent' }>;
@@ -282,7 +283,7 @@ export function testDeepAgent(
 /**
  * Makes `record` the root of the next `sessions.start`: the double's `chat` record (a system record every
  * employee sees) gets its name and content — added on the first call, a new version after it. A run
- * already started keeps its snapshot.
+ * already started keeps its version.
  */
 export async function setRootRecord(
   library: LibraryDouble,
@@ -303,6 +304,46 @@ export async function setRootRecord(
     return;
   }
   library.edit(chat.id, { name: record.name, body });
+}
+
+/**
+ * The default agents a temporary start runs on (data-model design-agents.md, KD-4, KD-5): `agent` and
+ * `deep_agent`, system records every employee sees, without a model of their own (the chain gives the
+ * parent's). Added once per double; the root's `chat` is {@link setRootRecord}'s.
+ */
+async function addDefaultAgents(library: LibraryDouble): Promise<void> {
+  const present = new Set(
+    (await library.listVisible(TEST_AUTHOR_ID)).map(
+      (header) => header.builtinKey,
+    ),
+  );
+  const system = { ownerId: null, everyone: true, offerInChat: true } as const;
+  if (!present.has(BuiltinKeySchema.enum.agent)) {
+    library.add({
+      ...testRecord('general-purpose', { model: null }),
+      ...system,
+      builtinKey: BuiltinKeySchema.enum.agent,
+    });
+  }
+  if (!present.has(BuiltinKeySchema.enum.deep_agent)) {
+    library.add({
+      ...system,
+      kind: 'deep_agent',
+      name: 'Глубокий агент',
+      builtinKey: BuiltinKeySchema.enum.deep_agent,
+      content: {
+        prompt: 'You are the default test deep agent.',
+        model: null,
+        maxTurns: 20,
+        servers: [],
+        subagents: [testSubagent('researcher', { model: null })],
+        finalSubagent: null,
+        taskList: false,
+        listDelegation: true,
+        selfLearning: false,
+      },
+    });
+  }
 }
 
 /** A deep agent's `task` call of a scripted answer (deep-agents/design-task.md, Contract «Инструмент `task`»). */
@@ -331,7 +372,7 @@ const StartTestDeepAgentArgsSchema = z.object({
 
 /**
  * The test's stand-in for `start_deep_agent`, without the brief card: at the root it starts the deep agent
- * record by id as the root's child, on the snapshot `resolveStart` gives the root's owner, and returns a
+ * record by id as the root's child, on the version and model `resolveStart` gives the root's owner, and returns a
  * refusal as `start_agent` does. Only the brief tests go through the real `start_deep_agent`.
  */
 function startTestDeepAgentTool(
@@ -355,6 +396,7 @@ function startTestDeepAgentTool(
             recordId: args.deepAgent,
             expected: 'deep_agent',
           },
+          callerModel: caller.run.model,
         },
         startDeps,
       ),
@@ -370,7 +412,7 @@ function startTestDeepAgentTool(
         };
       }
       const { agentId } = await startChild({
-        snapshot: prepared.snapshot,
+        run: prepared.run,
         prompt: args.prompt,
         description: args.description,
       });
@@ -454,7 +496,7 @@ export type HarnessSessions = Pick<StartOperations, 'start' | 'restart'> &
   > &
   Pick<
     ViewOperations,
-    | 'snapshot'
+    | 'version'
     | 'get'
     | 'list'
     | 'history'
@@ -511,10 +553,10 @@ async function openHarnessProvider(db: Database): Promise<void> {
     enabled: true,
   } as const;
   await db
-    .insert(agentModelProviders)
+    .insert(modelProviders)
     .values({ name: HARNESS_PROVIDER, ...row })
     .onConflictDoUpdate({
-      target: agentModelProviders.name,
+      target: modelProviders.name,
       set: { ...row, updatedAt: sql`now()` },
     });
 }
@@ -524,8 +566,8 @@ async function closeHarnessProvider(db: Database): Promise<void> {
   openHarnesses -= 1;
   if (openHarnesses > 0) return;
   await db
-    .delete(agentModelProviders)
-    .where(eq(agentModelProviders.name, HARNESS_PROVIDER));
+    .delete(modelProviders)
+    .where(eq(modelProviders.name, HARNESS_PROVIDER));
 }
 
 /**
@@ -561,7 +603,6 @@ export async function createAgentsHarness(
   const library = options.library ?? createLibraryDouble();
   const embeddings = options.embeddings ?? createScriptedEmbeddings();
   let embeddingVerdict = NO_EMBEDDING_MODEL;
-  if (options.root !== undefined) await setRootRecord(library, options.root);
   const fixtureProcess = await startFixtureProcess(fixture);
   const access = createAccessGateDouble({
     servers: options.access,
@@ -604,6 +645,10 @@ export async function createAgentsHarness(
       .useValue(options.codeRunner);
   const app = await builder.compile();
   const db = app.get<Database>(DATABASE);
+  // The double writes the rows of the versions it gives out through this harness's pool while it is open.
+  const releaseDatabase = library.useDatabase(db);
+  await addDefaultAgents(library);
+  if (options.root !== undefined) await setRootRecord(library, options.root);
   const workers = app.get(RuntimeWorkers);
   const runtime: HarnessRuntime = {
     tasks: app.get(TaskControl),
@@ -627,7 +672,7 @@ export async function createAgentsHarness(
     interrupt: (request) => control.interrupt(request),
     stop: (request) => control.stop(request),
     resolveConfirmation: (request) => control.resolveConfirmation(request),
-    snapshot: (agentId, ownerId) => views.snapshot(agentId, ownerId),
+    version: (agentId, ownerId) => views.version(agentId, ownerId),
     get: (agentId, ownerId) => views.get(agentId, ownerId),
     list: (rootId, ownerId) => views.list(rootId, ownerId),
     history: (request) => views.history(request),
@@ -652,6 +697,7 @@ export async function createAgentsHarness(
       } finally {
         try {
           // The workers are stopped above; closing the context ends the pool of `DbModule`.
+          releaseDatabase();
           await app.close();
         } finally {
           await fixtureProcess.stop();
@@ -854,10 +900,14 @@ export function eventsOf(db: Database, taskId: string) {
 }
 
 /**
- * The token ledger rows of an owner (`PLATFORM_OWNER_ID` for the platform's own calls), of one task when
- * `taskId` is given, in order of the call: an embedding row tells itself by its model.
+ * The token ledger rows of an owner (`null` for the platform's own calls), of one task when `taskId` is given, in
+ * order of the call: an embedding row tells itself by its model.
  */
-export function ledgerRowsOf(db: Database, ownerId: string, taskId?: string) {
+export function ledgerRowsOf(
+  db: Database,
+  ownerId: string | null,
+  taskId?: string,
+) {
   return db
     .select({
       taskId: runtimeModelCalls.taskId,
@@ -869,7 +919,9 @@ export function ledgerRowsOf(db: Database, ownerId: string, taskId?: string) {
     .from(runtimeModelCalls)
     .where(
       and(
-        eq(runtimeModelCalls.ownerId, ownerId),
+        ownerId === null
+          ? isNull(runtimeModelCalls.ownerId)
+          : eq(runtimeModelCalls.ownerId, ownerId),
         taskId === undefined ? undefined : eq(runtimeModelCalls.taskId, taskId),
       ),
     )
@@ -884,14 +936,14 @@ export function codeCallRowsOf(
 ) {
   return db
     .select()
-    .from(agentCodeCalls)
+    .from(codeCalls)
     .where(
       and(
-        eq(agentCodeCalls.taskId, agentId),
-        eq(agentCodeCalls.runCallId, runCallId),
+        eq(codeCalls.conversationId, agentId),
+        eq(codeCalls.runCallId, runCallId),
       ),
     )
-    .orderBy(asc(agentCodeCalls.attempt), asc(agentCodeCalls.seq));
+    .orderBy(asc(codeCalls.attempt), asc(codeCalls.seq));
 }
 
 /** Every log record of one `run_code` run (its `runId` is the run's `callId`), in order. */
@@ -922,9 +974,9 @@ export function toolOutputOf(
 
 /**
  * Row versions (`xmin`) of everything the agents and the runtime keep about the given agents: their
- * `agent_sessions`, `agent_messages` and `runtime_tasks` rows, one sorted line each
+ * `conversations`, `messages` and `runtime_tasks` rows, one sorted line each
  * (`<table> <task id> [<key>] <version>`). Equal snapshots mean no row was written, added or removed —
- * tool calls included: a call and every change of it are `agent_messages` rows.
+ * tool calls included: a call and every change of it are `messages` rows.
  */
 export async function treeRowVersionsOf(
   db: Database,
@@ -935,9 +987,10 @@ export async function treeRowVersionsOf(
     sql`, `,
   );
   const { rows } = await db.execute(sql`
-    SELECT concat_ws(' ', 'session', task_id, xmin) AS line FROM app.agent_sessions WHERE task_id IN (${ids})
+    SELECT concat_ws(' ', 'session', id, xmin) AS line FROM app.conversations WHERE id IN (${ids})
     UNION ALL
-    SELECT concat_ws(' ', 'message', task_id, seq, xmin) FROM app.agent_messages WHERE task_id IN (${ids})
+    SELECT concat_ws(' ', 'message', conversation_id, seq, xmin) FROM app.messages
+     WHERE conversation_id IN (${ids})
     UNION ALL
     SELECT concat_ws(' ', 'task', task_id, xmin) FROM app.runtime_tasks WHERE task_id IN (${ids})
     ORDER BY 1`);
@@ -950,8 +1003,8 @@ export async function historyRowVersionsOf(
   agentId: string,
 ): Promise<{ seq: number; version: string }[]> {
   const { rows } = await db.execute(sql`
-    SELECT seq, xmin::text AS version FROM app.agent_messages
-     WHERE task_id = ${agentId} ORDER BY seq`);
+    SELECT seq, xmin::text AS version FROM app.messages
+     WHERE conversation_id = ${agentId} ORDER BY seq`);
   return rows.map((row) => ({
     seq: Number(row.seq),
     version: String(row.version),
@@ -960,7 +1013,7 @@ export async function historyRowVersionsOf(
 
 /**
  * The task list of a session as `<number> <status> <subject>` lines, with `blocked by` when the task has blockers,
- * by number, read from `agent_session_tasks`.
+ * by number, read from `conversation_tasks`.
  */
 export async function sessionTaskRowsOf(
   db: Database,
@@ -968,14 +1021,14 @@ export async function sessionTaskRowsOf(
 ): Promise<string[]> {
   const rows = await db
     .select({
-      number: agentSessionTasks.number,
-      status: agentSessionTasks.status,
-      subject: agentSessionTasks.subject,
-      blockedBy: agentSessionTasks.blockedBy,
+      number: conversationTasks.number,
+      status: conversationTasks.status,
+      subject: conversationTasks.subject,
+      blockedBy: conversationTasks.blockedBy,
     })
-    .from(agentSessionTasks)
-    .where(eq(agentSessionTasks.taskId, sessionId))
-    .orderBy(asc(agentSessionTasks.number));
+    .from(conversationTasks)
+    .where(eq(conversationTasks.conversationId, sessionId))
+    .orderBy(asc(conversationTasks.number));
   return rows.map((row) =>
     [
       `${row.number} ${row.status} ${row.subject}`,

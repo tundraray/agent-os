@@ -9,7 +9,7 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
-  DEEP_AGENT_RECORD_ID,
+  DEEP_AGENT_NAME,
   deepAgentOrigin,
 } from '@/test/fixtures';
 
@@ -317,7 +317,8 @@ describe('toFeed', () => {
     },
   );
 
-  // UXRD run card part 4: the deep agent card shows the question of the brief that started it.
+  // UXRD run card part 4: the deep agent card shows the question of the brief that started it; data-model KD-5:
+  // the brief names its deep agent by name (here in another case), and another deep agent's brief is not its.
   it('the deep agent run card carries the question the brief ran with', () => {
     const view = conversationView({
       decisions: [
@@ -326,13 +327,13 @@ describe('toFeed', () => {
           agentId: 'root',
           kind: 'agents.brief',
           args: {
-            deepAgent: DEEP_AGENT_RECORD_ID,
+            deepAgent: 'исследование',
             question: 'Исходный',
             boundaries: '',
             result: '',
           },
           content: {
-            deepAgent: DEEP_AGENT_RECORD_ID,
+            deepAgent: 'исследование',
             question: 'Исходный',
             boundaries: '',
             result: '',
@@ -341,7 +342,7 @@ describe('toFeed', () => {
           resolution: {
             approve: true,
             args: {
-              deepAgent: DEEP_AGENT_RECORD_ID,
+              deepAgent: 'исследование',
               question: 'Исправленный',
               boundaries: '',
               result: '',
@@ -350,11 +351,40 @@ describe('toFeed', () => {
           createdAt: fixtureTime(2.2),
           resolvedAt: fixtureTime(2.4),
         }),
+        confirmation({
+          decisionId: 'other-brief',
+          agentId: 'root',
+          kind: 'agents.brief',
+          args: {
+            deepAgent: 'Ресерч логов',
+            question: 'Чужой',
+            boundaries: '',
+            result: '',
+          },
+          content: {
+            deepAgent: 'Ресерч логов',
+            question: 'Чужой',
+            boundaries: '',
+            result: '',
+          },
+          status: 'resolved',
+          resolution: {
+            approve: true,
+            args: {
+              deepAgent: 'Ресерч логов',
+              question: 'Чужой',
+              boundaries: '',
+              result: '',
+            },
+          },
+          createdAt: fixtureTime(2.3),
+          resolvedAt: fixtureTime(2.35),
+        }),
       ],
       agents: [
         agentNode({
           agentId: 'w1',
-          name: 'Исследование',
+          name: DEEP_AGENT_NAME,
           origin: deepAgentOrigin(),
           createdAt: fixtureTime(2.5),
         }),

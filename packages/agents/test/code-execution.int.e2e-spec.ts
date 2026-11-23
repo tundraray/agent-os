@@ -150,7 +150,7 @@ async function startReader(
   prompt: string,
   options: Pick<AgentsHarnessOptions, 'variables' | 'fixture'> = {},
 ): Promise<Reader> {
-  const ownerId = newUser();
+  const ownerId = await newUser();
   const fixture = options.fixture ?? createFixtureFiles('code-execution');
   const harness = await createAgentsHarness({
     ...options,
@@ -224,7 +224,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   count and returns errors per service -> the model gets only the returned value, the history carries the value and the `output`, the audit has one run row and one from-code row linked to it, the log has start, call with outcome and duration, output and end under one `runId`
   // Catches: a run whose pieces work alone but not chained - `readResult` returning the 16 KiB slice instead of the full result (the count is not `totalMatched`), the script output reaching the model, a from-code call row not linked to its run row, or a run missing from the log
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, agent_tool_results, tool calls in `agent_messages`, MCP fixture (logs), logger, ScriptedModel, Postgres
+  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, tool_results, tool calls in `messages`, MCP fixture (logs), logger, ScriptedModel, Postgres
   // @complexity: high
   it(
     'INT-1 row A: AC-01.1 a read run counts the full result by callId, reaches the second page, and the model gets only the returned value',
@@ -396,7 +396,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   the next model call carries the error text, not a truncated result; the API process still answers
   // Catches: refused calls not counted (a script loops on refusals forever), a burst of parallel calls getting past the limit of 50, data handed to the script past 64 MiB, and the model getting a cut-off result in place of the error
   // @category: edge-case
-  // @dependency: run_code tool, CodeRunner (real process), tool call counter, tool calls in `agent_messages`, MCP fixture, ScriptedModel
+  // @dependency: run_code tool, CodeRunner (real process), tool call counter, tool calls in `messages`, MCP fixture, ScriptedModel
   // @complexity: medium
   it(
     'INT-1 row B: AC-07.4 the call and memory limits end the run with the error text the model sees on its next turn (rows: 51 calls, Promise.all of 100, readResult past 64 MiB)',
@@ -748,7 +748,7 @@ async function startWriter(
   prompt: string,
   fixture: FixtureFiles = createFixtureFiles('code-execution'),
 ): Promise<Writer> {
-  const ownerId = newUser();
+  const ownerId = await newUser();
   const options: AgentsHarnessOptions = {
     model,
     fixture,
@@ -778,7 +778,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a `write` run whose script calls `mcp__${BACKOFFICE_SERVER}__create_incident_note` three times -> before the decision the fixture journal is empty and the request carries the agent, the description, the class, the full script and the one-item "Может вызвать" list ("меняет") -> approve -> three calls, no new request, the result
   // Catches: a mutating call reaching the server before the employee decided, a request that does not carry the list or the full script the employee will confirm, a confirmed script that asks again for each call
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), tool calls in `agent_messages`
+  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), tool calls in `messages`
   // @complexity: high
   it(
     'INT-2 row A: AC-05.3 the request waits with the journal empty and carries script and "Может вызвать"; approve runs the three calls once, with no new request',
@@ -1122,7 +1122,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a confirmed script makes three note calls, then calls `mcp__${LOGS_SERVER}__search_logs` by a name built from two parts -> refusal `not_in_confirmed_script` naming the tool, audit row "отказ", the journal has three calls and no `search_logs`, the log's run start carries "подтверждён" and the code hash
   // Catches: a confirmed script reaching a tool the employee never saw in the "Может вызвать" list (the confirmation covers more than what was shown)
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", tool calls in `agent_messages`, MCP fixture, logger
+  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", tool calls in `messages`, MCP fixture, logger
   // @complexity: high
   it(
     'INT-2 row E: AC-03.7 a confirmed script calling a tool absent from the confirmed list is refused not_in_confirmed_script and the server never sees it',
@@ -1207,7 +1207,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   //   `create_incident_note` in a `read` run -> `changing_in_read_run` with tool name and class -> every row has an audit row "отказ" and the fixture journal is empty
   // Catches: a script reaching a server its employee may not use, a built-in tool through the code door (it would start agents or nest runs past the gate), a change slipping into a read run
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, tool calls in `agent_messages`, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, tool calls in `messages`, MCP fixture
   // @complexity: high
   it(
     'INT-3 row A: AC-03.1 each refused call from code (built-in, invented, outside the definition, not permitted, changing in read) gets its reason and an audit row, and the server journal stays empty',
@@ -1215,8 +1215,8 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       // Given: the definition names `logs` and `backoffice`; employee A may use `logs` only, employee W both. A's read script
       // asks for `start_agent`, `run_code`, an invented name, a `tracker` tool (a server outside the definition) and a
       // `backoffice` tool; W's read script asks for `create_incident_note` (W has the server, so the run class decides)
-      const employeeA = newUser();
-      const employeeW = newUser();
+      const employeeA = await newUser();
+      const employeeW = await newUser();
       const requests = [
         [
           'start_agent',
@@ -1358,14 +1358,14 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   // Behavior: the script passes `ownerId` of employee B in the arguments of an allowed read tool -> the call is recorded for A and reaches the server as the direct call with the same arguments does, ending in the same outcome class
   // Catches: an owner taken from the script's arguments instead of from the step (Invariant 1) - one employee acting as another
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, tool calls in `agent_messages`, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, tool calls in `messages`, MCP fixture
   // @complexity: medium
   it(
     'INT-3 row B: AC-03.3 an ownerId of another employee in the arguments changes nothing: recorded for the owner, same outcome as the direct call',
     async () => {
       // Given: employee A may use `logs`, employee B no server at all; A's agent calls `search_logs` directly with B's id
       // as `ownerId` in the arguments, then a read script makes the same call
-      const otherEmployee = newUser();
+      const otherEmployee = await newUser();
       const foreignArgs = { ...ONE_RECORD, ownerId: otherEmployee };
       const prompt = 'Read the logs with the id of another employee';
       const sameCall = [
@@ -1426,7 +1426,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   // Behavior: `readResult` with a `callId` of B's session, of another agent of A, an invented id, the `callId` of a call that ended in an error, and a `callId` left by a concurrent run -> every answer is the same "result not found"
   // Catches: another employee's full result (or one from another session) readable by guessing a `callId`; an answer that differs between "foreign" and "missing" and so confirms the id exists
   // @category: core-functionality
-  // @dependency: readResult, agent_tool_results, session and owner lookup, CodeRunner (real process)
+  // @dependency: readResult, tool_results, session and owner lookup, CodeRunner (real process)
   // @complexity: medium
   it(
     'INT-3 row C: AC-04.3 readResult answers one "result not found" for a foreign session, another agent, an invented id, a failed call and a concurrent run',
@@ -1435,8 +1435,8 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       // agent reads one record directly, then runs a script that leaves a global and calls `search_logs` with a page the
       // fixture holds, so that run is still going. A's second agent reads one record directly, makes a direct call that
       // ends in an error (`from` after `to`), then runs a script that reads by each id and by its own
-      const employeeA = newUser();
-      const employeeB = newUser();
+      const employeeA = await newUser();
+      const employeeB = await newUser();
       const heldPageArgs = { ...WINDOW, pageSize: 2 };
       const unorderedArgs = { from: WINDOW.to, to: WINDOW.from, pageSize: 1 };
       const fixture = createFixtureFiles('code-execution');
@@ -1684,7 +1684,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   `sending` and closes "исход неизвестен" after the agent continues, without running the script again.
   // Catches: a run that keeps calling tools after the employee said stop (side effects already refused), or an executor process left behind
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, tool calls in `agent_messages`, MCP fixture (held call)
+  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, tool calls in `messages`, MCP fixture (held call)
   // @complexity: high
   it(
     'INT-4 row A: AC-10.1 interrupting the agent mid-run: no further call reaches the server, no executor process remains, the run and its audit row end "прервано"',
@@ -1875,14 +1875,14 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   Row 2: A has two running, one ends in an error, A starts another -> it executes (the slot was freed by the failure)
   // Catches: one employee filling the server's executor slots (and starving everyone else), a refused run spending a read run's attempt, a slot leaked by an error end so the employee is locked out of code
   // @category: edge-case
-  // @dependency: run_code tool, admission counters, CodeRunner (substituted), tool calls in `agent_messages` attempts
+  // @dependency: run_code tool, admission counters, CodeRunner (substituted), tool calls in `messages` attempts
   // @complexity: medium
   it(
     'INT-4 row C: AC-07.6 the third concurrent run of an employee is refused without spending an attempt, another employee is served, and any end of a run frees the slot',
     async () => {
       // Given: employees A and B may read `logs`; the substituted runner holds every run; at most 2 runs of one employee, 4 in all
-      const employeeA = newUser();
-      const employeeB = newUser();
+      const employeeA = await newUser();
+      const employeeB = await newUser();
       const held = createHeldRunner();
       const model = createScriptedModel();
       const runOf = (prompt: string, label: string) => {

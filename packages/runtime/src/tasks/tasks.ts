@@ -1,58 +1,43 @@
 import { type TaskStatus, TaskStatusSchema } from '@agent-os/contracts';
 import {
   type NewRuntimeTaskRow,
-  runtimeTasks,
+  type RuntimeTaskRow,
+  type RuntimeTaskRowGuard,
   RuntimeTasksRepository,
+  type RuntimeTaskWrite,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
-import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { RuntimeError } from '../errors';
 import {
   assertAllowed,
   isFinished,
   type TaskChange,
-  type TaskGuard,
-  type TaskRow,
 } from './guarded-transition';
 
 const { running, waiting } = TaskStatusSchema.enum;
 
-const nextAttempt = sql`${runtimeTasks.attempt} + 1`;
+/** A new status: no wait reason, `finished_at` only when finished. */
+const leaveStatus = (status: TaskStatus): RuntimeTaskWrite => ({
+  status,
+  finishedNow: isFinished(status),
+});
 
-/** Columns that follow a new status: no wait reason, `finished_at` only when finished. */
-function leaveStatus(
-  status: TaskStatus,
-): PgUpdateSetSource<typeof runtimeTasks> {
-  return {
-    status,
-    waitReason: null,
-    finishedAt: isFinished(status) ? sql`now()` : null,
-  };
-}
-
-function changeColumns(
-  change: TaskChange,
-): PgUpdateSetSource<typeof runtimeTasks> {
+function changeColumns(change: TaskChange): RuntimeTaskWrite {
   switch (change.kind) {
     case 'claim':
-      return {
-        status: running,
-        attempt: nextAttempt,
-        stepClaims: sql`${runtimeTasks.stepClaims} + 1`,
-      };
+      return { status: running, nextAttempt: true, countClaim: true };
     case 'wait':
       return {
         ...change.fields,
         ...leaveStatus(waiting),
         waitReason: change.reason,
-        ...(change.fence ? { attempt: nextAttempt } : {}),
+        nextAttempt: change.fence,
       };
     case 'set':
       return {
         ...change.fields,
-        ...(change.status === undefined ? {} : leaveStatus(change.status)),
-        ...(change.fence ? { attempt: nextAttempt } : {}),
+        ...(change.status !== undefined && leaveStatus(change.status)),
+        nextAttempt: change.fence,
       };
   }
 }
@@ -69,7 +54,7 @@ export class Tasks {
   ) {}
 
   /** Inserts a task in `queued`. An id already taken is `TASK_EXISTS`. */
-  async insert(task: NewRuntimeTaskRow): Promise<TaskRow> {
+  async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow> {
     const row = await this.rows.insert(task);
     if (row === undefined) {
       throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
@@ -84,9 +69,9 @@ export class Tasks {
    * fenced and dropped.
    */
   async transition(
-    guard: TaskGuard,
+    guard: RuntimeTaskRowGuard,
     change: TaskChange,
-  ): Promise<TaskRow | undefined> {
+  ): Promise<RuntimeTaskRow | undefined> {
     assertAllowed(guard, change);
     return this.rows.updateGuarded(guard, changeColumns(change));
   }
@@ -98,7 +83,7 @@ export class Tasks {
    * transaction, so the returned row stays current until it ends and the guarded writes after it
    * match; a writer that waited sees the row this transaction left.
    */
-  hold(guard: TaskGuard): Promise<TaskRow | undefined> {
+  hold(guard: RuntimeTaskRowGuard): Promise<RuntimeTaskRow | undefined> {
     return this.rows.updateGuarded(guard, {});
   }
 
@@ -107,10 +92,7 @@ export class Tasks {
    * status: two senders never get the same number. Returns the row as {@link hold} does — the
    * number taken is its `nextMessageSeq - 1` — or `undefined` for a missing task.
    */
-  takeMessageSeq(taskId: string): Promise<TaskRow | undefined> {
-    return this.rows.updateGuarded(
-      { taskId, from: TaskStatusSchema.options },
-      { nextMessageSeq: sql`${runtimeTasks.nextMessageSeq} + 1` },
-    );
+  takeMessageSeq(taskId: string): Promise<RuntimeTaskRow | undefined> {
+    return this.rows.takeMessageSeq(taskId);
   }
 }

@@ -3,7 +3,8 @@
 // Run with `pnpm --filter @agent-os/agents test:e2e`: needs Postgres with the `vector` extension (`pgvector/pgvector:pg16`).
 //
 // The rows speak only the port: the same table runs against any other implementation by swapping `createStore`.
-// Each row gets two fresh deep agents (`a`, `b`) with real `app.library_records` rows; deleting them cascades to the vectors.
+// Each row gets two fresh deep agents (`a`, `b`) with real `app.agents` rows; `withLibraryRow` deletes their knowledge
+// rows itself and only marks the agents deleted.
 // Vectors are unit length; model B's are of another length, so a query that compared across models would fail in pgvector.
 import { randomUUID } from 'node:crypto';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';

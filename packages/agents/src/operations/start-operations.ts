@@ -20,29 +20,34 @@ import {
   resolveStart,
   type StartSource,
 } from '../start/resolve-start';
-import type { RunSnapshot } from '../start/snapshot';
+import type { RunStart } from '../start/run-definition';
+import { History } from '../store/history';
 import {
   type Session,
   type SessionInput,
   sessionInputOf,
   Sessions,
+  startFieldsOf,
 } from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
 import type { AgentRef, StartRequest } from './agent-sessions';
 import { agentTask, asAgent, createLogged } from './operation-support';
 
 /**
- * Where a restart takes its snapshot (KD-2): a record starts anew by its id, as the owner sees it now;
- * a subagent and a fork restart on their own snapshot.
+ * Where a restart takes its version (data-model design-agents.md, «Старт: версия, имя и модель беседы»): an
+ * agent or a root starts anew on the active version of the same agent, as the owner sees it now, under the
+ * restarted conversation's name; a subagent and a fork restart on the version, name and model of the
+ * restarted conversation.
  */
-function restartSource(snapshot: RunSnapshot, session: Session): StartSource {
-  if (snapshot.kind === 'subagent' || session.forkedFromTaskId !== null) {
-    return { kind: 'restart', snapshot };
+function restartSource(run: RunStart, session: Session): StartSource {
+  if (run.subagent !== null || session.forkedThroughSeq !== null) {
+    return { kind: 'restart', run };
   }
   return {
     kind: 'record',
-    recordId: snapshot.origin.recordId,
-    expected: snapshot.origin.kind,
+    recordId: run.version.agentId,
+    expected: run.version.kind,
+    name: run.name,
   };
 }
 
@@ -55,10 +60,12 @@ export class StartOperations {
   constructor(
     @Inject(Db) private readonly db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
+    /** A restart repeats the assignment of the restarted session's `task` entry (KD-6). */
+    @Inject(History) private readonly history: Pick<History, 'taskText'>,
     @Inject(TaskControl)
     private readonly tasks: Pick<TaskControl, 'create' | 'get'>,
     @Inject(LiveTasks) private readonly liveTasks: Pick<LiveTasks, 'adopt'>,
-    /** `resolveStart` asks it for the record of a start or a restart. */
+    /** `resolveStart` asks it for the agent of a start or a restart; a restart reads the restarted version. */
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
     /** `resolveStart` asks it whether the model of a start has a ready provider (model-providers KD-2). */
@@ -85,15 +92,16 @@ export class StartOperations {
       'start',
       { agentId: agentId ?? null, ownerId, recordId: record?.id ?? null },
       async () => {
-        const started = await this.startSnapshot(
+        const started = await this.startRun(
           ownerId,
           { kind: 'builtin', builtinKey: CHAT_BUILTIN_KEY },
-          null,
+          { parentId: null, callerModel: null },
         );
         const created = await this.createRoot(
           ownerId,
+          started.run,
           {
-            snapshot: started.snapshot,
+            ...startFieldsOf(started.run),
             prompt,
             description,
             ...(record === undefined ? {} : { record }),
@@ -122,22 +130,35 @@ export class StartOperations {
         const session = await this.sessions.get(agentId);
         if (session === undefined)
           throw new Error(`Finished agent ${agentId} has no session`);
-        const { snapshot } = sessionInputOf(task.input);
-        // AC-09.2: the same assignment and parent on the snapshot of KD-2; the history starts anew,
-        // and a restarted fork does not inherit its parent's.
-        const started = await this.startSnapshot(
+        const input = sessionInputOf(task.input);
+        const restarted: RunStart = {
+          version: await this.library.version(input.versionId),
+          name: session.name,
+          subagent: input.subagent,
+          model: session.model,
+        };
+        // AC-09.2: the same assignment and parent; the version by the table of «Старт», the model by the chain
+        // with the same parent (KD-3). The history starts anew, and a restarted fork does not inherit its parent's.
+        const started = await this.startRun(
           ownerId,
-          restartSource(snapshot, session),
-          task.parentId,
+          restartSource(restarted, session),
+          {
+            parentId: task.parentId,
+            callerModel: await this.parentModel(task.parentId),
+          },
         );
-        const input = {
-          snapshot: started.snapshot,
+        // A restarted child keeps the call that started the agent it replaces.
+        const restartInput: SessionInput = {
+          ...startFieldsOf(started.run),
           description: session.description,
-          prompt: session.prompt,
+          prompt: await this.history.taskText(agentId),
+          ...(session.startCallId === null
+            ? {}
+            : { startCallId: session.startCallId }),
         };
         const created =
           task.parentId === null
-            ? await this.createRoot(ownerId, input)
+            ? await this.createRoot(ownerId, started.run, restartInput)
             : await this.createChild(
                 {
                   ownerId,
@@ -145,7 +166,8 @@ export class StartOperations {
                   rootId: task.rootId,
                   depth: task.depth,
                 },
-                input,
+                started.run,
+                restartInput,
               );
         started.done(created.agentId, task.rootId);
         return created;
@@ -154,22 +176,35 @@ export class StartOperations {
     );
   }
 
+  /** The model of the parent's conversation, the second link of the chain (KD-3); `null` for a root. */
+  private async parentModel(parentId: string | null): Promise<string | null> {
+    if (parentId === null) return null;
+    const parent = await this.sessions.get(parentId);
+    if (parent === undefined)
+      throw new Error(`Parent agent ${parentId} has no session`);
+    return parent.model;
+  }
+
   /**
-   * The snapshot of a start by `resolveStart` on behalf of the owner (KD-2), and the log of the start
-   * once its agent exists; a refusal is logged and is `START_REFUSED` with its reason and model, and no
+   * The version, name and model of a start by `resolveStart` on behalf of the owner (KD-2), and the log of the
+   * start once its agent exists; a refusal is logged and is `START_REFUSED` with its reason and model, and no
    * agent is made. Only a refusal of the access gate writes an `access_denied` record.
    */
-  private async startSnapshot(
+  private async startRun(
     ownerId: string,
     source: StartSource,
-    parentId: string | null,
+    place: {
+      readonly parentId: string | null;
+      readonly callerModel: string | null;
+    },
   ): Promise<{
-    snapshot: RunSnapshot;
+    run: RunStart;
     done: (agentId: string, rootId: string) => void;
   }> {
     const startedAt = Date.now();
+    const { parentId, callerModel } = place;
     const resolution = await resolveStart(
-      { ownerId, source },
+      { ownerId, source, callerModel },
       { library: this.library, access: this.access, providers: this.providers },
     );
     const entry = {
@@ -196,7 +231,7 @@ export class StartOperations {
       );
     }
     return {
-      snapshot: resolution.snapshot,
+      run: resolution.run,
       done: (agentId, rootId) =>
         logStart(this.logger, { ...entry, rootId, agentId, refusal: null }),
     };
@@ -218,6 +253,7 @@ export class StartOperations {
       readonly rootId: string;
       readonly depth: number;
     },
+    run: RunStart,
     input: SessionInput,
   ): Promise<{ agentId: string }> {
     const { type, ownerId, parentId = null } = request;
@@ -227,6 +263,7 @@ export class StartOperations {
         type,
         { taskId, ownerId, parentId, ...placeOf(taskId) },
         input,
+        run.version,
       );
       return { agentId: taskId, agent };
     });
@@ -237,6 +274,7 @@ export class StartOperations {
   /** Creates a root — a chat: of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`. */
   private createRoot(
     ownerId: string,
+    run: RunStart,
     input: SessionInput,
     agentId?: string,
   ): Promise<{ agentId: string }> {
@@ -247,11 +285,12 @@ export class StartOperations {
         ...(agentId === undefined ? {} : { taskId: agentId }),
       },
       (taskId) => ({ rootId: taskId, depth: 0 }),
+      run,
       input,
     );
   }
 
-  /** Creates an agent of the snapshot's type in the place of a finished one under its parent. */
+  /** Creates an agent of its run's type in the place of a finished one under its parent. */
   private createChild(
     place: {
       readonly ownerId: string;
@@ -259,13 +298,15 @@ export class StartOperations {
       readonly rootId: string;
       readonly depth: number;
     },
+    run: RunStart,
     input: SessionInput,
   ): Promise<{ agentId: string }> {
     const { ownerId, parentId, rootId, depth } = place;
     return asAgent(
       this.create(
-        { type: childTypeOf(input.snapshot), ownerId, parentId },
+        { type: childTypeOf(run), ownerId, parentId },
         () => ({ rootId, depth }),
+        run,
         input,
       ),
     );

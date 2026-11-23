@@ -11,6 +11,7 @@ import {
   type ScriptedModel,
 } from '@agent-os/agents/testing';
 import { consoleSink, createLogger } from '@agent-os/common';
+import { DATABASE, type Database } from '@agent-os/db';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
 import { type ModelPrice, parseRuntimeConfig } from '@agent-os/runtime';
 import { runtimeModules, serveHarness } from '@agent-os/runtime/testing';
@@ -79,6 +80,8 @@ async function main(): Promise<void> {
     minLevel: 'info',
   });
   const scenario = readScenario();
+  // Steps read the version their task input names; the child's double holds none and reads it from the database.
+  const library = createLibraryDouble();
   const app = await Test.createTestingModule({
     imports: [
       ...runtimeModules(
@@ -94,8 +97,8 @@ async function main(): Promise<void> {
           defaultChatModel: CHILD_MODEL,
         }),
         audit: async () => {},
-        // Steps read the snapshot of their run from the task input; only the test process starts runs.
-        library: createLibraryDouble(),
+        // Only the test process starts runs.
+        library,
       }),
     ],
   })
@@ -105,6 +108,7 @@ async function main(): Promise<void> {
     .overrideProvider(EMBEDDING_CLIENT)
     .useValue(createScriptedEmbeddings().client)
     .compile();
+  library.useDatabase(app.get<Database>(DATABASE));
   // The registrations of `onModuleInit`, then the workers start.
   await app.init();
 

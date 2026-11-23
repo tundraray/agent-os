@@ -54,7 +54,7 @@ export interface AccessGate {
   model(ownerId: string, model: string): Promise<ModelVerdict>;
   /** The id of the default chat model, or `null` while none is chosen. */
   defaultChatModel(): Promise<string | null>;
-  /** `ownerId` `null` — the platform's own call, written on the `platform` owner. */
+  /** `ownerId` `null` — the platform's own call, written to the ledger with no owner. */
   embedding(ownerId: string | null): Promise<EmbeddingVerdict>;
 }
 

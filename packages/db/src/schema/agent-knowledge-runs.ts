@@ -15,7 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { isOneOf } from './helpers';
-import { agentSessions } from './agent-sessions';
+import { conversations } from './conversations';
 
 /**
  * A run that learns (KD-2, KD-3): written with the coordinator session; deleting the conversation
@@ -26,7 +26,7 @@ export const agentKnowledgeRuns = app.table(
   {
     runId: uuid('run_id')
       .primaryKey()
-      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+      .references(() => conversations.id, { onDelete: 'cascade' }),
     recordId: uuid('record_id').notNull(),
     /** Servers of the whole team: tells a round whether a lesson's tool is alive. */
     servers: jsonb('servers').notNull(),
