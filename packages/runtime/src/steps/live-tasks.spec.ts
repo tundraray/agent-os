@@ -35,6 +35,7 @@ const commit = (
   outcome,
   ended: false,
   adopted: [],
+  stopped: [],
   ...more,
 });
 

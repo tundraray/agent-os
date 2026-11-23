@@ -9,7 +9,7 @@ import type { NewHistoryEntry } from '../store/history';
 import type { Session } from '../store/sessions';
 import type { AgentDeps } from './agent-deps';
 import type { Continuation } from './continuation';
-import { appendWithEvent, logStep, type StepPrelude } from './step-common';
+import { logStep, type StepPrelude } from './step-common';
 
 /** The session fields a continuation sets (Flow 6): the turn counter from zero, `closed` cleared. */
 const CONTINUATION_PATCH: SessionPatch = { turns: 0, closed: false };
@@ -106,7 +106,7 @@ export function withPrelude(
   return {
     ...result,
     commit: async (effects) => {
-      await appendWithEvent(deps, effects, ctx.taskId, await prelude.write());
+      await deps.history.append(ctx.taskId, await prelude.write());
       await deps.sessionRows.update(ctx.taskId, prelude.patch);
       await inner(effects);
     },
@@ -126,9 +126,9 @@ export function interruptWait(
   logStep(ctx, 'interrupt', startedAt, 'wait');
   return {
     outcome: 'wait',
-    commit: async (effects) => {
+    commit: async () => {
       // The step's only messages are `interrupt`s: they add no entry of their own.
-      await appendWithEvent(deps, effects, ctx.taskId, await prelude.write());
+      await deps.history.append(ctx.taskId, await prelude.write());
       await deps.sessionRows.update(ctx.taskId, {
         ...prelude.patch,
         interrupted: true,

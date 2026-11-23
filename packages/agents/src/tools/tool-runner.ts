@@ -1,10 +1,14 @@
-import type { Logger } from '@agent-os/common';
+import { errorText, type Logger } from '@agent-os/common';
 import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
 import { SettingsRepository } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
-import type { AccessAudit, AccessGate } from '../access-gate';
+import {
+  type AccessAudit,
+  type AccessGate,
+  OwnerDisabledError,
+} from '../access-gate';
 import {
   ACCESS_AUDIT,
   ACCESS_GATE,
@@ -12,6 +16,7 @@ import {
   MASK_SECRETS,
 } from '../agents.tokens';
 import type { AgentsConfig } from '../config';
+import { failureTextOf } from '../failure-text';
 import { McpAccounts } from '../mcp/mcp-accounts';
 import { McpClient } from '../mcp/mcp-client';
 import { CallRecords } from '../store/call-records';
@@ -47,6 +52,12 @@ import { callTarget, isMcp, type SessionTool } from './tool-registry';
 
 /** What `planInCommit` gives the step: run inside `commit(effects)`. */
 export type InCommitPlan = (effects: StepEffects) => Promise<ToolExecution>;
+
+/** What an in-commit tool's `prepare` gave, outside the transaction. */
+interface Prepared {
+  readonly kind: 'prepared';
+  readonly value: unknown;
+}
 
 export type ConfirmedSend =
   | {
@@ -107,6 +118,8 @@ export class ToolRunner {
   ) => Promise<CodeCallExecution>;
   /** Binds the spawn helper to the commit transaction and the caller; `useStartChild` sets it. */
   private startChildFor: ((scope: StartChildScope) => StartChild) | undefined;
+  /** The logger's redaction by value: the text of a tool error the model gets passes it too. */
+  private readonly maskSecrets: (text: string) => string;
 
   constructor(
     /** Writes the `tool_sent` intent of a confirmed call before it goes out. */
@@ -134,6 +147,7 @@ export class ToolRunner {
     /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
     @Inject(MASK_SECRETS) maskSecrets: (text: string) => string,
   ) {
+    this.maskSecrets = maskSecrets;
     this.mcpCalls = createMcpCalls({
       client,
       accounts,
@@ -190,7 +204,7 @@ export class ToolRunner {
   }
 
   /**
-   * The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. A tool with
+   * The question (`effects.ask`) of the call; `agents.tool_confirmation` for an MCP tool. A tool with
    * `review` is asked first, outside any transaction: its refusal is the answer and no request is made, its
    * card is the request's content (deep-agents KD-3). Without `review` the content is the tool's
    * `content(args, tools)` — `tools` the session's tool set (code-execution KD-10).
@@ -263,21 +277,41 @@ export class ToolRunner {
 
   /**
    * The closure an `in_commit` tool runs in `commit(effects)`, with the spawn helper. The gate is asked and
-   * the tool's `prepare` runs first, outside the transaction.
+   * the tool's `prepare` runs first, outside the transaction; a `prepare` that throws ends the call as a tool
+   * error (KD-6). The step runs the closure in a savepoint.
    */
   async planInCommit(
     call: InCommitCall,
     logger: Logger,
   ): Promise<InCommitPlan> {
-    const refusal = await admit(this.access, this.audit, call, logger);
     const prepared =
-      refusal === undefined ? await prepareInCommit(call) : undefined;
+      (await admit(this.access, this.audit, call, logger)) ??
+      (await this.prepareInCommit(call, logger));
     return async (effects) => {
       const startedAt = Date.now();
       const execution =
-        refusal ?? (await this.runInCommit(call, prepared, effects));
+        prepared.kind === 'prepared'
+          ? await this.runInCommit(call, prepared.value, effects)
+          : prepared;
       logCall(logger, loggedCall(call), execution, startedAt);
       return execution;
+    };
+  }
+
+  /**
+   * The execution of a call whose tool threw unexpectedly (data-model/design-runtime.md KD-6): `tool_error`
+   * with the error's safe text (a failed query gives only the database's message), masked and cut, for the model to decide what to do next; the error is logged whole with the
+   * call's id.
+   */
+  toolError(call: ResolvedCall, error: unknown, logger: Logger): ToolExecution {
+    logger.error('tool threw; the call ends as a tool error', {
+      ...loggedCall(call),
+      error,
+    });
+    return {
+      kind: 'done',
+      outcome: 'tool_error',
+      text: failureTextOf(`The tool failed: ${errorText(error)}`),
     };
   }
 
@@ -308,14 +342,18 @@ export class ToolRunner {
     };
     if (isInCommit(call)) {
       const inCommit = { ...call, args: sent.args };
-      const prepared = await prepareInCommit(inCommit);
+      const prepared = await this.prepareInCommit(inCommit, ctx.logger);
+      const run = async (effects: StepEffects): Promise<ToolExecution> =>
+        prepared.kind === 'prepared'
+          ? this.runInCommit(inCommit, prepared.value, effects, confirmed)
+          : prepared;
       return {
         kind: 'in_commit',
         commit: async (effects) => {
           const startedAt = Date.now();
           const execution: ToolExecution | NotSent =
             (await this.callRecords.markSent(key))
-              ? await this.runInCommit(inCommit, prepared, effects, confirmed)
+              ? await run(effects)
               : { kind: 'not_sent', reason: 'not_awaiting' };
           logCall(ctx.logger, loggedCall(sent), execution, startedAt);
           return execution;
@@ -344,24 +382,62 @@ export class ToolRunner {
     confirmed?: unknown,
   ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
-    if (isMcp(tool))
-      return this.mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger);
+    if (isMcp(tool)) {
+      return this.caught(call, ctx.logger, () =>
+        this.mcpCalls.direct({ ...call, tool }, ctx.signal, ctx.logger),
+      );
+    }
     if (tool.tool.mode !== 'outside') {
       throw new Error(
         `Tool ${tool.name} runs in the commit transaction, not outside it`,
       );
     }
     if (ctx.signal.aborted) return { kind: 'aborted' };
-    const result = await tool.tool.execute({
-      args: call.args,
-      caller: call.caller,
-      callId: call.callId,
-      signal: ctx.signal,
-      logger: ctx.logger,
-      guard: (work) => ctx.guard(work),
-      ...(confirmed === undefined ? {} : { confirmed }),
-    });
+    const outside = tool.tool;
+    const result = await this.caught(call, ctx.logger, () =>
+      outside.execute({
+        args: call.args,
+        caller: call.caller,
+        callId: call.callId,
+        signal: ctx.signal,
+        logger: ctx.logger,
+        guard: (work) => ctx.guard(work),
+        ...(confirmed === undefined ? {} : { confirmed }),
+      }),
+    );
     return ctx.signal.aborted ? { kind: 'aborted' } : result;
+  }
+
+  /**
+   * Runs the tool's own code outside any transaction (KD-6): an exception ends the call as a tool error and
+   * the step goes on; a disabled owner still ends the step. A cut by the step's signal is the caller's.
+   */
+  private async caught<T>(
+    call: ResolvedCall,
+    logger: Logger,
+    work: () => Promise<T>,
+  ): Promise<T | ToolExecution> {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof OwnerDisabledError) throw error;
+      return this.toolError(call, error, logger);
+    }
+  }
+
+  /** The tool's `prepare`, run before the commit transaction opens; one that throws is a tool error. */
+  private prepareInCommit(
+    call: InCommitCall,
+    logger: Logger,
+  ): Promise<Prepared | ToolExecution> {
+    return this.caught(call, logger, async (): Promise<Prepared> => {
+      const value = await call.tool.tool.prepare?.({
+        callId: call.callId,
+        args: call.args,
+        caller: call.caller,
+      });
+      return { kind: 'prepared', value };
+    });
   }
 
   private runInCommit(
@@ -389,15 +465,4 @@ export class ToolRunner {
       ...(confirmed === undefined ? {} : { confirmed }),
     });
   }
-}
-
-/** The tool's `prepare`, run before the commit transaction opens. */
-function prepareInCommit(call: InCommitCall): Promise<unknown> {
-  return (
-    call.tool.tool.prepare?.({
-      callId: call.callId,
-      args: call.args,
-      caller: call.caller,
-    }) ?? Promise.resolve(undefined)
-  );
 }

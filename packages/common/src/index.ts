@@ -1,6 +1,7 @@
 export {
   createLogger,
   createSecretMasker,
+  errorText,
   isSecretFieldName,
   LOGGER,
   rememberSecret,

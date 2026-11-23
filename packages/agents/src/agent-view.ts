@@ -15,11 +15,14 @@ export interface AgentStatusInput {
   readonly pendingInterrupt: boolean;
   /** The session's mark «прерван». */
   readonly sessionInterrupted: boolean;
+  /** A question of the agent waits for the employee (data-model/design-runtime.md, KD-3). */
+  readonly openQuestion: boolean;
 }
 
 /**
  * The status of an agent for the employee (State Transitions, KD-3): «Прерван» is seen at once from a
- * pending `interrupt`, and after the step took it, from the session's mark.
+ * pending `interrupt`, and after the step took it, from the session's mark. `awaiting_confirmation` — the agent
+ * waits for its children and one of them is an open question (data-model/design-runtime.md, «Статус агента»).
  */
 export function agentStatus(input: AgentStatusInput): AgentStatus {
   switch (input.taskStatus) {
@@ -32,7 +35,8 @@ export function agentStatus(input: AgentStatusInput): AgentStatus {
       return input.pendingInterrupt ? 'interrupted' : 'working';
     case 'waiting':
       // Agents always interrupt with an `interrupt` message (KD-3), so the runtime's own `interrupted` reason never occurs.
-      if (input.waitReason === 'decision') return 'awaiting_confirmation';
+      if (input.waitReason === 'children' && input.openQuestion)
+        return 'awaiting_confirmation';
       return input.sessionInterrupted ? 'interrupted' : 'working';
   }
 }
@@ -70,13 +74,13 @@ export interface AgentView {
 export function toAgentView(
   task: Task,
   session: Session,
-  pendingInterrupt: boolean,
+  marks: Pick<AgentStatusInput, 'pendingInterrupt' | 'openQuestion'>,
 ): AgentView {
   const status = agentStatus({
     taskStatus: task.status,
     waitReason: task.waitReason,
-    pendingInterrupt,
     sessionInterrupted: session.interrupted,
+    ...marks,
   });
   return {
     agentId: task.taskId,

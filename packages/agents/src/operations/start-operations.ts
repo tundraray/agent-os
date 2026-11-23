@@ -23,11 +23,10 @@ import {
 import type { RunStart } from '../start/run-definition';
 import { History } from '../store/history';
 import {
+  type AgentTaskInput,
   type Session,
-  type SessionInput,
-  sessionInputOf,
   Sessions,
-  startFieldsOf,
+  type SessionStart,
 } from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
 import type { AgentRef, StartRequest } from './agent-sessions';
@@ -99,9 +98,8 @@ export class StartOperations {
         );
         const created = await this.createRoot(
           ownerId,
-          started.run,
           {
-            ...startFieldsOf(started.run),
+            run: started.run,
             prompt,
             description,
             ...(record === undefined ? {} : { record }),
@@ -130,11 +128,10 @@ export class StartOperations {
         const session = await this.sessions.get(agentId);
         if (session === undefined)
           throw new Error(`Finished agent ${agentId} has no session`);
-        const input = sessionInputOf(task.input);
         const restarted: RunStart = {
-          version: await this.library.version(input.versionId),
+          version: await this.library.version(session.versionId),
           name: session.name,
-          subagent: input.subagent,
+          subagent: session.origin.subagent,
           model: session.model,
         };
         // AC-09.2: the same assignment and parent; the version by the table of «Старт», the model by the chain
@@ -148,8 +145,8 @@ export class StartOperations {
           },
         );
         // A restarted child keeps the call that started the agent it replaces.
-        const restartInput: SessionInput = {
-          ...startFieldsOf(started.run),
+        const restartStart: SessionStart = {
+          run: started.run,
           description: session.description,
           prompt: await this.history.taskText(agentId),
           ...(session.startCallId === null
@@ -158,7 +155,7 @@ export class StartOperations {
         };
         const created =
           task.parentId === null
-            ? await this.createRoot(ownerId, started.run, restartInput)
+            ? await this.createRoot(ownerId, restartStart)
             : await this.createChild(
                 {
                   ownerId,
@@ -166,8 +163,7 @@ export class StartOperations {
                   rootId: task.rootId,
                   depth: task.depth,
                 },
-                started.run,
-                restartInput,
+                restartStart,
               );
         started.done(created.agentId, task.rootId);
         return created;
@@ -238,9 +234,9 @@ export class StartOperations {
   }
 
   /**
-   * Creates an agent outside a step: its task, its session and its object commit together, so whoever sees the
-   * task sees the session; the object goes to the runtime once the transaction resolved, and the agent's first
-   * step runs on it.
+   * Creates an agent outside a step: its task with an empty input, its session written from the start and its
+   * object commit together, so whoever sees the task sees the session (KD-8); the object goes to the runtime once
+   * the transaction resolved, and the agent's first step runs on it.
    */
   private async create(
     request: {
@@ -253,17 +249,17 @@ export class StartOperations {
       readonly rootId: string;
       readonly depth: number;
     },
-    run: RunStart,
-    input: SessionInput,
+    start: SessionStart,
   ): Promise<{ agentId: string }> {
     const { type, ownerId, parentId = null } = request;
+    const input: AgentTaskInput = {};
     const { agentId, agent } = await this.db.transaction(async () => {
       const taskId = await this.tasks.create({ ...request, input });
       const agent = await this.factory.createIn(
         type,
         { taskId, ownerId, parentId, ...placeOf(taskId) },
         input,
-        run.version,
+        start,
       );
       return { agentId: taskId, agent };
     });
@@ -274,8 +270,7 @@ export class StartOperations {
   /** Creates a root — a chat: of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`. */
   private createRoot(
     ownerId: string,
-    run: RunStart,
-    input: SessionInput,
+    start: SessionStart,
     agentId?: string,
   ): Promise<{ agentId: string }> {
     return this.create(
@@ -285,8 +280,7 @@ export class StartOperations {
         ...(agentId === undefined ? {} : { taskId: agentId }),
       },
       (taskId) => ({ rootId: taskId, depth: 0 }),
-      run,
-      input,
+      start,
     );
   }
 
@@ -298,16 +292,14 @@ export class StartOperations {
       readonly rootId: string;
       readonly depth: number;
     },
-    run: RunStart,
-    input: SessionInput,
+    start: SessionStart,
   ): Promise<{ agentId: string }> {
     const { ownerId, parentId, rootId, depth } = place;
     return asAgent(
       this.create(
-        { type: childTypeOf(run), ownerId, parentId },
+        { type: childTypeOf(start.run), ownerId, parentId },
         () => ({ rootId, depth }),
-        run,
-        input,
+        start,
       ),
     );
   }

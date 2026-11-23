@@ -20,9 +20,6 @@ export const AGENT_TASK_TYPES: readonly string[] = [
   DEEP_AGENT_TASK_TYPE,
 ];
 
-/** Event written in every transaction that appended to an agent's history. */
-export const AGENTS_HISTORY_APPENDED = 'agents.history_appended';
-
 /** Decision kind of a tool call that waits for the employee's confirmation. */
 export const AGENTS_TOOL_CONFIRMATION = 'agents.tool_confirmation';
 

@@ -17,11 +17,7 @@ import {
   Db,
   SettingsRepository,
 } from '@agent-os/db';
-import {
-  EventConsumerRegistry,
-  HandlerRegistry,
-  TaskControl,
-} from '@agent-os/runtime';
+import { HandlerRegistry, TaskControl, TaskEndHooks } from '@agent-os/runtime';
 import {
   Inject,
   Injectable,
@@ -43,10 +39,12 @@ import type { AgentsConfig } from './config';
 import { createStartDeepAgentTool } from './deep/start-deep-agent';
 import { createTaskTool } from './deep/task-delegation';
 import { AgentsEmbeddings } from './embeddings/embeddings';
-import { createStopChildrenOnFailure } from './events/stop-children-on-failure';
 import { createKnowledgeEmbedHandler } from './knowledge/embed.handler';
 import { createKnowledgeExtractHandler } from './knowledge/extract.handler';
-import { createKnowledgeTrigger } from './knowledge/knowledge-trigger';
+import {
+  createKnowledgeTrigger,
+  KNOWLEDGE_TRIGGER_HOOK,
+} from './knowledge/knowledge-trigger';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { ModelClient } from './model/model-client';
 import { AgentsProviders } from './providers/provider-registry';
@@ -124,7 +122,7 @@ export class SystemToolsRegistration implements OnModuleInit {
 /**
  * Registers the package in the runtime (plan Notes 8): the agents (`ChatAgent`, `Agent`, `DeepAgent`) as the
  * live task types `chat`, `agent` and `deep_agent` — one object per task, made by `AgentFactory` —, the
- * `knowledge.extract` and `knowledge.embed` task handlers and the `task.failed` and knowledge trigger consumers.
+ * `knowledge.extract` and `knowledge.embed` task handlers and the knowledge trigger as a task end hook.
  * Once every module has registered its tools it closes the tools library.
  */
 @Injectable()
@@ -133,8 +131,7 @@ export class AgentsRegistration
 {
   constructor(
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(EventConsumerRegistry)
-    private readonly eventConsumers: EventConsumerRegistry,
+    @Inject(TaskEndHooks) private readonly endHooks: TaskEndHooks,
     @Inject(AgentFactory)
     private readonly factory: Pick<AgentFactory, 'restore'>,
     @Inject(ToolRegistry)
@@ -210,10 +207,8 @@ export class AgentsRegistration
         store: this.vectorStore,
       }),
     );
-    this.eventConsumers.register(
-      createStopChildrenOnFailure({ tasks, sessions, logger }),
-    );
-    this.eventConsumers.register(
+    this.endHooks.register(
+      KNOWLEDGE_TRIGGER_HOOK,
       createKnowledgeTrigger({
         db: this.db,
         tasks,

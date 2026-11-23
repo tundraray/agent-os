@@ -4,11 +4,7 @@
 // Runtime tables (agent-platform/design-runtime.md, Data Model).
 // ---------------------------------------------------------------------------------------------
 export * from './runtime-tasks';
-export * from './runtime-trackers';
 export * from './runtime-inbox';
-export * from './runtime-decisions';
-export * from './runtime-events';
-export * from './runtime-event-deliveries';
 export * from './runtime-model-calls';
 
 // ---------------------------------------------------------------------------------------------

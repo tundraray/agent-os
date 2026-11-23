@@ -9,7 +9,7 @@ The one database of the backend: pool, Drizzle client, the `app` schema, migrati
 - Repositories live flat in `src/repositories/`, one file per table or table group, named after the table (`runtime-tasks.repository.ts`, `agents.repository.ts` for `agents` and its versions and shares). A new class goes into the `REPOSITORIES` list in `src/repositories/index.ts`.
 - A repository is a stateless plain class that only reads and writes rows: no decorator and no NestJS import. It takes `Db` in the constructor and queries through `this.db.client`: the transaction a service opened with `db.transaction(...)`, otherwise the plain database. It never opens a transaction, takes no locks, holds no domain logic and does not map rows into domain objects. A typed projection of columns is still a row; a grouping into a `Map`, a domain rename or a parse of a jsonb column is mapping and belongs to the service that calls the repository.
 - A repository imports only drizzle, `Db`, the schema and `@agent-os/contracts`.
-- Row types (`RuntimeTrackerRow` and the like) are exported from here; packages above use them and declare none of their own.
+- Row types (`RuntimeTaskRow` and the like) are exported from here; packages above use them and declare none of their own.
 - `src/db.module.ts` is the only NestJS file: `DbModule` builds `Db` and every class of `REPOSITORIES` with a factory provider and hands them what the constructor takes. Other packages inject a repository by its class.
 - The server never applies migrations at start, it only checks that none are pending. Migrations are applied by `pnpm db:migrate`.
 

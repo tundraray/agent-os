@@ -5,16 +5,18 @@
 //
 // Harness: `createAgentsHarness` of support/agentsHarness.ts, the library double with a `deep_agent` record the root starts through
 // `start_test_deep_agent` (a plain task, so a subagent's task is its description alone). A subagent fails as in deep-agents-run
-// INT-2 A: its model errors on every attempt. A unique owner `newUser()` per run; no sleeps, `waitForTaskStatus` orders the steps.
+// INT-2 A: its model errors on every attempt, held on a latch until the other subagent has completed (a failed awaited child wakes the
+// deep agent at once, so the order is the test's, not the timing's). A unique owner `newUser()` per run; no sleeps, `waitForTaskStatus` orders the steps.
 //
 // Proven elsewhere (not restated here):
 // - unit, packages/agents/src/tools/builtin/delegation-rules.spec.ts - UC-7, UC-8: every refusal of a task call, list items outside maxRuns,
 //   and the cut of the result table.
 // - unit, packages/agents/src/agent/turn-rules.spec.ts - UC-6: the answer fields.
-// - integration, packages/runtime/test/deep-agents-task.*.e2e-spec.ts - the tracker itself: restarts, stop, isolation, one wake.
+// - integration, packages/runtime/test/deep-agents-task.*.e2e-spec.ts - waiting for awaited children: restarts, stop, one wake.
 
 import { conversationTasks, toolResults } from '@agent-os/db';
 import {
+  createLatch,
   createLibraryDouble,
   createScriptedModel,
   modelError,
@@ -174,7 +176,7 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-18.1 (the result of task is the subagent's last message), AC-18.2 (one assignment in the subagent's history), AC-18.3 (task 1 of
   //   the list gets the subagent as its owner and is completed by its answer), AC-22.4 (a failed subagent is the call's error, the deep
-  //   agent works on), DC-1 (the task calls of one answer, one tracker, one wake), DC-7 (a failed delegation leaves task 1 in_progress and
+  //   agent works on), DC-1 (the task calls of one answer, awaited children, one wake), DC-7 (a failed delegation leaves task 1 in_progress and
   //   names it).
   // Catches: (1) a wake per subagent instead of one; (2) a failed subagent that fails the deep agent; (3) the assignment written twice
   //   into the subagent's history; (4) task 1 left unlabelled, completed after a failure, or not completed after a success.
@@ -192,6 +194,8 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       const { harness, recordId } = await delegatingHarness(model);
       const assignmentA = `Find the cause (${row})`;
       const assignmentB = `Check the logs (${row})`;
+      // The failing subagent fails only once the other has completed.
+      const failLatch = createLatch();
       const deepAgent = model.script({ task: `Investigate (${row})` }, [
         { calls: [taskCreate('Найти причину')] },
         {
@@ -210,20 +214,32 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       model.script(
         { task: assignmentA },
         failing === 'a' ? [] : [{ text: 'The cause is a bad deploy.' }],
-        failing === 'a' ? { thereafter: modelError() } : {},
+        failing === 'a' ? { thereafter: modelError(undefined, failLatch) } : {},
       );
       model.script(
         { task: assignmentB },
         failing === 'b' ? [] : [{ text: 'The logs agree.' }],
-        failing === 'b' ? { thereafter: modelError() } : {},
+        failing === 'b' ? { thereafter: modelError(undefined, failLatch) } : {},
       );
       try {
         // When: the root starts the deep agent and both subagents end
-        const { deepAgentId } = await startDeepAgent(harness, model, {
+        const { rootId, deepAgentId } = await startDeepAgent(harness, model, {
           ownerId,
           recordId,
           task: `Investigate (${row})`,
         });
+        // Only the succeeding subagent can complete while the failing one is held.
+        await waitFor(
+          async () =>
+            (await harness.runtime.tasks.listTree(rootId, ownerId)).filter(
+              (task) => task.parentId === deepAgentId,
+            ),
+          (subagents) =>
+            subagents.length === 2 &&
+            subagents.some((task) => task.status === 'completed'),
+          'the succeeding subagent to complete',
+        );
+        failLatch.open();
         await waitForTaskStatus(harness, deepAgentId, ownerId, 'completed');
 
         // Then: one wake for both calls - the third model call holds both results; the failed one is an error with its reason
@@ -234,7 +250,8 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
             : [],
         ).toEqual(['task', 'task']);
         const results = await taskResultsOf(harness, deepAgentId, ownerId);
-        const failedText = 'The subagent failed: provider_unavailable.';
+        // data-model design-runtime.md, «Инструмент `task`»: the reason and the failure's text.
+        const failedText = 'The subagent failed: provider_unavailable: ';
         expect(results).toEqual(
           failing === 'b'
             ? [
@@ -243,13 +260,23 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
                   outcome: 'success',
                   text: 'The cause is a bad deploy.\n\nTask 1 completed',
                 },
-                { subagent: SCOUT_B, outcome: 'tool_error', text: failedText },
+                {
+                  subagent: SCOUT_B,
+                  outcome: 'tool_error',
+                  text: expect.stringMatching(
+                    new RegExp(`^${failedText}.+\\.$`),
+                  ),
+                },
               ]
             : [
                 {
                   subagent: SCOUT_A,
                   outcome: 'tool_error',
-                  text: `${failedText}\n\nTask 1 is still in_progress`,
+                  text: expect.stringMatching(
+                    new RegExp(
+                      `^${failedText}.+\\.\n\nTask 1 is still in_progress$`,
+                    ),
+                  ),
                 },
                 {
                   subagent: SCOUT_B,
@@ -315,10 +342,14 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
       const items = ['Москва', 'Казань', 'Тверь', 'Пермь', 'Омск'];
       const answerOf = (item: string) =>
         `Answer for ${item}: ${'факт '.repeat(1_500)}end of ${item}`;
+      // The third item's subagent fails only once the other four have completed.
+      const failLatch = createLatch();
       for (const [index, item] of items.entries()) {
         const task = `${instruction}\n\nItem: ${item}`;
         if (index === 2)
-          model.script({ task }, [], { thereafter: modelError() });
+          model.script({ task }, [], {
+            thereafter: modelError(undefined, failLatch),
+          });
         else model.script({ task }, [{ text: answerOf(item) }]);
       }
       const readStored: ReplyFromInput = (messages) => ({
@@ -338,6 +369,16 @@ describe('deep-agents / task - a deep agent gives work to its subagents with tas
           recordId,
           task: 'Collect five cities',
         });
+        await waitFor(
+          async () =>
+            (await harness.runtime.tasks.listTree(rootId, ownerId)).filter(
+              (task) =>
+                task.parentId === deepAgentId && task.status === 'completed',
+            ),
+          (completed) => completed.length === 4,
+          'the four succeeding subagents to complete',
+        );
+        failLatch.open();
         await waitForTaskStatus(harness, deepAgentId, ownerId, 'completed');
 
         // Then: five subagents, one per item, under the deep agent

@@ -41,7 +41,6 @@ export function createMessageAgentTool(deps: {
       await effects.enqueue({
         recipientId: target.taskId,
         kind: AgentMessageKindSchema.enum.agent_message,
-        sender: caller.agentId,
         payload: {
           ...messagePayload(args.message, target, targetParent),
           fromAgentId: caller.agentId,

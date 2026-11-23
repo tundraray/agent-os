@@ -1,6 +1,11 @@
-import { GENERAL_PURPOSE_SUBAGENT } from '@agent-os/contracts';
-import { TRACKER_MAX_TASKS } from '@agent-os/runtime';
+import {
+  type ChildFinishedPayload,
+  GENERAL_PURPOSE_SUBAGENT,
+} from '@agent-os/contracts';
+import { AWAITED_CHILDREN_MAX } from '@agent-os/runtime';
 
+import { reportOf } from '../agent/deliver';
+import { failureTextOf } from '../failure-text';
 import { descriptionLine } from '../chat-listing';
 import {
   decideTaskChange,
@@ -139,12 +144,12 @@ function formOf(call: DelegationCall): DelegationForm | RefusedDelegation {
       'items: the list is empty.',
     );
   }
-  if (items.length > TRACKER_MAX_TASKS) {
+  if (items.length > AWAITED_CHILDREN_MAX) {
     return refusal(
       call.callId,
       'invalid_arguments',
       'list_too_long',
-      `items: ${items.length} items, more than the limit of ${TRACKER_MAX_TASKS} items in one call.`,
+      `items: ${items.length} items, more than the limit of ${AWAITED_CHILDREN_MAX} items in one call.`,
     );
   }
   return { kind: 'list', instruction, items };
@@ -187,9 +192,9 @@ function listTaskRefusal(
  * «Инструмент `task`»; pure-decision.md). A name outside the team starts a temporary subagent: `general-purpose`
  * under that name, its runs counted in the limit of `general-purpose` (data-model design-agents.md, KD-5, rule
  * 2). Each call is refused with a text that names the field and the rule — the member's `maxRuns` of single
- * assignments spent (`run_limit`; list items never count), forms mixed or missing, a list empty or longer than `TRACKER_MAX_TASKS`, a repeated
+ * assignments spent (`run_limit`; list items never count), forms mixed or missing, a list empty or longer than `AWAITED_CHILDREN_MAX`, a repeated
  * answer field, a task of the list that is missing, completed, blocked or named by another call of the answer,
- * the calls of the answer together over `TRACKER_MAX_TASKS`, a subagent past `AGENT_MAX_DEPTH`
+ * the calls of the answer together over `AWAITED_CHILDREN_MAX`, a subagent past `AGENT_MAX_DEPTH`
  * (`depth_limit`) — or accepted with what it starts. A refused call starts nothing.
  */
 export function decideDelegations(input: DelegationInput): DelegationDecision {
@@ -277,12 +282,12 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
       );
       if (listRefusal !== null) return listRefusal;
     }
-    if (tasksStarted + taskCountOf(form) > TRACKER_MAX_TASKS) {
+    if (tasksStarted + taskCountOf(form) > AWAITED_CHILDREN_MAX) {
       return refusal(
         call.callId,
         'invalid_arguments',
         'answer_too_many_tasks',
-        `items: the task calls of one answer start at most ${TRACKER_MAX_TASKS} subagents together; this one would make ${tasksStarted + taskCountOf(form)}.`,
+        `items: the task calls of one answer start at most ${AWAITED_CHILDREN_MAX} subagents together; this one would make ${tasksStarted + taskCountOf(form)}.`,
       );
     }
     return {
@@ -296,14 +301,61 @@ export function decideDelegations(input: DelegationInput): DelegationDecision {
   }
 }
 
-/** How one subagent of a list ended, as its row shows it. */
-export interface TableRow {
-  readonly item: string;
-  readonly status: 'completed' | 'failed' | 'cancelled';
+/** How a subagent of a sent `task` call stands at the step that closes the call. */
+export type SubagentStatus = 'completed' | 'failed' | 'stopped' | 'running';
+
+/** A subagent of a closing call: its status, the answer of a completed one, the line of any other. */
+export interface SubagentEnd {
+  readonly status: SubagentStatus;
   /** The subagent's last message of a completed task. */
   readonly answer: string | null;
-  /** Why a task failed. */
-  readonly reason: string | null;
+  /** What the model reads instead of an answer (Contract «Инструмент `task`»). */
+  readonly line: string | null;
+}
+
+/**
+ * How a subagent of a call stands, from its `child_finished` delivered in the closing step (data-model
+ * design-runtime.md, Contract «Инструмент `task`»; KD-2, KD-6): `completed` — its report; `failed` — the reason
+ * and the failure's text cut for the model; `stopped`; without a `child_finished` in this step — still
+ * running, its report coming later as a message.
+ */
+export function subagentEnd(
+  finished: ChildFinishedPayload | undefined,
+): SubagentEnd {
+  if (finished === undefined)
+    return {
+      status: 'running',
+      answer: null,
+      line: 'The subagent is still running; its report will arrive as a message.',
+    };
+  switch (finished.status) {
+    case 'completed':
+      return {
+        status: 'completed',
+        answer: reportOf(finished.result),
+        line: null,
+      };
+    case 'failed': {
+      const reason = finished.failure?.reason ?? 'unknown';
+      const message = failureTextOf(finished.failure?.message ?? '');
+      return {
+        status: 'failed',
+        answer: null,
+        line: `The subagent failed: ${reason}: ${message}.`,
+      };
+    }
+    case 'stopped':
+      return {
+        status: 'stopped',
+        answer: null,
+        line: 'The subagent was stopped.',
+      };
+  }
+}
+
+/** How one subagent of a list stands, as its row shows it. */
+export interface TableRow extends SubagentEnd {
+  readonly item: string;
 }
 
 /** A table cell: one line, without the column bar. */
@@ -325,9 +377,9 @@ function valueText(value: unknown): string {
 
 /** The answer's cells: the whole answer, or the value of each field of its JSON object. */
 function answerCells(row: TableRow, fields: readonly string[]): string[] {
-  if (fields.length === 0) return [cell(row.answer ?? row.reason ?? '')];
+  if (fields.length === 0) return [cell(row.answer ?? row.line ?? '')];
   if (row.answer === null)
-    return [...fields.map(() => ''), cell(row.reason ?? '')];
+    return [...fields.map(() => ''), cell(row.line ?? '')];
   try {
     const parsed: unknown = JSON.parse(row.answer);
     if (

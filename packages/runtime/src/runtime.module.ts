@@ -9,11 +9,7 @@ import {
 } from '@nestjs/common';
 import { systemClock } from './clock';
 import { CrashPoints } from './crash-points';
-import { EventConsumerRegistry } from './events/event-consumer.registry';
-import { EventLog } from './events/event-log';
-import { OutboxRelay } from './events/outbox.relay';
 import { TokenLedger } from './ledger/token-ledger';
-import { Decisions } from './messaging/decisions';
 import { Inbox } from './messaging/inbox';
 import type { RuntimeConfig } from './runtime-config';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from './runtime.tokens';
@@ -23,8 +19,8 @@ import { LiveTasks } from './steps/live-tasks';
 import { StepCommitter } from './steps/step-commit';
 import { RunningTaskRegistry } from './tasks/running-task.registry';
 import { TaskControl } from './tasks/task-control';
+import { TaskEndHooks } from './tasks/task-end-hooks';
 import { Tasks } from './tasks/tasks';
-import { Trackers } from './tasks/trackers';
 import { RecoverySweeper } from './workers/recovery.sweeper';
 import { RuntimeWorkers } from './workers/runtime-workers';
 
@@ -38,12 +34,9 @@ type RuntimeModuleOptions = Pick<ModuleMetadata, 'imports'> &
 /** What the modules above the runtime inject. */
 const PUBLIC_SERVICES = [
   HandlerRegistry,
-  EventConsumerRegistry,
+  TaskEndHooks,
   TaskControl,
   Inbox,
-  Decisions,
-  Trackers,
-  EventLog,
   TokenLedger,
   RuntimeWorkers,
   LiveTasks,
@@ -51,12 +44,12 @@ const PUBLIC_SERVICES = [
 
 /**
  * The task runtime (ADR-0001, design-runtime.md), available to every module: tasks run in steps,
- * each step ends in one transaction; events go through the outbox. It works over the pool and the
+ * each step ends in one transaction. It works over the pool and the
  * repositories of `DbModule` and logs through `LOGGER`, both provided globally by the composition
  * root; the package reads no environment (ADR-0004).
  *
- * Upper modules register their handlers (`HandlerRegistry`) and event consumers
- * (`EventConsumerRegistry`) in `onModuleInit`; `RuntimeWorkers` starts the workers in
+ * Upper modules register their handlers (`HandlerRegistry`) and task end hooks (`TaskEndHooks`)
+ * in `onModuleInit`; `RuntimeWorkers` starts the workers in
  * `onApplicationBootstrap` and stops them in `beforeApplicationShutdown`.
  */
 @Global()
@@ -89,7 +82,6 @@ export class RuntimeModule {
         Tasks,
         StepCommitter,
         Dispatcher,
-        OutboxRelay,
         RecoverySweeper,
         ...PUBLIC_SERVICES,
       ],

@@ -1,16 +1,12 @@
 import type { Logger } from '@agent-os/common';
 import {
   AgentMessageKindSchema,
+  type DecisionResponse,
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { ConversationsRepository, Db } from '@agent-os/db';
-import {
-  Decisions,
-  Inbox,
-  type ResolveOutcome,
-  TaskControl,
-} from '@agent-os/runtime';
+import { ConversationsRepository } from '@agent-os/db';
+import { Inbox, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
@@ -27,10 +23,12 @@ import type {
 import {
   agentTask,
   asAgent,
-  ConfirmationPayloadSchema,
+  type ConfirmationPayloadSchema,
   createLogged,
   parentOf,
+  QuestionInputSchema,
 } from './operation-support';
+import { isQuestion } from '../task-tree';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
@@ -45,17 +43,14 @@ export class ControlOperations {
   private readonly logged: ReturnType<typeof createLogged>;
 
   constructor(
-    @Inject(Db) private readonly db: Db,
     @Inject(ConversationsRepository)
     private readonly sessionRows: ConversationsRepository,
     @Inject(TaskControl)
     private readonly tasks: Pick<
       TaskControl,
-      'get' | 'interrupt' | 'stop' | 'deleteTree'
+      'get' | 'interrupt' | 'stop' | 'deleteTree' | 'answer'
     >,
     @Inject(Inbox) private readonly inbox: Pick<Inbox, 'enqueue'>,
-    @Inject(Decisions)
-    private readonly decisions: Pick<Decisions, 'get' | 'resolve'>,
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, 'toolOf'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
@@ -86,7 +81,6 @@ export class ControlOperations {
             recipientId: agentId,
             ownerId,
             kind: userMessage,
-            sender: ownerId,
             payload: {
               ...messagePayload(text, target, parent),
               ...(record === undefined ? {} : { record }),
@@ -120,7 +114,6 @@ export class ControlOperations {
         return asAgent(
           this.tasks.interrupt(agentId, ownerId, {
             kind: interrupt,
-            sender: ownerId,
             payload: {},
             revive: false,
           }),
@@ -148,32 +141,36 @@ export class ControlOperations {
     ownerId,
     approve,
     args,
-  }: ResolveConfirmationRequest): Promise<ResolveOutcome> {
+  }: ResolveConfirmationRequest): Promise<DecisionResponse['outcome']> {
     return this.logged(
       'resolveConfirmation',
       { decisionId, ownerId, approve, withArgs: args !== undefined },
       async () => {
-        // The edit is checked only against an open request of this owner. For any other one
-        // `decisions.resolve` answers `already_resolved` (resolved or cancelled) or
-        // `DECISION_NOT_FOUND` (missing or another owner's) and writes nothing.
-        const decision =
+        // The decision is the answer to a question task (data-model/design-runtime.md, KD-3). The edit is
+        // checked only against an open question of this owner. For any other task `tasks.answer` answers
+        // `already_answered` (answered or stopped) or `TASK_NOT_FOUND` (missing, another owner's, deleted or
+        // not a question) and writes nothing; `TASK_NOT_FOUND` passes through as the runtime's error.
+        const question =
           args === undefined
             ? undefined
-            : await this.decisions.get(decisionId, ownerId);
+            : await this.tasks.get(decisionId, ownerId);
         const edited =
-          decision?.status === 'open'
+          question !== undefined &&
+          isQuestion(question) &&
+          question.status === waiting
             ? {
                 args: this.editedArgs(
-                  ConfirmationPayloadSchema.parse(decision.payload),
+                  QuestionInputSchema.parse(question.input).payload,
                   args,
                 ),
               }
             : {};
-        // The tool step reads `{ approve, args? }` and the call id from the request's payload.
-        return this.decisions.resolve(decisionId, ownerId, {
+        // The tool step reads `{ approve, args? }` from the question's result and the call id from its input.
+        const outcome = await this.tasks.answer(decisionId, ownerId, {
           approve,
           ...edited,
         });
+        return outcome === 'answered' ? 'resolved' : 'already_resolved';
       },
       (outcome) => ({ outcome }),
     );
@@ -218,18 +215,14 @@ export class ControlOperations {
   }
 
   /**
-   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`), in one
-   * transaction: the deletion mark lives on the tasks only (KD-2), and from then on the conversation
-   * answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
-   * a missing, another owner's or an already deleted root.
+   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`, in
+   * its own transaction, which it repeats after a deadlock): the deletion mark lives on the tasks
+   * only (KD-2), and from then on the conversation answers as a missing one everywhere. The rows
+   * stay. `AGENT_NOT_FOUND` for a missing, another owner's or an already deleted root.
    */
   deleteRoot(rootId: string, ownerId: string): Promise<void> {
     return this.logged('deleteRoot', { rootId, ownerId }, () =>
-      asAgent(
-        this.db.transaction(async () => {
-          await this.tasks.deleteTree(rootId, ownerId);
-        }),
-      ),
+      asAgent(this.tasks.deleteTree(rootId, ownerId).then(() => undefined)),
     );
   }
 

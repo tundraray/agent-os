@@ -1,6 +1,6 @@
 import type {
   ChipRecord,
-  DecisionStatus,
+  ConfirmationStatus,
   ToolCallState,
 } from '@agent-os/contracts';
 import type { RootPosition } from '@agent-os/db';
@@ -108,7 +108,7 @@ export interface AgentConfirmation extends ToolDisplay {
   readonly args: unknown;
   /** The card content: the tool's `confirmation.content(args)`, or `{ toolDescription }`. */
   readonly content: unknown;
-  readonly status: DecisionStatus;
+  readonly status: ConfirmationStatus;
   /** Set when `resolved`: the decision and the arguments the call ran with (edited or requested). */
   readonly resolution: {
     readonly approve: boolean;

@@ -65,15 +65,8 @@ const runOf = (run: RunStart): AgentRun => ({
     type: 'stub',
     input: null,
   },
-  input: {
-    versionId: run.version.id,
-    name: run.name,
-    subagent: run.subagent,
-    model: run.model,
-    prompt: 'Do it',
-    description: 'Do it',
-  },
-  version: run.version,
+  input: {},
+  run,
 });
 const CHAT: AgentOf = (run) =>
   new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(run));

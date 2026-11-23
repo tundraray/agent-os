@@ -77,7 +77,7 @@ const confirmation = (seq: number, callId: string): HistoryEntry => ({
   seq,
   kind: 'tool_confirmation',
   createdAt: AT,
-  content: { callId },
+  content: { callId, questionId: `q-${callId}` },
 });
 const decision = (
   seq: number,
@@ -169,6 +169,42 @@ describe("history becomes provider messages with every message after its answer'
         },
         { role: 'user', content: 'stop after this' },
         { role: 'assistant', content: 'done', toolCalls: [] },
+      ],
+    ],
+    [
+      // DC-44: the model reads why a child failed — its reason and the failure's text — not only the reason.
+      'a failed child’s report carries the failure’s text',
+      {
+        entries: [
+          task(1, 'compare suppliers'),
+          {
+            seq: 2,
+            kind: 'child_report',
+            createdAt: AT,
+            content: {
+              agentId: 'child-2',
+              description: 'supplier B',
+              status: 'failed',
+              reason: 'model_error',
+              message: 'provider answered 529 overloaded',
+              text: null,
+              toolCalls: 3,
+              durationMs: 1200,
+            },
+          },
+        ],
+      },
+      [
+        { role: 'user', content: 'compare suppliers' },
+        {
+          role: 'user',
+          content: envelope(
+            'child agent report',
+            'child-2',
+            'Agent "supplier B" ended: failed (model_error). Tool calls: 3, duration: 1200 ms.\n' +
+              'Error: provider answered 529 overloaded',
+          ),
+        },
       ],
     ],
     [

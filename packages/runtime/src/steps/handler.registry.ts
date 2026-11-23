@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import type { LiveTaskType, TaskHandler } from './step-contract';
+import {
+  type LiveTaskType,
+  QUESTION_TASK_TYPE,
+  type TaskHandler,
+} from './step-contract';
 
 /** What creation checks of a task type, stateless or live. */
 export type RegisteredTaskType = Pick<TaskHandler, 'type' | 'inputSchema'>;
@@ -15,7 +19,10 @@ export class HandlerRegistry {
   private readonly handlers = new Map<string, TaskHandler>();
   private readonly liveTypes = new Map<string, LiveTaskType>();
 
-  /** Throws on a second handler of the same type, which stops the start. */
+  /**
+   * Throws on a second handler of the same type or on the runtime's question type, which stops the
+   * start.
+   */
   register(handler: TaskHandler): void {
     this.checkFree(handler.type);
     this.handlers.set(handler.type, handler);
@@ -52,6 +59,9 @@ export class HandlerRegistry {
   }
 
   private checkFree(type: string): void {
+    if (type === QUESTION_TASK_TYPE) {
+      throw new Error(`Task type "${type}" is reserved by the runtime`);
+    }
     if (this.handlers.has(type) || this.liveTypes.has(type)) {
       throw new Error(`Handler of task type "${type}" is already registered`);
     }

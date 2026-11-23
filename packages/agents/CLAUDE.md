@@ -8,7 +8,7 @@ The agents of the platform: agent classes and their step, the tools library, sta
 - An agent declares the tools it needs (`BaseAgent.declaration`); the registry decides what the session gets from the owner's rights through its single entry `toolsFor(owner, declaration)`.
 - The tools library knows no system tool by name: system tools are registered into it from outside. `src/tools/` and `src/tools/external/` do not import `agent/`, `deep/`, `operations/` or `knowledge/`.
 - Services are `@Injectable` classes with an explicit `@Inject(...)` on every constructor parameter (test child processes run under `tsx`, which emits no decorator metadata). Pure rules and tool objects stay plain code.
-- Registrations (agent classes as task handlers, event consumers, system tools) happen in `onModuleInit`.
+- Registrations (agent classes as task handlers, task end hooks, system tools) happen in `onModuleInit`.
 - Another domain arrives as a port: rights, quotas and library records come through `AccessGate`, `AccessAudit` and `RecordLibrary`, which `apps/api` implements. Never import `apps/api`.
 - Mastra (`@mastra/*`) is imported in this package only.
 - No table queries here: they live in `packages/db/src/repositories/`, one file per table (`conversations.repository.ts`, `mcp-servers.repository.ts`).

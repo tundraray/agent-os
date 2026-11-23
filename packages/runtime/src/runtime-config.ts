@@ -22,7 +22,6 @@ const RuntimeEnvSchema = z.object({
   RUNTIME_MAX_RECOVERIES: integer(3, 0),
   RUNTIME_STEP_MS: integer(900_000, 1_000),
   RUNTIME_SHUTDOWN_GRACE_MS: integer(5_000, 0),
-  RUNTIME_DELIVERY_MAX_ATTEMPTS: integer(5, 1),
   DB_POOL_MAX: integer(10, 1),
   INBOX_PAYLOAD_MAX_BYTES: integer(1_048_576, 1),
   // Passed through unparsed: its only parser is crash-points.ts.
@@ -46,7 +45,6 @@ export interface RuntimeConfig {
   /** `RUNTIME_STEP_MS`: limit of one step's duration. */
   stepMs: number;
   shutdownGraceMs: number;
-  deliveryMaxAttempts: number;
   dbPoolMax: number;
   /** `INBOX_PAYLOAD_MAX_BYTES`: max UTF-8 size of a message payload. */
   inboxPayloadMaxBytes: number;
@@ -81,7 +79,6 @@ export function parseRuntimeConfig(
     maxRecoveries: s.RUNTIME_MAX_RECOVERIES,
     stepMs: s.RUNTIME_STEP_MS,
     shutdownGraceMs: s.RUNTIME_SHUTDOWN_GRACE_MS,
-    deliveryMaxAttempts: s.RUNTIME_DELIVERY_MAX_ATTEMPTS,
     dbPoolMax: s.DB_POOL_MAX,
     inboxPayloadMaxBytes: s.INBOX_PAYLOAD_MAX_BYTES,
     crashAt: s.RUNTIME_CRASH_AT,

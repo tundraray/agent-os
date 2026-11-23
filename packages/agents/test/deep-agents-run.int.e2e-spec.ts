@@ -29,6 +29,7 @@ import {
   createLatch,
   createScriptedModel,
   inputLines,
+  type Latch,
   modelError,
   type Script,
   type ScriptedModel,
@@ -340,11 +341,17 @@ interface DeepResearchRun {
   readonly rootId: string;
   readonly coordinatorId: string;
   readonly coordinatorScript: Script;
+  /**
+   * The second gather agent's failing model calls wait on it: a failed awaited child wakes the deep agent at
+   * once, so the test opens it only after the first gather agent completed ({@link completeGatherThenFail}).
+   */
+  readonly gatherFailure: Latch;
 }
 
 /**
- * Scripts the run's agents (the second gather agent's model always errors, the first makes one `logs`
- * read), starts the root, confirms its brief unchanged and returns once the coordinator exists.
+ * Scripts the run's agents (the second gather agent's model always errors, held on `gatherFailure`; the
+ * first makes one `logs` read), starts the root, confirms its brief unchanged and returns once the
+ * coordinator exists.
  */
 async function startDeepResearch(
   harness: AgentsHarness,
@@ -388,8 +395,9 @@ async function startDeepResearch(
     { calls: [{ tool: GET_TRACE, args: TRACE }] },
     { text: GATHER_A_REPORT },
   ]);
+  const gatherFailure = createLatch();
   model.script({ task: assignment(GATHER_B_DESCRIPTION) }, [], {
-    thereafter: modelError(),
+    thereafter: modelError(undefined, gatherFailure),
   });
   model.script({ task: assignment(ANSWER_DESCRIPTION) }, [
     { text: ANSWER_TEXT },
@@ -419,7 +427,27 @@ async function startDeepResearch(
     rootId: root.rootId,
     coordinatorId: coordinator.agentId,
     coordinatorScript,
+    gatherFailure,
   };
+}
+
+/** Waits until the first gather agent completed, then lets the second one fail: one wake with both results. */
+async function completeGatherThenFail(
+  harness: AgentsHarness,
+  run: DeepResearchRun,
+  ownerId: string,
+): Promise<void> {
+  await waitFor(
+    () => childrenOf(harness, run.rootId, run.coordinatorId, ownerId),
+    (children) =>
+      children.some(
+        (child) =>
+          child.description === GATHER_A_DESCRIPTION &&
+          child.status === 'completed',
+      ),
+    'the first gather agent to complete',
+  );
+  run.gatherFailure.open();
 }
 
 /**
@@ -731,8 +759,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
   //   another; (4) a failed gather subagent that kills the run, hides from the deep agent or leaves it without its answer; (5) the root
   //   getting the deep agent's own closing text instead of the answer subagent's answer; (6) a run view that shows other steps than the deep
   //   agent's children, loses the brief, or answers for another employee's run or an ordinary agent.
-  // Rows: A "run to the report" - the second plan is refused `run_limit`; the second gather subagent fails while the first is still working;
-  //   the failure reaches the deep agent as the error of its task call, in the one wake with the other gather answer; one run under the root;
+  // Rows: A "run to the report" - the second plan is refused `run_limit`; both gather subagents are inside their work at once (the first in
+  //   its read, the second in its model call); the first completes, then the second fails; the failure reaches the deep agent as the
+  //   error of its task call, in the one wake with the other gather answer; one run under the root;
   //   the root gets one `completed` report whose text is the answer subagent's text, literally.
   //   B "reading the run" - `sessions.run` returns the origin, the brief, the deep agent, the team, the four steps in creation order and the
   //   one limit refusal; a foreign owner, an ordinary agent and an unknown id get one and the same `RUN_NOT_FOUND`.
@@ -741,7 +770,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
     async () => {
       const model = createScriptedModel();
       const ownerId = await newUser();
-      // The first gather agent's read is held on the fixture until the second gather agent has failed.
+      // The first gather agent's read is held on the fixture until the second gather agent is inside its model call.
       const fixture = createFixtureFiles('agents-e2e');
       const gatherRead = fixture.latch('gather-read');
       fixture.setFaults([holdCall('get_trace', TRACE, gatherRead)]);
@@ -749,22 +778,19 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
       try {
         const run = await startDeepResearch(harness, model, ownerId);
 
-        // The gather agents run at once: the second fails while the first is still inside its read.
+        // The gather agents run at once: the first is inside its read while the second is inside its model call.
         await waitFor(
           () =>
             fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE }),
           (calls) => calls.length === 1,
           'the first gather agent read on the fixture',
         );
-        const whileHeld = await waitFor(
-          () => childrenOf(harness, run.rootId, run.coordinatorId, ownerId),
-          (children) =>
-            children.some(
-              (child) =>
-                child.description === GATHER_B_DESCRIPTION &&
-                child.status === 'failed',
-            ),
-          'the second gather agent to fail',
+        await run.gatherFailure.reached();
+        const whileHeld = await childrenOf(
+          harness,
+          run.rootId,
+          run.coordinatorId,
+          ownerId,
         );
         expect(
           whileHeld
@@ -785,11 +811,12 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
           },
           {
             description: 'Сбор · таймауты шлюза',
-            status: 'failed',
-            failureReason: 'provider_unavailable',
+            status: 'working',
+            failureReason: null,
           },
         ]);
         gatherRead.release();
+        await completeGatherThenFail(harness, run, ownerId);
 
         expect(
           await waitForStatus(harness, run.coordinatorId, ownerId, 'completed'),
@@ -799,7 +826,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         });
 
         // The record's count of one plan reached the deep agent: the second plan is refused by the limit, no task for it.
-        // The refusal closes in the step that sends the first plan, whose result comes with its tracker.
+        // The refusal closes in the step that sends the first plan, which starts its subagents.
         const coordinatorHistory = await historyOf(
           harness,
           run.coordinatorId,
@@ -862,8 +889,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         const gatherResults = lastToolOutput(run.coordinatorScript, 3);
         expect(gatherResults).toHaveLength(2);
         expect(String(gatherResults[0]?.output)).toContain(GATHER_A_REPORT);
-        expect(String(gatherResults[1]?.output)).toContain(
-          'The subagent failed: provider_unavailable.',
+        // data-model design-runtime.md, «Инструмент `task`»: the reason and the failure's text.
+        expect(String(gatherResults[1]?.output)).toMatch(
+          /The subagent failed: provider_unavailable: .+\./,
         );
 
         // The root received one notification "completed" whose text is the answer agent's text, literally.
@@ -904,6 +932,7 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
       const harness = await createDeepAgentsHarness(model);
       try {
         const run = await startDeepResearch(harness, model, ownerId);
+        await completeGatherThenFail(harness, run, ownerId);
         await waitForStatus(harness, run.coordinatorId, ownerId, 'completed');
 
         const view = await harness.sessions.run(run.coordinatorId, ownerId);
@@ -1134,7 +1163,9 @@ describe('deep-agents / agent-types - the brief and the deep agent run (in-proce
         expect(secondFailure).toMatchObject({
           content: {
             outcome: 'tool_error',
-            text: 'The subagent failed: provider_unavailable.',
+            text: expect.stringMatching(
+              /^The subagent failed: provider_unavailable: .+\.$/,
+            ),
           },
         });
         const textsAfter = history.flatMap((entry, index) =>

@@ -30,12 +30,14 @@ export const isFinished = (status: string): boolean =>
 /**
  * Transitions of the task state diagram (design-runtime.md, State Transitions and Invariants).
  * `queued → queued` and `waiting → waiting` are the interrupt of a task that is not running: the
- * status stays or changes its wait reason, and the attempt is fenced.
+ * status stays or changes its wait reason, and the attempt is fenced. `queued → waiting` outside an
+ * interrupt and `waiting → completed` are a question task's: created waiting for its answer, and
+ * completed by it (KD-3).
  */
 const ALLOWED_TARGETS: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: [queued, running, waiting, stopped],
   running: [queued, waiting, completed, failed, stopped],
-  waiting: [queued, waiting, stopped],
+  waiting: [queued, waiting, completed, stopped],
   completed: [queued],
   failed: [queued],
   stopped: [queued],
@@ -44,11 +46,11 @@ const ALLOWED_TARGETS: Record<TaskStatus, readonly TaskStatus[]> = {
 /** Plain column values a change may set besides its status and counters. */
 export type TaskValues = Pick<
   RuntimeTaskWrite,
-  'stepNo' | 'stepClaims' | 'recoveries' | 'result' | 'failure'
+  'stepNo' | 'recoveries' | 'result' | 'failure'
 >;
 
 export type TaskChange =
-  /** `queued → running`: `attempt + 1` and `step_claims + 1` (only here). */
+  /** `queued → running`: `attempt + 1`. */
   | { kind: 'claim' }
   /** → `waiting` with its reason (`waiting` ⇔ `wait_reason` not null). */
   | {

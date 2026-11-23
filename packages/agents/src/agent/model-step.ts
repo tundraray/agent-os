@@ -13,6 +13,7 @@ import {
 } from '@agent-os/runtime';
 
 import { knowledgeBlock } from '../knowledge/knowledge-block';
+import { agentTasksOf } from '../task-tree';
 import { modelErrorMessage } from '../model/model-client';
 import type { AgentToolCall, AgentToolDefinition } from '../model/mastra-turn';
 import type { NewHistoryEntry } from '../store/history';
@@ -24,7 +25,6 @@ import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
 import {
-  appendWithEvent,
   callUnlessAborted,
   FAILURE_REASONS,
   failResult,
@@ -103,7 +103,7 @@ export async function childrenInFlight(
   ctx: StepContext,
 ): Promise<ChildrenInFlight> {
   const tree = await deps.tasks.listTree(ctx.rootId, agentOwner(ctx));
-  const unfinished = tree.filter(
+  const unfinished = agentTasksOf(tree).filter(
     (task) => task.parentId === ctx.taskId && !isFinished(task.status),
   ).length;
   const delivered = new Set(ctx.messages.map((message) => message.messageId));
@@ -134,8 +134,7 @@ export async function childrenInFlight(
  *   `complete` with `{ report }`, the session closed and its counter reset. How the turn ends is the agent's
  *   (`endOfTurn`), as are the tools it declares (`offeredDeclaration`) and the turn counter after the delivered
  *   messages (`turnsAfterDelivery`).
- * - Every commit writes the turn counter, `last_input_tokens` of the call (KD-7) and
- *   `agents.history_appended`.
+ * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7).
  */
 export async function runModelStep(
   deps: AgentDeps,
@@ -162,7 +161,7 @@ export async function runModelStep(
     prelude?.patch.turns ?? session.turns,
     ctx.messages,
   );
-  const delivered = await entriesOf(deps, ctx.messages);
+  const delivered = await entriesOf(deps, ctx);
   const writeStepEntries = async (): Promise<NewHistoryEntry[]> => [
     ...(prelude === undefined ? [] : await prelude.write()),
     ...delivered,
@@ -274,7 +273,7 @@ export async function runModelStep(
     after: readonly NewHistoryEntry[],
     patch: SessionPatch,
   ): Promise<void> => {
-    await appendWithEvent(deps, effects, ctx.taskId, [
+    await deps.history.append(ctx.taskId, [
       ...(await writeStepEntries()),
       answerEntry,
       ...after,

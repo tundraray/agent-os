@@ -37,7 +37,7 @@ const PASSING_MARKED = embedding({ passTaskId: PASS, needsPass: true });
 
 interface Row {
   readonly name: string;
-  readonly type: 'task.completed' | 'task.failed' | 'task.stopped';
+  readonly status: 'completed' | 'failed' | 'stopped';
   readonly taskId: string;
   readonly run?: TriggerRun;
   readonly embedding?: TriggerEmbedding;
@@ -47,35 +47,35 @@ interface Row {
 const ROWS: Row[] = [
   {
     name: 'deep agent completed, no extraction in progress: create one',
-    type: 'task.completed',
+    status: 'completed',
     taskId: DEEP_AGENT,
     run: IDLE,
     expected: { action: 'create_extract', run: IDLE },
   },
   {
     name: 'deep agent failed while a round runs: only the «one more round» mark',
-    type: 'task.failed',
+    status: 'failed',
     taskId: DEEP_AGENT,
     run: EXTRACTING,
     expected: { action: 'mark_round', run: EXTRACTING },
   },
   {
     name: 'deep agent stopped: «stopped», no task even while a round runs',
-    type: 'task.stopped',
+    status: 'stopped',
     taskId: DEEP_AGENT,
     run: EXTRACTING,
     expected: { action: 'stopped', run: EXTRACTING },
   },
   {
     name: 'extraction failed without the mark: interrupted, no new task',
-    type: 'task.failed',
+    status: 'failed',
     taskId: EXTRACTION,
     run: EXTRACTING,
     expected: { action: 'interrupted', run: EXTRACTING, nextRound: false },
   },
   {
     name: 'extraction failed with the mark: interrupted and a new task',
-    type: 'task.failed',
+    status: 'failed',
     taskId: EXTRACTION,
     run: EXTRACTING_MARKED,
     expected: {
@@ -86,7 +86,7 @@ const ROWS: Row[] = [
   },
   {
     name: 'extraction completed, no pass in progress: queue a pass',
-    type: 'task.completed',
+    status: 'completed',
     taskId: EXTRACTION,
     run: EXTRACTED,
     embedding: NO_PASS,
@@ -94,7 +94,7 @@ const ROWS: Row[] = [
   },
   {
     name: 'extraction completed while a pass runs: only the «one more pass» mark',
-    type: 'task.completed',
+    status: 'completed',
     taskId: EXTRACTION,
     run: EXTRACTED,
     embedding: PASSING,
@@ -102,14 +102,14 @@ const ROWS: Row[] = [
   },
   {
     name: 'extraction completed after its deep agent record was deleted: ignore',
-    type: 'task.completed',
+    status: 'completed',
     taskId: EXTRACTION,
     run: EXTRACTED,
     expected: { action: 'ignore', reason: 'record_deleted' },
   },
   {
     name: 'pass failed with the mark: id released and a new pass',
-    type: 'task.failed',
+    status: 'failed',
     taskId: PASS,
     embedding: PASSING_MARKED,
     expected: {
@@ -120,7 +120,7 @@ const ROWS: Row[] = [
   },
   {
     name: 'a task no knowledge row names (or the run row went with its conversation): ignore',
-    type: 'task.completed',
+    status: 'completed',
     taskId: OTHER_TASK,
     expected: { action: 'ignore', reason: 'not_learning' },
   },
@@ -130,7 +130,7 @@ describe('triggerDecision: one extraction per run end, none after a stop', () =>
   it.each(ROWS)('$name', (row) => {
     expect(
       triggerDecision(
-        { type: row.type, taskId: row.taskId },
+        { status: row.status, taskId: row.taskId },
         row.run,
         row.embedding,
       ),

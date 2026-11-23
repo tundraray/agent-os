@@ -84,7 +84,7 @@ export class AgentDeps {
     readonly library: Pick<RecordLibrary, 'listVisible'>,
     @Inject(ModelClient) readonly modelClient: Pick<ModelClient, 'call'>,
     /** Children of the agent: the end of a turn waits for the unfinished ones (DC-3). */
-    @Inject(TaskControl) readonly tasks: Pick<TaskControl, 'listTree'>,
+    @Inject(TaskControl) readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
     @Inject(Inbox) readonly inbox: Pick<Inbox, 'listPending'>,
     /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */

@@ -166,12 +166,15 @@ export interface ScriptedAnswer {
 export interface ScriptedModelError {
   readonly kind: 'model_error';
   readonly statusCode: number;
+  /** Each failing call waits on it first, so a test decides when the agent fails. */
+  readonly latch?: Latch;
 }
 
 export function modelError(
   statusCode = DEFAULT_ERROR_STATUS,
+  latch?: Latch,
 ): ScriptedModelError {
-  return { kind: 'model_error', statusCode };
+  return { kind: 'model_error', statusCode, ...(latch && { latch }) };
 }
 
 /** A reply computed from the call's input: the messages exactly as the provider would get them. */
@@ -401,8 +404,10 @@ export function createScriptedModel(): ScriptedModel {
         );
       }
       const answer = typeof reply === 'function' ? reply(call.messages) : reply;
-      if (isModelError(answer))
+      if (isModelError(answer)) {
+        await answer.latch?.pass(options.signal);
         throw providerError(`agent ${call.agentName}`, answer.statusCode);
+      }
 
       const generation = await streamAnswer(answer, options, () =>
         (answer.calls ?? []).map((scripted) => {

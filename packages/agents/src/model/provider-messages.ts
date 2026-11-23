@@ -48,7 +48,10 @@ function childReportText(report: HistoryContent<'child_report'>): string {
   const facts =
     `Agent "${report.description}" ended: ${ending}. ` +
     `Tool calls: ${report.toolCalls}, duration: ${report.durationMs} ms.`;
-  return `${facts}\n${report.text ?? '(no report)'}`;
+  const body =
+    report.text ??
+    (report.message === null ? '(no report)' : `Error: ${report.message}`);
+  return `${facts}\n${body}`;
 }
 
 function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {

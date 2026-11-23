@@ -6,11 +6,11 @@ import type {
   RoundOutcome,
 } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
-import { RuntimeEventTypeSchema } from '@agent-os/contracts';
-import {
-  type EventConsumer,
-  type TaskControl,
-  RUNTIME_EVENT_SCHEMA_VERSION,
+import { TaskStatusSchema } from '@agent-os/contracts';
+import type {
+  TaskControl,
+  TaskEndHook,
+  TaskEndHookInput,
 } from '@agent-os/runtime';
 
 import { type KnowledgeRun, knowledgeRunOf } from './knowledge-runs';
@@ -22,28 +22,23 @@ import {
 } from './knowledge-tasks';
 
 /*
- * The consumer `agents.knowledge-trigger` (design-core.md, KD-3, KD-8): the end of a run that
- * learns creates one extraction task in the delivery transaction, the end of an extraction queues
- * the deep agent's vector pass. The event carries neither the task type nor the owner, and `agents`
- * does not read `runtime_tasks` (plan Notes 6): the task is recognised by the knowledge rows that
- * name it. Every decision is the pure `triggerDecision`; `handle` only reads and writes those rows
- * and creates tasks in the delivery transaction — no model, embeddings or network call.
+ * The task end hook `agents.knowledge-trigger` (design-core.md, KD-3, KD-8; data-model
+ * design-runtime.md, KD-5): the end of a run that learns creates one extraction task in the end's
+ * transaction, the end of an extraction queues the deep agent's vector pass. The task is recognised
+ * by the knowledge rows that name it. Every decision is the pure `triggerDecision`; the hook only
+ * reads and writes those rows and creates tasks in the end's transaction — no model, embeddings or
+ * network call.
  */
 
-/** A delivered runtime event (`StoredEvent` of `runtime`, not exported by name). */
-type DeliveredEvent = Parameters<EventConsumer['handle']>[0];
+/** The name the runtime logs a failure of the hook under. */
+export const KNOWLEDGE_TRIGGER_HOOK = 'agents.knowledge-trigger';
 
-const CONSUMER_NAME = 'agents.knowledge-trigger';
-const COMPLETED = RuntimeEventTypeSchema.enum['task.completed'];
-const FAILED = RuntimeEventTypeSchema.enum['task.failed'];
-const STOPPED = RuntimeEventTypeSchema.enum['task.stopped'];
+const { completed: COMPLETED, stopped: STOPPED } = TaskStatusSchema.enum;
 
 // ---------- The decision (pure) ----------
 
-export interface TriggerEvent {
-  readonly type: string;
-  readonly taskId: string;
-}
+/** What the decision reads of the end of a task. */
+export type TriggerEvent = Pick<TaskEndHookInput, 'status' | 'taskId'>;
 
 /** What the decision reads of a run row. */
 export type TriggerRun = Pick<
@@ -89,8 +84,8 @@ export type TriggerDecision<
   | { readonly action: 'ignore'; readonly reason: TriggerIgnoreReason };
 
 /**
- * Decides what the event of a task means for self-learning. `run` is the run row found for the task
- * (by `run_id`, or by `last_extract_task_id` on `task.completed` / `extract_task_id` otherwise);
+ * Decides what the end of a task means for self-learning. `run` is the run row found for the task
+ * (by `run_id`, or by `last_extract_task_id` when it completed / `extract_task_id` otherwise);
  * `embedding` is the vector row of an ended extraction's deep agent, or the row whose pass is the task.
  */
 export function triggerDecision<
@@ -101,16 +96,16 @@ export function triggerDecision<
   run: R | undefined,
   embedding: E | undefined,
 ): TriggerDecision<R, E> {
-  const { type, taskId } = event;
+  const { status, taskId } = event;
   if (run !== undefined && run.runId === taskId) {
-    if (type === STOPPED) return { action: 'stopped', run };
+    if (status === STOPPED) return { action: 'stopped', run };
     return run.extractTaskId === null
       ? { action: 'create_extract', run }
       : { action: 'mark_round', run };
   }
   if (
     run !== undefined &&
-    type === COMPLETED &&
+    status === COMPLETED &&
     run.lastExtractTaskId === taskId
   ) {
     if (embedding === undefined)
@@ -119,7 +114,11 @@ export function triggerDecision<
       ? { action: 'queue_embed', run }
       : { action: 'mark_pass', run };
   }
-  if (run !== undefined && type !== COMPLETED && run.extractTaskId === taskId) {
+  if (
+    run !== undefined &&
+    status !== COMPLETED &&
+    run.extractTaskId === taskId
+  ) {
     return { action: 'interrupted', run, nextRound: run.needsRound };
   }
   if (embedding !== undefined && embedding.passTaskId === taskId) {
@@ -128,7 +127,7 @@ export function triggerDecision<
   return { action: 'ignore', reason: 'not_learning' };
 }
 
-// ---------- The consumer ----------
+// ---------- The hook ----------
 
 export interface KnowledgeTriggerDeps {
   /** The savepoint of the vector row of a deep agent that may have been deleted. */
@@ -141,8 +140,8 @@ export interface KnowledgeTriggerDeps {
 
 export function createKnowledgeTrigger(
   deps: KnowledgeTriggerDeps,
-): EventConsumer {
-  const logger = deps.logger.child({ consumer: CONSUMER_NAME });
+): TaskEndHook {
+  const logger = deps.logger.child({ hook: KNOWLEDGE_TRIGGER_HOOK });
   const { sessionRows, knowledgeRunRows: runRows } = deps;
 
   async function createExtract(
@@ -163,12 +162,12 @@ export function createKnowledgeTrigger(
 
   /** Applies the decision; returns the id of the task it created, if any. */
   async function apply(
-    event: DeliveredEvent,
+    end: TaskEndHookInput,
     decision: TriggerDecision<KnowledgeRun, KnowledgeEmbeddingRow>,
   ): Promise<string | undefined> {
     switch (decision.action) {
       case 'create_extract': {
-        const taskId = await createExtract(decision.run, event.rootId);
+        const taskId = await createExtract(decision.run, end.rootId);
         await runRows.updateRun(decision.run.runId, { extractTaskId: taskId });
         return taskId;
       }
@@ -180,21 +179,21 @@ export function createKnowledgeTrigger(
         // never goes back (Invariant 2), so calls of the stopped stretch are never extracted.
         await runRows.writeRoundOutcome(
           decision.run.runId,
-          outcomeOf('skipped', 'stopped', event),
+          outcomeOf('skipped', 'stopped', end),
         );
-        await runRows.advanceExtractedUpTo(decision.run.runId, event.createdAt);
+        await runRows.advanceExtractedUpTo(decision.run.runId, end.finishedAt);
         return undefined;
       case 'interrupted': {
         const { run } = decision;
         await runRows.writeRoundOutcome(
           run.runId,
-          outcomeOf('failed', 'interrupted', event),
+          outcomeOf('failed', 'interrupted', end),
         );
         if (!decision.nextRound) {
           await runRows.updateRun(run.runId, { extractTaskId: null });
           return undefined;
         }
-        // The failed task's event is rooted at itself; the next round needs the conversation root. It is
+        // The extraction is a root task of its own; the next round needs the conversation root. It is
         // read from the run's own session: the runtime answers a deleted conversation's tree as missing.
         const rootId = await sessionRows.rootIdOf(run.runId);
         if (rootId === undefined)
@@ -239,53 +238,41 @@ export function createKnowledgeTrigger(
     }
   }
 
-  return {
-    name: CONSUMER_NAME,
-    eventTypes: [COMPLETED, FAILED, STOPPED],
-    schemaVersions: [RUNTIME_EVENT_SCHEMA_VERSION],
-    async handle(event) {
-      const startedAt = Date.now();
-      if (event.taskId === null) return;
-      const taskId = event.taskId;
+  return async (end) => {
+    const startedAt = Date.now();
+    const { taskId, status } = end;
+    const run = await findRunOfTask(runRows, status, taskId);
+    const embedding = await findEmbeddingOfTask(
+      deps.db,
+      runRows,
+      status,
+      taskId,
+      run,
+    );
+    const decision = triggerDecision({ status, taskId }, run, embedding);
+    const createdTaskId = await apply(end, decision);
 
-      const run = await findRunOfTask(runRows, event.type, taskId);
-      const embedding = await findEmbeddingOfTask(
-        deps.db,
-        runRows,
-        event.type,
-        taskId,
-        run,
-      );
-      const decision = triggerDecision(
-        { type: event.type, taskId },
-        run,
-        embedding,
-      );
-      const createdTaskId = await apply(event, decision);
-
-      // Every task of the platform comes here; one that no knowledge row names is logged at debug.
-      const quiet =
-        decision.action === 'ignore' && decision.reason === 'not_learning';
-      logger[quiet ? 'debug' : 'info']('knowledge trigger decided', {
-        eventId: event.eventId,
-        eventType: event.type,
-        taskId,
-        rootId: event.rootId,
-        runId: run?.runId ?? null,
-        recordId: run?.recordId ?? embedding?.recordId ?? null,
-        ownerId: run?.ownerId ?? null,
-        decision: decision.action,
-        ...(decision.action === 'ignore' ? { reason: decision.reason } : {}),
-        ...(decision.action === 'interrupted'
-          ? { nextRound: decision.nextRound }
-          : {}),
-        ...(decision.action === 'release_pass'
-          ? { nextPass: decision.nextPass }
-          : {}),
-        createdTaskId: createdTaskId ?? null,
-        durationMs: Date.now() - startedAt,
-      });
-    },
+    // Every task of the platform comes here; one that no knowledge row names is logged at debug.
+    const quiet =
+      decision.action === 'ignore' && decision.reason === 'not_learning';
+    logger[quiet ? 'debug' : 'info']('knowledge trigger decided', {
+      taskId,
+      status,
+      rootId: end.rootId,
+      runId: run?.runId ?? null,
+      recordId: run?.recordId ?? embedding?.recordId ?? null,
+      ownerId: run?.ownerId ?? null,
+      decision: decision.action,
+      ...(decision.action === 'ignore' ? { reason: decision.reason } : {}),
+      ...(decision.action === 'interrupted'
+        ? { nextRound: decision.nextRound }
+        : {}),
+      ...(decision.action === 'release_pass'
+        ? { nextPass: decision.nextPass }
+        : {}),
+      createdTaskId: createdTaskId ?? null,
+      durationMs: Date.now() - startedAt,
+    });
   };
 }
 
@@ -295,13 +282,13 @@ export function createKnowledgeTrigger(
  */
 async function findRunOfTask(
   runRows: AgentKnowledgeRunsRepository,
-  type: string,
+  status: TaskEndHookInput['status'],
   taskId: string,
 ): Promise<KnowledgeRun | undefined> {
   const deepAgentRun = knowledgeRunOf(await runRows.findRunById(taskId));
   if (deepAgentRun !== undefined) return deepAgentRun;
   return knowledgeRunOf(
-    type === COMPLETED
+    status === COMPLETED
       ? await runRows.findRunByLastExtractTask(taskId)
       : await runRows.findRunByExtractTask(taskId),
   );
@@ -314,19 +301,19 @@ async function findRunOfTask(
 async function findEmbeddingOfTask(
   db: Db,
   runRows: AgentKnowledgeRunsRepository,
-  type: string,
+  status: TaskEndHookInput['status'],
   taskId: string,
   run: KnowledgeRun | undefined,
 ): Promise<KnowledgeEmbeddingRow | undefined> {
   if (run === undefined) return runRows.findEmbeddingByPassTask(taskId);
-  if (run.runId === taskId || type !== COMPLETED) return undefined;
+  if (run.runId === taskId || status !== COMPLETED) return undefined;
   return holdKnowledgeOf(db, runRows, run.recordId);
 }
 
 function outcomeOf(
   status: 'skipped' | 'failed',
   reason: 'stopped' | 'interrupted',
-  event: DeliveredEvent,
+  end: TaskEndHookInput,
 ): RoundOutcome {
   return {
     status,
@@ -335,6 +322,6 @@ function outcomeOf(
     confirmed: 0,
     outdated: 0,
     model: null,
-    at: event.createdAt,
+    at: end.finishedAt,
   };
 }

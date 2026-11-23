@@ -217,7 +217,6 @@ export function createStartAgentTool(
         ...(target.kind === 'fork'
           ? {
               forkedFrom: {
-                agentId: caller.agentId,
                 throughSeq: await seqBeforeAnswer(
                   deps.messageRows,
                   caller,

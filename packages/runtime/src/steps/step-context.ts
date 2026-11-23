@@ -1,19 +1,10 @@
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
-import type {
-  Db,
-  RuntimeDecisionRow,
-  RuntimeInboxRow,
-  RuntimeTaskRow,
-} from '@agent-os/db';
+import type { Db, RuntimeInboxRow, RuntimeTaskRow } from '@agent-os/db';
 import type { CrashPoints } from '../crash-points';
 import type { Tasks } from '../tasks/tasks';
-import type {
-  GuardResult,
-  StepContext,
-  StepDecision,
-  StepMessage,
-} from './step-contract';
+import { withTxRetry } from '../tasks/transaction-retry';
+import type { GuardResult, StepContext, StepMessage } from './step-contract';
 import { toStepMessage } from '../messaging/inbox';
 
 const { running } = TaskStatusSchema.enum;
@@ -33,11 +24,6 @@ export interface ClaimedStep {
   task: RuntimeTaskRow;
   /** Messages pending at the start of the step, read in the claim transaction. */
   messages: readonly RuntimeInboxRow[];
-  /**
-   * The resolved request no committed step has received yet, read in the claim transaction; the
-   * step's commit marks it delivered, so it comes in exactly one committed step.
-   */
-  decision: RuntimeDecisionRow | undefined;
   signal: AbortSignal;
 }
 
@@ -56,7 +42,6 @@ export class TaskStepContext implements StepContext {
   readonly stepNo: number;
   readonly resumedAfterLoss: boolean;
   readonly messages: readonly StepMessage[];
-  readonly decision: StepDecision | null;
   readonly signal: AbortSignal;
   readonly logger: Logger;
   /** The claim's attempt: only it may write (Invariant 1). */
@@ -76,20 +61,11 @@ export class TaskStepContext implements StepContext {
     this.input = task.input;
     this.stepNo = task.stepNo;
     this.attempt = task.attempt;
-    // The claim counts itself: more than one claim of this step means an earlier one was lost.
-    this.resumedAfterLoss = task.stepClaims > 1;
+    // Only the recovery sweeper counts a loss; an interrupt and a shutdown requeue reset it.
+    this.resumedAfterLoss = task.recoveries > 0;
     this.messages = [...claimed.messages]
       .sort((left, right) => left.seq - right.seq)
       .map(toStepMessage);
-    const { decision } = claimed;
-    this.decision = decision
-      ? {
-          decisionId: decision.decisionId,
-          kind: decision.kind,
-          payload: decision.payload,
-          resolution: decision.resolution,
-        }
-      : null;
     this.signal = claimed.signal;
     this.logger = deps.logger.child({
       taskId: task.taskId,
@@ -115,7 +91,13 @@ export class TaskStepContext implements StepContext {
   async guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
     const startedAt = Date.now();
     try {
-      const result = await this.deps.db.transaction(
+      const result = await withTxRetry(
+        {
+          db: this.deps.db,
+          logger: this.logger,
+          operation: 'step.guard',
+          taskId: this.taskId,
+        },
         async (): Promise<GuardResult<T>> => {
           const own = await this.deps.tasks.hold({
             taskId: this.taskId,

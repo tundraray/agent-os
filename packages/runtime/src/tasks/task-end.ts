@@ -1,29 +1,122 @@
 import {
   CHILD_FINISHED_KIND,
-  RuntimeEventTypeSchema,
-  TASKS_FINISHED_KIND,
+  type ChildFinishedPayload,
   TaskEndStatusSchema,
-  type TasksFinishedPayload,
   TaskStatusSchema,
 } from '@agent-os/contracts';
-import type { RuntimeTrackersRepository, RuntimeTaskRow } from '@agent-os/db';
-import type { EventLog } from '../events/event-log';
-import type { Inbox } from '../messaging/inbox';
-import type { TaskChange, TaskFailure, TaskValues } from './guarded-transition';
+import type { Logger } from '@agent-os/common';
+import type { Db, RuntimeTasksRepository, RuntimeTaskRow } from '@agent-os/db';
+import type { Inbox, InsertedMessage } from '../messaging/inbox';
+import type { LiveTasks } from '../steps/live-tasks';
+import type { StepSignalReason } from '../steps/step-contract';
+import {
+  type TaskChange,
+  type TaskFailure,
+  type TaskValues,
+  UNFINISHED_STATUSES,
+} from './guarded-transition';
+import type { RunningTaskRegistry } from './running-task.registry';
+import type { TaskEndHookInput, TaskEndHooks } from './task-end-hooks';
 import type { Tasks } from './tasks';
+import { inSavepoint } from './transaction-retry';
 
 const { queued, completed, failed, stopped } = TaskStatusSchema.enum;
-const EVENT = RuntimeEventTypeSchema.enum;
-
-/** Bound of a failure message in an event payload, which is at most 8 KiB. */
-const EVENT_MESSAGE_MAX = 1_000;
 
 /** Services the end of a task writes through. */
 export interface TaskEndDeps {
+  /** The savepoint of each end hook. */
+  db: Db;
   tasks: Tasks;
-  trackers: RuntimeTrackersRepository;
-  events: EventLog;
+  taskRows: RuntimeTasksRepository;
   inbox: Inbox;
+  endHooks: TaskEndHooks;
+  logger: Logger;
+}
+
+/**
+ * Why a task ended, for its log record: its step (`complete`, `fail`, a handler's exception), a stop
+ * of its tree, the answer to a question, the failure of an ancestor, a step lost too many times, an
+ * invalid step result or the step time limit.
+ */
+export type TaskEndCause =
+  | 'step'
+  | 'stop'
+  | 'answer'
+  | 'parent_failed'
+  | 'recovery'
+  | 'invalid_result'
+  | 'step_timeout';
+
+/** What one end wrote, collected in the transaction and logged after its commit ({@link logTaskEnds}). */
+export interface TaskEndRecord {
+  /** The task's row after the end (`queued` again when it revived). */
+  readonly row: RuntimeTaskRow;
+  readonly from: string;
+  readonly status: TaskEnd['status'];
+  readonly cause: TaskEndCause;
+  readonly failure: TaskFailure | undefined;
+  /** The `child_finished` to the parent; none for a root. */
+  readonly noticeId: string | undefined;
+  readonly parentWoken: boolean;
+  readonly revived: boolean;
+  /** The descendants this end stopped, top-down. */
+  readonly stoppedIds: readonly string[];
+}
+
+/** What a stop of a tree wrote: the stopped rows and their ends, top-down. */
+export interface StoppedTree {
+  /** Their steps in this process are cut off after the commit ({@link cutOff}). */
+  readonly stopped: readonly RuntimeTaskRow[];
+  readonly ends: readonly TaskEndRecord[];
+}
+
+/**
+ * What an end wrote: the task's last row, the descendants a failure stopped and every end of the
+ * transaction, this one first.
+ */
+export interface EndedTask extends StoppedTree {
+  readonly row: RuntimeTaskRow;
+}
+
+/** The fields every log record about a task carries. */
+export const taskLogFields = (task: RuntimeTaskRow) => ({
+  taskId: task.taskId,
+  rootId: task.rootId,
+  ownerId: task.ownerId,
+  type: task.type,
+  stepNo: task.stepNo,
+  attempt: task.attempt,
+});
+
+/** After the commit: one record per ended task. The failure text is not cut. */
+export function logTaskEnds(
+  logger: Logger,
+  ends: readonly TaskEndRecord[],
+): void {
+  for (const end of ends) {
+    const fields = {
+      ...taskLogFields(end.row),
+      from: end.from,
+      to: end.status,
+      cause: end.cause,
+      ...(end.failure && {
+        failureReason: end.failure.reason,
+        failureMessage: end.failure.message,
+      }),
+      noticeId: end.noticeId,
+      parentWoken: end.parentWoken,
+      revived: end.revived,
+      ...(end.stoppedIds.length > 0 && { stoppedIds: end.stoppedIds }),
+    };
+    if (end.status === failed) logger.warn('task ended', fields);
+    else logger.info('task ended', fields);
+  }
+}
+
+/** What cutting steps off needs: this process's steps and the objects of live tasks. */
+export interface CutOffDeps {
+  running: RunningTaskRegistry;
+  live: LiveTasks;
 }
 
 /** How a task ends. */
@@ -37,18 +130,8 @@ export interface TaskEnd {
   fields?: TaskValues;
   /** `attempt + 1`: the step in flight, if any, is no longer current (Invariant 1). */
   fence?: boolean;
+  cause: TaskEndCause;
 }
-
-const STATUS_EVENT = {
-  completed: EVENT['task.completed'],
-  failed: EVENT['task.failed'],
-  stopped: EVENT['task.stopped'],
-} as const;
-
-const eventFailure = (failure: TaskFailure): TaskFailure => ({
-  reason: failure.reason,
-  message: failure.message.slice(0, EVENT_MESSAGE_MAX),
-});
 
 /**
  * A guarded write, by its status and attempt, of a task row the caller's transaction holds: the
@@ -73,88 +156,47 @@ export async function writeHeld(
 }
 
 /**
- * The child's end notice in the parent's inbox (design-runtime.md, Очередь): never with `revive`,
- * so it does not wake a finished parent.
+ * The child's one end notice in the parent's inbox (KD-2, «Сообщение `child_finished`»): never with
+ * `revive`, so it does not wake a finished parent; the parent's wake-up rule reads the child's
+ * `awaited_step` and status.
  */
 async function notifyParent(
   inbox: Inbox,
   child: RuntimeTaskRow,
-): Promise<void> {
-  if (child.parentId === null) return;
+): Promise<InsertedMessage | undefined> {
+  if (child.parentId === null) return undefined;
   const finishedAt = child.finishedAt ?? new Date();
-  const status = TaskStatusSchema.parse(child.status);
-  await inbox.insertMessage({
+  const status = TaskEndStatusSchema.parse(child.status);
+  const payload: ChildFinishedPayload = {
+    taskId: child.taskId,
+    status,
+    ...(status === completed && { result: child.result }),
+    ...(status === failed && { failure: child.failure as TaskFailure }),
+    durationMs: Math.max(0, finishedAt.getTime() - child.createdAt.getTime()),
+  };
+  return inbox.insertMessage({
     recipientId: child.parentId,
     ownerId: child.ownerId,
     kind: CHILD_FINISHED_KIND,
-    sender: child.taskId,
-    payload: {
-      taskId: child.taskId,
-      status,
-      ...(status === completed && { result: child.result }),
-      ...(status === failed && { failure: child.failure }),
-      steps: child.stepNo,
-      durationMs: finishedAt.getTime() - child.createdAt.getTime(),
-    },
-    revive: false,
-  });
-}
-
-/**
- * The end of a task of an open tracker (deep-agents/design-task.md, KD-2), in the caller's
- * transaction: no `child_finished`; when no task of the tracker is unfinished
- * any more, the tracker is finished and the owner gets its one `tasks_finished`. The unfinished
- * tasks are counted, not a counter kept: a revived task makes the tracker wait for it again, and
- * a task that `revives` at once is not reported at all. Returns `false` when the task has no open
- * tracker, so the caller notifies the parent as usual.
- *
- * The recount follows a write of the tracker row (`holdOpen`): two tasks of one tracker that end
- * at once recount one after the other, and the second sees the first one ended.
- */
-async function reportToTracker(
-  deps: TaskEndDeps,
-  child: RuntimeTaskRow,
-  revives: boolean,
-): Promise<boolean> {
-  if (child.trackerId === null) return false;
-  const tracker = await deps.trackers.holdOpen(child.trackerId);
-  if (!tracker) return false;
-  if (revives) return true;
-  const ended: TasksFinishedPayload['tasks'] = [];
-  for (const task of await deps.trackers.taskStatuses(tracker.trackerId)) {
-    const status = TaskEndStatusSchema.safeParse(task.status);
-    if (!status.success) return true;
-    ended.push({ taskId: task.taskId, status: status.data });
-  }
-  await deps.trackers.finish(tracker.trackerId);
-  const payload: TasksFinishedPayload = {
-    trackerId: tracker.trackerId,
-    tasks: ended,
-  };
-  await deps.inbox.insertMessage({
-    recipientId: tracker.taskId,
-    ownerId: child.ownerId,
-    kind: TASKS_FINISHED_KIND,
-    sender: child.taskId,
     payload,
     revive: false,
+    finishedChild: { awaitedStep: child.awaitedStep, status },
   });
-  return true;
 }
 
 /**
- * The one procedure "a task ends → its parent is told" (KD-3, Invariant 5), in the caller's
- * transaction: the final status with its event, one
- * `child_finished` to the parent (for a task of an open tracker, the tracker's recount instead),
- * and — when the task completed or failed while a message with `revive` arrived — `queued` again
- * with `task.queued` (Invariant 9). A stop never revives. Returns the last row. `task` is a row
- * the transaction holds ({@link writeHeld}).
+ * The one procedure "a task ends → its parent is told" (KD-3, KD-5, Invariant 5), in the caller's
+ * transaction: the final status; for a `failed` task the stop of its unfinished
+ * descendants, top-down ({@link stopTree}); every end hook, each in its own savepoint; one
+ * `child_finished` to the parent, which wakes it by the wake-up rule (KD-2); and — when the task completed or failed while a message with `revive` arrived — `queued` again
+ * (Invariant 9). A stop never revives. `task` is a row the transaction holds
+ * ({@link writeHeld}). The caller logs the returned ends after the commit ({@link logTaskEnds}).
  */
 export async function endTask(
   deps: TaskEndDeps,
   task: RuntimeTaskRow,
   end: TaskEnd,
-): Promise<RuntimeTaskRow> {
+): Promise<EndedTask> {
   const ended = await writeHeld(deps.tasks, task, {
     kind: 'set',
     status: end.status,
@@ -165,29 +207,139 @@ export async function endTask(
     },
     fence: end.fence,
   });
-  await deps.events.append({
-    type: STATUS_EVENT[end.status],
-    task: ended,
-    payload: {
-      from: task.status,
-      ...(end.failure && { failure: eventFailure(end.failure) }),
-    },
-  });
+  const descendants: StoppedTree =
+    end.status === failed
+      ? await stopLevels(
+          deps,
+          await deps.taskRows.listChildren([ended.taskId]),
+          'parent_failed',
+        )
+      : { stopped: [], ends: [] };
+  await runEndHooks(deps, ended);
   const revives =
     end.status !== stopped && (await deps.inbox.hasPendingRevive(ended.taskId));
-  if (!(await reportToTracker(deps, ended, revives))) {
-    await notifyParent(deps.inbox, ended);
+  // The child's own row is written above, before the notice takes the parent's row: a sibling's end
+  // that takes the parent's row after this commit counts this child finished (wake-up rule, KD-2).
+  const notice = await notifyParent(deps.inbox, ended);
+  let row = ended;
+  if (revives) {
+    row = await writeHeld(deps.tasks, ended, {
+      kind: 'set',
+      status: queued,
+      fields: { result: null, failure: null },
+    });
   }
-  if (!revives) return ended;
-  const revived = await writeHeld(deps.tasks, ended, {
-    kind: 'set',
-    status: queued,
-    fields: { result: null, failure: null },
-  });
-  await deps.events.append({
-    type: EVENT['task.queued'],
-    task: revived,
-    payload: { cause: 'revive', from: ended.status },
-  });
-  return revived;
+  const record: TaskEndRecord = {
+    row,
+    from: task.status,
+    status: end.status,
+    cause: end.cause,
+    failure: end.failure,
+    noticeId: notice?.messageId,
+    parentWoken: notice?.woken ?? false,
+    revived: revives,
+    stoppedIds: descendants.stopped.map((stoppedTask) => stoppedTask.taskId),
+  };
+  return {
+    row,
+    stopped: descendants.stopped,
+    ends: [record, ...descendants.ends],
+  };
+}
+
+/**
+ * Every end hook on the ended row, each in its own savepoint (KD-5): a hook that throws rolls back
+ * only its writes and is logged, and the end goes on; an error after which the transaction cannot
+ * go on is thrown, so the whole end is repeated (KD-7).
+ */
+async function runEndHooks(
+  deps: TaskEndDeps,
+  ended: RuntimeTaskRow,
+): Promise<void> {
+  const input: TaskEndHookInput = {
+    taskId: ended.taskId,
+    rootId: ended.rootId,
+    parentId: ended.parentId,
+    ownerId: ended.ownerId,
+    type: ended.type,
+    status: TaskEndStatusSchema.parse(ended.status),
+    failure: ended.failure as TaskFailure | null,
+    finishedAt: ended.finishedAt ?? new Date(),
+  };
+  for (const { name, hook } of deps.endHooks.list()) {
+    const startedAt = Date.now();
+    const outcome = await inSavepoint(deps.db, () => hook(input));
+    if (outcome.ok) continue;
+    deps.logger.error('task end hook failed; its writes rolled back', {
+      hook: name,
+      taskId: ended.taskId,
+      rootId: ended.rootId,
+      ownerId: ended.ownerId,
+      type: ended.type,
+      status: input.status,
+      durationMs: Date.now() - startedAt,
+      error: outcome.error,
+    });
+  }
+}
+
+/**
+ * Stops `top` (unless finished) and every unfinished descendant, top-down, level by level, in the
+ * caller's transaction; returns the stopped rows, `top` first. Each task is taken by a write of its
+ * row as it is now (`Tasks.hold`) and ended; its children are read after that. A commit or a
+ * creation that adds a child writes the parent's row too, so it came before the parent's stop, and
+ * its child is read here, or it comes after and is refused.
+ */
+export function stopTree(
+  deps: TaskEndDeps,
+  top: RuntimeTaskRow,
+): Promise<StoppedTree> {
+  return stopLevels(deps, [top], 'stop');
+}
+
+/** {@link stopTree} from a first level of tasks down. */
+async function stopLevels(
+  deps: TaskEndDeps,
+  first: readonly RuntimeTaskRow[],
+  cause: TaskEndCause,
+): Promise<StoppedTree> {
+  const stoppedTasks: RuntimeTaskRow[] = [];
+  const ends: TaskEndRecord[] = [];
+  for (
+    let level = first;
+    level.length > 0;
+    level = await deps.taskRows.listChildren(level.map((task) => task.taskId))
+  ) {
+    for (const { taskId } of level) {
+      const task = await deps.tasks.hold({ taskId, from: UNFINISHED_STATUSES });
+      if (!task) continue;
+      const ended = await endTask(deps, task, {
+        status: stopped,
+        fields: { recoveries: 0 },
+        fence: true,
+        cause,
+      });
+      stoppedTasks.push(ended.row);
+      ends.push(...ended.ends);
+    }
+  }
+  return { stopped: stoppedTasks, ends };
+}
+
+/**
+ * After the commit: cuts off this process's steps of the tasks whose attempt the transaction
+ * raised, and lets their live objects go — a cut-off step may have written what its object has not
+ * taken in.
+ */
+export function cutOff(
+  deps: CutOffDeps,
+  changed: readonly RuntimeTaskRow[],
+  reason: StepSignalReason,
+): void {
+  if (changed.length === 0) return;
+  for (const task of changed) {
+    // Not awaited: the steps end when their handlers answer the signal.
+    void deps.running.abortTask(task.taskId, reason, task.attempt);
+  }
+  deps.live.evict(changed.map((task) => task.taskId));
 }

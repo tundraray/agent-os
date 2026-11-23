@@ -1,6 +1,6 @@
 {
-  "id": "0ef008c0-44a5-4076-8702-09c749e6eab0",
-  "prevId": "240f97b3-e512-4627-b586-56dae805cd04",
+  "id": "8fec8cd3-88ee-43a4-9497-20bd7ae76be0",
+  "prevId": "009f2ce7-1cf9-4125-a87a-b1746a384f2f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -77,22 +77,8 @@
           "notNull": true,
           "default": 0
         },
-        "step_claims": {
-          "name": "step_claims",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "recoveries": {
           "name": "recoveries",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "next_message_seq": {
-          "name": "next_message_seq",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -153,9 +139,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "tracker_id": {
-          "name": "tracker_id",
-          "type": "uuid",
+        "awaited_step": {
+          "name": "awaited_step",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         }
@@ -212,21 +198,6 @@
           "with": {},
           "method": "btree",
           "concurrently": false
-        },
-        "runtime_tasks_tracker_idx": {
-          "name": "runtime_tasks_tracker_idx",
-          "columns": [
-            {
-              "expression": "tracker_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -271,20 +242,6 @@
           ],
           "onUpdate": "no action",
           "onDelete": "cascade"
-        },
-        "runtime_tasks_tracker_id_runtime_trackers_tracker_id_fk": {
-          "name": "runtime_tasks_tracker_id_runtime_trackers_tracker_id_fk",
-          "tableFrom": "runtime_tasks",
-          "columnsFrom": [
-            "tracker_id"
-          ],
-          "tableTo": "runtime_trackers",
-          "schemaTo": "app",
-          "columnsTo": [
-            "tracker_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -297,108 +254,11 @@
         },
         "runtime_tasks_wait_reason_check": {
           "name": "runtime_tasks_wait_reason_check",
-          "value": "\"app\".\"runtime_tasks\".\"wait_reason\" in ('messages', 'decision', 'interrupted', 'tasks')"
+          "value": "\"app\".\"runtime_tasks\".\"wait_reason\" in ('messages', 'children', 'human')"
         },
         "runtime_tasks_waiting_check": {
           "name": "runtime_tasks_waiting_check",
           "value": "(\"app\".\"runtime_tasks\".\"status\" = 'waiting') = (\"app\".\"runtime_tasks\".\"wait_reason\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.runtime_trackers": {
-      "name": "runtime_trackers",
-      "schema": "app",
-      "columns": {
-        "tracker_id": {
-          "name": "tracker_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "runtime_trackers_open_task_idx": {
-          "name": "runtime_trackers_open_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "\"app\".\"runtime_trackers\".\"status\" = 'open'",
-          "concurrently": false
-        },
-        "runtime_trackers_task_idx": {
-          "name": "runtime_trackers_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "runtime_trackers_task_id_runtime_tasks_task_id_fk": {
-          "name": "runtime_trackers_task_id_runtime_tasks_task_id_fk",
-          "tableFrom": "runtime_trackers",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
-          "columnsTo": [
-            "task_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "runtime_trackers_status_check": {
-          "name": "runtime_trackers_status_check",
-          "value": "\"app\".\"runtime_trackers\".\"status\" in ('open', 'finished')"
         }
       },
       "isRLSEnabled": false
@@ -421,18 +281,23 @@
         },
         "seq": {
           "name": "seq",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "identity": {
+            "name": "runtime_inbox_seq_seq",
+            "increment": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "startWith": "1",
+            "cache": "1",
+            "cycle": false,
+            "schema": "app",
+            "type": "always"
+          }
         },
         "kind": {
           "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sender": {
-          "name": "sender",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -450,16 +315,9 @@
           "notNull": true,
           "default": false
         },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "delivered_step": {
-          "name": "delivered_step",
-          "type": "integer",
+        "delivered_at": {
+          "name": "delivered_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -491,7 +349,7 @@
           "isUnique": false,
           "with": {},
           "method": "btree",
-          "where": "\"app\".\"runtime_inbox\".\"status\" = 'pending'",
+          "where": "\"app\".\"runtime_inbox\".\"delivered_at\" is null",
           "concurrently": false
         }
       },
@@ -512,420 +370,9 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "runtime_inbox_recipient_seq_key": {
-          "name": "runtime_inbox_recipient_seq_key",
-          "columns": [
-            "recipient_id",
-            "seq"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "runtime_inbox_status_check": {
-          "name": "runtime_inbox_status_check",
-          "value": "\"app\".\"runtime_inbox\".\"status\" in ('pending', 'delivered')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.runtime_decisions": {
-      "name": "runtime_decisions",
-      "schema": "app",
-      "columns": {
-        "decision_id": {
-          "name": "decision_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "root_id": {
-          "name": "root_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "resolution": {
-          "name": "resolution",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "delivered_step": {
-          "name": "delivered_step",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "runtime_decisions_open_task_idx": {
-          "name": "runtime_decisions_open_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "\"app\".\"runtime_decisions\".\"status\" = 'open'",
-          "concurrently": false
-        },
-        "runtime_decisions_task_idx": {
-          "name": "runtime_decisions_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
-        "runtime_decisions_root_idx": {
-          "name": "runtime_decisions_root_idx",
-          "columns": [
-            {
-              "expression": "root_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "runtime_decisions_task_id_runtime_tasks_task_id_fk": {
-          "name": "runtime_decisions_task_id_runtime_tasks_task_id_fk",
-          "tableFrom": "runtime_decisions",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
-          "columnsTo": [
-            "task_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "runtime_decisions_root_id_runtime_tasks_task_id_fk": {
-          "name": "runtime_decisions_root_id_runtime_tasks_task_id_fk",
-          "tableFrom": "runtime_decisions",
-          "columnsFrom": [
-            "root_id"
-          ],
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
-          "columnsTo": [
-            "task_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "runtime_decisions_status_check": {
-          "name": "runtime_decisions_status_check",
-          "value": "\"app\".\"runtime_decisions\".\"status\" in ('open', 'resolved', 'cancelled')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.runtime_events": {
-      "name": "runtime_events",
-      "schema": "app",
-      "columns": {
-        "event_id": {
-          "name": "event_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "seq": {
-          "name": "seq",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "identity": {
-            "name": "runtime_events_seq_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "app",
-            "type": "always"
-          }
-        },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "schema_version": {
-          "name": "schema_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "root_id": {
-          "name": "root_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "runtime_events_root_seq_idx": {
-          "name": "runtime_events_root_seq_idx",
-          "columns": [
-            {
-              "expression": "root_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "seq",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
-        "runtime_events_task_idx": {
-          "name": "runtime_events_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "runtime_events_root_id_runtime_tasks_task_id_fk": {
-          "name": "runtime_events_root_id_runtime_tasks_task_id_fk",
-          "tableFrom": "runtime_events",
-          "columnsFrom": [
-            "root_id"
-          ],
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
-          "columnsTo": [
-            "task_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "runtime_events_task_id_runtime_tasks_task_id_fk": {
-          "name": "runtime_events_task_id_runtime_tasks_task_id_fk",
-          "tableFrom": "runtime_events",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
-          "columnsTo": [
-            "task_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "runtime_events_payload_size_check": {
-          "name": "runtime_events_payload_size_check",
-          "value": "octet_length(\"app\".\"runtime_events\".\"payload\"::text) <= 8192"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.runtime_event_deliveries": {
-      "name": "runtime_event_deliveries",
-      "schema": "app",
-      "columns": {
-        "event_id": {
-          "name": "event_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "consumer": {
-          "name": "consumer",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "next_attempt_at": {
-          "name": "next_attempt_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "runtime_event_deliveries_pending_idx": {
-          "name": "runtime_event_deliveries_pending_idx",
-          "columns": [
-            {
-              "expression": "next_attempt_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "where": "\"app\".\"runtime_event_deliveries\".\"status\" = 'pending'",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "runtime_event_deliveries_event_id_runtime_events_event_id_fk": {
-          "name": "runtime_event_deliveries_event_id_runtime_events_event_id_fk",
-          "tableFrom": "runtime_event_deliveries",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "tableTo": "runtime_events",
-          "schemaTo": "app",
-          "columnsTo": [
-            "event_id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {
-        "runtime_event_deliveries_event_id_consumer_pk": {
-          "name": "runtime_event_deliveries_event_id_consumer_pk",
-          "columns": [
-            "event_id",
-            "consumer"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "runtime_event_deliveries_status_check": {
-          "name": "runtime_event_deliveries_status_check",
-          "value": "\"app\".\"runtime_event_deliveries\".\"status\" in ('pending', 'done', 'needs_attention')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "app.runtime_model_calls": {

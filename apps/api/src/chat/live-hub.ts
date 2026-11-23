@@ -10,7 +10,7 @@ import { LOGGER, type Logger } from '@agent-os/common';
 import type { LiveEvent } from '@agent-os/contracts';
 import {
   CLOCK,
-  RUNTIME_EVENTS_CHANNEL,
+  RUNTIME_TREE_CHANNEL,
   type CancelTimer,
   type Clock,
 } from '@agent-os/runtime';
@@ -35,7 +35,7 @@ const RECONNECT_MS = 1000;
 /** How often an idle stream gets a `ping`, so that a proxy does not close it. */
 const PING_MS = 20_000;
 
-/** The notice of a `runtime_events` NOTIFY (`EventLog.write` of the runtime). */
+/** The data of a `runtime_tree` NOTIFY (`Tasks.signal` of the runtime). */
 const TreeNoticeSchema = z.object({ rootId: z.string().min(1) });
 
 /** The payload of an `agent_text_delta` NOTIFY (`notifyPayloads` of `DeltaPublisher`). */
@@ -62,8 +62,8 @@ const PING = messageEvent({ type: 'ping', data: {} });
 
 /**
  * The live updates of the API (design-chat.md, KD-2, KD-3, C3 «живые обновления»): one dedicated
- * connection per process listens on `runtime_events` and `agent_text_delta` and hands the signals to
- * the open SSE streams. A runtime event becomes a `tree` note to every stream of the conversation's
+ * connection per process listens on `runtime_tree` and `agent_text_delta` and hands the signals to
+ * the open SSE streams. A tree signal becomes a `tree` note to every stream of the conversation's
  * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
  *
  * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
@@ -142,7 +142,7 @@ export class LiveHub
     client.on('end', () => this.lost(client));
     try {
       await client.connect();
-      await client.query(`LISTEN "${RUNTIME_EVENTS_CHANNEL}"`);
+      await client.query(`LISTEN "${RUNTIME_TREE_CHANNEL}"`);
       await client.query(`LISTEN "${AGENT_TEXT_DELTA_CHANNEL}"`);
     } catch (error) {
       await client.end().catch(() => undefined);
@@ -198,11 +198,11 @@ export class LiveHub
   ): Promise<void> {
     // Nobody to tell: drop before parsing or looking anything up.
     if (this.streams.size === 0 || payload === undefined) return;
-    if (channel === RUNTIME_EVENTS_CHANNEL) await this.note(payload);
+    if (channel === RUNTIME_TREE_CHANNEL) await this.note(payload);
     else if (channel === AGENT_TEXT_DELTA_CHANNEL) this.delta(payload);
   }
 
-  /** A runtime event of a tree: a `tree` note to every stream of the conversation's owner. */
+  /** A change of a tree: a `tree` note to every stream of the conversation's owner. */
   private async note(payload: string): Promise<void> {
     const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
     const ownerId = await this.views.rootOwner(rootId);

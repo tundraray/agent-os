@@ -141,7 +141,7 @@ export class AgentControlService {
       },
       entries: entries.map(toHistoryEntry),
       nextAfterSeq: nextAfterSeqOf(entries),
-      pending: toPending(messages, views),
+      pending: toPending(messages, views, confirmations),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)
         .map((confirmation) => toConfirmation(confirmation, views)),
@@ -183,8 +183,8 @@ export class AgentControlService {
 
   /**
    * The task list of any of the owner's sessions, the conversation's root included, in number order; a
-   * session without one has an empty list (deep-agents KD-5), and the tasks of its trackers (design-task.md, «Запись
-   * и маршрут»). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
+   * session without one has an empty list (deep-agents KD-5), and the subagents of its `task` calls (design-task.md,
+   * «Запись и маршрут»). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
    */
   async tasks(agentId: string, ownerId: string): Promise<AgentTasksView> {
     if (!isUuid(agentId)) throw agentNotFound();

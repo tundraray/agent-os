@@ -27,7 +27,7 @@ import type { CallState } from '../../history/call-state';
 import type { McpAccounts } from '../../mcp/mcp-accounts';
 import { CallRecords } from '../../store/call-records';
 import { History } from '../../store/history';
-import type { Session, SessionInput } from '../../store/sessions';
+import type { AgentTaskInput, Session } from '../../store/sessions';
 import type { AgentDeps } from '../../agent/agent-deps';
 import { ChatAgent, type ChatAgentDeps } from '../../agent/chat-agent';
 import type { AgentTool, ToolCaller } from '../tool';
@@ -457,13 +457,13 @@ const HELPER_VERSION: AgentVersion = {
   content: { ...NO_TOOLS_CONTENT, servers: ['logs'] },
 };
 
-const HELPER_INPUT: SessionInput = {
-  versionId: HELPER_VERSION.id,
+const HELPER_INPUT: AgentTaskInput = {};
+
+const HELPER_RUN: RunStart = {
+  version: HELPER_VERSION,
   name: 'helper',
   subagent: null,
   model: MODEL,
-  prompt: 'Clean up the logs',
-  description: 'Clean up',
 };
 
 /** The denied tool was not offered, so the model step stored the name as asked, without a server. */
@@ -485,7 +485,8 @@ const SESSION: Session = {
   taskId: CALLER.agentId,
   parentId: null,
   ownerId: OWNER,
-  name: HELPER_INPUT.name,
+  versionId: HELPER_VERSION.id,
+  name: HELPER_RUN.name,
   origin: {
     recordId: id(1),
     kind: 'agent',
@@ -496,7 +497,7 @@ const SESSION: Session = {
     subagent: null,
   },
   firstRun: true,
-  description: HELPER_INPUT.description,
+  description: 'Clean up',
   model: MODEL,
   startCallId: null,
   forkedThroughSeq: null,
@@ -519,7 +520,6 @@ function stepContext(): StepContext {
     stepNo: 3,
     resumedAfterLoss: false,
     messages: [],
-    decision: null,
     signal: new AbortController().signal,
     logger: SILENT,
     guard: NO_SERVER_CALLS,
@@ -682,7 +682,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
           const agent = new ChatAgent(deps as ChatAgentDeps, {
             task: ctx,
             input: HELPER_INPUT,
-            version: HELPER_VERSION,
+            run: HELPER_RUN,
           });
           const result = await agent.toolStep(
             ctx,

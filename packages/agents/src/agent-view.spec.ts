@@ -2,8 +2,13 @@ import type { AgentStatus } from '@agent-os/contracts';
 import { type AgentStatusInput, agentStatus } from './agent-view';
 
 // State Transitions (MC-3 labels) and KD-3: «Прерван» is visible right after the command, from the
-// pending `interrupt`, and after the step took it, from the session's mark.
-const PLAIN = { pendingInterrupt: false, sessionInterrupted: false };
+// pending `interrupt`, and after the step took it, from the session's mark. data-model design-runtime.md,
+// «Статус агента», DC-38: `awaiting_confirmation` only while the agent waits for its children with an open question.
+const PLAIN = {
+  pendingInterrupt: false,
+  sessionInterrupted: false,
+  openQuestion: false,
+};
 
 describe('agent status is derived from the task status and the session mark', () => {
   it.each<[string, AgentStatusInput, AgentStatus]>([
@@ -23,9 +28,19 @@ describe('agent status is derived from the task status and the session mark', ()
       'working',
     ],
     [
-      'waiting for a decision awaits confirmation',
-      { ...PLAIN, taskStatus: 'waiting', waitReason: 'decision' },
+      'waiting for children with an open question awaits confirmation',
+      {
+        ...PLAIN,
+        taskStatus: 'waiting',
+        waitReason: 'children',
+        openQuestion: true,
+      },
       'awaiting_confirmation',
+    ],
+    [
+      'waiting for children without an open question is working',
+      { ...PLAIN, taskStatus: 'waiting', waitReason: 'children' },
+      'working',
     ],
     [
       'queued with a pending interrupt is interrupted',

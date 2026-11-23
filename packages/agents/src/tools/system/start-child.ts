@@ -1,11 +1,10 @@
 import type { Logger } from '@agent-os/common';
-import type { AgentVersion } from '@agent-os/contracts';
 import type { LiveTask, LiveTaskIdentity } from '@agent-os/runtime';
 
 import { AgentsError } from '../../errors';
 import type { StartResolution, StartSource } from '../../start/resolve-start';
 import type { RunStart } from '../../start/run-definition';
-import { type SessionInput, startFieldsOf } from '../../store/sessions';
+import type { AgentTaskInput, SessionStart } from '../../store/sessions';
 import type { StartChild } from '../tool';
 import type { StartChildScope } from '../tool-runner';
 
@@ -18,16 +17,16 @@ export interface StartChildDeps {
   readonly createIn: (
     type: string,
     task: Omit<LiveTaskIdentity, 'type' | 'input'>,
-    input: SessionInput,
-    version: AgentVersion,
+    input: AgentTaskInput,
+    start: SessionStart,
   ) => Promise<LiveTask>;
 }
 
 /**
  * The only start of a child agent inside a step's commit transaction (design-runtime.md, «Операции
  * `agents`»): the child is not deeper than `AGENT_MAX_DEPTH` (`DEPTH_LIMIT`), then `effects.spawn` of a
- * task of the child's type (`childType`) with its start in its input, then the child's object with its session and
- * `task` entry in the same transaction (plan Notes 11), handed to the runtime with `effects.adopt`: it keeps the
+ * task of the child's type (`childType`) with an empty input, then the child's object with its session — written
+ * from the start — and `task` entry in the same transaction (KD-8), handed to the runtime with `effects.adopt`: it keeps the
  * object once the commit succeeds, and the child's first step runs on it. The caller gets the `agentId` at once.
  * Owner and parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
  */
@@ -42,13 +41,7 @@ export function createStartChild(
           `A child of an agent at depth ${caller.depth} is deeper than AGENT_MAX_DEPTH ${deps.maxDepth}`,
         );
       }
-      const input: SessionInput = {
-        ...startFieldsOf(run),
-        prompt,
-        description,
-        ...(forkedFrom === undefined ? {} : { forkedFrom }),
-        startCallId: callId,
-      };
+      const input: AgentTaskInput = {};
       const type = deps.childType(run);
       const agentId = await effects.spawn({ type, input });
       const child = await deps.createIn(
@@ -61,7 +54,15 @@ export function createStartChild(
           depth: caller.depth + 1,
         },
         input,
-        run.version,
+        {
+          run,
+          prompt,
+          description,
+          ...(forkedFrom === undefined
+            ? {}
+            : { forkedThroughSeq: forkedFrom.throughSeq }),
+          startCallId: callId,
+        },
       );
       effects.adopt(agentId, child);
       return { agentId };

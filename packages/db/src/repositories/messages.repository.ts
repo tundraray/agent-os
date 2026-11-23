@@ -152,24 +152,6 @@ export class MessagesRepository {
       .orderBy(asc(messages.seq));
   }
 
-  /**
-   * The `tool_sent` entries that name a task of the session's list, in order, whatever was compacted since:
-   * only an accepted `task` call writes `taskId` into its `tool_sent`.
-   */
-  sentForListTask(taskId: string): Promise<MessageRow[]> {
-    return this.db.client
-      .select(ENTRY_COLUMNS)
-      .from(messages)
-      .where(
-        and(
-          eq(messages.conversationId, taskId),
-          eq(messages.kind, 'tool_sent'),
-          sql`${messages.content} ->> 'taskId' is not null`,
-        ),
-      )
-      .orderBy(asc(messages.seq));
-  }
-
   /** The records of the given calls, in order: only call records carry a `call_id`. */
   async callRecords(
     taskId: string,

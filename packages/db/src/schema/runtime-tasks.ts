@@ -14,7 +14,6 @@ import {
 import { app } from './app';
 import { createdAt, isOneOf, literal } from './helpers';
 import { identityUsers } from './identity-users';
-import { runtimeTrackers } from './runtime-trackers';
 
 export const runtimeTasks = app.table(
   'runtime_tasks',
@@ -47,12 +46,11 @@ export const runtimeTasks = app.table(
     stepNo: integer('step_no').notNull().default(0),
     /** Number of the current claim; fences a step that is no longer current. */
     attempt: integer('attempt').notNull().default(0),
-    /** Claims of the current step; 0 after its outcome. */
-    stepClaims: integer('step_claims').notNull().default(0),
-    /** Losses of the current step found by the sweeper; 0 after its outcome. */
+    /**
+     * Losses of the current step found by the sweeper; 0 after its outcome, an interrupt and a
+     * requeue on shutdown. Above 0 a claimed step continues a lost one (`resumedAfterLoss`).
+     */
     recoveries: integer('recoveries').notNull().default(0),
-    /** Next number in the task's inbox. */
-    nextMessageSeq: integer('next_message_seq').notNull().default(0),
     result: jsonb('result'),
     /** `{ reason, message }` of a `failed` task. */
     failure: jsonb('failure'),
@@ -67,13 +65,11 @@ export const runtimeTasks = app.table(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     /** Set on every task of a deleted tree, which answers as a missing one; null otherwise. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
-    /** The tracker the task belongs to, set when a step's commit opened it; null otherwise. */
-    trackerId: uuid('tracker_id').references(
-      (): AnyPgColumn => runtimeTrackers.trackerId,
-      {
-        onDelete: 'cascade',
-      },
-    ),
+    /**
+     * The parent's `step_no` after the commit that created this child, set once when the parent
+     * waits for it (data-model/design-runtime.md, KD-2); null for a background child.
+     */
+    awaitedStep: integer('awaited_step'),
   },
   (t) => [
     check(
@@ -93,8 +89,7 @@ export const runtimeTasks = app.table(
       .on(t.createdAt, t.taskId)
       .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.queued)}`),
     index('runtime_tasks_root_idx').on(t.rootId),
+    /** Children of a task, and the count of a waiting parent's unfinished awaited children. */
     index('runtime_tasks_parent_idx').on(t.parentId),
-    /** The end of a tracker's task counts the tracker's unfinished tasks. */
-    index('runtime_tasks_tracker_idx').on(t.trackerId),
   ],
 );

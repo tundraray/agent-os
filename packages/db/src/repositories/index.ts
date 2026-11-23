@@ -17,13 +17,9 @@ import { IdentityRolesRepository } from './identity-roles.repository';
 import { IdentitySessionsRepository } from './identity-sessions.repository';
 import { IdentityUsersRepository } from './identity-users.repository';
 import { AgentsRepository } from './agents.repository';
-import { RuntimeDecisionsRepository } from './runtime-decisions.repository';
-import { RuntimeEventDeliveriesRepository } from './runtime-event-deliveries.repository';
-import { RuntimeEventsRepository } from './runtime-events.repository';
 import { RuntimeInboxRepository } from './runtime-inbox.repository';
 import { RuntimeModelCallsRepository } from './runtime-model-calls.repository';
 import { RuntimeTasksRepository } from './runtime-tasks.repository';
-import { RuntimeTrackersRepository } from './runtime-trackers.repository';
 import { SettingsRepository } from './settings.repository';
 
 export * from './access-grants.repository';
@@ -46,13 +42,9 @@ export * from './identity-roles.repository';
 export * from './identity-sessions.repository';
 export * from './identity-users.repository';
 export * from './agents.repository';
-export * from './runtime-decisions.repository';
-export * from './runtime-event-deliveries.repository';
-export * from './runtime-events.repository';
 export * from './runtime-inbox.repository';
 export * from './runtime-model-calls.repository';
 export * from './runtime-tasks.repository';
-export * from './runtime-trackers.repository';
 export * from './settings.repository';
 
 /** Every repository class: `DbModule` provides and exports them all. */
@@ -76,12 +68,8 @@ export const REPOSITORIES = [
   IdentitySessionsRepository,
   IdentityUsersRepository,
   AgentsRepository,
-  RuntimeDecisionsRepository,
-  RuntimeEventDeliveriesRepository,
-  RuntimeEventsRepository,
   RuntimeInboxRepository,
   RuntimeModelCallsRepository,
   RuntimeTasksRepository,
-  RuntimeTrackersRepository,
   SettingsRepository,
 ];

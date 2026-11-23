@@ -23,8 +23,9 @@ export interface CallState {
   /** When the confirmed call went out (`tool_sent`); `null` for a call without the intent. */
   readonly sentAt: string | null;
   /**
-   * The tracker tasks a sent `task` call waits for and the task of the list it names (deep-agents/design-task.md
-   * KD-4, KD-8); `null` for every other call. Only the step that delivers `tasks_finished` closes such a call.
+   * The subagent tasks a sent `task` call waits for and the task of the list it names (deep-agents/design-task.md
+   * KD-8); `null` for every other call. The next step of the agent closes such a call from the `child_finished`
+   * of its subagents (data-model/design-runtime.md, «Инструмент `task`»).
    */
   readonly delegation: CallDelegation | null;
   /** How many attempts of a `run_code` read run started. */
@@ -46,7 +47,7 @@ const {
   done,
 } = ToolCallStateSchema.enum;
 
-/** A sent `task` call: never closed as unknown or interrupted, only with its tracker's outcomes. */
+/** A sent `task` call: never closed as unknown or interrupted, only with how its subagents stand. */
 export function isDelegated(call: Pick<CallState, 'delegation'>): boolean {
   return call.delegation !== null;
 }

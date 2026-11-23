@@ -1,4 +1,4 @@
-import type { LogFields, Logger } from '@agent-os/common';
+import { type LogFields, type Logger, rememberSecret } from '@agent-os/common';
 import { McpServerModeSchema, type McpConnection } from '@agent-os/contracts';
 import {
   McpAccountsRepository,
@@ -143,8 +143,24 @@ function usableServer(row: McpServerRow, access: ToolAccess): boolean {
   );
 }
 
-/** Tokens as stored: `expires_in` seconds from now becomes the end of the access. */
+/**
+ * Registers an employee's tokens as secrets of the process, so the logger and every masker redact them
+ * wherever they appear — an error of the query that stores them included.
+ */
+function rememberTokens(tokens: {
+  readonly accessToken: string;
+  readonly refreshToken: string | null;
+}): void {
+  rememberSecret(tokens.accessToken);
+  if (tokens.refreshToken !== null) rememberSecret(tokens.refreshToken);
+}
+
+/** Tokens as stored, registered as secrets: `expires_in` seconds from now becomes the end of the access. */
 function tokensOf(tokens: OAuthTokens, now: Date): McpTokens {
+  rememberTokens({
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token ?? null,
+  });
   return {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token ?? null,
@@ -411,6 +427,7 @@ export class McpAccounts {
       });
       return { kind: 'auth_required' };
     }
+    rememberTokens(account);
     let accessToken = account.accessToken;
     if (expiresSoon(account)) {
       try {
@@ -600,6 +617,7 @@ export class McpAccounts {
     };
     const account = await mcpAccountRows.find(server, ownerId);
     if (account === undefined) return lost('no_account');
+    rememberTokens(account);
     if (account.accessToken !== staleToken) return account.accessToken;
     const row = await mcpServerRows.find(server);
     if (account.refreshToken === null || !isOAuthServer(row))

@@ -48,7 +48,6 @@ export interface StartChildRequest {
   readonly description: string;
   /** Set only by `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
   readonly forkedFrom?: {
-    readonly agentId: string;
     readonly throughSeq: number;
   };
 }

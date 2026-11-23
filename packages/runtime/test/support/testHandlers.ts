@@ -3,9 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '@agent-os/db';
 import type {
   ChildTask,
-  OpenedTracker,
   StepContext,
-  StepDecision,
   StepResult,
   TaskHandler,
 } from '@agent-os/runtime';
@@ -115,14 +113,15 @@ export function createGateBook(): GateBook {
 export const DEAF_SIGNAL: AbortSignal = new AbortController().signal;
 
 /**
- * What one scripted step does; `throw` raises `error` from `step` instead of returning. With a
- * `gate` the step holds at it before answering; with `deaf` it holds there through its signal.
+ * What one scripted step does; `throw` raises `error` from `step` instead of returning; `ask` waits
+ * with a question asked in its commit (`effects.ask`). With a `gate` the step holds at it before
+ * answering; with `deaf` it holds there through its signal.
  */
 export type ScriptedStep = (
   | { outcome: 'continue' }
   | { outcome: 'wait' }
   | { outcome: 'complete'; result: unknown }
-  | { outcome: 'await_decision'; kind: string; payload: unknown }
+  | { outcome: 'ask'; kind: string; payload: unknown }
   | { outcome: 'throw'; error: Error }
 ) & { gate?: Gate; deaf?: boolean };
 
@@ -130,7 +129,6 @@ export type ScriptedStep = (
 export interface SeenMessage {
   seq: number;
   kind: string;
-  sender: string;
   payload: unknown;
   revive: boolean;
 }
@@ -140,7 +138,18 @@ export interface StepView {
   taskId: string;
   stepNo: number;
   messages: SeenMessage[];
-  decision: StepDecision | null;
+}
+
+/** The `child_finished` of the question `questionId` among the messages a step saw. */
+export function answerSeen(
+  view: StepView,
+  questionId: string,
+): SeenMessage | undefined {
+  return view.messages.find(
+    (message) =>
+      message.kind === 'child_finished' &&
+      (message.payload as { taskId?: unknown }).taskId === questionId,
+  );
 }
 
 export interface ScriptedHandlerOptions {
@@ -160,11 +169,9 @@ function viewOf(ctx: StepContext): StepView {
     messages: ctx.messages.map((message) => ({
       seq: message.seq,
       kind: message.kind,
-      sender: message.sender,
       payload: message.payload,
       revive: message.revive,
     })),
-    decision: ctx.decision,
   };
 }
 
@@ -225,46 +232,60 @@ export function scriptedHandler(options: ScriptedHandlerOptions): TaskHandler {
       if (scripted.gate)
         await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
       if (scripted.outcome === 'throw') throw scripted.error;
-      return {
-        ...outcomeOf(scripted),
-        commit: writeHandlerRow(ctx, note ?? null),
-      };
+      const writeRow = writeHandlerRow(ctx, note ?? null);
+      if (scripted.outcome === 'ask') {
+        const { kind, payload } = scripted;
+        return {
+          outcome: 'wait',
+          commit: async (effects) => {
+            await effects.ask({ kind, payload });
+            await writeRow();
+          },
+        };
+      }
+      return { ...outcomeOf(scripted), commit: writeRow };
     },
   };
 }
 
-/** Note of the handler row written by the commit that opened a tracker. */
-export const TRACKER_OPENED_NOTE = 'tracker:opened';
+/** Note of the handler row written by the commit that created awaited children. */
+const AWAITED_SPAWNED_NOTE = 'spawned:awaited';
 
-export interface TrackerOwnerOptions {
+export interface AwaitingParentOptions {
   type: string;
-  /** The tasks its first step opens a tracker with. */
-  tasks: readonly ChildTask[];
+  /**
+   * Step `n` creates `groups[n]` as awaited children and waits for them (KD-2); a step past the end
+   * creates none and waits for messages.
+   */
+  groups: readonly (readonly ChildTask[])[];
   /** Receives the view of every step's context, in call order. */
   seen?: StepView[];
-  /** Receives the tracker the first step's commit opened. */
-  opened?: OpenedTracker[];
+  /** The ids of the awaited children each committed step created, by step number. */
+  spawned?: Map<number, string[]>;
 }
 
-/**
- * The owner of a tracker (deep-agents/design-task.md, KD-1): its first step opens a tracker with
- * `tasks` and waits for them; every later step records what it got and waits for messages.
- */
-export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
-  const { type, tasks, seen, opened } = options;
+/** A parent that waits for groups of awaited children created with `effects.spawn`. */
+export function awaitingParentHandler(
+  options: AwaitingParentOptions,
+): TaskHandler {
+  const { type, groups, seen, spawned } = options;
   return {
     type,
     inputSchema: z.record(z.string(), z.unknown()),
     async step(ctx: StepContext): Promise<StepResult> {
       seen?.push(viewOf(ctx));
-      if (ctx.stepNo > 0)
+      const group = groups[ctx.stepNo];
+      if (!group)
         return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
       return {
         outcome: 'wait',
         commit: async (effects) => {
-          const tracker = await effects.openTracker(tasks);
-          opened?.push(tracker);
-          await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)();
+          const ids: string[] = [];
+          for (const child of group)
+            ids.push(await effects.spawn({ ...child, awaited: true }));
+          // Set, not pushed: a repeated commit transaction overwrites what a rolled-back one left.
+          spawned?.set(ctx.stepNo, ids);
+          await writeHandlerRow(ctx, AWAITED_SPAWNED_NOTE)();
         },
       };
     },
@@ -272,7 +293,7 @@ export function trackerOwnerHandler(options: TrackerOwnerOptions): TaskHandler {
 }
 
 function outcomeOf(
-  scripted: Exclude<ScriptedStep, { outcome: 'throw' }>,
+  scripted: Exclude<ScriptedStep, { outcome: 'throw' | 'ask' }>,
 ): StepResult {
   switch (scripted.outcome) {
     case 'continue':
@@ -280,11 +301,5 @@ function outcomeOf(
       return { outcome: scripted.outcome };
     case 'complete':
       return { outcome: 'complete', result: scripted.result };
-    case 'await_decision':
-      return {
-        outcome: 'await_decision',
-        kind: scripted.kind,
-        payload: scripted.payload,
-      };
   }
 }

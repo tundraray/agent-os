@@ -94,7 +94,6 @@ import {
   childNoticesOf,
   closeAll,
   createAgentsHarness,
-  eventsOf,
   ZOMBIE_RUNTIME,
   historyLines,
   historyOf,
@@ -291,15 +290,6 @@ async function startWriterUntilConfirmation(
   return { agentId, decisionId: open.decisionId };
 }
 
-/** The `task.queued` payload of a task queued again by a `revive` message. */
-function isRevive(payload: unknown): boolean {
-  return (
-    typeof payload === 'object' &&
-    payload !== null &&
-    (payload as { cause?: unknown }).cause === 'revive'
-  );
-}
-
 describe('agent-platform / agents - integration (in-process runtime + agents, real Postgres, real MCP fixture, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
   // INT-1  The agent loop: start in the background and report back, a message lands after the tool result, continue, final agent, fork and compaction
@@ -357,7 +347,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   //   history is unchanged (row versions of its entries before and after) and the fork's own history starts at its task. Second case: a model call whose `usage` input tokens are at `AGENT_COMPACT_AT_TOKENS` (set low for the test); the next step writes a `compaction`
   //   entry and a `compacted` event, the call after it gets the summary instead of the older entries, and `agents.history` still returns every entry in order.
   // - Row F "a message during the last step" (Flow 6 Failure handling, design-runtime v1.2 StepResult): a child holds its last model call on a latch and answers text without calls. When `agents.send` reaches it during that call and the latch opens, then: the child ends
-  //   `completed` with its report, the parent holds exactly one `child_finished` of that end, the task is `queued` again with the same id (`task.queued` with cause `revive`), the next step sees the message, and the child's second report is a second notification.
+  //   `completed` with its report, the parent holds exactly one `child_finished` of that end, the task is `queued` again with the same id (the first "task ended" record has `revived`), the next step sees the message, and the child's second report is a second notification.
   it(
     "INT-1 A: two children start in one step and work at once, a grandchild reports to its own parent, reports reach a free parent as its next turn and a busy one on the next step, and each model call is one ledger row on the session's model",
     async () => {
@@ -1188,22 +1178,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           noticeSummaries(await childNoticesOf(harness.db, rootId, agentId)),
         ).toEqual(['completed first report', 'completed second report']);
         // Then: the task was queued again by the message right after its first end, with the same id
-        const events = (await eventsOf(harness.db, agentId))
-          .filter(
-            (event) =>
-              event.type === 'task.completed' ||
-              (event.type === 'task.queued' && isRevive(event.payload)),
-          )
-          .map((event) =>
-            event.type === 'task.queued'
-              ? `${event.type} ${JSON.stringify(event.payload, ['cause', 'from'])}`
-              : event.type,
-          );
-        expect(events).toEqual([
-          'task.completed',
-          'task.queued {"cause":"revive","from":"completed"}',
-          'task.completed',
-        ]);
+        expect(
+          stepLogsOf(harness, agentId, 'task ended').map(
+            ({ fields }) =>
+              `${String(fields.to)} revived=${String(fields.revived)}`,
+          ),
+        ).toEqual(['completed revived=true', 'completed revived=false']);
         // Then: the next step saw the message in the same session
         expect(inputLines(child.calls[1]?.messages ?? [])).toEqual([
           'user: Last step task',
@@ -1246,7 +1226,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Catches: (1) an interrupted agent whose open call stays "requested" forever or is recorded as a success when the slow server finally answers, or whose status reads `working` until the step happens to take the message (KD-3's derived status); (2) an interrupt
   //   that still calls the model before a message comes; (3) a call in `sending` (a mutating action already on the wire) shown as "interrupted" instead of "unknown" - claiming a send that may have happened was
   //   cancelled; (4) a stop that leaves the child or grandchild calling the model, an open confirmation still shown as pending, a missing `stopped_with_parent` entry, or a parent that is told twice or not at all - the agent-level reading of the runtime's stop.
-  // Not re-checked here: the fence that refuses the cut-off step's late result, the cancelled decision row and the closure of the task tree (runtime INT-3), the status table (unit), `NOT_ACTIVE` for a finished agent (a branch of the operation, trivial).
+  // Not re-checked here: the fence that refuses the cut-off step's late result and the closure of the task tree (runtime INT-3), the status table (unit), `NOT_ACTIVE` for a finished agent (a branch of the operation, trivial).
   // Behavior: command while a call is held -> status changes before the call returns -> the open calls are closed in the history -> the agent waits for a message, or (stop) never calls the model again
   // @category: core-functionality
   // @dependency: RuntimeModule x1-2, createAgents (interrupt, stop, history, get; step that consumes the interrupt message), scripted model double with call counter, MCP fixture (delayed read, delayed mutating call), Postgres
@@ -2524,9 +2504,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           'restart: AgentsError AGENT_NOT_FOUND Task <id> not found',
           'confirmations: AgentsError AGENT_NOT_FOUND Agent <id> not found',
           'taskList: AgentsError AGENT_NOT_FOUND Task <id> not found',
-          'resolveConfirmation approve: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
-          'resolveConfirmation reject: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
-          'resolveConfirmation with edited arguments: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
+          'resolveConfirmation approve: RuntimeError TASK_NOT_FOUND Task <id> not found',
+          'resolveConfirmation reject: RuntimeError TASK_NOT_FOUND Task <id> not found',
+          'resolveConfirmation with edited arguments: RuntimeError TASK_NOT_FOUND Task <id> not found',
         ]);
 
         // Then: none of A's rows changed, and A's confirmation is still open

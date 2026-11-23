@@ -35,10 +35,7 @@ export interface RuntimeTaskWrite {
   finishedNow?: boolean;
   /** `attempt + 1`: the step in flight, if any, is no longer current. */
   nextAttempt?: boolean;
-  /** `step_claims + 1`. */
-  countClaim?: boolean;
   stepNo?: number;
-  stepClaims?: number;
   recoveries?: number;
   result?: unknown;
   failure?: unknown;
@@ -47,14 +44,7 @@ export interface RuntimeTaskWrite {
 function writeColumns(
   write: RuntimeTaskWrite,
 ): PgUpdateSetSource<typeof runtimeTasks> {
-  const {
-    status,
-    waitReason,
-    finishedNow,
-    nextAttempt,
-    countClaim,
-    ...values
-  } = write;
+  const { status, waitReason, finishedNow, nextAttempt, ...values } = write;
   return {
     ...values,
     ...(status !== undefined && {
@@ -63,11 +53,10 @@ function writeColumns(
       finishedAt: finishedNow ? sql`now()` : null,
     }),
     ...(nextAttempt && { attempt: sql`${runtimeTasks.attempt} + 1` }),
-    ...(countClaim && { stepClaims: sql`${runtimeTasks.stepClaims} + 1` }),
   };
 }
 
-const { queued, running } = TaskStatusSchema.enum;
+const { queued, running, waiting } = TaskStatusSchema.enum;
 
 export type NewRuntimeTaskRow = Pick<
   typeof runtimeTasks.$inferInsert,
@@ -78,7 +67,7 @@ export type NewRuntimeTaskRow = Pick<
   | 'rootId'
   | 'depth'
   | 'input'
-  | 'trackerId'
+  | 'awaitedStep'
 >;
 
 /**
@@ -106,6 +95,27 @@ export class RuntimeTasksRepository {
       .from(runtimeTasks)
       .where(inArray(runtimeTasks.parentId, [...parentIds]))
       .orderBy(asc(runtimeTasks.taskId));
+  }
+
+  /**
+   * How many children of the parent with `awaited_step` = `stepNo` are unfinished (KD-2): the
+   * children the parent waits for when its `step_no` is `stepNo`.
+   */
+  async countUnfinishedAwaited(
+    parentId: string,
+    stepNo: number,
+  ): Promise<number> {
+    const [row] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(runtimeTasks)
+      .where(
+        and(
+          eq(runtimeTasks.parentId, parentId),
+          eq(runtimeTasks.awaitedStep, stepNo),
+          inArray(runtimeTasks.status, [queued, running, waiting]),
+        ),
+      );
+    return row?.count ?? 0;
   }
 
   /**
@@ -179,7 +189,7 @@ export class RuntimeTasksRepository {
     return row;
   }
 
-  /** The oldest `queued` task of the given types. */
+  /** The oldest `queued` task of the given types outside a deleted tree. */
   async findReady(types: readonly string[]): Promise<string | undefined> {
     const [ready] = await this.db.client
       .select({ taskId: runtimeTasks.taskId })
@@ -188,6 +198,8 @@ export class RuntimeTasksRepository {
         and(
           eq(runtimeTasks.status, queued),
           inArray(runtimeTasks.type, [...types]),
+          // A task of a deleted tree is never claimed, even one a message revived during the deletion.
+          isNull(runtimeTasks.deletedAt),
         ),
       )
       .orderBy(asc(runtimeTasks.createdAt), asc(runtimeTasks.taskId))
@@ -229,8 +241,7 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * The only write of a `runtime_tasks` row besides {@link insert}, {@link markDeleted} and
-   * {@link takeMessageSeq}: one UPDATE of the columns of `write` and `updated_at`, guarded by the
+   * The only write of a `runtime_tasks` row besides {@link insert} and {@link markDeleted}: one UPDATE of the columns of `write` and `updated_at`, guarded by the
    * allowed source statuses and, when given, by the attempt (fencing, ADR-0001) and the wait reason. Returns the updated row, or `undefined`
    * when the guard matched nothing — the write is fenced and dropped. Which columns a change sets
    * and which changes are allowed is the rule of the runtime's `Tasks`, the only caller.
@@ -259,19 +270,11 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * Takes the task's next message number in one UPDATE (`next_message_seq + 1`), whatever its
-   * status: two senders never get the same number. Returns the row after the write — the number
-   * taken is its `nextMessageSeq - 1` — or `undefined` for a missing task.
+   * `pg_notify` of the tree in the open transaction, data `{"rootId"}`: listeners get it when the
+   * transaction commits, and Postgres folds equal notifications of one transaction into one.
    */
-  async takeMessageSeq(taskId: string): Promise<RuntimeTaskRow | undefined> {
-    const [row] = await this.db.client
-      .update(runtimeTasks)
-      .set({
-        nextMessageSeq: sql`${runtimeTasks.nextMessageSeq} + 1`,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(runtimeTasks.taskId, taskId))
-      .returning();
-    return row;
+  async notify(channel: string, rootId: string): Promise<void> {
+    const payload = JSON.stringify({ rootId });
+    await this.db.client.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 }

@@ -26,7 +26,8 @@ export interface StartRefusalDetail {
 
 /**
  * An expected refusal of an agents operation; the caller maps `code` to its own answer. Codes of
- * runtime (`PARENT_FINISHED`, `PAYLOAD_TOO_LARGE`, `DECISION_NOT_FOUND`) pass through as `RuntimeError`.
+ * runtime (`PARENT_FINISHED`, `PAYLOAD_TOO_LARGE`, and `TASK_NOT_FOUND` of a confirmation's question) pass
+ * through as `RuntimeError`.
  */
 export class AgentsError extends Error {
   override readonly name = 'AgentsError';

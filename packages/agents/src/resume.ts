@@ -25,7 +25,7 @@ export interface MessagePayload {
 
 /**
  * The payload of a message to `target` (plan Notes 3, 5). The runtime stops an agent without a write
- * of `agents`, so the sender reads the target's status (`tasks.get`) and marks a message to a stopped
+ * of `agents`, so whoever sends the message reads the target's status (`tasks.get`) and marks a message to a stopped
  * agent with `resume`; its first step then writes the stop entries. `withParent` — the parent was
  * stopped by the same command: `tasks.stop` ends the whole subtree in one transaction, and
  * `finished_at` is the transaction's `now()`, so the parent's `finishedAt` equals the target's.

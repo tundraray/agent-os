@@ -1,10 +1,18 @@
 import {
+  CHILD_FINISHED_KIND,
+  ChildFinishedPayloadSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   type ToolRefusalReason,
   ToolRefusalReasonSchema,
 } from '@agent-os/contracts';
-import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
+import {
+  type Question,
+  RuntimeError,
+  type StepContext,
+  type StepEffects,
+  type StepResult,
+} from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { OwnerDisabledError } from '../access-gate';
@@ -19,16 +27,19 @@ import type { Session } from '../store/sessions';
 import {
   isInCommit,
   reportCheck,
+  type ResolvedCall,
   toolDeniedEntry,
   toolRefusedEntry,
 } from '../tools/call-check';
-import type { ToolExecution } from '../tools/tool-execution';
+import type { NotSent, ToolExecution } from '../tools/tool-execution';
 import { callTargetOf, loggedArgsOf } from '../tools/tool-registry';
+import { isQuestion } from '../task-tree';
 import type { AgentDeps } from './agent-deps';
+import { agentOwner } from './agent-owner';
 import type { BaseAgent } from './base-agent';
 import type { CallClosing, DelegatedCall } from './delegation';
 import { entriesOf } from './deliver';
-import { appendWithEvent, logStep, refusedResult } from './step-common';
+import { logStep, refusedResult } from './step-common';
 import {
   type PastCall,
   repeatMarkText,
@@ -54,41 +65,68 @@ function pastCallOf(call: CallState): PastCall {
   };
 }
 
-/** The part of a confirmation request the step needs back: which call it is about and what was shown. */
-const ConfirmationPayloadSchema = z.object({
-  callId: z.string(),
-  content: z.unknown(),
+/**
+ * The input of a confirmation question as the step needs it back (data-model/design-runtime.md, KD-3, Flow 2):
+ * which call it is about and what was shown.
+ */
+const ConfirmationQuestionSchema = z.object({
+  kind: z.string(),
+  payload: z.object({ callId: z.string(), content: z.unknown() }).loose(),
 });
 
-/** The resolution `resolveConfirmation` (T4.3) writes; `args` — the employee's edit, if the tool allows one. */
+/** The answer `resolveConfirmation` gives the question; `args` — the employee's edit, if the tool allows one. */
 export const ConfirmationResolutionSchema = z.object({
   approve: z.boolean(),
   args: z.unknown().optional(),
 });
 
-/** The employee's decision on one call, read from `ctx.decision`. */
+/** The employee's decision on one call, read from the answered question. */
 interface CallDecision {
   readonly callId: string;
   readonly approve: boolean;
   readonly args?: unknown;
-  /** `content` of the resolved request, handed to the tool (code-execution KD-10; deep-agents KD-3). */
+  /** `content` of the question's input, handed to the tool (code-execution KD-10; deep-agents KD-3). */
   readonly confirmed?: unknown;
 }
 
-function decisionOf(ctx: StepContext): CallDecision | undefined {
-  if (ctx.decision === null) return undefined;
-  const { callId, content } = ConfirmationPayloadSchema.parse(
-    ctx.decision.payload,
-  );
-  const resolution = ConfirmationResolutionSchema.parse(
-    ctx.decision.resolution,
-  );
-  return {
-    callId,
-    approve: resolution.approve,
-    ...(resolution.args === undefined ? {} : { args: resolution.args }),
-    ...(content === undefined ? {} : { confirmed: content }),
-  };
+/**
+ * The employee's decision the step delivers (Flow 2): the `child_finished` of an answered question among the
+ * step's messages — the answer from its `result`, what was shown from the question's input. Ends of the
+ * children in `closedChildren` are a `task` call's, never a question's. A stopped question carries no answer.
+ */
+async function answerOf(
+  deps: Pick<AgentDeps, 'tasks'>,
+  ctx: StepContext,
+  closedChildren: ReadonlySet<string>,
+): Promise<{ decision: CallDecision; questionId: string } | undefined> {
+  for (const message of ctx.messages) {
+    if (message.kind !== CHILD_FINISHED_KIND) continue;
+    const notice = ChildFinishedPayloadSchema.parse(message.payload);
+    if (notice.status !== 'completed' || closedChildren.has(notice.taskId))
+      continue;
+    const task = await deps.tasks.get(notice.taskId, agentOwner(ctx));
+    if (!isQuestion(task)) continue;
+    const { callId, content } = ConfirmationQuestionSchema.parse(
+      task.input,
+    ).payload;
+    const resolution = ConfirmationResolutionSchema.parse(notice.result);
+    return {
+      questionId: notice.taskId,
+      decision: {
+        callId,
+        approve: resolution.approve,
+        ...(resolution.args === undefined ? {} : { args: resolution.args }),
+        ...(content === undefined ? {} : { confirmed: content }),
+      },
+    };
+  }
+  return undefined;
+}
+
+/** The call a step asks about and its question (`effects.ask`). */
+interface AskedCall {
+  readonly call: CallState;
+  readonly question: Question;
 }
 
 /** How a call the runner ran ends in its `tool_result`. */
@@ -135,38 +173,36 @@ async function closeAll(
 }
 
 /**
- * The commit of the step: the closings in call order, each with its `tool_result`, then the
- * `tool_confirmation` of the call an `await_decision` waits on (`awaited`) or the start of the accepted
- * delegated calls (`opening`), then the entries of the messages the step delivers (KD-1: a message stands after
- * the results of its answer), and `agents.history_appended` with the last `seq`.
+ * The commit of the step: the closings in call order, each with its `tool_result`, then the question of the
+ * call the step asks about (`asked`: `effects.ask` and the call's `tool_confirmation` with the question's id) or
+ * the start of the accepted delegated calls (`opening`), then the entries of the messages the step delivers
+ * (KD-1: a message stands after the results of its answer), without the ends of the children whose `task` calls
+ * this step closes and of the question it answers.
  */
 function commitOf(
-  deps: Pick<AgentDeps, 'history' | 'sessions' | 'messageRows'>,
+  deps: Pick<AgentDeps, 'history' | 'sessions' | 'messageRows' | 'tasks'>,
   ctx: StepContext,
   closings: readonly CallClosing[],
-  awaited?: CallState,
+  closedChildren: ReadonlySet<string>,
+  asked?: AskedCall,
   opening?: (effects: StepEffects) => Promise<void>,
 ): NonNullable<StepResult['commit']> {
   return async (effects) => {
-    const results = await closeAll(closings, effects);
+    await closeAll(closings, effects);
     await opening?.(effects);
-    await appendWithEvent(
-      deps,
-      effects,
-      ctx.taskId,
-      [
-        ...(awaited === undefined
-          ? []
-          : [
-              {
-                kind: 'tool_confirmation' as const,
-                content: { callId: awaited.callId },
-              },
-            ]),
-        ...(await entriesOf(deps, ctx.messages)),
-      ],
-      results,
-    );
+    const questionId =
+      asked === undefined ? undefined : await effects.ask(asked.question);
+    await deps.history.append(ctx.taskId, [
+      ...(asked === undefined || questionId === undefined
+        ? []
+        : [
+            {
+              kind: 'tool_confirmation' as const,
+              content: { callId: asked.call.callId, questionId },
+            },
+          ]),
+      ...(await entriesOf(deps, ctx, closedChildren)),
+    ]);
   };
 }
 
@@ -180,8 +216,9 @@ function commitOf(
  * - What differs between the kinds of agents are the agent's methods: the closings of the sent delegated calls
  *   (`closeDelegated`), which calls are delegated (`delegates`), and their check (`delegate`). Only a deep agent
  *   delegates — its `task` calls (deep-agents/design-task.md KD-4).
- * - A sent delegated call waits for its tracker: the step that delivers `tasks_finished` closes it with its
- *   tasks' outcomes, first, and never as `unknown`.
+ * - A sent delegated call is closed by the agent's next step, first, and never as `unknown`: from the
+ *   `child_finished` of its subagents this step delivers, a subagent without one as still running
+ *   (data-model/design-runtime.md, «Инструмент `task`»). Their `child_finished` become no `child_report`.
  * - A call in `sending` — its `tool_sent` intent is written and it has no result — is never sent again:
  *   `unknown` (DC-5, AC-01.2), also when the owner is disabled. A step finds it so only when a step was
  *   lost after the intent; an interrupt or a stop closes it elsewhere.
@@ -192,14 +229,18 @@ function commitOf(
  *   `repeated_call`, audited for an MCP tool; a second one runs and its result's text gets the mark;
  *   a call needing confirmation without a decision is checked by its tool's `review`, if it has one, outside
  *   any transaction (deep-agents KD-3) — a refusal closes it `refused` with its text and asks nothing —
- *   and then ends the step with `await_decision`, the ready
- *   results committed and the call's `tool_confirmation` written, the rest waiting; a rejected one is
+ *   and then asks the employee (`effects.ask`, data-model KD-3) and ends the step with `wait`, the ready
+ *   results committed and the call's `tool_confirmation` written, the rest waiting; the answer comes as the
+ *   question's `child_finished` to the next step (Flow 2); a rejected one is
  *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
  *   after it so its result is committed before anything else runs; an `outside` call runs under the
- *   step's signal; an `in_commit` call runs in the commit.
+ *   step's signal; an `in_commit` call runs in the commit, in a savepoint with its closing.
+ * - A tool that throws unexpectedly ends its call `tool_error` with the error's text, the error logged whole,
+ *   and the step goes on (data-model/design-runtime.md KD-6); a disabled owner and a broken rule of the
+ *   runtime still end the step.
  * - The delegated calls the check lets through wait until every other call of the answer is closed, then are
- *   checked together (KD-4): a refusal is closed with its text; the accepted ones open one tracker in the
- *   commit and the step ends with `wait`, which the runtime turns into waiting for the tracker's tasks.
+ *   checked together (KD-4): a refusal is closed with its text; the accepted ones start their subagents as
+ *   awaited children in the commit and the step ends with `wait`, which the runtime turns into waiting for them.
  * - The signal aborted around a call, or the intent fenced: `continue` without writes — the runtime
  *   rejects the result of a step that is no longer current.
  * - The gate refused the owner at a call's admission (KD-4): that call and the rest do not start; the
@@ -239,8 +280,15 @@ export async function runToolStep(
       name: requestedName(call),
       args: call.args,
     });
-  const decision = decisionOf(ctx);
   const closings: CallClosing[] = [];
+  // Every sent delegated call closes in this step: its subagents' ends reach the model through its result.
+  const closedChildren = new Set(
+    openCalls.flatMap((call) => call.delegation?.taskIds ?? []),
+  );
+  const answered = await answerOf(deps, ctx, closedChildren);
+  const decision = answered?.decision;
+  // The answered question's end is read here, not reported to the model.
+  if (answered !== undefined) closedChildren.add(answered.questionId);
   // The repeat rule's past (KD-5): the closed calls of the visible history, then each call of this step it lets through.
   const past: PastCall[] = calls.flatMap((earlier) =>
     earlier.result === null
@@ -300,11 +348,54 @@ export async function runToolStep(
     }
     return closed;
   };
+  /**
+   * Runs an in-commit tool and closes its call in a savepoint of the commit (data-model KD-6): a tool that
+   * throws rolls back only its own writes and what it did through the effects (`effects.savepoint`), and its
+   * call is closed `tool_error` with the error's text. An error after which the transaction cannot go on is
+   * thrown by the savepoint, so the commit repeats whole; a
+   * `RuntimeError` and a disabled owner are thrown and still end the step; a broken rule of the effects is
+   * kept by the runtime, which fails the commit with `invalid_step_result` after it.
+   */
+  const closeInCommit =
+    (
+      call: CallState,
+      resolved: ResolvedCall,
+      run: (effects: StepEffects) => Promise<ToolExecution | NotSent>,
+      decided?: CallDecision,
+    ): CallClosing =>
+    async (effects) => {
+      const startedAt = new Date();
+      const attempt = await effects.savepoint(async () => {
+        const execution = await run(effects);
+        if (execution.kind === 'not_sent') return undefined;
+        return closeExecuted(
+          call,
+          { execution, startedAt, finishedAt: new Date() },
+          decided,
+        );
+      });
+      if (attempt.ok) return attempt.value;
+      const { error } = attempt;
+      if (error instanceof RuntimeError || error instanceof OwnerDisabledError)
+        throw error;
+      return closeExecuted(
+        call,
+        {
+          execution: runner.toolError(resolved, error, ctx.logger),
+          startedAt,
+          finishedAt: new Date(),
+        },
+        decided,
+      );
+    };
   const done = (): StepResult => {
     logStep(ctx, STEP_KIND, stepStartedAt, 'continue', {
       calls: closings.length,
     });
-    return { outcome: 'continue', commit: commitOf(deps, ctx, closings) };
+    return {
+      outcome: 'continue',
+      commit: commitOf(deps, ctx, closings, closedChildren),
+    };
   };
   /** The agent fails with `owner_disabled`: the calls that ran are closed, the rest never start (KD-5). */
   const ownerDisabled = (): Promise<StepResult> =>
@@ -318,16 +409,15 @@ export async function runToolStep(
       audit,
       writeEntries: async (effects) => {
         await closeAll(closings, effects);
-        return entriesOf(deps, ctx.messages);
+        return entriesOf(deps, ctx, closedChildren);
       },
       patch: {},
     });
 
-  // Sent delegated calls wait for their tracker, and this step delivers its `tasks_finished` (KD-4): they close
-  // with the outcomes of their tasks, before the gate, like the calls in `sending` below.
-  closings.push(
-    ...(await agent.closeDelegated(ctx, openCalls.filter(isDelegated))),
-  );
+  // Sent delegated calls close in this step from the ends of their subagents it delivers, before the gate, like
+  // the calls in `sending` below.
+  const delegatedOpen = openCalls.filter(isDelegated);
+  closings.push(...(await agent.closeDelegated(ctx, delegatedOpen)));
 
   // Before the gate, so a disabled owner's exit closes them too: a call left in `sending` precedes every
   // other open call of its answer.
@@ -381,7 +471,14 @@ export async function runToolStep(
     });
     return {
       outcome: 'wait',
-      commit: commitOf(deps, ctx, closings, undefined, delegation.open),
+      commit: commitOf(
+        deps,
+        ctx,
+        closings,
+        closedChildren,
+        undefined,
+        delegation.open,
+      ),
     };
   };
 
@@ -495,14 +592,16 @@ export async function runToolStep(
             outcome: null,
             reason: 'awaiting_confirmation',
           });
-          logStep(ctx, STEP_KIND, stepStartedAt, 'await_decision', {
+          logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
             calls: closings.length,
+            asked: call.callId,
           });
           return {
-            outcome: 'await_decision',
-            kind: request.kind,
-            payload: request.payload,
-            commit: commitOf(deps, ctx, closings, call),
+            outcome: 'wait',
+            commit: commitOf(deps, ctx, closings, closedChildren, {
+              call,
+              question: { kind: request.kind, payload: request.payload },
+            }),
           };
         }
 
@@ -542,17 +641,9 @@ export async function runToolStep(
           return done();
         }
         if (send.kind === 'in_commit') {
-          const { commit } = send;
-          closings.push(async (effects) => {
-            const callStartedAt = new Date();
-            const execution = await commit(effects);
-            if (execution.kind === 'not_sent') return undefined;
-            return closeExecuted(
-              call,
-              { execution, startedAt: callStartedAt, finishedAt: new Date() },
-              callDecision,
-            );
-          });
+          closings.push(
+            closeInCommit(call, resolved, send.commit, callDecision),
+          );
           return done();
         }
         const { execution } = send;
@@ -572,15 +663,7 @@ export async function runToolStep(
 
       if (isInCommit(resolved)) {
         const run = await runner.planInCommit(resolved, ctx.logger);
-        closings.push(async (effects) => {
-          const startedAt = new Date();
-          const execution = await run(effects);
-          return closeExecuted(call, {
-            execution,
-            startedAt,
-            finishedAt: new Date(),
-          });
-        });
+        closings.push(closeInCommit(call, resolved, run));
         continue;
       }
 

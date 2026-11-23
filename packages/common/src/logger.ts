@@ -164,6 +164,18 @@ export function withoutQueryParams<T>(error: T): T | Error {
 }
 
 /**
+ * An error's text safe to keep outside the log — a task's failure, a tool error the model reads, a
+ * history entry: for a failed database query the database's own message (its cause), never the
+ * query or its params; any other error's message; any other thrown value as text. Not masked.
+ */
+export function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if ('params' in error && 'query' in error)
+    return error.cause instanceof Error ? error.cause.message : 'Failed query';
+  return error.message;
+}
+
+/**
  * The same for a message that is already text (a Sentry event of an error the SDK captured by itself):
  * a failed query's message without its `\nparams: …` tail; any other text as it is.
  */

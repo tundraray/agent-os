@@ -1,4 +1,3 @@
-import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
 import type { Db } from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
@@ -7,7 +6,6 @@ import {
   boundToDb,
   HANDLER_ROWS_TABLE,
   scriptedHandler,
-  TRACKER_OPENED_NOTE,
   writeHandlerRow,
 } from './testHandlers';
 
@@ -17,13 +15,11 @@ import {
  * types). Every row they write goes to {@link HANDLER_ROWS_TABLE}, told apart by `note`:
  *
  * - `step:<outcome>` — the step's own row, written in its commit: it exists exactly when the commit
- *   did. `<outcome>` is `done`, `unknown` (the redone step found its intent and skipped the action),
- *   `asked` (a decision request), or the JSON a decision step saw.
+ *   did. `<outcome>` is `done` or `unknown` (the redone step found its intent and skipped the action).
  * - `intent` — written through `guard` before the external action.
  * - `external` — written by the external-action double, in its own autocommit statement: the action
  *   happened, whatever became of the step.
  * - `children:<n>` — the parent's step row: `n` child notices in that step.
- * - `tracker:opened` — the tracker owner's first step row, written in the commit that opened it.
  */
 
 /** Variable of the child's environment naming the task types it registers (JSON of {@link ChildTypes}). */
@@ -37,34 +33,15 @@ export interface ChildTypes {
   writer?: string;
   /** C2: two steps, a committed row each. */
   reader?: string;
-  /** A decision step, then a step that records the decision and the messages it got. */
-  decider?: string;
   /** A step that holds until its signal aborts (measurements). */
   hold?: string;
-  /**
-   * A tracker owner: opens a tracker of `input.tasks` tasks of type `input.taskType`, then completes
-   * with a {@link TrackerOwnerView} of the step that `tasks_finished` woke.
-   */
-  trackerOwner?: string;
-  /** A task of a tracker: one step that commits a `step:done` row and completes with its item. */
-  trackerTask?: string;
-  /**
-   * The type of a tracker's tasks in a process that must not run them: registered, so a tracker of
-   * it opens, but its step holds until shutdown gives the task back to the queue.
-   */
-  parkedTrackerTask?: string;
 }
 
 export const STEP_DONE = 'step:done';
 export const STEP_UNKNOWN = 'step:unknown';
-export const STEP_ASKED = 'step:asked';
 export const INTENT_NOTE = 'intent';
 export const EXTERNAL_NOTE = 'external';
 const CHILDREN_NOTE_PREFIX = 'children:';
-
-/** The decision request of the decider's first step. */
-export const DECISION_KIND = 'approval';
-export const DECISION_PAYLOAD = { question: 'proceed?' };
 
 /** The external action of the guard row: one autocommit row per call, apart from the step. */
 async function callExternalAction(db: Db, ctx: StepContext): Promise<void> {
@@ -152,123 +129,6 @@ function readerHandler(type: string): TaskHandler {
   });
 }
 
-/** What the decider's second step saw: the resolution and the payloads of its messages. */
-export interface DeciderView {
-  decision: unknown;
-  messages: unknown[];
-}
-
-/** UC-6: asks for a decision, then records the decision and the messages it got, and completes. */
-function deciderHandler(type: string): TaskHandler {
-  return {
-    type,
-    inputSchema: z.object({}),
-    async step(ctx): Promise<StepResult> {
-      if (ctx.stepNo === 0) {
-        return {
-          outcome: 'await_decision',
-          kind: DECISION_KIND,
-          payload: DECISION_PAYLOAD,
-          commit: writeHandlerRow(ctx, STEP_ASKED),
-        };
-      }
-      const view: DeciderView = {
-        decision: ctx.decision?.resolution ?? null,
-        messages: ctx.messages.map((message) => message.payload),
-      };
-      return {
-        outcome: 'complete',
-        result: view,
-        commit: writeHandlerRow(ctx, JSON.stringify(view)),
-      };
-    },
-  };
-}
-
-const TrackerOwnerInputSchema = z.object({
-  tasks: z.number().int().min(1),
-  taskType: z.string(),
-});
-
-/** What the tracker owner's woken step got: its `tasks_finished` payloads and the other payloads. */
-export interface TrackerOwnerView {
-  tasksFinished: unknown[];
-  messages: unknown[];
-}
-
-/**
- * UC-3 (deep-agents/design-task.md): the first step opens a tracker of `input.tasks` tasks, one item
- * each, and waits for them; the step woken by `tasks_finished` completes with what it got.
- */
-function ownerOfTrackerHandler(type: string): TaskHandler {
-  return {
-    type,
-    inputSchema: TrackerOwnerInputSchema,
-    async step(ctx): Promise<StepResult> {
-      const { tasks, taskType } = TrackerOwnerInputSchema.parse(ctx.input);
-      if (ctx.stepNo === 0) {
-        return {
-          outcome: 'wait',
-          commit: async (effects) => {
-            await effects.openTracker(
-              Array.from({ length: tasks }, (_, item) => ({
-                type: taskType,
-                input: { item },
-              })),
-            );
-            await writeHandlerRow(ctx, TRACKER_OPENED_NOTE)();
-          },
-        };
-      }
-      const view: TrackerOwnerView = {
-        tasksFinished: ctx.messages
-          .filter((message) => message.kind === TASKS_FINISHED_KIND)
-          .map((message) => message.payload),
-        messages: ctx.messages
-          .filter((message) => message.kind !== TASKS_FINISHED_KIND)
-          .map((message) => message.payload),
-      };
-      const commit = writeHandlerRow(ctx, JSON.stringify(view));
-      return view.tasksFinished.length > 0
-        ? { outcome: 'complete', result: view, commit }
-        : { outcome: 'wait', commit };
-    },
-  };
-}
-
-const TrackerTaskInputSchema = z.object({ item: z.number().int() });
-
-/** A task of the owner's tracker: one committed step that completes with its item. */
-function trackerTaskHandler(type: string): TaskHandler {
-  return {
-    type,
-    inputSchema: TrackerTaskInputSchema,
-    async step(ctx): Promise<StepResult> {
-      const { item } = TrackerTaskInputSchema.parse(ctx.input);
-      return {
-        outcome: 'complete',
-        result: { item },
-        commit: writeHandlerRow(ctx, STEP_DONE),
-      };
-    },
-  };
-}
-
-/**
- * A task of a tracker in a process that must not run it: the step holds until its signal aborts and
- * then throws, so a shutdown requeues the task and nothing of it is committed.
- */
-function parkedTrackerTaskHandler(type: string): TaskHandler {
-  return {
-    type,
-    inputSchema: TrackerTaskInputSchema,
-    async step(ctx): Promise<StepResult> {
-      await aborted(ctx.signal);
-      throw new Error(`Task ${ctx.taskId} is parked in this process`);
-    },
-  };
-}
-
 /** Resolves once `signal` aborts. */
 function aborted(signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -298,12 +158,6 @@ export function handlersFor(types: ChildTypes, db: Db): TaskHandler[] {
   if (types.parent) handlers.push(parentHandler(types.parent, db));
   if (types.writer) handlers.push(writerHandler(types.writer, db));
   if (types.reader) handlers.push(readerHandler(types.reader));
-  if (types.decider) handlers.push(deciderHandler(types.decider));
   if (types.hold) handlers.push(holdHandler(types.hold));
-  if (types.trackerOwner)
-    handlers.push(ownerOfTrackerHandler(types.trackerOwner));
-  if (types.trackerTask) handlers.push(trackerTaskHandler(types.trackerTask));
-  if (types.parkedTrackerTask)
-    handlers.push(parkedTrackerTaskHandler(types.parkedTrackerTask));
   return handlers.map((handler) => boundToDb(handler, db));
 }

@@ -1,31 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@agent-os/common';
 import {
-  RuntimeEventTypeSchema,
   type TaskStatus,
   TaskStatusSchema,
   type WaitReason,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import {
-  Db,
-  RuntimeDecisionsRepository,
-  RuntimeTrackersRepository,
-  RuntimeTasksRepository,
-  type RuntimeTaskRow,
-} from '@agent-os/db';
+import { Db, RuntimeTasksRepository, type RuntimeTaskRow } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { RuntimeError } from '../errors';
-import { EventLog } from '../events/event-log';
 import {
   isFinished,
-  type TaskChange,
   type TaskFailure,
   UNFINISHED_STATUSES,
 } from './guarded-transition';
 import { HandlerRegistry } from '../steps/handler.registry';
 import { LiveTasks } from '../steps/live-tasks';
-import type { EnqueueMessage, StepSignalReason } from '../steps/step-contract';
+import {
+  type EnqueueMessage,
+  QUESTION_TASK_TYPE,
+} from '../steps/step-contract';
 import {
   Inbox,
   payloadTooLarge,
@@ -34,21 +28,38 @@ import {
 import { RunningTaskRegistry } from './running-task.registry';
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
-import { endTask, writeHeld } from './task-end';
+import {
+  cutOff,
+  endTask,
+  logTaskEnds,
+  type StoppedTree,
+  stopTree,
+  type TaskEndDeps,
+  type TaskEndRecord,
+  taskLogFields,
+  writeHeld,
+} from './task-end';
+import { TaskEndHooks } from './task-end-hooks';
 import { Tasks } from './tasks';
+import { withTxRetry } from './transaction-retry';
 
-const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
-const EVENT = RuntimeEventTypeSchema.enum;
+const { queued, running, waiting } = TaskStatusSchema.enum;
 
 /**
- * What `tasks.interrupt` answers; `not_active` for a finished task or one waiting for a decision or
- * for its tasks.
+ * What `tasks.interrupt` answers; `not_active` for a finished task or one waiting for its children
+ * or for a human's answer.
  */
 export type InterruptOutcome = 'interrupted' | 'not_active';
 
 /**
- * The message an interrupt puts in the task's own queue, by the rules of `inbox.enqueue`: by it the
- * next step tells an interrupt from a lost step (`resumedAfterLoss` is true in both).
+ * What `tasks.answer` answers: `answered` — the question completed with the answer; or
+ * `already_answered` — it was answered or stopped before, nothing written.
+ */
+export type AnswerOutcome = 'answered' | 'already_answered';
+
+/**
+ * The message an interrupt puts in the task's own queue, by the rules of `inbox.enqueue`; every
+ * interrupt carries one (design-runtime.md, «Состояния задачи», Прерывание).
  */
 export type InterruptMessage = Omit<EnqueueMessage, 'recipientId'>;
 
@@ -91,35 +102,25 @@ export interface CreateTask {
   taskId?: string;
 }
 
-interface TaskControlDeps {
-  db: Db;
+interface TaskControlDeps extends TaskEndDeps {
   handlers: HandlerRegistry;
-  tasks: Tasks;
-  taskRows: RuntimeTasksRepository;
-  trackers: RuntimeTrackersRepository;
-  events: EventLog;
-  inbox: Inbox;
-  decisions: RuntimeDecisionsRepository;
   /** Steps of this process: a command cuts its own process's step off at once (KD-4). */
   running: RunningTaskRegistry;
   /** Objects of the tasks of live types: a cut-off task's object is let go. */
   live: LiveTasks;
-  logger: Logger;
-  /** `INBOX_PAYLOAD_MAX_BYTES`: bound of an interrupt message's payload. */
+  /** `INBOX_PAYLOAD_MAX_BYTES`: bound of an interrupt message's payload and of an answer. */
   inboxPayloadMaxBytes: number;
 }
 
 /**
- * A task an interrupt can reach: `queued`, `running`, or `waiting` for messages or after an
- * interrupt. One waiting for a decision or for its tasks (deep-agents/design-task.md, KD-3) is
- * woken only by them.
+ * A task an interrupt can reach: `queued`, `running`, or `waiting` for messages. One waiting for its
+ * children (KD-2) or a question waiting for its answer (KD-3) is woken only by them.
  */
 const isInterruptible = (task: RuntimeTaskRow): boolean =>
   task.status === queued ||
   task.status === running ||
   (task.status === waiting &&
-    task.waitReason !== WaitReasonSchema.enum.decision &&
-    task.waitReason !== WaitReasonSchema.enum.tasks);
+    task.waitReason === WaitReasonSchema.enum.messages);
 
 function toTask(row: RuntimeTaskRow): Task {
   return {
@@ -159,10 +160,8 @@ export class TaskControl {
     @Inject(HandlerRegistry) handlers: HandlerRegistry,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
-    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
-    @Inject(EventLog) events: EventLog,
     @Inject(Inbox) inbox: Inbox,
-    @Inject(RuntimeDecisionsRepository) decisions: RuntimeDecisionsRepository,
+    @Inject(TaskEndHooks) endHooks: TaskEndHooks,
     @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
     @Inject(LiveTasks) live: LiveTasks,
     @Inject(RUNTIME_LOGGER) logger: Logger,
@@ -173,10 +172,8 @@ export class TaskControl {
       handlers,
       tasks,
       taskRows,
-      trackers,
-      events,
       inbox,
-      decisions,
+      endHooks,
       running,
       live,
       logger,
@@ -186,12 +183,12 @@ export class TaskControl {
 
   /**
    * Creates a root task (its own root, depth 0) or, with `parentId`, a child of the owner's task
-   * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`. The id
+   * outside a step (same owner and root, one level deeper) in `queued`, signalling its tree. The id
    * is `taskId` when given — `TASK_EXISTS` if a task of any owner has it — or a new one.
    * The parent must not be finished. Returns the `taskId`.
    *
    * Inside a caller's transaction the caller commits or rolls back the whole of it, the task with
-   * it (KD-3, self-learning). The `task.created` NOTIFY goes out at that commit; the dispatcher's
+   * it (KD-3, self-learning). The tree's NOTIFY goes out at that commit; the dispatcher's
    * poll is the guarantee anyway.
    */
   async create(request: CreateTask): Promise<string> {
@@ -204,11 +201,13 @@ export class TaskControl {
     };
     try {
       const input = this.checkInput(request.type, request.input);
-      const task = await db.transaction(() => this.createIn(request, input));
+      const task = await withTxRetry(
+        { db, logger, operation: 'tasks.create', taskId: request.taskId },
+        () => this.createIn(request, input),
+      );
       logger.info('task created', {
         ...fields,
-        taskId: task.taskId,
-        rootId: task.rootId,
+        ...taskLogFields(task),
         depth: task.depth,
         durationMs: Date.now() - startedAt,
       });
@@ -238,30 +237,28 @@ export class TaskControl {
   }
 
   /**
-   * Interrupts a `queued`, `running` or `waiting` (not for a decision or tasks) task: without a
-   * message it becomes `waiting` (`interrupted`), with one the message goes into its queue and it
-   * becomes `queued`; `attempt + 1`, `task.interrupted`. A finished task or one
-   * waiting for a decision or its tasks gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or another
-   * owner's task, `PAYLOAD_TOO_LARGE` for a message over `INBOX_PAYLOAD_MAX_BYTES`.
+   * Interrupts a `queued`, `running` or `waiting(messages)` task: it becomes `queued` with
+   * `attempt + 1` and `recoveries = 0`, and the message goes into its queue. A finished task or one
+   * waiting for its children or a human gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or
+   * another owner's task, `PAYLOAD_TOO_LARGE` for a message over `INBOX_PAYLOAD_MAX_BYTES`.
    */
   async interrupt(
     taskId: string,
     ownerId: string,
-    message?: InterruptMessage,
+    message: InterruptMessage,
   ): Promise<InterruptOutcome> {
     const { db, logger } = this.deps;
     const startedAt = Date.now();
     const fields = {
       taskId,
       ownerId,
-      withMessage: message !== undefined,
-      kind: message?.kind,
-      sender: message?.sender,
+      kind: message.kind,
     };
     try {
-      if (message) this.checkMessage(message);
-      const interrupted = await db.transaction(() =>
-        this.interruptIn(taskId, ownerId, message),
+      this.checkMessage(message);
+      const interrupted = await withTxRetry(
+        { db, logger, operation: 'tasks.interrupt', taskId },
+        () => this.interruptIn(taskId, ownerId, message),
       );
       if (!interrupted) {
         logger.info('task not interrupted: not active', {
@@ -271,12 +268,12 @@ export class TaskControl {
         });
         return 'not_active';
       }
-      this.cutOff([interrupted.task], 'interrupted');
+      cutOff(this.deps, [interrupted.task], 'interrupted');
       logger.info('task interrupted', {
         ...fields,
-        rootId: interrupted.task.rootId,
-        status: interrupted.task.status,
-        attempt: interrupted.task.attempt,
+        ...taskLogFields(interrupted.task),
+        from: interrupted.from,
+        to: interrupted.task.status,
         messageId: interrupted.messageId,
         outcome: 'interrupted',
         durationMs: Date.now() - startedAt,
@@ -293,8 +290,52 @@ export class TaskControl {
   }
 
   /**
-   * Stops the task and every unfinished descendant: `stopped`, `attempt + 1`, `task.stopped`, open
-   * requests `cancelled`, one `child_finished` (`stopped`) to the parent of each. Returns the
+   * The human's answer to a question (KD-3) in its own transaction: `answered` — the question is
+   * `completed` with `answer` as its `result`, and its `child_finished` wakes the asking task by the
+   * wake-up rule (KD-2); `already_answered` — answered or stopped before, nothing written.
+   * `TASK_NOT_FOUND` for a missing question, another owner's, one of a deleted tree or a task that
+   * is no question; `PAYLOAD_TOO_LARGE` for an answer over `INBOX_PAYLOAD_MAX_BYTES`, as it travels
+   * in `child_finished`.
+   */
+  async answer(
+    questionId: string,
+    ownerId: string,
+    answer: unknown,
+  ): Promise<AnswerOutcome> {
+    const { db, logger, inboxPayloadMaxBytes } = this.deps;
+    const startedAt = Date.now();
+    const fields = { questionId, ownerId };
+    try {
+      const tooLarge = payloadTooLarge(answer ?? null, inboxPayloadMaxBytes);
+      if (tooLarge) throw tooLarge;
+      const answered = await withTxRetry(
+        { db, logger, operation: 'tasks.answer', taskId: questionId },
+        () => this.answerIn(questionId, ownerId, answer ?? null),
+      );
+      const [end] = answered.ends;
+      if (answered.ends.length > 0) logTaskEnds(logger, answered.ends);
+      logger.info('question answered', {
+        ...fields,
+        ...taskLogFields(answered.question),
+        askerId: answered.question.parentId,
+        outcome: answered.outcome,
+        askerWoken: end?.parentWoken ?? false,
+        durationMs: Date.now() - startedAt,
+      });
+      return answered.outcome;
+    } catch (error) {
+      logger.warn('question not answered', {
+        ...fields,
+        durationMs: Date.now() - startedAt,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Stops the task and every unfinished descendant: `stopped`, `attempt + 1`, its
+   * questions with it, one `child_finished` (`stopped`) to the parent of each. Returns the
    * stopped `taskId`s, the task first; `[]` for a finished task, nothing changed. `TASK_NOT_FOUND`
    * for a missing, another owner's or a deleted task.
    */
@@ -303,16 +344,23 @@ export class TaskControl {
     const startedAt = Date.now();
     const fields = { taskId, ownerId };
     try {
-      const stoppedTasks = await db.transaction(async () => {
-        // `find` does not read the deletion mark, so it is checked here, as in `findOwned`.
-        const target = await taskRows.find(taskId);
-        if (target?.ownerId !== ownerId || target.deletedAt !== null) {
-          throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
-        }
-        if (isFinished(target.status)) return [];
-        return this.stopTree(target);
-      });
-      this.cutOff(stoppedTasks, 'stopped');
+      const { stopped: stoppedTasks, ends } = await withTxRetry(
+        { db, logger, operation: 'tasks.stop', taskId },
+        async (): Promise<StoppedTree> => {
+          // `find` does not read the deletion mark, so it is checked here, as in `findOwned`.
+          const target = await taskRows.find(taskId);
+          if (target?.ownerId !== ownerId || target.deletedAt !== null) {
+            throw new RuntimeError(
+              'TASK_NOT_FOUND',
+              `Task ${taskId} not found`,
+            );
+          }
+          if (isFinished(target.status)) return { stopped: [], ends: [] };
+          return stopTree(this.deps, target);
+        },
+      );
+      cutOff(this.deps, stoppedTasks, 'stopped');
+      logTaskEnds(logger, ends);
       const stoppedIds = stoppedTasks.map((task) => task.taskId);
       logger.info('task stop answered', {
         ...fields,
@@ -334,7 +382,7 @@ export class TaskControl {
 
   /**
    * Stops the tree as {@link stop} does and marks every task of it deleted: from then on each
-   * answers as a missing one. The rows, their messages, requests and events and the token ledger
+   * answers as a missing one. The rows, their messages, requests and the token ledger
    * stay (KD-5). This is the only deletion mark: what an upper layer keeps for the tree answers as
    * missing through it (KD-2). Only a root can be deleted: another task, a missing, another owner's or an
    * already deleted one gives `TASK_NOT_FOUND`.
@@ -348,10 +396,12 @@ export class TaskControl {
     const startedAt = Date.now();
     const fields = { rootId, ownerId };
     try {
-      const stoppedTasks = await db.transaction(() =>
-        this.deleteTreeIn(rootId, ownerId),
+      const { stopped: stoppedTasks, ends } = await withTxRetry(
+        { db, logger, operation: 'tasks.deleteTree', taskId: rootId },
+        () => this.deleteTreeIn(rootId, ownerId),
       );
-      this.cutOff(stoppedTasks, 'stopped');
+      cutOff(this.deps, stoppedTasks, 'stopped');
+      logTaskEnds(logger, ends);
       logger.info('task tree deleted', {
         ...fields,
         stoppedIds: stoppedTasks.map((task) => task.taskId),
@@ -369,27 +419,66 @@ export class TaskControl {
     }
   }
 
+  /**
+   * The answer's writes. The question's row is the first write (KD-7), guarded by `waiting`
+   * (`human`): an answer or a stop that came first has ended it, and this one writes nothing. Its
+   * end goes through {@link endTask}, so the asker's wake-up follows the wake-up rule.
+   */
+  private async answerIn(
+    questionId: string,
+    ownerId: string,
+    answer: unknown,
+  ): Promise<{
+    outcome: AnswerOutcome;
+    question: RuntimeTaskRow;
+    ends: readonly TaskEndRecord[];
+  }> {
+    const { tasks, taskRows } = this.deps;
+    const notFound = () =>
+      new RuntimeError('TASK_NOT_FOUND', `Task ${questionId} not found`);
+    const found = await taskRows.findOwned(questionId, ownerId);
+    if (found?.type !== QUESTION_TASK_TYPE) throw notFound();
+    const held = await tasks.hold({
+      taskId: questionId,
+      from: [waiting],
+      waitReason: WaitReasonSchema.enum.human,
+    });
+    if (!held) {
+      // A deletion that came first stopped the tree and marked it: the question answers as missing,
+      // as `already_answered` would tell the deleted tree apart.
+      const now = await taskRows.find(questionId);
+      if (now?.deletedAt !== null) throw notFound();
+      return { outcome: 'already_answered', question: now, ends: [] };
+    }
+    const ended = await endTask(this.deps, held, {
+      status: TaskStatusSchema.enum.completed,
+      result: answer,
+      cause: 'answer',
+    });
+    return { outcome: 'answered', question: ended.row, ends: ended.ends };
+  }
+
   /** The deletion's writes: the tree stopped and marked deleted. */
   private async deleteTreeIn(
     rootId: string,
     ownerId: string,
-  ): Promise<RuntimeTaskRow[]> {
+  ): Promise<StoppedTree> {
     const { taskRows } = this.deps;
     const root = await taskRows.findOwned(rootId, ownerId);
     if (!root || root.parentId !== null) {
       throw new RuntimeError('TASK_NOT_FOUND', `Task ${rootId} not found`);
     }
-    const stoppedInTree = await this.stopTree(root);
+    const stoppedTree = await stopTree(this.deps, root);
     await taskRows.markDeleted(root.taskId);
-    return stoppedInTree;
+    return stoppedTree;
   }
 
-  /** The creation's writes: the task row and `task.created`. */
+  /** The creation's writes: the task row. */
   private async createIn(
     request: CreateTask,
     input: unknown,
   ): Promise<RuntimeTaskRow> {
-    const { tasks, taskRows, events } = this.deps;
+    const { tasks, taskRows } = this.deps;
     const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
       parentId: null,
@@ -398,7 +487,8 @@ export class TaskControl {
     };
     if (request.parentId !== undefined) {
       const found = await taskRows.findOwned(request.parentId, request.ownerId);
-      if (!found) {
+      // A question task has no children: it is ended only by its answer or a stop (KD-3).
+      if (!found || found.type === QUESTION_TASK_TYPE) {
         throw new RuntimeError(
           'TASK_NOT_FOUND',
           `Task ${request.parentId} not found`,
@@ -429,11 +519,6 @@ export class TaskControl {
       input,
       ...lineage,
     });
-    await events.append({
-      type: RuntimeEventTypeSchema.enum['task.created'],
-      task: row,
-      payload: { type: row.type, parentId: row.parentId, depth: row.depth },
-    });
     return row;
   }
 
@@ -441,11 +526,11 @@ export class TaskControl {
   private async interruptIn(
     taskId: string,
     ownerId: string,
-    message: InterruptMessage | undefined,
+    message: InterruptMessage,
   ): Promise<
-    { task: RuntimeTaskRow; messageId: string | undefined } | undefined
+    { task: RuntimeTaskRow; from: string; messageId: string } | undefined
   > {
-    const { tasks, taskRows, events, inbox } = this.deps;
+    const { tasks, taskRows, inbox } = this.deps;
     const found = await taskRows.findOwned(taskId, ownerId);
     if (!found)
       throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
@@ -454,84 +539,22 @@ export class TaskControl {
     const task = await tasks.hold({ taskId, from: UNFINISHED_STATUSES });
     if (!task || !isInterruptible(task)) return undefined;
 
-    const change: TaskChange = message
-      ? { kind: 'set', status: queued, fence: true }
-      : {
-          kind: 'wait',
-          reason: WaitReasonSchema.enum.interrupted,
-          fence: true,
-        };
-    const row = await writeHeld(tasks, task, change);
-    await events.append({
-      type: EVENT['task.interrupted'],
-      task: row,
-      payload: {
-        from: task.status,
-        status: row.status,
-        withMessage: message !== undefined,
-      },
+    await writeHeld(tasks, task, {
+      kind: 'set',
+      status: queued,
+      fields: { recoveries: 0 },
+      fence: true,
     });
-    if (!message) return { task: row, messageId: undefined };
+    const from = task.status;
     // The task is `queued` already: the message wakes nothing.
     const inserted = await inbox.insertMessage({
       recipientId: taskId,
       ownerId,
       kind: message.kind,
-      sender: message.sender,
       payload: message.payload,
       revive: message.revive ?? false,
     });
-    return { task: inserted.recipient, messageId: inserted.messageId };
-  }
-
-  /**
-   * Stops `top` (unless finished) and every unfinished descendant, top-down, level by level. Each
-   * task is taken by a write of its row as it is now (`Tasks.hold`) and ended; its children are
-   * read after that. A commit or a creation that adds a child writes the parent's row too, so it
-   * came before the parent's stop, and its child is read here, or it comes after and is refused.
-   */
-  private async stopTree(top: RuntimeTaskRow): Promise<RuntimeTaskRow[]> {
-    const { tasks, taskRows } = this.deps;
-    const stoppedTasks: RuntimeTaskRow[] = [];
-    for (
-      let level: readonly RuntimeTaskRow[] = [top];
-      level.length > 0;
-      level = await taskRows.listChildren(level.map((task) => task.taskId))
-    ) {
-      for (const { taskId } of level) {
-        const task = await tasks.hold({ taskId, from: UNFINISHED_STATUSES });
-        if (!task) continue;
-        stoppedTasks.push(
-          await endTask(this.deps, task, {
-            status: stopped,
-            fields: { stepClaims: 0, recoveries: 0 },
-            fence: true,
-          }),
-        );
-      }
-    }
-    if (stoppedTasks.length > 0) {
-      // Invariant 3: a task that no longer waits has no open request.
-      await this.deps.decisions.cancelOpen(
-        stoppedTasks.map((task) => task.taskId),
-      );
-    }
-    return stoppedTasks;
-  }
-
-  /**
-   * Cuts off this process's steps of the tasks whose attempt the command raised, and lets their
-   * live objects go: a cut-off step may have written what its object has not taken in.
-   */
-  private cutOff(
-    changed: readonly RuntimeTaskRow[],
-    reason: StepSignalReason,
-  ): void {
-    for (const task of changed) {
-      // Not awaited: the steps end when their handlers answer the signal.
-      void this.deps.running.abortTask(task.taskId, reason, task.attempt);
-    }
-    this.deps.live.evict(changed.map((task) => task.taskId));
+    return { task: inserted.recipient, from, messageId: inserted.messageId };
   }
 
   /** The rules of `inbox.enqueue` for an interrupt's message. */

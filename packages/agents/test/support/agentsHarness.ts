@@ -34,7 +34,6 @@ import {
   conversationTasks,
   DATABASE,
   type Database,
-  runtimeEvents,
   runtimeInbox,
   runtimeModelCalls,
 } from '@agent-os/db';
@@ -856,7 +855,8 @@ export function historyLines(entries: readonly AgentHistoryEntry[]): string[] {
 /** A `child_finished` notice in a parent's queue as stored, delivered or not. */
 export interface ChildNotice {
   readonly seq: number;
-  readonly status: string;
+  /** When a committed step of the parent received the notice; null while it waits. */
+  readonly deliveredAt: Date | null;
   readonly payload: {
     readonly taskId: string;
     readonly status: string;
@@ -874,7 +874,7 @@ export async function childNoticesOf(
   const rows = await db
     .select({
       seq: runtimeInbox.seq,
-      status: runtimeInbox.status,
+      deliveredAt: runtimeInbox.deliveredAt,
       payload: runtimeInbox.payload,
     })
     .from(runtimeInbox)
@@ -888,15 +888,6 @@ export async function childNoticesOf(
   return rows
     .map((row) => ({ ...row, payload: row.payload as ChildNotice['payload'] }))
     .filter((row) => row.payload.taskId === childId);
-}
-
-/** Runtime events about a task, by `seq`. */
-export function eventsOf(db: Database, taskId: string) {
-  return db
-    .select({ type: runtimeEvents.type, payload: runtimeEvents.payload })
-    .from(runtimeEvents)
-    .where(eq(runtimeEvents.taskId, taskId))
-    .orderBy(asc(runtimeEvents.seq));
 }
 
 /**

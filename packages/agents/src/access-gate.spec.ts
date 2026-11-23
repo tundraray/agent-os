@@ -36,7 +36,8 @@ import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { ModelClient } from './model/model-client';
 import { CallRecords } from './store/call-records';
 import { History } from './store/history';
-import { type Session, type SessionInput, Sessions } from './store/sessions';
+import type { RunStart } from './start/run-definition';
+import { type AgentTaskInput, type Session, Sessions } from './store/sessions';
 import {
   createAccessGateDouble,
   createLibraryDouble,
@@ -101,20 +102,21 @@ const VERSION: AgentVersion = {
   },
 };
 
-const INPUT: SessionInput = {
-  versionId: VERSION.id,
+const INPUT: AgentTaskInput = {};
+
+const RUN: RunStart = {
+  version: VERSION,
   name: 'helper',
   subagent: null,
   model: MODEL,
-  prompt: 'Look it up',
-  description: 'Look up',
 };
 
 const SESSION: Session = {
   taskId: AGENT,
   parentId: null,
   ownerId: OWNER,
-  name: INPUT.name,
+  versionId: VERSION.id,
+  name: RUN.name,
   origin: {
     recordId: VERSION.agentId,
     kind: 'agent',
@@ -162,7 +164,6 @@ function stepContext(logger: Logger): StepContext {
     stepNo: 3,
     resumedAfterLoss: false,
     messages: [],
-    decision: null,
     signal: new AbortController().signal,
     logger,
     guard: async () => {
@@ -179,7 +180,7 @@ function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
   const db = new Db(emptyDatabase());
   const model = createScriptedModel();
-  model.script({ agent: INPUT.name }, [], {
+  model.script({ agent: RUN.name }, [], {
     thereafter: { text: 'answer' },
   });
   const audits: AuditRecord[] = [];
@@ -287,7 +288,7 @@ function refusedAgent(refusal: Refusal) {
       access,
       audit,
       modelClient,
-      tasks: { listTree: async () => [] },
+      tasks: { get: notCalled, listTree: async () => [] },
       inbox: { listPending: async () => [] },
       vectorStore,
       embeddings: { embed: notCalled },
@@ -295,7 +296,7 @@ function refusedAgent(refusal: Refusal) {
       library: createLibraryDouble(),
       logger,
     },
-    { task: ctx, input: INPUT, version: VERSION },
+    { task: ctx, input: INPUT, run: RUN },
   );
   return {
     ctx,

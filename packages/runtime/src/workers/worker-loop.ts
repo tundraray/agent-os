@@ -22,8 +22,8 @@ export interface WorkerLoopOptions {
 }
 
 /**
- * A periodic worker of the runtime (relay, sweeper). A failed pass — the database is unreachable —
- * is logged and retried with backoff doubling from `RUNTIME_POLL_MS` up to 16 × `RUNTIME_POLL_MS`;
+ * A periodic worker of the runtime (the recovery sweeper). A failed pass — the database is
+ * unreachable — is logged and retried with backoff doubling from `RUNTIME_POLL_MS` up to 16 × `RUNTIME_POLL_MS`;
  * the state is not changed.
  */
 export class WorkerLoop {

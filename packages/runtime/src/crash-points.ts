@@ -13,10 +13,8 @@ export const CRASH_POINTS = [
   'step.before-commit',
   /** Inside the commit transaction, after the handler's writes, before delivery marks. */
   'step.inside-commit',
-  /** After the commit, before the outbox delivers its events. */
+  /** After the commit transaction of a step, before its log records. */
   'step.after-commit',
-  /** Inside the message transaction, after the insert, before the wake-up. */
-  'inbox.before-wake',
   /** After the sweeper's requeue transaction. */
   'sweeper.after-requeue',
 ] as const;

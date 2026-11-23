@@ -1,5 +1,4 @@
-import { MessageStatusSchema } from '@agent-os/contracts';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { runtimeInbox, runtimeTasks } from '../schema';
 
@@ -7,23 +6,25 @@ export type RuntimeInboxRow = typeof runtimeInbox.$inferSelect;
 
 export type NewRuntimeInboxRow = Pick<
   typeof runtimeInbox.$inferInsert,
-  'messageId' | 'recipientId' | 'seq' | 'kind' | 'sender' | 'payload' | 'revive'
+  'messageId' | 'recipientId' | 'kind' | 'payload' | 'revive'
 >;
-
-const { pending, delivered } = MessageStatusSchema.enum;
 
 /**
  * Drizzle queries of `runtime_inbox`. The runtime's `Inbox` is the only writer:
- * it holds its sequence and its wake-up.
+ * it holds the wake-up.
  */
 export class RuntimeInboxRepository {
   constructor(private readonly db: Db) {}
 
-  /** Inserts a `pending` message. */
-  async insert(message: NewRuntimeInboxRow): Promise<void> {
-    await this.db.client
+  /** Inserts a waiting message; returns its `seq`, the insertion order. */
+  async insert(message: NewRuntimeInboxRow): Promise<number> {
+    const [row] = await this.db.client
       .insert(runtimeInbox)
-      .values({ ...message, status: pending });
+      .values(message)
+      .returning({ seq: runtimeInbox.seq });
+    if (row === undefined)
+      throw new Error('runtime_inbox insert returned no row');
+    return row.seq;
   }
 
   /** The task's pending messages by `seq`. */
@@ -34,7 +35,7 @@ export class RuntimeInboxRepository {
       .where(
         and(
           eq(runtimeInbox.recipientId, taskId),
-          eq(runtimeInbox.status, pending),
+          isNull(runtimeInbox.deliveredAt),
         ),
       )
       .orderBy(asc(runtimeInbox.seq));
@@ -59,26 +60,25 @@ export class RuntimeInboxRepository {
         and(
           eq(runtimeInbox.recipientId, taskId),
           eq(runtimeTasks.ownerId, ownerId),
-          eq(runtimeInbox.status, pending),
+          isNull(runtimeInbox.deliveredAt),
         ),
       )
       .orderBy(asc(runtimeInbox.seq));
     return rows.map((row) => row.message);
   }
 
-  /** Marks the task's pending messages as delivered to step `stepNo`; returns the ones it marked. */
+  /** Marks the task's pending messages delivered (`delivered_at = now()`); returns the ones it marked. */
   markDelivered(
     taskId: string,
     messageIds: readonly string[],
-    stepNo: number,
   ): Promise<{ messageId: string; seq: number }[]> {
     return this.db.client
       .update(runtimeInbox)
-      .set({ status: delivered, deliveredStep: stepNo })
+      .set({ deliveredAt: sql`now()` })
       .where(
         and(
           eq(runtimeInbox.recipientId, taskId),
-          eq(runtimeInbox.status, pending),
+          isNull(runtimeInbox.deliveredAt),
           inArray(runtimeInbox.messageId, [...messageIds]),
         ),
       )
@@ -93,7 +93,7 @@ export class RuntimeInboxRepository {
       .where(
         and(
           eq(runtimeInbox.recipientId, taskId),
-          eq(runtimeInbox.status, pending),
+          isNull(runtimeInbox.deliveredAt),
           eq(runtimeInbox.revive, true),
         ),
       )

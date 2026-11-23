@@ -1,12 +1,11 @@
 import {
   AGENT_TASK_TYPE,
-  type AgentVersion,
   CHAT_TASK_TYPE,
   DEEP_AGENT_TASK_TYPE,
 } from '@agent-os/contracts';
 import type { Logger } from '@agent-os/common';
 import { SettingsRepository } from '@agent-os/db';
-import { type LiveTaskIdentity, Trackers } from '@agent-os/runtime';
+import { type LiveTaskIdentity, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import { AGENTS_CONFIG, AGENTS_LOGGER, RECORD_LIBRARY } from '../agents.tokens';
@@ -14,7 +13,11 @@ import type { AgentsConfig } from '../config';
 import { DeepAgent, type DeepAgentDeps } from '../deep/deep-agent';
 import type { RecordLibrary } from '../start/record-library';
 import type { RunStart } from '../start/run-definition';
-import { type SessionInput, sessionInputOf } from '../store/sessions';
+import {
+  type AgentTaskInput,
+  agentTaskInputOf,
+  type SessionStart,
+} from '../store/sessions';
 import { createStartChild } from '../tools/system/start-child';
 import { readToolResultSettings } from '../tools/tool-result-settings';
 import { ToolRunner } from '../tools/tool-runner';
@@ -49,10 +52,11 @@ export class AgentFactory implements OnModuleInit {
 
   constructor(
     @Inject(AgentDeps) private readonly agent: AgentDeps,
-    /** The version of a task the runtime has no object for is read from it (`restore`). */
+    /** The version of a task the runtime has no object for is read from it by its session's id (`restore`). */
     @Inject(RECORD_LIBRARY)
     private readonly library: Pick<RecordLibrary, 'version'>,
-    @Inject(Trackers) trackers: Pick<Trackers, 'list'>,
+    /** The final subagent's answer of a deep agent is read from its task. */
+    @Inject(TaskControl) tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** The settings of large results, read for each `task` ending (tool-result-reading R-5). */
     @Inject(SettingsRepository) settingsRows: Pick<SettingsRepository, 'read'>,
     @Inject(ToolRunner)
@@ -65,7 +69,7 @@ export class AgentFactory implements OnModuleInit {
     // The holder has fields only: a copy with what the class adds is all a class needs.
     this.chat = Object.assign({}, agent, { logger });
     this.deep = Object.assign({}, agent, {
-      trackers,
+      tasks,
       resultSettings: () => readToolResultSettings(settingsRows),
       maxDepth: config.maxDepth,
     });
@@ -80,31 +84,32 @@ export class AgentFactory implements OnModuleInit {
       createStartChild({
         maxDepth: this.config.maxDepth,
         childType: childTypeOf,
-        createIn: (type, task, input, version) =>
-          this.createIn(type, task, input, version),
+        createIn: (type, task, input, start) =>
+          this.createIn(type, task, input, start),
       }),
     );
   }
 
   /**
-   * The object of a task just created, inside the transaction that created it, on the version its start
-   * resolved: writes the agent's session with whatever its class adds to a new one, and takes the written rows
-   * in. The caller hands the object over once the transaction commits (`LiveTasks.adopt`, or `effects.adopt` in
-   * a step's commit).
+   * The object of a task just created, inside the transaction that created it, on the run its start resolved:
+   * writes the agent's session from the start's request with whatever its class adds to a new one, and takes
+   * the written rows in. The caller hands the object over once the transaction commits (`LiveTasks.adopt`, or
+   * `effects.adopt` in a step's commit).
    */
   async createIn(
     type: string,
     task: Omit<LiveTaskIdentity, 'type' | 'input'>,
-    input: SessionInput,
-    version: AgentVersion,
+    input: AgentTaskInput,
+    start: SessionStart,
   ): Promise<BaseAgent> {
     const startedAt = Date.now();
+    const { run, ...request } = start;
     const agent = this.build({
       task: { ...task, type, input },
       input,
-      version,
+      run,
     });
-    await agent.createSession();
+    await agent.createSession(request);
     await agent.absorb();
     this.logger.info('agent object created', {
       ...agent.held(),
@@ -114,14 +119,23 @@ export class AgentFactory implements OnModuleInit {
   }
 
   /**
-   * The object of an existing task, from the database, with the version its input names, read once. An agent
-   * without a session yet comes back empty: its first step makes the session.
+   * The object of an existing task, from the database: the version, name, team member and model are its
+   * session's (KD-8), the version read once. An agent task without a session is a defect: the restore throws,
+   * and the step fails with `handler_error`.
    */
   async restore(task: LiveTaskIdentity): Promise<BaseAgent> {
     const startedAt = Date.now();
-    const input = sessionInputOf(task.input);
-    const version = await this.library.version(input.versionId);
-    const agent = this.build({ task, input, version });
+    const input = agentTaskInputOf(task.input);
+    const session = await this.agent.sessions.get(task.taskId);
+    if (session === undefined)
+      throw new Error(`Agent ${task.taskId} has no session`);
+    const run: RunStart = {
+      version: await this.library.version(session.versionId),
+      name: session.name,
+      subagent: session.origin.subagent,
+      model: session.model,
+    };
+    const agent = this.build({ task, input, run });
     await agent.absorb();
     this.logger.info('agent object restored', {
       ...agent.held(),

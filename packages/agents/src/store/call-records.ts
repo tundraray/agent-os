@@ -120,7 +120,8 @@ function interruptedEnding(call: Pick<CallState, 'sentAt'>): CallEnding {
 /**
  * The open calls as an interrupt or a stop closes them at `finishedAt`, before the write or without
  * one: the preview of a step and the derived view of a stopped agent's history. A sent `task` call is
- * not among them: its tracker's outcomes close it (deep-agents/design-task.md KD-3, KD-4).
+ * not among them: the agent's next step closes it from its subagents' `child_finished`
+ * (data-model/design-runtime.md, «Инструмент `task`»).
  */
 export function interruptedResults(
   open: readonly CallState[],
@@ -187,7 +188,7 @@ export class CallRecords {
 
   /**
    * Closes the agent's open calls in answer and position order as an interrupt or a stop does and
-   * returns their results; a sent `task` call stays open for its tracker's outcomes. The only closing of
+   * returns their results; a sent `task` call stays open for its subagents' `child_finished`. The only closing of
    * open calls (overview, Common Processing Points).
    */
   async closeOpen(taskId: string): Promise<HistoryEntry[]> {

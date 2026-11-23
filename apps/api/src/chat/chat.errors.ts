@@ -86,7 +86,6 @@ function codeOf(
     switch (error.code) {
       case 'TASK_NOT_FOUND':
         return notFound;
-      case 'DECISION_NOT_FOUND':
       case 'PARENT_FINISHED':
         return error.code;
       default:

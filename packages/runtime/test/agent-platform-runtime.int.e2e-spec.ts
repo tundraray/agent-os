@@ -14,7 +14,7 @@
 // - Isolation (project convention, no truncate): a unique owner, a real employee row (`await newUser()`), and a unique task type per test (a worker claims only types in its own `handlers` registry, so another file's workers never touch these
 //   rows); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on gates the handler waits on and on rows (`runtimeWorkSettled`-style). "Status changed within the command" (NFR-01) is asserted as: the status read right after the command's
-//   response, while the handler is still held; the 5 s p95 is the on-demand script `test/verify/runtime-latency.verify.ts` (UC-N2), not this file.
+//   response, while the handler is still held: the command writes the status in its own transaction, so no latency is left to measure.
 // - Support (test/support): runtimeHarness.ts (DbModule + RuntimeModule with test handlers, injected Clock, an in-memory logger from `@agent-os/common/testing`,
 //   held workers), runtimeDb.ts (read-only snapshots of `runtime_*` rows, a row-version snapshot for "nothing changed"), testHandlers.ts (step scripts, gates, a table of handler rows written through `commit`).
 //
@@ -27,8 +27,8 @@
 //   `parseRuntimeConfig` rows extend the existing `runtime-config.spec.ts` only if the plan changes the parsing
 // - unit, packages/common/src: DC-11 and UC-9 - redaction by field name (case-insensitive, nested) and by secret value, the `[redacted]` replacement in BOTH sinks, error expansion with cause chain, the 16 KiB truncation, `child(fields)`; the console and the
 //   Sentry sink over a fake SDK (one log call, plus one exception call when `error` is set). One table-driven file over `@agent-os/common/testing`; no integration test, the logger has no I/O of its own.
-// - the process-kill matrix, restart, recovery exhaustion, the guard intent, the decision across a restart: sibling file agent-platform-runtime.e2e-spec.ts (E2E-1)
-// - on-demand script test/verify/runtime-latency.verify.ts (not in the suite): UC-N1 (resume within 60 s, NFR-05 measured), UC-N2 (status within 5 s p95, NFR-01 measured)
+// - the process-kill matrix, restart, recovery exhaustion, the guard intent, the question across a restart: sibling file agent-platform-runtime.e2e-spec.ts (E2E-1)
+// - on-demand script test/verify/runtime-latency.verify.ts (not in the suite): UC-N1 (resume within 60 s, NFR-05 measured)
 // - not automated: task input validation (`UNKNOWN_TASK_TYPE`, `INVALID_TASK_INPUT` - zod is the library; the wiring is hit by every test that creates a task), event type prefix rule, `RUNTIME_*` defaults, Sentry initialisation in the apps
 //
 // AC -> proving test:
@@ -37,29 +37,25 @@
 // - AC-01.3: INT-2 (rows A, B, E: once and in order), E2E-1 (a message pending at the kill)
 // - AC-02.1, AC-02.2: INT-5 (rows A, B) and the cost-rule unit table
 // - DC-1: INT-1 row A + E2E-1 row "kill inside the commit"; DC-2, DC-3, DC-7: E2E-1; DC-4: INT-2; DC-5: INT-1 rows A, B and INT-3 row B; DC-6: INT-3; DC-8: INT-4; DC-10: INT-5 rows B, D; DC-11: unit (packages/common)
-// - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
+// - NFR-01 (status within the command): INT-3 rows A, B; NFR-04: INT-2 row E; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
 
 import { randomUUID } from 'node:crypto';
-import {
-  runtimeDecisions,
-  runtimeModelCalls,
-  runtimeTasks,
-} from '@agent-os/db';
+import { runtimeModelCalls, runtimeTasks } from '@agent-os/db';
 import {
   type GuardResult,
   type NewMessage,
+  QUESTION_TASK_TYPE,
   RuntimeError,
   type StepContext,
   type StepResult,
   type TaskHandler,
 } from '@agent-os/runtime';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { newUser, waitFor } from '@agent-os/db/testing';
 import {
   closeRuntimeDb,
-  eventsOf,
   handlerRowsOf,
   inboxOf,
   rowVersionsOf,
@@ -112,19 +108,27 @@ function note(
   ownerId: string,
   payload: unknown,
 ): NewMessage {
-  return { recipientId, ownerId, kind: 'note', sender: ownerId, payload };
+  return { recipientId, ownerId, kind: 'note', payload };
 }
 
-/** The stored state of a decision request. */
-async function decisionOf(harness: RuntimeHarness, decisionId: string) {
+/** The stored question task the asker asked (KD-3); throws before it asked. */
+async function questionOf(harness: RuntimeHarness, askerId: string) {
   const [row] = await harness.db
     .select({
-      status: runtimeDecisions.status,
-      resolution: runtimeDecisions.resolution,
-      deliveredStep: runtimeDecisions.deliveredStep,
+      taskId: runtimeTasks.taskId,
+      status: runtimeTasks.status,
+      waitReason: runtimeTasks.waitReason,
+      input: runtimeTasks.input,
+      result: runtimeTasks.result,
     })
-    .from(runtimeDecisions)
-    .where(eq(runtimeDecisions.decisionId, decisionId));
+    .from(runtimeTasks)
+    .where(
+      and(
+        eq(runtimeTasks.parentId, askerId),
+        eq(runtimeTasks.type, QUESTION_TASK_TYPE),
+      ),
+    );
+  if (!row) throw new Error(`Task ${askerId} asked no question`);
   return row;
 }
 
@@ -164,7 +168,7 @@ interface CutOffProbe {
   later: {
     stepNo: number;
     resumedAfterLoss: boolean;
-    messages: { kind: string; sender: string; payload: unknown }[];
+    messages: { kind: string; payload: unknown }[];
   }[];
 }
 
@@ -191,9 +195,8 @@ function cutOffHandler(options: {
         probe.later.push({
           stepNo: ctx.stepNo,
           resumedAfterLoss: ctx.resumedAfterLoss,
-          messages: ctx.messages.map(({ kind, sender, payload }) => ({
+          messages: ctx.messages.map(({ kind, payload }) => ({
             kind,
-            sender,
             payload,
           })),
         });
@@ -231,12 +234,12 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Not re-checked here: input validation, the shape of `StepResult` variants (types), the cost of the step (INT-5).
   // Behavior: ready tasks -> claimed -> each step's handler rows + status + notification committed once -> the tree reads as one uninterrupted run
   // @category: core-functionality
-  // @dependency: RuntimeModule (Dispatcher, TaskControl, Inbox, EventLog), test handlers, Postgres
+  // @dependency: RuntimeModule (Dispatcher, TaskControl, Inbox), test handlers, Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; one child task under a parent task whose inbox is read):
   // - Row A "three steps": the child's handler returns `continue`, `continue`, then `complete` with a result, writing one row per step to its own table through `commit`. Then: three handler rows with step numbers 0, 1, 2 and no others; the child `completed`
-  //   with `stepNo` 3 and the result stored; the parent's inbox holds exactly one `child_finished` with status `completed`, the child's `taskId`, the result, the step count and a duration; `task.step_committed` appears three times for the child.
+  //   with `stepNo` 3 and the result stored; the parent's inbox holds exactly one `child_finished` with status `completed`, the child's `taskId`, the result, the step count and a duration.
   // - Row B "handler throws": the handler throws an error with a `cause` on its first step. Then: the child `failed` with reason `handler_error`; no row of that step in the handler's table; exactly one `child_finished` with status `failed` and the failure in the
   //   parent's inbox; the error is in the in-memory log with its stack and cause (the log side of DC-11 is the unit table, this row only checks that the failure is logged at all).
   it(
@@ -283,20 +286,13 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         });
         const notices = await childFinishedOf(parentId);
         expect(notices).toHaveLength(1);
-        expect(notices[0]).toMatchObject({ sender: childId, revive: false });
+        expect(notices[0]).toMatchObject({ revive: false });
         expect(notices[0].payload).toEqual({
           taskId: childId,
           status: 'completed',
           result: { answer: 42 },
-          steps: 3,
           durationMs: expect.any(Number),
         });
-        const committed = (await eventsOf(childId)).filter(
-          (event) => event.type === 'task.step_committed',
-        );
-        expect(committed.map((event) => event.payload.stepNo)).toEqual([
-          0, 1, 2,
-        ]);
       } finally {
         await harness.close();
       }
@@ -352,12 +348,11 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         expect(await handlerRowsOf([childId])).toEqual([]);
         const notices = await childFinishedOf(parentId);
         expect(notices).toHaveLength(1);
-        expect(notices[0]).toMatchObject({ sender: childId, revive: false });
+        expect(notices[0]).toMatchObject({ revive: false });
         expect(notices[0].payload).toEqual({
           taskId: childId,
           status: 'failed',
           failure: { reason: 'handler_error', message: 'step exploded' },
-          steps: 0,
           durationMs: expect.any(Number),
         });
         // The log line follows the failing transaction's commit, so it is awaited too.
@@ -396,7 +391,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //
   // Catches: (1) a message that arrives during a step shown to that same step (the "current step sees no messages" boundary), or delivered twice, or out of order; (2) a task left `waiting` with a pending message when the message lands between the handler's
   //   `wait` result and the commit (the lost wake-up of Invariant 2); (3) a finished task revived without `revive`, or a stopped parent revived by a child's notification (KD-3 "a child's notification does not revive").
-  // Not re-checked here: the kill half of UC-E4 (E2E-1 row "message pending at the kill"), the decision-waiting case (E2E-1 row "decision across a restart", which holds the pending message), `PAYLOAD_TOO_LARGE`.
+  // Not re-checked here: the kill half of UC-E4 (E2E-1 row "message pending at the kill"), a task waiting for its question (data-model UC-2), `PAYLOAD_TOO_LARGE`.
   // Behavior: messages enqueued -> task busy / free / finished / racing with the end of a step -> delivered in the next committed step once, in number order, with the task never left asleep over them
   // @category: core-functionality
   // @dependency: RuntimeModule (Inbox, Dispatcher, TaskControl), test handlers with gates, Postgres NOTIFY
@@ -404,20 +399,17 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //
   // Verification items (table-driven by recipient state):
   // - Row A "busy": a step is held on a gate. Enqueue three messages in a row. Then: the held step's context had none of them; after the gate opens the next step's context lists all three in the order sent; after that step commits all three are `delivered`
-  //   with that step number; a further step's context lists none (no redelivery).
+  //   (`delivered_at` set); a further step's context lists none (no redelivery).
   // - Row B "free, waiting for messages": the task is `waiting` with reason `messages`. Enqueue one message. Then: in the same call's transaction the task reads `queued` (checked before any worker could have run: workers paused for this row); with workers on, the
   //   next step receives the message.
   // - Row C "finished, no revive, then revive": the task is `completed`. Enqueue without `revive`: the task stays `completed`, the message is listed pending. Enqueue with `revive`: the task is `queued`; its next step receives both messages in number order.
   // - Row D "a child's notification does not revive a stopped parent": stop the parent (its children finish afterwards): the parent stays `stopped` and the `child_finished` messages wait. (A `completed` parent: the same.)
   // - Row E "race": the step's handler returns `wait`; messages are enqueued in parallel with the commit of that step and with an `interrupt` of the task; the scenario is repeated
-  //   100 times with a fresh task each. After every iteration: no task is `waiting` with reason `messages` while a message is pending (Invariant 2); every message is `delivered` exactly once and the delivery order equals the number order (Invariant 4); the
-  //   number sequence of one recipient has no gaps and no repeats under 8 concurrent senders.
+  //   100 times with a fresh task each. After every iteration: no task is `waiting` with reason `messages` while a message is pending (Invariant 2); every message is `delivered` exactly once and the delivery order equals the `seq` order (Invariant 4); the
+  //   `seq` of one recipient's messages keeps each sender's order under 8 concurrent senders.
   // - Row F "revive during the last step" (UC-E10, Invariant 9, design v1.2): a child's step is held on a gate and will return `complete`. Enqueue a message without `revive`, then one with `revive`;
   //   open the gate. Then: the parent's inbox holds exactly one `child_finished` with status `completed`; the child reads `queued` with the same `taskId` (no new task) and its result cleared; its next step's
   //   context lists both messages in number order. Catches: the commit leaving the task `completed` over a pending `revive` message (a lost revive), or reviving without notifying the parent first.
-  // - Row B, decision half (task T4.4 proof obligation, DC-4 "задача, которая ждёт решения, получает его после решения"): a task waiting for a decision gets a message and stays
-  //   `waiting` (`decision`); `resolve` twice answers `resolved`, then `already_resolved`; the next step alone gets the decision and the message; the decision reads `resolved`
-  //   with `delivered_step` of that step.
   it(
     'INT-2 A: a message sent during a step is invisible to it, comes in the next step in the order sent, and is not delivered again',
     async () => {
@@ -461,25 +453,15 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         expect(sent).toEqual([0, 1, 2]);
         expect(seen.map((view) => view.stepNo)).toEqual([0, 1, 2]);
         expect(seen[0].messages).toEqual([]);
-        expect(
-          seen[1].messages.map((message) => [message.seq, message.payload]),
-        ).toEqual([
-          [0, { n: 1 }],
-          [1, { n: 2 }],
-          [2, { n: 3 }],
+        expect(seen[1].messages.map((message) => message.payload)).toEqual([
+          { n: 1 },
+          { n: 2 },
+          { n: 3 },
         ]);
         expect(seen[2].messages).toEqual([]);
         expect(
-          (await inboxOf(taskId)).map((message) => [
-            message.seq,
-            message.status,
-            message.deliveredStep,
-          ]),
-        ).toEqual([
-          [0, 'delivered', 1],
-          [1, 'delivered', 1],
-          [2, 'delivered', 1],
-        ]);
+          (await inboxOf(taskId)).map((message) => message.delivered),
+        ).toEqual([true, true, true]);
         expect(await harness.inbox.listPending(taskId, ownerId)).toEqual([]);
       } finally {
         await harness.close();
@@ -491,31 +473,16 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   it(
     'INT-2 B: a message to a task waiting for messages makes it queued in the same transaction, and its next step receives it',
     async () => {
-      // Given: a task that waits for messages, and (the decision half) a task that asks for a decision
+      // Given: a task that waits for messages
       const ownerId = await newUser();
       const messagesType = uniqueType('int2b-messages');
-      const decisionType = uniqueType('int2b-decision');
       const seenByMessages: StepView[] = [];
-      const seenByDecision: StepView[] = [];
       const harness = await createRuntimeHarness({
         handlers: [
           scriptedHandler({
             type: messagesType,
             seen: seenByMessages,
             steps: [{ outcome: 'wait' }],
-          }),
-          scriptedHandler({
-            type: decisionType,
-            seen: seenByDecision,
-            steps: [
-              {
-                outcome: 'await_decision',
-                kind: 'approve',
-                payload: { question: 'go?' },
-              },
-              { outcome: 'continue' },
-              { outcome: 'wait' },
-            ],
           }),
         ],
       });
@@ -556,80 +523,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           ),
         ).toEqual([[], [{ n: 1 }]]);
         expect(
-          (await inboxOf(taskId)).map((message) => [
-            message.status,
-            message.deliveredStep,
-          ]),
-        ).toEqual([['delivered', 1]]);
-
-        // Given (decision half): a task waiting for a decision gets a message and keeps waiting
-        const decidingId = await harness.tasks.create({
-          type: decisionType,
-          ownerId,
-          input: {},
-        });
-        await waitFor(
-          () => harness.tasks.get(decidingId, ownerId),
-          (task) => task.status === 'waiting' && task.waitReason === 'decision',
-          'the task to wait for a decision',
-        );
-        await harness.inbox.enqueue(note(decidingId, ownerId, { n: 1 }));
-        expect(await harness.tasks.get(decidingId, ownerId)).toMatchObject({
-          status: 'waiting',
-          waitReason: 'decision',
-        });
-        const [request] = (
-          await harness.decisions.listTree(decidingId, ownerId)
-        ).filter((d) => d.status === 'open');
-
-        // When: the decision is resolved twice
-        const first = await harness.decisions.resolve(
-          request.decisionId,
-          ownerId,
-          {
-            approved: true,
-          },
-        );
-        const second = await harness.decisions.resolve(
-          request.decisionId,
-          ownerId,
-          {
-            approved: false,
-          },
-        );
-
-        // Then: resolved once; only the next step gets the decision, together with the message
-        expect([first, second]).toEqual(['resolved', 'already_resolved']);
-        await waitFor(
-          () => statusesOf([decidingId]),
-          (statuses) =>
-            statuses.get(decidingId) === 'waiting' &&
-            seenByDecision.length === 3,
-          'the steps after the decision to commit',
-        );
-        expect(seenByDecision[0].decision).toBeNull();
-        expect(seenByDecision[1]).toMatchObject({
-          stepNo: 1,
-          decision: {
-            decisionId: request.decisionId,
-            kind: 'approve',
-            payload: { question: 'go?' },
-            resolution: { approved: true },
-          },
-        });
-        expect(
-          seenByDecision[1].messages.map((message) => message.payload),
-        ).toEqual([{ n: 1 }]);
-        expect(seenByDecision[2]).toMatchObject({
-          stepNo: 2,
-          decision: null,
-          messages: [],
-        });
-        expect(await decisionOf(harness, request.decisionId)).toEqual({
-          status: 'resolved',
-          resolution: { approved: true },
-          deliveredStep: 1,
-        });
+          (await inboxOf(taskId)).map((message) => message.delivered),
+        ).toEqual([true]);
       } finally {
         await harness.close();
       }
@@ -698,24 +593,14 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           'the revived step to commit',
         );
         expect(
-          seen[1].messages.map((message) => [
-            message.seq,
-            message.payload,
-            message.revive,
-          ]),
+          seen[1].messages.map((message) => [message.payload, message.revive]),
         ).toEqual([
-          [0, { n: 1 }, false],
-          [1, { n: 2 }, true],
+          [{ n: 1 }, false],
+          [{ n: 2 }, true],
         ]);
         expect(
-          (await inboxOf(taskId)).map((message) => [
-            message.status,
-            message.deliveredStep,
-          ]),
-        ).toEqual([
-          ['delivered', 1],
-          ['delivered', 1],
-        ]);
+          (await inboxOf(taskId)).map((message) => message.delivered),
+        ).toEqual([true, true]);
       } finally {
         await harness.close();
       }
@@ -792,22 +677,15 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         );
         expect(
           (await harness.inbox.listPending(stoppedParentId, ownerId)).map(
-            (message) => [
-              message.kind,
-              message.sender,
-              message.revive,
-              message.payload,
-            ],
+            (message) => [message.kind, message.revive, message.payload],
           ),
         ).toEqual([
           [
             'child_finished',
-            stoppedChildId,
             false,
             {
               taskId: stoppedChildId,
               status: 'stopped',
-              steps: 0,
               durationMs: expect.any(Number),
             },
           ],
@@ -851,23 +729,16 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         });
         expect(
           (await harness.inbox.listPending(completedParentId, ownerId)).map(
-            (message) => [
-              message.kind,
-              message.sender,
-              message.revive,
-              message.payload,
-            ],
+            (message) => [message.kind, message.revive, message.payload],
           ),
         ).toEqual([
           [
             'child_finished',
-            lateChildId,
             false,
             {
               taskId: lateChildId,
               status: 'completed',
               result: { child: 'done' },
-              steps: 1,
               durationMs: expect.any(Number),
             },
           ],
@@ -913,7 +784,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           gate.open();
           const interrupting = harness.tasks.interrupt(taskId, ownerId, {
             kind: 'note',
-            sender: ownerId,
             payload: { interrupt: true },
           });
           await Promise.all(
@@ -938,22 +808,17 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             [],
           );
 
-          // And: numbers without gaps or repeats, each message delivered, in number order (Invariant 4)
+          // And: every message delivered, in `seq` order (Invariant 4)
           const messages = await inboxOf(taskId);
-          const total = senders * messagesPerSender + 1;
           expect(
-            messages.map((message) => message.seq),
-            at,
-          ).toEqual(Array.from({ length: total }, (_, seq) => seq));
-          expect(
-            messages.filter((message) => message.status !== 'delivered'),
+            messages.filter((message) => !message.delivered),
             at,
           ).toEqual([]);
-          const deliveredSteps = messages.map(
-            (message) => message.deliveredStep ?? -1,
+          const deliveredAt = messages.map((message) =>
+            Number(message.deliveredAt),
           );
-          expect(deliveredSteps, at).toEqual(
-            [...deliveredSteps].sort((left, right) => left - right),
+          expect(deliveredAt, at).toEqual(
+            [...deliveredAt].sort((left, right) => left - right),
           );
           for (let sender = 0; sender < senders; sender += 1) {
             expect(
@@ -968,9 +833,17 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             ).toEqual([0, 1, 2]);
           }
           // each message is named by exactly one committed delivery
-          const deliveredIds = (await eventsOf(taskId))
-            .filter((event) => event.type === 'inbox.delivered')
-            .flatMap((event) => event.payload.messageIds as string[]);
+          const deliveredIds = harness.logs
+            .filter(
+              (record) =>
+                record.message === 'step committed' &&
+                record.fields.taskId === taskId,
+            )
+            .flatMap((record) =>
+              (record.fields.deliveredMessages as { messageId: string }[]).map(
+                (message) => message.messageId,
+              ),
+            );
           expect([...deliveredIds].sort(), at).toEqual(
             messages.map((message) => message.messageId).sort(),
           );
@@ -1035,16 +908,17 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         await nextStep.reached;
 
         // Then: the commit that completed the child queued it again - same task, result cleared
-        const events = await eventsOf(childId);
-        const completedAt = events.findIndex(
-          (event) => event.type === 'task.completed',
-        );
-        expect(completedAt).toBeGreaterThan(-1);
         expect(
-          events
-            .slice(completedAt + 1)
-            .find((event) => event.type === 'task.queued')?.payload,
-        ).toMatchObject({ cause: 'revive', from: 'completed' });
+          harness.logs
+            .filter(
+              (record) =>
+                record.message === 'task ended' &&
+                record.fields.taskId === childId,
+            )
+            .map((record) => record.fields),
+        ).toEqual([
+          expect.objectContaining({ to: 'completed', revived: true }),
+        ]);
         expect(await harness.tasks.get(childId, ownerId)).toMatchObject({
           taskId: childId,
           status: 'running',
@@ -1080,7 +954,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           taskId: childId,
           status: 'completed',
           result: { answer: 1 },
-          steps: 1,
         });
       } finally {
         await harness.close();
@@ -1095,29 +968,29 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Covers (original statements):
   // DC-6: "Прерывание и остановка меняют статус в пределах команды; итог шага, который шёл в этот момент, не применяется; остановка захватывает всех незаконченных потомков."
   // DC-5 (the stopped half): "Когда задача заканчивается — завершена, упала или остановлена, — в очереди её родителя появляется ровно одно уведомление со статусом и итогом."
-  // NFR-01: "Прерывание и остановка меняют статус агента не позже чем через 5 с после команды (p95)." (status in the command's own transaction here; the figure is the verify script)
+  // NFR-01: "Прерывание и остановка меняют статус агента не позже чем через 5 с после команды (p95)." (the status is written in the command's own transaction and read right after it)
   // Invariant 1 and 6: "Записать итог шага или охраняемую запись может только текущая попытка задачи." / "Дочерняя задача не создаётся под законченным родителем, а остановка дерева не оставляет в нём незаконченных задач, даже когда ребёнка порождают одновременно с остановкой."
   // Use cases: UC-E2, UC-E3, UC-E9. EARS: When. Design flow: Flow 4, KD-4 (status first, step cut off by fencing).
   //
-  // Catches: (1) an interrupted step whose late result is still applied (handler rows, delivery marks, a new status over `waiting`) - the fencing by attempt number; (2) a stop that leaves a grandchild running, a decision `open`, or notifies the parent twice or not
+  // Catches: (1) an interrupted step whose late result is still applied (handler rows, delivery marks, a new status over `waiting`) - the fencing by attempt number; (2) a stop that leaves a grandchild running, a question `waiting`, or notifies the parent twice or not
   //   at all; (3) a child spawned in the gap between the stop's tree read and its commit, which then runs under a stopped parent (the race of Invariant 6).
-  // Not re-checked here: interrupting a finished task or one that waits for a decision (a branch of the command, trivial).
-  // Behavior: command -> status changes before the handler in flight answers -> the late result is refused -> the next step runs with the message and the loss flag; stop closes the tree and its decisions and tells the parent once
+  // Not re-checked here: interrupting a finished task or one that waits for its children or a human (a branch of the command, trivial).
+  // Behavior: command -> status changes before the handler in flight answers -> the late result is refused -> the next step runs with the message and without the loss flag; stop closes the tree with its questions and tells the parent once
   // @category: core-functionality
-  // @dependency: RuntimeModule (TaskControl, Dispatcher, Decisions, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres
+  // @dependency: RuntimeModule (TaskControl, Dispatcher, Inbox, TokenLedger), test handlers with gates and an abort observer, Postgres
   // @complexity: high
   //
   // Verification items (table-driven):
   // - Row A "interrupt with a message, step in flight": a step holds on a gate after writing a guarded intent row (`guard`) and after `ledger.record` of one call. `interrupt(taskId, ownerId, message)` returns
   //   `interrupted`. Then, before the gate opens: the task reads `queued` and the message is pending; the handler's signal reason is `interrupted`. The gate opens and the handler returns a result with a `commit` row. Then: that result is refused - the commit row is
-  //   absent, `stepNo` is unchanged, the message is not marked delivered by it; the guarded intent row and the ledger row written before the signal remain; the NEXT step's context carries the message and `resumedAfterLoss` true; a `guard` call made by the
+  //   absent, `stepNo` is unchanged, the message is not marked delivered by it; the guarded intent row and the ledger row written before the signal remain; the NEXT step's context carries the message and `resumedAfterLoss` false (data-model DC-33); a `guard` call made by the
   //   cut-off handler after the command returns `fenced` and writes nothing.
-  // - Row B "stop of a subtree": parent P with child C (running a held step) and grandchild G (queued); C has an open decision. `stop(C)` returns the stopped ids {C, G}. Then: C and G `stopped`; the decision `cancelled`; P's inbox holds exactly one
+  // - Row B "stop of a subtree": parent P with child C (running a held step) and grandchild G (queued); C has an open question Q (data-model KD-3). `stop(C)` returns the stopped ids C first, then {Q, G}. Then: C, Q and G `stopped`; P's inbox holds exactly one
   //   `child_finished` for C with status `stopped`; the late result of C's held step is refused; no step of C or G is claimed afterwards; P is not touched - it reads `queued` or `running`, and its next step receives the notification.
   // - Row C "stop against spawn, repeated": a step spawns a child through `effects.spawn` in its commit while `stop` is called on the parent, and `create({ parentId })` is called against the same parent in parallel; 100 iterations with a fresh
   //   tree each. After each: the tree has no unfinished task; every `create` that lost the race answered `PARENT_FINISHED` and wrote no task; no task exists under a `stopped` parent in a non-final status.
   it(
-    'INT-3 A: interrupting a running step with a message changes the status in the command, refuses the late result, keeps intent and ledger rows, and the next step gets the message with the loss flag',
+    'INT-3 A: interrupting a running step with a message changes the status in the command, refuses the late result, keeps intent and ledger rows, and the next step gets the message without the loss flag',
     async () => {
       // Given: the runtime runs one step at a time, so the held step keeps its only slot. The step
       // wrote an intent row through `guard` and recorded a model call.
@@ -1149,7 +1022,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       });
       const message = {
         kind: 'note',
-        sender: ownerId,
         payload: { text: 'change course' },
       };
       try {
@@ -1204,12 +1076,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           stepNo: 0,
         });
         expect(
-          (await inboxOf(taskId)).map((stored) => [
-            stored.seq,
-            stored.status,
-            stored.deliveredStep,
-          ]),
-        ).toEqual([[0, 'pending', null]]);
+          (await inboxOf(taskId)).map((stored) => stored.delivered),
+        ).toEqual([false]);
         expect(
           (await ledgerRowsOf(runtime, ownerId)).map((row) => [
             row.taskId,
@@ -1217,15 +1085,14 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             row.costUsd,
           ]),
         ).toEqual([[taskId, TEST_MODEL_ONE, 0.002]]);
-        // the next step carries the message and the loss flag
+        // the next step carries the message; an interrupt is no lost step (DC-33)
         expect(probe.later).toEqual([
           {
             stepNo: 0,
-            resumedAfterLoss: true,
+            resumedAfterLoss: false,
             messages: [
               {
                 kind: 'note',
-                sender: ownerId,
                 payload: { text: 'change course' },
               },
             ],
@@ -1245,17 +1112,13 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             taskId,
             stepNo: 0,
             attempt: 3,
-            resumedAfterLoss: true,
+            resumedAfterLoss: false,
             note: 'commit',
           },
         ]);
         expect(
-          (await inboxOf(taskId)).map((stored) => [
-            stored.seq,
-            stored.status,
-            stored.deliveredStep,
-          ]),
-        ).toEqual([[0, 'delivered', 0]]);
+          (await inboxOf(taskId)).map((stored) => stored.delivered),
+        ).toEqual([true]);
       } finally {
         held.open();
         next.open();
@@ -1266,9 +1129,9 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   );
 
   it(
-    'INT-3 B: stopping a child closes it and its grandchild, cancels its decision, tells the parent once, and leaves the parent running',
+    'INT-3 B: stopping a child closes it, its question and its grandchild, tells the parent once, and leaves the parent running',
     async () => {
-      // Given: parent P waits for messages; child C waits for a decision; grandchild G holds a step
+      // Given: parent P waits for messages; child C waits for its question; grandchild G holds a step
       // deaf to its signal
       const ownerId = await newUser();
       const parentType = uniqueType('int3b-parent');
@@ -1287,7 +1150,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           type: childType,
           steps: [
             {
-              outcome: 'await_decision',
+              outcome: 'ask',
               kind: 'approve',
               payload: { question: 'go on?' },
             },
@@ -1315,8 +1178,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           () => first.tasks.listTree(parentId, ownerId),
           (tree) =>
             tree.map((task) => task.waitReason).join() ===
-            ['messages', 'decision'].join(),
-          'the parent to wait for messages and the child for a decision',
+            ['messages', 'children', 'human'].join(),
+          'the parent to wait for messages and the child for its question',
         );
         const grandchildId = await first.tasks.create({
           type: grandchildType,
@@ -1325,39 +1188,36 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           parentId: childId,
         });
         await grandchildHeld.reached;
-        const [request] = (
-          await first.decisions.listTree(parentId, ownerId)
-        ).filter((d) => d.status === 'open');
-        expect(request.taskId).toBe(childId);
+        const question = await questionOf(first, childId);
 
         // When: the child is stopped
         const stoppedIds = await first.tasks.stop(childId, ownerId);
 
-        // Then: child and grandchild stopped, the decision cancelled, the parent told once and woken
-        expect(stoppedIds).toEqual([childId, grandchildId]);
-        const statuses = await statusesOf([parentId, childId, grandchildId]);
-        expect([statuses.get(childId), statuses.get(grandchildId)]).toEqual([
-          'stopped',
-          'stopped',
+        // Then: child, its question and grandchild stopped, the parent told once and woken
+        expect(stoppedIds[0]).toBe(childId);
+        expect([...stoppedIds].sort()).toEqual(
+          [childId, question.taskId, grandchildId].sort(),
+        );
+        const statuses = await statusesOf([
+          parentId,
+          childId,
+          question.taskId,
+          grandchildId,
         ]);
+        expect([
+          statuses.get(childId),
+          statuses.get(question.taskId),
+          statuses.get(grandchildId),
+        ]).toEqual(['stopped', 'stopped', 'stopped']);
         expect(['queued', 'running']).toContain(statuses.get(parentId));
-        expect(await decisionOf(first, request.decisionId)).toEqual({
-          status: 'cancelled',
-          resolution: null,
-          deliveredStep: null,
-        });
         const stoppedNotice = {
           taskId: childId,
           status: 'stopped',
-          steps: 1,
           durationMs: expect.any(Number),
         };
         expect(
-          (await childFinishedOf(parentId)).map((notice) => [
-            notice.sender,
-            notice.payload,
-          ]),
-        ).toEqual([[childId, stoppedNotice]]);
+          (await childFinishedOf(parentId)).map((notice) => notice.payload),
+        ).toEqual([stoppedNotice]);
 
         // When: the grandchild's held step answers late
         grandchildHeld.open();
@@ -1388,19 +1248,15 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           "the parent's next step to commit",
         );
         expect(
-          seenByParent[1].messages.map((seen) => [
-            seen.kind,
-            seen.sender,
-            seen.payload,
-          ]),
-        ).toEqual([['child_finished', childId, stoppedNotice]]);
-        const claimsOf = async (taskId: string) =>
-          (await eventsOf(taskId)).filter(
-            (event) => event.type === 'task.step_started',
+          seenByParent[1].messages.map((seen) => [seen.kind, seen.payload]),
+        ).toEqual([['child_finished', stoppedNotice]]);
+        const claimsOf = (taskId: string) =>
+          first.logs.filter(
+            (record) =>
+              record.message === 'step started' &&
+              record.fields.taskId === taskId,
           ).length;
-        expect([await claimsOf(childId), await claimsOf(grandchildId)]).toEqual(
-          [1, 1],
-        );
+        expect([claimsOf(childId), claimsOf(grandchildId)]).toEqual([1, 1]);
         const after = await statusesOf([childId, grandchildId]);
         expect([after.get(childId), after.get(grandchildId)]).toEqual([
           'stopped',
@@ -1570,23 +1426,23 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Invariant 7: "Дерево целиком принадлежит одному владельцу."
   // Use case: UC-E5. EARS: If-then. Design flow: Contract Definitions ("Все операции принимают владельца ... и для чужой задачи, сообщения или запроса отвечают так же, как для несуществующих").
   //
-  // Catches: one operation of the part that looks the object up by id alone - a foreign owner reads a task, a tree, events or pending messages, puts a message into, interrupts, stops, deletes or resolves another user's object, or creates a child under another
+  // Catches: one operation of the part that looks the object up by id alone - a foreign owner reads a task, a tree or pending messages, puts a message into, interrupts, stops, deletes or answers another user's object, or creates a child under another
   //   user's parent (a tree with two owners, Invariant 7). The difference between "foreign" and "missing" answers is itself a leak, so each row compares the two answers.
   // Not re-checked here: authentication (the owner id is handed in by `apps/api` from the session; that edge is tested in the api part), the authorization of MCP servers and of the web routes (later parts).
-  // Behavior: owner B calls each operation on owner A's task, message or decision -> the answer equals the answer for an id that does not exist -> nothing in A's tree changed
+  // Behavior: owner B calls each operation on owner A's task, message or question -> the answer equals the answer for an id that does not exist -> nothing in A's tree changed
   // @category: core-functionality
-  // @dependency: RuntimeModule (TaskControl, Inbox, Decisions, EventLog), a test handler that opens a decision, Postgres
+  // @dependency: RuntimeModule (TaskControl, Inbox), a test handler that asks a question, Postgres
   // @complexity: medium
   //
-  // Verification items (table-driven by operation; A has a tree: a root, a child, a pending message, an open decision, events):
-  // - Rows: `tasks.get`, `tasks.listTree`, `tasks.create` with A's task as `parentId`, `tasks.interrupt`, `tasks.stop`, `tasks.deleteTree`, `inbox.enqueue`, `inbox.listPending`, `decisions.resolve`, `decisions.listTree`, `events.listAfter`.
-  // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`TASK_NOT_FOUND` / `DECISION_NOT_FOUND`), or the same empty list for the list operations; no timing or message difference is asserted.
-  // - After all rows: a row-version snapshot of A's tasks, messages, decisions and events equals the snapshot before; A's decision is still `open` and can be resolved by A (`resolved`), and A's tree can still be read in full by A.
+  // Verification items (table-driven by operation; A has a tree: a root, its open question, a child, a pending message):
+  // - Rows: `tasks.get`, `tasks.listTree`, `tasks.create` with A's task as `parentId`, `tasks.interrupt`, `tasks.stop`, `tasks.deleteTree`, `inbox.enqueue`, `inbox.listPending`, `tasks.answer` (data-model DC-39).
+  // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`TASK_NOT_FOUND`), or the same empty list for the list operations; no timing or message difference is asserted.
+  // - After all rows: a row-version snapshot of A's tasks and messages equals the snapshot before; A's question is still `waiting` and can be answered by A (`answered`), and A's tree can still be read in full by A.
   it(
     "INT-4: every runtime operation called as another owner answers exactly as for a missing object and changes none of the owner's rows",
     async () => {
-      // Given: owner A's tree - a root waiting for its open decision with a pending message, a child
-      // waiting for messages, their events - with the workers paused so that only the calls act
+      // Given: owner A's tree - a root waiting for its open question with a pending message, a child
+      // waiting for messages - with the workers paused so that only the calls act
       const ownerA = await newUser();
       const ownerB = await newUser();
       const rootType = uniqueType('int4-root');
@@ -1597,7 +1453,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             type: rootType,
             steps: [
               {
-                outcome: 'await_decision',
+                outcome: 'ask',
                 kind: 'approve',
                 payload: { question: 'go?' },
               },
@@ -1614,8 +1470,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         });
         await waitFor(
           () => harness.tasks.get(rootId, ownerA),
-          (task) => task.waitReason === 'decision',
-          'the root to wait for a decision',
+          (task) => task.waitReason === 'children',
+          'the root to wait for its question',
         );
         const childId = await harness.tasks.create({
           type: childType,
@@ -1630,17 +1486,12 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         );
         await harness.inbox.enqueue(note(rootId, ownerA, { n: 1 }));
         await harness.stop();
-        const [request] = (
-          await harness.decisions.listTree(rootId, ownerA)
-        ).filter((d) => d.status === 'open');
-        expect(request.taskId).toBe(rootId);
+        const question = await questionOf(harness, rootId);
+        expect(question.status).toBe('waiting');
         expect(await harness.inbox.listPending(rootId, ownerA)).toHaveLength(1);
-        expect(
-          await harness.events.listAfter(rootId, ownerA, 0, 500),
-        ).not.toEqual([]);
         const before = await rowVersionsOf(rootId);
         expect(new Set(before.map((row) => row.table))).toEqual(
-          new Set(['tasks', 'inbox', 'decisions', 'events']),
+          new Set(['tasks', 'inbox']),
         );
         const missingId = randomUUID();
         const notFound = { code: 'TASK_NOT_FOUND' };
@@ -1683,7 +1534,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             (id) =>
               harness.tasks.interrupt(id, ownerB, {
                 kind: 'note',
-                sender: ownerB,
                 payload: {},
               }),
             notFound,
@@ -1713,22 +1563,10 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             none,
           ],
           [
-            'decisions.resolve',
-            request.decisionId,
-            (id) => harness.decisions.resolve(id, ownerB, { approved: false }),
-            { code: 'DECISION_NOT_FOUND' },
-          ],
-          [
-            'decisions.listTree',
-            rootId,
-            (id) => harness.decisions.listTree(id, ownerB),
-            none,
-          ],
-          [
-            'events.listAfter',
-            rootId,
-            (id) => harness.events.listAfter(id, ownerB, 0, 500),
-            none,
+            'tasks.answer',
+            question.taskId,
+            (id) => harness.tasks.answer(id, ownerB, { approved: false }),
+            notFound,
           ],
         ];
 
@@ -1743,18 +1581,18 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           });
         }
 
-        // And: no row of A's tree changed; A still reads the whole tree and resolves the decision
+        // And: no row of A's tree changed; A still reads the whole tree and answers the question
         expect(await rowVersionsOf(rootId)).toEqual(before);
         expect(
           (await harness.tasks.listTree(rootId, ownerA)).map(
             (task) => task.taskId,
           ),
-        ).toEqual([rootId, childId]);
+        ).toEqual([rootId, question.taskId, childId]);
         expect(
-          await harness.decisions.resolve(request.decisionId, ownerA, {
+          await harness.tasks.answer(question.taskId, ownerA, {
             approved: true,
           }),
-        ).toBe('resolved');
+        ).toBe('answered');
       } finally {
         await harness.close();
       }
@@ -1775,7 +1613,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //
   // Catches: (1) a cost taken from the wrong model's price, or a row without owner, task or tokens; (2) a month sum that includes the previous month's last second, drops the 1st 00:00:00 UTC instant, adds another owner's rows or double-counts; (3) `deleteTree` removing
   //   the tree's rows or the ledger rows, so deleting a conversation loses its record or lowers the month's spend; (4) a row written for a model with no price; (5) one runtime operation that reads or wakes a deleted tree for its own owner - a task read by its id, the
-  //   tree listed, a command, a revive message that wakes the root, a child created under it, a cancelled request answered `already_resolved` - instead of answering as for a missing id.
+  //   tree listed, a command, a revive message that wakes the root, a child created under it, a stopped question answered `already_answered` - instead of answering as for a missing id.
   // Not re-checked here: the cost rule's variants (tier, cache read and write) - the unit table proves the rule; one literal price per model proves it is wired.
   // Behavior: calls recorded on two priced models for two owners across a month boundary -> rows and costs per model price -> `monthSpend` is the owner's sum for the UTC month -> the sum survives `deleteTree`; an unpriced model leaves no row
   // @category: core-functionality
@@ -1788,8 +1626,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // - Row B "the month window": A also has calls at 2026-10-31T23:59:59Z, 2026-11-01T00:00:00Z, 2026-11-30T23:59:59Z and 2026-12-01T00:00:00Z; owner B has November calls. Then: `monthSpend(A, '2026-11')` equals the literal sum of A's calls from 2026-11-01T00:00:00Z
   //   through 2026-11-30T23:59:59Z, and its call count equals their number; October, December and B's rows are not in it; `monthSpend(A, '2026-09')` is `{ costUsd: 0, calls: 0 }`.
   //   `monthSpendByModel(A, '2026-11')` holds each model's literal sum (AC-21.4, DC-9 of design-access.md), `'2026-09'` is empty, B's rows are not in A's map.
-  // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: both task rows stay, `stopped`, each with `deleted_at` set; the messages and events stay and the request is `cancelled`. Table by operation, as
-  //   in INT-4: each of A's own operations on the deleted tree answers exactly as for a random missing id (`TASK_NOT_FOUND`, `DECISION_NOT_FOUND`, `[]`), and no row of the tree changed. The ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
+  // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: both task rows stay, `stopped`, each with `deleted_at` set; the messages stay. Table by operation, as
+  //   in INT-4: each of A's own operations on the deleted tree answers exactly as for a random missing id (`TASK_NOT_FOUND`, `[]`), and no row of the tree changed. The ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
   it(
     "INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model's price",
     async () => {
@@ -1950,7 +1788,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   it(
     'INT-5 D: deleting the task tree keeps its rows marked deleted, answers as missing to its own owner, and leaves the ledger and the month spend unchanged',
     async () => {
-      // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
+      // Given: owner A's tree - a root waiting for its question with a pending message, a child - and a
       // call recorded for each task in November 2026
       const ownerId = await newUser();
       const rootType = uniqueType('int5d-root');
@@ -1961,7 +1799,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             type: rootType,
             steps: [
               {
-                outcome: 'await_decision',
+                outcome: 'ask',
                 kind: 'approve',
                 payload: { question: 'go?' },
               },
@@ -1979,8 +1817,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         });
         await waitFor(
           () => harness.tasks.get(rootId, ownerId),
-          (task) => task.waitReason === 'decision',
-          'the root to wait for a decision',
+          (task) => task.waitReason === 'children',
+          'the root to wait for its question',
         );
         const childId = await harness.tasks.create({
           type: childType,
@@ -1994,9 +1832,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           'the child to wait for messages',
         );
         await harness.inbox.enqueue(note(rootId, ownerId, { n: 1 }));
-        const [request] = (
-          await harness.decisions.listTree(rootId, ownerId)
-        ).filter((d) => d.status === 'open');
+        const question = await questionOf(harness, rootId);
         // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
         const usage = {
           inputTokens: 1000,
@@ -2026,8 +1862,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         // When: the tree is deleted
         const answer = await harness.tasks.deleteTree(rootId, ownerId);
 
-        // Then: both tasks stay, stopped and marked deleted; the messages, events and the cancelled
-        // request stay with them
+        // Then: the tasks stay, the question among them, stopped and marked deleted; the messages
+        // stay with them
         expect(answer).toBe('deleted');
         expect(
           await harness.db
@@ -2041,26 +1877,23 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             .orderBy(asc(runtimeTasks.createdSeq)),
         ).toEqual([
           { taskId: rootId, status: 'stopped', deletedAt: expect.any(Date) },
+          {
+            taskId: question.taskId,
+            status: 'stopped',
+            deletedAt: expect.any(Date),
+          },
           { taskId: childId, status: 'stopped', deletedAt: expect.any(Date) },
         ]);
         expect(
           (await inboxOf(rootId)).map((message) => [
             message.kind,
-            message.status,
+            message.delivered,
           ]),
         ).toEqual([
-          ['note', 'pending'],
-          ['child_finished', 'pending'],
+          ['note', false],
+          ['child_finished', false],
+          ['child_finished', false],
         ]);
-        expect((await eventsOf(rootId)).map((event) => event.type)).toEqual(
-          expect.arrayContaining(['task.created', 'task.stopped']),
-        );
-        expect((await eventsOf(childId)).map((event) => event.type)).toEqual(
-          expect.arrayContaining(['task.created', 'task.stopped']),
-        );
-        expect(await decisionOf(harness, request.decisionId)).toMatchObject({
-          status: 'cancelled',
-        });
 
         // When: the owner calls every operation on the deleted tree, and on an id that exists for nobody
         const before = await rowVersionsOf(rootId);
@@ -2093,7 +1926,11 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           [
             'tasks.interrupt',
             childId,
-            (id) => harness.tasks.interrupt(id, ownerId),
+            (id) =>
+              harness.tasks.interrupt(id, ownerId, {
+                kind: 'note',
+                payload: {},
+              }),
             notFound,
           ],
           [
@@ -2131,10 +1968,10 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
             notFound,
           ],
           [
-            'decisions.resolve',
-            request.decisionId,
-            (id) => harness.decisions.resolve(id, ownerId, { approved: true }),
-            { code: 'DECISION_NOT_FOUND' },
+            'tasks.answer',
+            question.taskId,
+            (id) => harness.tasks.answer(id, ownerId, { approved: true }),
+            notFound,
           ],
         ];
 

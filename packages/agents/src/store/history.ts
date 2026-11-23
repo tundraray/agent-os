@@ -78,8 +78,7 @@ export class History {
 
   /**
    * Appends the entries in order with `seq` = `max(seq) + 1`, `+ 2`, …: history is written only in a
-   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time. Returns the appended entries; the caller writes
-   * `agents.history_appended` with the last `seq`.
+   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time. Returns the appended entries.
    */
   async append(
     taskId: string,
@@ -122,15 +121,6 @@ export class History {
     const rows = await this.rows.page(taskId, afterSeq, limit, HIDDEN_KINDS);
     // The hidden kinds are filtered out by the query.
     return rows.map(toEntry) as PageEntry[];
-  }
-
-  /** The `tool_sent` entries of the `task` calls that name a task of the session's list, in order. */
-  async sentForListTask(
-    taskId: string,
-  ): Promise<Extract<HistoryEntry, { kind: 'tool_sent' }>[]> {
-    const rows = await this.rows.sentForListTask(taskId);
-    // The query selects `tool_sent` entries only.
-    return rows.map(toEntry) as Extract<HistoryEntry, { kind: 'tool_sent' }>[];
   }
 
   /**

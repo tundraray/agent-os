@@ -5,9 +5,6 @@ import { databaseUrl } from '@agent-os/db/testing';
 import {
   CLOCK,
   type Clock,
-  Decisions,
-  EventConsumerRegistry,
-  EventLog,
   HandlerRegistry,
   Inbox,
   type ModelPrice,
@@ -17,8 +14,8 @@ import {
   systemClock,
   type TaskHandler,
   TaskControl,
+  TaskEndHooks,
   TokenLedger,
-  Trackers,
 } from '@agent-os/runtime';
 import { runtimeModules } from '@agent-os/runtime/testing';
 import { Test } from '@nestjs/testing';
@@ -88,10 +85,8 @@ export interface RuntimeHarness {
   readonly handlers: HandlerRegistry;
   readonly tasks: TaskControl;
   readonly inbox: Inbox;
-  readonly decisions: Decisions;
-  readonly trackers: Trackers;
-  readonly events: EventLog;
-  readonly eventConsumers: EventConsumerRegistry;
+  /** Task end hooks; a test registers its own before the tasks end. */
+  readonly endHooks: TaskEndHooks;
   readonly ledger: TokenLedger;
   /** Starts the workers (`RuntimeWorkers.start`). */
   start(): void;
@@ -146,10 +141,7 @@ export async function createRuntimeHarness(
     handlers,
     tasks: app.get(TaskControl),
     inbox: app.get(Inbox),
-    decisions: app.get(Decisions),
-    trackers: app.get(Trackers),
-    events: app.get(EventLog),
-    eventConsumers: app.get(EventConsumerRegistry),
+    endHooks: app.get(TaskEndHooks),
     ledger: app.get(TokenLedger),
     start: () => workers.start(),
     stop: () => workers.stop(),

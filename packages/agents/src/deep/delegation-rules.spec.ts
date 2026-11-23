@@ -5,6 +5,8 @@ import {
   type DelegationInput,
   decideDelegations,
   resultTable,
+  type SubagentEnd,
+  subagentEnd,
 } from './delegation-rules';
 
 const TEAM = [
@@ -322,6 +324,69 @@ describe('the task calls of one answer are refused with field and rule, or accep
   });
 });
 
+// data-model design-runtime.md, Contract «Инструмент `task`», KD-2, KD-6: a sent call closes from the
+// `child_finished` its step delivers. A defect here closes a running subagent as failed, drops the failure's text
+// the model decides on, or hands the model a failure text past 1 000 characters.
+describe('a subagent of a closing task call', () => {
+  const CHILD = '00000000-0000-4000-8000-000000000001';
+  it.each<[string, Parameters<typeof subagentEnd>[0], SubagentEnd]>([
+    [
+      'completed gives its report',
+      {
+        taskId: CHILD,
+        status: 'completed',
+        result: { report: 'итог' },
+        durationMs: 5,
+      },
+      { status: 'completed', answer: 'итог', line: null },
+    ],
+    [
+      'failed gives its reason and its failure text',
+      {
+        taskId: CHILD,
+        status: 'failed',
+        failure: { reason: 'model_error', message: 'provider answered 529' },
+        durationMs: 5,
+      },
+      {
+        status: 'failed',
+        answer: null,
+        line: 'The subagent failed: model_error: provider answered 529.',
+      },
+    ],
+    [
+      'failed with a long text gives its first 1 000 characters',
+      {
+        taskId: CHILD,
+        status: 'failed',
+        failure: { reason: 'handler_error', message: 'x'.repeat(1_500) },
+        durationMs: 5,
+      },
+      {
+        status: 'failed',
+        answer: null,
+        line: `The subagent failed: handler_error: ${'x'.repeat(1_000)}.`,
+      },
+    ],
+    [
+      'stopped says so',
+      { taskId: CHILD, status: 'stopped', durationMs: 5 },
+      { status: 'stopped', answer: null, line: 'The subagent was stopped.' },
+    ],
+    [
+      'without a child_finished in the step is still running',
+      undefined,
+      {
+        status: 'running',
+        answer: null,
+        line: 'The subagent is still running; its report will arrive as a message.',
+      },
+    ],
+  ])('%s', (_name, finished, expected) => {
+    expect(subagentEnd(finished)).toEqual(expected);
+  });
+});
+
 // KD-5, UC-2 (AC-19.2, DC-3 at the lowest level): a long table keeps every row and cuts the answers to an equal
 // share within the limit, and its last line names the call whose full table read_tool_result reads.
 describe('the table of a list delegation', () => {
@@ -330,15 +395,20 @@ describe('the table of a list delegation', () => {
       item: 'Москва',
       status: 'completed' as const,
       answer: 'а'.repeat(300),
-      reason: null,
+      line: null,
     },
     {
       item: 'Казань',
       status: 'failed' as const,
       answer: null,
-      reason: 'turn_limit',
+      line: 'turn_limit',
     },
-    { item: 'Тверь', status: 'cancelled' as const, answer: null, reason: null },
+    {
+      item: 'Тверь',
+      status: 'running' as const,
+      answer: null,
+      line: 'still running',
+    },
   ];
 
   it('fits whole under the limit', () => {
@@ -355,7 +425,7 @@ describe('the table of a list delegation', () => {
       '| --- | --- | --- | --- |',
       `| 1 | Москва | completed | ${'а'.repeat(300)} |`,
       '| 2 | Казань | failed | turn_limit |',
-      '| 3 | Тверь | cancelled |  |',
+      '| 3 | Тверь | running | still running |',
     ]);
   });
 
@@ -375,7 +445,7 @@ describe('the table of a list delegation', () => {
     ).toEqual([
       '| 1 | Москва | completed',
       '| 2 | Казань | failed',
-      '| 3 | Тверь | cancelled',
+      '| 3 | Тверь | running',
     ]);
     expect(text.at(-1)).toBe(
       'The table is cut to 300 characters: each answer is shortened. Read the full table with read_tool_result (callId "call-1").',
@@ -390,13 +460,13 @@ describe('the table of a list delegation', () => {
           item: 'Москва',
           status: 'completed',
           answer: '{"вывод":"рост","источники":"логи"}',
-          reason: null,
+          line: null,
         },
         {
           item: 'Казань',
           status: 'failed',
           answer: null,
-          reason: 'turn_limit',
+          line: 'turn_limit',
         },
       ],
       answerFields: ['вывод', 'источники'],

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createLogger,
+  errorText,
   sentrySink,
   withoutQueryParamsText,
   type LogLevel,
@@ -216,6 +217,8 @@ params: ${params.join(',')}`,
     expect(withoutQueryParamsText(failure.message)).toBe(
       `Failed query: ${query}`,
     );
+    // The text kept on a task or shown to the model: the database's message only (A1).
+    expect(errorText(failure)).toBe('deadlock detected');
   });
 
   it('expands a non-Error thrown value into a message', () => {

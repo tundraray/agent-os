@@ -24,9 +24,14 @@ export class Db {
     return open && !open.closed ? open.tx : this.database;
   }
 
+  /** Whether a transaction is open in this async context: {@link transaction} would join it. */
+  get inTransaction(): boolean {
+    return this.client !== this.database;
+  }
+
   /** Runs `fn` in a transaction: joins the one open here, otherwise opens one and commits or rolls it back. */
   transaction<T>(fn: () => Promise<T>): Promise<T> {
-    return this.client === this.database ? this.open(fn) : fn();
+    return this.inTransaction ? fn() : this.open(fn);
   }
 
   /**

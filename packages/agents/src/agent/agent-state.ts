@@ -1,20 +1,21 @@
-import type { AgentVersion } from '@agent-os/contracts';
 import type { LiveTaskIdentity } from '@agent-os/runtime';
 
 import { type CallState, foldCalls } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import type { ForkPrefix } from '../model/provider-messages';
-import type { Session, SessionInput } from '../store/sessions';
+import type { RunStart } from '../start/run-definition';
+import type { AgentTaskInput, Session } from '../store/sessions';
 import type { AgentDeps } from './agent-deps';
 
 /**
- * What an agent object is made for: its task, the task's parsed input and the version the input names, read
- * once when the object is made (data-model design-agents.md, KD-6: a version never changes). Never changes.
+ * What an agent object is made for: its task, the task's parsed input and the run — the version, name, team
+ * member and model its start chose, which its conversation keeps (data-model design-runtime.md KD-8), with the
+ * version read once (design-agents.md KD-6: a version never changes). Never changes.
  */
 export interface AgentRun {
   readonly task: LiveTaskIdentity;
-  readonly input: SessionInput;
-  readonly version: AgentVersion;
+  readonly input: AgentTaskInput;
+  readonly run: RunStart;
 }
 
 /** The history the model sees: the fork prefix and the own entries. */
@@ -57,14 +58,14 @@ function stateOf(
 /**
  * The state of the agent as the database holds it: its session, its entries from the last compaction on
  * (`history.visible`) and, for a fork that has not compacted yet, the parent's entries through the fork point.
- * `undefined` — the agent has no session yet.
+ * Every agent task has its session from its creation on (KD-8): one without it is a defect and throws.
  */
 export async function loadState(
   deps: StateDeps,
   taskId: string,
-): Promise<AgentState | undefined> {
+): Promise<AgentState> {
   const session = await deps.sessions.get(taskId);
-  if (session === undefined) return undefined;
+  if (session === undefined) throw new Error(`Agent ${taskId} has no session`);
   const entries = await deps.history.visible(taskId);
   const compacted = entries.some((entry) => entry.kind === 'compaction');
   const forkPrefix: ForkPrefix | undefined =

@@ -1,6 +1,5 @@
 import {
-  ChipRecordSchema,
-  ModelIdSchema,
+  type ChipRecord,
   RecordKindSchema,
   type RunOrigin,
 } from '@agent-os/contracts';
@@ -31,48 +30,33 @@ export const AnswerFieldSchema = z.strictObject({
 });
 
 /**
- * The input of an `agent` task (data-model design-agents.md, KD-6): the request of the start — the version by
- * id, the run's name, the team member of a subagent run, the model the start chose — the assignment, the
- * description, a fork's link to its parent's history, at a conversation's root the chip of its first message,
- * for a child the id of the tool call in its parent's conversation that started it and, for a subagent a
- * `task` call started, the fields its answer must have. No definition: the version is its one copy. The
- * conversation's row is made from it once.
+ * The input of an agent task (data-model design-runtime.md, KD-8): only what the conversation does not hold —
+ * for a subagent a `task` call started, the fields its answer must have. The version, the name, the team
+ * member, the model, the description, the fork point and the start call live on the conversation's row; the
+ * assignment and the chip are its `task` entry. The row is written in the transaction that creates the task.
  */
 export const AgentTaskInputSchema = z.object({
-  versionId: z.uuid(),
-  name: z.string().min(1),
-  subagent: z.string().min(1).nullable(),
-  model: ModelIdSchema,
-  prompt: z.string(),
-  description: z.string(),
-  forkedFrom: z
-    .object({
-      agentId: z.string().min(1),
-      throughSeq: z.number().int().nonnegative(),
-    })
-    .optional(),
-  record: ChipRecordSchema.optional(),
-  /** The parent's tool call that started this child; absent on a root (data-model design-schema.md R3). */
-  startCallId: z.string().min(1).optional(),
   answerFields: z.array(AnswerFieldSchema).optional(),
 });
-export type SessionInput = z.infer<typeof AgentTaskInputSchema>;
+export type AgentTaskInput = z.infer<typeof AgentTaskInputSchema>;
 
-/** The input of an agent task, parsed: the one way steps, tools and operations read what the start wrote. */
-export function sessionInputOf(input: unknown): SessionInput {
+/** The input of an agent task, parsed. */
+export function agentTaskInputOf(input: unknown): AgentTaskInput {
   return AgentTaskInputSchema.parse(input);
 }
 
-/** The fields of a task input that name the run's start: its version by id, name, team member and model. */
-export function startFieldsOf(
-  run: RunStart,
-): Pick<SessionInput, 'versionId' | 'name' | 'subagent' | 'model'> {
-  return {
-    versionId: run.version.id,
-    name: run.name,
-    subagent: run.subagent,
-    model: run.model,
-  };
+/** The request of a start: what the conversation's row and its `task` entry are written from (KD-8). */
+export interface SessionStart {
+  /** The version, the run's name, the team member of a subagent run and the model the start chose. */
+  readonly run: RunStart;
+  readonly prompt: string;
+  readonly description: string;
+  /** Set on a fork: the parent's history up to this entry precedes the session's. */
+  readonly forkedThroughSeq?: number;
+  /** At a conversation's root, the chip of its first message. */
+  readonly record?: ChipRecord;
+  /** The parent's tool call that started this child; absent on a root (data-model design-schema.md R3). */
+  readonly startCallId?: string;
 }
 
 /** A `conversations` row: the run's name, parent, origin read through its version, and first-run mark. */
@@ -81,6 +65,8 @@ export interface Session {
   /** `null` for a root session. */
   readonly parentId: string | null;
   readonly ownerId: string;
+  /** The version the run is on: the one copy of its definition, never changed (design-agents.md KD-6). */
+  readonly versionId: string;
   /** The run's name, as its start gave it. */
   readonly name: string;
   /**
@@ -150,6 +136,7 @@ function toSession(row: ConversationRow): Session {
     taskId: row.id,
     parentId: row.parentId,
     ownerId: row.ownerId,
+    versionId: row.agentVersionId,
     name: row.name,
     origin: originOf(row),
     firstRun: row.firstRun,
@@ -179,40 +166,40 @@ export class Sessions {
   ) {}
 
   /**
-   * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11):
-   * the starter calls it in the transaction that creates the task, and the first step of an agent left
-   * without a session calls it again — `ON CONFLICT DO NOTHING` keeps a repeat safe. The version, the name,
-   * the team member and the model come from the input, the parent and the root from the task; `first_run` is
-   * set when the owner had no earlier conversation with the version's agent. A root session starts with an
-   * empty title and its list time. `true` — this call created the session: the caller
-   * (`BaseAgent.createSession`) then runs the agent's `sessionCreated` in the same transaction.
+   * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11): every
+   * starter calls it in the transaction that creates the task (KD-8); `ON CONFLICT DO NOTHING` keeps a repeat
+   * of that transaction safe. The version, the name, the team member and the model come from the start, the
+   * parent and the root from the task; `first_run` is set when the owner had no earlier conversation with the
+   * version's agent. A root session starts with an empty title and its list time. `true` — this call created
+   * the session: the caller (`BaseAgent.createSession`) then runs the agent's `sessionCreated` in the same
+   * transaction.
    */
   async ensureSession(
     task: SessionTask,
-    input: SessionInput,
-    agentId: string,
+    start: SessionStart,
   ): Promise<boolean> {
     const { taskId, ownerId } = task;
+    const { run } = start;
     const root = task.parentId === null;
     const firstRun = root
       ? false
-      : !(await this.rows.ranBefore(ownerId, agentId, taskId));
+      : !(await this.rows.ranBefore(ownerId, run.version.agentId, taskId));
     return this.rows.create(
       {
         id: taskId,
         parentId: task.parentId,
         ownerId,
-        startCallId: input.startCallId ?? null,
-        name: input.name,
-        description: input.description,
-        model: input.model,
-        agentVersionId: input.versionId,
-        subagent: input.subagent,
+        startCallId: start.startCallId ?? null,
+        name: run.name,
+        description: start.description,
+        model: run.model,
+        agentVersionId: run.version.id,
+        subagent: run.subagent,
         firstRun,
-        forkedThroughSeq: input.forkedFrom?.throughSeq ?? null,
+        forkedThroughSeq: start.forkedThroughSeq ?? null,
       },
       // The chip of a conversation's first message stays on the root's task (plan Notes 9а).
-      { text: input.prompt, record: input.record ?? null },
+      { text: start.prompt, record: start.record ?? null },
     );
   }
 

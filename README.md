@@ -245,7 +245,6 @@ POSTGRES_PORT=5433 pnpm db:up
 | `RUNTIME_NOTIFY` | `on` |
 | `RUNTIME_REAPER_MS` | 5000 |
 | `RUNTIME_MAX_RECOVERIES` | 3 |
-| `RUNTIME_DELIVERY_MAX_ATTEMPTS` | 5 |
 | `RUNTIME_SHUTDOWN_GRACE_MS` | 5000 |
 | `RUNTIME_STEP_MS` | 900000 (не меньше 1000; предел длительности одного шага) |
 | `DB_POOL_MAX` | 10 |

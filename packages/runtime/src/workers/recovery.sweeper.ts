@@ -1,48 +1,46 @@
 import type { Logger } from '@agent-os/common';
 import {
-  RuntimeEventTypeSchema,
   RuntimeFailureReasonSchema,
   TaskStatusSchema,
 } from '@agent-os/contracts';
-import {
-  Db,
-  RuntimeTrackersRepository,
-  RuntimeTasksRepository,
-  type RuntimeTaskRow,
-} from '@agent-os/db';
+import { Db, RuntimeTasksRepository, type RuntimeTaskRow } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '../clock';
 import { CrashPoints } from '../crash-points';
-import { EventLog } from '../events/event-log';
 import { Inbox } from '../messaging/inbox';
 import { WorkerLoop } from './worker-loop';
 import type { RuntimeConfig } from '../runtime-config';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { HandlerRegistry } from '../steps/handler.registry';
+import { LiveTasks } from '../steps/live-tasks';
 import { RunningTaskRegistry } from '../tasks/running-task.registry';
-import { endTask, writeHeld } from '../tasks/task-end';
+import {
+  cutOff,
+  type EndedTask,
+  endTask,
+  logTaskEnds,
+  type TaskEndDeps,
+  taskLogFields,
+  writeHeld,
+} from '../tasks/task-end';
+import { TaskEndHooks } from '../tasks/task-end-hooks';
 import { Tasks } from '../tasks/tasks';
+import { withTxRetry } from '../tasks/transaction-retry';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 
-interface RecoverySweeperDeps {
-  db: Db;
+interface RecoverySweeperDeps extends TaskEndDeps {
   config: RuntimeConfig;
-  logger: Logger;
   handlers: HandlerRegistry;
   running: RunningTaskRegistry;
-  tasks: Tasks;
-  taskRows: RuntimeTasksRepository;
-  trackers: RuntimeTrackersRepository;
-  events: EventLog;
-  inbox: Inbox;
+  live: LiveTasks;
   crashPoints: CrashPoints;
 }
 
 /** What the sweeper did with one lost task. */
 type Recovery =
   | { kind: 'requeued'; row: RuntimeTaskRow }
-  | { kind: 'exhausted'; row: RuntimeTaskRow }
+  | { kind: 'exhausted'; ended: EndedTask }
   /** The step was written meanwhile. */
   | { kind: 'skipped' };
 
@@ -51,9 +49,10 @@ type Recovery =
  * executes steps, so a `running` task of a type registered here whose step this process does not
  * execute (`RunningTaskRegistry`) is lost: the process that claimed it crashed, or its step ended
  * without its write (the database was unreachable). The task returns to `queued` with
- * `recoveries + 1`, `attempt + 1` and `task.recovered`, so that a new claim runs the step again.
+ * `recoveries + 1` and `attempt + 1`, so that a new claim runs the step again.
  * Once the step was lost `RUNTIME_MAX_RECOVERIES` times in a row, the task is `failed` with
- * `recovery_exhausted` and its parent is told. No handler is called; each task is one transaction.
+ * `recovery_exhausted` and its parent is told; its pending messages go with the failure, so only a
+ * new message revives it. No handler is called; each task is one transaction.
  */
 @Injectable()
 export class RecoverySweeper {
@@ -67,12 +66,12 @@ export class RecoverySweeper {
     @Inject(RUNTIME_LOGGER) runtimeLogger: Logger,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
-    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
-    @Inject(EventLog) events: EventLog,
     @Inject(Inbox) inbox: Inbox,
+    @Inject(TaskEndHooks) endHooks: TaskEndHooks,
     @Inject(CrashPoints) crashPoints: CrashPoints,
     @Inject(HandlerRegistry) handlers: HandlerRegistry,
     @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
+    @Inject(LiveTasks) live: LiveTasks,
   ) {
     const logger = runtimeLogger.child({ worker: 'sweeper' });
     this.deps = {
@@ -81,11 +80,11 @@ export class RecoverySweeper {
       logger,
       handlers,
       running,
+      live,
       tasks,
       taskRows,
-      trackers,
-      events,
       inbox,
+      endHooks,
       crashPoints,
     };
     this.loop = new WorkerLoop({
@@ -125,7 +124,10 @@ export class RecoverySweeper {
   }): Promise<void> {
     const { db, logger, crashPoints, config } = this.deps;
     const startedAt = Date.now();
-    const recovery = await db.transaction(() => this.recoverIn(lost));
+    const recovery = await withTxRetry(
+      { db, logger, operation: 'sweeper.recover', taskId: lost.taskId },
+      () => this.recoverIn(lost),
+    );
     const fields = {
       taskId: lost.taskId,
       attempt: lost.attempt,
@@ -143,10 +145,11 @@ export class RecoverySweeper {
           'lost step requeued: no step of this process runs the task',
           {
             ...fields,
-            rootId: recovery.row.rootId,
-            ownerId: recovery.row.ownerId,
-            type: recovery.row.type,
-            stepNo: recovery.row.stepNo,
+            ...taskLogFields(recovery.row),
+            lostAttempt: lost.attempt,
+            from: running,
+            to: recovery.row.status,
+            cause: 'recovery',
             recoveries: recovery.row.recoveries,
             outcome: 'requeued',
           },
@@ -154,15 +157,16 @@ export class RecoverySweeper {
         crashPoints.hit('sweeper.after-requeue');
         return;
       case 'exhausted':
+        cutOff(this.deps, recovery.ended.stopped, 'stopped');
+        logTaskEnds(logger, recovery.ended.ends);
         logger.error('task failed: its step was lost too many times', {
           ...fields,
-          rootId: recovery.row.rootId,
-          ownerId: recovery.row.ownerId,
-          type: recovery.row.type,
-          stepNo: recovery.row.stepNo,
+          ...taskLogFields(recovery.ended.row),
+          lostAttempt: lost.attempt,
           maxRecoveries: config.maxRecoveries,
           reason: RuntimeFailureReasonSchema.enum.recovery_exhausted,
           outcome: 'failed',
+          stoppedIds: recovery.ended.stopped.map((task) => task.taskId),
         });
         return;
     }
@@ -172,7 +176,7 @@ export class RecoverySweeper {
     taskId: string;
     attempt: number;
   }): Promise<Recovery> {
-    const { tasks, events, config } = this.deps;
+    const { tasks, inbox, config } = this.deps;
     const task = await tasks.hold({
       taskId: lost.taskId,
       from: [running],
@@ -181,16 +185,25 @@ export class RecoverySweeper {
     if (!task) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {
-      const row = await endTask(this.deps, task, {
+      // The lost steps' messages go with the failure, so a `revive` among them does not requeue the
+      // task into the same losses again. Which of them the last lost step was handed is not known
+      // here: every pending one goes, and only a message written after this end revives the task.
+      const pending = await inbox.loadPending(task.taskId);
+      await inbox.markDelivered(
+        task,
+        pending.map((message) => message.messageId),
+      );
+      const ended = await endTask(this.deps, task, {
         status: failed,
         failure: {
           reason: RuntimeFailureReasonSchema.enum.recovery_exhausted,
           message: `The step was lost ${task.recoveries + 1} times in a row`,
         },
-        fields: { stepClaims: 0, recoveries: 0 },
+        fields: { recoveries: 0 },
         fence: true,
+        cause: 'recovery',
       });
-      return { kind: 'exhausted', row };
+      return { kind: 'exhausted', ended };
     }
 
     const row = await writeHeld(tasks, task, {
@@ -198,15 +211,6 @@ export class RecoverySweeper {
       status: queued,
       fields: { recoveries: task.recoveries + 1 },
       fence: true,
-    });
-    await events.append({
-      type: RuntimeEventTypeSchema.enum['task.recovered'],
-      task: row,
-      payload: {
-        stepNo: row.stepNo,
-        lostAttempt: task.attempt,
-        recoveries: row.recoveries,
-      },
     });
     return { kind: 'requeued', row };
   }

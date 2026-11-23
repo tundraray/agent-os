@@ -56,9 +56,9 @@
 //   - AC-02.2 / AC-02.1 / AC-02.3: the graph is keyed by the record number only, so a flag switch, a new version and a copy cannot
 //       touch it by construction; INT-8 row 3 reads the same graph after a flag round trip. A deletion only marks the agent and keeps its
 //       knowledge (data-model/design-agents.md, KD-7), so no deletion removes the graph.
-//   - A task of extraction failing in the runtime (`task.failed` -> `interrupted`, a new task when the mark stands): one consumer decision,
+//   - A task of extraction failing in the runtime (its `failed` end -> `interrupted`, a new task when the mark stands): one end hook decision,
 //       a branch of `knowledge-trigger`, left to its unit table. The same for `knowledge.embed` (one task per deep agent, a second request
-//       while it runs only sets the "another pass" mark; Invariant 13): a branch of its consumer, left to its unit table.
+//       while it runs only sets the "another pass" mark; Invariant 13): a branch of the same end hook, left to its unit table.
 //   - The vector store port as such (`upsert` replaces the vector of a key, `query` is cosine within one model and honours `kind`, `list`):
 //       one contract table against real pgvector; INT-8 row 4, INT-10 and INT-11 use the store only through the real wiring.
 //   - Restart in the middle of an embedding pass (the step recounts only what is still missing, Flow 4): the same recovery technique as
@@ -905,7 +905,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   //   AC-15.2 "в графе есть запись «искал — не нашёл»"; AC-07.3 "текст, сформулированный как приказ, стоит внутри блока, помеченного как данные";
   //   NFR-01 "начало извлечения каждого запуска позже его конца". Design: UC-1.
   // Behavior: the subagent calls `search_logs` (`success`, service `payment-api`) -> the deep agent ends (row 1) or fails (row 2) ->
-  //   `knowledge-trigger` creates one `knowledge.extract` task in the delivery transaction -> the round calls model A with
+  //   the `knowledge-trigger` end hook creates one `knowledge.extract` task in the end's transaction -> the round calls model A with
   //   `record_knowledge` -> the commit writes two entities, a fact, a lesson and a "searched, found nothing" item -> the next run's model
   //   steps (deep agent and subagent) carry them inside the data envelope under the "a hint, verify every claim by a call in this run"
   //   rule. The graph is below the limit, so the two-pass selection takes all of it in the common order and no embedding model is needed
@@ -1188,7 +1188,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2: a user stop is never extracted, not even after the run is continued
   // ---------------------------------------------------------------------------------------------------------------
-  // AC: AC-03.2 "Given сотрудник остановил запуск, then граф не меняется". Design: UC-E1, DC-3, KD-3 (`task.stopped` only writes the state
+  // AC: AC-03.2 "Given сотрудник остановил запуск, then граф не меняется". Design: UC-E1, DC-3, KD-3 (a `stopped` end only writes the state
   //   and moves the mark), Invariant 2.
   // Behavior: the user stops a run that made calls -> no extraction task, graph unchanged, `lastExtraction` = skipped / `stopped`, the
   //   "extracted up to" mark moves to the stop moment -> the user continues, the run ends with no new calls -> the round gets none of the
@@ -1405,7 +1405,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
   // AC: AC-03.3 "Given запуск завершился, его извлечение выполнено, и сотрудник продолжил запуск сообщением, when запуск снова завершается,
   //   then извлечение получает только вызовы инструментов после прошлого извлечения". Design: UC-4, DC-4, DC-5, KD-3, Invariants 1 and 3.
   // Behavior: the run ended with three calls and its round is done -> the employee continues the deep agent, two new calls, it ends
-  //   while the first round is still waiting on the model (latch) -> the consumer only sets "needs another round" -> the first round's commit
+  //   while the first round is still waiting on the model (latch) -> the end hook only sets "needs another round" -> the first round's commit
   //   sees the mark and continues the same task with a second round.
   // Rows:
   //   A. second end arrives while a round is in flight: the trigger only sets "needs another round" on the row that names the one task;

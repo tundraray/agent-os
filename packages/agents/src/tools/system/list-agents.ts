@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { agentStatus } from '../../agent-view';
 import type { Sessions } from '../../store/sessions';
-import { descendantsOf } from '../../task-tree';
+import { descendantsOf, hasOpenQuestion } from '../../task-tree';
 import type { OutsideAgentTool } from '../tool';
 
 /** The task operations the built-in tools use. */
@@ -48,6 +48,7 @@ export function createListAgentsTool(
               waitReason: task.waitReason,
               pendingInterrupt: false,
               sessionInterrupted: session.interrupted,
+              openQuestion: hasOpenQuestion(tree, task.taskId),
             }),
           },
         ];

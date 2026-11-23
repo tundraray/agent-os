@@ -636,23 +636,25 @@ describe('data-model / agents (real AppModule + real Postgres + real library, sc
         (view) => nodeOf(view, label).status === 'completed',
         'the run of the deleted agent to finish',
       ).then((view) => nodeOf(view, label));
-      const { rows: stored } = await harness.pool.query<{
-        number: number;
-        input: Record<string, unknown>;
-      }>(
-        `SELECT v.number, t.input FROM app.conversations c
+      const { rows: stored } = await harness.pool.query<{ number: number }>(
+        `SELECT v.number FROM app.conversations c
            JOIN app.agent_versions v ON v.id = c.agent_version_id
-           JOIN app.runtime_tasks t ON t.task_id = c.id
           WHERE c.id = $1`,
         [running.agentId],
       );
       expect(stored.map((row) => row.number)).toEqual([1]);
-      expect(Object.keys(stored[0]?.input ?? {}).sort()).toEqual(
-        expect.not.arrayContaining(['content', 'servers', 'tools', 'snapshot']),
+      // DC-46 (data-model design-runtime.md KD-8): the input keeps only `answerFields`; what the conversation
+      // holds — version, name, model, assignment — is not copied into it, at the root and at its child.
+      const { rows: inputs } = await harness.pool.query<{
+        input: Record<string, unknown>;
+      }>(
+        `SELECT t.input FROM app.runtime_tasks t
+           JOIN app.runtime_tasks child ON t.task_id IN (child.task_id, child.root_id)
+          WHERE child.task_id = $1
+          ORDER BY t.depth`,
+        [running.agentId],
       );
-      expect(JSON.stringify(stored[0]?.input)).not.toContain(
-        `Промпт агента ${name}`,
-      );
+      expect(inputs.map((row) => Object.keys(row.input))).toEqual([[], []]);
       expect(finished.origin).toEqual({
         recordId: agent.id,
         kind: 'agent',

@@ -78,7 +78,6 @@ function message(seq: number, kind: string, payload: unknown): StepMessage {
     messageId: `m${seq}`,
     seq,
     kind,
-    sender: 'owner',
     payload,
     revive: false,
     createdAt: CREATED,
@@ -233,11 +232,21 @@ describe('conversation view maps confirmations, the agent tree and the pending q
     ]);
   });
 
-  it('pending: messages in queue order with their sources, an interrupt left out', () => {
+  // data-model design-runtime.md, «Ожидающие сообщения беседы»: an interrupt and a question's end are left out.
+  it('pending: messages in queue order with their sources, an interrupt and a question end left out', () => {
+    const child = '00000000-0000-4000-8000-00000000000a';
+    const question = '00000000-0000-4000-8000-00000000000b';
     const messages = [
+      message(5, 'child_finished', {
+        taskId: question,
+        status: 'completed',
+        result: { approve: true },
+        durationMs: 3,
+      }),
       message(4, 'child_finished', {
-        taskId: 'a',
+        taskId: child,
         status: 'failed',
+        failure: { reason: 'model_error', message: 'overloaded' },
         durationMs: 10,
       }),
       message(1, 'user_message', { text: 'hello' }),
@@ -245,7 +254,9 @@ describe('conversation view maps confirmations, the agent tree and the pending q
       message(2, 'agent_message', { text: 'from parent', fromAgentId: 'p' }),
     ];
 
-    expect(toPending(messages, [agent('a', 'root')])).toEqual([
+    expect(
+      toPending(messages, [agent(child, 'root')], [{ decisionId: question }]),
+    ).toEqual([
       {
         messageId: 'm1',
         source: 'user',
@@ -261,7 +272,7 @@ describe('conversation view maps confirmations, the agent tree and the pending q
       {
         messageId: 'm4',
         source: 'report',
-        agentDescription: 'agent a',
+        agentDescription: `agent ${child}`,
         status: 'failed',
         createdAt: '2026-11-14T10:00:00.000Z',
       },

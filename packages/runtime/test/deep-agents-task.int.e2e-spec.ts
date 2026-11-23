@@ -1,351 +1,345 @@
-// deep-agents / task integration - Design Doc: docs/features/deep-agents/design-task.md (Contract «Рантайм», Data Model, KD-1 – KD-3; Test Strategy UC-4, UC-5)
-// PRD: docs/features/deep-agents/prd.md (FR-22 AC-22.3, AC-22.4, AC-22.5). Test type: Integration (in-process runtime of the package + real Postgres).
+// data-model / runtime integration - Design Doc: docs/features/data-model/design-runtime.md (KD-2, «Правило пробуждения»,
+// «Состояния задачи», «Логи вместо событий»; Test Strategy UC-1). Test type: Integration (in-process runtime + real Postgres).
 // Harness and isolation as in agent-platform-runtime.int.e2e-spec.ts: a unique owner and unique task types per test, no truncate.
-// The restart rows of the tracker (UC-3) are the sibling file deep-agents-task.e2e-spec.ts.
 //
-// R-1 → AC-22.3, DC-5 (runtime): a stop of the owner stops both tasks, creates none, leaves one `tasks_finished` without
-//   `revive` in its queue; a message revives the owner and its step gets both.
-// R-2 → AC-22.5: `trackers.list` with another's task or as another employee is empty.
-// R-3 → AC-22.4 (runtime), DC-4: `tasks_finished` carries `failed` and wakes the owner, which does not fail; a message that
-//   arrived during the wait comes with it in the same step, and an interrupt meanwhile is `not_active`.
+// UC-1 → DC-34, DC-35, DC-36, DC-37, DC-41:
+//   run 1 — three awaited children; the first ends `completed` alone, then the second and the third at once: the parent is
+//     queued once, after the last of them, and its step gets the three `child_finished`;
+//   run 2 — the second child fails at once with the end of the first, the employee writes to the waiting parent: the parent is
+//     woken once, right after the failure, without a repeated transaction, the note comes in the same step, the rows of the
+//     children are not written by the wake-up; the woken parent creates a new group while the third child of the old one
+//     runs, and the end of that third child does not wake it; the log holds the children created, the wait and the delivery.
 
-import { randomUUID } from 'node:crypto';
-import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
-import type { OpenedTracker } from '@agent-os/runtime';
+import { CHILD_FINISHED_KIND } from '@agent-os/contracts';
+import type { LogRecord } from '@agent-os/common';
+import { newUser, waitFor } from '@agent-os/db/testing';
+import type { StepResult, TaskHandler } from '@agent-os/runtime';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { newUser, waitFor } from '@agent-os/db/testing';
-import { closeRuntimeDb, inboxOf } from './support/runtimeDb';
+import {
+  childRowsOf,
+  closeRuntimeDb,
+  inboxOf,
+  statusesOf,
+} from './support/runtimeDb';
 import {
   createRuntimeHarness,
   type RuntimeHarness,
 } from './support/runtimeHarness';
 import {
+  awaitingParentHandler,
   createGateBook,
-  scriptedHandler,
+  type GateBook,
   type StepView,
-  trackerOwnerHandler,
   uniqueType,
 } from './support/testHandlers';
 
 const TEST_TIMEOUT_MS = 60_000;
 
-/** An employee's note to the owner's task. */
-const NOTE = { text: 'meanwhile' };
+/** An employee's note to the waiting parent. */
+const NOTE = { text: 'and add the prices' };
 
-const taskOf = (harness: RuntimeHarness, taskId: string, ownerId: string) =>
-  harness.tasks.get(taskId, ownerId);
+/** The failure of the child that fails. */
+const FAILURE = { reason: 'model_error', message: 'provider answered 500' };
 
-describe('deep-agents / task - integration (in-process runtime + real Postgres)', () => {
+/** Log records of a repeated transaction: the engine's deadlock retry and the step commit's own. */
+const RETRY_MESSAGES = new Set([
+  'engine transaction deadlocked; repeating it',
+  'step commit transaction failed',
+]);
+
+const ChildInputSchema = z.object({
+  item: z.number().int(),
+  fail: z.boolean().optional(),
+});
+
+/** An awaited child: holds at its own gate, then completes with its item or fails with {@link FAILURE}. */
+function childHandler(type: string, gates: GateBook): TaskHandler {
+  return {
+    type,
+    inputSchema: ChildInputSchema,
+    async step(ctx): Promise<StepResult> {
+      const { item, fail } = ChildInputSchema.parse(ctx.input);
+      await gates.of(ctx.taskId).pass(ctx.signal);
+      return fail
+        ? { outcome: 'fail', ...FAILURE }
+        : { outcome: 'complete', result: { item } };
+    },
+  };
+}
+
+const wokenSteps = (seen: readonly StepView[]) =>
+  seen.filter((view) => view.stepNo > 0);
+
+const recordsOf = (harness: RuntimeHarness, message: string): LogRecord[] =>
+  harness.logs.filter((record) => record.message === message);
+
+async function parentState(
+  harness: RuntimeHarness,
+  parentId: string,
+  ownerId: string,
+) {
+  const task = await harness.tasks.get(parentId, ownerId);
+  return { status: task.status, waitReason: task.waitReason };
+}
+
+describe('data-model / runtime - UC-1 awaited children (in-process runtime + real Postgres)', () => {
   afterAll(closeRuntimeDb);
 
   it(
-    'R-1: stopping the owner stops both tasks, creates none, queues one tasks_finished without revive; a message revives the owner and its step gets both',
+    'UC-1 run 1: one of three awaited children ends, then the other two at once: the parent is queued once, after both, and its step gets three child_finished',
     async () => {
-      const ownerType = uniqueType('r1-owner');
-      const taskType = uniqueType('r1-task');
+      const parentType = uniqueType('uc1a-parent');
+      const childType = uniqueType('uc1a-child');
       const gates = createGateBook();
       const seen: StepView[] = [];
-      const opened: OpenedTracker[] = [];
+      const spawned = new Map<number, string[]>();
       const harness = await createRuntimeHarness({
-        config: { concurrency: 3 },
+        config: { concurrency: 4, dbPoolMax: 6 },
         handlers: [
-          trackerOwnerHandler({
-            type: ownerType,
-            tasks: [
-              { type: taskType, input: { item: 'a' } },
-              { type: taskType, input: { item: 'b' } },
+          awaitingParentHandler({
+            type: parentType,
+            groups: [
+              [0, 1, 2].map((item) => ({ type: childType, input: { item } })),
             ],
             seen,
-            opened,
+            spawned,
           }),
-          // Each task holds at its own gate until its signal aborts.
-          {
-            type: taskType,
-            inputSchema: z.record(z.string(), z.unknown()),
-            async step(ctx) {
-              await gates.of(ctx.taskId).pass(ctx.signal);
-              return { outcome: 'complete', result: { late: true } };
-            },
-          },
+          childHandler(childType, gates),
         ],
       });
       try {
         const ownerId = await newUser();
-        const ownerTaskId = await harness.tasks.create({
-          type: ownerType,
+        const parentId = await harness.tasks.create({
+          type: parentType,
           ownerId,
           input: {},
         });
-        await waitFor(
-          async () => opened.length,
-          (count) => count > 0,
-          'the tracker to open',
+        const [first, second, third] = await waitFor(
+          async () => spawned.get(0) ?? [],
+          (ids) => ids.length === 3,
+          'the awaited children',
         );
-        const [taskA, taskB] = opened[0].taskIds;
-        await gates.of(taskA).reached;
-        await gates.of(taskB).reached;
-
-        const stoppedIds = await harness.tasks.stop(ownerTaskId, ownerId);
-
-        expect(new Set(stoppedIds)).toEqual(
-          new Set([ownerTaskId, taskA, taskB]),
+        await Promise.all(
+          [first, second, third].map((id) => gates.of(id).reached),
         );
-        const tree = await harness.tasks.listTree(ownerTaskId, ownerId);
-        expect(tree.map((task) => [task.taskId, task.status])).toEqual([
-          [ownerTaskId, 'stopped'],
-          [taskA, 'stopped'],
-          [taskB, 'stopped'],
-        ]);
-        const [tracker] = await harness.trackers.list(ownerTaskId, ownerId);
-        expect(tracker.status).toBe('finished');
-        const inbox = await inboxOf(ownerTaskId);
+        expect(await parentState(harness, parentId, ownerId)).toEqual({
+          status: 'waiting',
+          waitReason: 'children',
+        });
+        // Each child carries the parent's `step_no` after the commit that created it.
         expect(
-          inbox.map(({ kind, revive, status, payload }) => ({
-            kind,
-            revive,
-            status,
-            payload,
-          })),
-        ).toEqual([
-          {
-            kind: TASKS_FINISHED_KIND,
-            revive: false,
-            status: 'pending',
-            payload: {
-              trackerId: opened[0].trackerId,
-              tasks: [
-                { taskId: taskA, status: 'stopped' },
-                { taskId: taskB, status: 'stopped' },
-              ],
-            },
-          },
-        ]);
+          (await childRowsOf(parentId)).map((row) => row.awaitedStep),
+        ).toEqual([1, 1, 1]);
 
-        await harness.inbox.enqueue({
-          recipientId: ownerTaskId,
-          ownerId,
-          kind: 'note',
-          sender: ownerId,
-          payload: NOTE,
-          revive: true,
-        });
-
-        const woken = await waitFor(
-          async () => seen.filter((view) => view.stepNo > 0),
-          (views) => views.length > 0,
-          'the revived owner to run a step',
-        );
-        expect(woken[0].messages.map((message) => message.kind)).toEqual([
-          TASKS_FINISHED_KIND,
-          'note',
-        ]);
-        // The revived owner opens no tracker and starts no task: the tree keeps its three tasks.
+        gates.of(first).open();
         await waitFor(
-          () => taskOf(harness, ownerTaskId, ownerId),
-          (task) => task.status === 'waiting',
-          'the revived owner to wait again',
+          () => statusesOf([first]),
+          (statuses) => statuses.get(first) === 'completed',
+          'the first child to complete',
         );
-        expect(await harness.tasks.listTree(ownerTaskId, ownerId)).toHaveLength(
-          3,
-        );
-      } finally {
-        await harness.close();
-      }
-    },
-    TEST_TIMEOUT_MS,
-  );
+        // A `completed` end while two awaited children run: nothing wakes the parent.
+        expect(await parentState(harness, parentId, ownerId)).toEqual({
+          status: 'waiting',
+          waitReason: 'children',
+        });
+        expect(wokenSteps(seen)).toEqual([]);
 
-  it(
-    "R-2: trackers.list gives the owner's trackers only; another's task or another employee gets an empty list",
-    async () => {
-      const ownerType = uniqueType('r2-owner');
-      const taskType = uniqueType('r2-task');
-      const opened: OpenedTracker[] = [];
-      const harness = await createRuntimeHarness({
-        handlers: [
-          trackerOwnerHandler({
-            type: ownerType,
-            tasks: [
-              { type: taskType, input: {} },
-              { type: taskType, input: {} },
-            ],
-            opened,
-          }),
-          scriptedHandler({
-            type: taskType,
-            steps: [{ outcome: 'complete', result: { ok: true } }],
-          }),
-        ],
-      });
-      try {
-        const alice = await newUser();
-        const bob = await newUser();
-        const aliceTask = await harness.tasks.create({
-          type: ownerType,
-          ownerId: alice,
-          input: {},
-        });
-        const bobTask = await harness.tasks.create({
-          type: ownerType,
-          ownerId: bob,
-          input: {},
-        });
-        const finished = async (taskId: string, ownerId: string) =>
-          (await harness.trackers.list(taskId, ownerId)).map(
-            (tracker) => tracker.status,
-          );
+        // The last two end at once: each counts the other after taking the parent's row, so exactly one wakes it.
+        gates.of(second).open();
+        gates.of(third).open();
         await waitFor(
-          () => finished(aliceTask, alice),
-          (s) => s[0] === 'finished',
-          "Alice's tracker",
+          () => parentState(harness, parentId, ownerId),
+          (state) =>
+            state.status === 'waiting' && state.waitReason === 'messages',
+          'the woken parent to commit its step',
         );
-        await waitFor(
-          () => finished(bobTask, bob),
-          (s) => s[0] === 'finished',
-          "Bob's tracker",
-        );
-
-        const own = await harness.trackers.list(aliceTask, alice);
-        expect(own).toHaveLength(1);
-        expect(
-          own[0].tasks.map(({ status, result, failure }) => ({
-            status,
-            result,
-            failure,
-          })),
-        ).toEqual([
-          { status: 'completed', result: { ok: true }, failure: null },
-          { status: 'completed', result: { ok: true }, failure: null },
-        ]);
-
-        expect(await harness.trackers.list(aliceTask, bob)).toEqual([]);
-        expect(await harness.trackers.list(bobTask, alice)).toEqual([]);
-        expect(await harness.trackers.list(randomUUID(), alice)).toEqual([]);
-      } finally {
-        await harness.close();
-      }
-    },
-    TEST_TIMEOUT_MS,
-  );
-
-  it(
-    'R-3: a failed task is reported as failed and wakes the owner, which does not fail; a message sent during the wait comes in the same step, and an interrupt meanwhile is not_active',
-    async () => {
-      const ownerType = uniqueType('r3-owner');
-      const okType = uniqueType('r3-ok');
-      const failType = uniqueType('r3-fail');
-      const gates = createGateBook();
-      const seen: StepView[] = [];
-      const opened: OpenedTracker[] = [];
-      const harness = await createRuntimeHarness({
-        config: { concurrency: 3 },
-        handlers: [
-          trackerOwnerHandler({
-            type: ownerType,
-            tasks: [
-              { type: okType, input: {} },
-              { type: failType, input: {} },
-            ],
-            seen,
-            opened,
-          }),
-          scriptedHandler({
-            type: okType,
-            steps: [{ outcome: 'complete', result: { answer: 1 } }],
-          }),
-          scriptedHandler({
-            type: failType,
-            steps: [
-              {
-                outcome: 'throw',
-                error: new Error('subagent broke'),
-                gate: gates.of('fail'),
-              },
-            ],
-          }),
-        ],
-      });
-      try {
-        const ownerId = await newUser();
-        const ownerTaskId = await harness.tasks.create({
-          type: ownerType,
-          ownerId,
-          input: {},
-        });
-        await gates.of('fail').reached;
-        const [okTask, failTask] = opened[0].taskIds;
-        await waitFor(
-          () => taskOf(harness, okTask, ownerId),
-          (task) => task.status === 'completed',
-          'the first task to complete',
-        );
-
-        // Waiting for its tasks: neither the employee's message nor an interrupt wakes the owner.
-        await harness.inbox.enqueue({
-          recipientId: ownerTaskId,
-          ownerId,
-          kind: 'note',
-          sender: ownerId,
-          payload: NOTE,
-        });
-        expect(await harness.tasks.interrupt(ownerTaskId, ownerId)).toBe(
-          'not_active',
-        );
-        const waiting = await taskOf(harness, ownerTaskId, ownerId);
-        expect([waiting.status, waiting.waitReason]).toEqual([
-          'waiting',
-          'tasks',
-        ]);
-        expect(
-          (await inboxOf(ownerTaskId)).map((message) => message.kind),
-        ).toEqual(['note']);
-
-        gates.of('fail').open();
-
-        const woken = await waitFor(
-          async () => seen.filter((view) => view.stepNo > 0),
-          (views) => views.length > 0,
-          'the owner to be woken',
-        );
+        const woken = wokenSteps(seen);
         expect(woken).toHaveLength(1);
-        expect(
-          woken[0].messages.map(({ kind, payload }) => ({ kind, payload })),
-        ).toEqual([
-          { kind: 'note', payload: NOTE },
-          {
-            kind: TASKS_FINISHED_KIND,
-            payload: {
-              trackerId: opened[0].trackerId,
-              tasks: [
-                { taskId: okTask, status: 'completed' },
-                { taskId: failTask, status: 'failed' },
-              ],
-            },
-          },
+        expect(woken[0].messages.map((message) => message.kind)).toEqual([
+          CHILD_FINISHED_KIND,
+          CHILD_FINISHED_KIND,
+          CHILD_FINISHED_KIND,
         ]);
-        const owner = await waitFor(
-          () => taskOf(harness, ownerTaskId, ownerId),
-          (task) => task.status === 'waiting' && task.waitReason === 'messages',
-          'the owner to wait for messages after its step',
-        );
-        expect(owner.failure).toBeNull();
-        const [tracker] = await harness.trackers.list(ownerTaskId, ownerId);
         expect(
-          tracker.tasks.map(({ status, failure }) => ({
-            status,
-            reason: failure?.reason,
-          })),
-        ).toEqual([
-          { status: 'completed', reason: undefined },
-          { status: 'failed', reason: 'handler_error' },
-        ]);
-        // The tracker's tasks never send `child_finished`.
-        expect(
-          (await inboxOf(ownerTaskId)).filter(
-            (message) => message.kind === 'child_finished',
+          woken[0].messages.map(
+            (message) => (message.payload as { taskId: string }).taskId,
           ),
+        ).toEqual(expect.arrayContaining([first, second, third]));
+        // The payload by the contract: no step count, the result of a completed child.
+        expect(
+          woken[0].messages.find(
+            (message) =>
+              (message.payload as { taskId: string }).taskId === third,
+          )?.payload,
+        ).toEqual({
+          taskId: third,
+          status: 'completed',
+          result: { item: 2 },
+          durationMs: expect.any(Number),
+        });
+        expect(
+          harness.logs.filter((record) => RETRY_MESSAGES.has(record.message)),
         ).toEqual([]);
+      } finally {
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'UC-1 run 2: a child fails at once with the end of another: one wake-up right after the failure with the note, no child row written by it, no repeated transaction; the old group no longer wakes the parent that waits for a new one',
+    async () => {
+      const parentType = uniqueType('uc1b-parent');
+      const childType = uniqueType('uc1b-child');
+      const gates = createGateBook();
+      const seen: StepView[] = [];
+      const spawned = new Map<number, string[]>();
+      const harness = await createRuntimeHarness({
+        config: { concurrency: 5, dbPoolMax: 7 },
+        handlers: [
+          awaitingParentHandler({
+            type: parentType,
+            groups: [
+              [
+                { type: childType, input: { item: 0 } },
+                { type: childType, input: { item: 1, fail: true } },
+                { type: childType, input: { item: 2 } },
+              ],
+              [{ type: childType, input: { item: 3 } }],
+            ],
+            seen,
+            spawned,
+          }),
+          childHandler(childType, gates),
+        ],
+      });
+      try {
+        const ownerId = await newUser();
+        const parentId = await harness.tasks.create({
+          type: parentType,
+          ownerId,
+          input: {},
+        });
+        const [first, failing, third] = await waitFor(
+          async () => spawned.get(0) ?? [],
+          (ids) => ids.length === 3,
+          'the awaited children',
+        );
+        await Promise.all(
+          [first, failing, third].map((id) => gates.of(id).reached),
+        );
+
+        // DC-37: the employee's message to a parent waiting for its children waits in the queue.
+        const note = await harness.inbox.enqueue({
+          recipientId: parentId,
+          ownerId,
+          kind: 'note',
+          payload: NOTE,
+        });
+        expect(await parentState(harness, parentId, ownerId)).toEqual({
+          status: 'waiting',
+          waitReason: 'children',
+        });
+        const thirdBefore = (await childRowsOf(parentId)).find(
+          (row) => row.taskId === third,
+        );
+
+        gates.of(first).open();
+        gates.of(failing).open();
+        const [woken] = await waitFor(
+          async () => wokenSteps(seen),
+          (views) => views.length > 0,
+          'the parent to be woken',
+        );
+        // The woken step creates the new group and waits for it.
+        const [newChild] = await waitFor(
+          async () => spawned.get(1) ?? [],
+          (ids) => ids.length === 1,
+          'the new group',
+        );
+        await gates.of(newChild).reached;
+        expect(await parentState(harness, parentId, ownerId)).toEqual({
+          status: 'waiting',
+          waitReason: 'children',
+        });
+
+        // The step got the note and the failure with its reason and text.
+        expect(woken.messages.map((message) => message.kind)).toContain('note');
+        expect(
+          woken.messages.find(
+            (message) =>
+              message.kind === CHILD_FINISHED_KIND &&
+              (message.payload as { taskId: string }).taskId === failing,
+          )?.payload,
+        ).toEqual({
+          taskId: failing,
+          status: 'failed',
+          failure: FAILURE,
+          durationMs: expect.any(Number),
+        });
+        // The wake-up wrote no child row: the third child, still running, is the row it was.
+        const rows = await childRowsOf(parentId);
+        expect(rows.find((row) => row.taskId === third)).toEqual(thirdBefore);
+        expect(rows.map((row) => row.awaitedStep)).toEqual([1, 1, 1, 2]);
+
+        // DC-36: the end of the old group's third child does not wake the parent waiting for the new one.
+        gates.of(third).open();
+        await waitFor(
+          async () =>
+            (await inboxOf(parentId)).filter(
+              (message) =>
+                message.kind === CHILD_FINISHED_KIND &&
+                (message.payload as { taskId: string }).taskId === third,
+            ),
+          (notices) => notices.length === 1,
+          "the third child's child_finished",
+        );
+        expect(await parentState(harness, parentId, ownerId)).toEqual({
+          status: 'waiting',
+          waitReason: 'children',
+        });
+        expect(wokenSteps(seen)).toHaveLength(1);
+        expect(
+          harness.logs.filter((record) => RETRY_MESSAGES.has(record.message)),
+        ).toEqual([]);
+
+        // DC-41: the log names the children created with their `awaited_step`, the wait and the delivery.
+        expect(
+          recordsOf(harness, 'child task created in step').map((record) => [
+            record.fields.childId,
+            record.fields.awaitedStep,
+          ]),
+        ).toEqual([
+          [first, 1],
+          [failing, 1],
+          [third, 1],
+          [newChild, 2],
+        ]);
+        const parentCommits = recordsOf(harness, 'step committed').filter(
+          (record) => record.fields.taskId === parentId,
+        );
+        expect(parentCommits.map((record) => record.fields.waitReason)).toEqual(
+          ['children', 'children'],
+        );
+        const delivered = parentCommits[1].fields.deliveredMessages as {
+          messageId: string;
+          kind: string;
+        }[];
+        expect(delivered.map((message) => message.messageId)).toContain(
+          note.messageId,
+        );
+        expect(
+          recordsOf(harness, 'task ended').find(
+            (record) => record.fields.taskId === failing,
+          )?.fields,
+        ).toMatchObject({
+          to: 'failed',
+          failureReason: FAILURE.reason,
+          failureMessage: FAILURE.message,
+          parentWoken: true,
+        });
       } finally {
         await harness.close();
       }

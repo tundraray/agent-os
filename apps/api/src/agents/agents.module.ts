@@ -29,7 +29,7 @@ const agentsPackage = AgentsPackageModule.forRootAsync({
 
 /**
  * The agents in `apps/api`: imports the package's module and hands its services on to the modules that
- * import this one. The package registers its agents, handlers, event consumers and system tools in
+ * import this one. The package registers its agents, handlers, task end hooks and system tools in
  * `onModuleInit`; upper modules register their tools in theirs; the tools library closes in
  * `onApplicationBootstrap`.
  *

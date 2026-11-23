@@ -16,6 +16,13 @@ import {
 
 const { running, waiting } = TaskStatusSchema.enum;
 
+/**
+ * The `LISTEN` channel of the runtime: one notification with `{"rootId"}` per committed transaction
+ * that changed a task's status or its queue. The web and the dispatcher's loop learn by it that a
+ * tree changed; it carries nothing else.
+ */
+export const RUNTIME_TREE_CHANNEL = 'runtime_tree';
+
 /** A new status: no wait reason, `finished_at` only when finished. */
 const leaveStatus = (status: TaskStatus): RuntimeTaskWrite => ({
   status,
@@ -25,7 +32,7 @@ const leaveStatus = (status: TaskStatus): RuntimeTaskWrite => ({
 function changeColumns(change: TaskChange): RuntimeTaskWrite {
   switch (change.kind) {
     case 'claim':
-      return { status: running, nextAttempt: true, countClaim: true };
+      return { status: running, nextAttempt: true };
     case 'wait':
       return {
         ...change.fields,
@@ -53,27 +60,38 @@ export class Tasks {
     private readonly rows: RuntimeTasksRepository,
   ) {}
 
-  /** Inserts a task in `queued`. An id already taken is `TASK_EXISTS`. */
+  /** Inserts a task in `queued` and signals its tree. An id already taken is `TASK_EXISTS`. */
   async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow> {
     const row = await this.rows.insert(task);
     if (row === undefined) {
       throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
     }
+    await this.signal(row.rootId);
     return row;
+  }
+
+  /** The tree's signal on {@link RUNTIME_TREE_CHANNEL}, sent when the open transaction commits. */
+  signal(rootId: string): Promise<void> {
+    return this.rows.notify(RUNTIME_TREE_CHANNEL, rootId);
   }
 
   /**
    * The only change of a task row besides {@link insert} and the deletion mark: one UPDATE guarded
    * by the allowed source statuses and, when given, by the attempt (fencing, ADR-0001) and the wait
    * reason. Returns the updated row, or `undefined` when the guard matched nothing — the write is
-   * fenced and dropped.
+   * fenced and dropped. A written change of status signals the tree.
    */
   async transition(
     guard: RuntimeTaskRowGuard,
     change: TaskChange,
   ): Promise<RuntimeTaskRow | undefined> {
     assertAllowed(guard, change);
-    return this.rows.updateGuarded(guard, changeColumns(change));
+    const write = changeColumns(change);
+    const row = await this.rows.updateGuarded(guard, write);
+    if (row !== undefined && write.status !== undefined) {
+      await this.signal(row.rootId);
+    }
+    return row;
   }
 
   /**
@@ -85,14 +103,5 @@ export class Tasks {
    */
   hold(guard: RuntimeTaskRowGuard): Promise<RuntimeTaskRow | undefined> {
     return this.rows.updateGuarded(guard, {});
-  }
-
-  /**
-   * Takes the task's next message number in one UPDATE (`next_message_seq + 1`), whatever its
-   * status: two senders never get the same number. Returns the row as {@link hold} does — the
-   * number taken is its `nextMessageSeq - 1` — or `undefined` for a missing task.
-   */
-  takeMessageSeq(taskId: string): Promise<RuntimeTaskRow | undefined> {
-    return this.rows.takeMessageSeq(taskId);
   }
 }

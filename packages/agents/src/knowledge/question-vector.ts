@@ -1,3 +1,4 @@
+import { errorText } from '@agent-os/common';
 import { AgentMessageKindSchema } from '@agent-os/contracts';
 import type {
   AgentKnowledgeRunsRepository,
@@ -140,7 +141,7 @@ export async function embedQuestion(
     if (ctx.signal.aborted) return false;
     attempt = {
       kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: errorText(error),
     };
   }
 

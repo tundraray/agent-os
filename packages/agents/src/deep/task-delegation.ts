@@ -1,6 +1,7 @@
 import type { Logger } from '@agent-os/common';
 import {
   AGENT_TASK_TYPE,
+  type ChildFinishedPayload,
   RecordNameSchema,
   ToolOutcomeSchema,
   type SettingsValue,
@@ -11,12 +12,7 @@ import type {
   ToolResultsRepository,
   StoredToolResult,
 } from '@agent-os/db';
-import type {
-  Trackers,
-  StepEffects,
-  Tracker,
-  TrackerTask,
-} from '@agent-os/runtime';
+import type { StepEffects } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { descriptionLine } from '../chat-listing';
@@ -26,10 +22,10 @@ import { type RunStart, runDefinition } from '../start/run-definition';
 import type { CallEnding, CallRecords } from '../store/call-records';
 import type { History } from '../store/history';
 import {
+  type AgentTaskInput,
   AnswerFieldSchema,
-  type SessionInput,
   type Sessions,
-  startFieldsOf,
+  type SessionStart,
 } from '../store/sessions';
 import { wrapperText } from '../tools/large-result';
 import { decideTaskChange } from '../tools/system/task-list-rules';
@@ -52,8 +48,9 @@ import {
   type DelegationDecision,
   decideDelegations,
   resultTable,
+  type SubagentEnd,
+  subagentEnd,
   TASK_TABLE_MAX_CHARS,
-  type TableRow,
   type TaskArgs,
 } from './delegation-rules';
 
@@ -126,7 +123,7 @@ function describeTask(
 ): string {
   return [
     'Give work to a subagent. It works in the background on its own and sees only what you give it; the call’s result is its last message.',
-    'You are resumed once, when every task call of your answer has finished: nothing is to be polled.',
+    'You are resumed when every subagent of your answer has finished, or at once when one fails or is stopped: then a subagent still running reports later as a message. Nothing is to be polled.',
     declaration.listDelegation
       ? 'Give description for one assignment, or instruction with items to run one subagent per item: that call’s result is a table with a row per item.'
       : 'Give description: the whole assignment.',
@@ -167,7 +164,8 @@ function loggedTaskArgs(
  * `task` as the registry holds it (deep-agents/design-task.md KD-4): its schema, description and log rule; a deep
  * agent sees it by its declaration — its subagents, and the fields its flags allow (DC-6). Its
  * calls never run one by one — the tool step hands all `task` calls of an answer to `DeepAgent`, which checks
- * them together and opens one tracker through `Delegations` — so `execute` is never reached.
+ * them together and starts their subagents as awaited children through `Delegations` — so `execute` is never
+ * reached.
  */
 export function createTaskTool(): InCommitAgentTool<TaskArgs> {
   return {
@@ -214,9 +212,9 @@ export interface Delegations {
     calls: readonly TaskCall[],
   ): Promise<DelegationDecision>;
   /**
-   * In the step's commit: the subagents' sessions with their assignments, one tracker of all their tasks, the
-   * `tool_sent` of each accepted call with its task ids, and the named task of the list `in_progress` with the
-   * subagent as its owner. The step then ends with `wait`.
+   * In the step's commit: each subagent an awaited child with its session and assignment, the `tool_sent` of
+   * each accepted call with its task ids, and the named task of the list `in_progress` with the subagent as its
+   * owner. The step then ends with `wait`, and the runtime wakes the agent by the rule of awaited children.
    */
   open(input: {
     readonly effects: StepEffects;
@@ -224,7 +222,11 @@ export interface Delegations {
     readonly accepted: readonly AcceptedDelegation[];
     readonly logger: Logger;
   }): Promise<void>;
-  /** The endings of the sent `task` calls once their tracker has finished, read outside any transaction. */
+  /**
+   * The endings of the sent `task` calls in the step after their start, outside any transaction: each subagent
+   * by its `child_finished` of this step (`finished`, by child task id), one without it as still running
+   * (data-model/design-runtime.md, Contract «Инструмент `task`»).
+   */
   closings(
     ctx: {
       readonly taskId: string;
@@ -232,6 +234,7 @@ export interface Delegations {
       readonly logger: Logger;
     },
     calls: readonly CallState[],
+    finished: ReadonlyMap<string, ChildFinishedPayload>,
   ): Promise<DelegationClosing[]>;
   /** In the step's commit: the call's `tool_result`, its stored result and its task of the list `completed`. */
   close(
@@ -241,7 +244,6 @@ export interface Delegations {
 }
 
 export interface DelegationsDeps {
-  /** The deep agent's history and task list are read from it before the commit. */
   /** The session of each subagent, the `tool_sent` and the closing of each call, and the deep agent's task list. */
   readonly sessions: Sessions;
   readonly history: History;
@@ -249,8 +251,6 @@ export interface DelegationsDeps {
   readonly callRecords: CallRecords;
   readonly sessionTaskRows: ConversationTasksRepository;
   readonly toolResultRows: ToolResultsRepository;
-  /** The outcomes of the tracker's tasks (`Trackers.list`). */
-  readonly trackers: Pick<Trackers, 'list'>;
   /** The threshold of a stored result, as for an MCP result (tool-result-reading R-5). */
   readonly resultSettings: () => Promise<SettingsValue<'tool_result_settings'>>;
   /** `AGENT_MAX_DEPTH`. */
@@ -340,25 +340,6 @@ function partsOf(
   }));
 }
 
-/** The report of a completed agent task: `{ report }`. */
-const ReportSchema = z.object({ report: z.string() });
-
-export function reportOf(task: TrackerTask): string {
-  return ReportSchema.parse(task.result).report;
-}
-
-/** A tracker task's end as the row and the result name it; a task revived since is not finished — cancelled. */
-function endOf(task: TrackerTask): TableRow['status'] {
-  if (task.status === 'completed') return 'completed';
-  return task.status === 'failed' ? 'failed' : 'cancelled';
-}
-
-function failureText(task: TrackerTask): string {
-  return endOf(task) === 'failed'
-    ? `The subagent failed: ${task.failure?.reason ?? 'unknown'}.`
-    : 'The task was cancelled.';
-}
-
 /** The line about the task of the list a call names (Contract «Инструмент `task`»). */
 function listTaskLine(listTask: number, completed: boolean): string {
   return completed
@@ -371,7 +352,7 @@ function withLine(text: string, line: string | null): string {
 }
 
 export function createDelegations(deps: DelegationsDeps): Delegations {
-  const { trackers, resultSettings, maxDepth } = deps;
+  const { resultSettings, maxDepth } = deps;
   const {
     sessions,
     history,
@@ -381,25 +362,25 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
     toolResultRows,
   } = deps;
 
-  /** The ending of a single call: the answer, a long one stored as an MCP result is; a failure or a cancel as an error. */
+  /** The ending of a single call: the answer, a long one stored as an MCP result is; any other end as an error. */
   function singleEnding(
     call: CallState,
-    task: TrackerTask,
+    childTaskId: string,
+    end: SubagentEnd,
     settings: SettingsValue<'tool_result_settings'>,
     listLine: string | null,
   ): Pick<DelegationClosing, 'ending' | 'stored'> {
-    const childTaskId = task.taskId;
-    if (endOf(task) !== 'completed') {
+    if (end.answer === null) {
       return {
         ending: {
           outcome: ToolOutcomeSchema.enum.tool_error,
-          resultText: withLine(failureText(task), listLine),
+          resultText: withLine(end.line ?? '', listLine),
           childTaskId,
         },
         stored: null,
       };
     }
-    const report = reportOf(task);
+    const report = end.answer;
     if (report.length <= settings.storeFromChars) {
       return {
         ending: {
@@ -429,19 +410,12 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
   function listEnding(
     call: CallState,
     args: TaskArgs,
-    tasks: readonly TrackerTask[],
+    ends: readonly SubagentEnd[],
     listLine: string | null,
   ): Pick<DelegationClosing, 'ending' | 'stored'> {
     const items = args.items ?? [];
-    const rows: TableRow[] = tasks.map((task, index) => ({
-      item: items[index] ?? '',
-      status: endOf(task),
-      answer: endOf(task) === 'completed' ? reportOf(task) : null,
-      reason:
-        endOf(task) === 'failed' ? (task.failure?.reason ?? 'unknown') : null,
-    }));
     const table = resultTable({
-      rows,
+      rows: ends.map((end, index) => ({ ...end, item: items[index] ?? '' })),
       answerFields: (args.answerFields ?? []).map((field) => field.name),
       callId: call.callId,
       maxChars: TASK_TABLE_MAX_CHARS,
@@ -453,24 +427,6 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       },
       stored: table.cut ? { value: table.full, text: table.full } : null,
     };
-  }
-
-  /** The tracker that holds the call's tasks, which must have finished. */
-  function trackerOf(
-    all: readonly Tracker[],
-    call: CallState,
-    agentId: string,
-  ): Tracker {
-    const first = call.delegation?.taskIds[0];
-    const tracker = all.find((candidate) =>
-      candidate.tasks.some((task) => task.taskId === first),
-    );
-    if (tracker?.status !== 'finished') {
-      throw new Error(
-        `task call ${call.callId} of agent ${agentId} has no finished tracker`,
-      );
-    }
-    return tracker;
   }
 
   return {
@@ -506,49 +462,48 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
             throw new Error(
               `Subagent ${delegation.subagent} left the team of ${caller.agentId}`,
             );
-          const input: SessionInput = {
-            ...startFieldsOf(run),
+          const input: AgentTaskInput =
+            delegation.answerFields.length === 0
+              ? {}
+              : { answerFields: [...delegation.answerFields] };
+          const start: SessionStart = {
+            run,
             prompt: assignmentOf(brief, body, delegation.answerFields),
             description,
             startCallId: delegation.callId,
-            ...(delegation.answerFields.length === 0
-              ? {}
-              : { answerFields: [...delegation.answerFields] }),
           };
-          return { delegation, input };
+          return { delegation, input, start };
         }),
       );
-      const { trackerId, taskIds } = await effects.openTracker(
-        children.map(({ input }) => ({ type: AGENT_TASK_TYPE, input })),
-      );
-      for (const [index, { delegation, input }] of children.entries()) {
-        const taskId = taskIds[index];
-        if (taskId === undefined)
-          throw new Error(
-            `Tracker ${trackerId} gave no task for subagent ${index}`,
-          );
-        // A subagent's kind adds nothing to a new session, so the store makes it directly.
+      const taskIds: string[] = [];
+      for (const { delegation, input, start } of children) {
+        const taskId = await effects.spawn({
+          type: AGENT_TASK_TYPE,
+          input,
+          awaited: true,
+        });
+        taskIds.push(taskId);
+        // A subagent's kind adds nothing to a new session, so the store makes it directly, in the commit that
+        // spawns its task (KD-8).
         await sessions.ensureSession(
           {
             taskId,
             ownerId: caller.ownerId,
             parentId: caller.agentId,
           },
-          input,
-          deepAgent.version.agentId,
+          start,
         );
         logger.info('task delegation started', {
           agentId: caller.agentId,
           rootId: caller.rootId,
           ownerId: caller.ownerId,
           callId: delegation.callId,
-          trackerId,
           taskId,
           subagent: delegation.subagent,
           name: delegation.name,
-          versionId: input.versionId,
+          versionId: start.run.version.id,
           version: deepAgent.version.number,
-          model: input.model,
+          model: start.run.model,
           listTask: delegation.listTask,
         });
       }
@@ -586,41 +541,35 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       }
     },
 
-    async closings(ctx, calls) {
-      const [all, settings] = await Promise.all([
-        trackers.list(ctx.taskId, ctx.ownerId),
-        resultSettings(),
-      ]);
+    async closings(ctx, calls, finished) {
+      const settings = await resultSettings();
       return calls.map((call) => {
-        const tracker = trackerOf(all, call, ctx.taskId);
         const taskIds = call.delegation?.taskIds ?? [];
-        const tasks = taskIds.map((taskId) => {
-          const task = tracker.tasks.find(
-            (candidate) => candidate.taskId === taskId,
-          );
-          if (task === undefined)
-            throw new Error(`Tracker ${tracker.trackerId} lost task ${taskId}`);
-          return task;
-        });
+        const ends = taskIds.map((taskId) => subagentEnd(finished.get(taskId)));
         const args = TaskArgsSchema.parse(call.args);
         const listTask = call.delegation?.listTask ?? null;
-        const allCompleted = tasks.every((task) => endOf(task) === 'completed');
+        const allCompleted = ends.every((end) => end.status === 'completed');
         const listLine =
           listTask === null ? null : listTaskLine(listTask, allCompleted);
-        const single = tasks.length === 1 && args.description !== undefined;
+        const [childTaskId] = taskIds;
+        const [end] = ends;
+        const single =
+          args.description !== undefined &&
+          ends.length === 1 &&
+          childTaskId !== undefined &&
+          end !== undefined;
         const { ending, stored } = single
-          ? singleEnding(call, tasks[0] as TrackerTask, settings, listLine)
-          : listEnding(call, args, tasks, listLine);
-        for (const task of tasks) {
-          ctx.logger.info('task delegation finished', {
+          ? singleEnding(call, childTaskId, end, settings, listLine)
+          : listEnding(call, args, ends, listLine);
+        for (const [index, taskId] of taskIds.entries()) {
+          ctx.logger.info('task delegation closed', {
             agentId: ctx.taskId,
             ownerId: ctx.ownerId,
             callId: call.callId,
-            trackerId: tracker.trackerId,
-            taskId: task.taskId,
+            taskId,
             subagent: args.subagentType,
-            status: endOf(task),
-            reason: task.failure?.reason ?? null,
+            status: ends[index]?.status ?? null,
+            reason: finished.get(taskId)?.failure?.reason ?? null,
             listTask,
           });
         }

@@ -15,7 +15,6 @@ import {
   RecordKindSchema,
   VersionSchema,
 } from './library';
-import { DecisionStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
 
 /**
@@ -358,6 +357,17 @@ export const LibraryRecordCardSchema = z.discriminatedUnion('kind', [
 ]);
 export type LibraryRecordCard = z.infer<typeof LibraryRecordCardSchema>;
 
+/**
+ * Status of a confirmation: `open` while its question waits, `resolved` once answered, `cancelled`
+ * once a stop ended it.
+ */
+export const ConfirmationStatusSchema = z.enum([
+  'open',
+  'resolved',
+  'cancelled',
+]);
+export type ConfirmationStatus = z.infer<typeof ConfirmationStatusSchema>;
+
 /** A decision request in any status. */
 export const ConfirmationSchema = z.object({
   decisionId: z.string().min(1),
@@ -373,7 +383,7 @@ export const ConfirmationSchema = z.object({
   args: z.unknown(),
   /** The card content: the tool's confirmation content (for a brief: the deep agent and its three fields). */
   content: z.unknown(),
-  status: DecisionStatusSchema,
+  status: ConfirmationStatusSchema,
   /** Set when `resolved`: the decision and the arguments the call ran with. */
   resolution: z.object({ approve: z.boolean(), args: z.unknown() }).nullable(),
   createdAt: z.iso.datetime(),
@@ -533,7 +543,7 @@ export const DELEGATION_ITEM_MAX_CHARS = 200;
 export const DELEGATION_ANSWER_MAX_CHARS = 300;
 
 /**
- * One task of the agent's trackers: the subagent's session, its assignment (the description or the item), the
+ * One subagent of the agent's `task` calls: the subagent's session, its assignment (the description or the item), the
  * task of the list the `task` call named, and how it ended.
  */
 export const DelegationViewSchema = z.object({
@@ -548,8 +558,8 @@ export const DelegationViewSchema = z.object({
 export type DelegationView = z.infer<typeof DelegationViewSchema>;
 
 /**
- * GET /agents/:agentId/tasks: the session's tasks by number, empty for a session without a list, and the tasks of
- * its trackers in order, empty for an agent that delegated nothing.
+ * GET /agents/:agentId/tasks: the session's tasks by number, empty for a session without a list, and the subagents
+ * of its `task` calls in call order, empty for an agent that delegated nothing.
  */
 export const AgentTasksViewSchema = z.object({
   tasks: z.array(SessionTaskViewSchema),

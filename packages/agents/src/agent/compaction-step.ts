@@ -12,7 +12,6 @@ import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
 import {
-  appendWithEvent,
   callUnlessAborted,
   failResult,
   logStep,
@@ -74,7 +73,7 @@ export async function runCompactionStep(
     deps;
   const startedAt = Date.now();
   const { definition } = agent;
-  const delivered = await entriesOf(deps, ctx.messages);
+  const delivered = await entriesOf(deps, ctx);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
   // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
@@ -174,13 +173,8 @@ export async function runCompactionStep(
     });
     return {
       outcome: 'continue',
-      commit: async (effects) => {
-        await appendWithEvent(
-          deps,
-          effects,
-          ctx.taskId,
-          await writeOwedEntries(),
-        );
+      commit: async () => {
+        await history.append(ctx.taskId, await writeOwedEntries());
         await sessionRows.update(ctx.taskId, patch);
       },
     };
@@ -198,12 +192,11 @@ export async function runCompactionStep(
   });
   return {
     outcome: 'continue',
-    commit: async (effects) => {
+    commit: async () => {
       // The prelude goes first in its own appends, so the summary knows the last `seq` it covers.
-      // `agents.history_appended` goes once, with the last `seq`, from the last append.
       await history.append(ctx.taskId, await writePrelude());
       const throughSeq = await messageRows.lastSeq(ctx.taskId);
-      await appendWithEvent(deps, effects, ctx.taskId, [
+      await history.append(ctx.taskId, [
         { kind: 'compaction', content: { summary, throughSeq } },
         {
           kind: 'event',

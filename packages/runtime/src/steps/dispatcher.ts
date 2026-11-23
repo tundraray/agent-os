@@ -1,6 +1,5 @@
-import type { Logger } from '@agent-os/common';
+import { errorText, type Logger } from '@agent-os/common';
 import {
-  RuntimeEventTypeSchema,
   RuntimeFailureReasonSchema,
   type RuntimeFailureReason,
   TaskStatusSchema,
@@ -9,9 +8,7 @@ import {
   DATABASE_CONNECTION,
   type DatabaseConnection,
   Db,
-  type RuntimeDecisionRow,
   type RuntimeInboxRow,
-  RuntimeTrackersRepository,
   RuntimeTasksRepository,
   type RuntimeTaskRow,
 } from '@agent-os/db';
@@ -19,11 +16,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import type pg from 'pg';
 import type { CancelTimer, Clock } from '../clock';
 import { CrashPoints } from '../crash-points';
-import { EventLog, RUNTIME_EVENTS_CHANNEL } from '../events/event-log';
 import { HandlerRegistry } from './handler.registry';
 import { LiveTasks } from './live-tasks';
 import type { StepResult } from './step-contract';
-import { Decisions } from '../messaging/decisions';
 import { Inbox } from '../messaging/inbox';
 import type { RuntimeConfig } from '../runtime-config';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
@@ -33,22 +28,26 @@ import {
 } from '../tasks/running-task.registry';
 import { type StepCommit, StepCommitter } from './step-commit';
 import { TaskStepContext } from './step-context';
-import { endTask } from '../tasks/task-end';
-import { Tasks } from '../tasks/tasks';
+import {
+  cutOff,
+  endTask,
+  logTaskEnds,
+  type TaskEndDeps,
+} from '../tasks/task-end';
+import { TaskEndHooks } from '../tasks/task-end-hooks';
+import { RUNTIME_TREE_CHANNEL, Tasks } from '../tasks/tasks';
+import { withTxRetry } from '../tasks/transaction-retry';
 import { backoffDelay } from '../workers/worker-loop';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
-const EVENT = RuntimeEventTypeSchema.enum;
 const FAILURE = RuntimeFailureReasonSchema.enum;
 
 /** Bound of a failure message the runtime writes; it travels in the parent's notice. */
 const FAILURE_MESSAGE_MAX = 2_000;
 
+/** A failed query gives only the database's message, never the query or its params (`errorText`). */
 const errorMessage = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error)).slice(
-    0,
-    FAILURE_MESSAGE_MAX,
-  );
+  errorText(error).slice(0, FAILURE_MESSAGE_MAX);
 
 /** How the handler's step ended, as the dispatcher saw it. */
 type Execution =
@@ -63,13 +62,12 @@ type Execution =
 type HandlerEnd = Extract<Execution, { kind: 'returned' | 'threw' }>;
 
 /**
- * A claimed step: the task row after the claim, the messages pending at its start, the resolved
- * decision no committed step has received yet and the step's entry among the running ones.
+ * A claimed step: the task row after the claim, the messages pending at its start and the step's
+ * entry among the running ones.
  */
 interface ClaimedTask {
   task: RuntimeTaskRow;
   messages: RuntimeInboxRow[];
-  decision: RuntimeDecisionRow | undefined;
   handle: RunningStepHandle;
 }
 
@@ -82,20 +80,12 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-interface DispatcherDeps {
-  db: Db;
+interface DispatcherDeps extends TaskEndDeps {
   /** The pool of the database: one of its connections LISTENs. */
   pool: pg.Pool;
   config: RuntimeConfig;
   clock: Clock;
-  logger: Logger;
   handlers: HandlerRegistry;
-  tasks: Tasks;
-  taskRows: RuntimeTasksRepository;
-  trackers: RuntimeTrackersRepository;
-  events: EventLog;
-  inbox: Inbox;
-  decisions: Decisions;
   running: RunningTaskRegistry;
   committer: StepCommitter;
   crashPoints: CrashPoints;
@@ -105,7 +95,7 @@ interface DispatcherDeps {
 
 /**
  * Execution of steps (Flow 1, Flow 2). A tick — at least every `RUNTIME_POLL_MS`, sooner on any
- * NOTIFY of `runtime_events` or when a slot frees — claims while slots (`RUNTIME_CONCURRENCY`) are
+ * NOTIFY of `runtime_tree` or when a slot frees — claims while slots (`RUNTIME_CONCURRENCY`) are
  * free the oldest `queued` task of a type registered here: a plain read, then the guarded claim
  * re-checks `queued`. Each step runs its handler outside any
  * transaction with a signal (a stop or an interrupt, step limit, shutdown) and ends in the commit
@@ -135,10 +125,8 @@ export class Dispatcher {
     @Inject(HandlerRegistry) handlers: HandlerRegistry,
     @Inject(Tasks) tasks: Tasks,
     @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
-    @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
-    @Inject(EventLog) events: EventLog,
     @Inject(Inbox) inbox: Inbox,
-    @Inject(Decisions) decisions: Decisions,
+    @Inject(TaskEndHooks) endHooks: TaskEndHooks,
     @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
     @Inject(StepCommitter) committer: StepCommitter,
     @Inject(CrashPoints) crashPoints: CrashPoints,
@@ -153,10 +141,8 @@ export class Dispatcher {
       handlers,
       tasks,
       taskRows,
-      trackers,
-      events,
       inbox,
-      decisions,
+      endHooks,
       running,
       committer,
       crashPoints,
@@ -251,8 +237,8 @@ export class Dispatcher {
   // ---------------------------------------------------------------------------------------------
 
   /**
-   * Claims the oldest ready task in one transaction: `running`, `attempt + 1`, `step_claims + 1`,
-   * the pending messages and `task.step_started`. The step is entered among the running ones
+   * Claims the oldest ready task in one transaction: `running`, `attempt + 1`,
+   * and the pending messages. The step is entered among the running ones
    * before the claim commits, so the recovery sweeper never takes a step of this process for a
    * lost one.
    */
@@ -262,40 +248,35 @@ export class Dispatcher {
       handlers,
       tasks,
       taskRows,
-      events,
       inbox,
-      decisions,
       running,
       crashPoints,
+      logger,
     } = this.deps;
     const types = handlers.types();
     if (types.length === 0) return undefined;
     const entered: { handle?: RunningStepHandle } = {};
     try {
-      const claimed = await db.transaction(async () => {
-        const taskId = await taskRows.findReady(types);
-        if (!taskId) return undefined;
-        // The guard re-checks `queued`.
-        const task = await tasks.transition(
-          { taskId, from: [queued] },
-          { kind: 'claim' },
-        );
-        if (!task) return undefined;
-        const handle = running.register(task);
-        entered.handle = handle;
-        const messages = await inbox.loadPending(taskId);
-        const decision = await decisions.loadUndelivered(taskId);
-        await events.append({
-          type: EVENT['task.step_started'],
-          task,
-          payload: {
-            stepNo: task.stepNo,
-            attempt: task.attempt,
-            messages: messages.length,
-          },
-        });
-        return { task, messages, decision, handle };
-      });
+      const claimed = await withTxRetry(
+        { db, logger, operation: 'step.claim' },
+        async () => {
+          // A repeat after a deadlock: the rolled-back claim runs no step.
+          entered.handle?.release();
+          entered.handle = undefined;
+          const taskId = await taskRows.findReady(types);
+          if (!taskId) return undefined;
+          // The guard re-checks `queued`.
+          const task = await tasks.transition(
+            { taskId, from: [queued] },
+            { kind: 'claim' },
+          );
+          if (!task) return undefined;
+          const handle = running.register(task);
+          entered.handle = handle;
+          const messages = await inbox.loadPending(taskId);
+          return { task, messages, handle };
+        },
+      );
       if (claimed) crashPoints.hit('step.after-claim');
       return claimed;
     } catch (error) {
@@ -311,7 +292,7 @@ export class Dispatcher {
 
   /** Runs the claimed step to its write; never rejects. */
   private async runStep(claimed: ClaimedTask): Promise<void> {
-    const { task, messages, decision, handle } = claimed;
+    const { task, messages, handle } = claimed;
     const step = new TaskStepContext(
       {
         db: this.deps.db,
@@ -319,11 +300,12 @@ export class Dispatcher {
         crashPoints: this.deps.crashPoints,
         logger: this.deps.logger,
       },
-      { task, messages, decision, signal: handle.signal },
+      { task, messages, signal: handle.signal },
     );
     const startedAt = Date.now();
     step.logger.info('step started', {
       messageIds: step.messageIds,
+      recoveries: task.recoveries,
       resumedAfterLoss: step.resumedAfterLoss,
     });
     let commit: StepCommit | undefined;
@@ -406,8 +388,11 @@ export class Dispatcher {
     startedAt: number,
   ): Promise<StepCommit | undefined> {
     switch (execution.kind) {
-      case 'returned':
-        return this.deps.committer.commit(step, execution.result);
+      case 'returned': {
+        const commit = await this.deps.committer.commit(step, execution.result);
+        cutOff(this.deps, commit.stopped, 'stopped');
+        return commit;
+      }
       case 'threw':
         if (step.signal.aborted) {
           // The step was cut off (interrupt, stop): its attempt is no longer current.
@@ -441,7 +426,8 @@ export class Dispatcher {
 
   /**
    * Fails the task with a runtime reason through the one end-of-task procedure (its parent is
-   * told), if the attempt is still current; `attempt + 1` fences a late result of the step.
+   * told), if the attempt is still current; `attempt + 1` fences a late result of the step. The
+   * messages the step was handed are marked delivered in the same transaction.
    */
   private async failStep(
     step: TaskStepContext,
@@ -450,20 +436,36 @@ export class Dispatcher {
     startedAt: number,
   ): Promise<void> {
     const { db, tasks } = this.deps;
-    const ended = await db.transaction(async () => {
-      const task = await tasks.hold({
+    const ended = await withTxRetry(
+      {
+        db,
+        logger: step.logger,
+        operation: 'step.fail',
         taskId: step.taskId,
-        from: [running],
-        attempt: step.attempt,
-      });
-      if (!task) return undefined;
-      return endTask(this.deps, task, {
-        status: failed,
-        failure: { reason, message: errorMessage(error) },
-        fields: { stepClaims: 0, recoveries: 0 },
-        fence: true,
-      });
-    });
+      },
+      async () => {
+        const task = await tasks.hold({
+          taskId: step.taskId,
+          from: [running],
+          attempt: step.attempt,
+        });
+        if (!task) return undefined;
+        // The step's messages go with its failure: a `revive` among them must not requeue the task
+        // into the same failure again (only a new message revives it).
+        await this.deps.inbox.markDelivered(task, step.messageIds);
+        return endTask(this.deps, task, {
+          status: failed,
+          failure: { reason, message: errorMessage(error) },
+          fields: { recoveries: 0 },
+          fence: true,
+          cause: reason === FAILURE.step_timeout ? 'step_timeout' : 'step',
+        });
+      },
+    );
+    if (ended) {
+      cutOff(this.deps, ended.stopped, 'stopped');
+      logTaskEnds(step.logger, ended.ends);
+    }
     const fields = { reason, durationMs: Date.now() - startedAt, error };
     if (!ended) {
       step.logger.warn(
@@ -477,29 +479,37 @@ export class Dispatcher {
     }
     step.logger.error('step failed: task failed', {
       ...fields,
-      outcome: ended.status,
+      outcome: ended.row.status,
+      ...(ended.stopped.length > 0 && {
+        stoppedIds: ended.stopped.map((task) => task.taskId),
+      }),
     });
   }
 
-  /** Shutdown: the task goes back to `queued` without counting a loss; `attempt + 1`. */
+  /** Shutdown: the task goes back to `queued` without counting a loss (`recoveries = 0`); `attempt + 1`. */
   private async requeue(
     step: TaskStepContext,
     startedAt: number,
   ): Promise<void> {
-    const { db, tasks, events } = this.deps;
-    const row = await db.transaction(async () => {
-      const requeued = await tasks.transition(
-        { taskId: step.taskId, from: [running], attempt: step.attempt },
-        { kind: 'set', status: queued, fence: true },
-      );
-      if (!requeued) return undefined;
-      await events.append({
-        type: EVENT['task.queued'],
-        task: requeued,
-        payload: { cause: 'shutdown', from: running },
-      });
-      return requeued;
-    });
+    const { db, tasks } = this.deps;
+    const row = await withTxRetry(
+      {
+        db,
+        logger: step.logger,
+        operation: 'step.requeue',
+        taskId: step.taskId,
+      },
+      () =>
+        tasks.transition(
+          { taskId: step.taskId, from: [running], attempt: step.attempt },
+          {
+            kind: 'set',
+            status: queued,
+            fields: { recoveries: 0 },
+            fence: true,
+          },
+        ),
+    );
     const durationMs = Date.now() - startedAt;
     if (!row) {
       step.logger.warn(
@@ -512,6 +522,9 @@ export class Dispatcher {
       return;
     }
     step.logger.warn('step requeued on shutdown', {
+      from: running,
+      to: row.status,
+      cause: 'shutdown',
       durationMs,
       outcome: 'queued',
     });
@@ -522,7 +535,7 @@ export class Dispatcher {
   // ---------------------------------------------------------------------------------------------
 
   /**
-   * Holds one pooled connection on `LISTEN runtime_events` while `RUNTIME_NOTIFY` is on; any
+   * Holds one pooled connection on `LISTEN runtime_tree` while `RUNTIME_NOTIFY` is on; any
    * notification ticks. A failure only logs: the poll goes on.
    */
   private async listen(): Promise<void> {
@@ -538,7 +551,7 @@ export class Dispatcher {
         });
         this.dropListener(error);
       });
-      await client.query(`LISTEN "${RUNTIME_EVENTS_CHANNEL}"`);
+      await client.query(`LISTEN "${RUNTIME_TREE_CHANNEL}"`);
       this.listener = client;
     } catch (error) {
       client?.release(error instanceof Error ? error : true);

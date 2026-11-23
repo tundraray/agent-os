@@ -17,7 +17,7 @@ import {
   runDefinition,
   type RunStart,
 } from '../start/run-definition';
-import type { Session, SessionInput } from '../store/sessions';
+import type { AgentTaskInput, Session, SessionStart } from '../store/sessions';
 import { TASK_LIST_TOOLS } from '../tools/system/task-list-tools';
 import type { ToolCaller, ToolDeclaration } from '../tools/tool';
 import type { SessionTool } from '../tools/tool-registry';
@@ -72,7 +72,7 @@ const { done } = ToolCallStateSchema.enum;
  * commit, and the state changes in one place, `absorb`, after the commit succeeded. Any other end of a step
  * makes the runtime drop the object and restore a new one. What rights depend on is never kept and is read on
  * every step: the chat listing, the knowledge block, the task list, the session's tools (`registry.toolsFor`,
- * `checkTools`), `access.tools`, the children in flight, the trackers.
+ * `checkTools`), `access.tools`, the children in flight.
  *
  * The class is abstract and holds what every agent does. Its three subclasses, one task type each: `Agent`
  * (`agent.ts`) — an agent's record and a deep agent's subagent; `ChatAgent` (`chat-agent.ts`) — a conversation's
@@ -91,9 +91,9 @@ export abstract class BaseAgent implements LiveTask {
 
   /** The task the object is of. */
   readonly task: LiveTaskIdentity;
-  /** The task's input, parsed once: the start's version id, name and model, and the assignment. */
-  readonly input: SessionInput;
-  /** The run's start: the version the input names, with the input's name, team member and model. */
+  /** The task's input, parsed once: the fields a subagent's answer must have. */
+  readonly input: AgentTaskInput;
+  /** The run's start: the version, name, team member and model its conversation keeps (KD-8). */
   readonly run: RunStart;
   /** What the version hands the model. */
   readonly definition: RunDefinition;
@@ -106,25 +106,14 @@ export abstract class BaseAgent implements LiveTask {
    * (`offeredDeclaration`). The set a step's calls are checked against is built from this.
    */
   readonly declaration: ToolDeclaration;
-  /** The session as of the last commit; `undefined` until the session exists. Assigned only in `absorb`. */
+  /** The session as of the last commit; `undefined` until the first `absorb`. Assigned only in `absorb`. */
   private state: AgentState | undefined = undefined;
 
   constructor(
     protected readonly deps: AgentDeps,
-    run: AgentRun,
+    { task, input, run }: AgentRun,
   ) {
-    const { task, input, version } = run;
-    if (version.id !== input.versionId) {
-      throw new Error(
-        `Agent ${task.taskId} is made with version ${version.id}, not its input's ${input.versionId}`,
-      );
-    }
-    this.run = {
-      version,
-      name: input.name,
-      subagent: input.subagent,
-      model: input.model,
-    };
+    this.run = run;
     const definition = runDefinition(this.run);
     const taskList = this.root || definition.taskList;
     this.task = task;
@@ -158,9 +147,9 @@ export abstract class BaseAgent implements LiveTask {
   /**
    * One step of the agent.
    *
-   * 1. The state is the object's. Only an agent without a session — its starter did not make it — makes it
-   *    here from the task input (through `guard`) and reads it. A session that learns gets its question vector
-   *    on a new question (self-learning KD-6).
+   * 1. The state is the object's: `createIn` or `restore` took it in before the first step, since every agent
+   *    task has its session from its creation on (KD-8). A session that learns gets its question vector on a
+   *    new question (self-learning KD-6).
    * 2. A finished agent continues (`continuationOf`): its stop entries and `continued` go first. An `interrupt`
    *    closes the open calls and writes `interrupted`; with no other message the agent is marked and waits,
    *    with one the step goes on to its work.
@@ -171,8 +160,9 @@ export abstract class BaseAgent implements LiveTask {
    */
   async step(ctx: StepContext): Promise<StepResult> {
     const startedAt = Date.now();
-    const state = this.state ?? (await this.startedState(ctx));
-    if (state === undefined) return abandoned(ctx, 'session write fenced');
+    const { state } = this;
+    if (state === undefined)
+      throw new Error(`Agent ${ctx.taskId} steps before its state is read`);
     const { session, calls } = state;
     if (!(await this.embedQuestion(ctx, session))) {
       return abandoned(ctx, 'question write fenced or cancelled');
@@ -190,8 +180,8 @@ export abstract class BaseAgent implements LiveTask {
       return interruptWait(this.deps, ctx, prelude, startedAt);
     }
 
-    // A stop or an interrupt closes the open calls, but a sent `task` call only its tracker's outcomes close
-    // (deep-agents/design-task.md KD-3): the tool step closes it with the `tasks_finished` this step delivers.
+    // A stop or an interrupt closes the open calls, but a sent `task` call the tool step closes, from the
+    // `child_finished` of its subagents this step delivers (data-model/design-runtime.md, «Инструмент `task`»).
     const toRun = closesOpen(plan) ? plan.open.filter(isDelegated) : plan.open;
     if (toRun.length > 0) {
       // The tool step does not know the prelude: its commit is wrapped so the prelude goes first.
@@ -248,18 +238,18 @@ export abstract class BaseAgent implements LiveTask {
   }
 
   /**
-   * The one way a session is made: `sessions.ensureSession`, then `sessionCreated` in the same transaction when
-   * this call created the row.
+   * The one way the session of an agent object is made, in the transaction that creates its task:
+   * `sessions.ensureSession` from the start's request, then `sessionCreated` in the same transaction when this
+   * call created the row. The start's run is the object's.
    */
-  async createSession(): Promise<void> {
+  async createSession(start: Omit<SessionStart, 'run'>): Promise<void> {
     const created = await this.deps.sessions.ensureSession(
       {
         taskId: this.task.taskId,
         ownerId: this.caller.ownerId,
         parentId: this.task.parentId,
       },
-      this.input,
-      this.run.version.agentId,
+      { ...start, run: this.run },
     );
     if (created) await this.sessionCreated();
   }
@@ -268,21 +258,6 @@ export abstract class BaseAgent implements LiveTask {
    * Called in the transaction that created the agent's session, once per session. Overridden by `DeepAgent`.
    */
   protected async sessionCreated(): Promise<void> {}
-
-  /**
-   * The state of an agent whose task was created without its session: the session is made from the task input
-   * and read; `undefined` when the attempt is fenced. The object keeps it only after the step's commit.
-   */
-  private async startedState(
-    ctx: StepContext,
-  ): Promise<AgentState | undefined> {
-    const made = await ctx.guard(() => this.createSession());
-    if (made.outcome === 'fenced') return undefined;
-    const state = await loadState(this.deps, ctx.taskId);
-    if (state === undefined)
-      throw new Error(`Session of agent ${ctx.taskId} was not created`);
-    return state;
-  }
 
   /**
    * The question vector of a session that learns; `false` — the step was cancelled or its write fenced.

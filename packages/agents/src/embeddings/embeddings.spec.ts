@@ -153,7 +153,7 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         requests: [1],
         calledModel: 'gemini/embedding-v2',
         pauses: [],
-        ledger: ['platform gemini/embedding-v2 10'],
+        ledger: ['null gemini/embedding-v2 10'],
       },
     ],
     [

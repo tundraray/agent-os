@@ -1,6 +1,5 @@
 import {
   AgentFailureReasonSchema,
-  AGENTS_HISTORY_APPENDED,
   type ChipRecord,
   HistoryEventSchema,
 } from '@agent-os/contracts';
@@ -98,29 +97,6 @@ export function providerMessagesOf(
   });
 }
 
-/**
- * Appends the entries and writes `agents.history_appended` with the last `seq` (§ «Сообщения и события»).
- * `before` — entries the same transaction appended already, such as the results of closed calls: the
- * event names the last of them when nothing follows.
- */
-export async function appendWithEvent(
-  deps: Pick<AgentDeps, 'history'>,
-  effects: StepEffects,
-  taskId: string,
-  entries: readonly NewHistoryEntry[],
-  before: readonly HistoryEntry[] = [],
-): Promise<HistoryEntry[]> {
-  const appended = await deps.history.append(taskId, entries);
-  const last = appended.at(-1) ?? before.at(-1);
-  if (last !== undefined) {
-    await effects.emit(AGENTS_HISTORY_APPENDED, {
-      agentId: taskId,
-      seq: last.seq,
-    });
-  }
-  return appended;
-}
-
 /** The `failed` event the history shows before the step fails. */
 function failedEvent(reason: string): NewHistoryEntry {
   return {
@@ -152,10 +128,7 @@ export function failResult(input: {
     message,
     commit: async (effects) => {
       const entries = await input.writeEntries(effects);
-      await appendWithEvent(deps, effects, ctx.taskId, [
-        ...entries,
-        failedEvent(reason),
-      ]);
+      await deps.history.append(ctx.taskId, [...entries, failedEvent(reason)]);
       await deps.sessionRows.update(ctx.taskId, {
         ...input.patch,
         turns: 0,

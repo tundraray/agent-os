@@ -33,7 +33,7 @@
 //     * the `LiveHub` filter - a note goes to the streams of the conversation's owner; a part goes to the same owner's stream that watches that agent; `watch` parsing (`thread:<id>`, `agent:<id>`, unknown value is not an error) - the rules; the defect "a foreign stream receives it" is INT-4
 //     * the cursor of the conversation list and of `GET /agents` (`updatedAt`/`createdAt` + id, stable under equal timestamps) - the format is reused from the current `thread-cursor.ts` tests; the SQL page and the no-duplicate/no-gap walk over 25 rows is INT-3 row A
 //     * the title rules - trimmed to `GENERATED_THREAD_TITLE_MAX_LENGTH`, quotes and trailing punctuation stripped (the existing `TitleService` rules, kept) - AC-14.3 in the rules' share
-//     * `Confirmation` mapping from `decisions.listTree` (kind, status) and the `AgentNode` tree assembly
+//     * `Confirmation` mapping from the question tasks of the tree (kind, status) and the `AgentNode` tree assembly
 // - agents, workflows and runtime parts: everything listed under "Light test process" above.
 // - not automated: the choice of the FR-15 branch by the real model (AC-15.1, AC-15.4..AC-15.6: a judgement of the prompt, checked by a manual run after the part, per the Design Doc "Test Strategy" and the PRD Assumptions); the time to first token against the current chat (NFR-03: a manual measurement after the part, per the Design Doc risk list); `Last-Event-ID`-free reconnect hint `retry: 2000` and the 20 s `ping` (a constant and a timer of the NestJS `@Sse()` contract, not our rule);
 //   removal of `@mastra/*` from `apps/api` (a dependency check of the quality gate, not a test).
@@ -440,7 +440,7 @@ const THREAD_NOT_FOUND_BODY = {
 
 /**
  * INT-4: the rows of the owner's tree that a foreign call could change — the conversation, which is its
- * root session row (with its row version), the tasks, their queues, histories and decisions. Read through the harness pool: the
+ * root session row (with its row version), the tasks, their queues, histories and questions (question tasks with their answers). Read through the harness pool: the
  * rows the plan's test names.
  */
 async function treeSnapshot(
@@ -456,11 +456,11 @@ async function treeSnapshot(
       [threadId],
     ),
     tasks: await read(
-      'SELECT task_id, parent_id, status, wait_reason, step_no, next_message_seq FROM app.runtime_tasks WHERE root_id = $1 ORDER BY task_id',
+      'SELECT task_id, parent_id, status, wait_reason, step_no FROM app.runtime_tasks WHERE root_id = $1 ORDER BY task_id',
       [rootId],
     ),
     inbox: await read(
-      `SELECT i.message_id, i.recipient_id, i.kind, i.status FROM app.runtime_inbox i
+      `SELECT i.message_id, i.recipient_id, i.kind, i.delivered_at FROM app.runtime_inbox i
          JOIN app.runtime_tasks t ON t.task_id = i.recipient_id WHERE t.root_id = $1 ORDER BY i.message_id`,
       [rootId],
     ),
@@ -471,7 +471,7 @@ async function treeSnapshot(
       [rootId],
     ),
     decisions: await read(
-      'SELECT decision_id, status FROM app.runtime_decisions WHERE root_id = $1 ORDER BY decision_id',
+      "SELECT task_id, status, result FROM app.runtime_tasks WHERE root_id = $1 AND type = 'runtime.question' ORDER BY task_id",
       [rootId],
     ),
   };

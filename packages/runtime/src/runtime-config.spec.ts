@@ -11,7 +11,6 @@ const DEFAULTS: RuntimeConfig = {
   maxRecoveries: 3,
   stepMs: 900_000,
   shutdownGraceMs: 5_000,
-  deliveryMaxAttempts: 5,
   dbPoolMax: 10,
   inboxPayloadMaxBytes: 1_048_576,
   crashAt: undefined,

@@ -8,6 +8,7 @@ import {
   AGENTS_BRIEF_CONFIRMATION,
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
+  ChildFinishedPayloadSchema,
   ConfirmationKindSchema,
   CREATE_RECORD_TOOL,
   DELETE_RECORD_TOOL,
@@ -275,10 +276,6 @@ export function focusOf(
 
 /** Payloads of the queue messages of an agent (the agents package, `agent/deliver.ts`). */
 const TextPayloadSchema = z.object({ text: z.string() });
-const ChildFinishedPayloadSchema = z.object({
-  taskId: z.string(),
-  status: z.enum(['completed', 'failed', 'stopped']),
-});
 
 const {
   user_message: userMessage,
@@ -289,18 +286,27 @@ const {
 /**
  * Undelivered messages of an agent in queue order: the employee's message, the parent's message, and
  * a child's end as a report with the child's description and status. An `interrupt` is left out: it
- * carries nothing to show, the agent's status already reads «Прерван». Any other kind throws: an
- * agent's queue holds only these four.
+ * carries nothing to show, the agent's status already reads «Прерван»; so is the end of a question
+ * (data-model/design-runtime.md, «Ожидающие сообщения беседы»): the decision shows it. `confirmations` —
+ * the tree's confirmations, whose ids are the question tasks. Any other kind throws: an agent's queue
+ * holds only these four.
  */
 export function toPending(
   messages: readonly StepMessage[],
   views: readonly Pick<AgentsAgentView, 'agentId' | 'description'>[],
+  confirmations: readonly Pick<AgentConfirmation, 'decisionId'>[],
 ): PendingMessage[] {
   const descriptions = new Map(
     views.map((view) => [view.agentId, view.description]),
   );
+  const questions = new Set(
+    confirmations.map((confirmation) => confirmation.decisionId),
+  );
+  const isQuestionEnd = (message: StepMessage): boolean =>
+    message.kind === CHILD_FINISHED_KIND &&
+    questions.has(ChildFinishedPayloadSchema.parse(message.payload).taskId);
   return messages
-    .filter((message) => message.kind !== interrupt)
+    .filter((message) => message.kind !== interrupt && !isQuestionEnd(message))
     .sort((left, right) => left.seq - right.seq)
     .map((message): PendingMessage => {
       const base = {

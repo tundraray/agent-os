@@ -29,7 +29,7 @@ const answer = (seq: number, ...callIds: string[]): HistoryEntry =>
     })),
   });
 const confirmation = (seq: number, callId: string) =>
-  entry(seq, 'tool_confirmation', { callId });
+  entry(seq, 'tool_confirmation', { callId, questionId: `q-${callId}` });
 const decision = (seq: number, callId: string, args?: unknown) =>
   entry(seq, 'tool_decision', {
     callId,

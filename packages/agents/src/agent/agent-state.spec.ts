@@ -127,7 +127,6 @@ describe('an agent kept in memory takes a committed step in and holds what a res
     ],
   ])('%s', async (_, before, after, expected) => {
     const kept = await loadState(storesAt(before, 0), AGENT);
-    if (kept === undefined) throw new Error('the agent has a session');
 
     const absorbed = await absorbState(storesAt(after, 1), kept);
 
@@ -143,10 +142,10 @@ describe('an agent kept in memory takes a committed step in and holds what a res
   it('holds the open call of the last answer until its result is appended', async () => {
     const kept = await loadState(storesAt(2, 0), AGENT);
 
-    expect(kept?.calls.map((call) => [call.callId, call.state])).toEqual([
+    expect(kept.calls.map((call) => [call.callId, call.state])).toEqual([
       ['call-1', 'requested'],
     ]);
-    expect(kept?.forkPrefix).toEqual({
+    expect(kept.forkPrefix).toEqual({
       throughSeq: 1,
       entries: PARENT_ENTRIES,
     });

@@ -47,6 +47,8 @@ export const HistoryContentSchemas = {
     description: z.string(),
     status: ChildEndSchema,
     reason: z.string().nullable(),
+    /** The failure's text, cut to 1 000 characters (KD-6); `null` unless the child failed. */
+    message: z.string().nullable(),
     /** The report text; none when the child ended without one. */
     text: z.string().nullable(),
     toolCalls: z.number().int().nonnegative(),
@@ -57,8 +59,11 @@ export const HistoryContentSchemas = {
     text: z.string(),
     toolCalls: z.array(AnswerCallSchema),
   }),
-  /** The call was put before the employee: written in the commit that ends the step with `await_decision`. */
-  tool_confirmation: z.object({ callId: z.string() }),
+  /**
+   * The call was put before the employee: written in the commit that asks the question (`effects.ask`, KD-3)
+   * and ends the step with `wait`; `questionId` — the question's task.
+   */
+  tool_confirmation: z.object({ callId: z.string(), questionId: z.string() }),
   /** The employee's decision, written by the step that consumed it; `args` — the edited arguments, if any. */
   tool_decision: z.object({
     callId: z.string(),
@@ -74,7 +79,7 @@ export const HistoryContentSchemas = {
     callId: z.string(),
     startedAt: z.iso.datetime(),
     args: z.unknown().optional(),
-    /** The tracker tasks of an accepted `task` call, in its order (deep-agents/design-task.md KD-4). */
+    /** The subagent tasks of an accepted `task` call, in its order: awaited children of its step. */
     taskIds: z.array(z.string()).optional(),
     /** The task of the session's list the `task` call names (KD-8). */
     taskId: z.number().int().positive().optional(),

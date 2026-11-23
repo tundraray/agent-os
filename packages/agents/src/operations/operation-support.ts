@@ -3,6 +3,7 @@ import { RuntimeError, type Task, type TaskControl } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import { AgentsError } from '../errors';
+import { isQuestion } from '../task-tree';
 
 /** The part of a confirmation request (`ToolRunner.confirmationRequest`) the operations read. */
 export const ConfirmationPayloadSchema = z.object({
@@ -13,6 +14,12 @@ export const ConfirmationPayloadSchema = z.object({
   server: z.string().nullable(),
   args: z.unknown(),
   content: z.unknown(),
+});
+
+/** The input of a confirmation question task (`effects.ask`, data-model/design-runtime.md KD-3): the request. */
+export const QuestionInputSchema = z.object({
+  kind: z.string(),
+  payload: ConfirmationPayloadSchema,
 });
 
 /** `TASK_NOT_FOUND` of the runtime is `AGENT_NOT_FOUND` here; other runtime codes pass unchanged (Notes 2). */
@@ -31,13 +38,15 @@ export function agentNotFound(id: string): AgentsError {
   return new AgentsError('AGENT_NOT_FOUND', `Agent ${id} not found`);
 }
 
-/** The owner's agent; `AGENT_NOT_FOUND` for a missing or another owner's one. */
-export function agentTask(
+/** The owner's agent; `AGENT_NOT_FOUND` for a missing or another owner's one, and for a question task (KD-3). */
+export async function agentTask(
   tasks: Pick<TaskControl, 'get'>,
   agentId: string,
   ownerId: string,
 ): Promise<Task> {
-  return asAgent(tasks.get(agentId, ownerId));
+  const task = await asAgent(tasks.get(agentId, ownerId));
+  if (isQuestion(task)) throw agentNotFound(agentId);
+  return task;
 }
 
 /** The parent of a task; `null` for a root. */

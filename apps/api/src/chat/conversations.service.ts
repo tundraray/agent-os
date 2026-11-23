@@ -212,7 +212,7 @@ export class ConversationsService {
       },
       entries: entries.map(toHistoryEntry),
       nextAfterSeq: nextAfterSeqOf(entries),
-      pending: toPending(messages, views),
+      pending: toPending(messages, views, confirmations),
       decisions,
       agents: toAgentTree(views, threadId),
       focus: focusOf(
