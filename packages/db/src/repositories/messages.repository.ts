@@ -1,5 +1,4 @@
 import { type ToolOutcome, ToolOutcomeSchema } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
   asc,
@@ -16,7 +15,7 @@ import {
   type SQL,
   sql,
 } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { messages } from '../schema';
 import {
   type FinishedMcpCall,
@@ -75,9 +74,8 @@ function isSingleTaskResult(tool: string) {
  * live here too: a call is an item of its `model_answer`, and what happened to it are later call
  * records. No method opens a transaction, and none updates a row.
  */
-@Injectable()
 export class MessagesRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** `seq` of the last entry; 0 for an empty history. */
   async lastSeq(taskId: string): Promise<number> {

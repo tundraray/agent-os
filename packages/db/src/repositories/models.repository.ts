@@ -1,7 +1,6 @@
 import { modelProvider } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { asc, count, eq, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { models } from '../schema';
 
 /** A row of `models`; the api reads it into a catalogue model by its purpose. */
@@ -16,9 +15,8 @@ export type ModelColumns = Omit<
 /**
  * Drizzle queries of `models`.
  */
-@Injectable()
 export class ModelsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async find(id: string): Promise<ModelRow | undefined> {
     const [row] = await this.db.client

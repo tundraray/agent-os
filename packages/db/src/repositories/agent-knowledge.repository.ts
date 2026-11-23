@@ -1,7 +1,6 @@
 import type { KnowledgeItemType } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, count, eq, or } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import {
   agentKnowledgeEntities,
   agentKnowledgeRelations,
@@ -70,9 +69,8 @@ export interface KnowledgeSettingsChange {
  * `agent_knowledge_relations` and `agent_knowledge_settings`. No method opens a transaction, logs or
  * decides: the rules are the pure functions' (`checkOperations`, `selectKnowledge`).
  */
-@Injectable()
 export class AgentKnowledgeRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** All records of the deep agent's graph, outdated included, by id. */
   async readGraph(recordId: string): Promise<KnowledgeGraph> {

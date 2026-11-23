@@ -1,4 +1,3 @@
-import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
   count,
@@ -12,7 +11,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import {
   agents,
   agentVersions,
@@ -132,9 +131,8 @@ const ROOT_COLUMNS = {
 /**
  * Drizzle queries of `conversations`: one row per agent, keyed by its runtime task. No method opens a transaction.
  */
-@Injectable()
 export class ConversationsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Whether the owner has a conversation on a version of the agent other than `taskId`. */
   async ranBefore(

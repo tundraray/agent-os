@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { identityRoleMembers, identityRoles, identityUsers } from '../schema';
 
 /** A row of `identity_roles`. */
@@ -26,9 +25,8 @@ export interface MemberRoleRow {
 /**
  * Drizzle queries of `identity_roles` and `identity_role_members`.
  */
-@Injectable()
 export class IdentityRolesRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Id of the built-in «Супер-администратор» role the migration creates (KD-6). */
   async builtinId(): Promise<string> {

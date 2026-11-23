@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, gte, lt, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeModelCalls } from '../schema';
 
 export type NewRuntimeModelCallRow = Pick<
@@ -27,9 +26,8 @@ export interface CalledWindow {
  * Drizzle queries of `runtime_model_calls`, the rows of the token ledger: one per finished model
  * call. Rows are only inserted and summed; they outlive the deletion of their task tree.
  */
-@Injectable()
 export class RuntimeModelCallsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async insert(call: NewRuntimeModelCallRow): Promise<void> {
     await this.db.client.insert(runtimeModelCalls).values(call);

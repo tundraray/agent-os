@@ -14,12 +14,25 @@ import { DATABASE, DATABASE_CONNECTION } from './db.tokens';
 import { REPOSITORIES } from './repositories';
 import {
   createDatabase,
+  type Database,
   type DatabaseConnection,
   type DatabaseOptions,
   logClientErrors,
 } from './database';
 
 const DATABASE_OPTIONS = Symbol('DATABASE_OPTIONS');
+
+/**
+ * The repositories and `Db` are plain classes that take what they query through in the constructor;
+ * this module is the only place that hands it to them.
+ */
+const REPOSITORY_PROVIDERS = REPOSITORIES.map(
+  (Repository): FactoryProvider => ({
+    provide: Repository,
+    inject: [Db],
+    useFactory: (db: Db) => new Repository(db),
+  }),
+);
 
 /** Where the composition root gets the settings of the pool from. */
 type DbModuleOptions = Pick<ModuleMetadata, 'imports'> &
@@ -64,8 +77,12 @@ export class DbModule implements OnApplicationShutdown {
           inject: [DATABASE_CONNECTION],
           useFactory: (connection: DatabaseConnection) => connection.db,
         },
-        Db,
-        ...REPOSITORIES,
+        {
+          provide: Db,
+          inject: [DATABASE],
+          useFactory: (database: Database) => new Db(database),
+        },
+        ...REPOSITORY_PROVIDERS,
       ],
       exports: [DATABASE_CONNECTION, DATABASE, Db, ...REPOSITORIES],
     };

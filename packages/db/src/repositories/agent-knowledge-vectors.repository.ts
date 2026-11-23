@@ -2,9 +2,8 @@ import {
   type KnowledgeItemType,
   KnowledgeItemTypeSchema,
 } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, cosineDistance, eq, inArray, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { agentKnowledgeVectors } from '../schema';
 
 const vectors = agentKnowledgeVectors;
@@ -23,9 +22,8 @@ export interface NewKnowledgeVectorRow {
  * exact cosine over the rows of one collection and one model, no approximate index; vectors are unit
  * length, so closeness `1 - cosine distance` equals their dot product.
  */
-@Injectable()
 export class AgentKnowledgeVectorsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async upsert(
     collection: string,

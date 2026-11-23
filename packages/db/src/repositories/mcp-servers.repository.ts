@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { mcpServers } from '../schema';
 
 /** A row of `mcp_servers`; `tools` is read back by the registry, which owns its shape. */
@@ -27,9 +26,8 @@ export interface McpServerChange {
  * Drizzle queries of `mcp_servers` (ADR-0014): the registry is read
  * from the database on every use (KD-2). No method opens a transaction or calls out of the process.
  */
-@Injectable()
 export class McpServersRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async find(name: string): Promise<McpServerRow | undefined> {
     const [row] = await this.db.client

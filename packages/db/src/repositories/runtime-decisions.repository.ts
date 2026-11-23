@@ -1,7 +1,6 @@
 import { DecisionStatusSchema } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeDecisions, runtimeTasks } from '../schema';
 
 export type RuntimeDecisionRow = typeof runtimeDecisions.$inferSelect;
@@ -42,9 +41,8 @@ const VIEW_COLUMNS = {
 /**
  * Drizzle queries of `runtime_decisions`.
  */
-@Injectable()
 export class RuntimeDecisionsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Inserts an `open` request. */
   async insert(decision: NewRuntimeDecisionRow): Promise<RuntimeDecisionRow> {

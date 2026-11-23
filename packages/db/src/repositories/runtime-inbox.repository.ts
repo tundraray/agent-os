@@ -1,7 +1,6 @@
 import { MessageStatusSchema } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeInbox, runtimeTasks } from '../schema';
 
 export type RuntimeInboxRow = typeof runtimeInbox.$inferSelect;
@@ -17,9 +16,8 @@ const { pending, delivered } = MessageStatusSchema.enum;
  * Drizzle queries of `runtime_inbox`. The runtime's `Inbox` is the only writer:
  * it holds its sequence and its wake-up.
  */
-@Injectable()
 export class RuntimeInboxRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Inserts a `pending` message. */
   async insert(message: NewRuntimeInboxRow): Promise<void> {

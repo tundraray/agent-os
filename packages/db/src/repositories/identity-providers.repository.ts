@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, lte, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { identityLoginRequests, identityProviders } from '../schema';
 
 /** A row of `identity_providers`; `type` and `options` are read by the api, which owns their shape. */
@@ -34,9 +33,8 @@ const CREATION_ORDER = [
 /**
  * Drizzle queries of `identity_providers` and `identity_login_requests`.
  */
-@Injectable()
 export class IdentityProvidersRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** The providers in creation order. */
   list() {

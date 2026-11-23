@@ -3,9 +3,8 @@ import type {
   LastExtractionReason,
   LastExtractionStatus,
 } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import {
   agentKnowledgeEmbedding,
   agentKnowledgeQuestions,
@@ -76,9 +75,8 @@ export interface EmbeddingOutcome {
  * `agent_knowledge_runs`, `agent_knowledge_questions` and `agent_knowledge_embedding`; besides them it
  * reads only `conversations.owner_id`. No method opens a transaction, logs or decides.
  */
-@Injectable()
 export class AgentKnowledgeRunsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /**
    * Creates the run row with the deep agent session (KD-2, called from `DeepAgent.sessionStarted` in its

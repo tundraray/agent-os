@@ -3,10 +3,9 @@ import {
   TaskStatusSchema,
   type WaitReason,
 } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeTasks } from '../schema';
 
 export type RuntimeTaskRow = typeof runtimeTasks.$inferSelect;
@@ -87,9 +86,8 @@ export type NewRuntimeTaskRow = Pick<
  * {@link markDeleted}. A task with `deleted_at` answers as a missing one in
  * `findOwned` and `listTree`.
  */
-@Injectable()
 export class RuntimeTasksRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Whether the task row exists, deleted or not. */
   async exists(taskId: string): Promise<boolean> {

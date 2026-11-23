@@ -3,9 +3,8 @@ import {
   type Language,
   type UserStatus,
 } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { identityUsers } from '../schema';
 import { IS_ADMIN } from './identity-columns';
 
@@ -43,9 +42,8 @@ const escapeLikePattern = (text: string): string =>
  * Drizzle queries of `identity_users`. The id is always the database's `gen_random_uuid()`
  * (ADR-0012, Invariant 3).
  */
-@Injectable()
 export class IdentityUsersRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async findByLogin(login: string): Promise<IdentityUserRow | undefined> {
     const [row] = await this.db.client

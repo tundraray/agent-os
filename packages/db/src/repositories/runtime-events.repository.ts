@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gt, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeEvents, runtimeTasks } from '../schema';
 
 export type NewRuntimeEventRow = Pick<
@@ -13,9 +12,8 @@ export type NewRuntimeEventRow = Pick<
  * the only writer: it adds the deliveries and the NOTIFY ({@link notify}) of an event in the same
  * transaction.
  */
-@Injectable()
 export class RuntimeEventsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Inserts the event; returns what the log assigns to it. */
   async insert(

@@ -1,4 +1,3 @@
-import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
   asc,
@@ -12,7 +11,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { agentShares, agentVersions, agents } from '../schema';
 
 /** A row of `agents`. */
@@ -215,9 +214,8 @@ function panelQueryCondition(
  * agent answers as a missing one in every read (data-model design-agents.md, KD-7). The admin right takes
  * no part in either (DC-3). Authors and holders come by id: their names live in `identity`.
  */
-@Injectable()
 export class AgentsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /**
    * The agents the viewer sees, or the one with this id when it is visible, in the order of {@link where}:

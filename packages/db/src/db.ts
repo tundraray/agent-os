@@ -1,7 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { Inject, Injectable } from '@nestjs/common';
 import type { Database } from './database';
-import { DATABASE } from './db.tokens';
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -15,11 +13,10 @@ interface OpenTransaction {
  * The database the repositories query through. A service that needs several writes together wraps
  * them in {@link Db.transaction}; the repositories called inside join it by themselves.
  */
-@Injectable()
 export class Db {
   private readonly current = new AsyncLocalStorage<OpenTransaction>();
 
-  constructor(@Inject(DATABASE) private readonly database: Database) {}
+  constructor(private readonly database: Database) {}
 
   /** The transaction open in this async context, otherwise the plain database. */
   get client(): Database | Transaction {

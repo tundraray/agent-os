@@ -1,7 +1,6 @@
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { codeCalls, messages } from '../schema';
 import {
   type FinishedMcpCall,
@@ -58,9 +57,8 @@ function byKey(call: CodeCallKey) {
  * made, one row per request, of the `run_code` call `(conversation_id, run_call_id)` of its session (KD-6). A row
  * gets at most one outcome (Invariant 4): every closing write is guarded by `outcome is null`.
  */
-@Injectable()
 export class CodeCallsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Writes the open row of a call; the caller writes it through the step's `guard`. */
   async open(call: NewCodeCall): Promise<void> {

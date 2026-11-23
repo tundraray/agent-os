@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { conversations, toolResults } from '../schema';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
@@ -27,9 +26,8 @@ export interface ToolResultLookup {
  * Drizzle queries of `tool_results`: a result is written in the step's commit together with the closing of the call, read by
  * `run_code` scripts and the reading tools. No method opens a transaction.
  */
-@Injectable()
 export class ToolResultsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async insert(result: NewToolResult): Promise<void> {
     const { taskId, ...row } = result;

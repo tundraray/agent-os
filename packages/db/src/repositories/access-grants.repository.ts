@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { accessGrants, models } from '../schema';
 
 /** A row of `access_grants`; the api reads its target and holder out of the columns. */
@@ -24,9 +23,8 @@ export type GrantHolderQuery = { roleId: string } | { userId: string };
 /**
  * Drizzle queries of `access_grants`. Lists come by creation time, then id.
  */
-@Injectable()
 export class AccessGrantsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** The grants of the employee's roles and his personal ones, in one query. */
   ofEmployee(

@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { mcpAccounts } from '../schema';
 
 /** A row of `mcp_accounts`: an employee's own credentials on a server. */
@@ -27,9 +26,8 @@ function accountKey(server: string, ownerId: string) {
  * Drizzle queries of `mcp_accounts` (ADR-0014): tokens are read by
  * the pair "server — owner" only. No method opens a transaction or calls out of the process.
  */
-@Injectable()
 export class McpAccountsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async find(
     server: string,

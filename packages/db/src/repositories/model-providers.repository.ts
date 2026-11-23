@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, inArray } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { modelProviders } from '../schema';
 
 /** A row of `model_providers`; `apiKey` is the key as stored. */
@@ -28,9 +27,8 @@ export interface ModelProviderChange {
  * read from the database on every use, without a cache (KD-1). No method opens a transaction or calls out
  * of the process.
  */
-@Injectable()
 export class ModelProvidersRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async find(name: string): Promise<ModelProviderRow | undefined> {
     const [row] = await this.db.client

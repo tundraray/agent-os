@@ -21,7 +21,7 @@ Agent OS is a proof of concept, not a product in production.
 
 - One database, one place for it: `packages/db` holds the schema and every repository. No table query lives anywhere else.
 - A repository only reads and writes rows in the caller's transaction. A service holds the logic of an operation, opens the transaction and maps rows into domain objects.
-- Services and repositories are NestJS `@Injectable` classes wired by modules in `apps/api`, `packages/db`, `packages/runtime` and `packages/agents`; no hand-written composition functions.
+- Services are NestJS `@Injectable` classes. Repositories are plain classes that take `Db` in the constructor; `DbModule` builds them. Everything is wired by modules in `apps/api`, `packages/db`, `packages/runtime` and `packages/agents`; no hand-written composition functions.
 - Pure rules and data stay plain functions and values; do not turn them into providers.
 - `packages/common`, `packages/contracts` and `packages/code-runner` stay free of NestJS.
 

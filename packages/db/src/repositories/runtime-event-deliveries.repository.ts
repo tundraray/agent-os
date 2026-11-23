@@ -1,7 +1,6 @@
 import { DeliveryStatusSchema } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeEventDeliveries, runtimeEvents } from '../schema';
 
 export type RuntimeEventDeliveryRow =
@@ -19,9 +18,8 @@ const { pending } = DeliveryStatusSchema.enum;
  * Drizzle queries of `runtime_event_deliveries`. The rows are
  * inserted by the runtime's `EventLog` with their event; the relay reads and updates them.
  */
-@Injectable()
 export class RuntimeEventDeliveriesRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Inserts one `pending` delivery of the event per named consumer. */
   async insert(eventId: string, consumers: readonly string[]): Promise<void> {

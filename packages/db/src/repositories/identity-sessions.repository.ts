@@ -1,7 +1,6 @@
 import type { SettingsKey } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { identitySessions, identityUsers, settings } from '../schema';
 import { IS_ADMIN } from './identity-columns';
 
@@ -11,9 +10,8 @@ const SIGN_IN_SETTINGS: SettingsKey = 'sign_in_settings';
 /**
  * Drizzle queries of `identity_sessions`. Tokens and expiry rules live in the api's `SessionStore`.
  */
-@Injectable()
 export class IdentitySessionsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Deletes the employee's sessions created more than `absoluteMinutes` ago. */
   async deleteOlderThan(

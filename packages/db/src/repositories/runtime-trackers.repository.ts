@@ -1,7 +1,6 @@
 import { TrackerStatusSchema } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { runtimeTasks, runtimeTrackers } from '../schema';
 
 export type RuntimeTrackerRow = typeof runtimeTrackers.$inferSelect;
@@ -11,9 +10,8 @@ const { open, finished } = TrackerStatusSchema.enum;
 /**
  * Drizzle queries of `runtime_trackers`.
  */
-@Injectable()
 export class RuntimeTrackersRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** Inserts an `open` tracker of the owner task. */
   async insert(tracker: { trackerId: string; taskId: string }): Promise<void> {

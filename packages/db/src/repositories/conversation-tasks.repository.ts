@@ -2,9 +2,8 @@ import {
   type SessionTaskStatus,
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { conversations, conversationTasks } from '../schema';
 
 /** A task of a session's list (deep-agents design-task-list.md, Data Model). */
@@ -33,9 +32,8 @@ export interface SessionTasksWrite {
  * a time and in the step's commit, so the list changes together with the `tool_result` of the call that
  * changed it. No method opens a transaction.
  */
-@Injectable()
 export class ConversationTasksRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   /** The session's tasks by number; empty for a session without a list. */
   async list(sessionId: string): Promise<SessionTask[]> {

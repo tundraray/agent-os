@@ -1,7 +1,6 @@
 import type { SettingsKey } from '@agent-os/contracts';
-import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
-import { Db } from '../db';
+import type { Db } from '../db';
 import { settings } from '../schema';
 
 /** The row of a settings key; `value` is parsed by the key's schema in the service that reads it. */
@@ -40,9 +39,8 @@ const jsonbOf = (value: unknown) => sql`${JSON.stringify(value)}::jsonb`;
  * Drizzle queries of `settings` (data-model design-schema.md KD-3). The migration creates the row of every key,
  * so a missing row is a fault.
  */
-@Injectable()
 export class SettingsRepository {
-  constructor(@Inject(Db) private readonly db: Db) {}
+  constructor(private readonly db: Db) {}
 
   async read(key: SettingsKey): Promise<SettingsRow> {
     const [row] = await this.db.client
