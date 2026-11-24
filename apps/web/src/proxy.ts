@@ -6,7 +6,10 @@ import { SENTRY_DSN_COOKIE } from '@/sentry-dsn-cookie';
 // read synchronously in `instrumentation-client.ts` before hydration (design-web-image.md, KD-4).
 export function proxy(): NextResponse {
   const response = NextResponse.next();
-  response.cookies.set(SENTRY_DSN_COOKIE,process.env.SENTRY_DSN ?? '', { path: '/', sameSite: 'lax' });
+  response.cookies.set(SENTRY_DSN_COOKIE, process.env.SENTRY_DSN ?? '', {
+    path: '/',
+    sameSite: 'lax',
+  });
   return response;
 }
 

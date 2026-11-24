@@ -20,7 +20,7 @@
 import {
   DecisionRequestSchema,
   SendMessageRequestSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
+  AGENTS_BRIEF_CONFIRMATION,
   type AgentListPage,
   type AgentPageView,
   type Confirmation,
@@ -48,13 +48,11 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
-  recordDetail,
   threadList,
   threadSummary,
-  WORKFLOW_RECORD_ID,
-  workflowContent,
-  workflowOrigin,
-  workflowRunView,
+  DEEP_AGENT_NAME,
+  deepAgentOrigin,
+  deepAgentRunView,
   type Deferred,
 } from '@/test/fixtures';
 import { createTestLiveSource, type TestLiveSource } from '@/test/live-source';
@@ -85,7 +83,10 @@ type ConversationServer = {
 };
 
 /** Given: GET /threads, /threads/a and /threads/a/history answer from one server-side state. */
-function serveConversation(thread: ThreadSummary, view: ConversationView): ConversationServer {
+function serveConversation(
+  thread: ThreadSummary,
+  view: ConversationView,
+): ConversationServer {
   let hold: Deferred<void> | null = null;
   const state: ConversationServer = {
     view,
@@ -98,10 +99,16 @@ function serveConversation(thread: ThreadSummary, view: ConversationView): Conve
     },
   };
   server.use(
-    http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([thread]))),
-    http.get(`${API}/api/threads/${thread.id}`, () => HttpResponse.json(thread)),
+    http.get(`${API}/api/threads`, () =>
+      HttpResponse.json(threadList([thread])),
+    ),
+    http.get(`${API}/api/threads/${thread.id}`, () =>
+      HttpResponse.json(thread),
+    ),
     http.get(`${API}/api/threads/${thread.id}/history`, async ({ request }) => {
-      const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
+      const afterSeq = Number(
+        new URL(request.url).searchParams.get('afterSeq'),
+      );
       state.afterSeqs.push(afterSeq);
       const gate = hold;
       hold = null;
@@ -118,15 +125,21 @@ function serveConversation(thread: ThreadSummary, view: ConversationView): Conve
 }
 
 /** Given: `/chat/a` is open, its first read is on screen and the stream watches it. */
-async function openConversation(firstText: string): Promise<{ live: TestLiveSource; container: HTMLElement }> {
+async function openConversation(
+  firstText: string,
+): Promise<{ live: TestLiveSource; container: HTMLElement }> {
   const live = createTestLiveSource();
-  const { container } = renderWithRuntime({ pathname: '/chat/a', liveSource: live });
+  const { container } = renderWithRuntime({
+    pathname: '/chat/a',
+    liveSource: live,
+  });
   await screen.findByText(firstText);
   await waitFor(() => expect(live.current()?.url).toBe(WATCH_A));
   return { live, container };
 }
 
-const text = (element: Element | null): string => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
+const text = (element: Element | null): string =>
+  (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 /** `element` without the descendants matching `selector`, as text. */
 function textWithout(element: Element | null, selector: string): string {
@@ -151,11 +164,15 @@ function describeFeedItem(item: HTMLElement): string {
       '[data-slot="aui_message-source"], [data-slot="tool-group-root"]',
     );
     const tools = item.querySelector('[data-slot="tool-group-trigger-label"]');
-    return tools === null ? `Ответ: ${answer}` : `Ответ: ${answer} · ${text(tools)}`;
+    return tools === null
+      ? `Ответ: ${answer}`
+      : `Ответ: ${answer} · ${text(tools)}`;
   }
   const run = item.querySelector('[data-slot="run-card"]');
   if (run !== null) {
-    const steps = Array.from(run.querySelectorAll('li a'), (step) => step.getAttribute('aria-label'));
+    const steps = Array.from(run.querySelectorAll('li a'), (step) =>
+      step.getAttribute('aria-label'),
+    );
     return `Запуск: ${run.getAttribute('aria-label')}${steps.length === 0 ? '' : ` — ${steps.join('; ')}`}`;
   }
   const decision = item.querySelector('[data-slot="decision-card"]');
@@ -165,7 +182,8 @@ function describeFeedItem(item: HTMLElement): string {
   const report = item.querySelector('[data-slot="agent-report"]');
   if (report !== null) return `${report.getAttribute('aria-label')}`;
   const event = item.querySelector('[data-slot="agent-status-event"]');
-  if (event !== null) return `Событие: ${textWithout(event, 'time, [aria-hidden]')}`;
+  if (event !== null)
+    return `Событие: ${textWithout(event, 'time, [aria-hidden]')}`;
   return `? ${text(item)}`;
 }
 
@@ -173,10 +191,14 @@ function describeFeedItem(item: HTMLElement): string {
 function feedItems(): string[] {
   const group = document.querySelector('[data-slot="aui_message-group"]');
   if (group === null) return [];
-  return Array.from(group.querySelectorAll<HTMLElement>(FEED_ITEM), describeFeedItem);
+  return Array.from(
+    group.querySelectorAll<HTMLElement>(FEED_ITEM),
+    describeFeedItem,
+  );
 }
 
-const tray = (): HTMLElement | null => screen.queryByRole('region', { name: 'Ждут доставки' });
+const tray = (): HTMLElement | null =>
+  screen.queryByRole('region', { name: 'Ждут доставки' });
 
 /**
  * Records every DOM state in which `message` is not shown exactly once across the tray and the feed
@@ -186,20 +208,33 @@ function trackOnePlace(container: HTMLElement, message: string): string[] {
   const breaches: string[] = [];
   const check = () => {
     const box = tray();
-    const inTray = box === null ? 0 : Array.from(box.querySelectorAll('li')).filter((li) => text(li).includes(message)).length;
-    const inFeed = feedItems().filter((item) => item === `Вы: ${message}`).length;
+    const inTray =
+      box === null
+        ? 0
+        : Array.from(box.querySelectorAll('li')).filter((li) =>
+            text(li).includes(message),
+          ).length;
+    const inFeed = feedItems().filter(
+      (item) => item === `Вы: ${message}`,
+    ).length;
     if (inTray + inFeed !== 1) breaches.push(`tray ${inTray}, feed ${inFeed}`);
   };
   check();
   const observer = new MutationObserver(check);
-  observer.observe(container, { subtree: true, childList: true, characterData: true });
+  observer.observe(container, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+  });
   onTestFinished(() => observer.disconnect());
   return breaches;
 }
 
 /** Every phrase the shell's single polite live region speaks from now on, in order (MC-25). */
 function trackAnnouncements(): string[] {
-  const region = document.querySelector('div[role="status"][aria-live="polite"]');
+  const region = document.querySelector(
+    'div[role="status"][aria-live="polite"]',
+  );
   if (region === null) throw new Error('the shell announcer is not rendered');
   const spoken: string[] = [];
   const observer = new MutationObserver((records) => {
@@ -230,23 +265,41 @@ type AgentServer = {
 };
 
 /** Given: GET /threads, GET /agents and GET /agents/:agentId/history answer from one server-side state. */
-function serveAgents(threads: ThreadSummary[], list: AgentListPage, pages: Record<string, AgentPageView>): AgentServer {
+function serveAgents(
+  threads: ThreadSummary[],
+  list: AgentListPage,
+  pages: Record<string, AgentPageView>,
+): AgentServer {
   const state: AgentServer = { list, pages, afterSeqs: {} };
   server.use(
-    http.get(`${API}/api/threads`, () => HttpResponse.json(threadList(threads))),
+    http.get(`${API}/api/threads`, () =>
+      HttpResponse.json(threadList(threads)),
+    ),
     http.get(`${API}/api/agents`, () => HttpResponse.json(state.list)),
     http.get(`${API}/api/agents/:agentId/history`, ({ request, params }) => {
       const agentId = String(params['agentId']);
-      const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
-      state.afterSeqs[agentId] = [...(state.afterSeqs[agentId] ?? []), afterSeq];
+      const afterSeq = Number(
+        new URL(request.url).searchParams.get('afterSeq'),
+      );
+      state.afterSeqs[agentId] = [
+        ...(state.afterSeqs[agentId] ?? []),
+        afterSeq,
+      ];
       const page = state.pages[agentId];
       if (page === undefined) {
         return HttpResponse.json(
-          { statusCode: 404, message: 'Agent not found', errorCode: 'AGENT_NOT_FOUND' },
+          {
+            statusCode: 404,
+            message: 'Agent not found',
+            errorCode: 'AGENT_NOT_FOUND',
+          },
           { status: 404 },
         );
       }
-      return HttpResponse.json({ ...page, entries: page.entries.filter((entry) => entry.seq > afterSeq) });
+      return HttpResponse.json({
+        ...page,
+        entries: page.entries.filter((entry) => entry.seq > afterSeq),
+      });
     }),
   );
   return state;
@@ -254,10 +307,16 @@ function serveAgents(threads: ThreadSummary[], list: AgentListPage, pages: Recor
 
 /** The agent tree, top to bottom: each row as «task: status» (the status icon's accessible name). */
 function treeRows(): string[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-agent-row]'), (row) => {
-    const status = row.querySelector('[data-slot="agent-status"][role="img"]')?.getAttribute('aria-label') ?? '?';
-    return `${text(row.querySelector('[data-agent-link]'))}: ${status}`;
-  });
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-agent-row]'),
+    (row) => {
+      const status =
+        row
+          .querySelector('[data-slot="agent-status"][role="img"]')
+          ?.getAttribute('aria-label') ?? '?';
+      return `${text(row.querySelector('[data-agent-link]'))}: ${status}`;
+    },
+  );
 }
 
 /** The agent page's header (AV-01): the `h1` and its neighbours, the status label and the control button. */
@@ -272,7 +331,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   //   координатор, и их статусы, и картина обновляется без перезагрузки."
   // AC: AC-22.2 "Given агент работает, when сотрудник смотрит его историю, then новые записи появляются без перезагрузки."
   // AC: DC-1 (design-web) "Лента после перечитывания с afterSeq совпадает с лентой, собранной вживую: записи не повторяются и не пропадают."
-  // Behavior: open /chat/a (view: chat answer, an MCP tool call with its result, a confirmed brief, a workflow run with two steps)
+  // Behavior: open /chat/a (view: chat answer, an MCP tool call with its result, a confirmed brief, a deep agent run with two steps)
   //   → the event source delivers `ready`, then `delta` parts, then a `tree` note whose re-read (afterSeq = last seq) adds a third step
   //   and a report → the draft text is shown until its history entry arrives and is replaced by it; the run card sits under the
   //   brief card with three steps and their statuses; the report is last; no entry appears twice
@@ -280,17 +339,17 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   //   (invariant 2), or the draft is left next to the entry that replaced it
   // Verification items:
   // - draft visible before its history entry exists, gone (not duplicated) after the re-read that brings the entry
-  // - run card is placed directly under the brief card (CV-01), with 3 steps in order, each named by its executor
-  //   (`origin.executor`, custom-agents AC-27.1), with its task and status
+  // - run card is placed directly under the brief card (CV-01), with 3 steps in order, each named by its subagent
+  //   (`origin.subagent`, custom-agents AC-27.1), with its task and status
   // - `GET history` after the `tree` note carries afterSeq equal to the last seq of the first load
-  // - the successful start_agent / start_workflow tool call is not drawn (the run card replaces it, MC-23)
+  // - the successful start_agent / start_deep_agent tool call is not drawn (the run card replaces it, MC-23)
   // @category: core-functionality
   // @dependency: LiveStore (injected event source), FeedStore, toFeed, useFeedRuntime, threadsApiClient, Thread, AssistantMessage, RunCard, MSW
   // @complexity: high
   it('AC-24.1 / AC-22.2 / DC-1: live draft is replaced by its history entry, the run card sits under its brief with three steps, and the re-read repeats no entry', async () => {
-    // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a workflow run with two steps
+    // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a deep agent run with two steps
     const briefArgs = {
-      workflow: WORKFLOW_RECORD_ID,
+      deepAgent: DEEP_AGENT_NAME,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -299,8 +358,8 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       decisionId: 'd-brief',
       agentId: 'root',
       description: 'Чат',
-      kind: WORKFLOWS_BRIEF_CONFIRMATION,
-      tool: 'start_workflow',
+      kind: AGENTS_BRIEF_CONFIRMATION,
+      tool: 'start_deep_agent',
       server: null,
       args: briefArgs,
       content: briefArgs,
@@ -309,57 +368,106 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       createdAt: fixtureTime(4),
       resolvedAt: fixtureTime(4.5),
     });
-    // Each step carries the team executor it runs as (custom-agents KD-7): the card names steps by it.
-    const step = (agentId: string, executor: string, description: string, status: 'working' | 'completed', at: number) =>
+    // Each step carries the subagent it runs as (custom-agents KD-7): the card names steps by it.
+    const step = (
+      agentId: string,
+      subagent: string,
+      description: string,
+      status: 'working' | 'completed',
+      at: number,
+    ) =>
       agentNode({
         agentId,
         parentId: 'w1',
         depth: 2,
-        origin: { ...workflowOrigin(), executor },
+        origin: { ...deepAgentOrigin(), subagent },
         description,
         status,
         createdAt: fixtureTime(at),
       });
-    const run = (status: 'working' | 'completed', steps: ReturnType<typeof step>[]) =>
+    const run = (
+      status: 'working' | 'completed',
+      steps: ReturnType<typeof step>[],
+    ) =>
       agentNode({
         agentId: 'w1',
         name: 'Исследование',
-        origin: workflowOrigin(),
+        origin: deepAgentOrigin(),
         description: 'Исследование',
         status,
         createdAt: fixtureTime(5),
         children: steps,
       });
     const firstEntries = [
-      historyEntry({ kind: 'task', seq: 1, content: { text: 'Разберись, почему падает ночная выгрузка' } }),
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Разберись, почему падает ночная выгрузка' },
+      }),
       historyEntry({
         kind: 'model_answer',
         seq: 2,
         content: {
           text: 'Смотрю логи.',
-          toolCalls: [{ callId: 'c1', tool: 'search', server: 'logs', args: { query: 'ошибки' }, state: 'done' }],
+          toolCalls: [
+            {
+              callId: 'c1',
+              tool: 'search',
+              server: 'logs',
+              args: { query: 'ошибки' },
+              state: 'done',
+            },
+          ],
         },
       }),
-      historyEntry({ kind: 'tool_result', seq: 3, content: { callId: 'c1', tool: 'search', server: 'logs', text: 'Три ошибки' } }),
+      historyEntry({
+        kind: 'tool_result',
+        seq: 3,
+        content: {
+          callId: 'c1',
+          tool: 'search',
+          server: 'logs',
+          text: 'Три ошибки',
+        },
+      }),
       historyEntry({
         kind: 'model_answer',
         seq: 4,
         content: {
           text: 'Готовлю бриф.',
-          toolCalls: [{ callId: 'c2', tool: 'start_workflow', server: null, args: briefArgs, state: 'done' }],
+          toolCalls: [
+            {
+              callId: 'c2',
+              tool: 'start_deep_agent',
+              server: null,
+              args: briefArgs,
+              state: 'done',
+            },
+          ],
         },
       }),
       historyEntry({
         kind: 'tool_result',
         seq: 5,
-        content: { callId: 'c2', tool: 'start_workflow', server: null, args: briefArgs, text: 'Запущено' },
+        content: {
+          callId: 'c2',
+          tool: 'start_deep_agent',
+          server: null,
+          args: briefArgs,
+          text: 'Запущено',
+        },
       }),
     ];
     const conversation = serveConversation(
       THREAD,
       conversationView({
         thread: THREAD,
-        chat: { status: 'working', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'working',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: firstEntries,
         decisions: [brief],
         agents: [
@@ -371,10 +479,16 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       }),
     );
     // The card reads the run's view (custom-agents KD-7); the whole team is called, so no «не вызывался» rows.
-    const team = ['Логи', 'Разбор', 'Сводка'].map((name) => ({ name, role: `Роль ${name}`, maxRuns: 1, final: name === 'Сводка' }));
+    const team = ['Логи', 'Разбор', 'Сводка'].map((name) => ({
+      name,
+      maxRuns: 1,
+      final: name === 'Сводка',
+    }));
     server.use(
       http.get(`${API}/api/agents/w1/run`, () =>
-        HttpResponse.json(workflowRunView({ coordinator: run('working', []), team })),
+        HttpResponse.json(
+          deepAgentRunView({ deepAgent: run('working', []), team }),
+        ),
       ),
     );
     const { live } = await openConversation('Смотрю логи.');
@@ -384,7 +498,11 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
     await waitFor(() => expect(conversation.served).toBe(2));
     const draftHead = 'Запустил исследование, ';
     live.emit('delta', { agentId: 'root', offset: 0, text: draftHead });
-    live.emit('delta', { agentId: 'root', offset: draftHead.length, text: 'жду отчёт.' });
+    live.emit('delta', {
+      agentId: 'root',
+      offset: draftHead.length,
+      text: 'жду отчёт.',
+    });
 
     // Assert (live): the draft is last; the run card stands right under its brief; the start call is not drawn (MC-23)
     const head = [
@@ -407,7 +525,11 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       chat: { ...conversation.view.chat, status: 'idle' },
       entries: [
         ...firstEntries,
-        historyEntry({ kind: 'model_answer', seq: 6, content: { text: 'Запустил исследование, жду отчёт.', toolCalls: [] } }),
+        historyEntry({
+          kind: 'model_answer',
+          seq: 6,
+          content: { text: 'Запустил исследование, жду отчёт.', toolCalls: [] },
+        }),
         historyEntry({
           kind: 'child_report',
           seq: 7,
@@ -468,14 +590,27 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
   it('AC-23.1 / AC-16.1 / AC-16.2 / DC-2: an accepted message stands in the tray then in the feed; "Прервать" sends no text and keeps the field; a 500 returns the text with MC-27', async () => {
     // Arrange: the chat is `working`; the first message is accepted, the next one fails with 500
     const firstEntries = [
-      historyEntry({ kind: 'task', seq: 1, content: { text: 'Собери отчёт по продажам' } }),
-      historyEntry({ kind: 'model_answer', seq: 2, content: { text: 'Начинаю.', toolCalls: [] } }),
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Собери отчёт по продажам' },
+      }),
+      historyEntry({
+        kind: 'model_answer',
+        seq: 2,
+        content: { text: 'Начинаю.', toolCalls: [] },
+      }),
     ];
     const conversation = serveConversation(
       THREAD,
       conversationView({
         thread: THREAD,
-        chat: { status: 'working', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'working',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: firstEntries,
       }),
     );
@@ -489,13 +624,25 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
         const body = SendMessageRequestSchema.parse(await request.json());
         sendBodies.push(body);
         if (body.text !== queued) {
-          return HttpResponse.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 });
+          return HttpResponse.json(
+            { statusCode: 500, message: 'Internal server error' },
+            { status: 500 },
+          );
         }
         conversation.view = {
           ...conversation.view,
-          pending: [pendingMessage({ messageId: 'm1', text: queued, createdAt: fixtureTime(3) })],
+          pending: [
+            pendingMessage({
+              messageId: 'm1',
+              text: queued,
+              createdAt: fixtureTime(3),
+            }),
+          ],
         };
-        return HttpResponse.json({ messageId: 'm1' } satisfies SendMessageResponse, { status: 202 });
+        return HttpResponse.json(
+          { messageId: 'm1' } satisfies SendMessageResponse,
+          { status: 202 },
+        );
       }),
       http.post(`${API}/api/threads/a/interrupt`, async ({ request }) => {
         interruptBodies.push(await request.text());
@@ -503,10 +650,16 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
           ...conversation.view,
           entries: [
             ...conversation.view.entries,
-            historyEntry({ kind: 'event', seq: 4, content: { event: 'interrupted', reason: null } }),
+            historyEntry({
+              kind: 'event',
+              seq: 4,
+              content: { event: 'interrupted', reason: null },
+            }),
           ],
         };
-        return HttpResponse.json({ outcome: 'interrupted' } satisfies InterruptResponse);
+        return HttpResponse.json({
+          outcome: 'interrupted',
+        } satisfies InterruptResponse);
       }),
     );
     const user = userEvent.setup();
@@ -521,8 +674,12 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     await user.click(send);
 
     // Assert 1a: accepted → the field is empty and the message stands in the tray before any re-read
-    const queueTray = await screen.findByRole('region', { name: 'Ждут доставки' });
-    expect(within(queueTray).getByText('Ждут доставки · 1')).toBeInTheDocument();
+    const queueTray = await screen.findByRole('region', {
+      name: 'Ждут доставки',
+    });
+    expect(
+      within(queueTray).getByText('Ждут доставки · 1'),
+    ).toBeInTheDocument();
     expect(within(queueTray).getByText(queued)).toBeInTheDocument();
     expect(composer).toHaveValue('');
     expect(sendBodies).toEqual([{ text: queued }]);
@@ -533,14 +690,25 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     await waitFor(() => expect(conversation.served).toBe(2));
     conversation.view = {
       ...conversation.view,
-      entries: [...firstEntries, historyEntry({ kind: 'user_message', seq: 3, content: { text: queued } })],
+      entries: [
+        ...firstEntries,
+        historyEntry({
+          kind: 'user_message',
+          seq: 3,
+          content: { text: queued },
+        }),
+      ],
       pending: [],
     };
     live.emit('tree', { threadId: 'a' });
 
     // Assert 1b: the tray is empty and the message is in the feed at its place; never missing, never twice
     await waitFor(() => expect(tray()).toBeNull());
-    expect(feedItems()).toEqual(['Вы: Собери отчёт по продажам', 'Ответ: Начинаю.', `Вы: ${queued}`]);
+    expect(feedItems()).toEqual([
+      'Вы: Собери отчёт по продажам',
+      'Ответ: Начинаю.',
+      `Вы: ${queued}`,
+    ]);
     expect(breaches).toEqual([]);
 
     // Act 2: «Прервать» with text in the field: the button keeps its name and takes no text along
@@ -567,7 +735,11 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
 
     // Assert 3: the text is back in the field with MC-27; nothing in the tray or the feed
-    expect(await screen.findByText('Не удалось отправить сообщение. Попробуйте ещё раз.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'Не удалось отправить сообщение. Попробуйте ещё раз.',
+      ),
+    ).toBeInTheDocument();
     expect(composer).toHaveValue(refused);
     expect(tray()).toBeNull();
     expect(feedItems()).not.toContain(`Вы: ${refused}`);
@@ -581,25 +753,25 @@ describe('Agent platform web: the decision card (UC-3)', () => {
   // AC: AC-28.2 "Given бриф ждёт, when сотрудник подтверждает его, в том числе исправив текст, then запускается один workflow, и его агенты получают подтверждённый бриф, но не историю беседы."
   // AC: AC-28.3 "Given бриф ждёт, when сотрудник отказывается, then workflow не запускается, а чат получает результат «отклонено пользователем» (как AC-12.4)."
   // Behavior: /chat/a with an open brief and an open mutating-action request of a background agent
-  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `workflow` from the Confirmation
+  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `deepAgent` from the Confirmation
   //     unchanged and the three brief fields with the edited question → the card shows «Задание подтверждено» (MC-21), focus is on the card
   //   → press "Отклонить" on the action request, the first POST fails with a network error → the card returns to "Ждёт" with the MC-19
   //     error line (role="alert") → repeat the same button: the card shows «Отклонено»
-  // Catches: the brief decision sent without `workflow` or with the original instead of the edited text (the workflow would start from
+  // Catches: the brief decision sent without `deepAgent` or with the original instead of the edited text (the deep agent would start from
   //   the wrong brief), a failed decision that leaves the card stuck in "Отправка" or loses the retry button
   // Verification items:
-  // - request body of the brief decision: approve true, workflow as in the Confirmation, question = edited value
+  // - request body of the brief decision: approve true, deepAgent as in the Confirmation, question = edited value
   // - the focus moves to the card container after the outcome
   // - the error line of the failed decision is announced inside the card; the retry button is the same control
   // @category: core-functionality
   // @dependency: FeedStore.decide, toFeed (decisions placement), DecisionCard, threadsApiClient, MSW
   // @complexity: medium
-  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its workflow and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
+  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its deep agent and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
     // Arrange: the clock is on the fixture day, so outcome times read «ЧЧ:ММ» (FIXTURE_TIME 10:00Z = 11:00 Berlin)
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-28T12:00:00+01:00'));
     const briefArgs = {
-      workflow: WORKFLOW_RECORD_ID,
+      deepAgent: DEEP_AGENT_NAME,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -608,8 +780,8 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       decisionId: 'd-brief',
       agentId: 'root',
       description: 'Чат',
-      kind: WORKFLOWS_BRIEF_CONFIRMATION,
-      tool: 'start_workflow',
+      kind: AGENTS_BRIEF_CONFIRMATION,
+      tool: 'start_deep_agent',
       server: null,
       args: briefArgs,
       content: briefArgs,
@@ -631,16 +803,31 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       THREAD,
       conversationView({
         thread: THREAD,
-        chat: { status: 'awaiting_confirmation', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'awaiting_confirmation',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: [
-          historyEntry({ kind: 'task', seq: 1, content: { text: 'Разберись, почему падает ночная выгрузка' } }),
+          historyEntry({
+            kind: 'task',
+            seq: 1,
+            content: { text: 'Разберись, почему падает ночная выгрузка' },
+          }),
           historyEntry({
             kind: 'model_answer',
             seq: 2,
             content: {
               text: 'Предлагаю бриф.',
               toolCalls: [
-                { callId: 'c1', tool: 'start_workflow', server: null, args: briefArgs, state: 'awaiting_confirmation' },
+                {
+                  callId: 'c1',
+                  tool: 'start_deep_agent',
+                  server: null,
+                  args: briefArgs,
+                  state: 'awaiting_confirmation',
+                },
               ],
             },
           }),
@@ -648,66 +835,84 @@ describe('Agent platform web: the decision card (UC-3)', () => {
         decisions: [brief, ticket],
       }),
     );
-    const resolvedAt: Record<string, string> = { 'd-brief': fixtureTime(60), 'd-ticket': fixtureTime(120) };
+    const resolvedAt: Record<string, string> = {
+      'd-brief': fixtureTime(60),
+      'd-ticket': fixtureTime(120),
+    };
     const decisionBodies: { decisionId: string; body: DecisionRequest }[] = [];
     let ticketFailures = 1;
     server.use(
-      // The open brief card reads its workflow's record for the self-learning line (self-learning KD-6).
-      http.get(`${API}/api/library/${WORKFLOW_RECORD_ID}`, () =>
-        HttpResponse.json(
-          recordDetail({ id: WORKFLOW_RECORD_ID, kind: 'workflow', content: workflowContent({ selfLearning: false }) }),
-        ),
+      http.post(
+        `${API}/api/decisions/:decisionId`,
+        async ({ request, params }) => {
+          const decisionId = String(params['decisionId']);
+          const body = DecisionRequestSchema.parse(await request.json());
+          decisionBodies.push({ decisionId, body });
+          if (decisionId === 'd-ticket' && ticketFailures > 0) {
+            ticketFailures -= 1;
+            return HttpResponse.error();
+          }
+          conversation.view = {
+            ...conversation.view,
+            decisions: conversation.view.decisions.map(
+              (decision): Confirmation =>
+                decision.decisionId !== decisionId
+                  ? decision
+                  : {
+                      ...decision,
+                      status: 'resolved',
+                      resolution: {
+                        approve: body.approve,
+                        args: body.args ?? decision.args,
+                      },
+                      resolvedAt: resolvedAt[decisionId] ?? null,
+                    },
+            ),
+          };
+          return HttpResponse.json({
+            outcome: 'resolved',
+          } satisfies DecisionResponse);
+        },
       ),
-      http.post(`${API}/api/decisions/:decisionId`, async ({ request, params }) => {
-        const decisionId = String(params['decisionId']);
-        const body = DecisionRequestSchema.parse(await request.json());
-        decisionBodies.push({ decisionId, body });
-        if (decisionId === 'd-ticket' && ticketFailures > 0) {
-          ticketFailures -= 1;
-          return HttpResponse.error();
-        }
-        conversation.view = {
-          ...conversation.view,
-          decisions: conversation.view.decisions.map(
-            (decision): Confirmation =>
-              decision.decisionId !== decisionId
-                ? decision
-                : {
-                    ...decision,
-                    status: 'resolved',
-                    resolution: { approve: body.approve, args: body.args ?? decision.args },
-                    resolvedAt: resolvedAt[decisionId] ?? null,
-                  },
-          ),
-        };
-        return HttpResponse.json({ outcome: 'resolved' } satisfies DecisionResponse);
-      }),
     );
     const user = userEvent.setup();
     const { container } = await openConversation('Предлагаю бриф.');
     const cardOf = (decisionId: string): HTMLElement => {
-      const card = container.querySelector<HTMLElement>(`[data-decision-id="${decisionId}"]`);
-      if (card === null) throw new Error(`decision card ${decisionId} is not rendered`);
+      const card = container.querySelector<HTMLElement>(
+        `[data-decision-id="${decisionId}"]`,
+      );
+      if (card === null)
+        throw new Error(`decision card ${decisionId} is not rendered`);
       return card;
     };
 
     // Act 1: edit the brief question and launch with the edits
-    const briefCard = await screen.findByRole('group', { name: 'Задание: Почему падает выгрузка?' });
-    await user.click(within(briefCard).getByRole('button', { name: 'Исправить' }));
+    const briefCard = await screen.findByRole('group', {
+      name: 'Задание: Почему падает выгрузка?',
+    });
+    await user.click(
+      within(briefCard).getByRole('button', { name: 'Исправить' }),
+    );
     const question = within(briefCard).getByRole('textbox', { name: 'Вопрос' });
     await user.clear(question);
     await user.type(question, 'Почему падает ночная выгрузка?');
-    await user.click(within(briefCard).getByRole('button', { name: 'Запустить с правками' }));
+    await user.click(
+      within(briefCard).getByRole('button', { name: 'Запустить с правками' }),
+    );
 
-    // Assert 1: approve with the workflow unchanged and the edited question; the card confirms and takes focus
-    await waitFor(() => expect(within(cardOf('d-brief')).getByText('Задание подтверждено · 11:01')).toBeInTheDocument());
+    // Assert 1: approve with the deep agent unchanged and the edited question; the card confirms and takes focus
+    await waitFor(() =>
+      expect(
+        within(cardOf('d-brief')).getByText('Задание подтверждено · 11:01'),
+      ).toBeInTheDocument(),
+    );
     expect(decisionBodies).toEqual([
       {
         decisionId: 'd-brief',
         body: {
           approve: true,
           args: {
-            workflow: WORKFLOW_RECORD_ID,
+            deepAgent: DEEP_AGENT_NAME,
             question: 'Почему падает ночная выгрузка?',
             boundaries: 'Только логи за неделю',
             result: 'Короткий отчёт',
@@ -715,28 +920,47 @@ describe('Agent platform web: the decision card (UC-3)', () => {
         },
       },
     ]);
-    expect(within(cardOf('d-brief')).getByText('Почему падает ночная выгрузка?')).toBeInTheDocument();
+    expect(
+      within(cardOf('d-brief')).getByText('Почему падает ночная выгрузка?'),
+    ).toBeInTheDocument();
     await waitFor(() => expect(cardOf('d-brief')).toHaveFocus());
 
     // Act 2: decline the background agent's request; the first POST is lost
-    const ticketCard = screen.getByRole('group', { name: 'Нужно решение: Создать заявку' });
-    expect(ticketCard).toHaveTextContent('Агент «Разбор заявок» хочет выполнить:');
+    const ticketCard = screen.getByRole('group', {
+      name: 'Нужно решение: Создать заявку',
+    });
+    expect(ticketCard).toHaveTextContent(
+      'Агент «Разбор заявок» хочет выполнить:',
+    );
     // The action reads as the tool's title over «name · server», its arguments as rows «label — value»
     // (the schema title, or the key as is); the exact JSON opens only by its disclosure, focus stays on it
     expect(ticketCard).toHaveTextContent('create_ticket · backoffice');
-    const ticketArgs = within(ticketCard).getByRole('region', { name: 'Аргументы' });
+    const ticketArgs = within(ticketCard).getByRole('region', {
+      name: 'Аргументы',
+    });
     expect(
-      [...ticketArgs.querySelectorAll('dt')].map((term) => `${term.textContent} — ${term.nextElementSibling?.textContent}`),
+      [...ticketArgs.querySelectorAll('dt')].map(
+        (term) =>
+          `${term.textContent} — ${term.nextElementSibling?.textContent}`,
+      ),
     ).toEqual(['Заголовок — Сбой выгрузки', 'urgent — да']);
     expect(ticketArgs).not.toHaveTextContent('{');
-    const showJson = within(ticketArgs).getByRole('button', { name: 'Показать как JSON' });
+    const showJson = within(ticketArgs).getByRole('button', {
+      name: 'Показать как JSON',
+    });
     expect(showJson).toHaveAttribute('aria-expanded', 'false');
     await user.click(showJson);
-    expect(within(ticketArgs).getByRole('button', { name: 'Скрыть JSON' })).toBe(showJson);
+    expect(
+      within(ticketArgs).getByRole('button', { name: 'Скрыть JSON' }),
+    ).toBe(showJson);
     expect(showJson).toHaveAttribute('aria-expanded', 'true');
     expect(showJson).toHaveFocus();
-    expect(within(ticketArgs).getByRole('region', { name: 'JSON' })).toHaveTextContent('"urgent": true');
-    const reject = within(ticketCard).getByRole('button', { name: 'Отклонить' });
+    expect(
+      within(ticketArgs).getByRole('region', { name: 'JSON' }),
+    ).toHaveTextContent('"urgent": true');
+    const reject = within(ticketCard).getByRole('button', {
+      name: 'Отклонить',
+    });
     await user.click(reject);
 
     // Assert 2: back to «Ждёт» with the MC-19 error line inside the card; the same button retries
@@ -744,8 +968,12 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       'Не удалось отправить решение. Попробуйте ещё раз.',
     );
     expect(ticketCard).toHaveAttribute('data-state', 'open');
-    expect(within(ticketCard).getByText('Ждёт подтверждения')).toBeInTheDocument();
-    expect(within(ticketCard).getByRole('button', { name: 'Отклонить' })).toBe(reject);
+    expect(
+      within(ticketCard).getByText('Ждёт подтверждения'),
+    ).toBeInTheDocument();
+    expect(within(ticketCard).getByRole('button', { name: 'Отклонить' })).toBe(
+      reject,
+    );
     expect(reject).toBeEnabled();
     expect(reject).not.toHaveAttribute('aria-busy');
 
@@ -753,7 +981,11 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     await user.click(reject);
 
     // Assert 3: «Отклонено», the error line is gone, focus on the card
-    await waitFor(() => expect(within(cardOf('d-ticket')).getByText('Отклонено · 11:02')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        within(cardOf('d-ticket')).getByText('Отклонено · 11:02'),
+      ).toBeInTheDocument(),
+    );
     expect(within(cardOf('d-ticket')).queryByRole('alert')).toBeNull();
     await waitFor(() => expect(cardOf('d-ticket')).toHaveFocus());
     expect(decisionBodies.slice(1)).toEqual([
@@ -790,7 +1022,13 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
       threadTitle: 'Выгрузка',
       createdAt: fixtureTime(1),
       children: [
-        agentNode({ agentId: 'c1', parentId: 'r1', depth: 2, description: 'Поиск ошибок', createdAt: fixtureTime(2) }),
+        agentNode({
+          agentId: 'c1',
+          parentId: 'r1',
+          depth: 2,
+          description: 'Поиск ошибок',
+          createdAt: fixtureTime(2),
+        }),
       ],
     };
     const childAgent = (agentId: string, status: 'working' | 'stopped') => ({
@@ -804,19 +1042,43 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
       parentDescription: 'Разбор логов',
     });
     const childEntries = [
-      historyEntry({ kind: 'task', seq: 1, content: { text: 'Найди ошибки в логах' } }),
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Найди ошибки в логах' },
+      }),
       historyEntry({
         kind: 'model_answer',
         seq: 2,
         content: {
           text: 'Смотрю логи.',
-          toolCalls: [{ callId: 'c1', tool: 'search', server: 'logs', args: { query: 'ошибки' }, state: 'done' }],
+          toolCalls: [
+            {
+              callId: 'c1',
+              tool: 'search',
+              server: 'logs',
+              args: { query: 'ошибки' },
+              state: 'done',
+            },
+          ],
         },
       }),
-      historyEntry({ kind: 'tool_result', seq: 3, content: { callId: 'c1', tool: 'search', server: 'logs', text: 'Три ошибки' } }),
+      historyEntry({
+        kind: 'tool_result',
+        seq: 3,
+        content: {
+          callId: 'c1',
+          tool: 'search',
+          server: 'logs',
+          text: 'Три ошибки',
+        },
+      }),
     ];
     const agents = serveAgents([THREAD], agentListPage([root]), {
-      c1: agentPageView({ agent: childAgent('c1', 'working'), entries: childEntries }),
+      c1: agentPageView({
+        agent: childAgent('c1', 'working'),
+        entries: childEntries,
+      }),
     });
     const stopped: string[] = [];
     const restarted: string[] = [];
@@ -826,22 +1088,42 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
         stopped.push(agentId);
         agents.pages[agentId] = agentPageView({
           agent: childAgent(agentId, 'stopped'),
-          entries: [...childEntries, historyEntry({ kind: 'event', seq: 4, content: { event: 'stopped', reason: null } })],
+          entries: [
+            ...childEntries,
+            historyEntry({
+              kind: 'event',
+              seq: 4,
+              content: { event: 'stopped', reason: null },
+            }),
+          ],
         });
         return HttpResponse.json({ stopped: [agentId] } satisfies StopResponse);
       }),
       http.post(`${API}/api/agents/:agentId/restart`, ({ params }) => {
         restarted.push(String(params['agentId']));
-        agents.pages['c2'] = agentPageView({ agent: childAgent('c2', 'working'), entries: childEntries.slice(0, 1) });
-        return HttpResponse.json({ agentId: 'c2' } satisfies RestartResponse, { status: 201 });
+        agents.pages['c2'] = agentPageView({
+          agent: childAgent('c2', 'working'),
+          entries: childEntries.slice(0, 1),
+        });
+        return HttpResponse.json({ agentId: 'c2' } satisfies RestartResponse, {
+          status: 201,
+        });
       }),
     );
     const user = userEvent.setup();
     const live = createTestLiveSource();
-    const { router, setPathname } = renderWithRuntime({ pathname: '/agents', liveSource: live });
+    const { router, setPathname } = renderWithRuntime({
+      pathname: '/agents',
+      liveSource: live,
+    });
 
     // Assert (tree): the stream has no target; the root is expanded with its working child
-    await waitFor(() => expect(treeRows()).toEqual(['Разбор логов: Работает', 'Поиск ошибок: Работает']));
+    await waitFor(() =>
+      expect(treeRows()).toEqual([
+        'Разбор логов: Работает',
+        'Поиск ошибок: Работает',
+      ]),
+    );
     expect(live.opened).toEqual([{ url: `${API}/api/events`, closed: false }]);
 
     // Act: a new root is stored and a `tree` note arrives
@@ -861,15 +1143,27 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
 
     // Assert: the new root is first in the tree without a reload (AC-21.1)
     await waitFor(() =>
-      expect(treeRows()).toEqual(['Сводка по продажам: Завершён', 'Разбор логов: Работает', 'Поиск ошибок: Работает']),
+      expect(treeRows()).toEqual([
+        'Сводка по продажам: Завершён',
+        'Разбор логов: Работает',
+        'Поиск ошибок: Работает',
+      ]),
     );
 
     // Act: open the child agent; the stream moves to it and its first `ready` re-reads
     setPathname('/agents/c1');
-    const title = await screen.findByRole('heading', { level: 1, name: 'Поиск ошибок' });
-    await waitFor(() => expect(live.current()?.url).toBe(`${API}/api/events?watch=agent%3Ac1`));
+    const title = await screen.findByRole('heading', {
+      level: 1,
+      name: 'Поиск ошибок',
+    });
     await waitFor(() =>
-      expect(feedItems()).toEqual(['Вы: Найди ошибки в логах', 'Ответ: Смотрю логи. · 1 вызов инструмента']),
+      expect(live.current()?.url).toBe(`${API}/api/events?watch=agent%3Ac1`),
+    );
+    await waitFor(() =>
+      expect(feedItems()).toEqual([
+        'Вы: Найди ошибки в логах',
+        'Ответ: Смотрю логи. · 1 вызов инструмента',
+      ]),
     );
     live.emit('ready', {});
     await waitFor(() => expect(agents.afterSeqs['c1']).toEqual([0, 3]));
@@ -880,13 +1174,19 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
     expect(within(agentHeader()).getByText('Работает')).toBeInTheDocument();
 
     // Act: «Остановить»
-    const control = within(agentHeader()).getByRole('button', { name: 'Остановить' });
+    const control = within(agentHeader()).getByRole('button', {
+      name: 'Остановить',
+    });
     await user.click(control);
 
     // Assert: «Остановлен вами» ends the history; the same button now reads «Запустить с нуля» and keeps focus (AC-23.2)
-    await waitFor(() => expect(feedItems().at(-1)).toBe('Событие: Остановлен вами'));
+    await waitFor(() =>
+      expect(feedItems().at(-1)).toBe('Событие: Остановлен вами'),
+    );
     expect(within(agentHeader()).getByText('Остановлен')).toBeInTheDocument();
-    expect(within(agentHeader()).getByRole('button', { name: 'Запустить с нуля' })).toBe(control);
+    expect(
+      within(agentHeader()).getByRole('button', { name: 'Запустить с нуля' }),
+    ).toBe(control);
     expect(control).toHaveFocus();
     expect(stopped).toEqual(['c1']);
 
@@ -894,19 +1194,30 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
     await user.click(control);
 
     // Assert: the router opens the new agent, not the old one
-    await waitFor(() => expect(router.push.mock.calls).toEqual([['/agents/c2']]));
+    await waitFor(() =>
+      expect(router.push.mock.calls).toEqual([['/agents/c2']]),
+    );
     expect(restarted).toEqual(['c1']);
 
     // Act: Next performs the navigation
     setPathname('/agents/c2');
 
     // Assert: the new agent's page — its own history and status, its `h1` focused, the stream watching it
-    await waitFor(() => expect(feedItems()).toEqual(['Вы: Найди ошибки в логах']));
-    const newTitle = screen.getByRole('heading', { level: 1, name: 'Поиск ошибок' });
+    await waitFor(() =>
+      expect(feedItems()).toEqual(['Вы: Найди ошибки в логах']),
+    );
+    const newTitle = screen.getByRole('heading', {
+      level: 1,
+      name: 'Поиск ошибок',
+    });
     await waitFor(() => expect(newTitle).toHaveFocus());
     expect(within(agentHeader()).getByText('Работает')).toBeInTheDocument();
-    expect(within(agentHeader()).getByRole('button', { name: 'Остановить' })).toBeInTheDocument();
-    await waitFor(() => expect(live.current()?.url).toBe(`${API}/api/events?watch=agent%3Ac2`));
+    expect(
+      within(agentHeader()).getByRole('button', { name: 'Остановить' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(live.current()?.url).toBe(`${API}/api/events?watch=agent%3Ac2`),
+    );
     expect(agents.afterSeqs).toEqual({ c1: [0, 3, 3, 4], c2: [0] });
 
     // Assert (invariant 1): the stream followed every screen, one source at a time
@@ -950,28 +1261,53 @@ describe('Agent platform web: the stream drops and comes back (UC-E1)', () => {
       createdAt: fixtureTime(2.5),
     });
     const firstEntries = [
-      historyEntry({ kind: 'task', seq: 1, content: { text: 'Собери отчёт по продажам' } }),
-      historyEntry({ kind: 'model_answer', seq: 2, content: { text: 'Начинаю.', toolCalls: [] } }),
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Собери отчёт по продажам' },
+      }),
+      historyEntry({
+        kind: 'model_answer',
+        seq: 2,
+        content: { text: 'Начинаю.', toolCalls: [] },
+      }),
     ];
     const conversation = serveConversation(
       THREAD,
       conversationView({
         thread: THREAD,
-        chat: { status: 'working', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'working',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: firstEntries,
-        pending: [pendingMessage({ messageId: 'm1', text: queued, createdAt: fixtureTime(3) })],
+        pending: [
+          pendingMessage({
+            messageId: 'm1',
+            text: queued,
+            createdAt: fixtureTime(3),
+          }),
+        ],
         decisions: [ticket],
       }),
     );
     const { live } = await openConversation('Начинаю.');
     live.emit('ready', {});
     await waitFor(() => expect(conversation.served).toBe(2));
-    const head = ['Вы: Собери отчёт по продажам', 'Ответ: Начинаю.', 'Решение: Нужно решение: create_ticket (open)'];
+    const head = [
+      'Вы: Собери отчёт по продажам',
+      'Ответ: Начинаю.',
+      'Решение: Нужно решение: create_ticket (open)',
+    ];
     const spoken = trackAnnouncements();
 
     // Act: the root's answer starts streaming, then the stream errors and closes itself
     live.emit('delta', { agentId: 'root', offset: 0, text: 'Готовлю итог' });
-    await waitFor(() => expect(feedItems()).toEqual([...head, 'Ответ: Готовлю итог']));
+    await waitFor(() =>
+      expect(feedItems()).toEqual([...head, 'Ответ: Готовлю итог']),
+    );
     live.fail({ closed: true });
 
     // Assert (lost): the connection line stands and the loss is announced once
@@ -981,7 +1317,14 @@ describe('Agent platform web: the stream drops and comes back (UC-E1)', () => {
     // Act: meanwhile the server stores the answer; the store reopens the stream after 2 s
     conversation.view = {
       ...conversation.view,
-      entries: [...firstEntries, historyEntry({ kind: 'model_answer', seq: 3, content: { text: 'Готовлю итог.', toolCalls: [] } })],
+      entries: [
+        ...firstEntries,
+        historyEntry({
+          kind: 'model_answer',
+          seq: 3,
+          content: { text: 'Готовлю итог.', toolCalls: [] },
+        }),
+      ],
     };
     await waitFor(
       () =>
@@ -996,16 +1339,27 @@ describe('Agent platform web: the stream drops and comes back (UC-E1)', () => {
 
     // Assert (back): the line goes, the recovery is announced once, the feed adds the answer once in place of the draft
     await waitFor(() => expect(screen.queryByText(CONNECTION_LINE)).toBeNull());
-    await waitFor(() => expect(feedItems()).toEqual([...head, 'Ответ: Готовлю итог.']));
-    expect(spoken).toEqual(['Связь с сервером потеряна', 'Связь с сервером восстановлена']);
+    await waitFor(() =>
+      expect(feedItems()).toEqual([...head, 'Ответ: Готовлю итог.']),
+    );
+    expect(spoken).toEqual([
+      'Связь с сервером потеряна',
+      'Связь с сервером восстановлена',
+    ]);
     expect(conversation.afterSeqs).toEqual([0, 2, 2]);
 
     // Assert: the tray and the decision card are still there, taken from the full `pending` and `decisions`
     const queueTray = tray();
     expect(queueTray).not.toBeNull();
-    expect(within(queueTray ?? document.body).getByText('Ждут доставки · 1')).toBeInTheDocument();
-    expect(within(queueTray ?? document.body).getByText(queued)).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'Нужно решение: create_ticket' })).toHaveAttribute('data-state', 'open');
+    expect(
+      within(queueTray ?? document.body).getByText('Ждут доставки · 1'),
+    ).toBeInTheDocument();
+    expect(
+      within(queueTray ?? document.body).getByText(queued),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('group', { name: 'Нужно решение: create_ticket' }),
+    ).toHaveAttribute('data-state', 'open');
     expect(live.mostOpenAtOnce()).toBe(1);
   });
 });

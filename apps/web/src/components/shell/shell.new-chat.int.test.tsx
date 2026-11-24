@@ -67,24 +67,38 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     const threadB = threadSummary({ id: 'b', title: 'Беседа B' });
     let createCalls = 0;
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadA, threadB]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([threadA, threadB])),
+      ),
       http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadA)),
       http.get(`${API}/api/threads/b`, () => HttpResponse.json(threadB)),
       http.get(`${API}/api/threads/a/history`, () =>
-        HttpResponse.json(conversationWithTurns(threadA, ['Сообщение 1', 'Сообщение 2'])),
+        HttpResponse.json(
+          conversationWithTurns(threadA, ['Сообщение 1', 'Сообщение 2']),
+        ),
       ),
       http.get(`${API}/api/threads/b/history`, () =>
-        HttpResponse.json(conversationWithTurns(threadB, ['Сообщение 1', 'Сообщение 2'])),
+        HttpResponse.json(
+          conversationWithTurns(threadB, ['Сообщение 1', 'Сообщение 2']),
+        ),
       ),
       http.post(`${API}/api/threads`, () => {
         createCalls += 1;
-        return HttpResponse.json(threadSummary({ id: 'unexpected', title: null }), { status: 201 });
+        return HttpResponse.json(
+          threadSummary({ id: 'unexpected', title: null }),
+          { status: 201 },
+        );
       }),
     );
     const user = userEvent.setup();
-    const { router, setPathname } = renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' });
+    const { router, setPathname } = renderWithRuntime({
+      pathname: '/chat/a',
+      pointer: 'fine',
+    });
     const history = screen.getByRole('navigation', { name: 'История бесед' });
-    const linkA = await within(history).findByRole('link', { name: 'Беседа A' });
+    const linkA = await within(history).findByRole('link', {
+      name: 'Беседа A',
+    });
     await waitFor(() => expect(linkA).toHaveAttribute('aria-current', 'page'));
     await screen.findByText('Сообщение 2');
 
@@ -92,7 +106,8 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     const sidebarNewChat = screen
       .getAllByRole('button', { name: 'Новый чат' })
       .find((button) => button.closest('[data-slot="sidebar"]') !== null);
-    if (sidebarNewChat === undefined) throw new Error('SB-03 «Новый чат» is not rendered');
+    if (sidebarNewChat === undefined)
+      throw new Error('SB-03 «Новый чат» is not rendered');
     await user.click(sidebarNewChat);
     expect(router.push).toHaveBeenCalledWith('/');
     setPathname('/');
@@ -109,7 +124,11 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     const linkB = within(history).getByRole('link', { name: 'Беседа B' });
     await waitFor(() => expect(linkB).toHaveAttribute('aria-current', 'page'));
     expect(createCalls).toBe(0);
-    expect(within(history).getAllByRole('link').map((link) => link.textContent)).toEqual(['Беседа A', 'Беседа B']);
+    expect(
+      within(history)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Беседа A', 'Беседа B']);
     expect(within(history).queryByText('Новая беседа')).toBeNull();
     await waitFor(() => expect(document.title).toBe('Беседа B — Agent OS'));
   });
@@ -144,7 +163,11 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     window.history.replaceState(null, '', '/');
     const live = createTestLiveSource();
     const watchUrl = `${API}/api/events?watch=thread%3At-1`;
-    const threadT1 = threadSummary({ id: 't-1', title: null, updatedAt: '2026-10-28T11:00:00.000Z' });
+    const threadT1 = threadSummary({
+      id: 't-1',
+      title: null,
+      updatedAt: '2026-10-28T11:00:00.000Z',
+    });
     let readySent = false;
     let accepted = false;
     const sourcesAtCreate: string[][] = [];
@@ -153,7 +176,13 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     server.use(
       http.get(`${API}/api/threads`, () =>
         HttpResponse.json(
-          threadList([threadSummary({ id: 'old', title: 'Старая беседа', updatedAt: '2026-10-28T08:00:00.000Z' })]),
+          threadList([
+            threadSummary({
+              id: 'old',
+              title: 'Старая беседа',
+              updatedAt: '2026-10-28T08:00:00.000Z',
+            }),
+          ]),
         ),
       ),
       http.post(`${API}/api/threads`, () => {
@@ -170,26 +199,46 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
       http.get(`${API}/api/threads/t-1/history`, () =>
         // Before its first message the conversation does not exist: a read is 404, as on the server.
         accepted
-          ? HttpResponse.json(conversationWithTurns(threadT1, ['Составь план', 'Готово.']))
-          : HttpResponse.json({ statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' }, { status: 404 }),
+          ? HttpResponse.json(
+              conversationWithTurns(threadT1, ['Составь план', 'Готово.']),
+            )
+          : HttpResponse.json(
+              {
+                statusCode: 404,
+                message: 'Thread not found',
+                errorCode: 'THREAD_NOT_FOUND',
+              },
+              { status: 404 },
+            ),
       ),
-      http.get(`${API}/api/threads/t-1`, () => HttpResponse.json(threadSummary({ id: 't-1', title: null }))),
+      http.get(`${API}/api/threads/t-1`, () =>
+        HttpResponse.json(threadSummary({ id: 't-1', title: null })),
+      ),
     );
     const requests = recordRequests();
     const replaceSpy = vi.spyOn(window.history, 'replaceState');
     const user = userEvent.setup();
-    const { router, setPathname } = renderWithRuntime({ pathname: '/', pointer: 'fine', liveSource: live });
+    const { router, setPathname } = renderWithRuntime({
+      pathname: '/',
+      pointer: 'fine',
+      liveSource: live,
+    });
     const history = screen.getByRole('navigation', { name: 'История бесед' });
     await within(history).findByRole('link', { name: 'Старая беседа' });
 
     // Act: send; the store opens the stream on the new thread and waits for its `ready`
-    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Составь план');
+    await user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Составь план',
+    );
     await user.keyboard('{Enter}');
     await waitFor(() => expect(live.current()?.url).toBe(watchUrl));
     readySent = true;
     live.emit('ready', {});
     await screen.findByText('Готово.');
-    await waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(null, '', '/chat/t-1'));
+    await waitFor(() =>
+      expect(replaceSpy).toHaveBeenCalledWith(null, '', '/chat/t-1'),
+    );
     setPathname('/chat/t-1');
 
     // Assert (AC-04.1, KD-2): create → the stream watches the new thread and is ready → send
@@ -205,9 +254,17 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     expect(router.replace).not.toHaveBeenCalled();
 
     // Assert (AC-03.3)
-    const today = within(history).getByRole('heading', { level: 2, name: 'Сегодня' });
+    const today = within(history).getByRole('heading', {
+      level: 2,
+      name: 'Сегодня',
+    });
     const todayList = within(history).getByRole('list', { name: 'Сегодня' });
-    await waitFor(() => expect(within(todayList).getAllByRole('link')[0]).toHaveAttribute('href', '/chat/t-1'));
+    await waitFor(() =>
+      expect(within(todayList).getAllByRole('link')[0]).toHaveAttribute(
+        'href',
+        '/chat/t-1',
+      ),
+    );
     const [first, second] = within(todayList).getAllByRole('link');
     expect(today).toBeInTheDocument();
     expect(first.textContent).toMatch(/^Новая беседа/);
@@ -215,7 +272,9 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     expect(second).toHaveTextContent('Старая беседа');
     expect(second).not.toHaveAttribute('aria-current');
     for (const label of ['Вчера', 'Предыдущие 7 дней', 'Старше']) {
-      expect(within(history).queryByRole('heading', { level: 2, name: label })).toBeNull();
+      expect(
+        within(history).queryByRole('heading', { level: 2, name: label }),
+      ).toBeNull();
     }
     await waitFor(() => expect(document.title).toBe('Новая беседа — Agent OS'));
   });
@@ -240,14 +299,21 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     const deleteCalls: string[] = [];
     server.use(
       http.get(`${API}/api/threads`, () =>
-        HttpResponse.json(threadList([threadSummary({ id: 'old', title: 'Старая беседа' })])),
+        HttpResponse.json(
+          threadList([threadSummary({ id: 'old', title: 'Старая беседа' })]),
+        ),
       ),
       http.post(`${API}/api/threads`, () => {
         created += 1;
-        return HttpResponse.json(threadSummary({ id: `t-${created}`, title: null }), { status: 201 });
+        return HttpResponse.json(
+          threadSummary({ id: `t-${created}`, title: null }),
+          { status: 201 },
+        );
       }),
       http.get(`${API}/api/threads/:id`, ({ params }) =>
-        HttpResponse.json(threadSummary({ id: String(params.id), title: null })),
+        HttpResponse.json(
+          threadSummary({ id: String(params.id), title: null }),
+        ),
       ),
       http.post(`${API}/api/threads/:id/messages`, () =>
         HttpResponse.json(
@@ -267,10 +333,15 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
       }),
     );
     const user = userEvent.setup();
-    const { router, setPathname } = renderWithRuntime({ pathname: '/', pointer: 'fine', liveSource: live });
+    const { router, setPathname } = renderWithRuntime({
+      pathname: '/',
+      pointer: 'fine',
+      liveSource: live,
+    });
     const history = screen.getByRole('navigation', { name: 'История бесед' });
     await within(history).findByRole('link', { name: 'Старая беседа' });
-    const composer = (): HTMLElement => screen.getByRole('textbox', { name: 'Сообщение' });
+    const composer = (): HTMLElement =>
+      screen.getByRole('textbox', { name: 'Сообщение' });
     /**
      * Sends what the field holds as the first message of conversation `id`, which is refused. The pathname follows the
      * URL as Next does: `/chat/<id>` once the conversation is created, back to `/` once the shell leaves it.
@@ -295,7 +366,11 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
 
     // Assert: the empty conversation is gone without a toast; the new chat keeps the text and the refusal
     await waitFor(() =>
-      expect(within(history).getAllByRole('link').map((link) => link.textContent)).toEqual(['Старая беседа']),
+      expect(
+        within(history)
+          .getAllByRole('link')
+          .map((link) => link.textContent),
+      ).toEqual(['Старая беседа']),
     );
     expect(await screen.findByText(REFUSAL)).toBeVisible();
     await waitFor(() => expect(composer()).toHaveValue(TEXT));
@@ -311,4 +386,3 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     expect(screen.queryByText('Беседа удалена')).toBeNull();
   });
 });
-

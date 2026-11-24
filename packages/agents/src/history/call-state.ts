@@ -1,4 +1,4 @@
-import { RUN_CODE_TOOL, type ToolCallState, ToolCallStateSchema } from '@agent-os/contracts';
+import { type ToolCallState, ToolCallStateSchema } from '@agent-os/contracts';
 
 import { mcpToolName } from '../mcp/mcp-tool';
 import type { HistoryContent, HistoryEntry } from './history';
@@ -18,22 +18,42 @@ export interface CallState {
   readonly state: ToolCallState;
   /** When the confirmed call went out (`tool_sent`); `null` for a call without the intent. */
   readonly sentAt: string | null;
+  /**
+   * The subagent tasks a sent `task` call waits for and the task of the list it names (deep-agents/design-task.md
+   * KD-8); `null` for every other call. The next step of the agent closes such a call from the `child_finished`
+   * of its subagents (data-model/design-runtime.md, «Инструмент `task`»).
+   */
+  readonly delegation: CallDelegation | null;
   /** How many attempts of a `run_code` read run started. */
   readonly attempts: number;
   /** The closing record; `null` while the call is open. */
   readonly result: HistoryContent<'tool_result'> | null;
 }
 
-const { requested, awaiting_confirmation: awaiting, sending, done } = ToolCallStateSchema.enum;
-
-/** The name the model called: the history keeps an MCP tool as its server and raw name. */
-export function requestedName(call: { readonly tool: string; readonly server: string | null }): string {
-  return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
+/** What the `tool_sent` of an accepted `task` call holds. */
+export interface CallDelegation {
+  readonly taskIds: readonly string[];
+  readonly listTask: number | null;
 }
 
-/** A `run_code` call: the built-in tool, not an MCP tool of the same name. */
-export function isRunCodeCall(call: { readonly tool: string; readonly server: string | null }): boolean {
-  return call.tool === RUN_CODE_TOOL && call.server === null;
+const {
+  requested,
+  awaiting_confirmation: awaiting,
+  sending,
+  done,
+} = ToolCallStateSchema.enum;
+
+/** A sent `task` call: never closed as unknown or interrupted, only with how its subagents stand. */
+export function isDelegated(call: Pick<CallState, 'delegation'>): boolean {
+  return call.delegation !== null;
+}
+
+/** The name the model called: the history keeps an MCP tool as its server and raw name. */
+export function requestedName(call: {
+  readonly tool: string;
+  readonly server: string | null;
+}): string {
+  return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
 }
 
 interface Folding {
@@ -66,7 +86,15 @@ export function foldCalls(entries: readonly HistoryEntry[]): CallState[] {
       case 'model_answer':
         entry.content.toolCalls.forEach((call, position) => {
           calls.set(call.callId, {
-            call: { ...call, answerSeq: entry.seq, position, sentAt: null, attempts: 0, result: null },
+            call: {
+              ...call,
+              answerSeq: entry.seq,
+              position,
+              sentAt: null,
+              delegation: null,
+              attempts: 0,
+              result: null,
+            },
             confirmationAsked: false,
           });
         });
@@ -78,8 +106,19 @@ export function foldCalls(entries: readonly HistoryEntry[]): CallState[] {
         break;
       case 'tool_sent':
         update(entry.content.callId, (folding) => {
-          const args = entry.content.args === undefined ? folding.call.args : entry.content.args;
-          folding.call = { ...folding.call, args, sentAt: entry.content.startedAt };
+          const { content } = entry;
+          const args =
+            content.args === undefined ? folding.call.args : content.args;
+          const delegation =
+            content.taskIds === undefined
+              ? null
+              : { taskIds: content.taskIds, listTask: content.taskId ?? null };
+          folding.call = {
+            ...folding.call,
+            args,
+            sentAt: content.startedAt,
+            delegation,
+          };
         });
         break;
       case 'run_attempt':
@@ -96,7 +135,10 @@ export function foldCalls(entries: readonly HistoryEntry[]): CallState[] {
         break;
     }
   }
-  return [...calls.values()].map((folding) => ({ ...folding.call, state: stateOf(folding) }));
+  return [...calls.values()].map((folding) => ({
+    ...folding.call,
+    state: stateOf(folding),
+  }));
 }
 
 /** The calls that have no result yet, by answer and position. */

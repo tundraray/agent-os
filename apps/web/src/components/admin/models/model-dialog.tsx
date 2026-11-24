@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useRef } from 'react';
+import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
   AccessErrorCode,
@@ -13,30 +14,50 @@ import {
   type UpdateCatalogModelBody,
 } from '@agent-os/contracts';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { adminApi } from '@/lib/admin/admin-api';
-import { ADMIN_TEXT, MODEL_DIALOG_TEXT as TEXT } from '@/lib/admin/admin-texts';
-import { modelRules, parseDecimal, type ModelValues } from '@/lib/admin/form-rules';
-import { PROVIDER_KIND_TEXT } from '@/lib/admin/model-providers';
+import {
+  fieldErrorText,
+  modelRules,
+  parseDecimal,
+  type ModelValues,
+} from '@/lib/admin/form-rules';
+import { providerKindText } from '@/lib/admin/model-providers';
 import { isApiRequestError } from '@/lib/api/api-request';
+import type { Formatter } from '@/i18n/formats';
 import { cn } from '@/lib/utils';
-import { AdminForm, AdminRadioField, AdminSelectField, AdminTextField, CAPTION, type AdminFormApi } from '../admin-form';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminSelectField,
+  AdminTextField,
+  CAPTION,
+  type AdminFormApi,
+} from '../admin-form';
 import { MODEL_DEFAULT_FIELD_ID } from './model-defaults-form';
 
 type PriceField = keyof PriceRates;
 type PriceTexts = ModelValues['prices'];
 
-/** UXRD MC-30: the four prices in the order of the catalogue's columns and the dialog's fields. */
-export const PRICES: ReadonlyArray<{ field: PriceField; label: string }> = [
-  { field: 'inputUsdPerMTok', label: 'Вход' },
-  { field: 'outputUsdPerMTok', label: 'Выход' },
-  { field: 'cacheWriteUsdPerMTok', label: 'Запись в кэш' },
-  { field: 'cacheReadUsdPerMTok', label: 'Чтение из кэша' },
+/**
+ * UXRD MC-30: the four prices in the order of the catalogue's columns and the dialog's fields; each one's label
+ * is `admin.models.dialog.price.{field}`.
+ */
+export const PRICES: readonly PriceField[] = [
+  'inputUsdPerMTok',
+  'outputUsdPerMTok',
+  'cacheWriteUsdPerMTok',
+  'cacheReadUsdPerMTok',
 ];
 
 /** MP-06: an embedding model is priced by its input only. */
-const EMBEDDING_PRICES = PRICES.filter(({ field }) => field === 'inputUsdPerMTok');
+const EMBEDDING_PRICES = PRICES.filter((field) => field === 'inputUsdPerMTok');
 
 const NO_PRICES: PriceTexts = {
   inputUsdPerMTok: '',
@@ -45,16 +66,15 @@ const NO_PRICES: PriceTexts = {
   cacheReadUsdPerMTok: '',
 };
 
-const PURPOSE_TEXT: Readonly<Record<ModelPurpose, string>> = { chat: TEXT.chat, embedding: TEXT.embedding };
+/** A stored price as the field shows it: every significant digit up to nine decimals, the page's decimal mark. */
+const priceText = (format: Formatter, usd: number): string =>
+  format.number(usd, { useGrouping: false, maximumFractionDigits: 9 });
 
-/** A stored price as the field shows it: every significant digit up to nine decimals, comma for the fraction. */
-const priceText = (usd: number): string => usd.toFixed(9).replace(/\.?0+$/, '').replace('.', ',');
-
-const textsOf = (prices: PriceRates): PriceTexts => ({
-  inputUsdPerMTok: priceText(prices.inputUsdPerMTok),
-  outputUsdPerMTok: priceText(prices.outputUsdPerMTok),
-  cacheWriteUsdPerMTok: priceText(prices.cacheWriteUsdPerMTok),
-  cacheReadUsdPerMTok: priceText(prices.cacheReadUsdPerMTok),
+const textsOf = (format: Formatter, prices: PriceRates): PriceTexts => ({
+  inputUsdPerMTok: priceText(format, prices.inputUsdPerMTok),
+  outputUsdPerMTok: priceText(format, prices.outputUsdPerMTok),
+  cacheWriteUsdPerMTok: priceText(format, prices.cacheWriteUsdPerMTok),
+  cacheReadUsdPerMTok: priceText(format, prices.cacheReadUsdPerMTok),
 });
 
 /** A new model: chat, and the only provider chosen at once (MP-06). */
@@ -71,13 +91,20 @@ function newModel(providers: readonly ModelProviderView[]): ModelValues {
 }
 
 /** A stored model: provider, purpose, the name at the provider and the dimensions are fixed, shown as text. */
-function valuesOf(model: CatalogModel): ModelValues {
-  const fixed = { provider: model.provider, modelName: model.id.slice(model.provider.length + 1), name: model.name };
+function valuesOf(format: Formatter, model: CatalogModel): ModelValues {
+  const fixed = {
+    provider: model.provider,
+    modelName: model.id.slice(model.provider.length + 1),
+    name: model.name,
+  };
   if (model.purpose === 'embedding') {
     return {
       ...fixed,
       purpose: 'embedding',
-      prices: { ...NO_PRICES, inputUsdPerMTok: priceText(model.inputUsdPerMTok) },
+      prices: {
+        ...NO_PRICES,
+        inputUsdPerMTok: priceText(format, model.inputUsdPerMTok),
+      },
       longContext: null,
       dimensions: String(model.dimensions),
     };
@@ -85,11 +112,14 @@ function valuesOf(model: CatalogModel): ModelValues {
   return {
     ...fixed,
     purpose: 'chat',
-    prices: textsOf(model.prices),
+    prices: textsOf(format, model.prices),
     longContext:
       model.longContext === null
         ? null
-        : { aboveInputTokens: String(model.longContext.aboveInputTokens), prices: textsOf(model.longContext.prices) },
+        : {
+            aboveInputTokens: String(model.longContext.aboveInputTokens),
+            prices: textsOf(format, model.longContext.prices),
+          },
     dimensions: '',
   };
 }
@@ -97,7 +127,10 @@ function valuesOf(model: CatalogModel): ModelValues {
 /** A number the field rule already accepted; a `null` here is a defect of the rule, not of the input. */
 function numberOf(text: string): number {
   const value = parseDecimal(text);
-  if (value === null) throw new Error(`model form: «${text}» passed the field rule but is not a number`);
+  if (value === null)
+    throw new Error(
+      `model form: «${text}» passed the field rule but is not a number`,
+    );
   return value;
 }
 
@@ -114,7 +147,10 @@ const chatPricesOf = ({ prices, longContext }: ModelValues) => ({
   longContext:
     longContext === null
       ? null
-      : { aboveInputTokens: numberOf(longContext.aboveInputTokens), prices: ratesOf(longContext.prices) },
+      : {
+          aboveInputTokens: numberOf(longContext.aboveInputTokens),
+          prices: ratesOf(longContext.prices),
+        },
 });
 
 /**
@@ -122,7 +158,8 @@ const chatPricesOf = ({ prices, longContext }: ModelValues) => ({
  * field of the other purpose.
  */
 function createBodyOf(values: ModelValues): CreateCatalogModelBody {
-  if (values.provider === null) throw new Error('model form: no provider passed the field rule');
+  if (values.provider === null)
+    throw new Error('model form: no provider passed the field rule');
   const id = `${values.provider}/${values.modelName.trim()}`;
   const name = values.name.trim();
   if (values.purpose === 'embedding') {
@@ -138,9 +175,13 @@ function createBodyOf(values: ModelValues): CreateCatalogModelBody {
 }
 
 /** An edit changes the name and the prices of the model's own purpose. */
-function updateBodyOf(model: CatalogModel, values: ModelValues): UpdateCatalogModelBody {
+function updateBodyOf(
+  model: CatalogModel,
+  values: ModelValues,
+): UpdateCatalogModelBody {
   const name = values.name.trim();
-  if (model.purpose === 'embedding') return { name, inputUsdPerMTok: numberOf(values.prices.inputUsdPerMTok) };
+  if (model.purpose === 'embedding')
+    return { name, inputUsdPerMTok: numberOf(values.prices.inputUsdPerMTok) };
   return { name, ...chatPricesOf(values) };
 }
 
@@ -156,18 +197,28 @@ type PriceGroupProps = {
 };
 
 /** Prices of a model, ordinary or for long requests: one group of fields under the unit. */
-function PriceGroup({ legend, form, fields, prices, errorPrefix, onChange }: PriceGroupProps) {
+function PriceGroup({
+  legend,
+  form,
+  fields,
+  prices,
+  errorPrefix,
+  onChange,
+}: PriceGroupProps) {
+  const t = useTranslations('admin.models.dialog.price');
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className={cn(CAPTION, 'mb-2 text-muted-foreground')}>{legend}</legend>
+      <legend className={cn(CAPTION, 'mb-2 text-muted-foreground')}>
+        {legend}
+      </legend>
       <div className="grid grid-cols-2 gap-4">
-        {fields.map(({ field, label }) => {
+        {fields.map((field) => {
           const key = `${errorPrefix}${field}`;
           return (
             <AdminTextField
               key={key}
               {...form.field(key)}
-              label={label}
+              label={t(field)}
               value={prices[field]}
               inputMode="decimal"
               onChange={(value) => {
@@ -182,25 +233,32 @@ function PriceGroup({ legend, form, fields, prices, errorPrefix, onChange }: Pri
   );
 }
 
-const LONG_ERROR_KEYS = ['aboveInputTokens', ...PRICES.map(({ field }) => `long.${field}`)];
+const LONG_ERROR_KEYS = [
+  'aboveInputTokens',
+  ...PRICES.map((field) => `long.${field}`),
+];
 
 /** The error keys of the purpose-specific fields, cleared when the purpose changes along with their values. */
-const PURPOSE_ERROR_KEYS = [...PRICES.map(({ field }) => field), 'dimensions', ...LONG_ERROR_KEYS];
+const PURPOSE_ERROR_KEYS = [...PRICES, 'dimensions', ...LONG_ERROR_KEYS];
 
 function ChatPrices({ form }: { form: AdminFormApi<ModelValues> }) {
+  const t = useTranslations('admin.models.dialog');
   const checkboxId = useId();
   const { values } = form;
   const long = values.longContext;
 
   const toggleLong = (on: boolean): void => {
-    form.set('longContext', on ? { aboveInputTokens: '', prices: NO_PRICES } : null);
+    form.set(
+      'longContext',
+      on ? { aboveInputTokens: '', prices: NO_PRICES } : null,
+    );
     if (!on) LONG_ERROR_KEYS.forEach(form.clearError);
   };
 
   return (
     <>
       <PriceGroup
-        legend={TEXT.priceUnit}
+        legend={t('priceUnit')}
         form={form}
         fields={PRICES}
         prices={values.prices}
@@ -214,15 +272,18 @@ function ChatPrices({ form }: { form: AdminFormApi<ModelValues> }) {
           disabled={form.saving}
           onCheckedChange={(checked) => toggleLong(checked)}
         />
-        <FieldLabel htmlFor={checkboxId} className="text-data font-normal text-foreground">
-          {TEXT.longContext}
+        <FieldLabel
+          htmlFor={checkboxId}
+          className="text-data font-normal text-foreground"
+        >
+          {t('longContext')}
         </FieldLabel>
       </Field>
       {long !== null && (
         <>
           <AdminTextField
             {...form.field('aboveInputTokens')}
-            label={TEXT.threshold}
+            label={t('threshold')}
             value={long.aboveInputTokens}
             inputMode="numeric"
             onChange={(value) => {
@@ -231,7 +292,7 @@ function ChatPrices({ form }: { form: AdminFormApi<ModelValues> }) {
             }}
           />
           <PriceGroup
-            legend={TEXT.longPriceUnit}
+            legend={t('longPriceUnit')}
             form={form}
             fields={PRICES}
             prices={long.prices}
@@ -245,9 +306,10 @@ function ChatPrices({ form }: { form: AdminFormApi<ModelValues> }) {
 }
 
 function EmbeddingPrice({ form }: { form: AdminFormApi<ModelValues> }) {
+  const t = useTranslations('admin.models.dialog');
   return (
     <PriceGroup
-      legend={TEXT.priceUnit}
+      legend={t('priceUnit')}
       form={form}
       fields={EMBEDDING_PRICES}
       prices={form.values.prices}
@@ -258,9 +320,20 @@ function EmbeddingPrice({ form }: { form: AdminFormApi<ModelValues> }) {
 }
 
 /** MP-06, adding: provider, purpose, the name at the provider with the id it makes. */
-function NewModelHead({ form, providers }: { form: AdminFormApi<ModelValues>; providers: readonly ModelProviderView[] }) {
+function NewModelHead({
+  form,
+  providers,
+}: {
+  form: AdminFormApi<ModelValues>;
+  providers: readonly ModelProviderView[];
+}) {
+  const t = useTranslations('admin.models');
+  const tErrors = useTranslations('errors');
+  const locale = useLocale();
   const { values } = form;
-  const chosen = providers.find((provider) => provider.name === values.provider);
+  const chosen = providers.find(
+    (provider) => provider.name === values.provider,
+  );
   // AC-13.2: a provider whose kind serves no embedding model is not offered one.
   const embeddings = chosen?.servesEmbeddings ?? true;
 
@@ -275,53 +348,76 @@ function NewModelHead({ form, providers }: { form: AdminFormApi<ModelValues>; pr
 
   const chooseProvider = (name: string): void => {
     form.set('provider', name);
-    if (providers.find((provider) => provider.name === name)?.servesEmbeddings === false) choosePurpose('chat');
+    if (
+      providers.find((provider) => provider.name === name)?.servesEmbeddings ===
+      false
+    )
+      choosePurpose('chat');
   };
 
   const providerOptions = [...providers]
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => a.name.localeCompare(b.name, locale))
     .map((provider) => ({
       value: provider.name,
-      label: TEXT.providerOption(provider.name, PROVIDER_KIND_TEXT[provider.kind].label),
+      label: t('dialog.providerOption', {
+        name: provider.name,
+        kind: providerKindText(t, provider.kind).label,
+      }),
     }));
-  const purposes: readonly ModelPurpose[] = embeddings ? ['chat', 'embedding'] : ['chat'];
-  const purposeOptions = purposes.map((purpose) => ({ value: purpose, label: PURPOSE_TEXT[purpose] }));
+  const purposes: readonly ModelPurpose[] = embeddings
+    ? ['chat', 'embedding']
+    : ['chat'];
+  const purposeOptions = purposes.map((purpose) => ({
+    value: purpose,
+    label: t(`dialog.${purpose}`),
+  }));
   const modelName = values.modelName.trim();
 
   return (
     <>
       <AdminSelectField
         {...form.field('provider')}
-        label={TEXT.provider}
+        label={t('dialog.provider')}
         value={values.provider}
         // The MC-7 error text doubles as the prompt of the empty field.
-        emptyText={ADMIN_TEXT.modelProviderRequired}
+        emptyText={fieldErrorText(tErrors, 'modelProviderRequired')}
         options={providerOptions}
         onChange={chooseProvider}
         disabled={form.saving}
       />
       <div className="flex flex-col gap-1.5">
-        <AdminRadioField label={TEXT.purpose} value={values.purpose} options={purposeOptions} onChange={choosePurpose} />
+        <AdminRadioField
+          label={t('dialog.purpose')}
+          value={values.purpose}
+          options={purposeOptions}
+          onChange={choosePurpose}
+        />
         {!embeddings && (
           <p className={cn(CAPTION, 'text-muted-foreground')}>
-            {TEXT.noAnthropicEmbeddings}
+            {t('dialog.noAnthropicEmbeddings')}
           </p>
         )}
       </div>
       <div className="flex flex-col gap-1">
         <AdminTextField
           {...form.field('modelName')}
-          label={TEXT.modelName}
+          label={t('dialog.modelName')}
           value={values.modelName}
           mono
-          hint={TEXT.modelNameHint}
+          hint={t('dialog.modelNameHint')}
           onChange={(value) => form.set('modelName', value)}
         />
-        <p className={cn(CAPTION, 'font-mono wrap-break-word text-muted-foreground')}>
-          {TEXT.idPreview(
-            values.provider ?? TEXT.providerPlaceholder,
-            modelName === '' ? TEXT.modelNamePlaceholder : modelName,
+        <p
+          className={cn(
+            CAPTION,
+            'font-mono wrap-break-word text-muted-foreground',
           )}
+        >
+          {t('dialog.idPreview', {
+            provider: values.provider ?? t('dialog.providerPlaceholder'),
+            modelName:
+              modelName === '' ? t('dialog.modelNamePlaceholder') : modelName,
+          })}
         </p>
       </div>
     </>
@@ -336,6 +432,7 @@ type ModelFieldsProps = {
 };
 
 function ModelFields({ form, model, providers }: ModelFieldsProps) {
+  const t = useTranslations('admin.models.dialog');
   const { values } = form;
   return (
     <>
@@ -343,24 +440,29 @@ function ModelFields({ form, model, providers }: ModelFieldsProps) {
         <NewModelHead form={form} providers={providers} />
       ) : (
         <p className="text-data wrap-break-word text-foreground">
-          {TEXT.fixed(model.id, PURPOSE_TEXT[model.purpose])}
-          {model.purpose === 'embedding' && TEXT.fixedDimensions(model.dimensions)}
+          {t('fixed', { id: model.id, purpose: t(model.purpose) })}
+          {model.purpose === 'embedding' &&
+            t('fixedDimensions', { dimensions: model.dimensions })}
         </p>
       )}
       <AdminTextField
         {...form.field('name')}
-        label={TEXT.name}
+        label={t('name')}
         value={values.name}
         onChange={(value) => form.set('name', value)}
       />
-      {values.purpose === 'chat' ? <ChatPrices form={form} /> : <EmbeddingPrice form={form} />}
+      {values.purpose === 'chat' ? (
+        <ChatPrices form={form} />
+      ) : (
+        <EmbeddingPrice form={form} />
+      )}
       {model === null && values.purpose === 'embedding' && (
         <AdminTextField
           {...form.field('dimensions')}
-          label={TEXT.dimensions}
+          label={t('dimensions')}
           value={values.dimensions}
           inputMode="numeric"
-          hint={TEXT.dimensionsHint}
+          hint={t('dimensionsHint')}
           inputClassName="w-24"
           onChange={(value) => form.set('dimensions', value)}
         />
@@ -392,7 +494,16 @@ const DEFAULT_OF: Readonly<Record<ModelPurpose, keyof ModelDefaults>> = {
  * провайдера»; a provider gone meanwhile or one that serves no embeddings is the form's error
  * (`describeAdminError`); a model removed meanwhile (`MODEL_NOT_FOUND`) re-reads the section.
  */
-export function ModelDialog({ open, onOpenChange, model, providers, defaults, reloadAll }: ModelDialogProps) {
+export function ModelDialog({
+  open,
+  onOpenChange,
+  model,
+  providers,
+  defaults,
+  reloadAll,
+}: ModelDialogProps) {
+  const t = useTranslations('admin.models');
+  const format = useFormatter();
   const adding = model === null;
   const addedPurpose = useRef<ModelPurpose>('chat');
 
@@ -405,7 +516,11 @@ export function ModelDialog({ open, onOpenChange, model, providers, defaults, re
     try {
       await adminApi.models.update(model.id, updateBodyOf(model, values));
     } catch (error) {
-      if (isApiRequestError(error) && error.code === AccessErrorCode.MODEL_NOT_FOUND) reloadAll();
+      if (
+        isApiRequestError(error) &&
+        error.code === AccessErrorCode.MODEL_NOT_FOUND
+      )
+        reloadAll();
       throw error;
     }
   };
@@ -415,15 +530,19 @@ export function ModelDialog({ open, onOpenChange, model, providers, defaults, re
     reloadAll();
     if (!adding) return;
     const purpose = addedPurpose.current;
-    const offerDefault = defaults !== undefined && defaults[DEFAULT_OF[purpose]] === null;
+    const offerDefault =
+      defaults !== undefined && defaults[DEFAULT_OF[purpose]] === null;
     toast.success(
-      TEXT.added,
+      t('dialog.added'),
       offerDefault
         ? {
             action: {
-              label: TEXT.chooseDefault,
+              label: t('dialog.chooseDefault'),
               // The MP-01 form holds the value: the action only takes the admin to the field.
-              onClick: () => document.getElementById(MODEL_DEFAULT_FIELD_ID[purpose])?.focus(),
+              onClick: () =>
+                document
+                  .getElementById(MODEL_DEFAULT_FIELD_ID[purpose])
+                  ?.focus(),
             },
           }
         : undefined,
@@ -435,23 +554,29 @@ export function ModelDialog({ open, onOpenChange, model, providers, defaults, re
       {/* Up to eleven fields with long-request prices: the dialog scrolls rather than leaving the viewport. */}
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{adding ? TEXT.add : TEXT.edit}</DialogTitle>
+          <DialogTitle>{adding ? t('addModel') : t('dialog.edit')}</DialogTitle>
         </DialogHeader>
         <AdminForm
           key={model?.id ?? 'new'}
           variant="dialog"
-          initialValues={model === null ? newModel(providers) : valuesOf(model)}
+          initialValues={
+            model === null ? newModel(providers) : valuesOf(format, model)
+          }
           validate={modelRules}
           onSubmit={submit}
-          submitLabel={adding ? TEXT.add : TEXT.save}
+          submitLabel={adding ? t('addModel') : t('dialog.save')}
           // A new model's notice is `saved`'s own: it may carry «Выбрать по умолчанию».
-          savedText={adding ? null : TEXT.saved}
+          savedText={adding ? null : t('dialog.saved')}
           onSaved={saved}
           // The refusal names the provider of the request that was refused.
-          errorContext={(values) => ({ providerName: values.provider ?? undefined })}
+          errorContext={(values) => ({
+            providerName: values.provider ?? undefined,
+          })}
           logEvent={adding ? 'admin: model create' : 'admin: model save'}
         >
-          {(form) => <ModelFields form={form} model={model} providers={providers} />}
+          {(form) => (
+            <ModelFields form={form} model={model} providers={providers} />
+          )}
         </AdminForm>
       </DialogContent>
     </Dialog>

@@ -26,7 +26,8 @@ export const IdentityErrorCode = {
   PROVIDER_CHECK_FAILED: 'PROVIDER_CHECK_FAILED',
   PUBLIC_URL_REQUIRED: 'PUBLIC_URL_REQUIRED',
 } as const;
-export type IdentityErrorCode = (typeof IdentityErrorCode)[keyof typeof IdentityErrorCode];
+export type IdentityErrorCode =
+  (typeof IdentityErrorCode)[keyof typeof IdentityErrorCode];
 
 /** `reason` of a 400 VALIDATION_FAILED answered by the identity service. */
 export const IdentityValidationReason = {
@@ -45,7 +46,8 @@ export const ProviderCheckFailure = {
   UNREACHABLE: 'unreachable',
   INVALID_DOCUMENT: 'invalid_document',
 } as const;
-export type ProviderCheckFailure = (typeof ProviderCheckFailure)[keyof typeof ProviderCheckFailure];
+export type ProviderCheckFailure =
+  (typeof ProviderCheckFailure)[keyof typeof ProviderCheckFailure];
 
 /** `error` query parameter of the /login redirect after a failed provider sign-in (uxrd MC-3). */
 export const SignInErrorSchema = z.enum([
@@ -61,7 +63,11 @@ const IdSchema = z.uuid();
 /** Any non-empty password: length rules are the service's `weak_password`, so the reason reaches the client. */
 const PasswordSchema = z.string().min(1);
 const RoleNameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
-const ProviderNameSchema = z.string().trim().min(1).max(PROVIDER_NAME_MAX_LENGTH);
+const ProviderNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROVIDER_NAME_MAX_LENGTH);
 const CursorSchema = z.string().min(1).max(512);
 
 // ---------- Sign-in and session (web) ----------
@@ -69,6 +75,9 @@ const CursorSchema = z.string().min(1).max(512);
 /** The interface languages an employee can choose (i18n design-web.md, KD-4). */
 export const LanguageSchema = z.enum(['en', 'ru']);
 export type Language = z.infer<typeof LanguageSchema>;
+
+/** The cookie the API writes with the employee's language and the Next server reads (i18n design-web.md, KD-2). */
+export const LOCALE_COOKIE = 'aos_locale';
 
 /**
  * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
@@ -181,6 +190,10 @@ export const RoleSummarySchema = z.object({
   name: z.string(),
   memberCount: z.number().int().nonnegative(),
   isAdmin: z.boolean(),
+  /** The right to train the employee's own agents (KD-8). */
+  trainOwn: z.boolean(),
+  /** The right to train any agent of the catalogue or the panel (KD-8). */
+  trainAny: z.boolean(),
   builtin: z.boolean(),
 });
 export type RoleSummary = z.infer<typeof RoleSummarySchema>;
@@ -191,7 +204,9 @@ export type RoleList = z.infer<typeof RoleListSchema>;
 
 /** Response of GET /api/admin/roles/:id. */
 export const RoleDetailSchema = RoleSummarySchema.extend({
-  members: z.array(z.object({ id: IdSchema, name: z.string(), email: z.string() })),
+  members: z.array(
+    z.object({ id: IdSchema, name: z.string(), email: z.string() }),
+  ),
 });
 export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 
@@ -199,11 +214,16 @@ export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 export const CreateRoleBodySchema = z.object({ name: RoleNameSchema });
 export type CreateRoleBody = z.infer<typeof CreateRoleBodySchema>;
 
-/** Body of PATCH /api/admin/roles/:id: `name` and/or `isAdmin`. */
+/** Body of PATCH /api/admin/roles/:id: at least one of `name`, `isAdmin`, `trainOwn`, `trainAny`. */
 export const UpdateRoleBodySchema = z
-  .object({ name: RoleNameSchema.optional(), isAdmin: z.boolean().optional() })
-  .refine((body) => body.name !== undefined || body.isAdmin !== undefined, {
-    message: 'name or isAdmin is required',
+  .object({
+    name: RoleNameSchema.optional(),
+    isAdmin: z.boolean().optional(),
+    trainOwn: z.boolean().optional(),
+    trainAny: z.boolean().optional(),
+  })
+  .refine((body) => Object.values(body).some((v) => v !== undefined), {
+    message: 'name, isAdmin, trainOwn or trainAny is required',
   });
 export type UpdateRoleBody = z.infer<typeof UpdateRoleBodySchema>;
 
@@ -275,10 +295,8 @@ export type UpdateProviderBody = z.infer<typeof UpdateProviderBodySchema>;
 
 export const IDLE_MINUTES_MIN = 15;
 export const IDLE_MINUTES_MAX = 1440;
-export const IDLE_MINUTES_DEFAULT = 480;
 export const ABSOLUTE_MINUTES_MIN = 60;
 export const ABSOLUTE_MINUTES_MAX = 43200;
-export const ABSOLUTE_MINUTES_DEFAULT = 1440;
 
 /** Public address without `/api`: `https://…` or `http://localhost…`, no path. */
 export const PublicUrlSchema = z.string().refine(isPublicUrl, {
@@ -287,26 +305,37 @@ export const PublicUrlSchema = z.string().refine(isPublicUrl, {
 
 /** `https`, or `http` only on `localhost` (development): the rule for the public address and an issuer. */
 export function isHttpsOrLocalhost(url: URL): boolean {
-  return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+  return (
+    url.protocol === 'https:' ||
+    (url.protocol === 'http:' && url.hostname === 'localhost')
+  );
 }
 
 function isPublicUrl(value: string): boolean {
   if (!URL.canParse(value)) return false;
   const url = new URL(value);
-  const noPath = url.pathname === '/' && !value.endsWith('/') && !url.search && !url.hash;
+  const noPath =
+    url.pathname === '/' && !value.endsWith('/') && !url.search && !url.hash;
   return isHttpsOrLocalhost(url) && noPath && !url.username && !url.password;
 }
 
 const sessionLimitsFields = {
   publicUrl: PublicUrlSchema.nullable(),
   idleMinutes: z.number().int().min(IDLE_MINUTES_MIN).max(IDLE_MINUTES_MAX),
-  absoluteMinutes: z.number().int().min(ABSOLUTE_MINUTES_MIN).max(ABSOLUTE_MINUTES_MAX),
+  absoluteMinutes: z
+    .number()
+    .int()
+    .min(ABSOLUTE_MINUTES_MIN)
+    .max(ABSOLUTE_MINUTES_MAX),
 };
 
 const idleNotAboveAbsolute = {
   check: (settings: { idleMinutes: number; absoluteMinutes: number }) =>
     settings.idleMinutes <= settings.absoluteMinutes,
-  params: { message: 'idleMinutes must not exceed absoluteMinutes', path: ['idleMinutes'] },
+  params: {
+    message: 'idleMinutes must not exceed absoluteMinutes',
+    path: ['idleMinutes'],
+  },
 };
 
 /** Response of GET/PUT /api/admin/settings/sign-in. `updatedAt: null` while the defaults stand. */
@@ -319,4 +348,6 @@ export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 export const UpdateSignInSettingsBodySchema = z
   .object(sessionLimitsFields)
   .refine(idleNotAboveAbsolute.check, idleNotAboveAbsolute.params);
-export type UpdateSignInSettingsBody = z.infer<typeof UpdateSignInSettingsBodySchema>;
+export type UpdateSignInSettingsBody = z.infer<
+  typeof UpdateSignInSettingsBodySchema
+>;

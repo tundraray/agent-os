@@ -1,39 +1,38 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { MCP_SERVER_NAME_MAX_LENGTH, type McpServerMode, type RegisterMcpServerBody } from '@agent-os/contracts';
+import {
+  MCP_SERVER_NAME_MAX_LENGTH,
+  type McpServerMode,
+  type RegisterMcpServerBody,
+} from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { adminApi } from '@/lib/admin/admin-api';
-import { registerFailed } from '@/lib/admin/admin-texts';
 import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminForm, AdminRadioField, AdminTextField, FORM_TEXT, type AdminRadioOption } from '../admin-form';
-import { PANEL_TITLE, sectionParent } from '../admin-header';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminTextField,
+  type AdminRadioOption,
+} from '../admin-form';
+import { useAdminTitles } from '../admin-header';
 import { SecretField } from '../secret-field';
-import { SERVER_MODE_LABEL, SERVER_TEXT } from './server-list';
-
-/** UXRD MC-29; the title is the UXRD's name of the screen (AD-09). */
-const TEXT = {
-  title: 'Регистрация',
-  name: 'Имя',
-  nameHint: 'По этому имени сервер указывают в определениях агентов. После регистрации имя не меняется.',
-  url: 'Адрес',
-  sharedToken: 'Токен доступа',
-  register: 'Зарегистрировать',
-  checking: 'Проверяем сервер…',
-} as const;
+import { serverModeLabel } from './server-list';
+import type { ServersTranslator } from '@/i18n/catalog';
 
 /** MC-29: the credentials modes, each with what it means under its radio. */
-const MODES: readonly AdminRadioOption<McpServerMode>[] = [
-  { value: 'shared', label: SERVER_MODE_LABEL.shared, hint: 'Один токен на всех: все вызовы идут с ним.' },
-  {
-    value: 'oauth',
-    label: SERVER_MODE_LABEL.oauth,
-    hint: 'Каждый сотрудник подключает свой аккаунт. Чтобы получить список инструментов, подключите свой.',
-  },
-];
+const modes = (
+  t: ServersTranslator,
+): readonly AdminRadioOption<McpServerMode>[] =>
+  (['shared', 'oauth'] as const).map((mode) => ({
+    value: mode,
+    label: serverModeLabel(t, mode),
+    hint: t(`modeHint.${mode}`),
+  }));
 
 type RegisterValues = {
   name: string;
@@ -43,10 +42,20 @@ type RegisterValues = {
   sharedToken: string | undefined;
 };
 
-const INITIAL: RegisterValues = { name: '', url: '', mode: 'shared', sharedToken: '' };
+const INITIAL: RegisterValues = {
+  name: '',
+  url: '',
+  mode: 'shared',
+  sharedToken: '',
+};
 
 /** The `POST` body: the token goes only with the shared mode, as the contract's two shapes require. */
-function registerBodyOf({ name, url, mode, sharedToken }: RegisterValues): RegisterMcpServerBody {
+function registerBodyOf({
+  name,
+  url,
+  mode,
+  sharedToken,
+}: RegisterValues): RegisterMcpServerBody {
   return mode === 'shared'
     ? { name, url: url.trim(), mode, sharedToken: sharedToken ?? '' }
     : { name, url: url.trim(), mode };
@@ -58,13 +67,17 @@ function registerBodyOf({ name, url, mode, sharedToken }: RegisterValues): Regis
  * navigation, because the connect route answers with a redirect to the authorization server.
  */
 export function RegisterServerForm() {
+  const titles = useAdminTitles();
+  const t = useTranslations('admin.servers');
   const router = useRouter();
   const { navigate } = useShellServices();
 
   const register = async (values: RegisterValues): Promise<void> => {
     const server = await adminApi.servers.register(registerBodyOf(values));
     if (server.status === 'awaiting_admin_account') {
-      logger.info('admin: server register: connecting the admin account', { server: server.name });
+      logger.info('admin: server register: connecting the admin account', {
+        server: server.name,
+      });
       navigate(adminApi.servers.connectUrl(server.name));
       return;
     }
@@ -73,26 +86,34 @@ export function RegisterServerForm() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={TEXT.title} parent={sectionParent('servers')} />
+      <PageHeader
+        area={titles.panel}
+        title={t('registration.title')}
+        parent={titles.parent('servers')}
+      />
       <AdminForm
         variant="page"
         initialValues={INITIAL}
-        validate={({ sharedToken, ...values }) => serverRules({ ...values, sharedToken: sharedToken ?? '' })}
+        validate={({ sharedToken, ...values }) =>
+          serverRules({ ...values, sharedToken: sharedToken ?? '' })
+        }
         onSubmit={register}
-        submitLabel={TEXT.register}
-        savingLabel={({ mode }) => (mode === 'shared' ? TEXT.checking : FORM_TEXT.saving)}
+        submitLabel={t('registration.submit')}
+        savingLabel={({ mode }) =>
+          mode === 'shared' ? t('checking') : undefined
+        }
         savedText={null}
         onCancel={() => router.push(adminPath('servers'))}
         secretFields={['sharedToken']}
-        errorContext={{ checkFailed: registerFailed }}
+        errorContext={{ checkFailed: 'register' }}
         logEvent="admin: server register"
       >
         {(form) => (
           <>
             <AdminTextField
               {...form.field('name')}
-              label={TEXT.name}
-              hint={TEXT.nameHint}
+              label={t('registration.name')}
+              hint={t('registration.nameHint')}
               mono
               maxLength={MCP_SERVER_NAME_MAX_LENGTH}
               value={form.values.name}
@@ -100,7 +121,7 @@ export function RegisterServerForm() {
             />
             <AdminTextField
               {...form.field('url')}
-              label={TEXT.url}
+              label={t('registration.url')}
               mono
               type="url"
               inputMode="url"
@@ -108,9 +129,9 @@ export function RegisterServerForm() {
               onChange={(value) => form.set('url', value)}
             />
             <AdminRadioField
-              label={SERVER_TEXT.credentials}
+              label={t('credentials')}
               value={form.values.mode}
-              options={MODES}
+              options={modes(t)}
               onChange={(mode) => {
                 form.set('mode', mode);
                 // A typed token does not outlive its mode: it is not kept in the state of an OAuth registration.
@@ -120,7 +141,7 @@ export function RegisterServerForm() {
             {form.values.mode === 'shared' && (
               <SecretField
                 {...form.field('sharedToken')}
-                label={TEXT.sharedToken}
+                label={t('sharedToken')}
                 isSet={false}
                 value={form.values.sharedToken}
                 onChange={(value) => form.set('sharedToken', value ?? '')}

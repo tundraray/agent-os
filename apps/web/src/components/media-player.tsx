@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   useEffect,
@@ -6,15 +6,15 @@ import {
   useState,
   type ComponentProps,
   type RefObject,
-} from "react";
-import { PauseIcon, PlayIcon } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
-import { field, inkButton, mono, paper } from "./surfaces";
+} from 'react';
+import { PauseIcon, PlayIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { cn } from '@/lib/utils';
+import { field, inkButton, mono, paper } from './surfaces';
 
 export interface AudioPlayerProps extends Omit<
-  ComponentProps<"div">,
-  "children"
+  ComponentProps<'div'>,
+  'children'
 > {
   src: string;
   title?: string | undefined;
@@ -23,13 +23,13 @@ export interface AudioPlayerProps extends Omit<
 }
 
 export interface VideoPlayerProps extends Omit<
-  ComponentProps<"div">,
-  "children"
+  ComponentProps<'div'>,
+  'children'
 > {
   src: string;
   poster?: string | undefined;
   title?: string | undefined;
-  ratio?: "16:9" | "4:3" | "1:1" | "9:16" | "auto" | undefined;
+  ratio?: '16:9' | '4:3' | '1:1' | '9:16' | 'auto' | undefined;
   durationMs?: number | undefined;
 }
 
@@ -37,7 +37,7 @@ function formatDuration(seconds: number): string {
   const wholeSeconds = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(wholeSeconds / 60);
   const remainingSeconds = wholeSeconds % 60;
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
 function useMediaDuration(
@@ -83,7 +83,8 @@ export function AudioPlayer({
   className,
   ...props
 }: AudioPlayerProps) {
-  const t = useTranslations("formats");
+  const t = useTranslations('formats');
+  const tMedia = useTranslations('chat.media');
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playback, setPlayback] = useState({
     src,
@@ -101,17 +102,23 @@ export function AudioPlayer({
       ? playback
       : { src, currentTime: 0, playing: false, hasError: false };
   const { currentTime, playing, hasError } = playbackState;
-  const update = (patch: Partial<Omit<typeof playback, "src">>) =>
+  const update = (patch: Partial<Omit<typeof playback, 'src'>>) =>
     setPlayback((current) => ({
       ...(current.src === src
         ? current
         : { src, currentTime: 0, playing: false, hasError: false }),
       ...patch,
     }));
-  const displayTitle = title ?? "Аудио";
-  const playbackLabel = title ? ` ${title}` : " аудио";
+  const displayTitle = title ?? tMedia('audio');
+  const playbackLabel = playing
+    ? title
+      ? tMedia('pauseTitled', { title })
+      : tMedia('pause')
+    : title
+      ? tMedia('playTitled', { title })
+      : tMedia('play');
   const durationLabel =
-    duration === undefined ? "--:--" : formatDuration(duration);
+    duration === undefined ? '--:--' : formatDuration(duration);
 
   useEffect(() => {
     if (audioRef.current?.error) {
@@ -143,7 +150,7 @@ export function AudioPlayer({
       data-slot="audio-player"
       className={cn(
         paper,
-        "flex w-full max-w-md items-center gap-3 rounded-2xl p-3",
+        'flex w-full max-w-md items-center gap-3 rounded-2xl p-3',
         className,
       )}
       {...props}
@@ -157,12 +164,12 @@ export function AudioPlayer({
       ) : null}
       <button
         type="button"
-        aria-label={`${playing ? "Пауза" : "Воспроизвести"}${playbackLabel}`}
+        aria-label={playbackLabel}
         disabled={hasError}
         onClick={togglePlayback}
         className={cn(
           inkButton,
-          "flex size-9 shrink-0 items-center justify-center rounded-full disabled:cursor-default disabled:opacity-40",
+          'flex size-9 shrink-0 items-center justify-center rounded-full disabled:cursor-default disabled:opacity-40',
         )}
       >
         {playing ? (
@@ -181,8 +188,11 @@ export function AudioPlayer({
           max={duration ?? 0}
           step={0.1}
           value={Math.min(currentTime, duration ?? 0)}
-          aria-label="Перемотка"
-          aria-valuetext={t("playbackPosition", { position: formatDuration(currentTime), duration: durationLabel })}
+          aria-label={tMedia('seek')}
+          aria-valuetext={t('playbackPosition', {
+            position: formatDuration(currentTime),
+            duration: durationLabel,
+          })}
           disabled={hasError}
           onChange={(event) => {
             const nextTime = Number(event.currentTarget.value);
@@ -194,7 +204,7 @@ export function AudioPlayer({
           className="accent-foreground w-full"
         />
       </div>
-      <span className={cn(mono, "text-muted-foreground tabular-nums")}>
+      <span className={cn(mono, 'text-muted-foreground tabular-nums')}>
         {formatDuration(currentTime)}&nbsp;/ {durationLabel}
       </span>
       <audio
@@ -214,7 +224,7 @@ export function AudioPlayer({
       />
       {hasError ? (
         <span role="alert" className="text-muted-foreground text-xs">
-          Не удалось воспроизвести аудио
+          {tMedia('playFailed')}
         </span>
       ) : null}
     </div>
@@ -225,11 +235,12 @@ export function VideoPlayer({
   src,
   poster,
   title,
-  ratio = "16:9",
+  ratio = '16:9',
   durationMs,
   className,
   ...props
 }: VideoPlayerProps) {
+  const t = useTranslations('chat.media');
   const videoRef = useRef<HTMLVideoElement>(null);
   const { duration, setDurationFromMetadata } = useMediaDuration(
     videoRef,
@@ -237,23 +248,23 @@ export function VideoPlayer({
     durationMs,
   );
   const ratioClassName =
-    ratio === "1:1"
-      ? "aspect-square"
-      : ratio === "4:3"
-        ? "aspect-[4/3]"
-        : ratio === "16:9"
-          ? "aspect-video"
-          : ratio === "9:16"
-            ? "aspect-[9/16]"
+    ratio === '1:1'
+      ? 'aspect-square'
+      : ratio === '4:3'
+        ? 'aspect-[4/3]'
+        : ratio === '16:9'
+          ? 'aspect-video'
+          : ratio === '9:16'
+            ? 'aspect-[9/16]'
             : undefined;
 
   return (
     <div
       data-slot="video-player"
-      className={cn("flex w-full max-w-xl flex-col gap-2", className)}
+      className={cn('flex w-full max-w-xl flex-col gap-2', className)}
       {...props}
     >
-      <div className={cn(field, "overflow-hidden rounded-xl", ratioClassName)}>
+      <div className={cn(field, 'overflow-hidden rounded-xl', ratioClassName)}>
         <video
           ref={videoRef}
           src={src}
@@ -261,10 +272,10 @@ export function VideoPlayer({
           controls
           playsInline
           preload="metadata"
-          aria-label={title ?? "Видео"}
+          aria-label={title ?? t('video')}
           className={cn(
-            "block max-w-full",
-            ratio !== "auto" && "h-full w-full object-contain",
+            'block max-w-full',
+            ratio !== 'auto' && 'h-full w-full object-contain',
           )}
           onLoadedMetadata={(event) => {
             setDurationFromMetadata(event.currentTarget.duration);
@@ -282,7 +293,7 @@ export function VideoPlayer({
             <span
               className={cn(
                 mono,
-                "text-muted-foreground shrink-0 tabular-nums",
+                'text-muted-foreground shrink-0 tabular-nums',
               )}
             >
               {formatDuration(duration)}

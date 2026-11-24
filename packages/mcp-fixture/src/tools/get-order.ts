@@ -6,7 +6,10 @@ import { OrderSchema } from './search-orders';
 const GetOrderArgsSchema = z.strictObject({
   orderId: z
     .string()
-    .regex(/^ord-[0-9a-f]{8}$/, 'orderId must be ord- and 8 lowercase hex characters')
+    .regex(
+      /^ord-[0-9a-f]{8}$/,
+      'orderId must be ord- and 8 lowercase hex characters',
+    )
     .meta({ title: 'Заказ' }),
 });
 
@@ -37,6 +40,9 @@ export const getOrderTool = defineTool({
   argsSchema: GetOrderArgsSchema,
   resultSchema: GetOrderResultSchema,
   run(args, dataset) {
-    return { snapshot: dataset.snapshot, order: backOfficeOf(dataset).order(args.orderId) ?? null };
+    return {
+      snapshot: dataset.snapshot,
+      order: backOfficeOf(dataset).order(args.orderId) ?? null,
+    };
   },
 });

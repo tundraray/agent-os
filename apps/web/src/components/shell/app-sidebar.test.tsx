@@ -21,8 +21,12 @@ function emulateExitAnimation(): void {
     configurable: true,
     value: () => [
       {
-        finished: new Promise((resolve) => setTimeout(resolve, EXIT_ANIMATION_MS)),
-        effect: { getTiming: () => ({ duration: EXIT_ANIMATION_MS, iterations: 1 }) },
+        finished: new Promise((resolve) =>
+          setTimeout(resolve, EXIT_ANIMATION_MS),
+        ),
+        effect: {
+          getTiming: () => ({ duration: EXIT_ANIMATION_MS, iterations: 1 }),
+        },
         pending: false,
         playState: 'finished',
       },
@@ -39,7 +43,9 @@ const afterExitAnimation = (): Promise<void> =>
 
 describe('AppSidebar — mobile drawer (S-11, AC-10.2)', () => {
   it('«Меню» opens the «История бесед» dialog focused on «Новый чат»; Esc closes it and focus returns to «Меню»', async () => {
-    server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+    );
     const user = userEvent.setup();
     renderWithRuntime({ pathname: '/', width: 375, pointer: 'coarse' });
 
@@ -53,19 +59,33 @@ describe('AppSidebar — mobile drawer (S-11, AC-10.2)', () => {
 
     const drawer = await screen.findByRole('dialog', { name: 'История бесед' });
     expect(drawer).toHaveAttribute('aria-modal', 'true');
-    await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Новый чат' })).toHaveFocus());
-    expect(within(drawer).getByRole('button', { name: 'Закрыть меню' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(drawer).getByRole('button', { name: 'Новый чат' }),
+      ).toHaveFocus(),
+    );
+    expect(
+      within(drawer).getByRole('button', { name: 'Закрыть меню' }),
+    ).toBeInTheDocument();
 
     await user.keyboard('{Escape}');
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'История бесед' })).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'История бесед' }),
+      ).toBeNull(),
+    );
     expect(screen.getByRole('button', { name: 'Меню' })).toHaveFocus();
   });
 
   // AC-10.3: "When в шторке выбрана беседа, the system shall закрыть шторку, открыть беседу, фокус — на h1 шапки."
   it('a thread picked in the drawer closes it and focuses the page h1, not «Меню»', async () => {
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'b', title: 'Беседа B' })]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(
+          threadList([threadSummary({ id: 'b', title: 'Беседа B' })]),
+        ),
+      ),
     );
     const user = userEvent.setup();
     renderWithRuntime({ pathname: '/', width: 375, pointer: 'coarse' });
@@ -79,14 +99,20 @@ describe('AppSidebar — mobile drawer (S-11, AC-10.2)', () => {
     emulateExitAnimation();
     await user.click(link);
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'История бесед' })).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'История бесед' }),
+      ).toBeNull(),
+    );
     await afterExitAnimation();
     expect(screen.getByRole('heading', { level: 1 })).toHaveFocus();
   });
 
   // UXRD 7.4: SB-03 «Новый чат» with a coarse pointer focuses HD-03; the drawer must not pull focus back to «Меню».
   it('SB-03 «Новый чат» in the drawer closes it and focuses the page h1, not «Меню»', async () => {
-    server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+    );
     const user = userEvent.setup();
     renderWithRuntime({ pathname: '/', width: 375, pointer: 'coarse' });
 
@@ -96,7 +122,11 @@ describe('AppSidebar — mobile drawer (S-11, AC-10.2)', () => {
     emulateExitAnimation();
     await user.click(within(drawer).getByRole('button', { name: 'Новый чат' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'История бесед' })).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'История бесед' }),
+      ).toBeNull(),
+    );
     await afterExitAnimation();
     expect(screen.getByRole('heading', { level: 1 })).toHaveFocus();
   });

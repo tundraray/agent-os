@@ -1,0 +1,15 @@
+{
+  "copied": "Copied",
+  "saved": "Saved",
+  "copySaved": "Copy “{name}” saved",
+  "tookNewVersion": "Took the new version of “{name}”",
+  "messageQueued": "A message is waiting to be delivered",
+  "loadingEarlier": "Loading earlier messages…",
+  "chipInComposer": "“{name}” is in the message field — describe the task and send",
+  "connectionLost": "Connection to the server lost",
+  "connectionRestored": "Connection to the server restored",
+  "decisionsOpened": "Your decision is needed: {count, plural, one {# request} other {# requests}}",
+  "decisionRequested": "Your decision is needed: {who, select, chat {Chat} other {Agent “{agent}”}} wants to run {tool}",
+  "briefReady": "The brief is ready — your decision is needed",
+  "reportArrived": "Report arrived: {description}"
+}

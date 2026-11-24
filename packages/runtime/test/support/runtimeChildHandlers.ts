@@ -1,8 +1,13 @@
-import type { Database } from '@agent-os/db';
+import type { Db } from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHandlers';
+import {
+  boundToDb,
+  HANDLER_ROWS_TABLE,
+  scriptedHandler,
+  writeHandlerRow,
+} from './testHandlers';
 
 /**
  * Handlers of the E2E-1 tree and of the on-demand measurements, shared by the child process (which
@@ -10,8 +15,7 @@ import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHand
  * types). Every row they write goes to {@link HANDLER_ROWS_TABLE}, told apart by `note`:
  *
  * - `step:<outcome>` — the step's own row, written in its commit: it exists exactly when the commit
- *   did. `<outcome>` is `done`, `unknown` (the redone step found its intent and skipped the action),
- *   `asked` (a decision request), or the JSON a decision step saw.
+ *   did. `<outcome>` is `done` or `unknown` (the redone step found its intent and skipped the action).
  * - `intent` — written through `guard` before the external action.
  * - `external` — written by the external-action double, in its own autocommit statement: the action
  *   happened, whatever became of the step.
@@ -29,26 +33,19 @@ export interface ChildTypes {
   writer?: string;
   /** C2: two steps, a committed row each. */
   reader?: string;
-  /** A decision step, then a step that records the decision and the messages it got. */
-  decider?: string;
   /** A step that holds until its signal aborts (measurements). */
   hold?: string;
 }
 
 export const STEP_DONE = 'step:done';
 export const STEP_UNKNOWN = 'step:unknown';
-export const STEP_ASKED = 'step:asked';
 export const INTENT_NOTE = 'intent';
 export const EXTERNAL_NOTE = 'external';
 const CHILDREN_NOTE_PREFIX = 'children:';
 
-/** The decision request of the decider's first step. */
-export const DECISION_KIND = 'approval';
-export const DECISION_PAYLOAD = { question: 'proceed?' };
-
 /** The external action of the guard row: one autocommit row per call, apart from the step. */
-async function callExternalAction(db: Database, ctx: StepContext): Promise<void> {
-  await db.execute(sql`
+async function callExternalAction(db: Db, ctx: StepContext): Promise<void> {
+  await db.client.execute(sql`
     INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
     SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${EXTERNAL_NOTE}
       FROM app.runtime_tasks WHERE task_id = ${ctx.taskId}`);
@@ -57,15 +54,17 @@ async function callExternalAction(db: Database, ctx: StepContext): Promise<void>
 const ParentInputSchema = z.object({ children: z.number().int().min(1) });
 
 /** P: each step records how many child notices it got; completes once all children reported. */
-function parentHandler(type: string, db: Database): TaskHandler {
+function parentHandler(type: string, db: Db): TaskHandler {
   return {
     type,
     inputSchema: ParentInputSchema,
     async step(ctx): Promise<StepResult> {
       const { children } = ParentInputSchema.parse(ctx.input);
-      const notices = ctx.messages.filter((message) => message.kind === 'child_finished').length;
+      const notices = ctx.messages.filter(
+        (message) => message.kind === 'child_finished',
+      ).length;
       // Notices of earlier steps: only committed steps left a row.
-      const { rows } = await db.execute<{ note: string }>(sql`
+      const { rows } = await db.client.execute<{ note: string }>(sql`
         SELECT note FROM ${sql.raw(HANDLER_ROWS_TABLE)}
          WHERE task_id = ${ctx.taskId} AND note LIKE ${`${CHILDREN_NOTE_PREFIX}%`}`);
       const earlier = rows.reduce(
@@ -87,25 +86,30 @@ const WriterInputSchema = z.object({ steps: z.number().int().min(1) });
  * its row. A step that finds its own intent — the previous attempt got that far and was lost — does
  * not call the action again and commits the outcome `unknown`.
  */
-function writerHandler(type: string, db: Database): TaskHandler {
+function writerHandler(type: string, db: Db): TaskHandler {
   return {
     type,
     inputSchema: WriterInputSchema,
     async step(ctx): Promise<StepResult> {
       const { steps } = WriterInputSchema.parse(ctx.input);
-      const guarded = await ctx.guard(async (tx) => {
-        const { rows } = await tx.execute(sql`
+      const guarded = await ctx.guard(async () => {
+        const { rows } = await db.client.execute(sql`
           SELECT 1 FROM ${sql.raw(HANDLER_ROWS_TABLE)}
            WHERE task_id = ${ctx.taskId} AND step_no = ${ctx.stepNo} AND note = ${INTENT_NOTE}`);
         if (rows.length > 0) return 'found' as const;
-        await writeHandlerRow(ctx, INTENT_NOTE)(tx);
+        await writeHandlerRow(ctx, INTENT_NOTE)();
         return 'written' as const;
       });
       if (guarded.outcome === 'fenced') {
-        throw new Error(`Step ${ctx.stepNo} of ${ctx.taskId} was fenced at its intent`);
+        throw new Error(
+          `Step ${ctx.stepNo} of ${ctx.taskId} was fenced at its intent`,
+        );
       }
       if (guarded.value === 'written') await callExternalAction(db, ctx);
-      const commit = writeHandlerRow(ctx, guarded.value === 'found' ? STEP_UNKNOWN : STEP_DONE);
+      const commit = writeHandlerRow(
+        ctx,
+        guarded.value === 'found' ? STEP_UNKNOWN : STEP_DONE,
+      );
       return ctx.stepNo >= steps - 1
         ? { outcome: 'complete', result: { steps }, commit }
         : { outcome: 'continue', commit };
@@ -117,42 +121,23 @@ function writerHandler(type: string, db: Database): TaskHandler {
 function readerHandler(type: string): TaskHandler {
   return scriptedHandler({
     type,
-    steps: [{ outcome: 'continue' }, { outcome: 'complete', result: { steps: 2 } }],
+    steps: [
+      { outcome: 'continue' },
+      { outcome: 'complete', result: { steps: 2 } },
+    ],
     note: STEP_DONE,
   });
 }
 
-/** What the decider's second step saw: the resolution and the payloads of its messages. */
-export interface DeciderView {
-  decision: unknown;
-  messages: unknown[];
-}
-
-/** UC-6: asks for a decision, then records the decision and the messages it got, and completes. */
-function deciderHandler(type: string): TaskHandler {
-  return {
-    type,
-    inputSchema: z.object({}),
-    async step(ctx): Promise<StepResult> {
-      if (ctx.stepNo === 0) {
-        return {
-          outcome: 'await_decision',
-          kind: DECISION_KIND,
-          payload: DECISION_PAYLOAD,
-          commit: writeHandlerRow(ctx, STEP_ASKED),
-        };
-      }
-      const view: DeciderView = {
-        decision: ctx.decision?.resolution ?? null,
-        messages: ctx.messages.map((message) => message.payload),
-      };
-      return {
-        outcome: 'complete',
-        result: view,
-        commit: writeHandlerRow(ctx, JSON.stringify(view)),
-      };
-    },
-  };
+/** Resolves once `signal` aborts. */
+function aborted(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
 }
 
 /** Holds its step until the signal aborts; the late result is fenced. */
@@ -161,25 +146,18 @@ function holdHandler(type: string): TaskHandler {
     type,
     inputSchema: z.object({}),
     async step(ctx): Promise<StepResult> {
-      await new Promise<void>((resolve) => {
-        if (ctx.signal.aborted) {
-          resolve();
-          return;
-        }
-        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
-      });
+      await aborted(ctx.signal);
       return { outcome: 'wait' };
     },
   };
 }
 
-/** The handlers of the roles in `types`; `db` is the process's own pool. */
-export function handlersFor(types: ChildTypes, db: Database): TaskHandler[] {
+/** The handlers of the roles in `types`, bound to `db`: the `Db` of the runtime they register in. */
+export function handlersFor(types: ChildTypes, db: Db): TaskHandler[] {
   const handlers: TaskHandler[] = [];
   if (types.parent) handlers.push(parentHandler(types.parent, db));
   if (types.writer) handlers.push(writerHandler(types.writer, db));
   if (types.reader) handlers.push(readerHandler(types.reader));
-  if (types.decider) handlers.push(deciderHandler(types.decider));
   if (types.hold) handlers.push(holdHandler(types.hold));
-  return handlers;
+  return handlers.map((handler) => boundToDb(handler, db));
 }

@@ -21,7 +21,8 @@ import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
 const API = 'http://api.test';
-const PLACEHOLDER = 'Здесь появятся артефакты инструментов: таблицы, документы, графики.';
+// deep-agents DA-12, MC-25: the workspace is the panel «Схема»; with no record in focus it shows its empty state.
+const PLACEHOLDER = 'Здесь появится схема';
 
 describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   // AC-11.3: "When нажата та же кнопка или «×», the system shall скрыть панель, фокус — на кнопку в шапке."
@@ -31,7 +32,7 @@ describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   //   AC-11.1: When (event: page load at ≥ 1024 px) — the same ChatShell render, asserted before the panel is opened.
   // ROI: 3.5 | Business Value: 6 | Frequency: 5 | Legal: false | Defect Detection: 8 (focus is lost when the focused «×» unmounts)
   // ROI (AC-11.1): 6.0 | Business Value: 6 (chat gets full width by default) | Frequency: 10 | Legal: false | Defect Detection: 6
-  // Behavior: render at '/', desktop media → button «Рабочая область» aria-expanded="false", no complementary «Рабочая область» (AC-11.1)
+  // Behavior: render at '/', desktop media → button «Схема» aria-expanded="false", no complementary «Схема» (AC-11.1)
   //   → click HD-04 → panel visible, aria-expanded="true" → close by the row's closer → panel gone, aria-expanded="false", focus on HD-04
   // Primary failure mode: closing via «×» leaves focus on <body> (the focused element unmounted), the HD-04 toggle only opens,
   //   or focus jumps into the panel/body on close; AC-11.1: the panel is open by default (the pre-feature layout kept a permanent 60 % panel)
@@ -40,30 +41,32 @@ describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   // @complexity: medium
   // Table rows (implement with it.each):
   //   | closer                                   | focus before close | focus after close            |
-  //   | button "Закрыть рабочую область" (WS-03) | on «×» (in panel)  | button "Рабочая область" (HD-04) |
-  //   | button "Рабочая область" (HD-04)         | on HD-04           | button "Рабочая область" (HD-04) |
-  it.each([
-    { closer: 'Закрыть рабочую область' },
-    { closer: 'Рабочая область' },
-  ])(
+  //   | button "Закрыть схему" (WS-03) | on «×» (in panel)  | button "Схема" (HD-04) |
+  //   | button "Схема" (HD-04)         | on HD-04           | button "Схема" (HD-04) |
+  it.each([{ closer: 'Закрыть схему' }, { closer: 'Схема' }])(
     'AC-11.3 + AC-11.1: the workspace is hidden on load; closing it by "$closer" hides it and leaves focus on the header button',
     async ({ closer }) => {
       // Arrange
-      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+      server.use(
+        http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+      );
       const user = userEvent.setup();
-      renderWithRuntime({ pathname: '/', media: { '(min-width: 1024px)': true, '(min-width: 768px)': true } });
+      renderWithRuntime({
+        pathname: '/',
+        media: { '(min-width: 1024px)': true, '(min-width: 768px)': true },
+      });
 
       // Act 1: load
       await screen.findByText('Пока нет бесед');
 
       // Assert 1 (AC-11.1): hidden by default, HD-04 not pressed
-      const toggle = screen.getByRole('button', { name: 'Рабочая область' });
-      expect(screen.queryByRole('complementary', { name: 'Рабочая область' })).toBeNull();
+      const toggle = screen.getByRole('button', { name: 'Схема' });
+      expect(screen.queryByRole('complementary', { name: 'Схема' })).toBeNull();
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
       // Act 2: open
       await user.click(toggle);
-      const panel = screen.getByRole('complementary', { name: 'Рабочая область' });
+      const panel = screen.getByRole('complementary', { name: 'Схема' });
       expect(toggle).toHaveAttribute('aria-expanded', 'true');
       expect(panel).toHaveTextContent(PLACEHOLDER);
 
@@ -71,7 +74,7 @@ describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
       await user.click(screen.getByRole('button', { name: closer }));
 
       // Assert 2 (AC-11.3)
-      expect(screen.queryByRole('complementary', { name: 'Рабочая область' })).toBeNull();
+      expect(screen.queryByRole('complementary', { name: 'Схема' })).toBeNull();
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
       expect(toggle).toHaveFocus();
     },

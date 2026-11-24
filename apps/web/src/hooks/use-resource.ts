@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { describeApiError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 
@@ -51,19 +57,22 @@ function useLatestRead(label = 'admin') {
     },
     [],
   );
-  return useCallback(<R,>(read: () => Promise<R>, apply: (outcome: Outcome<R>) => void): void => {
-    generation.current += 1;
-    const mine = generation.current;
-    read().then(
-      (value) => {
-        if (mine === generation.current) apply({ ok: true, value });
-      },
-      (error: unknown) => {
-        logger.error(`${label}: read failed`, describeApiError(error));
-        if (mine === generation.current) apply({ ok: false, error });
-      },
-    );
-  }, [label]);
+  return useCallback(
+    <R>(read: () => Promise<R>, apply: (outcome: Outcome<R>) => void): void => {
+      generation.current += 1;
+      const mine = generation.current;
+      read().then(
+        (value) => {
+          if (mine === generation.current) apply({ ok: true, value });
+        },
+        (error: unknown) => {
+          logger.error(`${label}: read failed`, describeApiError(error));
+          if (mine === generation.current) apply({ ok: false, error });
+        },
+      );
+    },
+    [label],
+  );
 }
 
 type Snapshot<S> = S & { key: string; status: ResourceStatus; error: unknown };
@@ -72,7 +81,11 @@ type Snapshot<S> = S & { key: string; status: ResourceStatus; error: unknown };
  * design-admin.md, KD-4: a screen's data read on open and on `key` change, read again after a change.
  * `label` names the screen's area in the log of a failed read (`library` for the library screens).
  */
-export function useResource<T>(load: () => Promise<T>, key: string, label = 'admin'): Resource<T> {
+export function useResource<T>(
+  load: () => Promise<T>,
+  key: string,
+  label = 'admin',
+): Resource<T> {
   const loadRef = useLatest(load);
   const run = useLatestRead(label);
   const [snapshot, setSnapshot] = useState<Snapshot<{ data: T | undefined }>>({
@@ -89,8 +102,18 @@ export function useResource<T>(load: () => Promise<T>, key: string, label = 'adm
         (outcome) =>
           setSnapshot(
             outcome.ok
-              ? { key: readKey, status: 'ready', data: outcome.value, error: undefined }
-              : { key: readKey, status: 'error', data: undefined, error: outcome.error },
+              ? {
+                  key: readKey,
+                  status: 'ready',
+                  data: outcome.value,
+                  error: undefined,
+                }
+              : {
+                  key: readKey,
+                  status: 'error',
+                  data: undefined,
+                  error: outcome.error,
+                },
           ),
       ),
     [run, loadRef],
@@ -108,8 +131,16 @@ export function useResource<T>(load: () => Promise<T>, key: string, label = 'adm
   }, [key, read]);
 
   // A snapshot of the previous key is never shown: the new key is loading until its own answer arrives.
-  const current = snapshot.key === key ? snapshot : { status: 'loading' as const, data: undefined, error: undefined };
-  return { status: current.status, data: current.data, error: current.error, reload };
+  const current =
+    snapshot.key === key
+      ? snapshot
+      : { status: 'loading' as const, data: undefined, error: undefined };
+  return {
+    status: current.status,
+    data: current.data,
+    error: current.error,
+    reload,
+  };
 }
 
 type PageState<T> = {
@@ -121,7 +152,13 @@ type PageState<T> = {
   reloading: boolean;
 };
 
-const emptyPages = { items: [], nextCursor: null, loadingMore: false, loadMoreError: undefined, reloading: false };
+const emptyPages = {
+  items: [],
+  nextCursor: null,
+  loadingMore: false,
+  loadMoreError: undefined,
+  reloading: false,
+};
 
 /** `useResource` for a cursor list: the first page on open and on `key` change, later pages by `loadMore`. */
 export function usePagedResource<T>(
@@ -144,8 +181,19 @@ export function usePagedResource<T>(
         (outcome) =>
           setSnapshot(
             outcome.ok
-              ? { key: readKey, status: 'ready', error: undefined, ...emptyPages, ...outcome.value }
-              : { key: readKey, status: 'error', error: outcome.error, ...emptyPages },
+              ? {
+                  key: readKey,
+                  status: 'ready',
+                  error: undefined,
+                  ...emptyPages,
+                  ...outcome.value,
+                }
+              : {
+                  key: readKey,
+                  status: 'error',
+                  error: outcome.error,
+                  ...emptyPages,
+                },
           ),
       ),
     [run, loadPageRef],
@@ -162,13 +210,24 @@ export function usePagedResource<T>(
     readFirst(key);
   }, [key, readFirst]);
 
-  const current = snapshot.key === key ? snapshot : { status: 'loading' as const, error: undefined, ...emptyPages };
+  const current =
+    snapshot.key === key
+      ? snapshot
+      : { status: 'loading' as const, error: undefined, ...emptyPages };
 
   const { nextCursor, loadingMore, reloading } = current;
-  const canLoadMore = current.status === 'ready' && nextCursor !== null && !loadingMore && !reloading;
+  const canLoadMore =
+    current.status === 'ready' &&
+    nextCursor !== null &&
+    !loadingMore &&
+    !reloading;
   const loadMore = useCallback(() => {
     if (!canLoadMore || nextCursor === null) return;
-    setSnapshot((previous) => ({ ...previous, loadingMore: true, loadMoreError: undefined }));
+    setSnapshot((previous) => ({
+      ...previous,
+      loadingMore: true,
+      loadMoreError: undefined,
+    }));
     run(
       () => loadPageRef.current(nextCursor),
       (outcome) =>

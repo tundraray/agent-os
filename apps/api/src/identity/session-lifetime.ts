@@ -1,4 +1,4 @@
-/** Session limits of `identity_settings` (KD-2); the session row stores none of them. */
+/** Session limits of the `sign_in_settings` key (KD-2); the session row stores none of them. */
 export interface SessionLimits {
   idleMinutes: number;
   absoluteMinutes: number;

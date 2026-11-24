@@ -1,53 +1,54 @@
-import type { Logger } from '@agent-os/common';
-import { ALL_SERVERS, McpServerModeSchema } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  ALL_SERVERS,
+  McpServerModeSchema,
+  type Script,
+} from '@agent-os/contracts';
+import {
+  McpAccountsRepository,
+  McpServersRepository,
+  type McpServerRow,
+} from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
 import type { AccessGate } from '../access-gate';
-import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-listing';
-import { accountsOf } from '../mcp/mcp-accounts.repository';
-import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository';
+import { ACCESS_GATE } from '../agents.tokens';
 import { type McpTool, storedMcpTools } from '../mcp/mcp-tool';
 import { mcpToolDescription } from '../mcp/tool-shape';
 import type { JsonSchemaObject } from '../model/mastra-turn';
-import type { RecordLibrary } from '../start/record-library';
-import type { RunSnapshot } from '../start/snapshot';
-import { snapshotDefinition } from '../start/snapshot-definition';
-import { sessions } from '../store/sessions.repository';
-import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent';
-import type { AgentTool, ToolDisplay } from './tool';
+import type { AgentTool, ToolDeclaration, ToolDisplay } from './tool';
 
-/**
- * The root's tool that starts a workflow (design-runtime.md, «Инструменты модели»); `workflows` registers
- * it, and the registry lists the chat's workflows in its description (KD-4).
- */
-export const START_WORKFLOW_TOOL = 'start_workflow';
-
-/** The description of `start_workflow` at the root: the tool's own text, then the workflows the chat offers. */
-function describeStartWorkflow(description: string, workflows: readonly string[]): string {
-  const lines = workflows.length === 0 ? ['(none)'] : workflows.map((line) => `- ${line}`);
-  return [description, 'Workflows you may start:', ...lines].join('\n');
+/** What every tool of a session's set has: an `AgentToolDefinition` of the model call. */
+interface OfferedTool {
+  /** The name the model sees. */
+  readonly name: string;
+  readonly description: string;
 }
 
+/** A tool of an MCP server in a session's set. */
+export type McpSessionTool = OfferedTool & {
+  readonly kind: 'external';
+  readonly inputSchema: JsonSchemaObject;
+  readonly mcp: McpTool;
+};
+
 /**
- * A tool one session offers its model: its name, description and schema (an `AgentToolDefinition` of
- * the model call) plus what runs it — a built-in or registered tool, or a tool of an MCP server.
+ * A tool one session offers its model, and what runs it. `kind` says whose it is: a `system` tool is the
+ * platform's own — the agent declares it by name, or gets it as a root or as every session does; an
+ * `external` tool is chosen by the owner's rights alone — a tool of an MCP server (`mcp`), or `run_code` and
+ * a saved script's tool (`tool`), which only call such tools.
  */
 export type SessionTool =
-  | {
-      readonly kind: 'agent';
-      readonly name: string;
-      readonly description: string;
+  | (OfferedTool & {
+      readonly kind: 'system' | 'external';
       readonly inputSchema: z.ZodType<unknown>;
       readonly tool: AgentTool;
-    }
-  | {
-      readonly kind: 'mcp';
-      readonly name: string;
-      readonly description: string;
-      readonly inputSchema: JsonSchemaObject;
-      readonly mcp: McpTool;
-    };
+    })
+  | McpSessionTool;
+
+export function isMcp(tool: SessionTool): tool is McpSessionTool {
+  return 'mcp' in tool;
+}
 
 /** The tool and the server of a call as the history and the confirmation request hold them. */
 export interface ToolTarget {
@@ -56,246 +57,303 @@ export interface ToolTarget {
 }
 
 export function callTarget(tool: SessionTool): ToolTarget {
-  return tool.kind === 'mcp'
+  return isMcp(tool)
     ? { tool: tool.mcp.tool, server: tool.mcp.server }
     : { tool: tool.name, server: null };
 }
 
 /** The target of a requested name in a tool set; an unknown name stays as written, with no server. */
-export function callTargetOf(tools: readonly SessionTool[], name: string): ToolTarget {
+export function callTargetOf(
+  tools: readonly SessionTool[],
+  name: string,
+): ToolTarget {
   const tool = tools.find((candidate) => candidate.name === name);
   return tool === undefined ? { tool: name, server: null } : callTarget(tool);
 }
 
+/** What a tool's `loggedArgs` keeps, or the whole arguments of a tool without it; a non-object is not logged then. */
+function keptArgs(tool: AgentTool, args: unknown): unknown {
+  if (tool.loggedArgs === undefined) return args;
+  return typeof args === 'object' && args !== null
+    ? tool.loggedArgs(args)
+    : null;
+}
+
+/** The arguments of a call as the log may hold them: {@link keptArgs} of a registered tool, all of an MCP call. */
+export function loggedArgs(tool: SessionTool, args: unknown): unknown {
+  return isMcp(tool) ? args : keptArgs(tool.tool, args);
+}
+
 /**
- * The arguments of a call as the log may hold them: what the tool's `loggedArgs` keeps, or the whole
- * arguments of a tool without it. Arguments that are not an object are not logged for such a tool.
+ * `loggedArgs` of a requested name: the session set's tool, else the registered tool of that name — a call to
+ * a tool the session was not offered (`create_record` from a deep agent) keeps that tool's rule — and for a
+ * name nobody registered only the argument keys, since nothing says what its arguments may hold.
  */
-export function loggedArgs(tool: SessionTool | undefined, args: unknown): unknown {
-  if (tool?.kind !== 'agent' || tool.tool.loggedArgs === undefined) return args;
-  return typeof args === 'object' && args !== null ? tool.tool.loggedArgs(args) : null;
+export function loggedArgsOf(
+  tools: readonly SessionTool[],
+  toolOf: ToolRegistry['toolOf'],
+  call: { readonly name: string; readonly args: unknown },
+): unknown {
+  const offered = tools.find((candidate) => candidate.name === call.name);
+  if (offered !== undefined) return loggedArgs(offered, call.args);
+  const registered = toolOf(call.name);
+  if (registered !== undefined) return keptArgs(registered, call.args);
+  return typeof call.args === 'object' && call.args !== null
+    ? { keys: Object.keys(call.args) }
+    : null;
 }
 
-/** `loggedArgs` of a requested name in a tool set. */
-export function loggedArgsOf(tools: readonly SessionTool[], name: string, args: unknown): unknown {
-  return loggedArgs(
-    tools.find((candidate) => candidate.name === name),
-    args,
-  );
-}
+/** The tools library: the registry of the tools a session may offer its model (C3, `ToolRunner` reads it). */
+@Injectable()
+export class ToolRegistry {
+  private readonly tools = new Map<string, AgentTool>();
+  /**
+   * `run_code`, in every session and never named by a declaration (code-execution KD-3, DC-1), and the builder of
+   * a saved script's tool; both run over the one code run.
+   */
+  private codeRun:
+    | {
+        readonly runCode: AgentTool;
+        readonly scriptTool: (script: Script) => AgentTool;
+      }
+    | undefined;
+  private sealed = false;
 
-export interface SessionToolsInput {
-  /** The session's snapshot, from the input of its task (ADR-0017). */
-  readonly snapshot: RunSnapshot;
-  readonly ownerId: string;
-  readonly agentId: string;
-  /** The session has no parent: a conversation's root, which alone gets the root's tools (KD-6). */
-  readonly root: boolean;
-}
+  constructor(
+    /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
+    @Inject(McpServersRepository)
+    private readonly mcpServerRows: McpServersRepository,
+    @Inject(McpAccountsRepository)
+    private readonly mcpAccountRows: McpAccountsRepository,
+    /** The one access check: the same in the tool set, in the call check and in the connections list. */
+    @Inject(ACCESS_GATE) private readonly access: Pick<AccessGate, 'tools'>,
+  ) {}
 
-export interface ToolRegistry {
-  /** Adds a tool of an upper part before `start()`; a repeated name or a registration after `seal()` throws. */
-  register(tool: AgentTool): void;
-  /** Closes registration; `start()` calls it. */
-  seal(): void;
-  /** Names of the built-in and registered tools; `run_code` is not among them. */
-  toolNames(): string[];
-  /** A built-in or registered tool, or `run_code`, by its name. */
-  toolOf(name: string): AgentTool | undefined;
+  /**
+   * Sets `run_code` and the builder of a script's tool, once: they are built over the registry, so they arrive
+   * after the registry is made. A second call, or a name a registered tool already has, throws.
+   */
+  useCodeRun(
+    runCode: AgentTool,
+    scriptTool: (script: Script) => AgentTool,
+  ): void {
+    if (this.codeRun !== undefined)
+      throw new Error(`Tool ${runCode.name} is set as run_code twice`);
+    if (this.tools.has(runCode.name))
+      throw new Error(`Tool ${runCode.name} is registered twice`);
+    this.codeRun = { runCode, scriptTool };
+  }
+
+  /**
+   * Adds a tool before `seal()` — the package's own system tools and those of an upper part alike; a repeated
+   * name or a registration after `seal()` throws.
+   */
+  register(tool: AgentTool): void {
+    if (this.sealed) {
+      throw new Error(
+        `Tool ${tool.name} is registered after start(): register tools before it`,
+      );
+    }
+    if (this.tools.has(tool.name) || tool.name === this.codeRun?.runCode.name) {
+      throw new Error(`Tool ${tool.name} is registered twice`);
+    }
+    this.tools.set(tool.name, tool);
+  }
+
+  /** Closes registration; called when the agents start. */
+  seal(): void {
+    this.sealed = true;
+  }
+
+  /** Names of the registered tools; `run_code` is not among them. */
+  toolNames(): string[] {
+    return [...this.tools.keys()];
+  }
+
+  /** A registered tool, or `run_code`, by its name; a script's tool is not among them. */
+  toolOf(name: string): AgentTool | undefined {
+    const { runCode } = this.codeRunTools();
+    return name === runCode.name ? runCode : this.tools.get(name);
+  }
+
   /**
    * How the given calls read for the employee, in their order: the server's titles of an MCP tool;
-   * empty for a built-in tool and for an MCP tool that is not listed now. The servers are read in one query.
+   * empty for a registered tool and for an MCP tool that is not listed now. The servers are read in one query.
    */
-  displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]>;
+  async displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]> {
+    const names = new Set(
+      calls.flatMap(({ server }) => (server === null ? [] : [server])),
+    );
+    const rows = await this.mcpServerRows.findMany([...names]);
+    const listed = new Map(
+      rows.map((row) => [row.name, storedMcpTools(row.tools)]),
+    );
+    return calls.map(
+      ({ tool, server }): ToolDisplay =>
+        (server === null
+          ? undefined
+          : listed.get(server)?.find((mcp) => mcp.tool === tool)?.display) ??
+        {},
+    );
+  }
+
   /**
-   * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1;
-   * design-runtime.md KD-4, KD-6): the built-in ones the snapshot's definition names, the root's tools
-   * (`start_workflow`, `draft_record`) in a session without a parent only, the `everySession` tools
-   * (`read_tool_result`, `search_tool_result`) and `run_code` in every session (code-execution KD-3), then the MCP tools of the snapshot's servers (`*` — all) that are enabled in the
-   * registry, whose server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled
-   * owner gets no MCP tool, and his model call fails the step) and, for an `oauth` server, that the owner
-   * has an account on. At the root the descriptions of `start_agent` and `start_workflow` list the chat
-   * listing, read from the library and the owner's sessions on every call; elsewhere `start_agent` lists
-   * the snapshot's agents or team. Nothing is kept between steps (Invariant 3).
+   * The one entry of the library: the tools of a session, for the owner of its task and what its agent
+   * declares (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1; design-runtime.md KD-4, KD-6).
+   *
+   * - The system tools are added by the declaration: the ones it names, in its order; the `rootOnly` tools for
+   *   a root; the `everySession` tools (`read_tool_result`, `search_tool_result`). A tool with `describe` reads
+   *   as it says for this declaration.
+   * - The external tools are chosen by the owner's rights alone: `run_code` in every session (code-execution
+   *   KD-3), then the MCP tools of the declared servers (`*` — all) that are enabled in the registry, whose
+   *   server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled owner gets no MCP
+   *   tool, and his model call fails the step) and, for an `oauth` server, that the owner has an account on.
+   *
+   * Nothing is kept between steps (Invariant 3).
    */
-  sessionTools(input: SessionToolsInput): Promise<SessionTool[]>;
+  async toolsFor(
+    ownerId: string,
+    declaration: ToolDeclaration,
+  ): Promise<SessionTool[]> {
+    const rows = await this.withAccounts(
+      await this.enabledServers(declaration.servers),
+      ownerId,
+    );
+    return [
+      ...this.registeredTools(declaration),
+      ...(await this.allowedTools(rows, ownerId)),
+    ];
+  }
+
   /**
-   * The set a call is checked against: `sessionTools` without the owner's access filter, without the
-   * account filter and without the chat listing in the descriptions. A call to a server the owner may not use is then refused `no_access` by the call check,
-   * and a call the model asked for before the account went away gets `auth_required`, not
-   * `tool_not_in_definition` (C3; design-mcp-connect.md DC-2).
+   * The set a call is checked against: `toolsFor` without the owner's access filter and without the account
+   * filter. A call to a server the owner may not use is then refused `no_access` by the call check, and a call
+   * the model asked for before the account went away gets `auth_required`, not `tool_not_in_definition` (C3;
+   * design-mcp-connect.md DC-2).
    */
-  checkTools(input: SessionToolsInput): Promise<SessionTool[]>;
+  async checkTools(declaration: ToolDeclaration): Promise<SessionTool[]> {
+    return [
+      ...this.registeredTools(declaration),
+      ...mcpToolsOf(await this.enabledServers(declaration.servers)),
+    ];
+  }
+
   /**
-   * The MCP tools of the enabled servers of the run's snapshot, before the owner's access filter and
+   * The MCP tools of the enabled servers among the declared ones, before the owner's access filter and
    * without accounts: the set a `run_code` run checks its calls against, so a server the owner may not use
    * is `no_access`, not `tool_not_in_definition` (code-execution DC-6; ADR-0011).
    */
-  definitionMcpTools(snapshot: RunSnapshot): Promise<SessionTool[]>;
-}
+  async declaredMcpTools(
+    servers: readonly string[],
+  ): Promise<McpSessionTool[]> {
+    return mcpToolsOf(await this.enabledServers(servers));
+  }
 
-export interface ToolRegistryOptions {
-  /** The package's built-in tools (T3.4); the composition root hands them over. */
-  readonly builtins: readonly AgentTool[];
-  /** `run_code`: in every session, never named by a definition (code-execution KD-3, DC-1). */
-  readonly runCode: AgentTool;
-  /** The MCP registry, the accounts and the owner's session counts are read from it for every tool set (KD-2). */
-  readonly database: Database;
-  /** The one access check: the same in the tool set, in the call check and in the connections list. */
-  readonly access: Pick<AccessGate, 'tools'>;
-  /** The root's chat listing reads the owner's `listVisible` from it (KD-4). */
-  readonly library: Pick<RecordLibrary, 'listVisible'>;
-  /** Logs the chat listing of each root tool set. */
-  readonly logger: Logger;
-}
-
-/** The registry of the tools a session may offer its model (C3, `ToolRunner` reads it). */
-export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
-  const tools = new Map<string, AgentTool>();
-  const { runCode, database, access, library } = options;
-  const logger = options.logger.child({ service: 'agents.tools' });
-  let sealed = false;
-
-  function add(tool: AgentTool): void {
-    if (tools.has(tool.name) || tool.name === runCode.name) {
-      throw new Error(`Tool ${tool.name} is registered twice`);
+  /** `run_code` and the script builder, which every tool set and every lookup by name needs: `useCodeRun` sets them before them. */
+  private codeRunTools(): NonNullable<ToolRegistry['codeRun']> {
+    if (this.codeRun === undefined) {
+      throw new Error(
+        'The tool registry is used before run_code was set: call useCodeRun() first',
+      );
     }
-    tools.set(tool.name, tool);
-  }
-  options.builtins.forEach(add);
-
-  /** The chat listing of the root's owner (KD-4): his `listVisible` and his session counts, read now. */
-  async function rootListing(input: SessionToolsInput): Promise<ChatListing> {
-    const startedAt = Date.now();
-    const headers = await library.listVisible(input.ownerId);
-    const sessionCounts = await sessions.recordCounts(database, input.ownerId);
-    const listing = chatListing({ headers, sessionCounts, budget: CHAT_LISTING_BUDGET });
-    logger.info('chat listing built', {
-      ownerId: input.ownerId,
-      agentId: input.agentId,
-      visible: headers.length,
-      described: listing.described,
-      length: [...listing.agents, ...listing.workflows].reduce((sum, line) => sum + line.length, 0),
-      durationMs: Date.now() - startedAt,
-    });
-    return listing;
+    return this.codeRun;
   }
 
-  function sessionToolOf(tool: AgentTool, description: string = tool.description): SessionTool {
-    return { kind: 'agent', name: tool.name, description, inputSchema: tool.argsSchema, tool };
-  }
-
-  function registered(name: string, input: SessionToolsInput): AgentTool {
-    const tool = tools.get(name);
-    if (tool === undefined) {
-      throw new Error(`Run ${input.snapshot.name} names tool ${name}, which is not registered`);
-    }
+  private declared(name: string): AgentTool {
+    const tool = this.tools.get(name);
+    if (tool === undefined)
+      throw new Error(
+        `An agent declares tool ${name}, which is not registered`,
+      );
     return tool;
   }
 
   /**
-   * The description the session sees: `start_agent` lists whom it may start — the chat listing at the root,
-   * the snapshot's agents or team elsewhere — and `start_workflow` the chat's workflows. Without a listing
-   * (the call check) the root keeps the tools' own descriptions.
+   * The declared tools, the root's tools for a root, the tools of every session, then `run_code` (KD-6) and the
+   * tool of each script the declaration owns (self-learning scripts KD-4).
    */
-  function descriptionOf(tool: AgentTool, input: SessionToolsInput, listing: ChatListing | null): string {
-    const canFork = input.snapshot.kind !== 'workflow';
-    if (tool.name === START_AGENT_TOOL) {
-      if (!input.root) return describeStartAgent(snapshotDefinition(input.snapshot).startable, canFork);
-      if (listing !== null) return describeStartAgent(listing.agents, canFork);
-    }
-    if (tool.name === START_WORKFLOW_TOOL && listing !== null) {
-      return describeStartWorkflow(tool.description, listing.workflows);
-    }
-    return tool.description;
-  }
-
-  /**
-   * The built-in tools the snapshot names, the root's tools at the root only, the tools of every session
-   * (`everySession`), then `run_code` (KD-6).
-   */
-  function agentTools(input: SessionToolsInput, listing: ChatListing | null): SessionTool[] {
-    const named = snapshotDefinition(input.snapshot).tools.map((name) => registered(name, input));
-    const rootTools = input.root ? [...tools.values()].filter((tool) => tool.rootOnly === true) : [];
-    const everySession = [...tools.values()].filter((tool) => tool.everySession === true);
+  private registeredTools(declaration: ToolDeclaration): SessionTool[] {
+    const { runCode, scriptTool } = this.codeRunTools();
+    const all = [...this.tools.values()];
+    const system = [
+      ...declaration.system.map((name) => this.declared(name)),
+      ...(declaration.root ? all.filter((tool) => tool.rootOnly === true) : []),
+      ...all.filter((tool) => tool.everySession === true),
+    ];
     return [
-      ...[...named, ...rootTools].map((tool) => sessionToolOf(tool, descriptionOf(tool, input, listing))),
-      ...everySession.map((tool) => sessionToolOf(tool)),
-      sessionToolOf(runCode),
+      ...system.map((tool) => systemTool(tool, declaration)),
+      ...[runCode, ...declaration.scripts.map(scriptTool)].map(
+        (tool): SessionTool => ({
+          kind: 'external',
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.argsSchema,
+          tool,
+        }),
+      ),
     ];
   }
 
-  function toolOf(name: string): AgentTool | undefined {
-    return name === runCode.name ? runCode : tools.get(name);
-  }
-
-  /** Enabled registry servers the snapshot names; a name the registry does not hold gives nothing (DC-11). */
-  function snapshotServers(snapshot: RunSnapshot): Promise<McpServerRow[]> {
-    const { servers } = snapshotDefinition(snapshot);
-    return enabledServersWithTools(database, servers.includes(ALL_SERVERS) ? ALL_SERVERS : servers);
-  }
-
-  function mcpToolsOf(rows: readonly McpServerRow[]): SessionTool[] {
-    return rows.flatMap((row) =>
-      (storedMcpTools(row.tools) ?? []).map(
-        (mcp): SessionTool => ({
-          kind: 'mcp',
-          name: mcp.name,
-          description: mcpToolDescription(mcp),
-          inputSchema: mcp.inputSchema,
-          mcp,
-        }),
-      ),
+  /** Enabled registry servers among the declared ones; a name the registry does not hold gives nothing (DC-11). */
+  private enabledServers(servers: readonly string[]): Promise<McpServerRow[]> {
+    return this.mcpServerRows.enabledWithTools(
+      servers.includes(ALL_SERVERS) ? ALL_SERVERS : servers,
     );
   }
 
   /** The MCP tools of the given servers whose pair the gate allows the owner; none for a disabled owner. */
-  async function allowedTools(rows: readonly McpServerRow[], ownerId: string): Promise<SessionTool[]> {
+  private async allowedTools(
+    rows: readonly McpServerRow[],
+    ownerId: string,
+  ): Promise<McpSessionTool[]> {
     if (rows.length === 0) return [];
-    const answer = await access.tools(ownerId);
+    const answer = await this.access.tools(ownerId);
     if (answer.kind === 'owner_disabled') return [];
-    return mcpToolsOf(rows).filter(
-      (tool) => tool.kind === 'mcp' && answer.allows(tool.mcp.server, tool.mcp.tool),
+    return mcpToolsOf(rows).filter((tool) =>
+      answer.allows(tool.mcp.server, tool.mcp.tool),
     );
   }
 
   /** Keeps a shared server, and an `oauth` server only when the owner has an account on it. */
-  async function withAccounts(rows: McpServerRow[], ownerId: string): Promise<McpServerRow[]> {
-    const isOAuth = (row: McpServerRow) => row.mode === McpServerModeSchema.enum.oauth;
+  private async withAccounts(
+    rows: McpServerRow[],
+    ownerId: string,
+  ): Promise<McpServerRow[]> {
+    const isOAuth = (row: McpServerRow) =>
+      row.mode === McpServerModeSchema.enum.oauth;
     if (!rows.some(isOAuth)) return rows;
-    const connected = new Set((await accountsOf(database, ownerId)).map((account) => account.server));
+    const connected = new Set(
+      (await this.mcpAccountRows.listOwned(ownerId)).map(
+        (account) => account.server,
+      ),
+    );
     return rows.filter((row) => !isOAuth(row) || connected.has(row.name));
   }
+}
 
+/** The tool as the declaring agent sees it: by its `describe`, or its own description and schema. */
+function systemTool(
+  tool: AgentTool,
+  declaration: ToolDeclaration,
+): SessionTool {
+  const { description, argsSchema } = tool.describe?.(declaration) ?? tool;
   return {
-    register(tool) {
-      if (sealed) {
-        throw new Error(`Tool ${tool.name} is registered after start(): register tools before it`);
-      }
-      add(tool);
-    },
-    seal() {
-      sealed = true;
-    },
-    toolNames: () => [...tools.keys()],
-    toolOf,
-    async displays(calls) {
-      const names = new Set(calls.flatMap(({ server }) => (server === null ? [] : [server])));
-      const rows = await findServers(database, [...names]);
-      const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row.tools)]));
-      return calls.map(
-        ({ tool, server }): ToolDisplay =>
-          (server === null ? undefined : listed.get(server)?.find((mcp) => mcp.tool === tool)?.display) ?? {},
-      );
-    },
-    async sessionTools(input) {
-      const listing = input.root ? await rootListing(input) : null;
-      const rows = await withAccounts(await snapshotServers(input.snapshot), input.ownerId);
-      return [...agentTools(input, listing), ...(await allowedTools(rows, input.ownerId))];
-    },
-    async checkTools(input) {
-      return [...agentTools(input, null), ...mcpToolsOf(await snapshotServers(input.snapshot))];
-    },
-    definitionMcpTools: async (snapshot) => mcpToolsOf(await snapshotServers(snapshot)),
+    kind: 'system',
+    name: tool.name,
+    description,
+    inputSchema: argsSchema ?? tool.argsSchema,
+    tool,
   };
+}
+
+function mcpToolsOf(rows: readonly McpServerRow[]): McpSessionTool[] {
+  return rows.flatMap((row) =>
+    (storedMcpTools(row.tools) ?? []).map((mcp): McpSessionTool => ({
+      kind: 'external',
+      name: mcp.name,
+      description: mcpToolDescription(mcp),
+      inputSchema: mcp.inputSchema,
+      mcp,
+    })),
+  );
 }

@@ -12,7 +12,10 @@ export function consoleSink(): LogSink {
   };
 }
 
-type SentryLogMethod = (message: string, attributes?: Record<string, unknown>) => void;
+type SentryLogMethod = (
+  message: string,
+  attributes?: Record<string, unknown>,
+) => void;
 
 /** The part of an application's Sentry SDK (`@sentry/nestjs`, `@sentry/nextjs`) the sink uses. */
 export interface SentrySdk {
@@ -22,7 +25,10 @@ export interface SentrySdk {
     warn: SentryLogMethod;
     error: SentryLogMethod;
   };
-  captureException(error: unknown, context?: { extra?: Record<string, unknown> }): unknown;
+  captureException(
+    error: unknown,
+    context?: { extra?: Record<string, unknown> },
+  ): unknown;
 }
 
 /** Sends every record to Sentry Logs; a record with `error` is also sent as an exception. */
@@ -31,7 +37,9 @@ export function sentrySink(sdk: SentrySdk): LogSink {
     write(record) {
       sdk.logger[record.level](record.message, record.fields);
       if ('error' in record.fields) {
-        sdk.captureException(toError(record.fields.error), { extra: record.fields });
+        sdk.captureException(toError(record.fields.error), {
+          extra: record.fields,
+        });
       }
     },
   };
@@ -40,7 +48,9 @@ export function sentrySink(sdk: SentrySdk): LogSink {
 /** Rebuilds an `Error` from the already redacted expansion, never from the original value. */
 function toError(expanded: unknown): Error {
   const fields = (expanded ?? {}) as LogFields;
-  const error = new Error(typeof fields.message === 'string' ? fields.message : '');
+  const error = new Error(
+    typeof fields.message === 'string' ? fields.message : '',
+  );
   if (typeof fields.name === 'string') error.name = fields.name;
   error.stack = typeof fields.stack === 'string' ? fields.stack : undefined;
   return error;

@@ -1,106 +1,132 @@
-import type { RecordKind } from "@agent-os/contracts";
-
-export const CHAT_PATH_PREFIX = "/chat/";
-export const AGENTS_PATH = "/agents";
+export const CHAT_PATH_PREFIX = '/chat/';
+export const AGENTS_PATH = '/agents';
 /** «Мой доступ» (UXRD Screen 3). */
-export const ACCOUNT_PATH = "/account";
+export const ACCOUNT_PATH = '/account';
 
 const AGENT_PATH_PREFIX = `${AGENTS_PATH}/`;
-const LIBRARY_PATH = "/library";
+const LIBRARY_PATH = '/library';
 const LIBRARY_PATH_PREFIX = `${LIBRARY_PATH}/`;
-/** Under the library but parsed before a record id, so no record id can take these addresses. */
-const NEW_RECORD_PATHS: Record<RecordKind, string> = {
-  agent: `${LIBRARY_PATH_PREFIX}new/agent`,
-  workflow: `${LIBRARY_PATH_PREFIX}new/workflow`,
-};
-const ADMIN_PATH = "/admin";
+/** Under the library but parsed before a record id, so no record id can take this address. A deep agent has no form (UXRD KD-1). */
+const NEW_AGENT_PATH = `${LIBRARY_PATH_PREFIX}new/agent`;
+const ADMIN_PATH = '/admin';
 const ADMIN_PATH_PREFIX = `${ADMIN_PATH}/`;
 /** Outside `/admin/servers/…` because a server may be named `new`. */
 const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
-/** After a record id: what a workflow has learned (self-learning design-web.md KD-2). */
-const KNOWLEDGE_SUFFIX = "/knowledge";
+/** After a record id: a deep agent's memory (self-learning UXRD ME-01). */
+const MEMORY_SUFFIX = '/memory';
+/** After a record id, before a training id: a training's result (self-learning UXRD TR-02). */
+const TRAINING_SEGMENT = '/training/';
+/** After an agent id: the deep agent page's tab «Задачи» (deep-agents UXRD DA-04); «Ход работы» is the page's own address. */
+const TASKS_SUFFIX = '/tasks';
 
 /** The panel's sections in screen order; titles and icons live in `components/admin/admin-sections.ts`. */
-export const ADMIN_SECTION_IDS = ["users", "roles", "sign-in", "servers", "models", "library"] as const;
+export const ADMIN_SECTION_IDS = [
+  'users',
+  'roles',
+  'sign-in',
+  'servers',
+  'models',
+  'library',
+] as const;
 export type AdminSection = (typeof ADMIN_SECTION_IDS)[number];
 /** The model catalogue is edited in dialogs on its list; every other section's records have their own page. */
-const hasRecordPages = (section: AdminSection): boolean => section !== "models";
+const hasRecordPages = (section: AdminSection): boolean => section !== 'models';
 
-/** The tabs of the panel's «Агенты и workflow» (design-web.md KD-1); «Системные» is the section's own address. */
-export const LIBRARY_TABS = ["system", "shared", "bans"] as const;
+/** The tabs of the panel's «Агенты и глубокие агенты» (design-web.md KD-1); «Системные» is the section's own address. */
+export const LIBRARY_TABS = ['system', 'shared', 'bans'] as const;
 export type LibraryTab = (typeof LIBRARY_TABS)[number];
 
-/** A list carries its tab and a new record its kind in the section `library` only. */
+/** A list carries its tab in the section `library` only; a new record there is a new agent. */
 export type AdminPage =
-  | { kind: "list"; tab?: LibraryTab }
-  | { kind: "new"; recordKind?: RecordKind }
-  | { kind: "record"; key: string }
-  | { kind: "knowledge"; key: string };
+  | { kind: 'list'; tab?: LibraryTab }
+  | { kind: 'new' }
+  | { kind: 'record'; key: string }
+  | { kind: 'memory'; key: string };
 
-/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new record of a kind, or what a workflow has learned. */
+/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent, a deep agent's memory or a training's result. */
 export type LibraryPage =
-  | { kind: "list" }
-  | { kind: "record"; id: string }
-  | { kind: "new"; recordKind: RecordKind }
-  | { kind: "knowledge"; id: string };
+  | { kind: 'list' }
+  | { kind: 'record'; id: string }
+  | { kind: 'new' }
+  | { kind: 'memory'; id: string }
+  | { kind: 'training'; id: string; trainingId: string };
+
+/** The tab of a deep agent's page carried in its address; absent — «Ход работы» (deep-agents UXRD DA-04). */
+export type AgentTab = 'tasks';
 
 /** The screen a shell path opens; `/` and any unknown path open a new chat. */
 export type ShellRoute =
-  | { kind: "chat"; threadId?: string }
-  | { kind: "agents" }
-  | { kind: "agent"; agentId: string }
-  | { kind: "account" }
-  | { kind: "library"; page: LibraryPage }
-  | { kind: "admin"; section: AdminSection; page: AdminPage };
+  | { kind: 'chat'; threadId?: string }
+  | { kind: 'agents' }
+  | { kind: 'agent'; agentId: string; tab?: AgentTab }
+  | { kind: 'account' }
+  | { kind: 'library'; page: LibraryPage }
+  | { kind: 'admin'; section: AdminSection; page: AdminPage };
 
 /** The only way a thread path is built: Link href, replaceState, pathname comparison. */
 export const threadPath = (threadId: string): string =>
   `${CHAT_PATH_PREFIX}${encodeURIComponent(threadId)}`;
 
-/** The only way an agent page path is built. */
-export const agentPath = (agentId: string): string =>
-  `${AGENT_PATH_PREFIX}${encodeURIComponent(agentId)}`;
+/** The only way an agent page path is built; `tab` — a deep agent's «Задачи». */
+export const agentPath = (agentId: string, tab?: AgentTab): string =>
+  `${AGENT_PATH_PREFIX}${encodeURIComponent(agentId)}${tab === undefined ? '' : TASKS_SUFFIX}`;
 
 /** The only way the library list path is built. */
 export const libraryPath = (): string => LIBRARY_PATH;
 
 /** The only way an employee's record page path is built. */
-export const recordPath = (id: string): string => `${LIBRARY_PATH_PREFIX}${encodeURIComponent(id)}`;
+export const recordPath = (id: string): string =>
+  `${LIBRARY_PATH_PREFIX}${encodeURIComponent(id)}`;
 
-/** The only way an employee's knowledge page path of a workflow is built. */
-export const knowledgePath = (id: string): string => `${recordPath(id)}${KNOWLEDGE_SUFFIX}`;
+/** The only way an employee's memory page path of a deep agent is built. */
+export const memoryPath = (id: string): string =>
+  `${recordPath(id)}${MEMORY_SUFFIX}`;
 
-/** The only way an employee's "new record" path is built. */
-export const newRecordPath = (kind: RecordKind): string => NEW_RECORD_PATHS[kind];
+/** The only way a training's result path is built. */
+export const trainingPath = (id: string, trainingId: string): string =>
+  `${recordPath(id)}${TRAINING_SEGMENT}${encodeURIComponent(trainingId)}`;
+
+/** The only way an employee's "new agent" path is built. */
+export const newAgentPath = (): string => NEW_AGENT_PATH;
 
 /** The only way a panel section list path is built. */
-export const adminPath = (section: AdminSection): string => `${ADMIN_PATH_PREFIX}${section}`;
+export const adminPath = (section: AdminSection): string =>
+  `${ADMIN_PATH_PREFIX}${section}`;
 
 /** The only way a panel record path is built; a server is addressed by its name (ADR-0014). */
 export const adminRecordPath = (section: AdminSection, key: string): string =>
   `${adminPath(section)}/${encodeURIComponent(key)}`;
 
-/** The only way the panel's knowledge page path of a company workflow is built. */
-export const adminKnowledgePath = (key: string): string =>
-  `${adminRecordPath("library", key)}${KNOWLEDGE_SUFFIX}`;
+/** The only way the panel's memory page path of a company deep agent is built. */
+export const adminMemoryPath = (key: string): string =>
+  `${adminRecordPath('library', key)}${MEMORY_SUFFIX}`;
 
 /** The only way a panel "new record" path is built. */
-export const adminNewPath = (section: "sign-in" | "servers"): string =>
-  section === "sign-in" ? NEW_SIGN_IN_PATH : REGISTER_SERVER_PATH;
+export const adminNewPath = (section: 'sign-in' | 'servers'): string =>
+  section === 'sign-in' ? NEW_SIGN_IN_PATH : REGISTER_SERVER_PATH;
 
-/** The only way a tab of the panel's «Агенты и workflow» is addressed. */
+/** The only way a tab of the panel's «Агенты и глубокие агенты» is addressed. */
 export const adminLibraryTabPath = (tab: LibraryTab): string =>
-  tab === "system" ? adminPath("library") : `${adminPath("library")}/${tab}`;
+  tab === 'system' ? adminPath('library') : `${adminPath('library')}/${tab}`;
 
-/** The only way the panel's "new company record" path is built. */
-export const adminNewRecordPath = (kind: RecordKind): string => `${adminPath("library")}/new/${kind}`;
+/** The only way the panel's "new company agent" path is built. */
+export const adminNewAgentPath = (): string =>
+  `${adminPath('library')}/new/agent`;
 
 /** One non-empty segment between `prefix` and `suffix`, decoded; undefined when the path has none or more. */
-function singleSegment(pathname: string, prefix: string, suffix = ""): string | undefined {
-  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return undefined;
-  const segment = pathname.slice(prefix.length, pathname.length - suffix.length);
-  if (segment === "" || segment.includes("/")) return undefined;
+function singleSegment(
+  pathname: string,
+  prefix: string,
+  suffix = '',
+): string | undefined {
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix))
+    return undefined;
+  const segment = pathname.slice(
+    prefix.length,
+    pathname.length - suffix.length,
+  );
+  if (segment === '' || segment.includes('/')) return undefined;
   try {
     return decodeURIComponent(segment);
   } catch {
@@ -109,52 +135,74 @@ function singleSegment(pathname: string, prefix: string, suffix = ""): string | 
   }
 }
 
-/** A tab, a new-record or a knowledge address of «Агенты и workflow»; checked before a record id, which is a UUID. */
+/** A tab, the new-agent or a memory address of «Агенты и глубокие агенты»; checked before a record id, which is a UUID. */
 function libraryAdminPage(pathname: string): AdminPage | undefined {
-  const tab = LIBRARY_TABS.find((candidate) => pathname === adminLibraryTabPath(candidate));
-  if (tab !== undefined) return { kind: "list", tab };
-  if (pathname === adminNewRecordPath("agent")) return { kind: "new", recordKind: "agent" };
-  if (pathname === adminNewRecordPath("workflow")) return { kind: "new", recordKind: "workflow" };
-  const key = singleSegment(pathname, `${adminPath("library")}/`, KNOWLEDGE_SUFFIX);
-  return key === undefined ? undefined : { kind: "knowledge", key };
+  const tab = LIBRARY_TABS.find(
+    (candidate) => pathname === adminLibraryTabPath(candidate),
+  );
+  if (tab !== undefined) return { kind: 'list', tab };
+  if (pathname === adminNewAgentPath()) return { kind: 'new' };
+  const key = singleSegment(
+    pathname,
+    `${adminPath('library')}/`,
+    MEMORY_SUFFIX,
+  );
+  return key === undefined ? undefined : { kind: 'memory', key };
 }
 
 /** `/admin` and any unknown path under it open «Сотрудники». */
-function parseAdminPage(pathname: string): { section: AdminSection; page: AdminPage } {
-  if (pathname === NEW_SIGN_IN_PATH) return { section: "sign-in", page: { kind: "new" } };
-  if (pathname === REGISTER_SERVER_PATH) return { section: "servers", page: { kind: "new" } };
+function parseAdminPage(pathname: string): {
+  section: AdminSection;
+  page: AdminPage;
+} {
+  if (pathname === NEW_SIGN_IN_PATH)
+    return { section: 'sign-in', page: { kind: 'new' } };
+  if (pathname === REGISTER_SERVER_PATH)
+    return { section: 'servers', page: { kind: 'new' } };
   const libraryPage = libraryAdminPage(pathname);
-  if (libraryPage !== undefined) return { section: "library", page: libraryPage };
+  if (libraryPage !== undefined)
+    return { section: 'library', page: libraryPage };
   for (const section of ADMIN_SECTION_IDS) {
-    if (pathname === adminPath(section)) return { section, page: { kind: "list" } };
-    const key = hasRecordPages(section) ? singleSegment(pathname, `${adminPath(section)}/`) : undefined;
-    if (key !== undefined) return { section, page: { kind: "record", key } };
+    if (pathname === adminPath(section))
+      return { section, page: { kind: 'list' } };
+    const key = hasRecordPages(section)
+      ? singleSegment(pathname, `${adminPath(section)}/`)
+      : undefined;
+    if (key !== undefined) return { section, page: { kind: 'record', key } };
   }
-  return { section: "users", page: { kind: "list" } };
+  return { section: 'users', page: { kind: 'list' } };
 }
 
-/** `/library`, an id after it, a new-record address or an id's knowledge; any other path under it opens the list. */
+/** `/library`, an id after it, the new-agent address, an id's memory or training; any other path under it opens the list. */
 function parseLibraryPage(pathname: string): LibraryPage {
-  if (pathname === NEW_RECORD_PATHS.agent) return { kind: "new", recordKind: "agent" };
-  if (pathname === NEW_RECORD_PATHS.workflow) return { kind: "new", recordKind: "workflow" };
-  const knowledgeId = singleSegment(pathname, LIBRARY_PATH_PREFIX, KNOWLEDGE_SUFFIX);
-  if (knowledgeId !== undefined) return { kind: "knowledge", id: knowledgeId };
+  if (pathname === NEW_AGENT_PATH) return { kind: 'new' };
+  const memoryId = singleSegment(pathname, LIBRARY_PATH_PREFIX, MEMORY_SUFFIX);
+  if (memoryId !== undefined) return { kind: 'memory', id: memoryId };
+  const [head = '', tail = ''] = pathname.split(TRAINING_SEGMENT);
+  const trainingRecordId = singleSegment(head, LIBRARY_PATH_PREFIX);
+  const trainingId = singleSegment(tail, '');
+  if (trainingRecordId !== undefined && trainingId !== undefined)
+    return { kind: 'training', id: trainingRecordId, trainingId };
   const id = singleSegment(pathname, LIBRARY_PATH_PREFIX);
-  return id === undefined ? { kind: "list" } : { kind: "record", id };
+  return id === undefined ? { kind: 'list' } : { kind: 'record', id };
 }
 
 export function parseShellRoute(pathname: string | null): ShellRoute {
-  if (pathname === null) return { kind: "chat" };
-  if (pathname === AGENTS_PATH) return { kind: "agents" };
-  if (pathname === ACCOUNT_PATH) return { kind: "account" };
+  if (pathname === null) return { kind: 'chat' };
+  if (pathname === AGENTS_PATH) return { kind: 'agents' };
+  if (pathname === ACCOUNT_PATH) return { kind: 'account' };
   if (pathname === LIBRARY_PATH || pathname.startsWith(LIBRARY_PATH_PREFIX)) {
-    return { kind: "library", page: parseLibraryPage(pathname) };
+    return { kind: 'library', page: parseLibraryPage(pathname) };
   }
   if (pathname === ADMIN_PATH || pathname.startsWith(ADMIN_PATH_PREFIX)) {
-    return { kind: "admin", ...parseAdminPage(pathname) };
+    return { kind: 'admin', ...parseAdminPage(pathname) };
   }
+  // The tab is parsed before a single agent id, as a memory address before a record id.
+  const tasksAgentId = singleSegment(pathname, AGENT_PATH_PREFIX, TASKS_SUFFIX);
+  if (tasksAgentId !== undefined)
+    return { kind: 'agent', agentId: tasksAgentId, tab: 'tasks' };
   const agentId = singleSegment(pathname, AGENT_PATH_PREFIX);
-  if (agentId !== undefined) return { kind: "agent", agentId };
+  if (agentId !== undefined) return { kind: 'agent', agentId };
   const threadId = singleSegment(pathname, CHAT_PATH_PREFIX);
-  return threadId === undefined ? { kind: "chat" } : { kind: "chat", threadId };
+  return threadId === undefined ? { kind: 'chat' } : { kind: 'chat', threadId };
 }

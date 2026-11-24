@@ -14,12 +14,20 @@ const isGuardCurrent = (): boolean => GUARD_KEY in historyState();
 
 /** A spare entry with the same address and App Router's own state: «Назад» pops it instead of leaving. */
 const pushGuard = (): void => {
-  window.history.pushState({ ...historyState(), [GUARD_KEY]: true }, '', window.location.href);
+  window.history.pushState(
+    { ...historyState(), [GUARD_KEY]: true },
+    '',
+    window.location.href,
+  );
 };
 
 /** The next `popstate` is ours (the spare entry dropped): App Router must not see it. */
 const swallowNextPopState = (): void => {
-  window.addEventListener('popstate', (event) => event.stopImmediatePropagation(), { capture: true, once: true });
+  window.addEventListener(
+    'popstate',
+    (event) => event.stopImmediatePropagation(),
+    { capture: true, once: true },
+  );
 };
 
 /**
@@ -39,7 +47,8 @@ export function useLeaveGuardHistory(): void {
   useEffect(() => {
     if (!holding) return;
 
-    const onBeforeUnload = (event: BeforeUnloadEvent): void => event.preventDefault();
+    const onBeforeUnload = (event: BeforeUnloadEvent): void =>
+      event.preventDefault();
 
     const onPopState = (event: PopStateEvent): void => {
       // Released (left through MC-11 or saved): the step back is a real navigation for App Router.

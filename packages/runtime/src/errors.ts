@@ -12,8 +12,6 @@ export const RUNTIME_ERROR_CODES = [
   'INVALID_TASK_INPUT',
   /** A message payload is larger than `INBOX_PAYLOAD_MAX_BYTES`. */
   'PAYLOAD_TOO_LARGE',
-  /** The decision request does not exist or belongs to another owner. */
-  'DECISION_NOT_FOUND',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 

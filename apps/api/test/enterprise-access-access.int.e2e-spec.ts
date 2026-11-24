@@ -27,8 +27,8 @@
 //     assertions; `auditOf(pool, { kind, objectType, ... })` that reads `access_denied` rows by object type (the kind is shared with the
 //     administrator-route refusals of identity, so rows of tools and models are filtered by `objectType`).
 //   - `createTestApp`: the `mcpAccess` option, `MCP_ACCESS_TABLE` and the price file are deleted.
-//   - A test workflow record of the employee whose executor names the `backoffice` server and runs a model script and a `run_code` script,
-//     started by `start_workflow` of the employee's chat (INT-1 step 4).
+//   - A test deep agent record of the employee whose subagent names the `backoffice` server and runs a model script and a `run_code` script,
+//     started by `start_deep_agent` of the employee's chat (INT-1 step 4).
 //   - Agent records on a given model (system records the administrator shows to one employee), which the chat starts by id: the model of a
 //     start is the record's (INT-2, INT-3). The built-in records run on `A` (`pointBuiltinsAt`).
 //   - A latch around a scripted model call (the scripted model's `hold`/latch of the existing chat suite) so two calls stay in flight (INT-3).
@@ -76,12 +76,12 @@ import {
   type TextScript,
 } from '@agent-os/agents/testing';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AGENTS_TOOL_CONFIRMATION,
   CreateCatalogModelBodySchema,
   GrantSchema,
   MyModelsSchema,
   StartRefusedErrorSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
   type AgentNode,
   type ConversationView,
   type CreateRecordBody,
@@ -106,13 +106,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import {
-  type ChatApi,
-  chatApi,
-  expectBody,
-  expectError,
-  waitFor,
-} from './support/api';
+import { type ChatApi, chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
@@ -123,12 +117,8 @@ import {
   recordName,
   setSystemAudience,
 } from './support/library';
-import {
-  BACKOFFICE_SERVER,
-  LOGS_SERVER,
-  runName,
-} from './support/mcp-servers';
-import { databaseUrl } from './support/migrate.global-setup';
+import { BACKOFFICE_SERVER, LOGS_SERVER, runName } from './support/mcp-servers';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   apiRequest,
   insertEmployee,
@@ -194,41 +184,45 @@ const SEARCH_LOGS = mcpTool(LOGS_SERVER, 'search_logs');
 const SEARCH_TICKETS = mcpTool(TRACKER_SERVER, 'search_tickets');
 const RUN_CODE = 'run_code';
 
-/** The one executor of the INT-1 workflow, which its coordinator starts by name. */
-const ACCESS_EXECUTOR = 'access-executor';
+/** The one subagent of the INT-1 deep agent, which the deep agent gives work to by name with `task`. */
+const ACCESS_SUBAGENT = 'access-subagent';
 
 /**
- * The INT-1 workflow record: a coordinator on `A` and one executor on `A` that names the run's `backoffice`. Every
- * session has `run_code` without naming it, and a record never holds it, so the executor's `tools` is empty.
+ * The INT-1 deep agent record: the deep agent on `A` without servers and one subagent on `A` that names the run's
+ * `backoffice`. Every session has `run_code` without naming it, and a record never holds it.
  */
-function accessCheckWorkflow(): Extract<CreateRecordBody, { kind: 'workflow' }> {
+function accessCheckDeepAgent(): Extract<
+  CreateRecordBody,
+  { kind: 'deep_agent' }
+> {
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name: recordName('access-check'),
     description:
-      'Test workflow of the access integration tests: one executor that writes an incident note.',
+      'Test deep agent of the access integration tests: one subagent that writes an incident note.',
     content: {
-      coordinator: {
-        rules: `Start the executor ${ACCESS_EXECUTOR} with start_agent and wait for its report.`,
-        model: MODEL_A,
-        maxTurns: 6,
-      },
-      executors: [
+      prompt: `Give the work to the subagent ${ACCESS_SUBAGENT} with task.`,
+      servers: [],
+      model: MODEL_A,
+      maxTurns: 6,
+      subagents: [
         {
-          name: ACCESS_EXECUTOR,
-          role: 'Writes the incident note of the access check.',
+          name: ACCESS_SUBAGENT,
+          description: 'Writes the incident note of the access check.',
           prompt:
             'You write the incident note of the access check from your assignment.',
           servers: [BACKOFFICE_SERVER],
           model: MODEL_A,
           maxTurns: 4,
           maxRuns: 1,
-          tools: [],
-          source: null,
+          taskList: false,
         },
       ],
-      finalExecutor: ACCESS_EXECUTOR,
+      finalSubagent: ACCESS_SUBAGENT,
+      taskList: true,
+      listDelegation: false,
       selfLearning: false,
+      scripts: [],
     },
   };
 }
@@ -245,11 +239,11 @@ const QuotaRefusalRecordSchema = z.object({
   }),
 });
 
-/** A `start_agent` call of a scripted answer: the agent record `agent` runs on its own model; by default the general agent on `A`. */
+/** A `start_agent` call of a scripted answer: the agent record named `agent` runs on its own model; by default the general agent on `A`. */
 function startAgent(
   description: string,
   prompt: string,
-  agent: string = BUILTIN.generalPurpose.id,
+  agent: string = BUILTIN.generalPurpose.name,
 ): ScriptedToolCall {
   return { tool: 'start_agent', args: { agent, description, prompt } };
 }
@@ -421,14 +415,15 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   }
 
   /**
-   * A system agent record on `model` that only `viewer` sees, offered in the chat: the chat starts it by id and the
-   * start runs on the record's model. Like the general agent it stands in for, it may list its agents.
+   * A system agent record on `model` that only `viewer` sees, offered in the chat; returns its name. The chat starts
+   * it by that name and the start runs on the record's model. Like the general agent it stands in for, it may list its agents.
    */
   async function agentOn(model: string, viewer: Session): Promise<string> {
+    const name = recordName(`agent on ${model}`);
     const { id } = await createSystemRecord(
       harness.app,
       admin,
-      agentBody(recordName(`agent on ${model}`), {
+      agentBody(name, {
         model,
         tools: ['list_agents'],
       }),
@@ -438,7 +433,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       everyone: false,
       userIds: [viewer.id],
     });
-    return id;
+    return name;
   }
 
   /** `GET /api/access/models` of the employee. */
@@ -535,14 +530,14 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       }
     } finally {
       // The servers take their accounts; the users their sessions, memberships, personal grants, conversations,
-      // agents, own records, ledger rows and audit records; the roles and models their grants; the system records
-      // their holders.
+      // agents, own records, ledger rows and audit records; the roles and models their grants. The system records
+      // have no owner: they are marked deleted, as the panel deletes them (a conversation may still run on their versions).
       await database.pool.query(
-        'DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)',
+        'DELETE FROM app.mcp_servers WHERE name = ANY($1)',
         [[LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER]],
       );
       await database.pool.query(
-        'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+        'UPDATE app.agents SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
         [madeRecords],
       );
       await removeRunRows(database.pool, made);
@@ -565,7 +560,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   инструменты и те же отказы, что главный чат". Design: DC-1, DC-2, DC-4 (the tool half); UC-1, and the target-existence and duplicate rows of UC-7.
   // Behavior: the administrator makes rights through the admin operations -> the employees' agents run (workers on, scripted model) -> the set offered
   //   to the model, the check at the call (direct, after confirmation, from `run_code`, from a workflow agent) and the changes made while agents run all
-  //   answer from the rights of that moment -> the fixture journal, tool calls in `agent_messages` / `agent_code_calls` rows and the audit.
+  //   answer from the rights of that moment -> the fixture journal, tool calls in `messages` / `code_calls` rows and the audit.
   // Steps (one story, literal expectations; the registry holds `backoffice` with the mutating tool `create_incident_note` and the read tools
   //   `get_order`, `search_orders`, `logs` with `aggregate_logs`, `get_trace`, `search_logs`, and `tracker` with `search_tickets`; shared-token servers,
   //   so no account of an employee is involved):
@@ -598,11 +593,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   than the main chat; a refusal that reaches the server or leaves zero or two audit rows; a grant for a tool or model that does not exist, or a
   //   duplicate, saved and then silently never matching.
   // @category: core-functionality
-  // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, start_workflow, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
+  // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, start_deep_agent, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
   // @complexity: high
   // Implementation (task T3.1; where the comment above differs, the task's text and the built code decide): Аня, Борис
-  //   and Глеб each get `A` through the run's role `int1-models`; Глеб's `logs` comes from the role `int1-logs`. The workflow
-  //   is Аня's own record; its executor names `backoffice` and has `run_code` without naming it (a record never holds it).
+  //   and Глеб each get `A` through the run's role `int1-models`; Глеб's `logs` comes from the role `int1-logs`. The deep agent
+  //   is Аня's own record; its subagent names `backoffice` and has `run_code` without naming it (a record never holds it).
   //   «Exactly one record per refusal»: the audit is written before the commit of the refusal (plan Notes 3), so the test
   //   waits for the refused call rows first and counts the audit after.
   it(
@@ -636,12 +631,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           `SELECT s.owner_id AS owner, 'call' AS door,
                   coalesce(c.content ->> 'server' || '/' || (c.content ->> 'tool'), c.content ->> 'tool') AS target,
                   c.content ->> 'refusalReason' AS reason
-             FROM app.agent_messages c JOIN app.agent_sessions s USING (task_id)
-            WHERE s.owner_id = ANY($1::text[]) AND c.kind = 'tool_result' AND c.content ->> 'outcome' = 'refused'
+             FROM app.messages c JOIN app.conversations s ON s.id = c.conversation_id
+            WHERE s.owner_id = ANY($1::uuid[]) AND c.kind = 'tool_result' AND c.content ->> 'outcome' = 'refused'
            UNION ALL
            SELECT s.owner_id, 'code', k.server || '/' || k.tool, k.refusal_reason
-             FROM app.agent_code_calls k JOIN app.agent_sessions s USING (task_id)
-            WHERE s.owner_id = ANY($1::text[]) AND k.outcome = 'refused'`,
+             FROM app.code_calls k JOIN app.conversations s ON s.id = k.conversation_id
+            WHERE s.owner_id = ANY($1::uuid[]) AND k.outcome = 'refused'`,
           [[...names.keys()]],
         );
         return rows
@@ -793,11 +788,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         server: BACKOFFICE_SERVER,
         tool: 'create_incident_note',
       });
-      // Аня's own workflow record: her chat may start it, and its executor names `backoffice`
+      // Аня's own deep agent record: her chat may start it, and its subagent names `backoffice`
       const accessCheck = await createRecord(
         harness.app,
         anya,
-        accessCheckWorkflow(),
+        accessCheckDeepAgent(),
       );
 
       const anyaTask =
@@ -805,8 +800,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const borisTask = 'INT-1: Борис reads the trace and the tickets';
       const glebTask = 'INT-1: Глеб writes the incident note';
       const question = 'INT-1: write the incident note of the order';
-      const executorTask =
-        'INT-1: the workflow executor writes the incident note';
+      const subagentTask =
+        'INT-1: the deep agent subagent writes the incident note';
       const anyaChat = harness.model.script(
         { task: anyaTask },
         [
@@ -821,9 +816,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           {
             calls: [
               {
-                tool: 'start_workflow',
+                tool: 'start_deep_agent',
                 args: {
-                  workflow: accessCheck.id,
+                  deepAgent: accessCheck.name,
                   question,
                   boundaries: '',
                   result: '',
@@ -841,36 +836,39 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           {
             calls: [
               {
-                tool: 'start_agent',
+                tool: 'task',
                 args: {
-                  agent: ACCESS_EXECUTOR,
-                  description: 'executor',
-                  prompt: executorTask,
+                  subagentType: ACCESS_SUBAGENT,
+                  description: subagentTask,
                 },
               },
             ],
           },
         ],
-        { thereafter: { text: 'the executor reported' } },
+        { thereafter: { text: 'the subagent reported' } },
       );
-      const executor = harness.model.script({ task: executorTask }, [
-        {
-          calls: [
-            {
-              tool: CREATE_NOTE,
-              args: {
-                orderId: 'ord-0000a002',
-                text: 'INT-1: from the workflow',
+      // The subagent's one `task` entry: the question of the brief as its labelled line, then the assignment.
+      const subagent = harness.model.script(
+        { task: `Question: ${question}\n\n${subagentTask}` },
+        [
+          {
+            calls: [
+              {
+                tool: CREATE_NOTE,
+                args: {
+                  orderId: 'ord-0000a002',
+                  text: 'INT-1: from the deep agent',
+                },
               },
-            },
-            refusedFromCode('Заметка из скрипта', CREATE_NOTE, {
-              orderId: 'ord-0000a003',
-              text: 'INT-1: from code',
-            }),
-          ],
-        },
-        { text: 'the note was refused' },
-      ]);
+              refusedFromCode('Заметка из скрипта', CREATE_NOTE, {
+                orderId: 'ord-0000a003',
+                text: 'INT-1: from code',
+              }),
+            ],
+          },
+          { text: 'the note was refused' },
+        ],
+      );
       const borisChat = harness.model.script({ task: borisTask }, [
         {
           calls: [
@@ -924,26 +922,25 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         RUN_CODE,
       ]);
 
-      // 4. AC-18.1, AC-18.4, DC-4, the doors: Аня's chat, Борис's chat and its script, the workflow agent and its
+      // 4. AC-18.1, AC-18.4, DC-4, the doors: Аня's chat, Борис's chat and its script, the subagent and its
       //    script -> five `no_access`, each the call's result (the agents go on), no call reaches the fixture but
       //    Борис's allowed `search_tickets`, and exactly one audit record per refusal
       const brief = await waitFor(
         () => anyaApi.history(anyaThread),
         (view) =>
           view.decisions.some(
-            (d) =>
-              d.kind === WORKFLOWS_BRIEF_CONFIRMATION && d.status === 'open',
+            (d) => d.kind === AGENTS_BRIEF_CONFIRMATION && d.status === 'open',
           ),
-        "the brief of Аня's workflow",
+        "the brief of Аня's deep agent",
       );
       const briefId =
-        brief.decisions.find((d) => d.kind === WORKFLOWS_BRIEF_CONFIRMATION)
+        brief.decisions.find((d) => d.kind === AGENTS_BRIEF_CONFIRMATION)
           ?.decisionId ?? '';
       expect(await anyaApi.decide(briefId, { approve: true })).toEqual({
         outcome: 'resolved',
       });
       await Promise.all([
-        executor.called(2),
+        subagent.called(2),
         borisChat.called(2),
         anyaChat.called(3),
       ]);
@@ -967,7 +964,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         `boris ${LOGS_SERVER}/get_trace rejected no_access`,
         `boris ${LOGS_SERVER}/get_trace rejected no_access`,
       ]);
-      expect(offered(executor.calls[0])).toEqual(offered(anyaChat.calls[0]));
+      expect(offered(subagent.calls[0])).toEqual(offered(anyaChat.calls[0]));
       expect(journal()).toEqual(['tracker shared search_tickets']);
       // Борис's refusals are results his chat goes on with; his script got the refusal as its value
       const borisTurn = await untilIdle(
@@ -990,7 +987,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           ? scriptResult.content.text
           : undefined,
       ).toBe('refused no_access');
-      // The workflow settles: the executor and the coordinator report and Аня's chat is free again
+      // The run settles: the subagent and the deep agent report and Аня's chat is free again
       await waitFor(
         () => anyaApi.history(anyaThread),
         (view) => {
@@ -1003,7 +1000,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
             reportsOf(view).length === 1
           );
         },
-        "Аня's workflow to finish",
+        "Аня's deep agent to finish",
       );
 
       // 5. After approval: Глеб's mutating call waits for his decision; the administrator removes his personal right;
@@ -1689,7 +1686,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(agentNamed(other.agents, 'agent on B').status).toBe('completed');
       expect(bScript.calls).toHaveLength(2);
       expect(harness.model.calls.length).toBe(callsInFlight + 1);
-      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([0.000003, 0.0045]);
+      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([
+        0.000003, 0.0045,
+      ]);
       expect(await paidCalls()).toEqual([0.015, 0.015]);
       expect(await deniedAudit('model', { anya })).toEqual([
         `anya ${MODEL_A} rejected quota_exhausted`,

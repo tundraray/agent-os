@@ -1,29 +1,42 @@
-"use client";
+'use client';
 
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Info } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { useStore } from "zustand";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { ChevronDown, Info } from 'lucide-react';
+import { useLocale, useTranslations } from 'next-intl';
+import { useStore } from 'zustand';
 import {
   ALL_SERVERS,
   type AgentContent,
+  type DeepAgentContent,
   type MissingRight,
   type RecordBody,
   type RecordKind,
-  type WorkflowContent,
-  type WorkflowExecutor,
-} from "@agent-os/contracts";
-import { Button } from "@/components/ui/button";
-import { StateBadge } from "@/components/state-badge";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { RecordLabel } from "@/components/library/record-label";
-import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
-import { kindWord } from "@/lib/library/library-errors";
-import { RECORD_FIELD_LABELS, type ChangedField, type RecordField } from "@/lib/library/record-rules";
-import { cn } from "cn";
+  type Subagent,
+} from '@agent-os/contracts';
+import { Button } from '@/components/ui/button';
+import { StateBadge } from '@/components/state-badge';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { RecordLabel } from '@/components/library/record-label';
+import { formatRecordModel, type ModelNames } from '@/lib/agents/format';
+import { builtinRoleName } from '@/i18n/builtin-name';
+import type {
+  ChangedField,
+  RecordField,
+  SubagentField,
+} from '@/lib/library/record-rules';
+import { cn } from 'cn';
 
-/** «В карточке» — a draft card in the conversation; «На странице» — a colleague's, company's or panel record. */
-export type DefinitionViewVariant = "card" | "page";
+/**
+ * «В карточке» — a decision card that creates a record; «Правка» — one that edits it, with the changes marked;
+ * «На странице» — a record's page in the library or the panel; «Схема» — the diagram panel beside the conversation.
+ */
+export type DefinitionViewVariant = 'card' | 'edit' | 'page' | 'schema';
 
 /** «Пояснение получателю» (AC-29.1, MC-6): the author and the viewer's roles the record is shared with. */
 export type DefinitionRecipient = { author: string; roles: readonly string[] };
@@ -35,57 +48,58 @@ export type DefinitionViewProps = {
   variant: DefinitionViewVariant;
   /** Only on a colleague's record page. */
   recipient?: DefinitionRecipient | null;
-  /** A draft's changed fields: each gets «изменено», a removed executor goes to «Убрано: …». */
-  changed?: readonly ChangedField[];
   /** The record page of an agent this agent may start; its label has no link without it. */
   recordHref?: (recordId: string) => string;
   /** The viewer's models and default chat model: models read by title, a record without its own model by the default. */
   modelNames?: ModelNames;
+  /** «Правка»: what the edit changes against the saved version (`changedFields`). */
+  changes?: readonly ChangedField[];
 };
 
-const TASK_ONLY_TEXT =
-  "Workflow получает только задание, которое вы подтверждаете перед запуском: вопрос, границы и результат. Беседу он не видит.";
-const CAPTION = "text-muted-foreground text-xs leading-4 font-medium";
+const CAPTION = 'text-muted-foreground text-xs leading-4 font-medium';
 
 /**
- * A record's definition, read-only (design-system definition-view.md; UXRD MC-9, MC-12, MC-15).
- * Instructions, rules, executor names and roles are other employees' text: rendered as plain text
- * with the author's line breaks, never as markdown or HTML. A server is named as the MCP registry
- * names it, without a description (design-web.md, KD-8).
+ * A record's definition, read-only (design-system definition-view.md; custom-agents UXRD MC-9, MC-12;
+ * deep-agents UXRD MC-26, MC-27). Instructions, subagent names and descriptions are other people's text:
+ * rendered as plain text with the author's line breaks, never as markdown or HTML. A server is named as the
+ * MCP registry names it, without a description (design-web.md, KD-8).
  */
 export function DefinitionView({
   definition,
   missingRights,
   variant,
   recipient,
-  changed = [],
   recordHref,
   modelNames,
+  changes = [],
 }: DefinitionViewProps) {
-  const isChanged = (field: RecordField) => changed.some((item) => item.field === field);
+  if (variant === 'schema')
+    return <SchemaRows definition={definition} missingRights={missingRights} />;
+  const marks = marksOf(changes);
   return (
     <div className="@container flex flex-col gap-2">
-      {recipient != null && <RecipientNote kind={definition.kind} recipient={recipient} />}
-      {definition.kind === "agent" ? (
+      {recipient != null && (
+        <RecipientNote kind={definition.kind} recipient={recipient} />
+      )}
+      {definition.kind === 'agent' ? (
         <dl className="flex flex-col gap-2">
-          <DescriptionRow description={definition.description} changed={isChanged("description")} />
+          <DescriptionRow description={definition.description} marks={marks} />
           <AgentRows
             content={definition.content}
             missing={missingServers(missingRights, null)}
             variant={variant}
-            isChanged={isChanged}
+            marks={marks}
             recordHref={recordHref}
             modelNames={modelNames}
           />
         </dl>
       ) : (
-        <WorkflowRows
+        <DeepAgentRows
           description={definition.description}
           content={definition.content}
           missingRights={missingRights}
           variant={variant}
-          changed={changed}
-          isChanged={isChanged}
+          marks={marks}
           modelNames={modelNames}
         />
       )}
@@ -93,38 +107,145 @@ export function DefinitionView({
   );
 }
 
-function RecipientNote({ kind, recipient }: { kind: RecordKind; recipient: DefinitionRecipient }) {
-  const shared = recipient.roles.length > 0 ? ` ${kindWord(kind, true)} открыт вашей роли ${recipient.roles.join(", ")}.` : "";
+function RecipientNote({
+  kind,
+  recipient,
+}: {
+  kind: RecordKind;
+  recipient: DefinitionRecipient;
+}) {
+  const t = useTranslations('library');
+  const locale = useLocale();
+  const roles = recipient.roles.map((name) => builtinRoleName(name, locale));
   return (
-    <div role="note" className="bg-info-subtle border-info-border flex gap-2 rounded-md border p-3">
+    <div
+      role="note"
+      className="bg-info-subtle border-info-border flex gap-2 rounded-md border p-3"
+    >
       <Info aria-hidden className="text-info mt-px size-4 shrink-0" />
       <p className="text-foreground text-xs leading-4 font-medium">
-        {`Автор — ${recipient.author}.${shared}`} Работает с вашими правами и подключёнными аккаунтами.
-        Изменения в системах — только после вашего подтверждения. {`Убрать ${kindWord(kind)} может автор или администратор.`}
+        {t('definition.recipient', {
+          author: recipient.author,
+          roleCount: roles.length,
+          roles: roles.join(', '),
+          kind,
+        })}
       </p>
     </div>
   );
 }
 
-type RowProps = { label: string; changed?: boolean; children: ReactNode };
+/**
+ * The marks of «Правка» (MC-24): «изменено» on a changed row or subagent, «новый» on an added subagent, and
+ * «Убрано: …» under the part that lost entries. Other variants get no changes, so nothing is marked.
+ */
+type Marks = {
+  changed: (field: RecordField) => boolean;
+  /** The entries a list field lost. */
+  removed: (field: RecordField) => readonly string[];
+  subagent: (name: string) => SubagentMark | null;
+  removedSubagents: readonly string[];
+};
 
-/** «подпись — значение»: the label left in a 140 px column from 560 px of width, above the value below it. */
-function Row({ label, changed = false, children }: RowProps) {
+type SubagentMark = {
+  change: 'changed' | 'new';
+  fields: readonly SubagentField[];
+};
+
+function marksOf(changes: readonly ChangedField[]): Marks {
+  const fieldChange = (field: RecordField) =>
+    changes.find(
+      (item): item is Extract<ChangedField, { field: RecordField }> =>
+        item.field === field,
+    );
+  return {
+    changed: (field) => fieldChange(field) !== undefined,
+    removed: (field) => fieldChange(field)?.removed ?? [],
+    subagent: (name) => {
+      for (const item of changes) {
+        if (item.field !== 'subagent' || item.subagent !== name) continue;
+        if (item.change === 'changed')
+          return { change: 'changed', fields: item.fields };
+        if (item.change === 'new') return { change: 'new', fields: [] };
+      }
+      return null;
+    },
+    removedSubagents: changes.flatMap((item) =>
+      item.field === 'subagent' && item.change === 'removed'
+        ? [item.subagent]
+        : [],
+    ),
+  };
+}
+
+/** «изменено» or «новый»: a word in the «Источник» badge, not a colour (definition-view.md, Accessibility). */
+function ChangeBadge({ change }: { change: SubagentMark['change'] }) {
+  const t = useTranslations('agents.recordCard');
+  return <StateBadge variant="source">{t(change)}</StateBadge>;
+}
+
+/** «Убрано: …» under its part; nothing when the part lost nothing. */
+function RemovedLine({ names }: { names: readonly string[] }) {
+  const t = useTranslations('agents.recordCard');
+  if (names.length === 0) return null;
   return (
-    <div className="grid gap-0.5 @[35rem]:grid-cols-[8.75rem_minmax(0,1fr)] @[35rem]:gap-x-4">
-      <dt className={cn(CAPTION, "flex flex-wrap items-center gap-1.5 @[35rem]:pt-0.5")}>
+    <span className={cn(CAPTION, 'block break-words')}>
+      {t('removed', { what: names.join(', ') })}
+    </span>
+  );
+}
+
+type RowProps = {
+  label: string;
+  changed?: boolean;
+  stacked?: boolean;
+  children: ReactNode;
+};
+
+/**
+ * «подпись — значение»: the label left in a 140 px column from 560 px of width, above the value below it;
+ * `stacked` — always above (variant «Схема»).
+ */
+function Row({ label, changed = false, stacked = false, children }: RowProps) {
+  return (
+    <div
+      className={cn(
+        'grid gap-0.5',
+        !stacked &&
+          '@[35rem]:grid-cols-[8.75rem_minmax(0,1fr)] @[35rem]:gap-x-4',
+      )}
+    >
+      <dt
+        className={cn(
+          CAPTION,
+          'flex flex-wrap items-center gap-1.5',
+          !stacked && '@[35rem]:pt-0.5',
+        )}
+      >
         {label}
-        {changed && <StateBadge variant="source">изменено</StateBadge>}
+        {changed && <ChangeBadge change="changed" />}
       </dt>
       <dd className="text-foreground min-w-0 text-sm leading-5">{children}</dd>
     </div>
   );
 }
 
-function DescriptionRow({ description, changed }: { description: string; changed: boolean }) {
+function DescriptionRow({
+  description,
+  marks,
+}: {
+  description: string;
+  marks: Marks;
+}) {
+  const tLibrary = useTranslations('library');
   return (
-    <Row label={RECORD_FIELD_LABELS.description} changed={changed}>
-      <span className="break-words whitespace-pre-wrap">{description === "" ? "—" : description}</span>
+    <Row
+      label={tLibrary('fields.description')}
+      changed={marks.changed('description')}
+    >
+      <span className="break-words whitespace-pre-wrap">
+        {description === '' ? '—' : description}
+      </span>
     </Row>
   );
 }
@@ -133,51 +254,99 @@ type AgentRowsProps = {
   content: AgentContent;
   missing: readonly string[];
   variant: DefinitionViewVariant;
-  isChanged: (field: RecordField) => boolean;
+  marks: Marks;
   recordHref?: (recordId: string) => string;
   modelNames?: ModelNames;
 };
 
-function AgentRows({ content, missing, variant, isChanged, recordHref, modelNames }: AgentRowsProps) {
-  const t = useTranslations("formats");
+function AgentRows({
+  content,
+  missing,
+  variant,
+  marks,
+  recordHref,
+  modelNames,
+}: AgentRowsProps) {
+  const t = useTranslations('formats');
+  const tLibrary = useTranslations('library');
+  const removedAgents = marks.removed('agents');
   return (
     <>
-      <Row label={RECORD_FIELD_LABELS.prompt} changed={isChanged("prompt")}>
-        <LongText text={content.prompt} collapsible={variant === "card"} />
+      <Row label={tLibrary('fields.prompt')} changed={marks.changed('prompt')}>
+        <LongText text={content.prompt} collapsible={variant !== 'page'} />
       </Row>
-      <Row label={RECORD_FIELD_LABELS.model} changed={isChanged("model")}>
+      <Row label={tLibrary('fields.model')} changed={marks.changed('model')}>
         {formatRecordModel(t, content.model, modelNames)}
       </Row>
-      <Row label={RECORD_FIELD_LABELS.maxTurns} changed={isChanged("maxTurns")}>
+      <Row
+        label={tLibrary('fields.maxTurns')}
+        changed={marks.changed('maxTurns')}
+      >
         <span className="tabular-nums">{content.maxTurns}</span>
       </Row>
-      <Row label={RECORD_FIELD_LABELS.servers} changed={isChanged("servers")}>
+      <Row
+        label={tLibrary('fields.servers')}
+        changed={marks.changed('servers')}
+      >
         <Servers servers={content.servers} missing={missing} />
+        <RemovedLine names={marks.removed('servers')} />
       </Row>
-      {content.agents.length > 0 && (
-        <Row label={RECORD_FIELD_LABELS.agents} changed={isChanged("agents")}>
-          <StartableAgents ids={content.agents} recordHref={recordHref} />
+      <CapabilitiesRow taskList={content.taskList} />
+      {(content.agents.length > 0 || removedAgents.length > 0) && (
+        <Row
+          label={tLibrary('fields.agents')}
+          changed={marks.changed('agents')}
+        >
+          {content.agents.length > 0 && (
+            <StartableAgents ids={content.agents} recordHref={recordHref} />
+          )}
+          <RemovedAgents ids={removedAgents} />
         </Row>
       )}
     </>
   );
 }
 
-/** The agents this agent may start, labelled from the live library list; an agent not in it is unavailable. */
-function StartableAgents({ ids, recordHref }: { ids: readonly string[]; recordHref?: (recordId: string) => string }) {
+/** «Убрано: …» of startable agents, named from the live library list. */
+function RemovedAgents({ ids }: { ids: readonly string[] }) {
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
+  const t = useTranslations('library');
+  const names = ids.map(
+    (id) => records?.get(id)?.name ?? t('label.unavailable', { kind: 'agent' }),
+  );
+  return <RemovedLine names={names} />;
+}
+
+/** The agents this agent may start, labelled from the live library list; an agent not in it is unavailable. */
+function StartableAgents({
+  ids,
+  recordHref,
+}: {
+  ids: readonly string[];
+  recordHref?: (recordId: string) => string;
+}) {
+  const { libraryIndex } = useShellServices();
+  const records = useStore(libraryIndex, (state) => state.records);
+  const t = useTranslations('library');
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       {ids.map((id, index) => {
         const summary = records?.get(id);
-        const comma = index < ids.length - 1 ? <span aria-hidden>,</span> : null;
+        const comma =
+          index < ids.length - 1 ? <span aria-hidden>,</span> : null;
         return (
           <span key={id} className="inline-flex min-w-0 items-center gap-0.5">
             {summary === undefined ? (
-              <StateBadge state="off">{`${kindWord("agent")} недоступен`}</StateBadge>
+              <StateBadge state="off">
+                {t('label.unavailable', { kind: 'agent' })}
+              </StateBadge>
             ) : (
-              <RecordLabel variant="row" summary={summary} href={recordHref?.(id)} />
+              <RecordLabel
+                variant="row"
+                summary={summary}
+                href={recordHref?.(id)}
+              />
             )}
             {comma}
           </span>
@@ -188,56 +357,132 @@ function StartableAgents({ ids, recordHref }: { ids: readonly string[]; recordHr
 }
 
 /** «Sentry · Jira ⊖ у вас недоступна», «без систем» or «все системы» (definition-view.md, part 4). */
-function Servers({ servers, missing }: { servers: readonly string[]; missing: readonly string[] }) {
-  if (servers.includes(ALL_SERVERS)) return <>все системы</>;
-  if (servers.length === 0) return <>без систем</>;
+function Servers({
+  servers,
+  missing,
+}: {
+  servers: readonly string[];
+  missing: readonly string[];
+}) {
+  const t = useTranslations('library');
+  if (servers.includes(ALL_SERVERS)) return <>{t('team.allServers')}</>;
+  if (servers.length === 0) return <>{t('team.noServers')}</>;
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       {servers.map((server, index) => (
         <span key={server} className="inline-flex items-center gap-1.5">
-          {index > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+          {index > 0 && (
+            <span aria-hidden className="text-muted-foreground">
+              ·
+            </span>
+          )}
           {server}
-          {missing.includes(server) && <StateBadge state="off">у вас недоступна</StateBadge>}
+          {missing.includes(server) && (
+            <StateBadge state="off">{t('agentFields.unavailable')}</StateBadge>
+          )}
         </span>
       ))}
     </span>
   );
 }
 
-type WorkflowRowsProps = {
+/**
+ * «Способности» (definition-view.md, part 13; deep-agents UXRD MC-27): the record's switched-on capabilities in words
+ * through « · », «нет» when none is on. List delegation is a deep agent's only, so others pass no `listDelegation`.
+ */
+function CapabilitiesRow({
+  taskList,
+  listDelegation = false,
+}: {
+  taskList: boolean;
+  listDelegation?: boolean;
+}) {
+  const t = useTranslations('library.definition');
+  const names = [
+    ...(taskList ? [t('capability.taskList')] : []),
+    ...(listDelegation ? [t('capability.listDelegation')] : []),
+  ];
+  return (
+    <Row label={t('capabilities')}>
+      {names.length === 0 ? t('capability.none') : names.join(' · ')}
+    </Row>
+  );
+}
+
+type DeepAgentRowsProps = {
   description: string;
-  content: WorkflowContent;
+  content: DeepAgentContent;
   missingRights: readonly MissingRight[];
   variant: DefinitionViewVariant;
-  changed: readonly ChangedField[];
-  isChanged: (field: RecordField) => boolean;
+  marks: Marks;
   modelNames?: ModelNames;
 };
 
-function WorkflowRows({ description, content, missingRights, variant, changed, isChanged, modelNames }: WorkflowRowsProps) {
-  const { coordinator, finalExecutor } = content;
-  const t = useTranslations("formats");
+/** Parts 1–4 and 6–11 of a deep agent: the brief phrase stands before the team, the deep agent's own model last. */
+function DeepAgentRows({
+  description,
+  content,
+  missingRights,
+  variant,
+  marks,
+  modelNames,
+}: DeepAgentRowsProps) {
+  const t = useTranslations('formats');
+  const tLibrary = useTranslations('library');
   return (
     <>
       <dl className="flex flex-col gap-2">
-        <DescriptionRow description={description} changed={isChanged("description")} />
+        <DescriptionRow description={description} marks={marks} />
       </dl>
-      <p className={CAPTION}>{TASK_ONLY_TEXT}</p>
+      <p className={CAPTION}>{tLibrary('definition.brief')}</p>
       <dl className="flex flex-col gap-2">
-        <Row label={`Команда · ${content.executors.length}`}>
-          <Team content={content} missingRights={missingRights} variant={variant} changed={changed} modelNames={modelNames} />
+        <Row
+          label={tLibrary('fields.prompt')}
+          changed={marks.changed('prompt')}
+        >
+          <LongText text={content.prompt} collapsible={variant !== 'page'} />
         </Row>
-        {coordinator.rules !== "" && (
-          <Row label={RECORD_FIELD_LABELS.rules} changed={isChanged("rules")}>
-            <LongText text={coordinator.rules} collapsible={variant === "card"} />
-          </Row>
-        )}
-        <Row label={RECORD_FIELD_LABELS.finalExecutor} changed={isChanged("finalExecutor")}>
-          {finalExecutor ?? "Координатор сам"}
+        <Row
+          label={tLibrary('fields.servers')}
+          changed={marks.changed('servers')}
+        >
+          <Servers
+            servers={content.servers}
+            missing={missingServers(missingRights, null)}
+          />
+          <RemovedLine names={marks.removed('servers')} />
         </Row>
-        <Row label={RECORD_FIELD_LABELS.selfLearning}>{content.selfLearning ? "включено" : "выключено"}</Row>
-        <Row label="Координатор" changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
-          <span className="tabular-nums">{`${formatRecordModel(t, coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
+        <CapabilitiesRow
+          taskList={content.taskList}
+          listDelegation={content.listDelegation}
+        />
+        <Row
+          label={tLibrary('team.title', { count: content.subagents.length })}
+        >
+          <Team
+            content={content}
+            missingRights={missingRights}
+            variant={variant}
+            marks={marks}
+            modelNames={modelNames}
+          />
+        </Row>
+        <Row
+          label={tLibrary('definition.finalSubagent')}
+          changed={marks.changed('finalSubagent')}
+        >
+          {content.finalSubagent ?? tLibrary('definition.agentItself')}
+        </Row>
+        <Row
+          label={tLibrary('definition.deepAgent')}
+          changed={marks.changed('model') || marks.changed('maxTurns')}
+        >
+          <span className="tabular-nums">
+            {tLibrary('definition.deepAgentSummary', {
+              model: formatRecordModel(t, content.model, modelNames),
+              maxTurns: content.maxTurns,
+            })}
+          </span>
         </Row>
       </dl>
     </>
@@ -245,77 +490,119 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
 }
 
 type TeamProps = {
-  content: WorkflowContent;
+  content: DeepAgentContent;
   missingRights: readonly MissingRight[];
   variant: DefinitionViewVariant;
-  changed: readonly ChangedField[];
+  marks: Marks;
   modelNames?: ModelNames;
 };
 
-/** The team as a set, not a queue: executors in alphabetical order, without numbers or arrows. */
-function Team({ content, missingRights, variant, changed, modelNames }: TeamProps) {
+/** The team as a set, not a queue: subagents in alphabetical order, without numbers or arrows. */
+function Team({
+  content,
+  missingRights,
+  variant,
+  marks,
+  modelNames,
+}: TeamProps) {
   const listId = useId();
-  const [details, setDetails] = useState(variant === "page");
-  const executors = [...content.executors].sort((a, b) => a.name.localeCompare(b.name, "ru"));
-  const changedNames = changed.flatMap((item) => (item.field === "executor" ? [item.executor] : []));
-  const removed = changedNames.filter((name) => !content.executors.some((executor) => executor.name === name));
+  const t = useTranslations('library.team');
+  const locale = useLocale();
+  const [details, setDetails] = useState(variant === 'page');
+  const subagents = [...content.subagents].sort((a, b) =>
+    a.name.localeCompare(b.name, locale),
+  );
 
   return (
     <div className="flex flex-col gap-1">
-      <span className={CAPTION}>Кого и когда звать, решает координатор по строкам команды.</span>
-      <ul id={listId} aria-label="Команда, кого и когда звать, решает координатор" className="flex flex-col gap-1">
-        {executors.map((executor) => (
-          <ExecutorItem
-            key={executor.name}
-            executor={executor}
-            final={executor.name === content.finalExecutor}
-            changed={changedNames.includes(executor.name)}
-            missing={missingServers(missingRights, executor.name)}
+      <span className={CAPTION}>{t('hint')}</span>
+      <ul
+        id={listId}
+        aria-label={t('listLabel')}
+        className="flex flex-col gap-1"
+      >
+        {subagents.map((subagent) => (
+          <SubagentItem
+            key={subagent.name}
+            subagent={subagent}
+            final={subagent.name === content.finalSubagent}
+            missing={missingServers(missingRights, subagent.name)}
             details={details}
+            mark={marks.subagent(subagent.name)}
             modelNames={modelNames}
           />
         ))}
       </ul>
-      {removed.length > 0 && <span className={CAPTION}>{`Убрано: ${removed.join(", ")}`}</span>}
-      <Disclosure expanded={details} controls={listId} onToggle={() => setDetails((open) => !open)}>
-        Подробнее
+      <RemovedLine names={marks.removedSubagents} />
+      <Disclosure
+        expanded={details}
+        controls={listId}
+        onToggle={() => setDetails((open) => !open)}
+      >
+        {t('details')}
       </Disclosure>
     </div>
   );
 }
 
-type ExecutorItemProps = {
-  executor: WorkflowExecutor;
+type SubagentItemProps = {
+  subagent: Subagent;
   final: boolean;
-  changed: boolean;
   missing: readonly string[];
   details: boolean;
+  mark: SubagentMark | null;
   modelNames?: ModelNames;
 };
 
-function ExecutorItem({ executor, final, changed, missing, details, modelNames }: ExecutorItemProps) {
-  const t = useTranslations("formats");
+function SubagentItem({
+  subagent,
+  final,
+  missing,
+  details,
+  mark,
+  modelNames,
+}: SubagentItemProps) {
+  const t = useTranslations('formats');
+  const tLibrary = useTranslations('library');
+  const changedIn = (field: SubagentField): boolean =>
+    mark?.fields.includes(field) === true;
   return (
     <li className="flex flex-col gap-1">
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="min-w-0 truncate" title={`${executor.name} — ${executor.role}`}>
-          <span className="font-medium">{executor.name}</span>
-          <span className="text-muted-foreground"> — {executor.role}</span>
+        <span
+          className="min-w-0 truncate"
+          title={`${subagent.name} — ${subagent.description}`}
+        >
+          <span className="font-medium">{subagent.name}</span>
+          <span className="text-muted-foreground">
+            {' '}
+            — {subagent.description}
+          </span>
         </span>
-        {final && <StateBadge variant="source">пишет ответ</StateBadge>}
-        {changed && <StateBadge variant="source">изменено</StateBadge>}
+        {final && (
+          <StateBadge variant="source">{tLibrary('team.final')}</StateBadge>
+        )}
+        {mark !== null && <ChangeBadge change={mark.change} />}
       </span>
       {details && (
         <dl className="border-border ml-1 flex flex-col gap-2 border-l pl-3">
-          <Row label={RECORD_FIELD_LABELS.model}>{formatRecordModel(t, executor.model, modelNames)}</Row>
-          <Row label={RECORD_FIELD_LABELS.servers}>
-            <Servers servers={executor.servers} missing={missing} />
+          <Row label={tLibrary('fields.model')} changed={changedIn('model')}>
+            {formatRecordModel(t, subagent.model, modelNames)}
           </Row>
-          <Row label="Сколько раз можно звать">
-            <span className="tabular-nums">{`до ${executor.maxRuns} раз`}</span>
+          <Row
+            label={tLibrary('fields.servers')}
+            changed={changedIn('servers')}
+          >
+            <Servers servers={subagent.servers} missing={missing} />
           </Row>
-          <Row label={RECORD_FIELD_LABELS.prompt}>
-            <LongText text={executor.prompt} collapsible />
+          <CapabilitiesRow taskList={subagent.taskList} />
+          <Row label={tLibrary('team.maxRuns')} changed={changedIn('maxRuns')}>
+            <span className="tabular-nums">
+              {tLibrary('team.upTo', { count: subagent.maxRuns })}
+            </span>
+          </Row>
+          <Row label={tLibrary('fields.prompt')} changed={changedIn('prompt')}>
+            <LongText text={subagent.prompt} collapsible />
           </Row>
         </dl>
       )}
@@ -324,11 +611,88 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
 }
 
 /**
+ * Variant «Схема» (definition-view.md, parts 1, 4, 7, 8, 14): the description without a label, the servers and,
+ * for a deep agent, the team with each subagent's servers under it; labels above values, nothing truncated. No
+ * instructions, models or details: those are on the record's card the panel links to.
+ */
+function SchemaRows({
+  definition,
+  missingRights,
+}: Pick<DefinitionViewProps, 'definition' | 'missingRights'>) {
+  const tLibrary = useTranslations('library');
+  const locale = useLocale();
+  const subagents =
+    definition.kind === 'deep_agent'
+      ? [...definition.content.subagents].sort((a, b) =>
+          a.name.localeCompare(b.name, locale),
+        )
+      : [];
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">
+        {definition.description === '' ? '—' : definition.description}
+      </p>
+      <dl className="flex flex-col gap-2">
+        <Row label={tLibrary('fields.servers')} stacked>
+          <Servers
+            servers={definition.content.servers}
+            missing={missingServers(missingRights, null)}
+          />
+        </Row>
+        {definition.kind === 'deep_agent' && (
+          <Row
+            label={tLibrary('team.title', { count: subagents.length })}
+            stacked
+          >
+            <ul
+              aria-label={tLibrary('team.listLabel')}
+              className="flex flex-col gap-1"
+            >
+              {subagents.map((subagent) => (
+                <li key={subagent.name} className="flex flex-col">
+                  <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                    <span className="min-w-0 break-words">
+                      <span className="font-medium">{subagent.name}</span>
+                      <span className="text-muted-foreground">
+                        {' '}
+                        — {subagent.description}
+                      </span>
+                    </span>
+                    {subagent.name === definition.content.finalSubagent && (
+                      <StateBadge variant="source">
+                        {tLibrary('team.final')}
+                      </StateBadge>
+                    )}
+                  </span>
+                  <span className={cn(CAPTION, 'pl-3')}>
+                    <Servers
+                      servers={subagent.servers}
+                      missing={missingServers(missingRights, subagent.name)}
+                    />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Row>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+/**
  * The author's long text with their paragraphs and line breaks, as text. Collapsible — six lines
  * and «Показать целиком», and no button when the text is shorter.
  */
-function LongText({ text, collapsible }: { text: string; collapsible: boolean }) {
+function LongText({
+  text,
+  collapsible,
+}: {
+  text: string;
+  collapsible: boolean;
+}) {
   const textId = useId();
+  const t = useTranslations('library.definition');
   const ref = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -345,34 +709,65 @@ function LongText({ text, collapsible }: { text: string; collapsible: boolean })
       <p
         ref={ref}
         id={textId}
-        className={cn("text-foreground text-base leading-6.5 break-words whitespace-pre-wrap", clamped && "line-clamp-6")}
+        className={cn(
+          'text-foreground text-base leading-6.5 break-words whitespace-pre-wrap',
+          clamped && 'line-clamp-6',
+        )}
       >
-        {text === "" ? "—" : text}
+        {text === '' ? '—' : text}
       </p>
       {collapsible && (overflows || expanded) && (
-        <Disclosure expanded={expanded} controls={textId} onToggle={() => setExpanded((open) => !open)}>
-          {expanded ? "Свернуть" : "Показать целиком"}
+        <Disclosure
+          expanded={expanded}
+          controls={textId}
+          onToggle={() => setExpanded((open) => !open)}
+        >
+          {t(expanded ? 'collapse' : 'expand')}
         </Disclosure>
       )}
     </div>
   );
 }
 
-type DisclosureProps = { expanded: boolean; controls: string; onToggle: () => void; children: ReactNode };
+type DisclosureProps = {
+  expanded: boolean;
+  controls: string;
+  onToggle: () => void;
+  children: ReactNode;
+};
 
-function Disclosure({ expanded, controls, onToggle, children }: DisclosureProps) {
+function Disclosure({
+  expanded,
+  controls,
+  onToggle,
+  children,
+}: DisclosureProps) {
   return (
-    <Button variant="ghost" size="sm" aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
+    <Button
+      variant="ghost"
+      size="sm"
+      aria-expanded={expanded}
+      aria-controls={controls}
+      onClick={onToggle}
+    >
       <ChevronDown
         aria-hidden
-        className={cn("transition-transform duration-150 motion-reduce:transition-none", expanded && "rotate-180")}
+        className={cn(
+          'transition-transform duration-150 motion-reduce:transition-none',
+          expanded && 'rotate-180',
+        )}
       />
       {children}
     </Button>
   );
 }
 
-/** Servers of the agent itself (`executor` `null`) or of one executor the viewer has no right to. */
-function missingServers(missingRights: readonly MissingRight[], executor: string | null): string[] {
-  return missingRights.filter((right) => right.executor === executor).flatMap((right) => right.servers);
+/** Servers of the agent or the deep agent itself (`subagent` `null`), or of one subagent, the viewer has no right to. */
+function missingServers(
+  missingRights: readonly MissingRight[],
+  subagent: string | null,
+): string[] {
+  return missingRights
+    .filter((right) => right.subagent === subagent)
+    .flatMap((right) => right.servers);
 }

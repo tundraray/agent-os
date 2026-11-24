@@ -1,4 +1,11 @@
-import { cutText, linesOf, pageOf, previewOf, searchOf, wrapperText } from './large-result';
+import {
+  cutText,
+  linesOf,
+  pageOf,
+  previewOf,
+  searchOf,
+  wrapperText,
+} from './large-result';
 
 // R-1…R-3 of the tool-result-reading plan; risk «a page splits a character or a very long line».
 // Expected values are literals counted by hand.
@@ -17,8 +24,18 @@ describe('a stored result is replaced by the wrapper and read in exact parts', (
       20,
       'line one\nline two',
     ],
-    ['a line break not past half keeps the whole preview', 'ab\ncdefghijklmnop', 10, 'ab\ncdefghi'],
-    ['a line break exactly at half keeps the whole preview', 'abcde\nfghijk', 10, 'abcde\nfghi'],
+    [
+      'a line break not past half keeps the whole preview',
+      'ab\ncdefghijklmnop',
+      10,
+      'ab\ncdefghi',
+    ],
+    [
+      'a line break exactly at half keeps the whole preview',
+      'abcde\nfghijk',
+      10,
+      'abcde\nfghi',
+    ],
     ['the preview never splits a surrogate pair', 'abcd😀efgh', 5, 'abcd'],
     ['a text that fits is its own preview', 'a\nb', 10, 'a\nb'],
   ])('preview: %s', (_case, text, previewChars, expected) => {
@@ -42,8 +59,16 @@ describe('a stored result is replaced by the wrapper and read in exact parts', (
 
   it.each([
     ['a one-line JSON of 4 500 characters', ONE_LINE_JSON, [2_000, 2_000, 500]],
-    ['a surrogate pair on the line cap stays in the next line', PAIR_ON_LINE_CAP, [1_999, 3]],
-    ['a line ends after its line break, an empty line included', 'a\n\nb', [2, 1, 1]],
+    [
+      'a surrogate pair on the line cap stays in the next line',
+      PAIR_ON_LINE_CAP,
+      [1_999, 3],
+    ],
+    [
+      'a line ends after its line break, an empty line included',
+      'a\n\nb',
+      [2, 1, 1],
+    ],
     ['an empty text has no lines', '', []],
   ] as const)('lines: %s', (_case, text, lengths) => {
     const lines = linesOf(text);
@@ -135,7 +160,8 @@ describe('a stored result is replaced by the wrapper and read in exact parts', (
     let offset = 1;
     for (;;) {
       const page = pageOf(text, { offset, maxTokens: 600 });
-      if (page.kind !== 'page') throw new Error(`offset ${offset} is past the end`);
+      if (page.kind !== 'page')
+        throw new Error(`offset ${offset} is past the end`);
       joined += page.text.slice(page.text.indexOf('\n') + 1);
       if (page.lastLine === page.totalLines) break;
       offset = page.lastLine + 1;
@@ -188,7 +214,12 @@ describe('a stored result is replaced by the wrapper and read in exact parts', (
       4,
       'abcd\nresult cut by 6 characters',
     ],
-    ['the cut never splits a surrogate pair', 'abc😀de', 4, 'abc\nresult cut by 4 characters'],
+    [
+      'the cut never splits a surrogate pair',
+      'abc😀de',
+      4,
+      'abc\nresult cut by 4 characters',
+    ],
     ['a text within the limit stays whole', 'abcd', 4, 'abcd'],
   ])('error cut: %s', (_case, text, maxChars, expected) => {
     expect(cutText(text, maxChars)).toBe(expected);

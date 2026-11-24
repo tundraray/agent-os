@@ -1,24 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   isHttpsOrLocalhost,
   type ProviderType,
   type SignInError,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
+import { IdentityProvidersRepository } from '@agent-os/db';
 import * as client from 'openid-client';
 import { isUuid } from '../common/is-uuid';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { IdentitySettings } from './identity-settings';
 import { GOOGLE_ISSUER_URL } from './identity.tokens';
-import { isComplete } from './provider-options';
-import {
-  consumeLoginRequest,
-  deleteExpiredLoginRequests,
-  findProvider,
-  insertLoginRequest,
-} from './providers.repository';
+import { isComplete, toProvider } from './provider-options';
 
 /** How long a sign-in request and its `aos_login` cookie live (Runtime settings). */
 export const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;
@@ -75,31 +67,6 @@ interface SignInProvider {
   clientSecret: string;
 }
 
-/** The provider when it exists, is enabled and has its settings complete (`isComplete`); otherwise undefined. */
-async function findSignInProvider(
-  db: Database,
-  providerId: string,
-): Promise<SignInProvider | undefined> {
-  const provider = isUuid(providerId)
-    ? await findProvider(db, providerId)
-    : undefined;
-  if (
-    provider === undefined ||
-    !provider.enabled ||
-    !isComplete(provider.type, provider.options)
-  )
-    return undefined;
-  const { id, type, version, options } = provider;
-  return {
-    id,
-    type,
-    version,
-    issuer: options.issuer,
-    clientId: options.clientId,
-    clientSecret: options.clientSecret,
-  };
-}
-
 // ---------- OIDC ----------
 
 /** The return address registered at the provider (ProviderView.providerData.redirectUri). */
@@ -130,7 +97,6 @@ function describeError(error: unknown): Record<string, unknown> {
  */
 @Injectable()
 export class OidcSignIn {
-  private readonly db: Database;
   private readonly logger: Logger;
   /** Per provider id: the configuration of its current version (ADR-0001). */
   private readonly configs = new Map<
@@ -139,13 +105,37 @@ export class OidcSignIn {
   >();
 
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    private readonly providers: IdentityProvidersRepository,
     private readonly settings: IdentitySettings,
     @Inject(GOOGLE_ISSUER_URL) private readonly googleIssuer: string,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
-    this.db = database.db;
     this.logger = logger.child({ service: 'identity.oidc' });
+  }
+
+  /** The provider when it exists, is enabled and has its settings complete (`isComplete`); otherwise undefined. */
+  private async findSignInProvider(
+    providerId: string,
+  ): Promise<SignInProvider | undefined> {
+    const row = isUuid(providerId)
+      ? await this.providers.find(providerId)
+      : undefined;
+    const provider = row === undefined ? undefined : toProvider(row);
+    if (
+      provider === undefined ||
+      !provider.enabled ||
+      !isComplete(provider.type, provider.options)
+    )
+      return undefined;
+    const { id, type, version, options } = provider;
+    return {
+      id,
+      type,
+      version,
+      issuer: options.issuer,
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+    };
   }
 
   /**
@@ -154,7 +144,7 @@ export class OidcSignIn {
    * unavailable, never an address taken from this anonymous request.
    */
   async start(providerId: string, next: string): Promise<StartedSignIn> {
-    const provider = await findSignInProvider(this.db, providerId);
+    const provider = await this.findSignInProvider(providerId);
     if (provider === undefined)
       return {
         ok: false,
@@ -178,12 +168,12 @@ export class OidcSignIn {
     const state = client.randomState();
     const nonce = client.randomNonce();
     const codeVerifier = client.randomPKCECodeVerifier();
-    const expired = await deleteExpiredLoginRequests(this.db);
+    const expired = await this.providers.deleteExpiredLoginRequests();
     if (expired > 0)
       this.logger.debug('expired sign-in requests deleted', {
         count: expired,
       });
-    const loginRequestId = await insertLoginRequest(this.db, {
+    const loginRequestId = await this.providers.insertLoginRequest({
       state,
       providerId,
       nonce,
@@ -209,7 +199,9 @@ export class OidcSignIn {
   async finish(callback: ReturnFromProvider): Promise<FinishedSignIn> {
     const state = callback.query.get('state');
     const loginRequest =
-      state === null ? undefined : await consumeLoginRequest(this.db, state);
+      state === null
+        ? undefined
+        : await this.providers.consumeLoginRequest(state);
     const refuse = (
       reason: ProviderRefusal,
       detail: string,
@@ -227,7 +219,7 @@ export class OidcSignIn {
       return refuse('failed', 'state_mismatch');
     if (loginRequest.expiresAt.getTime() <= Date.now())
       return refuse('failed', 'request_expired');
-    const provider = await findSignInProvider(this.db, loginRequest.providerId);
+    const provider = await this.findSignInProvider(loginRequest.providerId);
     if (provider === undefined)
       return refuse('provider_unavailable', 'not_enabled');
     const providerError = callback.query.get('error');

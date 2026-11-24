@@ -4,11 +4,20 @@ import type {
   McpConnection,
   MyModels,
   RecordSummary,
+  AgentTasksView,
   SpendResponse,
+  ThreadDocumentsView,
+  TrainingState,
 } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolResultSettings } from './fixtures';
+import {
+  currentUser,
+  modelDefaults,
+  modelProviderView,
+  selfLearningSettings,
+  toolResultSettings,
+} from './fixtures';
 
 /**
  * Reads the shell makes on every mount whatever the test is about: the signed-in employee (UM-01, also
@@ -19,26 +28,58 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolR
  * agent page and the agent list (custom-agents design-web.md, KD-2). The model providers and the model
  * defaults are read by the grant dialog, the company record editor and the «Модели» section; a ready
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
- * «Системные» tab of «Агенты и workflow» (self-learning AS-01); the settings of large tool results by the
- * «MCP-серверы» list (tool-result-reading R-5). A test that cares overrides them with
+ * «Системные» tab of «Агенты и глубокие агенты» (self-learning AS-01); the settings of large tool results by the
+ * «MCP-серверы» list (tool-result-reading R-5). A session's task list is read by a deep agent's page and, for
+ * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12); the conversation's documents by its panel (self-learning DC-02); every deep agent card reads its training state (self-learning KD-1). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [
   http.get('/api/auth/me', () => HttpResponse.json(currentUser())),
-  http.get('/api/agents/awaiting', () => HttpResponse.json({ count: 0 } satisfies AwaitingCount)),
+  http.get('/api/agents/awaiting', () =>
+    HttpResponse.json({ count: 0 } satisfies AwaitingCount),
+  ),
   http.get('/api/spend', () =>
     HttpResponse.json({ month: '2026-11', costUsd: 0 } satisfies SpendResponse),
   ),
-  http.get('/api/mcp/connections', () => HttpResponse.json([] satisfies McpConnection[])),
-  http.get('/api/threads/:threadId/agents', () => HttpResponse.json([] satisfies AgentNode[])),
+  http.get('/api/mcp/connections', () =>
+    HttpResponse.json([] satisfies McpConnection[]),
+  ),
+  http.get('/api/threads/:threadId/agents', () =>
+    HttpResponse.json([] satisfies AgentNode[]),
+  ),
+  http.get('/api/threads/:threadId/documents', () =>
+    HttpResponse.json({ documents: [] } satisfies ThreadDocumentsView),
+  ),
+  http.get('/api/agents/:agentId/tasks', () =>
+    HttpResponse.json({ tasks: [], delegations: [] } satisfies AgentTasksView),
+  ),
   http.get('/api/access/models', () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),
-  http.get('/api/library', () => HttpResponse.json([] satisfies RecordSummary[])),
-  http.get('/api/admin/model-providers', () => HttpResponse.json([modelProviderView()])),
-  http.get('/api/admin/model-defaults', () => HttpResponse.json(modelDefaults())),
-  http.get('/api/admin/knowledge/settings', () => HttpResponse.json(knowledgeSettings())),
-  http.get('/api/admin/tool-results/settings', () => HttpResponse.json(toolResultSettings())),
+  http.get('/api/library', () =>
+    HttpResponse.json([] satisfies RecordSummary[]),
+  ),
+  http.get('/api/admin/model-providers', () =>
+    HttpResponse.json([modelProviderView()]),
+  ),
+  http.get('/api/admin/model-defaults', () =>
+    HttpResponse.json(modelDefaults()),
+  ),
+  http.get('/api/admin/self-learning/settings', () =>
+    HttpResponse.json(selfLearningSettings()),
+  ),
+  http.get('/api/admin/tool-results/settings', () =>
+    HttpResponse.json(toolResultSettings()),
+  ),
+  http.get('/api/library/:id/training', () =>
+    HttpResponse.json({
+      canTrain: false,
+      selfLearning: false,
+      capUsd: 2,
+      running: null,
+      lastFinished: null,
+    } satisfies TrainingState),
+  ),
 ];
 
 /**

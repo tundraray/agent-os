@@ -11,14 +11,14 @@
 - **Пометка `@AdminOnly()`** пускает только сотрудника с `isAdmin`; иначе 403 `ADMIN_REQUIRED` и запись аудита `access_denied`.
 - **Обработчик** берёт владельца в первой строке (`const ownerId = req.user.id`) и передаёт строку вниз. Владельца из тела, параметров или заголовков он не берёт.
 - **Поиск по владельцу**: сервис или пакет ищет объект по id вместе с владельцем, и чужой объект отвечает так же, как отсутствующий (`*_NOT_FOUND`, одно тело на оба случая).
-- **Поиск по видимости** — для объектов, которыми делятся: вместо владельца стоит одно условие видимости в репозитории, и через него идёт каждое чтение. Невидимый объект отвечает так же, как отсутствующий; видимый, но чужой для правки — отдельным отказом. Пример — записи библиотеки ([design-library.md](../../features/custom-agents/design-library.md), KD-2).
+- **Поиск по видимости** — для объектов, которыми делятся: вместо владельца стоит одно условие видимости в репозитории, и через него идёт каждое чтение. Невидимый объект отвечает так же, как отсутствующий; видимый, но чужой для правки — отдельным отказом. Пример — агенты каталога (условие `visibleTo` в `packages/db/src/repositories/agents.repository.ts`, [design-library.md](../../features/custom-agents/design-library.md), KD-2). Исключение — неизменная версия агента по id из входа задачи: видимость проверил старт ([immutable-versions.md](./immutable-versions.md)).
 - Пакеты ниже `apps/api` о сеансе не знают: они получают строку владельца параметром.
 
 Контракт — [design-identity.md](../../features/enterprise-access/design-identity.md#contract-definitions).
 
 ## Reference
 
-- `apps/api/src/identity/session.guard.ts` — глобальная проверка и пометки (появляется с частью `identity`)
+- `apps/api/src/identity/session.guard.ts` — глобальная проверка и пометки
 - `apps/api/src/chat/threads.controller.ts` — владелец в первой строке обработчика, поиск «чужое = нет»
 
 ## Not For
@@ -35,3 +35,5 @@
 - [design-chat.md](../../features/agent-platform/design-chat.md) — владелец в обработчиках бесед и агентов
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — подключение аккаунта и возврат из OAuth под сеансом без `@Public()`; реестр под `@AdminOnly()` (KD-6)
 - [design-library.md](../../features/custom-agents/design-library.md) — поиск по видимости, `RECORD_READ_ONLY`, маршруты панели под `@AdminOnly()` (KD-2)
+- [design-agents.md](../../features/data-model/design-agents.md) — видимость с агентами по умолчанию и без удалённых; поиск по имени от имени владельца, невидимое имя отвечает как несуществующее (KD-5, KD-7)
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — документы под маршрутами беседы с проверкой её владельца; чужая беседа отвечает как несуществующая (KD-7)

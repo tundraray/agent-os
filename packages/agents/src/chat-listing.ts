@@ -1,4 +1,9 @@
-import { CHAT_BUILTIN_KEY, type RecordHeader } from '@agent-os/contracts';
+import {
+  CHAT_BUILTIN_KEY,
+  nameWinners,
+  TRAINER_BUILTIN_KEY,
+  type RecordHeader,
+} from '@agent-os/contracts';
 
 /**
  * Characters the lines of the chat listing may take (design-runtime.md, Runtime settings). Names
@@ -12,11 +17,16 @@ const OWN_MARK = 'yours';
 const SYSTEM_MARK = 'system';
 
 /**
- * Whether the main chat may offer and start the record (KD-4): the employee's own always, another's only
- * with «предлагать в главном чате»; the `chat` record itself never.
+ * Whether the main chat offers the record (KD-4): the employee's own always, another's only with
+ * «предлагать в главном чате»; the `chat` and `trainer` records never. It decides whom the chat lists and
+ * which record a message's chip may name; a start by name is not limited by it (data-model KD-5, rule 1).
  */
 export function inRootLaunchSet(header: RecordHeader): boolean {
-  if (header.builtinKey === CHAT_BUILTIN_KEY) return false;
+  if (
+    header.builtinKey === CHAT_BUILTIN_KEY ||
+    header.builtinKey === TRAINER_BUILTIN_KEY
+  )
+    return false;
   return header.mine || header.offerInChat;
 }
 
@@ -31,8 +41,8 @@ export interface ChatListingInput {
 export interface ChatListing {
   /** Lines of the agents, for the description of `start_agent`. */
   readonly agents: readonly string[];
-  /** Lines of the workflows, for the description of `start_workflow`. */
-  readonly workflows: readonly string[];
+  /** Lines of the deep agents, for the description of the tool that starts one by a brief. */
+  readonly deepAgents: readonly string[];
   /** Records whose line kept its description. */
   readonly described: number;
 }
@@ -51,10 +61,18 @@ function whose(header: RecordHeader): string {
   return header.author === null ? SYSTEM_MARK : `by ${header.author.name}`;
 }
 
-/** A line of the listing (KD-4): id, name, whose record and, while the budget allows, the description. */
-function line(header: RecordHeader, withDescription: boolean): string {
-  const head = `${header.id}: ${header.name} (${whose(header)})`;
-  return descriptionLine(withDescription ? `${head} — ${header.description}` : head);
+/**
+ * A line of a start tool (data-model design-agents.md, «Инструменты модели»): the name the call takes, whose
+ * agent it is and, while the budget allows, the description.
+ */
+export function listingLine(
+  header: RecordHeader,
+  withDescription = true,
+): string {
+  const head = `${header.name} (${whose(header)})`;
+  return descriptionLine(
+    withDescription ? `${head} — ${header.description}` : head,
+  );
 }
 
 function byName(left: RecordHeader, right: RecordHeader): number {
@@ -72,28 +90,45 @@ function displayOrder(left: RecordHeader, right: RecordHeader): number {
 }
 
 /**
- * The records the main chat may offer, as lines of its tools (KD-4; pure-decision.md). Past the budget,
+ * The records the main chat may offer, as lines of its tools (KD-4; pure-decision.md): of each name only its
+ * winner (`nameWinners` of `@agent-os/contracts`), so the model never sees a name that would start another
+ * agent, and only when the chat may offer it. Past the budget,
  * descriptions are dropped one by one, first from the records the employee started fewer sessions
  * with; at an equal count by name without case, then by id. Names stay at any budget.
  */
-export function chatListing({ headers, sessionCounts, budget }: ChatListingInput): ChatListing {
-  const offered = headers.filter(inRootLaunchSet).sort(displayOrder);
-  const countOf = (header: RecordHeader): number => sessionCounts.get(header.id) ?? 0;
+export function chatListing({
+  headers,
+  sessionCounts,
+  budget,
+}: ChatListingInput): ChatListing {
+  const offered = nameWinners(headers)
+    .filter(inRootLaunchSet)
+    .sort(displayOrder);
+  const countOf = (header: RecordHeader): number =>
+    sessionCounts.get(header.id) ?? 0;
 
   const described = new Set(offered.map((header) => header.id));
-  let size = offered.reduce((sum, header) => sum + line(header, true).length, 0);
+  let size = offered.reduce(
+    (sum, header) => sum + listingLine(header, true).length,
+    0,
+  );
   const dropOrder = [...offered].sort(
     (left, right) => countOf(left) - countOf(right) || byName(left, right),
   );
   for (const header of dropOrder) {
     if (size <= budget) break;
-    size -= line(header, true).length - line(header, false).length;
+    size -=
+      listingLine(header, true).length - listingLine(header, false).length;
     described.delete(header.id);
   }
 
   const linesOf = (kind: RecordHeader['kind']): string[] =>
     offered
       .filter((header) => header.kind === kind)
-      .map((header) => line(header, described.has(header.id)));
-  return { agents: linesOf('agent'), workflows: linesOf('workflow'), described: described.size };
+      .map((header) => listingLine(header, described.has(header.id)));
+  return {
+    agents: linesOf('agent'),
+    deepAgents: linesOf('deep_agent'),
+    described: described.size,
+  };
 }

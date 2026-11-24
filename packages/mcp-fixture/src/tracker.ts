@@ -9,14 +9,25 @@ type TicketStatus = (typeof TICKET_STATUSES)[number];
  * question with a visible answer.
  */
 const TEAMS = {
-  payments: { assignees: ['anna.kovacs', 'omar.haddad', 'lena.vogel'], meanCloseHours: 18 },
-  checkout: { assignees: ['tom.becker', 'yuki.sato', 'ines.moreau'], meanCloseHours: 30 },
+  payments: {
+    assignees: ['anna.kovacs', 'omar.haddad', 'lena.vogel'],
+    meanCloseHours: 18,
+  },
+  checkout: {
+    assignees: ['tom.becker', 'yuki.sato', 'ines.moreau'],
+    meanCloseHours: 30,
+  },
   ledger: { assignees: ['piotr.nowak', 'sara.lindqvist'], meanCloseHours: 12 },
-  fraud: { assignees: ['diego.ramos', 'mia.jensen', 'ravi.iyer'], meanCloseHours: 48 },
+  fraud: {
+    assignees: ['diego.ramos', 'mia.jensen', 'ravi.iyer'],
+    meanCloseHours: 48,
+  },
 } as const;
 export type TicketTeam = keyof typeof TEAMS;
 export const TICKET_TEAMS = Object.keys(TEAMS) as TicketTeam[];
-export const TICKET_ASSIGNEES = Object.values(TEAMS).flatMap((team) => team.assignees);
+export const TICKET_ASSIGNEES = Object.values(TEAMS).flatMap(
+  (team) => team.assignees,
+);
 
 const SUBJECTS = [
   'Provider timeouts during checkout',
@@ -56,7 +67,9 @@ let tickets: readonly Ticket[] | undefined;
  * in every process and does not depend on the log dataset version.
  */
 export function trackerTickets(): readonly Ticket[] {
-  tickets ??= Array.from({ length: TICKET_COUNT }, (_, index) => ticketAt(index));
+  tickets ??= Array.from({ length: TICKET_COUNT }, (_, index) =>
+    ticketAt(index),
+  );
   return tickets;
 }
 
@@ -68,7 +81,9 @@ function ticketAt(index: number): Ticket {
   const team = TICKET_TEAMS[randomInt(random, 0, TICKET_TEAMS.length - 1)];
   const { assignees, meanCloseHours } = TEAMS[team];
   const assignee = assignees[randomInt(random, 0, assignees.length - 1)];
-  const createdMs = Math.floor(weekStartMs + index * slotMs + random() * slotMs);
+  const createdMs = Math.floor(
+    weekStartMs + index * slotMs + random() * slotMs,
+  );
   const closedMs = createdMs + closeHours(random, meanCloseHours) * HOUR_MS;
   const closed = closedMs < weekEndMs;
   return {
@@ -84,6 +99,7 @@ function ticketAt(index: number): Ticket {
 
 /** Whole-minute hours to close: a shifted exponential with the team's mean. */
 function closeHours(random: Random, meanHours: number): number {
-  const hours = MIN_CLOSE_HOURS - Math.log(1 - random()) * (meanHours - MIN_CLOSE_HOURS);
+  const hours =
+    MIN_CLOSE_HOURS - Math.log(1 - random()) * (meanHours - MIN_CLOSE_HOURS);
   return Math.round(hours * 60) / 60;
 }

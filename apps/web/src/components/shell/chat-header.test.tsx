@@ -25,19 +25,25 @@ describe('ChatHeaderView — HD-03 title by HeaderTitle (AC-07.2, AC-07.3, AC-12
   it.each([
     { state: 'text', text: 'Сверка договора с ООО «Ромашка»', pending: false },
     { state: 'pending', text: 'Новая беседа', pending: true },
-  ])('$state: the h1 shows «$text» and is the programmatic focus target', ({ text, pending }) => {
-    renderHeaderView({ title: { kind: 'text', text, pending } });
+  ])(
+    '$state: the h1 shows «$text» and is the programmatic focus target',
+    ({ text, pending }) => {
+      renderHeaderView({ title: { kind: 'text', text, pending } });
 
-    const heading = screen.getByRole('heading', { level: 1, name: text });
-    expect(heading).toHaveTextContent(text);
-    expect(heading).toHaveAttribute('tabindex', '-1');
-    expect(heading).toHaveAttribute('data-shell-focus', 'page-title');
-  });
+      const heading = screen.getByRole('heading', { level: 1, name: text });
+      expect(heading).toHaveTextContent(text);
+      expect(heading).toHaveAttribute('tabindex', '-1');
+      expect(heading).toHaveAttribute('data-shell-focus', 'page-title');
+    },
+  );
 
   it('hidden (`/`): the h1 is the visually hidden «Новый чат» and shows no title', () => {
     renderHeaderView({ title: { kind: 'hidden' } });
 
-    const heading = screen.getByRole('heading', { level: 1, name: 'Новый чат' });
+    const heading = screen.getByRole('heading', {
+      level: 1,
+      name: 'Новый чат',
+    });
     expect(heading.querySelector('.sr-only')).toHaveTextContent('Новый чат');
     expect(screen.queryByText('Новая беседа')).toBeNull();
   });
@@ -59,17 +65,25 @@ describe('ChatHeaderView — HD-03 title by HeaderTitle (AC-07.2, AC-07.3, AC-12
     expect(heading).toHaveTextContent('');
     expect(heading).not.toHaveAttribute('aria-busy');
     expect(heading.querySelector('[data-slot="skeleton"]')).toBeNull();
-    expect(screen.queryByRole('heading', { level: 1, name: 'Новый чат' })).toBeNull();
+    expect(
+      screen.queryByRole('heading', { level: 1, name: 'Новый чат' }),
+    ).toBeNull();
   });
 
   it.each([
     { workspaceOpen: false, expanded: 'false' },
     { workspaceOpen: true, expanded: 'true' },
-  ])('HD-04 «Рабочая область»: workspaceOpen=$workspaceOpen → aria-expanded="$expanded"', ({ workspaceOpen, expanded }) => {
-    renderHeaderView({ title: { kind: 'hidden' }, workspaceOpen });
+  ])(
+    'HD-04 «Схема» (deep-agents DA-12): workspaceOpen=$workspaceOpen → aria-expanded="$expanded"',
+    ({ workspaceOpen, expanded }) => {
+      renderHeaderView({ title: { kind: 'hidden' }, workspaceOpen });
 
-    expect(screen.getByRole('button', { name: 'Рабочая область' })).toHaveAttribute('aria-expanded', expanded);
-  });
+      expect(screen.getByRole('button', { name: 'Схема' })).toHaveAttribute(
+        'aria-expanded',
+        expanded,
+      );
+    },
+  );
 });
 
 describe('ChatHeaderView — HD-02 sidebar toggle (AC-07.1)', () => {

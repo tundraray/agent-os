@@ -10,8 +10,8 @@
     "#executor/*": "./src/executor/*.ts"
   },
   "scripts": {
-    "lint": "oxlint --type-aware --deny-warnings src/ test/",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint --type-aware --deny-warnings",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
   },

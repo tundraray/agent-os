@@ -1,11 +1,10 @@
 import { STATUS_CODES } from 'node:http';
 import { HttpException, InternalServerErrorException } from '@nestjs/common';
 import { AgentsError, type StartRefusalDetail } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
 import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
-import { WorkflowsError } from '@agent-os/workflows';
 import { apiError } from '../common/api-error';
+import type { RouteCall, RouteStyle } from '../common/logged-route';
 
 /**
  * The not-found codes a route answers with; a runtime `TASK_NOT_FOUND` and an agents `AGENT_NOT_FOUND`
@@ -28,14 +27,13 @@ const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
   AGENT_NOT_FOUND: { status: 404, message: 'Agent not found' },
   RUN_NOT_FOUND: { status: 404, message: 'Run not found' },
   DECISION_NOT_FOUND: { status: 404, message: 'Decision not found' },
+  DOCUMENT_NOT_FOUND: { status: 404, message: 'Document not found' },
   VALIDATION_FAILED: { status: 400, message: 'Validation failed' },
   INVALID_CURSOR: { status: 400, message: 'Invalid cursor' },
   INVALID_ARGUMENTS: { status: 400, message: 'Invalid arguments' },
   NOT_FINISHED: { status: 409, message: 'Agent is not finished' },
   PARENT_FINISHED: { status: 409, message: 'Parent agent is finished' },
   START_REFUSED: { status: 409, message: 'Start refused' },
-  DRAFT_NOT_FOUND: { status: 404, message: 'Draft not found' },
-  DRAFT_RESOLVED: { status: 409, message: 'Draft is resolved' },
 };
 
 /** The HTTP answer of one API error code, body `ApiErrorSchema`. */
@@ -79,6 +77,7 @@ function codeOf(
         return notFound;
       case 'NOT_FINISHED':
       case 'INVALID_ARGUMENTS':
+      case 'RUN_NOT_FOUND':
         return error.code;
       default:
         return undefined;
@@ -88,26 +87,28 @@ function codeOf(
     switch (error.code) {
       case 'TASK_NOT_FOUND':
         return notFound;
-      case 'DECISION_NOT_FOUND':
       case 'PARENT_FINISHED':
         return error.code;
       default:
         return undefined;
     }
   }
-  if (error instanceof WorkflowsError) return error.code;
   return undefined;
 }
 
 /**
  * Translates any error of a command into its HTTP answer: an `HttpException` (validation, cursor, the
  * service's own codes) as is, a refused start into 409 START_REFUSED with its reason and model, an
- * expected refusal of `agents`, `runtime` or `workflows` into its code with a constant message, anything else into a bare 500 with neither text nor stack (the caller logs
- * the original error in the field `error`).
+ * expected refusal of `agents` or `runtime` into its code with a constant message, anything else into a
+ * bare 500 with neither text nor stack (the caller logs the original error in the field `error`).
  */
 function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   if (error instanceof HttpException) return error;
-  if (error instanceof AgentsError && error.code === 'START_REFUSED' && error.refusal !== null) {
+  if (
+    error instanceof AgentsError &&
+    error.code === 'START_REFUSED' &&
+    error.refusal !== null
+  ) {
     return startRefused(error.refusal);
   }
   const code = codeOf(error, notFound);
@@ -122,68 +123,24 @@ export type CommandFields = {
   readonly threadId?: string;
   readonly agentId?: string;
   readonly decisionId?: string;
+  /** The document number of the path, as requested. */
+  readonly documentId?: string;
   /** The record chip of a message. */
   readonly recordId?: string;
-  /** A record draft and the employee's action on it. */
-  readonly draftId?: string;
-  readonly action?: string;
 };
 
 /** One API command: its route, ids, the work, and the outcome fields read from the result. */
-export type Command<T> = {
-  readonly route: string;
-  readonly fields: CommandFields;
-  readonly work: () => Promise<T>;
-  readonly outcomeOf?: (result: T) => Record<string, unknown>;
-};
+export type Command<T> = RouteCall<T> & { readonly fields: CommandFields };
 
 /**
- * Runs a command and writes its one log record (design-chat.md, Constraints): route, ids, outcome and
- * `durationMs`; an expected refusal is `info` with its `errorCode`, a server failure is `error` with
- * the original error in `error`. Errors leave as the `HttpException` of {@link toHttpError}.
+ * How the chat's routes log and answer (design-chat.md, Constraints): one `api command …` record per
+ * command, and every error leaves as the `HttpException` of {@link toHttpError}.
  */
-export async function runCommand<T>(
-  logger: Logger,
-  { route, fields, work, outcomeOf }: Command<T>,
+export function chatRoute(
   notFound: NotFoundCode = 'AGENT_NOT_FOUND',
-): Promise<T> {
-  const startedAt = Date.now();
-  try {
-    const result = await work();
-    logger.info('api command answered', {
-      route,
-      ...fields,
-      outcome: 'ok',
-      ...outcomeOf?.(result),
-      durationMs: Date.now() - startedAt,
-    });
-    return result;
-  } catch (error) {
-    const answer = toHttpError(error, notFound);
-    const status = answer.getStatus();
-    if (status >= 500) {
-      logger.error('api command failed', {
-        route,
-        ...fields,
-        outcome: 'error',
-        status,
-        durationMs: Date.now() - startedAt,
-        error,
-      });
-    } else {
-      const body = answer.getResponse();
-      logger.info('api command refused', {
-        route,
-        ...fields,
-        outcome: 'refused',
-        status,
-        errorCode:
-          typeof body === 'object' && 'errorCode' in body
-            ? body.errorCode
-            : undefined,
-        durationMs: Date.now() - startedAt,
-      });
-    }
-    throw answer;
-  }
+): RouteStyle {
+  return {
+    subject: 'api command',
+    toHttpError: (error) => toHttpError(error, notFound),
+  };
 }

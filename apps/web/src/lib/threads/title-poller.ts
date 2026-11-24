@@ -1,9 +1,9 @@
-import type { ThreadMessage } from "@assistant-ui/react";
-import { createAssistantStream, type AssistantStream } from "assistant-stream";
-import { logger } from "@/lib/logger";
-import type { ThreadsApiClient } from "./threads-api-client";
-import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import type { ShellStatusStore } from "./shell-status-store";
+import type { ThreadMessage } from '@assistant-ui/react';
+import { createAssistantStream, type AssistantStream } from 'assistant-stream';
+import { logger } from '@/lib/logger';
+import type { ThreadsApiClient } from './threads-api-client';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import type { ShellStatusStore } from './shell-status-store';
 
 /** At most one GET /api/threads/:id per interval. */
 const TITLE_POLL_INTERVAL_MS = 1_000;
@@ -11,7 +11,7 @@ const TITLE_POLL_INTERVAL_MS = 1_000;
 const TITLE_POLL_WINDOW_MS = 15_000;
 
 export type TitlePollDeps = {
-  api: Pick<ThreadsApiClient, "getThread">;
+  api: Pick<ThreadsApiClient, 'getThread'>;
   status: ShellStatusStore;
 };
 
@@ -36,7 +36,9 @@ export function createTitlePollStream({
   messages,
   deps,
 }: TitlePollInput): AssistantStream {
-  const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
+  const hasAssistantAnswer = messages.some(
+    (message) => message.role === 'assistant',
+  );
   if (!hasAssistantAnswer) return createAssistantStream(() => {});
 
   const { api, status } = deps;
@@ -53,8 +55,8 @@ export function createTitlePollStream({
             return;
           }
         } catch (error) {
-          if (isApiRequestError(error) && error.kind === "not_found") return;
-          logger.warn("[web-shell] title poll request failed", {
+          if (isApiRequestError(error) && error.kind === 'not_found') return;
+          logger.warn('[web-shell] title poll request failed', {
             remoteId,
             ...describeApiError(error),
           });

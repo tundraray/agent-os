@@ -79,7 +79,9 @@ export class FixtureServer {
     });
     await server.connect(transport);
     try {
-      return await transport.handleRequest(request, { parsedBody: options.parsedBody });
+      return await transport.handleRequest(request, {
+        parsedBody: options.parsedBody,
+      });
     } finally {
       await server.close();
     }
@@ -91,22 +93,37 @@ export class FixtureServer {
   }
 
   private createServer(resultFault: ResultFaultRule | undefined): Server {
-    const server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
+    const server = new Server(SERVER_INFO, {
+      capabilities: { tools: {}, resources: {} },
+    });
     server.setRequestHandler('tools/list', () => ({
       tools: this.tools.map((tool) => ({
         name: tool.name,
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
-        ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
+        ...(tool.outputSchema === undefined
+          ? {}
+          : { outputSchema: tool.outputSchema }),
         ...(tool.readOnly ? { annotations: { readOnlyHint: true } } : {}),
       })),
     }));
     server.setRequestHandler('tools/call', (request) =>
-      this.callTool(server, request.params.name, request.params.arguments, resultFault),
+      this.callTool(
+        server,
+        request.params.name,
+        request.params.arguments,
+        resultFault,
+      ),
     );
     server.setRequestHandler('resources/list', () => ({
-      resources: [{ uri: SOURCE_INFO_URI, name: 'source-info', mimeType: 'application/json' }],
+      resources: [
+        {
+          uri: SOURCE_INFO_URI,
+          name: 'source-info',
+          mimeType: 'application/json',
+        },
+      ],
     }));
     server.setRequestHandler('resources/read', (request) => {
       if (request.params.uri !== SOURCE_INFO_URI) {
@@ -117,7 +134,15 @@ export class FixtureServer {
         datasetVersion: this.dataset.version,
         recordCount: this.recordCount(),
       };
-      return { contents: [{ uri: SOURCE_INFO_URI, mimeType: 'application/json', text: canonicalJson(info) }] };
+      return {
+        contents: [
+          {
+            uri: SOURCE_INFO_URI,
+            mimeType: 'application/json',
+            text: canonicalJson(info),
+          },
+        ],
+      };
     });
     return server;
   }
@@ -142,13 +167,18 @@ export class FixtureServer {
   ): Promise<CallToolResult> {
     const tool = this.tools.find((candidate) => candidate.name === name);
     if (tool === undefined) {
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool: ${name}`);
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        `Unknown tool: ${name}`,
+      );
     }
     if (fault?.mode === 'delay_ms') {
       await sleep(fault.ms);
     }
     if (fault?.mode === 'wait_for_file' && !(await waitForFile(fault.path))) {
-      return toolError(`fixture fault: ${fault.path} did not appear within ${WAIT_FOR_FILE_LIMIT_MS} ms`);
+      return toolError(
+        `fixture fault: ${fault.path} did not appear within ${WAIT_FOR_FILE_LIMIT_MS} ms`,
+      );
     }
     if (fault?.mode === 'tool_error') {
       return toolError(fault.message ?? `fixture fault: ${name} failed`);
@@ -166,7 +196,10 @@ export class FixtureServer {
     if (fault?.mode === 'snapshot_flip') {
       this.dataset = flipped(this.dataset, fault.version);
     }
-    const result = fault === undefined ? outcome.result : applyResultFault(outcome.result, fault);
+    const result =
+      fault === undefined
+        ? outcome.result
+        : applyResultFault(outcome.result, fault);
     if (typeof result === 'string') {
       return toolError(result);
     }
@@ -175,7 +208,10 @@ export class FixtureServer {
 }
 
 /** The `snapshot_flip` switch between `v1` and `v2`. */
-function flipped(dataset: LogDataset, version: DatasetVersion | undefined): LogDataset {
+function flipped(
+  dataset: LogDataset,
+  version: DatasetVersion | undefined,
+): LogDataset {
   return createLogDataset(version ?? (dataset.version === 'v1' ? 'v2' : 'v1'));
 }
 
@@ -200,7 +236,9 @@ function jsonResult(result: Record<string, unknown>): CallToolResult {
   const json = canonicalJson(result);
   const structuredContent = JSON.parse(json) as Record<string, unknown>;
   const content: CallToolResult['content'] =
-    Buffer.byteLength(json, 'utf8') <= TEXT_COPY_MAX_BYTES ? [{ type: 'text', text: json }] : [];
+    Buffer.byteLength(json, 'utf8') <= TEXT_COPY_MAX_BYTES
+      ? [{ type: 'text', text: json }]
+      : [];
   return { structuredContent, content };
 }
 
@@ -212,7 +250,10 @@ const PAD_CHARACTER = 'x';
  * Reshapes a tool result for a result fault; returns an error text when the fault cannot apply to this result.
  * Modes that do not change the result shape (`delay_ms`, `snapshot_flip`, `tool_error*`) return it unchanged.
  */
-function applyResultFault(result: Record<string, unknown>, fault: ResultFaultRule): Record<string, unknown> | string {
+function applyResultFault(
+  result: Record<string, unknown>,
+  fault: ResultFaultRule,
+): Record<string, unknown> | string {
   const listKey = LIST_KEYS.find((key) => Array.isArray(result[key]));
   const list = listKey === undefined ? [] : (result[listKey] as unknown[]);
   const withList = (items: unknown): Record<string, unknown> =>
@@ -221,7 +262,11 @@ function applyResultFault(result: Record<string, unknown>, fault: ResultFaultRul
     case 'empty':
       return endPage({ ...withList([]), totalMatched: 0 });
     case 'unknown_total': {
-      const { totalMatched: _total, totalRelation: _relation, ...rest } = result;
+      const {
+        totalMatched: _total,
+        totalRelation: _relation,
+        ...rest
+      } = result;
       return rest;
     }
     case 'page_cap':
@@ -244,7 +289,11 @@ function endPage(result: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Lengthens the first record's `message` so the canonical result JSON is `bytes` long. */
-function padToBytes(result: Record<string, unknown>, records: unknown[], bytes: number): Record<string, unknown> | string {
+function padToBytes(
+  result: Record<string, unknown>,
+  records: unknown[],
+  bytes: number,
+): Record<string, unknown> | string {
   const [first, ...rest] = records;
   if (!isRecordWithMessage(first)) {
     return 'fixture fault: oversize needs a result with at least one record';
@@ -253,11 +302,19 @@ function padToBytes(result: Record<string, unknown>, records: unknown[], bytes: 
   if (missing <= 0) {
     return result;
   }
-  return { ...result, records: [{ ...first, message: first.message + PAD_CHARACTER.repeat(missing) }, ...rest] };
+  return {
+    ...result,
+    records: [
+      { ...first, message: first.message + PAD_CHARACTER.repeat(missing) },
+      ...rest,
+    ],
+  };
 }
 
 function isRecordWithMessage(value: unknown): value is { message: string } {
   return (
-    value !== null && typeof value === 'object' && typeof (value as { message?: unknown }).message === 'string'
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { message?: unknown }).message === 'string'
   );
 }

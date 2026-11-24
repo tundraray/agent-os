@@ -34,9 +34,7 @@ const ANSWERS: Record<AccessErrorCode, { status: number; message: string }> = {
 export function accessError(
   code: AccessErrorCode,
   reason?:
-    | GrantInvalidReason
-    | GrantTargetUnknownReason
-    | ModelProviderInvalidReason,
+    GrantInvalidReason | GrantTargetUnknownReason | ModelProviderInvalidReason,
 ): HttpException {
   const { status, message } = ANSWERS[code];
   return apiError(status, code, message, reason);

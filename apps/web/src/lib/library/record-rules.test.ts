@@ -1,34 +1,60 @@
-import type { AgentContent, MissingRight, WorkflowContent, WorkflowExecutor } from '@agent-os/contracts';
+import type {
+  AgentContent,
+  MissingRight,
+  RecordSummary,
+} from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
+import { fixtureId, recordSummary } from '@/test/fixtures';
+import { testTranslator } from '@/test/intl';
 import {
   canUseInChat,
   changedAfterRun,
+  changedFieldLabel,
   changedFields,
-  freeName,
-  isDraftStale,
   recipientNote,
-  taskTitleName,
-  type RecordDefinition,
+  recordNamed,
+  type AgentDefinition,
 } from './record-rules';
 
-const MODEL = 'anthropic/claude-haiku-4-5';
-const SOURCE_ID = '7f3c1a52-4b8e-4c1d-9a0e-2d6b5f8e1c40';
+const t = testTranslator('library');
+/** Changed fields as the form names them, from the Russian catalogue. */
+const labelsOf = (before: AgentDefinition, after: AgentDefinition): string[] =>
+  changedFields(before, after).map((field) => changedFieldLabel(t, field));
 
-const inChat = (fields: { builtinKey?: string | null; mine?: boolean; offerInChat?: boolean; missingRights?: MissingRight[] }) =>
-  canUseInChat({ builtinKey: null, mine: false, offerInChat: false, missingRights: [], ...fields });
+const MODEL = 'anthropic/claude-haiku-4-5';
+
+const inChat = (fields: {
+  builtinKey?: string | null;
+  mine?: boolean;
+  offerInChat?: boolean;
+  missingRights?: MissingRight[];
+}) =>
+  canUseInChat({
+    builtinKey: null,
+    mine: false,
+    offerInChat: false,
+    missingRights: [],
+    ...fields,
+  });
 
 const colleague = {
   mine: false,
-  author: { id: '0b8f6d2e-1c3a-4e5f-8a7b-9c0d1e2f3a4b', name: 'Аня', disabled: false },
+  author: {
+    id: '0b8f6d2e-1c3a-4e5f-8a7b-9c0d1e2f3a4b',
+    name: 'Аня',
+    disabled: false,
+  },
   audience: {
     roles: [
       { id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', name: 'SRE', member: true },
-      { id: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e', name: 'Поддержка', member: false },
+      {
+        id: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
+        name: 'Поддержка',
+        member: false,
+      },
     ],
   },
 };
-
-const pendingEdit = { state: 'pending' as const, recordId: SOURCE_ID, baseVersion: 3, refusal: null };
 
 const agentContent: AgentContent = {
   prompt: 'Собери ошибки gateway',
@@ -37,74 +63,108 @@ const agentContent: AgentContent = {
   maxTurns: 40,
   agents: [],
   tools: [],
+  taskList: true,
 };
 
-const agent = (content: Partial<AgentContent> = {}, name = 'Сбор логов'): RecordDefinition => ({
+const agent = (
+  content: Partial<AgentContent> = {},
+  name = 'Сбор логов',
+): AgentDefinition => ({
   name,
   description: 'Ошибки за период',
   kind: 'agent',
   content: { ...agentContent, ...content },
 });
 
-const executor = (name: string, fields: Partial<WorkflowExecutor> = {}): WorkflowExecutor => ({
-  name,
-  role: 'Собирает ошибки за период из задания',
-  prompt: 'Собери ошибки',
-  servers: ['sentry'],
-  model: MODEL,
-  maxTurns: 40,
-  maxRuns: 3,
-  tools: [],
-  source: null,
-  ...fields,
-});
+/**
+ * The library list of the name rows, in the order of the list: a colleague's deep agent «Отчёт», the viewer's own
+ * «отчёт», an agent «Сводка», and the main chat.
+ */
+const NAMED: ReadonlyMap<string, RecordSummary> = new Map(
+  [
+    recordSummary({
+      id: fixtureId(61),
+      kind: 'deep_agent',
+      name: 'Отчёт',
+      mine: false,
+    }),
+    recordSummary({ id: fixtureId(62), kind: 'deep_agent', name: 'отчёт' }),
+    recordSummary({ id: fixtureId(63), name: 'Сводка', mine: false }),
+    recordSummary({
+      id: fixtureId(64),
+      name: 'Главный чат',
+      builtinKey: 'chat',
+      author: null,
+      mine: false,
+    }),
+  ].map((record) => [record.id, record]),
+);
+const namedId = (kind: RecordSummary['kind'], name: string) =>
+  recordNamed(NAMED, kind, name)?.id ?? null;
 
-const workflow = (content: Partial<WorkflowContent> = {}, name = 'Разбор инцидента'): RecordDefinition => ({
-  name,
-  description: 'Сводка по инциденту',
-  kind: 'workflow',
-  content: {
-    coordinator: { rules: '', model: MODEL, maxTurns: 40 },
-    executors: [executor('Сбор логов'), executor('Ответ')],
-    finalExecutor: 'Ответ',
-    selfLearning: false,
-    ...content,
-  },
-});
-
-const index = { summaryOf: (id: string) => (id === SOURCE_ID ? { name: 'Разбор инцидента' } : null) };
-
-// Catches: a rule shows an action where it is forbidden or hides it where it is allowed (AC-26.2, AC-28.1, AC-29.1, DC-01).
+// Catches: a rule shows an action where it is forbidden or hides it where it is allowed (AC-26.2, AC-28.1, AC-29.1).
 describe('web rules (design-web.md, «Правила веба»)', () => {
   it.each<[string, () => unknown, unknown]>([
     // «Использовать в чате» — AC-26.2, RV-01
-    ['in chat: the main chat record → no', () => inChat({ builtinKey: 'chat', mine: true, offerInChat: true }), false],
-    ['in chat: own record → yes', () => inChat({ mine: true }), true],
-    ["in chat: colleague's record offered in chat → yes", () => inChat({ offerInChat: true }), true],
-    ["in chat: colleague's record not offered in chat → no (AC-26.2)", () => inChat({}), false],
     [
-      'in chat: the record itself needs a model the viewer lacks → no',
-      () => inChat({ mine: true, missingRights: [{ executor: null, servers: [], model: MODEL }] }),
+      'in chat: the main chat record → no',
+      () => inChat({ builtinKey: 'chat', mine: true, offerInChat: true }),
+      false,
+    ],
+    ['in chat: own record → yes', () => inChat({ mine: true }), true],
+    [
+      "in chat: colleague's record offered in chat → yes",
+      () => inChat({ offerInChat: true }),
+      true,
+    ],
+    [
+      "in chat: colleague's record not offered in chat → no (AC-26.2)",
+      () => inChat({}),
       false,
     ],
     [
-      'in chat: only missing servers or an executor model → yes',
+      'in chat: the record itself needs a model the viewer lacks → no',
+      () =>
+        inChat({
+          mine: true,
+          missingRights: [{ subagent: null, servers: [], model: MODEL }],
+        }),
+      false,
+    ],
+    [
+      'in chat: only missing servers or a subagent model → yes',
       () =>
         inChat({
           mine: true,
           missingRights: [
-            { executor: null, servers: ['sentry'], model: null },
-            { executor: 'Сбор логов', servers: [], model: MODEL },
+            { subagent: null, servers: ['sentry'], model: null },
+            { subagent: 'Сбор логов', servers: [], model: MODEL },
           ],
         }),
       true,
     ],
 
     // «Изменён после запуска» — AC-28.1
-    ['changed after run: newer version → yes', () => changedAfterRun({ version: 1 }, { version: 2 }), true],
-    ['changed after run: same version → no', () => changedAfterRun({ version: 2 }, { version: 2 }), false],
-    ['changed after run: record not in the list → no', () => changedAfterRun({ version: 1 }, null), false],
-    ['changed after run: list not read → no', () => changedAfterRun({ version: 1 }, undefined), false],
+    [
+      'changed after run: newer version → yes',
+      () => changedAfterRun({ version: 1 }, { version: 2 }),
+      true,
+    ],
+    [
+      'changed after run: same version → no',
+      () => changedAfterRun({ version: 2 }, { version: 2 }),
+      false,
+    ],
+    [
+      'changed after run: record not in the list → no',
+      () => changedAfterRun({ version: 1 }, null),
+      false,
+    ],
+    [
+      'changed after run: list not read → no',
+      () => changedAfterRun({ version: 1 }, undefined),
+      false,
+    ],
 
     // «Пояснение получателю» — AC-29.1
     [
@@ -112,83 +172,67 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
       () => [recipientNote(colleague), recipientNote(colleague, true)],
       [{ roles: ['SRE'] }, { roles: ['SRE'] }],
     ],
-    ['recipient note: not the first run → none', () => recipientNote(colleague, false), null],
-    ['recipient note: the viewer is the author → none', () => recipientNote({ ...colleague, mine: true }), null],
-    ['recipient note: a company record → none', () => recipientNote({ ...colleague, author: null }), null],
-    ['recipient note: record not in the live list → none', () => recipientNote(null), null],
-
-    // «Черновик устарел» — DC-01
-    ['stale draft: record version above baseVersion → yes', () => isDraftStale(pendingEdit, { version: 4 }), true],
-    ['stale draft: record still at baseVersion → no', () => isDraftStale(pendingEdit, { version: 3 }), false],
     [
-      'stale draft: last refusal version_conflict → yes',
-      () => isDraftStale({ ...pendingEdit, refusal: 'version_conflict' }, { version: 3 }),
-      true,
+      'recipient note: not the first run → none',
+      () => recipientNote(colleague, false),
+      null,
     ],
-    ['stale draft: an already saved draft → no', () => isDraftStale({ ...pendingEdit, state: 'saved' }, { version: 4 }), false],
     [
-      'stale draft: a draft of a new record → no',
-      () => isDraftStale({ ...pendingEdit, recordId: null, baseVersion: null }, undefined),
-      false,
+      'recipient note: the viewer is the author → none',
+      () => recipientNote({ ...colleague, mine: true }),
+      null,
     ],
-
-    // Заголовок задания — MC-21
-    ['task title: record in the list → with its name', () => taskTitleName(SOURCE_ID, index), 'Задание · Разбор инцидента'],
-    ['task title: record not in the list → «Задание»', () => taskTitleName('c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index), 'Задание'],
-    ['task title: list not read → «Задание»', () => taskTitleName(SOURCE_ID, { summaryOf: () => undefined }), 'Задание'],
-
-    // Свободное имя
-    ['free name: nothing taken → «{имя} 2»', () => freeName('Сбор логов', ['Сбор логов']), 'Сбор логов 2'],
     [
-      'free name: «{имя} 2» taken, any case → «{имя} 3»',
-      () => freeName('Сбор логов', ['Сбор логов', 'сбор логов 2']),
-      'Сбор логов 3',
+      'recipient note: a company record → none',
+      () => recipientNote({ ...colleague, author: null }),
+      null,
+    ],
+    [
+      'recipient note: record not in the live list → none',
+      () => recipientNote(null),
+      null,
     ],
 
-    // Изменённые поля — MC-7, MC-10, MC-15
+    // Запись по имени вызова — data-model KD-5: the card finds the record by name, never by an id; who wins a
+    // name is the backend's rule (its row in `packages/contracts/src/library.spec.ts`)
+    [
+      'record by name: the winner of the name among the records of the kind, whatever the case',
+      () => namedId('deep_agent', 'ОТЧЁТ'),
+      fixtureId(62),
+    ],
+    [
+      'record by name: an agent’s name asked as a deep agent → none (a temporary deep agent)',
+      () => namedId('deep_agent', 'Сводка'),
+      null,
+    ],
+    [
+      'record by name: the main chat is never named',
+      () => namedId('agent', 'Главный чат'),
+      null,
+    ],
+    [
+      'record by name: list not read → unknown',
+      () => recordNamed(null, 'agent', 'Сводка'),
+      undefined,
+    ],
+
+    // Изменённые поля — MC-7, MC-10
     [
       'changed fields: equal definitions, or servers ticked in another order → none',
-      () => [changedFields(agent(), agent()), changedFields(agent(), agent({ servers: ['jira', 'sentry'] }))],
+      () => [
+        changedFields(agent(), agent()),
+        changedFields(agent(), agent({ servers: ['jira', 'sentry'] })),
+      ],
       [[], []],
     ],
     [
       'changed fields: agent name and instruction',
-      () => changedFields(agent(), agent({ prompt: 'Собери ошибки и тикеты' }, 'Сбор логов и тикетов')),
-      [
-        { field: 'name', label: 'Имя' },
-        { field: 'prompt', label: 'Инструкция' },
-      ],
-    ],
-    [
-      'changed fields: workflow executor changed, added and removed',
       () =>
-        changedFields(
-          workflow(),
-          workflow({
-            executors: [executor('Сбор логов', { role: 'Собирает ошибки gateway' }), executor('Сбор тикетов')],
-            finalExecutor: null,
-          }),
+        labelsOf(
+          agent(),
+          agent({ prompt: 'Собери ошибки и тикеты' }, 'Сбор логов и тикетов'),
         ),
-      [
-        { field: 'executor', executor: 'Сбор логов', label: 'Исполнитель «Сбор логов»' },
-        { field: 'executor', executor: 'Сбор тикетов', label: 'Исполнитель «Сбор тикетов»' },
-        { field: 'executor', executor: 'Ответ', label: 'Исполнитель «Ответ»' },
-        { field: 'finalExecutor', label: 'Кто пишет ответ' },
-      ],
-    ],
-    [
-      'changed fields: workflow name and coordinator rules',
-      () => changedFields(workflow(), workflow({ coordinator: { rules: 'Ответ ждёт сбор', model: MODEL, maxTurns: 40 } }, 'Инцидент')),
-      [
-        { field: 'name', label: 'Имя' },
-        { field: 'rules', label: 'Как работает команда' },
-      ],
-    ],
-    // AC-10.1, DC-1: without the field the form stays clean after the tick, and the flag is never saved.
-    [
-      'changed fields: workflow self-learning only',
-      () => changedFields(workflow(), workflow({ selfLearning: true })),
-      [{ field: 'selfLearning', label: 'Самообучение' }],
+      ['Имя', 'Инструкция'],
     ],
   ])('%s', (_, decide, expected) => {
     expect(decide()).toEqual(expected);

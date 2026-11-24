@@ -14,5 +14,9 @@ type UsersSectionProps = {
  * the employee, so another employee's address starts from a fresh read.
  */
 export function UsersSection({ page }: UsersSectionProps) {
-  return page.kind === 'record' ? <UserPage key={page.key} id={page.key} /> : <UserList />;
+  return page.kind === 'record' ? (
+    <UserPage key={page.key} id={page.key} />
+  ) : (
+    <UserList />
+  );
 }

@@ -28,8 +28,9 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createLatch, type ScriptedToolCall } from '@agent-os/agents/testing';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AdminUserSummarySchema,
   ApiErrorSchema,
   CatalogModelSchema,
@@ -40,20 +41,17 @@ import {
   MyModelsSchema,
   RecordDetailSchema,
   StartRefusedErrorSchema,
-  WORKFLOWS_BRIEF_CONFIRMATION,
   type ModelDefaults,
   type ModelProviderView,
   type MyModel,
   type RecordDetail,
 } from '@agent-os/contracts';
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
-import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
 import type { INestApplication } from '@nestjs/common';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { APP_LOGGER } from '../src/logging/app-logger';
 import {
   addModel,
   allowRole,
@@ -64,18 +62,18 @@ import {
   runModel,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   BUILTIN,
   createRecord,
+  deepAgentBody,
   getRecord,
   recordName,
-  workflowBody,
 } from './support/library';
 import { runName } from './support/mcp-servers';
-import { databaseUrl } from './support/migrate.global-setup';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   apiRequest,
   createEmployee,
@@ -181,7 +179,7 @@ const StartRefusedLineSchema = z.object({
 
 /** One `app.runtime_model_calls` row as the assertions read it; `costUsd` as a number. */
 interface LedgerRow {
-  ownerId: string;
+  ownerId: string | null;
   taskId: string | null;
   model: string;
   inputTokens: number;
@@ -191,20 +189,10 @@ interface LedgerRow {
   costUsd: number;
 }
 
-/** A workflow record body whose coordinator and executor have no model of their own (`null`: the default at the start). */
-function nullModelWorkflow(name: string) {
-  const body = workflowBody(name, RUN_CHAT_MODEL);
-  return {
-    ...body,
-    content: {
-      ...body.content,
-      coordinator: { ...body.content.coordinator, model: null },
-      executors: body.content.executors.map((executor) => ({
-        ...executor,
-        model: null,
-      })),
-    },
-  };
+/** A deep agent record body whose deep agent and subagent have no model of their own (`null`: the default at the start). */
+function nullModelDeepAgent(name: string) {
+  const body = deepAgentBody(name, RUN_CHAT_MODEL, [{ model: null }]);
+  return { ...body, content: { ...body.content, model: null } };
 }
 
 /** A provider address on this machine: every request is answered 401 with the Gemini key it carried, which it keeps. */
@@ -298,7 +286,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       poolMax: 2,
     });
     double = await startProviderDouble();
-    // Workers on: INT-4 and INT-7 run agents and a workflow to their model calls.
+    // Workers on: INT-4 and INT-7 run agents and a deep agent to their model calls.
     harness = await createTestApp({ captureLog: true, workers: true });
     const { app } = harness;
     admin = await seedSuperAdmin(
@@ -329,7 +317,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     } finally {
       await harness?.close();
       await double?.close();
-      // The models first: a provider is only a name to them, but the catalogue rows name it.
+      // The models first: the foreign key refuses to delete a provider while catalogue rows name it.
       await removeRunRows(database.pool, {
         models: CASE_MODELS,
         roles: roleIds,
@@ -337,11 +325,11 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       });
       // INT-5 row C: the platform's ledger row belongs to no employee.
       await database.pool.query(
-        'DELETE FROM app.runtime_model_calls WHERE owner_id = $1 AND model = ANY($2::text[])',
-        [PLATFORM_OWNER_ID, CASE_MODELS],
+        'DELETE FROM app.runtime_model_calls WHERE owner_id IS NULL AND model = ANY($1::text[])',
+        [CASE_MODELS],
       );
       await database.pool.query(
-        'DELETE FROM app.agent_model_providers WHERE name = ANY($1::text[])',
+        'DELETE FROM app.model_providers WHERE name = ANY($1::text[])',
         [CASE_PROVIDERS],
       );
       await database.close();
@@ -411,9 +399,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     await allowed.add(session);
     return session;
   };
-  /** The ledger rows of `ownerId` (on `model` when given), largest input first. */
+  /** The ledger rows of `ownerId` (`null` — the platform's; on `model` when given), largest input first. */
   const ledgerRows = async (
-    ownerId: string,
+    ownerId: string | null,
     model?: string,
   ): Promise<LedgerRow[]> => {
     const { rows } = await database.pool.query<
@@ -423,7 +411,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
               output_tokens AS "outputTokens", cache_read_tokens AS "cacheReadTokens",
               cache_write_tokens AS "cacheWriteTokens", cost_usd AS "costUsd"
          FROM app.runtime_model_calls
-        WHERE owner_id = $1 AND ($2::text IS NULL OR model = $2)
+        WHERE owner_id IS NOT DISTINCT FROM $1::uuid AND ($2::text IS NULL OR model = $2)
         ORDER BY input_tokens DESC, called_at`,
       [ownerId, model ?? null],
     );
@@ -479,7 +467,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         shown?.apiKeyLast4,
       ];
       const path = `/admin/model-providers/${KEYED_PROVIDER}`;
-      const logger = app.get<Logger>(APP_LOGGER);
+      const logger = app.get<Logger>(LOGGER);
       /** The one captured console line holding `marker`, parsed. */
       const probeLine = (marker: string) => {
         const lines = harness.log.filter((line) => line.includes(marker));
@@ -597,7 +585,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
 
       // Row 4 - When: another instance wrote a provider row with K3 straight into the table, and this one reads it
       await harness.pool.query(
-        `INSERT INTO app.agent_model_providers (name, kind, api_key) VALUES ($1, 'gemini', $2)`,
+        `INSERT INTO app.model_providers (name, kind, api_key) VALUES ($1, 'gemini', $2)`,
         [OTHER_INSTANCE_PROVIDER, INT2_OTHER_INSTANCE_KEY],
       );
       const otherView = await harness.agents.providers.get(
@@ -783,9 +771,10 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // Rows:
   //   1. no chat model chosen by default: the first message of a new conversation -> 409 `START_REFUSED` `model_not_configured`; no conversation
   //      title is created; the reason is in the captured log (DC-3); the scripted model received no call
-  //   2. model chosen, its provider missing (deleted straight in the row), disabled, and Gemini without key -> the same request is refused 409
-  //      `START_REFUSED` `provider_missing`, `provider_disabled`, `provider_key_missing`, each with the `model` field; the scripted model received
-  //      no call
+  //   2. model chosen, its provider disabled, and Gemini without key -> the same request is refused 409 `START_REFUSED` `provider_disabled`,
+  //      `provider_key_missing`, each with the `model` field; the scripted model received no call. `provider_missing` is not exercised here: the
+  //      database forbids a catalogued model without its provider; the reason remains for the race between the catalogue read and the provider
+  //      read and is proven in packages/agents/src/model/retry-policy.spec.ts and packages/agents/src/providers/provider-readiness.spec.ts
   //   3. a run is in progress (the scripted model is held at its second call by a latch); the administrator disables the provider (PATCH
   //      `enabled: false`); the latch is released -> the run ends `failed` with `failureReason` `provider_disabled`, not `model_error`; the
   //      scripted model's second call never happened; then the same with the key removed (`apiKey: null`) -> `provider_key_missing`
@@ -798,7 +787,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // @dependency: resolveStart, providerReadiness, ModelClient, AccessGate.defaultChatModel, AdminModelProvidersController, AuditLog, ConversationsService, scripted AGENT_TURN_CLIENT, Postgres
   // @complexity: high
   it(
-    'INT-4: a missing, disabled or keyless provider refuses a start and fails a running agent with the named reason, writes no access_denied row and sends no model call',
+    'INT-4: a disabled or keyless provider refuses a start and fails a running agent with the named reason, writes no access_denied row and sends no model call',
     async () => {
       const { app } = harness;
       const providerPath = `/admin/model-providers/${REFUSE_PROVIDER}`;
@@ -860,15 +849,6 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
 
       // Row 2 - Given: the case's model is the default chat model
       await putDefaults({ chatModel: REFUSE_MODEL });
-      // When: its provider row is deleted straight in the table (as another instance would) - then registered again
-      await database.pool.query(
-        'DELETE FROM app.agent_model_providers WHERE name = $1',
-        [REFUSE_PROVIDER],
-      );
-      const missing = await refusedFirstMessage(
-        'INT-4 row 2: the provider is missing',
-      );
-      await registerProvider();
       // When: the provider is disabled - then enabled again
       await patchProvider({ enabled: false });
       const disabled = await refusedFirstMessage(
@@ -882,8 +862,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       );
       await patchProvider({ apiKey: INT4_REFUSE_KEY });
       // Then: each start is refused with the provider's reason and the model
-      expect([missing.refusal, disabled.refusal, keyless.refusal]).toEqual([
-        ['START_REFUSED', 'provider_missing', REFUSE_MODEL],
+      expect([disabled.refusal, keyless.refusal]).toEqual([
         ['START_REFUSED', 'provider_disabled', REFUSE_MODEL],
         ['START_REFUSED', 'provider_key_missing', REFUSE_MODEL],
       ]);
@@ -899,7 +878,6 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         .map((fields) => [fields.outcome, fields.refusedModel]);
       expect(refusalsLogged).toEqual([
         ['model_not_configured', null],
-        ['provider_missing', REFUSE_MODEL],
         ['provider_disabled', REFUSE_MODEL],
         ['provider_key_missing', REFUSE_MODEL],
       ]);
@@ -1007,7 +985,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
     'INT-5: embeddings are charged to the starter without grant or quota, refused for a disabled employee, and recorded as platform spend when no employee is named',
     async () => {
       const { app } = harness;
-      const logger = app.get<Logger>(APP_LOGGER);
+      const logger = app.get<Logger>(LOGGER);
       const embed = (ownerId: string | null, texts: readonly string[]) =>
         harness.agents.embeddings.embed({
           texts,
@@ -1026,7 +1004,11 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const monthSpend = async (session: Session) =>
         (await chatApi(app, session).spend()).costUsd;
       /** One ledger row of an embedding batch on the case's model: input tokens only, at 1 USD per million. */
-      const batchRow = (ownerId: string, inputTokens: number, costUsd: number) => ({
+      const batchRow = (
+        ownerId: string | null,
+        inputTokens: number,
+        costUsd: number,
+      ) => ({
         ownerId,
         taskId: null,
         model: INT5_EMBEDDING_MODEL,
@@ -1121,7 +1103,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const monthsBeforeC = [await monthSpend(anya), await monthSpend(boris)];
       const requestsBeforeC = harness.embeddings.calls.length;
       const platformVectors = await embed(null, ['a', 'bb', 'ccc']);
-      // Then: vectors returned, one request, one ledger row with the owner `platform`
+      // Then: vectors returned, one request, one ledger row without an owner
       expect(
         platformVectors.kind === 'vectors'
           ? [platformVectors.vectors.length, platformVectors.model]
@@ -1130,9 +1112,9 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       expect(requestsSince(requestsBeforeC)).toEqual([
         [INT5_EMBEDDING_MODEL, 3, 4],
       ]);
-      expect(
-        await ledgerRows(PLATFORM_OWNER_ID, INT5_EMBEDDING_MODEL),
-      ).toEqual([batchRow('platform', 30, 0.00003)]);
+      expect(await ledgerRows(null, INT5_EMBEDDING_MODEL)).toEqual([
+        batchRow(null, 30, 0.00003),
+      ]);
       // And: no employee's month changed - Аня's nor Борис's
       expect([await monthSpend(anya), await monthSpend(boris)]).toEqual(
         monthsBeforeC,
@@ -1167,7 +1149,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-01.3 "Given в каталоге есть модель провайдера, when администратор удаляет провайдера, then удаление отклоняется с причиной «у провайдера
   //   есть модели в каталоге», и провайдер остаётся"; DC-6 "Удаление модели, выбранной по умолчанию, снимает этот выбор: модели по умолчанию этого
-  //   назначения больше нет, пока администратор не выберет другую". Design: UC-E7, KD-5, Data Model (`access_model_defaults` clears on delete),
+  //   назначения больше нет, пока администратор не выберет другую". Design: UC-E7, KD-5, Data Model (the `model_defaults` key clears on delete),
   //   Invariants 4 and 5.
   // Behavior: the administrator deletes a provider that has a model -> refused; deletes the model chosen as the chat default -> the choice is
   //   cleared in the same step -> the provider is then deletable.
@@ -1181,7 +1163,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   // Catches: a provider deleted out from under its models (their runs fail later with `provider_missing` instead of the admin being stopped), a
   //   default pointing at a model that no longer exists (a start on a ghost model), or the choice cleared so late that one more run starts on it.
   // @category: core-functionality
-  // @dependency: Agents.providers (delete with `catalogModels` input), AccessService (catalogue, access_model_defaults), AdminModelProvidersController, catalogue controller, AuditLog, Postgres
+  // @dependency: Agents.providers (delete with `catalogModels` input), AccessService (catalogue, the `model_defaults` key), AdminModelProvidersController, catalogue controller, AuditLog, Postgres
   // @complexity: medium
   it(
     'INT-6: deleting a provider that still has catalogue models is refused, and deleting the default model clears the default',
@@ -1313,12 +1295,12 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   //   DC-7 "Встроенная запись с моделью `null` стартует на модели чата по умолчанию на момент старта; запуск, который уже идёт, смену не замечает".
   //   Design: UC-3, KD-5, run-snapshot pattern (ADR-0017).
   // Behavior: a library record is saved with `model: null` -> a run starts: `resolveStart` replaces `null` with the default chat model into the
-  //   snapshot -> the administrator changes the default -> the running agent's next calls and its workflow executors started later in that run use
+  //   snapshot -> the administrator changes the default -> the running agent's next calls and its subagents started later in that run use
   //   the snapshot's model; a NEW start takes the new default.
   // Rows:
   //   1. default = Haiku; a built-in-style record with `model: null` (a record created by an author with no model chosen is the same row): the
   //      scripted model's call carries the Haiku id
-  //   2. the administrator sets the default to Sonnet while that run is held at a latch: its next call and an executor the run starts after the
+  //   2. the administrator sets the default to Sonnet while that run is held at a latch: its next call and a subagent the run starts after the
   //      change still carry Haiku (the snapshot); a second run of the same record started after the change carries Sonnet
   //   3. a record created after the change by an author with no model chosen: `GET` of it holds Sonnet (AC-06.1), a record with a model of its
   //      own is untouched by the change
@@ -1338,15 +1320,15 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const vera = await employeeAllowed('mp-int7', [INT7_HAIKU, INT7_SONNET]);
       const veraApi = chatApi(app, vera);
       await putDefaults({ chatModel: INT7_HAIKU });
-      // And: Вера's workflow record with no model of its own (like a built-in record), and her agent record with Haiku chosen
-      const workflow = await createRecord(
+      // And: Вера's deep agent record with no model of its own (like a built-in record), and her agent record with Haiku chosen
+      const deepAgent = await createRecord(
         app,
         vera,
-        nullModelWorkflow(recordName('INT-7 workflow')),
+        nullModelDeepAgent(recordName('INT-7 deep agent')),
       );
-      if (workflow.kind !== 'workflow')
-        throw new Error('INT-7: the workflow record is not a workflow');
-      const executorName = workflow.content.executors[0]?.name ?? '';
+      if (deepAgent.kind !== 'deep_agent')
+        throw new Error('INT-7: the deep agent record is not a deep agent');
+      const subagentName = deepAgent.content.subagents[0]?.name ?? '';
       const ownModel = await createRecord(
         app,
         vera,
@@ -1354,19 +1336,24 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       );
       /** Every script answers its calls past the listed ones, so no step fails on an unscripted report. */
       const answered = { thereafter: { text: 'INT-7: принято' } };
-      const startWorkflow = (question: string): ScriptedToolCall => ({
-        tool: 'start_workflow',
-        args: { workflow: workflow.id, question, boundaries: '', result: '' },
+      const startDeepAgent = (question: string): ScriptedToolCall => ({
+        tool: 'start_deep_agent',
+        args: {
+          deepAgent: deepAgent.name,
+          question,
+          boundaries: '',
+          result: '',
+        },
       });
-      /** The coordinator's task: the brief as `start_workflow` writes it. */
+      /** The deep agent's task: the brief as `start_deep_agent` writes it. */
       const briefTask = (question: string) =>
         JSON.stringify({ question, boundaries: '', result: '' });
       /** Вера's first message in a new conversation; she approves the brief its chat asks for. */
-      const runWorkflow = async (text: string) => {
+      const runDeepAgent = async (text: string) => {
         const { id } = await veraApi.createThread();
         await veraApi.send(id, text);
         const isOpenBrief = (decision: { kind: string; status: string }) =>
-          decision.kind === WORKFLOWS_BRIEF_CONFIRMATION &&
+          decision.kind === AGENTS_BRIEF_CONFIRMATION &&
           decision.status === 'open';
         const view = await waitFor(
           () => veraApi.history(id),
@@ -1374,32 +1361,30 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
           `the brief of "${text}"`,
         );
         const brief = view.decisions.find(isOpenBrief);
-        if (brief === undefined) throw new Error(`INT-7: no brief for "${text}"`);
+        if (brief === undefined)
+          throw new Error(`INT-7: no brief for "${text}"`);
         await veraApi.decide(brief.decisionId, { approve: true });
       };
 
-      // Row 1 - When: Вера's chat (the built-in `chat` record on `null`) starts her workflow; its coordinator's first call is held
-      const firstText = 'INT-7 row 1: Вера запускает workflow без своей модели';
+      // Row 1 - When: Вера's chat (the built-in `chat` record on `null`) starts her deep agent; its first call is held
+      const firstText =
+        'INT-7 row 1: Вера запускает глубокого агента без своей модели';
       const firstQuestion = 'INT-7 row 1: вопрос первого запуска';
-      const executorTask = 'INT-7 row 2: задача исполнителя после смены';
+      const subagentTask = 'INT-7 row 2: задача сабагента после смены';
       const latch = createLatch();
       const firstChat = harness.model.script(
         { task: firstText },
-        [{ calls: [startWorkflow(firstQuestion)] }],
+        [{ calls: [startDeepAgent(firstQuestion)] }],
         answered,
       );
-      const firstCoordinator = harness.model.script(
+      const firstDeepAgent = harness.model.script(
         { task: briefTask(firstQuestion) },
         [
           {
             calls: [
               {
-                tool: 'start_agent',
-                args: {
-                  agent: executorName,
-                  description: 'INT-7 row 2: исполнитель',
-                  prompt: executorTask,
-                },
+                tool: 'task',
+                args: { subagentType: subagentName, description: subagentTask },
               },
             ],
             latch,
@@ -1407,50 +1392,51 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
         ],
         answered,
       );
-      const executor = harness.model.script(
-        { task: executorTask },
+      // The subagent's one `task` entry: the question of the brief as its labelled line, then the assignment
+      const subagent = harness.model.script(
+        { task: `Question: ${firstQuestion}\n\n${subagentTask}` },
         [],
         answered,
       );
       try {
-        await runWorkflow(firstText);
+        await runDeepAgent(firstText);
         await latch.reached(1);
-        // Then: the chat and the coordinator called Haiku, the default at their start
+        // Then: the chat and the deep agent called Haiku, the default at their start
         expect([
           firstChat.calls[0]?.model,
-          firstCoordinator.calls[0]?.model,
+          firstDeepAgent.calls[0]?.model,
         ]).toEqual([INT7_HAIKU, INT7_HAIKU]);
         // Row 2 - When: the administrator sets Sonnet as the default while the run is held
         await putDefaults({ chatModel: INT7_SONNET });
       } finally {
         latch.open();
       }
-      // Then: the coordinator's next call and the executor it starts after the change still call Haiku (the snapshot)
-      await executor.called(1);
-      await firstCoordinator.called(2);
+      // Then: the deep agent's next call and the subagent it starts after the change still call Haiku (the snapshot)
+      await subagent.called(1);
+      await firstDeepAgent.called(2);
       expect([
-        firstCoordinator.calls[1]?.model,
-        executor.calls[0]?.model,
+        firstDeepAgent.calls[1]?.model,
+        subagent.calls[0]?.model,
       ]).toEqual([INT7_HAIKU, INT7_HAIKU]);
       // When: a second run of the same records starts after the change
       const secondText = 'INT-7 row 2: второй запуск после смены';
       const secondQuestion = 'INT-7 row 2: вопрос второго запуска';
       const secondChat = harness.model.script(
         { task: secondText },
-        [{ calls: [startWorkflow(secondQuestion)] }],
+        [{ calls: [startDeepAgent(secondQuestion)] }],
         answered,
       );
-      const secondCoordinator = harness.model.script(
+      const secondDeepAgent = harness.model.script(
         { task: briefTask(secondQuestion) },
         [],
         answered,
       );
-      await runWorkflow(secondText);
-      await secondCoordinator.called(1);
-      // Then: its chat and its coordinator call Sonnet
+      await runDeepAgent(secondText);
+      await secondDeepAgent.called(1);
+      // Then: its chat and its deep agent call Sonnet
       expect([
         secondChat.calls[0]?.model,
-        secondCoordinator.calls[0]?.model,
+        secondDeepAgent.calls[0]?.model,
       ]).toEqual([INT7_SONNET, INT7_SONNET]);
 
       // Row 3 - When: after the change Вера opens the editor of a new record (it takes the model of `choices`, as the web

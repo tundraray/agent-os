@@ -1,0 +1,34 @@
+{
+  "extends": ["../../.oxlintrc.json"],
+  // Runs in the browser and in Node.
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "rules": {
+    // The shared list plus the layer rule of this package.
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@nestjs/*", "@nestjs/**"],
+            "message": "ADR-0022: this package stays free of NestJS; it is plain functions and classes."
+          },
+          {
+            "group": ["@sentry/*", "@sentry/**"],
+            "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
+          },
+          {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: Mastra is declared by packages/agents only."
+          },
+          {
+            "group": ["@agent-os/*", "@agent-os/**"],
+            "message": "ADR-0004: contracts is a bottom package and imports no workspace package."
+          }
+        ]
+      }
+    ]
+  }
+}

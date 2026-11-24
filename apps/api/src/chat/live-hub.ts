@@ -6,18 +6,25 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type { LiveEvent } from '@agent-os/contracts';
-import { RUNTIME_EVENTS_CHANNEL, type CancelTimer, type Clock } from '@agent-os/runtime';
+import {
+  CLOCK,
+  RUNTIME_TREE_CHANNEL,
+  type CancelTimer,
+  type Clock,
+} from '@agent-os/runtime';
 import pg from 'pg';
 import { Observable, type Subscriber } from 'rxjs';
 import { z } from 'zod';
-import type { Agents } from '@agent-os/agents';
-import { AGENTS } from '../agents/agents.tokens';
+import { ViewOperations } from '@agent-os/agents';
 import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_CLOCK } from '../runtime/runtime.tokens';
-import { deltaTargets, noteTargets, type LiveStream, type Watch } from './live-filter';
+import {
+  deltaTargets,
+  noteTargets,
+  type LiveStream,
+  type Watch,
+} from './live-filter';
 
 /** `application_name` of the hub's connection: tells it apart from the pool in `pg_stat_activity`. */
 export const LIVE_HUB_APPLICATION_NAME = 'agent-os-live-hub';
@@ -28,7 +35,7 @@ const RECONNECT_MS = 1000;
 /** How often an idle stream gets a `ping`, so that a proxy does not close it. */
 const PING_MS = 20_000;
 
-/** The notice of a `runtime_events` NOTIFY (`EventLog.write` of the runtime). */
+/** The data of a `runtime_tree` NOTIFY (`Tasks.signal` of the runtime). */
 const TreeNoticeSchema = z.object({ rootId: z.string().min(1) });
 
 /** The payload of an `agent_text_delta` NOTIFY (`notifyPayloads` of `DeltaPublisher`). */
@@ -55,12 +62,12 @@ const PING = messageEvent({ type: 'ping', data: {} });
 
 /**
  * The live updates of the API (design-chat.md, KD-2, KD-3, C3 «живые обновления»): one dedicated
- * connection per process listens on `runtime_events` and `agent_text_delta` and hands the signals to
- * the open SSE streams. A runtime event becomes a `tree` note to every stream of the conversation's
+ * connection per process listens on `runtime_tree` and `agent_text_delta` and hands the signals to
+ * the open SSE streams. A tree signal becomes a `tree` note to every stream of the conversation's
  * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
  *
  * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
- * by the tree's root id, and its owner is read for every note — one row of `agent_sessions` by its
+ * by the tree's root id, and its owner is read for every note — one row of `conversations` by its
  * primary key, and never remembered. A deleted conversation's root is marked and so has no owner
  * (`rootOwner` answers `undefined`): the notes of its tree go to nobody, on this or another API
  * instance, from the moment the deletion commits. A root that is no conversation (a tree of another
@@ -68,7 +75,9 @@ const PING = messageEvent({ type: 'ping', data: {} });
  * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
  */
 @Injectable()
-export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdown {
+export class LiveHub
+  implements OnApplicationBootstrap, BeforeApplicationShutdown
+{
   private readonly logger: Logger;
   private readonly streams = new Set<HubStream>();
   /** Signals are handled one after another, so the parts of one agent keep their order. */
@@ -79,9 +88,9 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
 
   constructor(
     private readonly config: ConfigService,
-    @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(RUNTIME_CLOCK) private readonly clock: Clock,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(CLOCK) private readonly clock: Clock,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.live' });
   }
@@ -126,12 +135,14 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       connectionString: this.config.getOrThrow<string>('DATABASE_URL'),
       application_name: LIVE_HUB_APPLICATION_NAME,
     });
-    client.on('notification', (notice) => this.enqueue(notice.channel, notice.payload));
+    client.on('notification', (notice) =>
+      this.enqueue(notice.channel, notice.payload),
+    );
     client.on('error', (error) => this.lost(client, error));
     client.on('end', () => this.lost(client));
     try {
       await client.connect();
-      await client.query(`LISTEN "${RUNTIME_EVENTS_CHANNEL}"`);
+      await client.query(`LISTEN "${RUNTIME_TREE_CHANNEL}"`);
       await client.query(`LISTEN "${AGENT_TEXT_DELTA_CHANNEL}"`);
     } catch (error) {
       await client.end().catch(() => undefined);
@@ -167,7 +178,9 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       await this.beforeApplicationShutdown();
       return;
     }
-    this.logger.info('live hub LISTEN restored', { streams: this.streams.size });
+    this.logger.info('live hub LISTEN restored', {
+      streams: this.streams.size,
+    });
     for (const stream of this.streams) stream.subscriber.next(READY);
   }
 
@@ -179,20 +192,24 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       });
   }
 
-  private async handle(channel: string, payload: string | undefined): Promise<void> {
+  private async handle(
+    channel: string,
+    payload: string | undefined,
+  ): Promise<void> {
     // Nobody to tell: drop before parsing or looking anything up.
     if (this.streams.size === 0 || payload === undefined) return;
-    if (channel === RUNTIME_EVENTS_CHANNEL) await this.note(payload);
+    if (channel === RUNTIME_TREE_CHANNEL) await this.note(payload);
     else if (channel === AGENT_TEXT_DELTA_CHANNEL) this.delta(payload);
   }
 
-  /** A runtime event of a tree: a `tree` note to every stream of the conversation's owner. */
+  /** A change of a tree: a `tree` note to every stream of the conversation's owner. */
   private async note(payload: string): Promise<void> {
     const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
-    const ownerId = await this.agents.sessions.rootOwner(rootId);
+    const ownerId = await this.views.rootOwner(rootId);
     if (ownerId === undefined) return;
     const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
-    for (const stream of noteTargets(ownerId, this.streams)) stream.subscriber.next(event);
+    for (const stream of noteTargets(ownerId, this.streams))
+      stream.subscriber.next(event);
   }
 
   /** A text part: only to the owner's streams that watch its agent or the root's conversation. */
@@ -202,6 +219,7 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       type: 'delta',
       data: { agentId: delta.agentId, offset: delta.offset, text: delta.text },
     });
-    for (const stream of deltaTargets(delta, this.streams)) stream.subscriber.next(event);
+    for (const stream of deltaTargets(delta, this.streams))
+      stream.subscriber.next(event);
   }
 }

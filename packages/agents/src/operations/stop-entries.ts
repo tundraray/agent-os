@@ -1,14 +1,17 @@
+import type { MessagesRepository } from '@agent-os/db';
 import type { Task } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import { stopEvent, stoppedTogether } from '../step/continuation';
-import { interruptedResults } from '../store/call-records.repository';
-import { history } from '../store/history.repository';
-import type { StoreReader } from '../store/sessions.repository';
+import { stopEvent, stoppedTogether } from '../resume';
+import { interruptedResults } from '../store/call-records';
+import type { History } from '../store/history';
 
 /** A derived stop record: a closed call or the stop event. */
-export type StopEntry = Extract<HistoryEntry, { kind: 'tool_result' | 'event' }>;
+export type StopEntry = Extract<
+  HistoryEntry,
+  { kind: 'tool_result' | 'event' }
+>;
 
 export interface StopEntriesInput {
   /** The stopped agent, read by the caller with the owner check. */
@@ -25,15 +28,18 @@ export interface StopEntriesInput {
  * writes for real, with the numbers after the last stored one and the time of the stop.
  */
 export async function stopEntries(
-  reader: StoreReader,
+  deps: {
+    readonly history: History;
+    readonly messageRows: MessagesRepository;
+  },
   input: StopEntriesInput,
 ): Promise<StopEntry[]> {
   const { task, parent } = input;
   const stoppedAt = task.finishedAt ?? task.updatedAt;
 
   // An open call never stands before the last compaction, so the entries a step works on hold them all.
-  const visible = await history.visible(reader, task.taskId);
-  const lastSeq = await history.lastSeq(reader, task.taskId);
+  const visible = await deps.history.visible(task.taskId);
+  const lastSeq = await deps.messageRows.lastSeq(task.taskId);
   const records = [
     ...interruptedResults(openCalls(visible), stoppedAt),
     stopEvent(stoppedTogether(task, parent)),
@@ -41,6 +47,11 @@ export async function stopEntries(
   // Each record keeps its own kind and content; TypeScript cannot correlate them across the spread.
   return records.map(
     (record, index) =>
-      ({ seq: lastSeq + index + 1, kind: record.kind, createdAt: stoppedAt, content: record.content }) as StopEntry,
+      ({
+        seq: lastSeq + index + 1,
+        kind: record.kind,
+        createdAt: stoppedAt,
+        content: record.content,
+      }) as StopEntry,
   );
 }

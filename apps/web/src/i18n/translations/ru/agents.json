@@ -1,0 +1,219 @@
+{
+  "status": {
+    "working": "Работает",
+    "awaiting_confirmation": "Ждёт подтверждения",
+    "interrupted": "Прерван",
+    "completed": "Завершён",
+    "failed": "Сбой",
+    "stopped": "Остановлен"
+  },
+  "composerPlaceholder": "{status, select, working {Сообщение агенту — получит после текущего шага} awaiting_confirmation {Сообщение агенту — получит после текущего шага} interrupted {Напишите, что делать дальше} other {Напишите, чтобы продолжить с прежней историей}}",
+  "brief": {
+    "question": "Вопрос",
+    "boundaries": "Границы",
+    "result": "Результат"
+  },
+  "list": {
+    "loading": "Загружаем агентов…",
+    "loadFailed": "Не удалось загрузить агентов",
+    "retry": "Повторить",
+    "showMore": "Показать ещё",
+    "empty": "Агентов пока нет",
+    "emptyHint": "Попросите в беседе сделать задачу в фоне — агент появится здесь."
+  },
+  "tree": {
+    "columns": {
+      "agent": "Агент",
+      "record": "Из библиотеки",
+      "status": "Статус",
+      "model": "Модель",
+      "started": "Запущен",
+      "chat": "Беседа"
+    },
+    "toggle": "{open, select, yes {Скрыть вложенных: {description}} other {Показать вложенных: {description}}}",
+    "model": "<hidden>модель </hidden>{model}",
+    "started": "<hidden>запущен </hidden><time>{at}</time>",
+    "chat": "<hidden>беседа </hidden>{title}"
+  },
+  "meta": {
+    "started": "запущен <time>{at}</time>",
+    "deepAgent": "Глубокий агент «{name}»",
+    "fromAgent": "запущен агентом «<link>{name}</link>»",
+    "fromChat": "из беседы «<link>{title}</link>»"
+  },
+  "header": {
+    "stop": "Остановить",
+    "stopFailed": "Не удалось остановить агента. Попробуйте ещё раз.",
+    "restart": "Запустить с нуля",
+    "restartFailed": "Не удалось запустить агента с нуля.",
+    "restartUnavailable": "{kind, select, agent {Агент} other {Глубокий агент}} недоступен — запустить с нуля нельзя",
+    "restartVersion": "Пойдёт на версии {version}",
+    "menu": "Действия с агентом",
+    "open": "Открыть"
+  },
+  "report": {
+    "title": "<prefix>Отчёт · </prefix><link>{description}</link>",
+    "label": "Отчёт: {description}",
+    "stopped": "{withParent, select, yes {остановлен вместе с родителем} other {остановлен вами}}",
+    "empty": "Отчёта нет."
+  },
+  "interrupt": "Прервать",
+  "values": {
+    "yes": "да",
+    "no": "нет"
+  },
+  "valueRows": {
+    "showJson": "Показать как JSON",
+    "hideJson": "Скрыть JSON"
+  },
+  "runCode": {
+    "class": {
+      "read": "читающий",
+      "write": "изменяющий: может менять данные во внешних системах"
+    },
+    "script": "Скрипт",
+    "showScript": "Показать скрипт",
+    "hideScript": "Скрыть скрипт",
+    "canCall": {
+      "title": "Может вызвать",
+      "changes": "меняет",
+      "reads": "читает",
+      "note": "Составила платформа по тексту скрипта: других инструментов запуск не вызовет",
+      "none": "Ни одного инструмента: запуск не обратится к внешним системам"
+    }
+  },
+  "decision": {
+    "byChat": "Чат хочет выполнить:",
+    "byAgent": "Агент «<link>{description}</link>» хочет выполнить:",
+    "groupAction": "Нужно решение: {tool}",
+    "groupBrief": "Задание: {question}",
+    "approve": "Подтвердить",
+    "reject": "Отклонить",
+    "approved": "Подтверждено · {time}",
+    "rejected": "Отклонено · {time}",
+    "briefApproved": "Задание подтверждено · {time}",
+    "briefRejected": "Задание отклонено · {time}",
+    "cancelled": "Не понадобилось: агент остановлен",
+    "sendFailed": "Не удалось отправить решение. Попробуйте ещё раз.",
+    "launch": "Запустить",
+    "edit": "Исправить",
+    "launchEdited": "Запустить с правками",
+    "cancelEdit": "Отмена",
+    "emptyQuestion": "Вопрос не может быть пустым",
+    "selfLearning": "Глубокий агент учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников."
+  },
+  "recordCard": {
+    "create": "{kind, select, agent {Создать агента} other {Создать глубокого агента}}",
+    "edit": "Изменить «{name}»",
+    "delete": "Удалить «{name}»",
+    "deleteNote": "{kind, select, agent {Агент} other {Глубокий агент}} пропадёт из библиотеки. Вернуть его нельзя.",
+    "changed": "изменено",
+    "new": "новый",
+    "removed": "Убрано: {what}",
+    "createButton": "Создать",
+    "saveButton": "Сохранить изменения",
+    "deleteButton": "Удалить",
+    "created": "Создано · {time}",
+    "changedOutcome": "Изменено · {time}",
+    "deleted": "Удалено · {time}",
+    "notSaved": "Не сохранено: {reason}",
+    "showDiagram": "Показать схему"
+  },
+  "recordTool": {
+    "list_records": "Список библиотеки",
+    "read_record": "Чтение «{name}»",
+    "create_record": "Создание «{name}»",
+    "edit_record": "Правка «{name}»",
+    "delete_record": "Удаление «{name}»"
+  },
+  "run": {
+    "label": "{name}: {status}",
+    "stepLabel": "{hasSubagent, select, yes {{subagent}, } other {}}{description}, {status}",
+    "open": "Открыть",
+    "openLabel": "Открыть агента «{description}»",
+    "openRun": "Открыть запуск",
+    "rerun": "Запустить заново",
+    "changedAfterRun": "{kind, select, agent {Агент} other {Глубокий агент}} изменён после запуска: сейчас версия {version}",
+    "recipient": "{author}{count, plural, =0 {} =1 { · для роли {roles}} other { · для ролей {roles}}}: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.",
+    "limitReached": "предел вызовов исчерпан",
+    "notCalled": "не вызывался"
+  },
+  "event": {
+    "interrupted": "Прервано вами",
+    "stopped": "Остановлен вами",
+    "stopped_with_parent": "Остановлен вместе с родителем",
+    "continued": "Продолжен с историей",
+    "compacted": "История сжата для модели",
+    "tasksOpen": "Ответ не принят: открыты задачи {numbers}",
+    "reportMissing": "Ответ не принят: нужен отчёт «{name}»"
+  },
+  "queue": {
+    "region": "Ждут доставки",
+    "heading": "Ждут доставки · {count}",
+    "more": "и ещё {count}",
+    "blocked": "Ждём вашего решения по запросу выше — сообщения уйдут после него.",
+    "toDecision": "К запросу",
+    "source": {
+      "user": "Вы",
+      "report": "Отчёт",
+      "parent": "Агент"
+    }
+  },
+  "taskStatus": {
+    "pending": "Ожидает",
+    "in_progress": "В работе",
+    "completed": "Готова",
+    "unfinished": "Не закончена"
+  },
+  "trainingStatus": {
+    "running": "Идёт",
+    "done": "Готово",
+    "stopped": "Остановлено вручную",
+    "capped": "Остановлено на потолке",
+    "failed": "Сбой: {reason}",
+    "failedNoReason": "Сбой"
+  },
+  "delegationStatus": {
+    "running": "В работе",
+    "completed": "Готово",
+    "failed": "Сбой",
+    "cancelled": "Отменено"
+  },
+  "delegations": {
+    "title": "Поручения · {count}",
+    "listLabel": "Поручения",
+    "summary": {
+      "running": "в работе {count}",
+      "completed": "готово {count}",
+      "failed": "сбой {count}",
+      "cancelled": "отменено {count}"
+    },
+    "task": "задача {number}",
+    "rowLabel": "{subagent}: {item}, {status}"
+  },
+  "tasks": {
+    "tabs": {
+      "activity": "Ход работы",
+      "tasks": "Задачи · {count}"
+    },
+    "listLabel": "Задачи",
+    "rowButton": "Задача {number}: {subject}, {status}",
+    "waitsFor": "ждёт {numbers}",
+    "emptyTitle": "Задач пока нет",
+    "emptyHint": "Здесь появятся задачи и поручения агента.",
+    "loading": "Загружаем задачи…",
+    "loadError": "Не удалось загрузить задачи",
+    "retry": "Повторить"
+  },
+  "documents": {
+    "tab": "Документы · {count}",
+    "listLabel": "Документы",
+    "writing": "Пишется",
+    "showAll": "Показать полностью",
+    "collapse": "Свернуть",
+    "openInPanel": "Открыть в панели",
+    "back": "Назад к документам",
+    "loadError": "Не удалось загрузить документ",
+    "retry": "Повторить"
+  }
+}

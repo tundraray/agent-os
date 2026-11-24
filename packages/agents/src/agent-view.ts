@@ -1,7 +1,12 @@
-import type { AgentStatus, RunOrigin, TaskStatus, WaitReason } from '@agent-os/contracts';
+import type {
+  AgentStatus,
+  RunOrigin,
+  TaskStatus,
+  WaitReason,
+} from '@agent-os/contracts';
 import type { Task } from '@agent-os/runtime';
 
-import type { Session } from './store/sessions.repository';
+import type { Session } from './store/sessions';
 
 export interface AgentStatusInput {
   readonly taskStatus: TaskStatus;
@@ -10,11 +15,14 @@ export interface AgentStatusInput {
   readonly pendingInterrupt: boolean;
   /** The session's mark «прерван». */
   readonly sessionInterrupted: boolean;
+  /** A question of the agent waits for the employee (data-model/design-runtime.md, KD-3). */
+  readonly openQuestion: boolean;
 }
 
 /**
  * The status of an agent for the employee (State Transitions, KD-3): «Прерван» is seen at once from a
- * pending `interrupt`, and after the step took it, from the session's mark.
+ * pending `interrupt`, and after the step took it, from the session's mark. `awaiting_confirmation` — the agent
+ * waits for its children and one of them is an open question (data-model/design-runtime.md, «Статус агента»).
  */
 export function agentStatus(input: AgentStatusInput): AgentStatus {
   switch (input.taskStatus) {
@@ -27,7 +35,8 @@ export function agentStatus(input: AgentStatusInput): AgentStatus {
       return input.pendingInterrupt ? 'interrupted' : 'working';
     case 'waiting':
       // Agents always interrupt with an `interrupt` message (KD-3), so the runtime's own `interrupted` reason never occurs.
-      if (input.waitReason === 'decision') return 'awaiting_confirmation';
+      if (input.waitReason === 'children' && input.openQuestion)
+        return 'awaiting_confirmation';
       return input.sessionInterrupted ? 'interrupted' : 'working';
   }
 }
@@ -38,7 +47,7 @@ export interface AgentView {
   readonly parentId: string | null;
   readonly rootId: string;
   readonly depth: number;
-  /** The run's name from its snapshot. */
+  /** The run's name, as its start gave it. */
   readonly name: string;
   /**
    * The record the run started from; `null` for a root, which the employee sees as the conversation
@@ -53,18 +62,25 @@ export interface AgentView {
   /** Set when `failed`: `turn_limit`, `model_error` or the runtime's reason. */
   readonly failureReason: string | null;
   /** Set for a fork: the parent's history through `throughSeq` precedes this one. */
-  readonly forkedFrom: { readonly agentId: string; readonly throughSeq: number } | null;
+  readonly forkedFrom: {
+    readonly agentId: string;
+    readonly throughSeq: number;
+  } | null;
   readonly createdAt: Date;
   readonly finishedAt: Date | null;
 }
 
 /** The view of an agent from its runtime task and its session. */
-export function toAgentView(task: Task, session: Session, pendingInterrupt: boolean): AgentView {
+export function toAgentView(
+  task: Task,
+  session: Session,
+  marks: Pick<AgentStatusInput, 'pendingInterrupt' | 'openQuestion'>,
+): AgentView {
   const status = agentStatus({
     taskStatus: task.status,
     waitReason: task.waitReason,
-    pendingInterrupt,
     sessionInterrupted: session.interrupted,
+    ...marks,
   });
   return {
     agentId: task.taskId,
@@ -79,8 +95,11 @@ export function toAgentView(task: Task, session: Session, pendingInterrupt: bool
     status,
     failureReason: status === 'failed' ? (task.failure?.reason ?? null) : null,
     forkedFrom:
-      session.forkedFromTaskId !== null && session.forkedThroughSeq !== null
-        ? { agentId: session.forkedFromTaskId, throughSeq: session.forkedThroughSeq }
+      session.parentId !== null && session.forkedThroughSeq !== null
+        ? {
+            agentId: session.parentId,
+            throughSeq: session.forkedThroughSeq,
+          }
         : null,
     createdAt: task.createdAt,
     finishedAt: task.finishedAt,

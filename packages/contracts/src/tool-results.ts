@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Settings of large tool results (tool-result-reading plan, R-5): the row `agent_tool_result_settings`.
+ * Settings of large tool results (tool-result-reading plan, R-5): the key `tool_result_settings` of `settings`.
  * Characters are JavaScript string characters; tokens are the platform's estimate of UTF-8 bytes.
  */
 
@@ -45,7 +45,9 @@ export const UpdateToolResultSettingsBodySchema = z
     path: ['previewChars'],
     message: 'previewChars must be less than storeFromChars',
   });
-export type UpdateToolResultSettingsBody = z.infer<typeof UpdateToolResultSettingsBodySchema>;
+export type UpdateToolResultSettingsBody = z.infer<
+  typeof UpdateToolResultSettingsBodySchema
+>;
 
 /** Response of GET/PUT /api/admin/tool-results/settings. `updatedAt: null` while the defaults stand. */
 export const ToolResultSettingsSchema = z.object({

@@ -6,16 +6,16 @@ import {
   RecordSummarySchema,
   type AgentContent,
   type CreateRecordBody,
+  type DeepAgentContent,
   type RecordDetail,
   type RecordSummary,
+  type Subagent,
   type ThreadSummary,
   type UpdateRecordBody,
-  type WorkflowContent,
 } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
-import { builtinRecords } from '../../src/library/builtin-records';
 import {
   allowRole,
   catalogueModelIds,
@@ -60,36 +60,45 @@ export function agentBody(
       maxTurns: 20,
       agents: [],
       tools: [],
+      taskList: false,
       ...content,
     },
   };
 }
 
-/** The body of a workflow record with one executor, the coordinator and the executor on `model`. */
-export function workflowBody(
+/**
+ * The body of a deep agent record on `model`, without servers of its own: one subagent «Аналитик» unless
+ * `subagents` are given, each subagent's fields over the defaults.
+ */
+export function deepAgentBody(
   name: string,
   model: string,
-): Extract<CreateRecordBody, { kind: 'workflow' }> {
-  const content: WorkflowContent = {
-    coordinator: { rules: '', model, maxTurns: 20 },
-    executors: [
-      {
-        name: 'Аналитик',
-        role: 'Разбирает вопрос и пишет отчёт',
-        prompt: `Промпт исполнителя ${name}`,
-        servers: [],
-        model,
-        maxTurns: 20,
-        maxRuns: 3,
-        tools: [],
-        source: null,
-      },
-    ],
-    finalExecutor: null,
+  subagents: readonly Partial<Subagent>[] = [{}],
+): Extract<CreateRecordBody, { kind: 'deep_agent' }> {
+  const content: DeepAgentContent = {
+    prompt: `Промпт глубокого агента ${name}`,
+    servers: [],
+    model,
+    maxTurns: 20,
+    subagents: subagents.map((fields, index) => ({
+      name: index === 0 ? 'Аналитик' : `Аналитик ${index + 1}`,
+      description: 'Разбирает вопрос и пишет отчёт',
+      prompt: `Промпт сабагента ${name}`,
+      servers: [],
+      model,
+      maxTurns: 20,
+      maxRuns: 3,
+      taskList: false,
+      ...fields,
+    })),
+    finalSubagent: null,
+    taskList: true,
+    listDelegation: true,
     selfLearning: false,
+    scripts: [],
   };
   return {
-    kind: 'workflow',
+    kind: 'deep_agent',
     name,
     description: `Описание: ${name}`,
     content,
@@ -201,31 +210,40 @@ export function setSystemAudience(
   );
 }
 
-/** A built-in record as the app seeds it (`builtin-records.ts`): its fixed id, its key and its name. */
+/** An agent of the built-in rows migration: its constant id, its key and its name. */
 export interface BuiltinRecord {
   readonly id: string;
-  readonly builtinKey: string;
+  /** `null` — an ordinary system agent (`deep-research`, data-model design-agents.md KD-4). */
+  readonly builtinKey: string | null;
   readonly name: string;
 }
 
-/** Ids, keys and names of the built-in records as the app seeds them. */
-const SEEDED = builtinRecords();
-
-function seeded(builtinKey: string): BuiltinRecord {
-  const record = SEEDED.find(
-    (candidate) => candidate.builtinKey === builtinKey,
-  );
-  if (record === undefined)
-    throw new Error(`No built-in record "${builtinKey}" is seeded`);
-  return { id: record.id, builtinKey, name: record.name };
-}
-
-/** The three built-in records every employee sees (design-runtime.md, KD-7). */
+/**
+ * The agents of the built-in rows migration (`packages/db/src/migrations/0001_builtin_rows.sql`, data-model
+ * design-agents.md KD-4): the three default agents every employee sees and `deep-research`, shown to everyone.
+ */
 export const BUILTIN = {
-  chat: seeded(CHAT_BUILTIN_KEY),
-  generalPurpose: seeded('general-purpose'),
-  deepResearch: seeded('deep-research'),
-} as const;
+  chat: {
+    id: '6a74a70b-e4b9-4b01-9750-20fa789b3b6c',
+    builtinKey: CHAT_BUILTIN_KEY,
+    name: 'Главный чат',
+  },
+  generalPurpose: {
+    id: 'd8992d6d-6ff0-4dc6-9b33-df4f88f00b7d',
+    builtinKey: 'agent',
+    name: 'general-purpose',
+  },
+  deepAgent: {
+    id: 'b7bfc31a-4fc4-4a8c-a968-05273c54de7c',
+    builtinKey: 'deep_agent',
+    name: 'Глубокий агент',
+  },
+  deepResearch: {
+    id: 'fb06f3c1-a1be-4167-9896-f0d0fba21a89',
+    builtinKey: null,
+    name: 'Глубокий ресерч',
+  },
+} as const satisfies Record<string, BuiltinRecord>;
 
 /** `GET /api/admin/library/:id`, 200. */
 function panelRecord(
@@ -241,15 +259,15 @@ function panelRecord(
 }
 
 /**
- * The models of a record by part: the agent's, or the coordinator's followed by each executor's; `null` — the
+ * The models of a record by part: the agent's, or the deep agent's followed by each subagent's; `null` — the
  * default chat model.
  */
 function modelsOf(record: RecordDetail): (string | null)[] {
   return record.kind === 'agent'
     ? [record.content.model]
     : [
-        record.content.coordinator.model,
-        ...record.content.executors.map((executor) => executor.model),
+        record.content.model,
+        ...record.content.subagents.map((subagent) => subagent.model),
       ];
 }
 
@@ -270,15 +288,14 @@ function withModels(
       content: { ...record.content, model: modelOf(0) },
     };
   }
-  const { coordinator, executors } = record.content;
   return {
     ...fields,
-    kind: 'workflow',
+    kind: 'deep_agent',
     content: {
       ...record.content,
-      coordinator: { ...coordinator, model: modelOf(0) },
-      executors: executors.map((executor, index) => ({
-        ...executor,
+      model: modelOf(0),
+      subagents: record.content.subagents.map((subagent, index) => ({
+        ...subagent,
         model: modelOf(index + 1),
       })),
     },
@@ -300,10 +317,10 @@ function putSystemRecord(
 }
 
 /**
- * Puts the run's `model` into every part of the built-in records through the panel routes: `chat`,
- * `general-purpose`, and the coordinator and each executor of `deep-research`. A part whose model is `null` runs
- * on the default chat model, but the developer may have given a part a model of his own (the `deep-research`
- * coordinator is seeded with one), and a suite's employees are allowed only the run's models, so without it a start
+ * Puts the run's `model` into every part of the agents of the built-in rows migration through the panel
+ * routes: `chat`, `general-purpose`, the default deep agent and `deep-research`, each deep agent with every
+ * subagent. A part whose model is `null` runs on the default chat model, but the developer may have given a part
+ * a model of his own (the migration gives the `deep-research` deep agent one), and a suite's employees are allowed only the run's models, so without it a start
  * may be START_REFUSED. Call it after `useRunModels`; the returned restore gives each part back the model it had
  * (`null` included) and runs before the run's rows are removed. A part whose former model is no longer in the
  * catalogue cannot get it back through the panel and gets `null` (the default chat model).

@@ -28,7 +28,7 @@ export interface McpTool {
 }
 
 /**
- * The stored form of an `McpTool` in `agent_mcp_servers.tools` (a list of them): the tool set is built
+ * The stored form of an `McpTool` in `mcp_servers.tools` (a list of them): the tool set is built
  * from it without the network (KD-2).
  */
 const StoredMcpToolSchema = z.object({
@@ -61,7 +61,10 @@ export function mcpToolName(serverId: string, tool: string): string {
 /** A tool as the server listed it; its human name is its `title`, or `annotations.title` when it has only that. */
 export function toMcpTool(serverId: string, listed: Tool): McpTool {
   const title = listed.title ?? listed.annotations?.title;
-  const inputSchema: JsonSchemaObject = { ...listed.inputSchema, type: 'object' };
+  const inputSchema: JsonSchemaObject = {
+    ...listed.inputSchema,
+    type: 'object',
+  };
   return {
     name: mcpToolName(serverId, listed.name),
     server: serverId,
@@ -73,13 +76,19 @@ export function toMcpTool(serverId: string, listed: Tool): McpTool {
       ...(title === undefined ? {} : { toolTitle: title }),
       ...argLabelsOf(inputSchema),
     },
-    ...(listed.outputSchema === undefined ? {} : { outputSchema: listed.outputSchema }),
+    ...(listed.outputSchema === undefined
+      ? {}
+      : { outputSchema: listed.outputSchema }),
   };
 }
 
 /** `argLabels` from the `title` of each property of the input schema; none when no property has one. */
-function argLabelsOf(inputSchema: JsonSchemaObject): Pick<ToolDisplay, 'argLabels'> {
-  const properties = z.record(z.string(), z.unknown()).safeParse(inputSchema['properties']);
+function argLabelsOf(
+  inputSchema: JsonSchemaObject,
+): Pick<ToolDisplay, 'argLabels'> {
+  const properties = z
+    .record(z.string(), z.unknown())
+    .safeParse(inputSchema['properties']);
   if (!properties.success) return {};
   const labels = Object.entries(properties.data).flatMap(([key, property]) => {
     const titled = TitledSchema.safeParse(property);

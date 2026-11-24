@@ -10,7 +10,9 @@ vi.mock('@assistant-ui/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@assistant-ui/react')>();
   return {
     ...actual,
-    useAuiState: <T,>(select: (state: { message: { createdAt: Date } }) => T): T =>
+    useAuiState: <T,>(
+      select: (state: { message: { createdAt: Date } }) => T,
+    ): T =>
       select({ message: { createdAt: new Date('2026-11-16T10:00:00.000Z') } }),
   };
 });
@@ -45,13 +47,24 @@ describe('ToolFallback', () => {
     };
     render(<ToolFallback {...props} />);
 
-    const trigger = screen.getByRole('button', { name: /^search_issues: нужен вход в аккаунт/ });
+    const trigger = screen.getByRole('button', {
+      name: /^search_issues: нужен вход в аккаунт/,
+    });
     // The line is visible while the block is still collapsed.
-    const line = screen.getByText((_, element) => element?.tagName === 'P' && element.textContent === 'Подключите аккаунт backoffice в разделе «Мой доступ»');
-    expect(within(line).getByRole('link', { name: 'Мой доступ' })).toHaveAttribute('href', '/account');
+    const line = screen.getByText(
+      (_, element) =>
+        element?.tagName === 'P' &&
+        element.textContent ===
+          'Подключите аккаунт backoffice в разделе «Мой доступ»',
+    );
+    expect(
+      within(line).getByRole('link', { name: 'Мой доступ' }),
+    ).toHaveAttribute('href', '/account');
 
     await user.click(trigger);
-    expect(screen.getByRole('region', { name: 'Аргументы' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('region', { name: 'Аргументы' }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Результат' })).toBeNull();
   });
 });

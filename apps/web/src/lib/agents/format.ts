@@ -1,56 +1,60 @@
-import { AgentFailureReasonSchema, type AgentFailureReason, type AgentStatus } from "@agent-os/contracts";
-import type { useTranslations } from "next-intl";
-import type { FormatsTranslator } from "@/lib/i18n/formats";
+import {
+  AgentFailureReasonSchema,
+  type AgentFailureReason,
+} from '@agent-os/contracts';
+import type { ErrorsTranslator, FormatsTranslator } from '@/i18n/catalog';
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides
- * how a status, a model, a duration and a failure reason read (agent-status.md, tool-call.md,
- * UXRD MC-3, MC-8, MC-14, MC-18).
+ * how a model, a duration and a failure reason read (agent-status.md, tool-call.md, UXRD MC-8, MC-14, MC-18).
+ * Status labels (MC-3) and the composer placeholder (MC-12) are the `agents` messages.
  */
-
-/** MC-3: the label of each agent status. */
-export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
-  working: "Работает",
-  awaiting_confirmation: "Ждёт подтверждения",
-  interrupted: "Прерван",
-  completed: "Завершён",
-  failed: "Сбой",
-  stopped: "Остановлен",
-};
 
 /** The model family of `formatModel` with its first letter capital: a name, not a phrase. */
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** The `errors` messages: pure functions receive them as a parameter, components take `useTranslations('errors')`. */
-export type ErrorsTranslator = ReturnType<typeof useTranslations<"errors">>;
-
 /** The failure reasons of a model provider (model-providers UXRD MC-9). */
 export const PROVIDER_FAILURE_REASONS = [
-  "provider_missing",
-  "provider_disabled",
-  "provider_key_missing",
-  "provider_key_rejected",
-  "provider_unavailable",
-  "provider_tools_rejected",
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_tools_rejected',
 ] as const satisfies readonly AgentFailureReason[];
 export type ProviderFailureReason = (typeof PROVIDER_FAILURE_REASONS)[number];
 
-export const isProviderFailureReason = (reason: string | null): reason is ProviderFailureReason =>
+export const isProviderFailureReason = (
+  reason: string | null,
+): reason is ProviderFailureReason =>
   PROVIDER_FAILURE_REASONS.some((known) => known === reason);
 
 /**
  * The MC-9 words of a provider reason (model-providers design-web.md, KD-7), lowercase as after «Сбой:» and
  * «Причина:»; `model` is the model's label, and without it the words name no model.
  */
-export function providerFailureText(t: ErrorsTranslator, reason: ProviderFailureReason, model?: string): string {
-  return model === undefined ? t(`providerReason.unnamed.${reason}`) : t(`providerReason.named.${reason}`, { model });
+export function providerFailureText(
+  t: ErrorsTranslator,
+  reason: ProviderFailureReason,
+  model?: string,
+): string {
+  return model === undefined
+    ? t(`providerReason.unnamed.${reason}`)
+    : t(`providerReason.named.${reason}`, { model });
 }
 
 /** MC-10: the second line under a provider failure — who can fix it, or that a retry may help. */
-export function providerFailureHint(t: ErrorsTranslator, reason: ProviderFailureReason): string {
-  return t(reason === "provider_unavailable" ? "providerHint.retry" : "providerHint.admin");
+export function providerFailureHint(
+  t: ErrorsTranslator,
+  reason: ProviderFailureReason,
+): string {
+  return t(
+    reason === 'provider_unavailable'
+      ? 'providerHint.retry'
+      : 'providerHint.admin',
+  );
 }
 
 /**
@@ -65,8 +69,9 @@ export function failureReasonText(
   model?: string,
 ): { text: string; hint: string | null } {
   const named = AgentFailureReasonSchema.safeParse(reason);
-  if (!named.success) return { text: t("platformFailure"), hint: reason };
-  if (isProviderFailureReason(named.data)) return { text: providerFailureText(t, named.data, model), hint: null };
+  if (!named.success) return { text: t('platformFailure'), hint: reason };
+  if (isProviderFailureReason(named.data))
+    return { text: providerFailureText(t, named.data, model), hint: null };
   return { text: t(`failureReason.${named.data}`), hint: null };
 }
 
@@ -95,32 +100,17 @@ export function formatModel(modelId: string, names?: ModelNames): string {
 }
 
 /** The model a record runs on: `null` is the default chat model, named when `names` knows it. */
-export function formatRecordModel(t: FormatsTranslator, modelId: string | null, names?: ModelNames): string {
+export function formatRecordModel(
+  t: FormatsTranslator,
+  modelId: string | null,
+  names?: ModelNames,
+): string {
   if (modelId !== null) return formatModel(modelId, names);
   const defaultModel = names?.defaultModel;
-  if (defaultModel === undefined) return t("defaultModel");
-  if (defaultModel === null) return t("defaultModelUnset");
-  return t("defaultModelNamed", { model: formatModel(defaultModel, names) });
+  if (defaultModel === undefined) return t('defaultModel');
+  if (defaultModel === null) return t('defaultModelUnset');
+  return t('defaultModelNamed', { model: formatModel(defaultModel, names) });
 }
 
-/** MC-12: the agent page composer's placeholder by the agent's status. */
-export function agentComposerPlaceholder(status: AgentStatus): string {
-  switch (status) {
-    case "working":
-    case "awaiting_confirmation":
-      return "Сообщение агенту — получит после текущего шага";
-    case "interrupted":
-      return "Напишите, что делать дальше";
-    case "completed":
-    case "failed":
-    case "stopped":
-      return "Напишите, чтобы продолжить с прежней историей";
-  }
-}
-
-/** The workflow brief's three parts in card order, with their labels (MC-9, MC-20). */
-export const BRIEF_PARTS = [
-  { key: "question", label: "Вопрос" },
-  { key: "boundaries", label: "Границы" },
-  { key: "result", label: "Результат" },
-] as const;
+/** The deep agent brief's three parts in card order (MC-9, MC-20); each reads `agents.brief.{part}`. */
+export const BRIEF_PARTS = ['question', 'boundaries', 'result'] as const;

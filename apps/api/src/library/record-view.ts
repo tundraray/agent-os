@@ -1,8 +1,6 @@
 import {
   ALL_SERVERS,
-  CHAT_BUILTIN_KEY,
   type BannedRecord,
-  type ExecutorSourceState,
   type MissingRight,
   type RecordAudience,
   type RecordBody,
@@ -11,7 +9,7 @@ import {
   type RecordSummary,
   type ResolvedRecord,
 } from '@agent-os/contracts';
-import type { BannedRecordRow, LibraryRecord } from './library.repository';
+import type { BannedRecordRow, LibraryRecord } from './library.types';
 import { contentParts } from './record-content';
 
 /**
@@ -33,9 +31,6 @@ export interface ViewContext {
   readonly allowedModels: readonly string[];
 }
 
-/** Agent records the viewer sees, id → version: the state of a workflow's executor sources. */
-export type VisibleVersions = ReadonlyMap<string, number>;
-
 type ViewFields = Omit<RecordSummary, 'kind'>;
 
 export function recordSummary(
@@ -48,16 +43,11 @@ export function recordSummary(
 export function recordDetail(
   record: LibraryRecord,
   context: ViewContext,
-  visibleVersions: VisibleVersions,
 ): RecordDetail {
-  return {
-    ...viewFields(record, context),
-    ...record.body,
-    executorSources: executorSources(record.body, visibleVersions),
-  };
+  return { ...viewFields(record, context), ...record.body };
 }
 
-/** The record has at least one holder: `shared` of a header, and the `saveOwn` refusal (AC-18.5). */
+/** The record has at least one holder: `shared` of a header. */
 export function hasHolders({ holders }: LibraryRecord): boolean {
   return (
     holders.everyone || holders.roles.length > 0 || holders.users.length > 0
@@ -72,10 +62,13 @@ export function recordHeader(
   return { ...headerFields(record, viewerId), kind: record.body.kind };
 }
 
-/** The answer of `resolve` and `resolveBuiltin`: the header with the content of its kind. */
+/**
+ * The answer of `resolve` and `resolveBuiltin`: the header with the content of its kind; `viewerId` `null` —
+ * read for nobody (a default agent).
+ */
 export function resolvedRecord(
   record: LibraryRecord,
-  viewerId: string,
+  viewerId: string | null,
 ): ResolvedRecord {
   return { ...headerFields(record, viewerId), ...record.body };
 }
@@ -128,16 +121,17 @@ export function banAuditSample(
 
 function headerFields(
   record: LibraryRecord,
-  viewerId: string,
+  viewerId: string | null,
 ): Omit<RecordHeader, 'kind'> {
   return {
     id: record.id,
     name: record.name,
     description: record.description,
     version: record.version,
+    versionId: record.versionId,
     builtinKey: record.builtinKey,
     author: record.author,
-    mine: record.ownerId === viewerId,
+    mine: viewerId !== null && record.ownerId === viewerId,
     shared: hasHolders(record),
     offerInChat: record.offerInChat,
   };
@@ -164,10 +158,7 @@ function viewFields(record: LibraryRecord, context: ViewContext): ViewFields {
         : null,
     missingRights: missingRights(record.body, context),
     canEdit,
-    canShare:
-      canEdit &&
-      record.closedAt === null &&
-      record.builtinKey !== CHAT_BUILTIN_KEY,
+    canShare: canEdit && record.closedAt === null && record.builtinKey === null,
     canDelete: canEdit && record.builtinKey === null,
   };
 }
@@ -210,31 +201,7 @@ function missingRights(body: RecordBody, context: ViewContext): MissingRight[] {
     const model =
       part.model === null || allowed.has(part.model) ? null : part.model;
     return servers.length > 0 || model !== null
-      ? [{ executor: part.executor, servers, model }]
+      ? [{ subagent: part.subagent, servers, model }]
       : [];
-  });
-}
-
-/** Each executor taken from an agent record: `current`, `changed` (with the newer version) or `gone`. */
-function executorSources(
-  body: RecordBody,
-  visibleVersions: VisibleVersions,
-): ExecutorSourceState[] {
-  if (body.kind === 'agent') return [];
-  return body.content.executors.flatMap((executor) => {
-    if (executor.source === null) return [];
-    const { recordId, version } = executor.source;
-    const latest = visibleVersions.get(recordId);
-    const state =
-      latest === undefined ? 'gone' : latest > version ? 'changed' : 'current';
-    return [
-      {
-        executor: executor.name,
-        recordId,
-        version,
-        state,
-        latestVersion: state === 'changed' ? (latest ?? null) : null,
-      },
-    ];
   });
 }

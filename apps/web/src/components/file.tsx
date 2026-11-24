@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { memo, type FC } from "react";
-import { cva, type VariantProps } from "class-variance-authority";
-import { useTranslations } from "next-intl";
+import { memo, type FC } from 'react';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { useTranslations } from 'next-intl';
 import {
   FileIcon,
   FileTextIcon,
@@ -11,68 +11,68 @@ import {
   VideoIcon,
   BracesIcon,
   DownloadIcon,
-} from "lucide-react";
-import type { FileMessagePartComponent } from "@assistant-ui/react";
-import type { FormatsTranslator } from "@/lib/i18n/formats";
-import { cn } from "@/lib/utils";
-import { AudioPlayer, VideoPlayer } from "./media-player";
+} from 'lucide-react';
+import type { FileMessagePartComponent } from '@assistant-ui/react';
+import type { ChatTranslator, FormatsTranslator } from '@/i18n/catalog';
+import { cn } from '@/lib/utils';
+import { AudioPlayer, VideoPlayer } from './media-player';
 
 const fileVariants = cva(
-  "aui-file-root inline-flex items-center gap-3 rounded-lg transition-colors motion-reduce:transition-none",
+  'aui-file-root inline-flex items-center gap-3 rounded-lg transition-colors motion-reduce:transition-none',
   {
     variants: {
       variant: {
-        outline: "border-border hover:bg-muted/50 border",
-        ghost: "hover:bg-muted/50",
-        muted: "bg-muted/50 hover:bg-muted/70",
+        outline: 'border-border hover:bg-muted/50 border',
+        ghost: 'hover:bg-muted/50',
+        muted: 'bg-muted/50 hover:bg-muted/70',
       },
       size: {
-        sm: "px-2.5 py-1.5 text-xs",
-        default: "px-3 py-2 text-sm",
-        lg: "px-4 py-3 text-base",
+        sm: 'px-2.5 py-1.5 text-xs',
+        default: 'px-3 py-2 text-sm',
+        lg: 'px-4 py-3 text-base',
       },
     },
     defaultVariants: {
-      variant: "outline",
-      size: "default",
+      variant: 'outline',
+      size: 'default',
     },
   },
 );
 
 function getMimeTypeIcon(mimeType: string): FC<{ className?: string }> {
   const type = mimeType.toLowerCase();
-  if (type.startsWith("image/")) {
+  if (type.startsWith('image/')) {
     return ImageIcon;
   }
-  if (type === "application/pdf") {
+  if (type === 'application/pdf') {
     return FileTextIcon;
   }
-  if (type === "application/json") {
+  if (type === 'application/json') {
     return BracesIcon;
   }
-  if (type.startsWith("text/")) {
+  if (type.startsWith('text/')) {
     return FileTextIcon;
   }
-  if (type.startsWith("audio/")) {
+  if (type.startsWith('audio/')) {
     return MusicIcon;
   }
-  if (type.startsWith("video/")) {
+  if (type.startsWith('video/')) {
     return VideoIcon;
   }
   return FileIcon;
 }
 
-export type FileDataKind = "data-uri" | "url" | "base64" | "id";
+export type FileDataKind = 'data-uri' | 'url' | 'base64' | 'id';
 
 function getFileDataKind(
   data: string,
-  sourceType?: "url" | "id",
+  sourceType?: 'url' | 'id',
 ): FileDataKind {
-  if (sourceType === "url" && /^data:/i.test(data)) return "data-uri";
+  if (sourceType === 'url' && /^data:/i.test(data)) return 'data-uri';
   if (sourceType) return sourceType;
-  if (/^data:/i.test(data)) return "data-uri";
-  if (/^(https?:\/\/|blob:)/i.test(data)) return "url";
-  return "base64";
+  if (/^data:/i.test(data)) return 'data-uri';
+  if (/^(https?:\/\/|blob:)/i.test(data)) return 'url';
+  return 'base64';
 }
 
 function isUnsafeScheme(data: string): boolean {
@@ -85,18 +85,18 @@ function isUnsafeScheme(data: string): boolean {
 function getFileHref(
   data: string,
   mimeType: string,
-  sourceType?: "url" | "id",
+  sourceType?: 'url' | 'id',
 ): string | null {
   if (isUnsafeScheme(data)) return null;
   const kind = getFileDataKind(data, sourceType);
-  if (kind === "id") return null;
-  if (kind === "data-uri") return /^data:[^,]*,/i.test(data) ? data : null;
-  if (kind === "url") return /^(https?:\/\/|blob:)/i.test(data) ? data : null;
+  if (kind === 'id') return null;
+  if (kind === 'data-uri') return /^data:[^,]*,/i.test(data) ? data : null;
+  if (kind === 'url') return /^(https?:\/\/|blob:)/i.test(data) ? data : null;
   return `data:${mimeType};base64,${data}`;
 }
 
 function getBase64PayloadSize(payload: string): number {
-  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
   const firstNonBase64 = payload.search(/[^A-Za-z\d+/]/);
   if (
     (firstNonBase64 !== -1 && firstNonBase64 !== payload.length - padding) ||
@@ -110,15 +110,15 @@ function getBase64PayloadSize(payload: string): number {
 
 function getBase64Size(base64: string): number {
   const payload = /[\t\n\f\r ]/.test(base64)
-    ? base64.replace(/[\t\n\f\r ]/g, "")
+    ? base64.replace(/[\t\n\f\r ]/g, '')
     : base64;
   return getBase64PayloadSize(payload);
 }
 
 function getDataUrlSize(data: string): number {
-  const fragment = data.indexOf("#");
+  const fragment = data.indexOf('#');
   const end = fragment < 0 ? data.length : fragment;
-  const comma = data.indexOf(",");
+  const comma = data.indexOf(',');
   if (comma < 0 || comma >= end) {
     return 0;
   }
@@ -129,32 +129,33 @@ function getDataUrlSize(data: string): number {
         .replace(/%([\da-f]{2})/gi, (_match, hex: string) =>
           String.fromCharCode(Number.parseInt(hex, 16)),
         )
-        .replace(/[\t\n\f\r ]/g, "");
+        .replace(/[\t\n\f\r ]/g, '');
     }
     return getBase64PayloadSize(payload);
   }
 
   // Each percent escape is one byte, including octets that are not valid UTF-8.
-  return new TextEncoder().encode(payload.replace(/%[\da-f]{2}/gi, "_"))
+  return new TextEncoder().encode(payload.replace(/%[\da-f]{2}/gi, '_'))
     .byteLength;
 }
 
-function getFileLabel(mimeType: string): string {
+function getFileLabel(t: ChatTranslator, mimeType: string): string {
   const subtype = /^[^/;]+\/(?:x-)?(?:[^;+]*\.)?([^;+.\s]+)/.exec(
     mimeType.toLowerCase(),
   )?.[1];
-  if (!subtype || subtype === "octet-stream") return "Файл";
-  if (subtype === "plain") return "Текстовый файл";
-  return `Файл ${subtype.toUpperCase()}`;
+  if (!subtype || subtype === 'octet-stream') return t('file.generic');
+  if (subtype === 'plain') return t('file.text');
+  return t('file.typed', { type: subtype.toUpperCase() });
 }
 
 function formatFileSize(t: FormatsTranslator, bytes: number): string {
-  if (bytes < 1024) return t("fileSize.bytes", { size: bytes });
-  if (bytes < 1024 * 1024) return t("fileSize.kilobytes", { size: bytes / 1024 });
-  return t("fileSize.megabytes", { size: bytes / (1024 * 1024) });
+  if (bytes < 1024) return t('fileSize.bytes', { size: bytes });
+  if (bytes < 1024 * 1024)
+    return t('fileSize.kilobytes', { size: bytes / 1024 });
+  return t('fileSize.megabytes', { size: bytes / (1024 * 1024) });
 }
 
-export type FileRootProps = React.ComponentProps<"div"> &
+export type FileRootProps = React.ComponentProps<'div'> &
   VariantProps<typeof fileVariants>;
 
 function FileRoot({
@@ -177,7 +178,7 @@ function FileRoot({
   );
 }
 
-type FileIconDisplayProps = React.ComponentProps<"span"> & {
+type FileIconDisplayProps = React.ComponentProps<'span'> & {
   mimeType?: string;
 };
 
@@ -192,7 +193,7 @@ function FileIconDisplay({
   return (
     <span
       data-slot="file-icon"
-      className={cn("text-muted-foreground shrink-0", className)}
+      className={cn('text-muted-foreground shrink-0', className)}
       {...props}
     >
       {/* eslint-disable-next-line react-hooks/static-components -- The helper only selects module-level icon components. */}
@@ -205,28 +206,29 @@ function FileName({
   className,
   children,
   ...props
-}: React.ComponentProps<"span">) {
+}: React.ComponentProps<'span'>) {
+  const t = useTranslations('chat');
   return (
     <span
       data-slot="file-name"
-      className={cn("min-w-0 flex-1 truncate font-medium", className)}
+      className={cn('min-w-0 flex-1 truncate font-medium', className)}
       {...props}
     >
-      {children || "Файл без названия"}
+      {children || t('file.untitled')}
     </span>
   );
 }
 
-type FileSizeProps = React.ComponentProps<"span"> & {
+type FileSizeProps = React.ComponentProps<'span'> & {
   bytes: number;
 };
 
 function FileSize({ bytes, className, ...props }: FileSizeProps) {
-  const t = useTranslations("formats");
+  const t = useTranslations('formats');
   return (
     <span
       data-slot="file-size"
-      className={cn("text-muted-foreground shrink-0", className)}
+      className={cn('text-muted-foreground shrink-0', className)}
       {...props}
     >
       {formatFileSize(t, bytes)}
@@ -234,11 +236,11 @@ function FileSize({ bytes, className, ...props }: FileSizeProps) {
   );
 }
 
-type FileDownloadProps = Omit<React.ComponentProps<"a">, "href"> & {
+type FileDownloadProps = Omit<React.ComponentProps<'a'>, 'href'> & {
   data: string;
   mimeType: string;
   filename?: string;
-  sourceType?: "url" | "id";
+  sourceType?: 'url' | 'id';
 };
 
 function FileDownload({
@@ -250,7 +252,8 @@ function FileDownload({
   children,
   ...props
 }: FileDownloadProps) {
-  if (typeof data !== "string") return null;
+  const t = useTranslations('chat');
+  if (typeof data !== 'string') return null;
   const kind = getFileDataKind(data, sourceType);
   const href = getFileHref(data, mimeType, sourceType);
   if (!href) return null;
@@ -259,13 +262,19 @@ function FileDownload({
     <a
       data-slot="file-download"
       href={href}
-      download={filename || "download"}
-      {...(kind === "url" && { target: "_blank", rel: "noopener noreferrer" })}
+      download={filename || 'download'}
+      {...(kind === 'url' && { target: '_blank', rel: 'noopener noreferrer' })}
       className={cn(
-        "text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors motion-reduce:transition-none",
+        'text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors motion-reduce:transition-none',
         className,
       )}
-      aria-label={!children ? `Скачать ${filename || "файл"}` : undefined}
+      aria-label={
+        children
+          ? undefined
+          : filename
+            ? t('file.download', { name: filename })
+            : t('file.downloadUnnamed')
+      }
       {...props}
     >
       {children || <DownloadIcon className="size-4" />}
@@ -274,13 +283,13 @@ function FileDownload({
 }
 
 export interface FilePlayerProps extends Omit<
-  React.ComponentProps<"div">,
-  "children"
+  React.ComponentProps<'div'>,
+  'children'
 > {
   data: string;
   mimeType: string;
   filename?: string | undefined;
-  sourceType?: "url" | "id" | undefined;
+  sourceType?: 'url' | 'id' | undefined;
 }
 
 function FilePlayer({
@@ -296,15 +305,15 @@ function FilePlayer({
 
   if (
     !src ||
-    (!normalizedMimeType.startsWith("audio/") &&
-      !normalizedMimeType.startsWith("video/"))
+    (!normalizedMimeType.startsWith('audio/') &&
+      !normalizedMimeType.startsWith('video/'))
   ) {
     return null;
   }
 
   return (
-    <div data-slot="file-player" className={cn("w-full", className)} {...props}>
-      {normalizedMimeType.startsWith("audio/") ? (
+    <div data-slot="file-player" className={cn('w-full', className)} {...props}>
+      {normalizedMimeType.startsWith('audio/') ? (
         <AudioPlayer src={src} title={filename} />
       ) : (
         <VideoPlayer src={src} title={filename} />
@@ -319,13 +328,14 @@ const FileImpl: FileMessagePartComponent = ({
   mimeType,
   sourceType,
 }) => {
+  const t = useTranslations('chat');
   const kind = getFileDataKind(data, sourceType);
   const showSize =
-    typeof data === "string" && (kind === "base64" || kind === "data-uri");
+    typeof data === 'string' && (kind === 'base64' || kind === 'data-uri');
   const mediaSource = getFileHref(data, mimeType, sourceType);
   const isMedia =
-    mimeType.toLowerCase().startsWith("audio/") ||
-    mimeType.toLowerCase().startsWith("video/");
+    mimeType.toLowerCase().startsWith('audio/') ||
+    mimeType.toLowerCase().startsWith('video/');
 
   if (mediaSource && isMedia) {
     return (
@@ -340,7 +350,7 @@ const FileImpl: FileMessagePartComponent = ({
           {showSize && (
             <FileSize
               bytes={
-                kind === "data-uri" ? getDataUrlSize(data) : getBase64Size(data)
+                kind === 'data-uri' ? getDataUrlSize(data) : getBase64Size(data)
               }
               className="text-muted-foreground text-[11px]"
             />
@@ -360,11 +370,11 @@ const FileImpl: FileMessagePartComponent = ({
     <FileRoot>
       <FileIconDisplay mimeType={mimeType} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <FileName>{filename || getFileLabel(mimeType)}</FileName>
+        <FileName>{filename || getFileLabel(t, mimeType)}</FileName>
         {showSize && (
           <FileSize
             bytes={
-              kind === "data-uri" ? getDataUrlSize(data) : getBase64Size(data)
+              kind === 'data-uri' ? getDataUrlSize(data) : getBase64Size(data)
             }
             className="text-xs"
           />
@@ -389,7 +399,7 @@ const File = memo(FileImpl) as unknown as FileMessagePartComponent & {
   Player: typeof FilePlayer;
 };
 
-File.displayName = "File";
+File.displayName = 'File';
 File.Root = FileRoot;
 File.Icon = FileIconDisplay;
 File.Name = FileName;

@@ -19,7 +19,12 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { conversationWithTurns, deferred, threadList, threadSummary } from '@/test/fixtures';
+import {
+  conversationWithTurns,
+  deferred,
+  threadList,
+  threadSummary,
+} from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
@@ -44,7 +49,9 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // @complexity: medium
   it('AC-02.2 + AC-04.3: a direct link shows the feed skeleton, not the welcome, while the thread is resolving; a 404 then shows «Беседа не найдена» with focus on its h1', async () => {
     // Arrange
-    server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+    );
     const fetchGate = deferred();
     const fetchStarted = deferred();
     server.use(
@@ -52,7 +59,11 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
         fetchStarted.resolve();
         await fetchGate.promise;
         return HttpResponse.json(
-          { statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' },
+          {
+            statusCode: 404,
+            message: 'Thread not found',
+            errorCode: 'THREAD_NOT_FOUND',
+          },
           { status: 404 },
         );
       }),
@@ -73,7 +84,9 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     await fetchStarted.promise;
 
     // Assert (while pending, AC-02.2)
-    expect(await screen.findByRole('status', { name: 'Загружаем беседу…' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('status', { name: 'Загружаем беседу…' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Чем могу помочь?')).toBeNull();
 
     // Assert (while pending, UXRD 6.17): the composer is visible and editable, sending is blocked
@@ -90,19 +103,30 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
 
     // Act: release the 404
     fetchGate.resolve();
-    const heading = await screen.findByRole('heading', { level: 1, name: 'Беседа не найдена' });
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: 'Беседа не найдена',
+    });
 
     // Assert (after the 404, AC-04.3)
-    expect(screen.getByText('Возможно, её удалили или ссылка указана неверно.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Возможно, её удалили или ссылка указана неверно.'),
+    ).toBeInTheDocument();
     const notice = screen.getByRole('region', { name: 'Беседа не найдена' });
-    expect(within(notice).getByRole('button', { name: 'Новый чат' })).toBeInTheDocument();
+    expect(
+      within(notice).getByRole('button', { name: 'Новый чат' }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(heading).toHaveFocus());
     expect(screen.queryByRole('textbox', { name: 'Сообщение' })).toBeNull();
     expect(screen.queryByText('Thread not found')).toBeNull();
     expect(screen.queryByText('Чем могу помочь?')).toBeNull();
-    expect(screen.queryByRole('status', { name: 'Загружаем беседу…' })).toBeNull();
+    expect(
+      screen.queryByRole('status', { name: 'Загружаем беседу…' }),
+    ).toBeNull();
     // HD-03 on TH-06 (DD State × Display Matrix «TH-06/07: пусто»): neither the loading skeleton nor «Новый чат».
-    const pageTitle = screen.getAllByRole('heading', { level: 1 }).find((h) => h !== heading);
+    const pageTitle = screen
+      .getAllByRole('heading', { level: 1 })
+      .find((h) => h !== heading);
     expect(pageTitle).toHaveTextContent('');
     expect(pageTitle).not.toHaveAttribute('aria-busy');
     expect(requests.filter((entry) => entry.startsWith('POST '))).toEqual([]);
@@ -129,13 +153,22 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     server.use(
       http.get(`${API}/api/threads`, async () => {
         await listGate.promise;
-        return HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]));
+        return HttpResponse.json(
+          threadList([threadSummary({ id: 'x', title: 'Отчёт' })]),
+        );
       }),
-      http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
+      http.get(`${API}/api/threads/x`, () =>
+        HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' })),
+      ),
       http.get(`${API}/api/threads/x/history`, async () => {
         messagesStarted.resolve();
         await messagesGate.promise;
-        return HttpResponse.json(conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), ['Вопрос', 'Ответ']));
+        return HttpResponse.json(
+          conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), [
+            'Вопрос',
+            'Ответ',
+          ]),
+        );
       }),
     );
     const seenWelcome: string[] = [];
@@ -144,16 +177,23 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     const record = () => {
       const text = container.textContent ?? '';
       if (text.includes('Чем могу помочь?')) seenWelcome.push(text);
-      if (!text.includes('Ответ') && !text.includes('Загружаем беседу…')) skeletonGoneEarly.push(text);
+      if (!text.includes('Ответ') && !text.includes('Загружаем беседу…'))
+        skeletonGoneEarly.push(text);
     };
     record();
     const observer = new MutationObserver(record);
-    observer.observe(container, { subtree: true, childList: true, characterData: true });
+    observer.observe(container, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
     onTestFinished(() => observer.disconnect());
 
     // Act: the history load is in flight while the list is held; the history answers first, then the list
     await messagesStarted.promise;
-    expect(await screen.findByRole('status', { name: 'Загружаем беседу…' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('status', { name: 'Загружаем беседу…' }),
+    ).toBeInTheDocument();
     messagesGate.resolve();
     await screen.findByText('Ответ');
     listGate.resolve();
@@ -165,7 +205,9 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     expect(skeletonGoneEarly).toEqual([]);
     expect(screen.getByText('Вопрос')).toBeInTheDocument();
     expect(screen.getByText('Ответ')).toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'Загружаем беседу…' })).toBeNull();
+    expect(
+      screen.queryByRole('status', { name: 'Загружаем беседу…' }),
+    ).toBeNull();
     await waitFor(() => expect(link).toHaveAttribute('aria-current', 'page'));
   });
 
@@ -182,29 +224,55 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     // Arrange
     let messageCalls = 0;
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(
+          threadList([threadSummary({ id: 'x', title: 'Отчёт' })]),
+        ),
+      ),
       // The runtime resolves the URL thread before page 1 arrives.
-      http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
+      http.get(`${API}/api/threads/x`, () =>
+        HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' })),
+      ),
       http.get(`${API}/api/threads/x/history`, () => {
         messageCalls += 1;
-        if (messageCalls === 1) return HttpResponse.json({ thread: { id: 'x' }, entries: [{ seq: 1, kind: 'robot' }] });
-        return HttpResponse.json(conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), ['Вопрос', 'Ответ']));
+        if (messageCalls === 1)
+          return HttpResponse.json({
+            thread: { id: 'x' },
+            entries: [{ seq: 1, kind: 'robot' }],
+          });
+        return HttpResponse.json(
+          conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), [
+            'Вопрос',
+            'Ответ',
+          ]),
+        );
       }),
     );
     const user = userEvent.setup();
     renderWithRuntime({ pathname: '/chat/x' });
 
     // Act: the invalid history surfaces TH-07
-    const heading = await screen.findByRole('heading', { level: 1, name: 'Не удалось загрузить беседу' });
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: 'Не удалось загрузить беседу',
+    });
 
     // Assert (before retry)
-    expect(screen.getByText('Проверьте подключение и попробуйте ещё раз.')).toBeInTheDocument();
-    const notice = screen.getByRole('region', { name: 'Не удалось загрузить беседу' });
-    expect(within(notice).getByRole('button', { name: 'Новый чат' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Проверьте подключение и попробуйте ещё раз.'),
+    ).toBeInTheDocument();
+    const notice = screen.getByRole('region', {
+      name: 'Не удалось загрузить беседу',
+    });
+    expect(
+      within(notice).getByRole('button', { name: 'Новый чат' }),
+    ).toBeInTheDocument();
     const retry = within(notice).getByRole('button', { name: 'Повторить' });
     expect(screen.queryByText('Чем могу помочь?')).toBeNull();
     const history = screen.getByRole('navigation', { name: 'История бесед' });
-    expect(within(history).getByRole('link', { name: 'Отчёт' })).toHaveAttribute('href', '/chat/x');
+    expect(
+      within(history).getByRole('link', { name: 'Отчёт' }),
+    ).toHaveAttribute('href', '/chat/x');
 
     // Act: retry
     await user.click(retry);
@@ -214,7 +282,11 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     expect(messageCalls).toBe(2);
     expect(screen.getByText('Вопрос')).toBeInTheDocument();
     expect(heading).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Не удалось загрузить беседу' })).toBeNull();
-    expect(within(history).getByRole('link', { name: 'Отчёт' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Не удалось загрузить беседу' }),
+    ).toBeNull();
+    expect(
+      within(history).getByRole('link', { name: 'Отчёт' }),
+    ).toBeInTheDocument();
   });
 });

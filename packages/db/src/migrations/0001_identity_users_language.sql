@@ -1,2 +1,0 @@
-ALTER TABLE "app"."identity_users" ADD COLUMN "language" text;--> statement-breakpoint
-ALTER TABLE "app"."identity_users" ADD CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru'));

@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import {
   IdentityErrorCode,
@@ -14,29 +15,26 @@ import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
 import { providerRules } from '@/lib/admin/form-rules';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { cn } from '@/lib/utils';
 import { adminPath } from '@/lib/shell-route';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
+import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { CopyValue } from '../copy-value';
 import { SecretField } from '../secret-field';
-import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL, ProviderEnabledSwitch } from './providers-table';
+import {
+  GoogleWarning,
+  PROVIDER_TYPE_LABEL,
+  ProviderEnabledSwitch,
+} from './providers-table';
 
-/** UXRD MC-27; «Сохранить» — MC-20. */
-const TEXT = {
-  settings: 'Настройки провайдера',
+/** UXRD MC-27: the standard OAuth/OIDC field names, the same in every language (i18n uxrd.md KD-7). */
+const STANDARD_LABEL = {
   issuer: 'Issuer',
   clientId: 'Client ID',
   clientSecret: 'Client secret',
-  providerData: 'Данные для провайдера',
-  providerDataHint: 'Перенесите эти значения в настройки приложения Agent OS у провайдера',
-  redirectUri: 'Адрес возврата',
   scopes: 'Scopes',
-  save: 'Сохранить',
-  loadFailed: 'Не удалось загрузить провайдера',
 } as const;
 
 type ProviderValues = {
@@ -59,28 +57,42 @@ const valuesOf = ({ name, options }: ProviderView): ProviderValues => ({
  * The `PATCH` body: empty fields and a secret without a replacement stay out of it, so a save never clears a
  * stored value and the stored secret is never sent back (design-admin.md, Contract `SecretField`).
  */
-function updateBodyOf(type: ProviderView['type'], { name, issuer, clientId, clientSecret }: ProviderValues): UpdateProviderBody {
+function updateBodyOf(
+  type: ProviderView['type'],
+  { name, issuer, clientId, clientSecret }: ProviderValues,
+): UpdateProviderBody {
   const options: NonNullable<UpdateProviderBody['options']> = {};
   if (type === 'oidc' && issuer.trim() !== '') options.issuer = issuer.trim();
   if (clientId.trim() !== '') options.clientId = clientId.trim();
-  if (clientSecret !== undefined && clientSecret !== '') options.clientSecret = clientSecret;
-  return Object.keys(options).length === 0 ? { name: name.trim() } : { name: name.trim(), options };
+  if (clientSecret !== undefined && clientSecret !== '')
+    options.clientSecret = clientSecret;
+  return Object.keys(options).length === 0
+    ? { name: name.trim() }
+    : { name: name.trim(), options };
 }
 
 const isPublicUrlRequired = (error: unknown): boolean =>
-  isApiRequestError(error) && error.code === IdentityErrorCode.PUBLIC_URL_REQUIRED;
+  isApiRequestError(error) &&
+  error.code === IdentityErrorCode.PUBLIC_URL_REQUIRED;
 
 /**
  * UXRD «Провайдер»: the switch, the button's name, the settings of the provider's type (AC-26.4) with the
  * client secret as a `SecretField`, and the values to copy into the app at the provider (AC-26.1).
  */
 export function ProviderPage({ id }: { id: string }) {
+  const titles = useAdminTitles();
+  const t = useTranslations('admin.signIn');
+  const tErrors = useTranslations('errors.admin.code');
   const router = useRouter();
-  const provider = useResource(() => adminApi.providers.get(id), `provider:${id}`);
+  const provider = useResource(
+    () => adminApi.providers.get(id),
+    `provider:${id}`,
+  );
   /** Counts the saved settings: each one gives the switch a fresh start, without the refusal of an older enable. */
   const [saves, setSaves] = useState(0);
 
-  if (isNotFound(provider.error)) return <ThreadNotice variant="record-not-found" section="sign-in" />;
+  if (isNotFound(provider.error))
+    return <ThreadNotice variant="record-not-found" section="sign-in" />;
 
   const data = provider.data;
   if (data === undefined) {
@@ -89,7 +101,11 @@ export function ProviderPage({ id }: { id: string }) {
         section="sign-in"
         resource={provider}
         // MC-27: the provider's data are built from the public address, which cannot be derived here.
-        loadFailed={isPublicUrlRequired(provider.error) ? ADMIN_TEXT.publicUrlRequired : TEXT.loadFailed}
+        loadFailed={
+          isPublicUrlRequired(provider.error)
+            ? tErrors('PUBLIC_URL_REQUIRED')
+            : t('provider.loadFailed')
+        }
       />
     );
   }
@@ -98,23 +114,41 @@ export function ProviderPage({ id }: { id: string }) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE}
+      <PageHeader
+        area={titles.panel}
         title={data.name}
-        parent={sectionParent('sign-in')}
-        badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? PROVIDER_TEXT.enabled : PROVIDER_TEXT.disabled}</StateBadge>}
+        parent={titles.parent('sign-in')}
+        badge={
+          <StateBadge state={data.enabled ? 'ok' : 'off'}>
+            {data.enabled ? t('enabled') : t('disabled')}
+          </StateBadge>
+        }
       />
       <div className="flex max-w-160 flex-col gap-6">
-        <ProviderEnabledSwitch key={saves} provider={data} inTable={false} onChanged={provider.reload} />
+        <ProviderEnabledSwitch
+          key={saves}
+          provider={data}
+          inTable={false}
+          onChanged={provider.reload}
+        />
         {data.type === 'google' && <GoogleWarning />}
 
         <AdminForm
           variant="page"
           initialValues={valuesOf(data)}
-          validate={({ name, issuer }) => providerRules({ name, issuer: isOidc && issuer.trim() !== '' ? issuer : undefined })}
+          validate={({ name, issuer }) =>
+            providerRules({
+              name,
+              issuer: isOidc && issuer.trim() !== '' ? issuer : undefined,
+            })
+          }
           onSubmit={async (values) => {
-            await adminApi.providers.update(id, updateBodyOf(data.type, values));
+            await adminApi.providers.update(
+              id,
+              updateBodyOf(data.type, values),
+            );
           }}
-          submitLabel={TEXT.save}
+          submitLabel={t('provider.save')}
           onSaved={() => {
             setSaves((count) => count + 1);
             provider.reload();
@@ -125,20 +159,22 @@ export function ProviderPage({ id }: { id: string }) {
         >
           {(form) => (
             <>
-              <ReadOnlyValue label={PROVIDER_TEXT.type}>{PROVIDER_TYPE_LABEL[data.type]}</ReadOnlyValue>
+              <ReadOnlyValue label={t('type')}>
+                {PROVIDER_TYPE_LABEL[data.type]}
+              </ReadOnlyValue>
               <AdminTextField
                 {...form.field('name')}
-                label={PROVIDER_TEXT.name}
-                hint={PROVIDER_TEXT.nameHint(form.values.name)}
+                label={t('name')}
+                hint={t('nameHint', { name: form.values.name.trim() })}
                 maxLength={PROVIDER_NAME_MAX_LENGTH}
                 value={form.values.name}
                 onChange={(value) => form.set('name', value)}
               />
-              <Group title={TEXT.settings}>
+              <Group title={t('provider.settings')}>
                 {isOidc && (
                   <AdminTextField
                     {...form.field('issuer')}
-                    label={TEXT.issuer}
+                    label={STANDARD_LABEL.issuer}
                     mono
                     type="url"
                     inputMode="url"
@@ -148,14 +184,14 @@ export function ProviderPage({ id }: { id: string }) {
                 )}
                 <AdminTextField
                   {...form.field('clientId')}
-                  label={TEXT.clientId}
+                  label={STANDARD_LABEL.clientId}
                   mono
                   value={form.values.clientId}
                   onChange={(value) => form.set('clientId', value)}
                 />
                 <SecretField
                   {...form.field('clientSecret')}
-                  label={TEXT.clientSecret}
+                  label={STANDARD_LABEL.clientSecret}
                   isSet={data.options.clientSecretSet}
                   value={form.values.clientSecret}
                   onChange={(value) => form.set('clientSecret', value)}
@@ -165,9 +201,20 @@ export function ProviderPage({ id }: { id: string }) {
           )}
         </AdminForm>
 
-        <Group title={TEXT.providerData} hint={TEXT.providerDataHint}>
-          <CopyValue label={TEXT.redirectUri} value={data.providerData.redirectUri} />
-          {isOidc && <CopyValue label={TEXT.scopes} value={data.providerData.scopes} />}
+        <Group
+          title={t('provider.providerData')}
+          hint={t('provider.providerDataHint')}
+        >
+          <CopyValue
+            label={t('provider.redirectUri')}
+            value={data.providerData.redirectUri}
+          />
+          {isOidc && (
+            <CopyValue
+              label={STANDARD_LABEL.scopes}
+              value={data.providerData.scopes}
+            />
+          )}
         </Group>
       </div>
     </>
@@ -175,7 +222,15 @@ export function ProviderPage({ id }: { id: string }) {
 }
 
 /** settings-form «Группа»: a Heading over its fields. */
-function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Group({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4 pt-2">
@@ -183,7 +238,9 @@ function Group({ title, hint, children }: { title: string; hint?: string; childr
         <h2 id={headingId} className="text-base leading-6 font-semibold">
           {title}
         </h2>
-        {hint !== undefined && <p className={cn(CAPTION, 'text-muted-foreground')}>{hint}</p>}
+        {hint !== undefined && (
+          <p className={cn(CAPTION, 'text-muted-foreground')}>{hint}</p>
+        )}
       </div>
       {children}
     </section>
@@ -191,10 +248,20 @@ function Group({ title, hint, children }: { title: string; hint?: string; childr
 }
 
 /** «Тип» never changes: a label over plain text, no input. */
-function ReadOnlyValue({ label, children }: { label: string; children: string }) {
+function ReadOnlyValue({
+  label,
+  children,
+}: {
+  label: string;
+  children: string;
+}) {
   const labelId = useId();
   return (
-    <div role="group" aria-labelledby={labelId} className="flex flex-col gap-1.5">
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      className="flex flex-col gap-1.5"
+    >
       <div id={labelId} className="text-data font-medium text-foreground">
         {label}
       </div>

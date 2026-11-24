@@ -9,7 +9,7 @@ const SERVER_DESCRIPTION = 'Searches tickets.';
 const HEADER = 'Result structure (structuredContent):';
 const TRUNCATED = '(result structure truncated)';
 
-/** An item of a stored tool list, as `storedMcpTools` reads it from `agent_mcp_servers.tools`. */
+/** An item of a stored tool list, as `storedMcpTools` reads it from `mcp_servers.tools`. */
 function stored(outputSchema?: Record<string, unknown>): unknown {
   return {
     name: 'mcp__tracker__search_tickets',
@@ -35,17 +35,25 @@ function withShape(text: string): string {
 
 /** An object with `count` required fields `fieldNNN: string`. */
 function wideObject(count: number): Record<string, unknown> {
-  const names = Array.from({ length: count }, (_, i) => `field${String(i).padStart(3, '0')}`);
+  const names = Array.from(
+    { length: count },
+    (_, i) => `field${String(i).padStart(3, '0')}`,
+  );
   return {
     type: 'object',
-    properties: Object.fromEntries(names.map((name) => [name, { type: 'string' }])),
+    properties: Object.fromEntries(
+      names.map((name) => [name, { type: 'string' }]),
+    ),
     required: names,
   };
 }
 
 /** The first `count` fields of `wideObject`, as the text writes them. */
 function wideFields(count: number): string {
-  return Array.from({ length: count }, (_, i) => `field${String(i).padStart(3, '0')}: string`).join(', ');
+  return Array.from(
+    { length: count },
+    (_, i) => `field${String(i).padStart(3, '0')}: string`,
+  ).join(', ');
 }
 
 /** 200 fields of 15 characters each: far over the limit. */
@@ -93,7 +101,9 @@ describe('builds the model description of an MCP tool from its stored shape (AC-
                       type: 'object',
                       properties: {
                         amount: { type: 'number' },
-                        failureReason: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                        failureReason: {
+                          anyOf: [{ type: 'string' }, { type: 'null' }],
+                        },
                       },
                       required: ['amount', 'failureReason'],
                       additionalProperties: false,
@@ -133,7 +143,10 @@ describe('builds the model description of an MCP tool from its stored shape (AC-
     ],
     [
       'a root that is an array',
-      stored({ type: 'array', items: { anyOf: [{ type: 'string' }, { type: 'number' }] } }),
+      stored({
+        type: 'array',
+        items: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+      }),
       withShape('(string | number)[]'),
     ],
     [
@@ -159,7 +172,11 @@ describe('builds the model description of an MCP tool from its stored shape (AC-
       }),
       withShape('{ when: string, odd: unknown, bag: object, list: unknown[] }'),
     ],
-    ['a shape longer than the limit', stored(LONG_SCHEMA), withShape(LONG_TEXT)],
+    [
+      'a shape longer than the limit',
+      stored(LONG_SCHEMA),
+      withShape(LONG_TEXT),
+    ],
     ['a short shape', stored(wideObject(3)), withShape(`{ ${wideFields(3)} }`)],
     ['an item of a list stored before shapes', stored(), SERVER_DESCRIPTION],
   ])('%s', (_case, item, expected) => {
@@ -168,6 +185,8 @@ describe('builds the model description of an MCP tool from its stored shape (AC-
     // DC-2: the same stored schema gives the same text on every read.
     expect(descriptionOf(item)).toBe(description);
     // DC-3: the block — everything after the server's description — stays within the limit.
-    expect(description.length - SERVER_DESCRIPTION.length).toBeLessThanOrEqual(TOOL_SHAPE_LIMIT + 2);
+    expect(description.length - SERVER_DESCRIPTION.length).toBeLessThanOrEqual(
+      TOOL_SHAPE_LIMIT + 2,
+    );
   });
 });

@@ -1,0 +1,219 @@
+{
+  "status": {
+    "working": "Working",
+    "awaiting_confirmation": "Awaiting confirmation",
+    "interrupted": "Interrupted",
+    "completed": "Completed",
+    "failed": "Failed",
+    "stopped": "Stopped"
+  },
+  "composerPlaceholder": "{status, select, working {Message the agent — it gets it after the current step} awaiting_confirmation {Message the agent — it gets it after the current step} interrupted {Write what to do next} other {Write to continue with the same history}}",
+  "brief": {
+    "question": "Question",
+    "boundaries": "Scope",
+    "result": "Result"
+  },
+  "list": {
+    "loading": "Loading agents…",
+    "loadFailed": "Couldn't load agents",
+    "retry": "Retry",
+    "showMore": "Show more",
+    "empty": "No agents yet",
+    "emptyHint": "Ask in a chat to do a task in the background — the agent will appear here."
+  },
+  "tree": {
+    "columns": {
+      "agent": "Agent",
+      "record": "From library",
+      "status": "Status",
+      "model": "Model",
+      "started": "Started",
+      "chat": "Chat"
+    },
+    "toggle": "{open, select, yes {Hide nested: {description}} other {Show nested: {description}}}",
+    "model": "<hidden>model </hidden>{model}",
+    "started": "<hidden>started </hidden><time>{at}</time>",
+    "chat": "<hidden>chat </hidden>{title}"
+  },
+  "meta": {
+    "started": "started <time>{at}</time>",
+    "deepAgent": "Deep agent “{name}”",
+    "fromAgent": "started by agent “<link>{name}</link>”",
+    "fromChat": "from chat “<link>{title}</link>”"
+  },
+  "header": {
+    "stop": "Stop",
+    "stopFailed": "Couldn't stop the agent. Try again.",
+    "restart": "Start over",
+    "restartFailed": "Couldn't start the agent over.",
+    "restartUnavailable": "The {kind, select, agent {agent} other {deep agent}} isn't available — can't start over",
+    "restartVersion": "Will run on version {version}",
+    "menu": "Agent actions",
+    "open": "Open"
+  },
+  "report": {
+    "title": "<prefix>Report · </prefix><link>{description}</link>",
+    "label": "Report: {description}",
+    "stopped": "{withParent, select, yes {stopped with its parent} other {stopped by you}}",
+    "empty": "No report."
+  },
+  "interrupt": "Interrupt",
+  "values": {
+    "yes": "yes",
+    "no": "no"
+  },
+  "valueRows": {
+    "showJson": "Show as JSON",
+    "hideJson": "Hide JSON"
+  },
+  "runCode": {
+    "class": {
+      "read": "read-only",
+      "write": "writing: can change data in external systems"
+    },
+    "script": "Script",
+    "showScript": "Show script",
+    "hideScript": "Hide script",
+    "canCall": {
+      "title": "Can call",
+      "changes": "changes",
+      "reads": "reads",
+      "note": "Listed by the platform from the script: the run won't call any other tools",
+      "none": "No tools: the run won't reach any external systems"
+    }
+  },
+  "decision": {
+    "byChat": "Chat wants to run:",
+    "byAgent": "Agent “<link>{description}</link>” wants to run:",
+    "groupAction": "Decision needed: {tool}",
+    "groupBrief": "Brief: {question}",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approved": "Approved · {time}",
+    "rejected": "Rejected · {time}",
+    "briefApproved": "Brief approved · {time}",
+    "briefRejected": "Brief rejected · {time}",
+    "cancelled": "Not needed: the agent was stopped",
+    "sendFailed": "Couldn't send the decision. Try again.",
+    "launch": "Run",
+    "edit": "Edit",
+    "launchEdited": "Run with edits",
+    "cancelEdit": "Cancel",
+    "emptyQuestion": "The question can't be empty",
+    "selfLearning": "The deep agent learns: it remembers what this run finds, and other employees' runs get it."
+  },
+  "recordCard": {
+    "create": "{kind, select, agent {Create agent} other {Create deep agent}}",
+    "edit": "Change “{name}”",
+    "delete": "Delete “{name}”",
+    "deleteNote": "The {kind, select, agent {agent} other {deep agent}} will be removed from the library. This can't be undone.",
+    "changed": "changed",
+    "new": "new",
+    "removed": "Removed: {what}",
+    "createButton": "Create",
+    "saveButton": "Save changes",
+    "deleteButton": "Delete",
+    "created": "Created · {time}",
+    "changedOutcome": "Changed · {time}",
+    "deleted": "Deleted · {time}",
+    "notSaved": "Not saved: {reason}",
+    "showDiagram": "Show diagram"
+  },
+  "recordTool": {
+    "list_records": "Library list",
+    "read_record": "Read “{name}”",
+    "create_record": "Create “{name}”",
+    "edit_record": "Edit “{name}”",
+    "delete_record": "Delete “{name}”"
+  },
+  "run": {
+    "label": "{name}: {status}",
+    "stepLabel": "{hasSubagent, select, yes {{subagent}, } other {}}{description}, {status}",
+    "open": "Open",
+    "openLabel": "Open agent “{description}”",
+    "openRun": "Open run",
+    "rerun": "Run again",
+    "changedAfterRun": "The {kind, select, agent {agent} other {deep agent}} changed after the run: now version {version}",
+    "recipient": "{author}{count, plural, =0 {} one { · for role {roles}} other { · for roles {roles}}}: works with your permissions and connections, changes only after you approve. The author or an administrator can remove it.",
+    "limitReached": "call limit reached",
+    "notCalled": "not called"
+  },
+  "event": {
+    "interrupted": "Interrupted by you",
+    "stopped": "Stopped by you",
+    "stopped_with_parent": "Stopped with its parent",
+    "continued": "Continued with history",
+    "compacted": "History compacted for the model",
+    "tasksOpen": "Answer not accepted: tasks {numbers} are still open",
+    "reportMissing": "Answer not accepted: waiting for the report from “{name}”"
+  },
+  "queue": {
+    "region": "Waiting for delivery",
+    "heading": "Waiting for delivery · {count}",
+    "more": "and {count} more",
+    "blocked": "Waiting for your decision on the request above — the messages will go after it.",
+    "toDecision": "Go to request",
+    "source": {
+      "user": "You",
+      "report": "Report",
+      "parent": "Agent"
+    }
+  },
+  "taskStatus": {
+    "pending": "Pending",
+    "in_progress": "In progress",
+    "completed": "Completed",
+    "unfinished": "Not finished"
+  },
+  "trainingStatus": {
+    "running": "Running",
+    "done": "Done",
+    "stopped": "Stopped manually",
+    "capped": "Stopped at the cap",
+    "failed": "Failed: {reason}",
+    "failedNoReason": "Failed"
+  },
+  "delegationStatus": {
+    "running": "Running",
+    "completed": "Done",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "delegations": {
+    "title": "Delegations · {count}",
+    "listLabel": "Delegations",
+    "summary": {
+      "running": "running {count}",
+      "completed": "done {count}",
+      "failed": "failed {count}",
+      "cancelled": "cancelled {count}"
+    },
+    "task": "task {number}",
+    "rowLabel": "{subagent}: {item}, {status}"
+  },
+  "tasks": {
+    "tabs": {
+      "activity": "Activity",
+      "tasks": "Tasks · {count}"
+    },
+    "listLabel": "Tasks",
+    "rowButton": "Task {number}: {subject}, {status}",
+    "waitsFor": "waits for {numbers}",
+    "emptyTitle": "No tasks yet",
+    "emptyHint": "The agent's tasks and delegations appear here.",
+    "loading": "Loading tasks…",
+    "loadError": "Couldn't load tasks",
+    "retry": "Try again"
+  },
+  "documents": {
+    "tab": "Documents · {count}",
+    "listLabel": "Documents",
+    "writing": "Writing",
+    "showAll": "Show in full",
+    "collapse": "Collapse",
+    "openInPanel": "Open in panel",
+    "back": "Back to documents",
+    "loadError": "Couldn't load the document",
+    "retry": "Try again"
+  }
+}

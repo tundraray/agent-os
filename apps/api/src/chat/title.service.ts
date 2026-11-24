@@ -1,13 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
-  type Agents,
+  ControlOperations,
+  ViewOperations,
+  ModelClient,
   ModelNotConfiguredError,
   ModelRefusedError,
   OwnerDisabledError,
 } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
-import { AGENTS } from '../agents/agents.tokens';
-import { APP_LOGGER } from '../logging/app-logger';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   buildTitlePrompt,
   normalizeGeneratedTitle,
@@ -35,7 +35,7 @@ function refusalReason(error: unknown): string | undefined {
 }
 
 /**
- * The automatic title of a conversation (design-chat.md, DC-2, KD-6): one `agents.completeText` call
+ * The automatic title of a conversation (design-chat.md, DC-2, KD-6): one `ModelClient.completeText` call
  * over the first message, the title rules, and a write only into an empty title. It runs in the
  * background of a send whose conversation has no title yet, at most once at a time per conversation
  * in this process; a failure, a refusal of the access gate (one `info` record with the reason), no
@@ -49,8 +49,10 @@ export class TitleService {
   private readonly logger: Logger;
 
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(ControlOperations) private readonly control: ControlOperations,
+    @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(ModelClient) private readonly model: ModelClient,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.title' });
   }
@@ -59,10 +61,16 @@ export class TitleService {
   ensure(request: EnsureTitleRequest): void {
     if (this.generating.has(request.threadId)) return;
     this.generating.add(request.threadId);
-    void this.generate(request).finally(() => this.generating.delete(request.threadId));
+    void this.generate(request).finally(() =>
+      this.generating.delete(request.threadId),
+    );
   }
 
-  private async generate({ threadId, ownerId, firstText }: EnsureTitleRequest): Promise<void> {
+  private async generate({
+    threadId,
+    ownerId,
+    firstText,
+  }: EnsureTitleRequest): Promise<void> {
     const startedAt = Date.now();
     try {
       const source = firstText ?? (await this.firstTask(threadId, ownerId));
@@ -73,7 +81,7 @@ export class TitleService {
         });
         return;
       }
-      const answer = await this.agents.completeText({
+      const answer = await this.model.completeText({
         ownerId,
         system: TITLE_SYSTEM_PROMPT,
         prompt: buildTitlePrompt(source),
@@ -89,7 +97,11 @@ export class TitleService {
         });
         return;
       }
-      const written = await this.agents.sessions.titleRootIfEmpty(threadId, ownerId, title);
+      const written = await this.control.titleRootIfEmpty(
+        threadId,
+        ownerId,
+        title,
+      );
       this.logger.info('thread title generated', {
         threadId,
         ownerId,
@@ -125,8 +137,15 @@ export class TitleService {
   }
 
   /** The text of the root's first entry, its task (Notes 5(в)): the title follows the first message. */
-  private async firstTask(rootId: string, ownerId: string): Promise<string | undefined> {
-    const [first] = await this.agents.sessions.history({ agentId: rootId, ownerId, limit: 1 });
+  private async firstTask(
+    rootId: string,
+    ownerId: string,
+  ): Promise<string | undefined> {
+    const [first] = await this.views.history({
+      agentId: rootId,
+      ownerId,
+      limit: 1,
+    });
     return first?.kind === 'task' ? first.content.text : undefined;
   }
 }

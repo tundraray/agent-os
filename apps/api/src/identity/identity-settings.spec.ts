@@ -1,14 +1,12 @@
 import type { Logger } from '@agent-os/common';
-import type { DatabaseConnection } from '@agent-os/db';
-import type { AuditLog } from '../audit/audit-log';
+import type {
+  SettingsService,
+  StoredSettings,
+} from '../settings/settings.service';
 import { IdentitySettings } from './identity-settings';
-import {
-  readSettings,
-  savePublicUrlIfUnset,
-  type SettingsRow,
-} from './settings.repository';
 
-vi.mock('./settings.repository');
+const readSettings = vi.fn<SettingsService['read']>();
+const replaceIf = vi.fn<SettingsService['replaceIf']>();
 
 const logger: Logger = {
   debug: vi.fn(),
@@ -18,35 +16,42 @@ const logger: Logger = {
   child: () => logger,
 };
 
-function settingsRow(publicUrl: string | null): SettingsRow {
+const LIMITS = { idleMinutes: 60, absoluteMinutes: 720 };
+
+function stored(publicUrl: string | null): StoredSettings<'sign_in_settings'> {
   return {
-    publicUrl,
-    idleMinutes: 60,
-    absoluteMinutes: 720,
+    value: { publicUrl, ...LIMITS },
     updatedAt: null,
+    updatedBy: null,
   };
 }
 
 // KD-3, Flow 3: behind the web's /api forwarding the request's Host is the API's internal address,
 // so the fallback public address is FRONTEND_ORIGIN, saved once, and only when it is a valid one.
-describe('public address without a saved one: the saved one wins, a valid FRONTEND_ORIGIN is returned and saved, http on another host is refused and nothing is saved', () => {
+// data-model DC-8: a first save that lost to a concurrent one answers with the address the other request stored.
+describe('public address without a saved one: the saved one wins, a valid FRONTEND_ORIGIN is returned and saved, a save lost to another request returns the stored address, http on another host is refused and nothing is saved', () => {
   const settings = new IdentitySettings(
-    { db: {} } as DatabaseConnection,
-    {} as AuditLog,
+    { read: readSettings, replaceIf } as unknown as SettingsService,
     logger,
   );
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.mocked(savePublicUrlIfUnset).mockReset();
+    replaceIf.mockReset();
   });
 
-  it.each([
+  it.each<{
+    saved: string | null;
+    frontendOrigin: string;
+    /** The address a concurrent request stored first: this request's replace writes nothing. */
+    savedByOther?: string;
+    expected: string;
+    savedNow?: string;
+  }>([
     {
       saved: 'https://aos.example.com',
       frontendOrigin: 'https://web.example.com',
       expected: 'https://aos.example.com',
-      savedNow: undefined,
     },
     {
       saved: null,
@@ -54,33 +59,42 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
       expected: 'https://aos.example.com',
       savedNow: 'https://aos.example.com',
     },
+    {
+      saved: null,
+      frontendOrigin: 'https://aos.example.com',
+      savedByOther: 'https://first.example.com',
+      expected: 'https://first.example.com',
+      savedNow: 'https://aos.example.com',
+    },
   ])(
-    'saved $saved, FRONTEND_ORIGIN $frontendOrigin -> $expected',
-    async ({ saved, frontendOrigin, expected, savedNow }) => {
+    'saved $saved, FRONTEND_ORIGIN $frontendOrigin, saved by another request $savedByOther -> $expected',
+    async ({ saved, frontendOrigin, savedByOther, expected, savedNow }) => {
       vi.stubEnv('FRONTEND_ORIGIN', frontendOrigin);
-      vi.mocked(readSettings).mockResolvedValue(settingsRow(saved));
-      vi.mocked(savePublicUrlIfUnset).mockResolvedValue(true);
+      readSettings
+        .mockResolvedValueOnce(stored(saved))
+        .mockResolvedValue(stored(savedByOther ?? saved));
+      replaceIf.mockResolvedValue(savedByOther === undefined);
 
       await expect(settings.publicUrlFor()).resolves.toBe(expected);
 
-      if (savedNow === undefined)
-        expect(savePublicUrlIfUnset).not.toHaveBeenCalled();
+      if (savedNow === undefined) expect(replaceIf).not.toHaveBeenCalled();
       else
-        expect(savePublicUrlIfUnset).toHaveBeenCalledWith(
-          expect.anything(),
-          savedNow,
+        expect(replaceIf).toHaveBeenCalledWith(
+          'sign_in_settings',
+          { publicUrl: null, ...LIMITS },
+          { publicUrl: savedNow, ...LIMITS },
         );
     },
   );
 
   it('refuses http on a host other than localhost with PUBLIC_URL_REQUIRED and saves nothing', async () => {
     vi.stubEnv('FRONTEND_ORIGIN', 'http://aos.example.com');
-    vi.mocked(readSettings).mockResolvedValue(settingsRow(null));
+    readSettings.mockResolvedValue(stored(null));
 
     await expect(settings.publicUrlFor()).rejects.toMatchObject({
       status: 409,
       response: { errorCode: 'PUBLIC_URL_REQUIRED' },
     });
-    expect(savePublicUrlIfUnset).not.toHaveBeenCalled();
+    expect(replaceIf).not.toHaveBeenCalled();
   });
 });

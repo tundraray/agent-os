@@ -8,7 +8,7 @@
 |---|---|---|
 | Монорепо | pnpm workspaces + Turborepo | Один lockfile, общие пакеты; Turborepo даёт граф задач и кэш сборок почти без конфигурации |
 | Фронт | Next.js (App Router) + assistant-ui | Примитивы чата под MIT: вложения, ветки, редактирование, tool UI, approvals |
-| Бэкенд | NestJS (Express-платформа) | Guards, interceptors, модули для auth/аудита/бюджетов |
+| Бэкенд | NestJS (Express-платформа) | Guards, interceptors, модули для входа, прав и аудита |
 | Агенты | `packages/agents` поверх `packages/runtime` | Каждый агент — задача durable runtime; Nest только собирает пакеты |
 | Транспорт | HTTP-команды и SSE (`GET /api/events`) | Команда отвечает сразу, ответ агента идёт живым потоком |
 | Хранилище | Postgres (схема `app`, `packages/db`) | Задачи, сессии агентов, беседы, расход и аудит в одной БД |
@@ -20,14 +20,13 @@
 agent-os/
   apps/
     web/              Next.js + assistant-ui
-    api/              NestJS: API чата, SSE, сборка runtime, agents и workflows
+    api/              NestJS: API чата, SSE, сборка runtime и agents
   packages/
     common/           логгер и общие утилиты
     contracts/        общие типы: инструменты, события, DTO
     db/               модель схемы `app` (Drizzle), миграции, мигратор, createDatabase
     runtime/          durable runtime без NestJS: createRuntime, порты, порт обработчика
-    agents/           агенты поверх runtime: определения, сессии, инструменты, MCP: createAgents
-    workflows/        шаблоны процессов (deep-research), инструмент start_workflow, чтение запуска: createWorkflows
+    agents/           агенты и глубокие агенты поверх runtime: снимки, сессии, инструменты, start_deep_agent, MCP: createAgents
     mcp-fixture/      HTTP-процесс с фикстурными MCP-серверами `logs`, `backoffice`, `tracker` для разработки и тестов
   infra/
     docker-compose.yml       стек из образов: postgres, migrate, api, web
@@ -95,12 +94,13 @@ cd ../..
 
 Инструкции: [NestJS first steps](https://docs.nestjs.com/first-steps), [NestJS configuration](https://docs.nestjs.com/techniques/configuration), [NestJS SSE](https://docs.nestjs.com/techniques/server-sent-events).
 
-`apps/api` — NestJS-приложение, которое собирает пакеты `runtime`, `agents` и `workflows` и отдаёт API чата:
+`apps/api` — NestJS-приложение, которое собирает пакеты `runtime` и `agents` и отдаёт API чата:
 
-- `src/runtime/`, `src/agents/`, `src/workflows/` — модули-сборщики пакетов: читают переменные окружения и файлы `config/`.
+- `src/runtime/`, `src/agents/` — модули-сборщики пакетов: читают переменные окружения.
 - `src/chat/` — беседы, агенты, решения, расход (HTTP-команды) и живой поток `GET /api/events` (SSE поверх `LISTEN/NOTIFY` Postgres).
 - `src/audit/` — interceptor, пишущий события в Postgres.
-- `src/auth/` — `SessionGuard`: в разработке все запросы идут от `dev-user` (заголовок `x-user-id` подменяет пользователя).
+- `src/identity/`, `src/access/` — вход, сессии, роли и права на MCP-серверы и модели.
+- `src/library/` — записи агентов и глубоких агентов.
 
 Переменные окружения и запуск — `apps/api/README.md` («How to run locally») и `apps/api/.env.example`.
 
@@ -204,7 +204,7 @@ pnpm db:up
 cp apps/api/.env.example apps/api/.env       # провайдеры и ключ задаются посевом seed:access или в панели
 pnpm --filter api build
 pnpm --filter api db:migrate
-pnpm --filter api start:dev
+pnpm --filter api dev
 ```
 
 Хост-порт Postgres задаётся переменной `POSTGRES_PORT` (по умолчанию 5432). Если 5432 занят, поднимите базу на другом порту и укажите тот же порт в `DATABASE_URL` в `apps/api/.env`:
@@ -223,7 +223,7 @@ POSTGRES_PORT=5433 pnpm db:up
 | Команда | Что делает |
 |---|---|
 | `pnpm db:migrate` | применяет миграции из `packages/db/src/migrations/` к базе `DATABASE_URL` из `apps/api/.env`; нужна собранная `apps/api` (`pnpm --filter api build`: сборка кладёт миграции в `apps/api/dist/migrations`) |
-| `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema.ts` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
+| `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema/` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
 
 Тесты с Postgres поднимают базу `DATABASE_URL` (из окружения, иначе из `apps/api/.env`) и сами применяют миграции один раз до набора. Запускайте их **по одному**, не параллельно против одной базы: воркеры runtime (relay, reaper) трогают чужие строки.
 
@@ -231,11 +231,11 @@ POSTGRES_PORT=5433 pnpm db:up
 |---|---|
 | `pnpm --filter @agent-os/db test:e2e` | миграции и домены CHECK схемы `app` |
 | `pnpm --filter @agent-os/runtime test:e2e` | интеграционные тесты runtime и матрицу убийств процесса (дочерний процесс запускается из исходников через `tsx`) |
-| `pnpm --filter @agent-os/agents test:e2e` / `pnpm --filter @agent-os/workflows test:e2e` | интеграционные тесты агентов и шаблонов процессов |
+| `pnpm --filter @agent-os/agents test:e2e` | интеграционные тесты агентов и глубоких агентов |
 | `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (беседы, агенты, решения, живой поток) |
 | `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
 
-Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — `docs/features/agent-platform/design-runtime.md`, Runtime Settings). Неверное значение останавливает старт с именем переменной. Настройки агентов (`AGENT_*`, `MCP_*`) — там же, в `.env.example`.
+Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — [`design-runtime.md`](docs/features/agent-platform/design-runtime.md#runtime-settings)). Неверное значение останавливает старт с именем переменной. Настройки агентов (`AGENT_*`, `MCP_*`) — там же, в `.env.example`.
 
 | Переменная | По умолчанию |
 |---|---|
@@ -243,9 +243,8 @@ POSTGRES_PORT=5433 pnpm db:up
 | `RUNTIME_CONCURRENCY` | 16 |
 | `RUNTIME_POLL_MS` | 500 |
 | `RUNTIME_NOTIFY` | `on` |
-| `RUNTIME_LEASE_MS` / `RUNTIME_HEARTBEAT_MS` / `RUNTIME_REAPER_MS` | 30000 / 10000 / 5000 |
+| `RUNTIME_REAPER_MS` | 5000 |
 | `RUNTIME_MAX_RECOVERIES` | 3 |
-| `RUNTIME_DELIVERY_MAX_ATTEMPTS` | 5 |
 | `RUNTIME_SHUTDOWN_GRACE_MS` | 5000 |
 | `RUNTIME_STEP_MS` | 900000 (не меньше 1000; предел длительности одного шага) |
 | `DB_POOL_MAX` | 10 |
@@ -259,18 +258,13 @@ POSTGRES_PORT=5433 pnpm db:up
 | `pnpm lint` | oxlint (`api` и пакеты в `packages/`) и ESLint (`web`); любое предупреждение — ошибка |
 | `pnpm typecheck` | `tsc --noEmit` по всем пакетам, включая тесты (`web` сначала генерирует типы роутов `next typegen`) |
 | `pnpm build` | сборка приложений: `apps/api` (бандл Nest CLI на rspack, исходники пакетов внутри) и `apps/web` (Next); у пакетов в `packages/` сборки нет |
+| `pnpm format:check` | prettier (`.prettierrc` в корне, один на весь репозиторий) сообщает о файлах не по формату; `pnpm format` их переписывает. В `pnpm check` и CI не входит |
 | `pnpm knip` | неиспользуемые файлы, экспорты и зависимости ([knip](https://knip.dev)); настройки в `knip.json` |
-| `pnpm check` | всё вышеперечисленное плюс `pnpm test` — то же, что гоняет CI (`.github/workflows/ci.yml`) |
+| `pnpm check` | `lint`, `typecheck`, `build`, `knip` и `pnpm test` — то же, что гоняет CI (`.github/workflows/ci.yml`) |
 
 Сообщения коммитов пишутся на английском и проверяются [commitlint](https://commitlint.js.org) по [Conventional Commits](https://www.conventionalcommits.org): `type(scope): subject`, например `feat(web): add new chat button` или `fix(api): keep thread title after delete`. Хук `commit-msg` ставит husky при `pnpm install`; в CI проверяются все коммиты PR.
 
 Скопированные компоненты shadcn и assistant-ui (`components/ui`, `components/assistant-ui`, `file`, `image`, `media-player`, `surfaces`) исключены из проверки неиспользуемых экспортов: это библиотечный код, его API шире того, что использует приложение. Неиспользуемые файлы и зависимости в них по-прежнему ловятся.
-
-## Что дальше
-
-1. Авторизация через корпоративный OIDC в `apps/api/src/auth`.
-2. Бюджеты токенов на пользователя и подразделение.
-3. Инструменты в изолированных Docker-воркерах (`apps/api/src/sandbox`).
 
 ## Альтернативы, которые отложены
 

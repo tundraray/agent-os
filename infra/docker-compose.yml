@@ -12,7 +12,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "agent", "-d", "agent_os"]
+      test: ['CMD', 'pg_isready', '-U', 'agent', '-d', 'agent_os']
       interval: 2s
       timeout: 5s
       retries: 30
@@ -20,7 +20,7 @@ services:
   # The API only checks migrations at start and refuses pending ones, so they run first, once.
   migrate:
     image: ghcr.io/tundraray/agent-os-api:latest
-    command: ["node", "dist/migrate-cli.js"]
+    command: ['node', 'dist/migrate-cli.js']
     environment:
       DATABASE_URL: postgres://agent:agent@postgres:5432/agent_os
     depends_on:
@@ -43,7 +43,7 @@ services:
     environment:
       SENTRY_DSN: ${SENTRY_DSN:-}
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       - api
     restart: unless-stopped

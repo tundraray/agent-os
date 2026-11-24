@@ -7,11 +7,13 @@
 // AC-10.1: "Given пустая база из infra/docker-compose.yml, When применяются миграции, Then схема создана; повторное применение ничего не меняет."
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
 // AC-RT-8: "Домены CHECK статусов в схеме app совпадают со значениями enum в packages/contracts" — the `runtime_*` tables
-// (task status, wait reason, message status, decision status, delivery status from packages/contracts/src/runtime.ts).
-// One baseline migration creates the whole schema `app` with its seed rows and the `vector` extension
-// (self-learning/design-core.md, Data Model): after it, only the tables of the Data Models are in `app`.
-// The `agent_*` CHECK domains (history kind, tool call state, outcome, refusal reason) come from
-// packages/contracts/src/agents.ts.
+// (task status and wait reason from packages/contracts/src/runtime.ts).
+// DC-9, DC-10 (data-model/design-schema.md, KD-7): the baseline set of two files — the generated schema, the built-in rows
+// — creates the whole schema `app`; after it, only the tables of "Таблицы части" and the
+// unrenamed groups are in `app`. DC-28 (data-model/design-agents.md, "Таблицы каталога"): the catalogue is `agents`,
+// `agent_versions`, `agent_shares`; the kind and the default-agent key domains come from packages/contracts/src/library.ts.
+// The conversation CHECK domains (history kind, tool call state, outcome, refusal reason)
+// come from packages/contracts/src/agents.ts, the `settings` key domain from packages/contracts/src/settings.ts.
 //
 // Primary failure mode: the migrator applies twice or partially, touches `public`, or a CHECK domain drifts from the contract enums.
 // Isolation: the row runs in its own scratch database, created with CREATE DATABASE and dropped afterwards.
@@ -19,26 +21,19 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  BuiltinKeySchema,
   CALL_RECORD_KINDS,
-  DecisionStatusSchema,
-  DeliveryStatusSchema,
-  DraftStateSchema,
-  EmbeddingFailureReasonSchema,
   GrantEffectSchema,
   GrantTargetKindSchema,
   HistoryEntryKindSchema,
-  KnowledgeItemKindSchema,
-  KnowledgeItemTypeSchema,
   LanguageSchema,
-  LastExtractionReasonSchema,
-  LastExtractionStatusSchema,
   McpServerModeSchema,
-  MessageStatusSchema,
   ModelProviderKindSchema,
   ModelPurposeSchema,
   ProviderTypeSchema,
   RecordKindSchema,
-  SaveOwnRefusalSchema,
+  SessionTaskStatusSchema,
+  SettingsKeySchema,
   TaskStatusSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
@@ -53,46 +48,36 @@ import { ScratchDatabases, withDatabase } from './support/scratch-db';
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;
 
-/** Tables of the Data Models (agent-platform/design-runtime.md, design-agents.md, design-chat.md, agent-quality/design-lifecycle.md) plus the migration journal. */
+/** Tables of data-model/design-schema.md (Data Model, "Таблицы части") plus the migration journal; `name` sorts bytewise: '_' (0x5f) before letters. */
 const APP_TABLES = [
   '__drizzle_migrations',
   'access_grants',
-  'access_model_defaults',
-  'access_models',
-  'agent_code_calls',
-  'agent_knowledge_embedding',
-  'agent_knowledge_entities',
-  'agent_knowledge_questions',
-  'agent_knowledge_relations',
-  'agent_knowledge_runs',
-  'agent_knowledge_settings',
-  'agent_knowledge_vectors',
-  'agent_mcp_accounts',
-  'agent_mcp_servers',
-  'agent_messages',
-  'agent_model_providers',
-  'agent_sessions',
-  // `name` sorts bytewise: '_' (0x5f) before 's' (0x73).
-  'agent_tool_result_settings',
-  'agent_tool_results',
+  'agent_shares',
+  'agent_versions',
+  'agents',
   'audit_events',
-  'chat_drafts',
+  'code_calls',
+  'conversation_tasks',
+  'conversations',
+  'documents',
   'identity_login_requests',
   'identity_providers',
   'identity_role_members',
   'identity_roles',
   'identity_sessions',
-  'identity_settings',
   'identity_users',
-  'library_records',
-  'library_settings',
-  'library_shares',
-  'runtime_decisions',
-  'runtime_event_deliveries',
-  'runtime_events',
+  'mcp_accounts',
+  'mcp_servers',
+  'memories',
+  'messages',
+  'model_providers',
+  'models',
   'runtime_inbox',
   'runtime_model_calls',
   'runtime_tasks',
+  'settings',
+  'tool_results',
+  'trainings',
 ];
 
 /** Stand-in for chat data: a `public` table named like Mastra's, with known rows. */
@@ -247,34 +232,26 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
       expect(domains).toEqual({
         runtime_tasks_status_check: sorted(TaskStatusSchema.options),
         runtime_tasks_wait_reason_check: sorted(WaitReasonSchema.options),
-        runtime_inbox_status_check: sorted(MessageStatusSchema.options),
-        runtime_decisions_status_check: sorted(DecisionStatusSchema.options),
-        runtime_event_deliveries_status_check: sorted(
-          DeliveryStatusSchema.options,
-        ),
-        agent_messages_kind_check: sorted(HistoryEntryKindSchema.options),
-        agent_messages_call_id_check: sorted(CALL_RECORD_KINDS),
-        agent_code_calls_outcome_check: sorted(ToolOutcomeSchema.options),
-        agent_code_calls_refusal_reason_check: sorted(
+        messages_kind_check: sorted(HistoryEntryKindSchema.options),
+        messages_call_id_check: sorted(CALL_RECORD_KINDS),
+        code_calls_outcome_check: sorted(ToolOutcomeSchema.options),
+        code_calls_refusal_reason_check: sorted(
           ToolRefusalReasonSchema.options,
         ),
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_users_language_check: sorted(LanguageSchema.options),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
-        agent_mcp_servers_mode_check: sorted(McpServerModeSchema.options),
-        agent_model_providers_kind_check: sorted(ModelProviderKindSchema.options),
-        access_models_purpose_check: sorted(ModelPurposeSchema.options),
+        mcp_servers_mode_check: sorted(McpServerModeSchema.options),
+        model_providers_kind_check: sorted(ModelProviderKindSchema.options),
+        models_purpose_check: sorted(ModelPurposeSchema.options),
         access_grants_effect_check: sorted(GrantEffectSchema.options),
         access_grants_target_kind_check: sorted(GrantTargetKindSchema.options),
-        library_records_kind_check: sorted(RecordKindSchema.options),
-        chat_drafts_kind_check: sorted(RecordKindSchema.options),
-        chat_drafts_state_check: sorted(DraftStateSchema.options),
-        chat_drafts_refusal_check: sorted(SaveOwnRefusalSchema.options),
-        agent_knowledge_relations_kind_check: sorted(KnowledgeItemKindSchema.options),
-        agent_knowledge_runs_last_status_check: sorted(LastExtractionStatusSchema.options),
-        agent_knowledge_runs_last_reason_check: sorted(LastExtractionReasonSchema.options),
-        agent_knowledge_embedding_last_reason_check: sorted(EmbeddingFailureReasonSchema.options),
-        agent_knowledge_vectors_key_kind_check: sorted(KnowledgeItemTypeSchema.options),
+        agents_kind_check: sorted(RecordKindSchema.options),
+        agents_builtin_key_check: sorted(BuiltinKeySchema.options),
+        conversation_tasks_status_check: sorted(
+          SessionTaskStatusSchema.options,
+        ),
+        settings_key_check: sorted(SettingsKeySchema.options),
       });
     });
   });

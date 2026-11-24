@@ -1,7 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AgentsError,
-  type Agents,
+  ViewOperations,
+  ControlOperations,
+  StartOperations,
   type AgentView as AgentsAgentView,
   type RootSession,
 } from '@agent-os/agents';
@@ -13,20 +15,18 @@ import {
   type AwaitingCount,
   type DecisionRequest,
   type DecisionResponse,
+  type DeepAgentRunView,
   type HistoryEntry,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type AgentTasksView,
   type SpendResponse,
   type StopResponse,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
-import { monthOf, type Runtime } from '@agent-os/runtime';
-import type { Workflows } from '@agent-os/workflows';
-import { AGENTS } from '../agents/agents.tokens';
+import { TrainingsRepository } from '@agent-os/db';
+import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
-import { RUNTIME } from '../runtime/runtime.tokens';
-import { WORKFLOWS } from '../workflows/workflows.tokens';
 import { httpError } from './chat.errors';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
 import {
@@ -35,10 +35,11 @@ import {
   toAgentView,
   toConfirmation,
   toHistoryEntry,
+  toDeepAgentRunView,
   toPending,
-  toWorkflowRunView,
+  trainingOf,
 } from './conversation-view';
-import { decodeRowCursor, toThreadSummary } from './conversations.service';
+import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');
@@ -52,18 +53,22 @@ type ListedAgent = {
 
 /**
  * The agent routes, decisions and spend (design-chat.md, Contract «Агенты», «Решения и расход», KD-7,
- * DC-3). Every agent operation starts with `agents.sessions.get` (the owner check of the package) and
+ * DC-3). Every agent operation starts with `ViewOperations.get` (the owner check of the package) and
  * refuses a conversation's root: for the web the root is not an agent. A malformed, missing or foreign
  * id answers as a missing one. Agents and the conversations — their root sessions — are reached only
- * through `agents`, `workflows` and `runtime`.
+ * through `agents` and `runtime`.
  */
 @Injectable()
 export class AgentControlService {
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(RUNTIME) private readonly runtime: Runtime,
-    @Inject(WORKFLOWS) private readonly workflows: Workflows,
+    @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(ControlOperations) private readonly control: ControlOperations,
+    @Inject(StartOperations) private readonly starts: StartOperations,
+    @Inject(Inbox) private readonly inbox: Inbox,
+    @Inject(TokenLedger) private readonly ledger: TokenLedger,
     @Inject(AGENT_LIST_PAGE_SIZE) private readonly pageSize: number,
+    @Inject(TrainingsRepository)
+    private readonly trainings: TrainingsRepository,
   ) {}
 
   /**
@@ -72,7 +77,7 @@ export class AgentControlService {
    */
   async page(ownerId: string, cursor?: string): Promise<AgentListPage> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
-    const roots = await this.agents.sessions.roots({ ownerId });
+    const roots = await this.views.roots({ ownerId });
     const perConversation = await Promise.all(
       roots.map(async (root) => this.topAgentsOf(root, ownerId)),
     );
@@ -89,11 +94,11 @@ export class AgentControlService {
 
   /** NV-01: open decision requests across all the owner's conversations. */
   async awaiting(ownerId: string): Promise<AwaitingCount> {
-    const roots = await this.agents.sessions.roots({ ownerId });
+    const roots = await this.views.roots({ ownerId });
     const counts = await Promise.all(
       roots.map(async ({ rootId }) => {
         const confirmations = await unlessDeleted(
-          this.agents.sessions.confirmations(rootId, ownerId),
+          this.views.confirmations(rootId, ownerId),
         );
         return confirmations.filter(
           (confirmation) => confirmation.status === 'open',
@@ -110,19 +115,21 @@ export class AgentControlService {
     afterSeq: number,
   ): Promise<AgentPageView> {
     const view = await this.agent(agentId, ownerId);
-    const conversation = await this.agents.sessions.root(view.rootId, ownerId);
+    const conversation = await this.views.root(view.rootId, ownerId);
     if (conversation === undefined) throw agentNotFound();
-    const [views, entries, messages, confirmations] = await Promise.all([
-      this.agents.sessions.list(view.rootId, ownerId),
-      this.agents.sessions.history({
-        agentId,
-        ownerId,
-        afterSeq,
-        limit: HISTORY_PAGE_SIZE,
-      }),
-      this.runtime.inbox.listPending(agentId, ownerId),
-      this.agents.sessions.confirmations(view.rootId, ownerId),
-    ]);
+    const [views, entries, messages, confirmations, training] =
+      await Promise.all([
+        this.views.list(view.rootId, ownerId),
+        this.views.history({
+          agentId,
+          ownerId,
+          afterSeq,
+          limit: HISTORY_PAGE_SIZE,
+        }),
+        this.inbox.listPending(agentId, ownerId),
+        this.views.confirmations(view.rootId, ownerId),
+        this.trainings.find(view.rootId),
+      ]);
     // design v1.2 (A-2): the parent's description, unless the parent is the conversation's root.
     const parent = views.find(
       (candidate) => candidate.agentId === view.parentId,
@@ -140,11 +147,12 @@ export class AgentControlService {
       },
       entries: entries.map(toHistoryEntry),
       nextAfterSeq: nextAfterSeqOf(entries),
-      pending: toPending(messages, views),
+      pending: toPending(messages, views, confirmations),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)
         .map((confirmation) => toConfirmation(confirmation, views)),
       children: toAgentTree(views, agentId),
+      training: trainingOf(training, agentId),
     };
   }
 
@@ -156,7 +164,7 @@ export class AgentControlService {
   ): Promise<InheritedHistory> {
     const { forkedFrom } = await this.agent(agentId, ownerId);
     if (forkedFrom === null) return { entries: [], nextAfterSeq: null };
-    const page = await this.agents.sessions.history({
+    const page = await this.views.history({
       agentId: forkedFrom.agentId,
       ownerId,
       afterSeq,
@@ -174,10 +182,20 @@ export class AgentControlService {
     return { entries, nextAfterSeq: more ? last.seq : null };
   }
 
-  /** A coordinator's workflow run (`WorkflowRunView`); any other agent is `RUN_NOT_FOUND` (from `workflows`). */
-  async run(agentId: string, ownerId: string): Promise<WorkflowRunView> {
+  /** A deep agent's run (`DeepAgentRunView`); any other agent is `RUN_NOT_FOUND` (from `agents`). */
+  async run(agentId: string, ownerId: string): Promise<DeepAgentRunView> {
     await this.agent(agentId, ownerId);
-    return toWorkflowRunView(await this.workflows.runs.get(agentId, ownerId));
+    return toDeepAgentRunView(await this.views.run(agentId, ownerId));
+  }
+
+  /**
+   * The task list of any of the owner's sessions, the conversation's root included, in number order; a
+   * session without one has an empty list (deep-agents KD-5), and the subagents of its `task` calls (design-task.md,
+   * «Запись и маршрут»). A malformed, missing or foreign id is `AGENT_NOT_FOUND`.
+   */
+  async tasks(agentId: string, ownerId: string): Promise<AgentTasksView> {
+    if (!isUuid(agentId)) throw agentNotFound();
+    return this.views.taskList(agentId, ownerId);
   }
 
   /** A message to the agent; to a finished agent it continues with its history. */
@@ -187,18 +205,28 @@ export class AgentControlService {
     text: string,
   ): Promise<{ messageId: string }> {
     await this.agent(agentId, ownerId);
-    return this.agents.sessions.send({ agentId, ownerId, text });
+    return this.control.send({ agentId, ownerId, text });
   }
 
   /** As the conversation's interrupt (FR-16). */
-  async interrupt(agentId: string, ownerId: string): Promise<InterruptResponse> {
+  async interrupt(
+    agentId: string,
+    ownerId: string,
+  ): Promise<InterruptResponse> {
     await this.agent(agentId, ownerId);
-    return { outcome: await this.agents.sessions.interrupt({ agentId, ownerId }) };
+    return { outcome: await this.control.interrupt({ agentId, ownerId }) };
   }
 
+  /** Also a training's root (the trainer): «Стоп» of a training conversation stops it. */
   async stop(agentId: string, ownerId: string): Promise<StopResponse> {
-    await this.agent(agentId, ownerId);
-    return { stopped: await this.agents.sessions.stop({ agentId, ownerId }) };
+    if (!isUuid(agentId)) throw agentNotFound();
+    const view = await this.views.get(agentId, ownerId);
+    if (
+      view.parentId === null &&
+      (await this.trainings.find(agentId)) === undefined
+    )
+      throw agentNotFound();
+    return { stopped: await this.control.stop({ agentId, ownerId }) };
   }
 
   /**
@@ -207,7 +235,7 @@ export class AgentControlService {
    */
   async restart(agentId: string, ownerId: string): Promise<RestartResponse> {
     await this.agent(agentId, ownerId);
-    return this.agents.sessions.restart({ agentId, ownerId });
+    return this.starts.restart({ agentId, ownerId });
   }
 
   /** Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged. */
@@ -217,7 +245,7 @@ export class AgentControlService {
     decision: DecisionRequest,
   ): Promise<DecisionResponse> {
     if (!isUuid(decisionId)) throw httpError('DECISION_NOT_FOUND');
-    const outcome = await this.agents.sessions.resolveConfirmation({
+    const outcome = await this.control.resolveConfirmation({
       decisionId,
       ownerId,
       approve: decision.approve,
@@ -229,7 +257,7 @@ export class AgentControlService {
   /** The owner's spend in the current UTC month (AC-29.1). */
   async spend(ownerId: string): Promise<SpendResponse> {
     const month = monthOf(new Date());
-    const { costUsd } = await this.runtime.ledger.monthSpend(ownerId, month);
+    const { costUsd } = await this.ledger.monthSpend(ownerId, month);
     return { month, costUsd };
   }
 
@@ -242,7 +270,7 @@ export class AgentControlService {
     ownerId: string,
   ): Promise<AgentsAgentView> {
     if (!isUuid(agentId)) throw agentNotFound();
-    const view = await this.agents.sessions.get(agentId, ownerId);
+    const view = await this.views.get(agentId, ownerId);
     if (view.parentId === null) throw agentNotFound();
     return view;
   }
@@ -252,9 +280,7 @@ export class AgentControlService {
     root: RootSession,
     ownerId: string,
   ): Promise<ListedAgent[]> {
-    const views = await unlessDeleted(
-      this.agents.sessions.list(root.rootId, ownerId),
-    );
+    const views = await unlessDeleted(this.views.list(root.rootId, ownerId));
     const threadTitle = toThreadSummary(root).title;
     return toAgentTree(views, root.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),

@@ -1,11 +1,10 @@
 import { Inject, Injectable, type LoggerService } from '@nestjs/common';
 import {
+  LOGGER,
   withoutQueryParams,
   type LogFields,
   type Logger,
 } from '@agent-os/common';
-import { APP_LOGGER } from './app-logger';
-
 /**
  * Nest's `LoggerService` over the application logger (logging.md): framework records and every
  * `new Logger(context)` go through the same redaction and sinks. Nest passes the context as the last
@@ -13,7 +12,7 @@ import { APP_LOGGER } from './app-logger';
  */
 @Injectable()
 export class NestLoggerAdapter implements LoggerService {
-  constructor(@Inject(APP_LOGGER) private readonly logger: Logger) {}
+  constructor(@Inject(LOGGER) private readonly logger: Logger) {}
 
   log(message: unknown, ...optionalParams: unknown[]): void {
     this.write('info', message, optionalParams);

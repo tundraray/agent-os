@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import type {
   AdminUserDetail,
   CreateRoleBody,
@@ -8,32 +8,26 @@ import type {
   RoleSummary,
   UpdateRoleBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log';
-import type { Executor } from '../common/executor';
-import { isUuid } from '../common/is-uuid';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { identityError } from './identity.errors';
 import {
-  addRoleMember,
-  deleteRole,
-  insertRole,
-  removeRoleMember,
-  roleMembers,
-  roleSummaries,
-  updateRole,
-  type RoleRow,
-  type RoleWithCount,
-} from './roles.repository';
-import { rolesOfUsers, takenField } from './users.repository';
+  type IdentityRoleRow,
+  IdentityRolesRepository,
+  type RoleSummaryRow,
+  Db,
+} from '@agent-os/db';
+import { AuditLog } from '../audit/audit-log';
+import { isUuid } from '../common/is-uuid';
+import { identityError } from './identity.errors';
+import { takenField } from './taken-field';
 import { roleRefs, UsersService } from './users.service';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
-const roleState = (role: Pick<RoleRow, 'name' | 'isAdmin'>) => ({
+const roleState = (
+  role: Pick<IdentityRoleRow, 'name' | 'isAdmin' | 'trainOwn' | 'trainAny'>,
+) => ({
   name: role.name,
   isAdmin: role.isAdmin,
+  trainOwn: role.trainOwn,
+  trainAny: role.trainAny,
 });
 
 /** A unique violation of the role name (ignoring case) is 409 ROLE_NAME_TAKEN; anything else goes up. */
@@ -44,41 +38,37 @@ function roleNameTaken(error: unknown): never {
 
 /**
  * Roles and their assignment, only by an administrator (FR-06, AC-06.1). The built-in
- * «Супер-администратор» cannot be deleted, renamed or lose the admin right: 409 BUILTIN_ROLE (KD-6,
- * DC-15). Every change writes `admin_change` with before and after.
+ * «Супер-администратор» cannot be deleted, renamed or lose the admin or a training right: 409
+ * BUILTIN_ROLE (KD-6, DC-15; training KD-8). Every change writes `admin_change` with before and after.
  */
 @Injectable()
 export class RolesService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    private readonly db: Db,
+    private readonly roles: IdentityRolesRepository,
     private readonly auditLog: AuditLog,
     private readonly users: UsersService,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
 
   /** The roles by name with their employee count. */
   list(): Promise<RoleList> {
-    return roleSummaries(this.db);
+    return this.roles.summaries();
   }
 
   /** One role with its employees. 404 ROLE_NOT_FOUND. */
   async detail(roleId: string): Promise<RoleDetail> {
     const role = await this.findOr404(roleId);
-    return { ...role, members: await roleMembers(this.db, role.id) };
+    return { ...role, members: await this.roles.members(role.id) };
   }
 
   /** A role without the admin right and without employees. 409 ROLE_NAME_TAKEN. */
   async create(actorId: string, body: CreateRoleBody): Promise<RoleSummary> {
     const startedAt = Date.now();
     const role = await this.db
-      .transaction(async (tx) => {
-        const created = await insertRole(tx, body.name);
+      .transaction(async () => {
+        const created = await this.roles.insert(body.name);
         await this.recordRoleChange(
-          tx,
           actorId,
           created.id,
           null,
@@ -97,12 +87,14 @@ export class RolesService {
       id: role.id,
       name: role.name,
       isAdmin: role.isAdmin,
+      trainOwn: role.trainOwn,
+      trainAny: role.trainAny,
       builtin: role.builtin,
       memberCount: 0,
     };
   }
 
-  /** Renames the role and/or gives or takes its admin right. 404 ROLE_NOT_FOUND, 409 ROLE_NAME_TAKEN, BUILTIN_ROLE. */
+  /** Renames the role and/or gives or takes its rights. 404 ROLE_NOT_FOUND, 409 ROLE_NAME_TAKEN, BUILTIN_ROLE. */
   async update(
     actorId: string,
     roleId: string,
@@ -111,22 +103,22 @@ export class RolesService {
     const startedAt = Date.now();
     const role = await this.findOr404(roleId);
     const renamed = body.name !== undefined && body.name !== role.name;
-    if (role.builtin && (renamed || body.isAdmin === false))
+    const rightTaken =
+      body.isAdmin === false ||
+      body.trainOwn === false ||
+      body.trainAny === false;
+    if (role.builtin && (renamed || rightTaken))
       throw this.refuseBuiltin(actorId, role.id, 'update');
     const after = {
       name: body.name ?? role.name,
       isAdmin: body.isAdmin ?? role.isAdmin,
+      trainOwn: body.trainOwn ?? role.trainOwn,
+      trainAny: body.trainAny ?? role.trainAny,
     };
     await this.db
-      .transaction(async (tx) => {
-        await updateRole(tx, role.id, after);
-        await this.recordRoleChange(
-          tx,
-          actorId,
-          role.id,
-          roleState(role),
-          after,
-        );
+      .transaction(async () => {
+        await this.roles.update(role.id, after);
+        await this.recordRoleChange(actorId, role.id, roleState(role), after);
       })
       .catch(roleNameTaken);
     this.logger.info('role updated', {
@@ -145,9 +137,9 @@ export class RolesService {
     const startedAt = Date.now();
     const role = await this.findOr404(roleId);
     if (role.builtin) throw this.refuseBuiltin(actorId, role.id, 'delete');
-    await this.db.transaction(async (tx) => {
-      await deleteRole(tx, role.id);
-      await this.recordRoleChange(tx, actorId, role.id, roleState(role), null);
+    await this.db.transaction(async () => {
+      await this.roles.delete(role.id);
+      await this.recordRoleChange(actorId, role.id, roleState(role), null);
     });
     this.logger.info('role deleted', {
       actorId,
@@ -188,19 +180,19 @@ export class RolesService {
     const startedAt = Date.now();
     await this.users.findOr404(userId);
     const role = await this.findOr404(roleId);
-    const changed = await this.db.transaction(async (tx) => {
-      const before = await this.roleRefsOf(tx, userId);
+    const changed = await this.db.transaction(async () => {
+      const before = await this.roleRefsOf(userId);
       const has = before.some((held) => held.id === role.id);
       if (has === (change === 'assign')) return false;
-      if (change === 'assign') await addRoleMember(tx, role.id, userId);
-      else await removeRoleMember(tx, role.id, userId);
-      await this.auditLog.record(tx, {
+      if (change === 'assign') await this.roles.addMember(role.id, userId);
+      else await this.roles.removeMember(role.id, userId);
+      await this.auditLog.record({
         kind: 'admin_change',
         actor: actorId,
         objectType: 'user',
         objectId: userId,
         before: { roles: before },
-        after: { roles: await this.roleRefsOf(tx, userId) },
+        after: { roles: await this.roleRefsOf(userId) },
         outcome: 'ok',
       });
       return true;
@@ -220,20 +212,18 @@ export class RolesService {
   }
 
   private async roleRefsOf(
-    executor: Executor,
     userId: string,
   ): Promise<{ id: string; name: string }[]> {
-    return roleRefs(await rolesOfUsers(executor, [userId]));
+    return roleRefs(await this.roles.ofUsers([userId]));
   }
 
   private recordRoleChange(
-    tx: RuntimeTx,
     actorId: string,
     roleId: string,
     before: ReturnType<typeof roleState> | null,
     after: ReturnType<typeof roleState> | null,
   ): Promise<void> {
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind: 'admin_change',
       actor: actorId,
       objectType: 'role',
@@ -260,8 +250,8 @@ export class RolesService {
   }
 
   /** The role with its employee count, or 404 ROLE_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
-  private async findOr404(roleId: string): Promise<RoleWithCount> {
-    const [role] = isUuid(roleId) ? await roleSummaries(this.db, roleId) : [];
+  private async findOr404(roleId: string): Promise<RoleSummaryRow> {
+    const [role] = isUuid(roleId) ? await this.roles.summaries(roleId) : [];
     if (role === undefined) throw identityError('ROLE_NOT_FOUND');
     return role;
   }

@@ -1,6 +1,11 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
-import { type EmbeddingInputType, type ProviderAdapter, keyHeader, rejectionText } from './adapters';
+import {
+  type EmbeddingInputType,
+  type ProviderAdapter,
+  keyHeader,
+  rejectionText,
+} from './adapters';
 import type { ProviderConnection } from './provider-registry';
 
 /** The Gemini task type of each kind of embedded text. */
@@ -10,7 +15,10 @@ const TASK_TYPES: Readonly<Record<EmbeddingInputType, string>> = {
 };
 
 function provider(connection: ProviderConnection) {
-  return createGoogleGenerativeAI({ baseURL: connection.baseUrl, apiKey: connection.apiKey ?? undefined });
+  return createGoogleGenerativeAI({
+    baseURL: connection.baseUrl,
+    apiKey: connection.apiKey ?? undefined,
+  });
 }
 
 /**
@@ -29,11 +37,20 @@ export const geminiAdapter: ProviderAdapter = {
     },
     // `gemini-embedding-001` answers 3072 dimensions unless asked for the catalogue's size.
     providerOptions(inputType, dimensions) {
-      return { google: { taskType: TASK_TYPES[inputType], outputDimensionality: dimensions } };
+      return {
+        google: {
+          taskType: TASK_TYPES[inputType],
+          outputDimensionality: dimensions,
+        },
+      };
     },
   },
   toolsRejected(statusCode, body) {
-    return rejectionText(statusCode, body)?.message.includes('function_declarations') ?? false;
+    return (
+      rejectionText(statusCode, body)?.message.includes(
+        'function_declarations',
+      ) ?? false
+    );
   },
   checkRequest(connection) {
     return {

@@ -25,9 +25,16 @@ function encodeCursor(payload: CursorPayload): string {
  * Decodes a cursor of the query with `queryHash`; `undefined` when it does not decode or belongs to another query.
  * A cursor from another snapshot is accepted, so a snapshot change surfaces as the page's `snapshot`.
  */
-function decodeCursor(cursor: string, queryHash: string): CursorPayload | undefined {
-  const payload = CursorPayloadSchema.safeParse(parseJson(Buffer.from(cursor, 'base64url').toString('utf8')));
-  return payload.success && payload.data.queryHash === queryHash ? payload.data : undefined;
+function decodeCursor(
+  cursor: string,
+  queryHash: string,
+): CursorPayload | undefined {
+  const payload = CursorPayloadSchema.safeParse(
+    parseJson(Buffer.from(cursor, 'base64url').toString('utf8')),
+  );
+  return payload.success && payload.data.queryHash === queryHash
+    ? payload.data
+    : undefined;
 }
 
 /** The page of `matched` a paged tool call asks for: `items` and the cursor of the next page, or null on the last. */
@@ -43,7 +50,9 @@ export interface Page<Item> {
 export function pageOf<Item>(
   matched: readonly Item[],
   args: { cursor?: string; pageSize: number },
-  dataset: Pick<CursorPayload, 'snapshot'> & { version: CursorPayload['datasetVersion'] },
+  dataset: Pick<CursorPayload, 'snapshot'> & {
+    version: CursorPayload['datasetVersion'];
+  },
 ): Page<Item> | typeof INVALID_CURSOR {
   const { cursor, ...query } = args;
   const queryHash = argsHash(query);
@@ -60,7 +69,12 @@ export function pageOf<Item>(
     items: matched.slice(offset, end),
     nextCursor:
       end < matched.length
-        ? encodeCursor({ datasetVersion: dataset.version, snapshot: dataset.snapshot, queryHash, offset: end })
+        ? encodeCursor({
+            datasetVersion: dataset.version,
+            snapshot: dataset.snapshot,
+            queryHash,
+            offset: end,
+          })
         : null,
   };
 }

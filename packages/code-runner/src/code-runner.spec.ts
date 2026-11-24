@@ -18,9 +18,11 @@ describe('the code runner refuses a Node that leaves the executor network open',
     ['26.0.0', false],
   ])('Node %s: refused %s', (version, refused) => {
     Object.defineProperty(process.versions, 'node', { value: version });
-    const create = (): unknown => createCodeRunner({ maxConcurrent: 1, logger });
+    const create = (): unknown =>
+      createCodeRunner({ maxConcurrent: 1, logger });
 
-    if (refused) expect(create).toThrow(`Node ${version} cannot run the code executor`);
+    if (refused)
+      expect(create).toThrow(`Node ${version} cannot run the code executor`);
     else expect(create).not.toThrow();
   });
 });

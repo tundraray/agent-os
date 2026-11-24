@@ -2,35 +2,46 @@ import type {
   AgentConfirmation,
   AgentHistoryEntry,
   AgentView as AgentsAgentView,
+  DeepAgentRun,
 } from '@agent-os/agents';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
+  ChildFinishedPayloadSchema,
   ConfirmationKindSchema,
+  CREATE_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
   HISTORY_PAGE_SIZE,
+  IdSchema,
+  LIBRARY_RECORD_CONFIRMATION,
+  READ_RECORD_TOOL,
   type AgentNode,
   type AgentView,
   type Confirmation,
-  type DraftView,
+  type ConversationTraining,
+  type DeepAgentRunView,
   type HistoryEntry,
   type PendingMessage,
+  type RecordFocus,
+  type RecordFocusAction,
   type RunOrigin,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
+import type { TrainingRow } from '@agent-os/db';
 import type { StepMessage } from '@agent-os/runtime';
-import type { WorkflowRun } from '@agent-os/workflows';
 import { z } from 'zod';
-import type { Draft } from './drafts.repository';
 
 /**
- * The views of `agents`, `workflows` and `runtime` as the chat API returns them (design-chat.md,
+ * The views of `agents` and `runtime` as the chat API returns them (design-chat.md,
  * ConversationView, AgentNode, Confirmation; design-runtime.md, «Данные для `web`»): every `Date`
  * becomes an ISO string, and each result is a value of the `contracts` schema's type without a cast.
  * Pure functions; `ConversationsService` and the agent routes share them.
  */
 
 const iso = (date: Date): string => date.toISOString();
-const isoOrNull = (date: Date | null): string | null => (date === null ? null : iso(date));
+const isoOrNull = (date: Date | null): string | null =>
+  date === null ? null : iso(date);
 
 /**
  * The record a run started from, field by field: an origin read from a snapshot may carry more than
@@ -42,9 +53,28 @@ function toRunOrigin(origin: RunOrigin): RunOrigin {
     kind: origin.kind,
     version: origin.version,
     name: origin.name,
-    author: origin.author === null ? null : { id: origin.author.id, name: origin.author.name },
+    author:
+      origin.author === null
+        ? null
+        : { id: origin.author.id, name: origin.author.name },
     builtinKey: origin.builtinKey,
-    executor: origin.executor,
+    subagent: origin.subagent,
+  };
+}
+
+/**
+ * The `training` field of a view of `agentId` (self-learning design-training.md, «Беседа обучения и беседы
+ * повторов»): the `trainings` row of its tree's root, which exists only when the root is a `trainer` task.
+ */
+export function trainingOf(
+  row: TrainingRow | undefined,
+  agentId: string,
+): ConversationTraining {
+  if (row === undefined) return null;
+  return {
+    agentId: row.agentId,
+    trainingId: row.id,
+    isRoot: row.id === agentId,
   };
 }
 
@@ -72,7 +102,10 @@ export function toAgentView(view: AgentsAgentView): AgentView {
  * The subtree under `parentId` (that agent itself not included): its children with their subtrees,
  * each level in the order of `agents`, which the agents' `list` returns in creation order.
  */
-export function toAgentTree(agents: readonly AgentsAgentView[], parentId: string): AgentNode[] {
+export function toAgentTree(
+  agents: readonly AgentsAgentView[],
+  parentId: string,
+): AgentNode[] {
   const byParent = new Map<string, AgentView[]>();
   for (const view of agents.map(toAgentView)) {
     if (view.parentId === null) continue;
@@ -81,7 +114,10 @@ export function toAgentTree(agents: readonly AgentsAgentView[], parentId: string
     byParent.set(view.parentId, siblings);
   }
   const nodesOf = (id: string): AgentNode[] =>
-    (byParent.get(id) ?? []).map((view) => ({ ...view, children: nodesOf(view.agentId) }));
+    (byParent.get(id) ?? []).map((view) => ({
+      ...view,
+      children: nodesOf(view.agentId),
+    }));
   return nodesOf(parentId);
 }
 
@@ -108,7 +144,9 @@ export function toHistoryEntry(entry: AgentHistoryEntry): HistoryEntry {
 }
 
 /** The next `afterSeq` of a history page: the last seq of a full page, `null` when everything is read. */
-export const nextAfterSeqOf = (entries: readonly AgentHistoryEntry[]): number | null =>
+export const nextAfterSeqOf = (
+  entries: readonly AgentHistoryEntry[],
+): number | null =>
   entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null;
 
 /**
@@ -119,7 +157,8 @@ export function toConfirmation(
   confirmation: AgentConfirmation,
   views: readonly Pick<AgentsAgentView, 'agentId' | 'origin'>[],
 ): Confirmation {
-  const origin = views.find((view) => view.agentId === confirmation.agentId)?.origin ?? null;
+  const origin =
+    views.find((view) => view.agentId === confirmation.agentId)?.origin ?? null;
   return {
     decisionId: confirmation.decisionId,
     agentId: confirmation.agentId,
@@ -134,79 +173,177 @@ export function toConfirmation(
     resolution:
       confirmation.resolution === null
         ? null
-        : { approve: confirmation.resolution.approve, args: confirmation.resolution.args },
+        : {
+            approve: confirmation.resolution.approve,
+            args: confirmation.resolution.args,
+          },
     createdAt: iso(confirmation.createdAt),
     resolvedAt: isoOrNull(confirmation.resolvedAt),
-    ...(confirmation.toolTitle === undefined ? {} : { toolTitle: confirmation.toolTitle }),
-    ...(confirmation.argLabels === undefined ? {} : { argLabels: confirmation.argLabels }),
+    ...(confirmation.toolTitle === undefined
+      ? {}
+      : { toolTitle: confirmation.toolTitle }),
+    ...(confirmation.argLabels === undefined
+      ? {}
+      : { argLabels: confirmation.argLabels }),
+    ...(confirmation.scriptCode === undefined
+      ? {}
+      : { scriptCode: confirmation.scriptCode }),
   };
 }
 
 /**
- * A workflow run (`GET /agents/:agentId/run`): the coordinator and the steps as agents, every date ISO.
+ * A deep agent run (`GET /agents/:agentId/run`): the deep agent and the steps as agents, every date ISO.
  */
-export function toWorkflowRunView(run: WorkflowRun): WorkflowRunView {
+export function toDeepAgentRunView(run: DeepAgentRun): DeepAgentRunView {
   return {
     origin: toRunOrigin(run.origin),
-    brief: { question: run.brief.question, boundaries: run.brief.boundaries, result: run.brief.result },
-    coordinator: toAgentView(run.coordinator),
+    brief: {
+      question: run.brief.question,
+      boundaries: run.brief.boundaries,
+      result: run.brief.result,
+    },
+    deepAgent: toAgentView(run.deepAgent),
     team: run.team.map((member) => ({
       name: member.name,
-      role: member.role,
       maxRuns: member.maxRuns,
       final: member.final,
     })),
     steps: run.steps.map(toAgentView),
-    limitRefusals: run.limitRefusals.map(({ executor, at }) => ({ executor, at: iso(at) })),
+    limitRefusals: run.limitRefusals.map(({ subagent, at }) => ({
+      subagent,
+      at: iso(at),
+    })),
   };
 }
 
-/** A record draft of the conversation (design-runtime.md, `DraftView`), every date ISO. */
-export function toDraftView(draft: Draft): DraftView {
-  const fields = {
-    draftId: draft.id,
-    callId: draft.callId,
-    name: draft.name,
-    description: draft.description,
-    recordId: draft.recordId,
-    baseVersion: draft.baseVersion,
-    state: draft.state,
-    refusal: draft.refusal,
-    savedRecordId: draft.savedRecordId,
-    createdAt: iso(draft.createdAt),
-    resolvedAt: isoOrNull(draft.resolvedAt),
-  };
-  return draft.body.kind === 'agent'
-    ? { ...fields, kind: 'agent', content: draft.body.content }
-    : { ...fields, kind: 'workflow', content: draft.body.content };
+/** The focus action of a record tool that names its record in `recordId`. */
+const RECORD_ID_ACTIONS: Readonly<Record<string, RecordFocusAction>> = {
+  [READ_RECORD_TOOL]: 'read',
+  [EDIT_RECORD_TOOL]: 'changed',
+  [DELETE_RECORD_TOOL]: 'deleted',
+};
+
+const RecordIdArgsSchema = z.object({ recordId: IdSchema });
+const DeepAgentArgsSchema = z.object({ deepAgent: z.string() });
+
+/** A deep agent run the root started, as the conversation's agents show it. */
+type StartedRun = Pick<AgentsAgentView, 'origin'>;
+
+type ToolResultEntry = Extract<HistoryEntry, { kind: 'tool_result' }>;
+
+/**
+ * The record of a successful root call and what the call did to it: a record tool names it in its
+ * arguments; a create in the card the employee approved (the id `review` chose, KD-3) — the root runs
+ * one call at a time, so it is the last approved `create_record` request resolved before the result; a
+ * brief start — the tool being the one of the root's `agents.brief` requests — in the record of the last
+ * deep agent the root started under the name it gave. `undefined` — the call is not about a record.
+ */
+function focusTargetOf(
+  result: ToolResultEntry,
+  confirmations: readonly Confirmation[],
+  startedRuns: readonly StartedRun[],
+):
+  | { readonly recordId: string; readonly action: RecordFocusAction }
+  | undefined {
+  const { tool, args: callArgs } = result.content;
+  const byId = RECORD_ID_ACTIONS[tool];
+  if (byId !== undefined) {
+    const args = RecordIdArgsSchema.safeParse(callArgs);
+    return args.success
+      ? { recordId: args.data.recordId, action: byId }
+      : undefined;
+  }
+  if (tool === CREATE_RECORD_TOOL) {
+    const card = confirmations.findLast(
+      (confirmation) =>
+        confirmation.kind === LIBRARY_RECORD_CONFIRMATION &&
+        confirmation.tool === CREATE_RECORD_TOOL &&
+        confirmation.resolution?.approve === true &&
+        confirmation.resolvedAt !== null &&
+        confirmation.resolvedAt <= result.createdAt,
+    );
+    const content = RecordIdArgsSchema.safeParse(card?.content);
+    return content.success
+      ? { recordId: content.data.recordId, action: 'created' }
+      : undefined;
+  }
+  const startsDeepAgent = confirmations.some(
+    (confirmation) =>
+      confirmation.kind === AGENTS_BRIEF_CONFIRMATION &&
+      confirmation.tool === tool,
+  );
+  if (!startsDeepAgent) return undefined;
+  const args = DeepAgentArgsSchema.safeParse(callArgs);
+  if (!args.success) return undefined;
+  const run = startedRuns.findLast(
+    ({ origin }) =>
+      origin?.name === args.data.deepAgent && origin.subagent === null,
+  );
+  return run?.origin == null
+    ? undefined
+    : { recordId: run.origin.recordId, action: 'started' };
 }
 
-/** Payloads of the queue messages of an agent (the agents package, `step/deliver.ts`). */
+/**
+ * The record in focus of a conversation (deep-agents KD-6): the last successful call of the root about a
+ * record — read, created, changed, deleted, or started by a brief — with the time it finished; `null`
+ * while the chat has not touched a record. `entries` are the root's whole history, `confirmations` its
+ * decision requests, `startedRuns` the root's children in creation order.
+ */
+export function focusOf(
+  entries: readonly HistoryEntry[],
+  confirmations: readonly Confirmation[],
+  startedRuns: readonly StartedRun[],
+): RecordFocus | null {
+  for (const entry of [...entries].reverse()) {
+    if (entry.kind !== 'tool_result' || entry.content.outcome !== 'success')
+      continue;
+    const target = focusTargetOf(entry, confirmations, startedRuns);
+    if (target !== undefined)
+      return { ...target, at: entry.content.finishedAt ?? entry.createdAt };
+  }
+  return null;
+}
+
+/** Payloads of the queue messages of an agent (the agents package, `agent/deliver.ts`). */
 const TextPayloadSchema = z.object({ text: z.string() });
-const ChildFinishedPayloadSchema = z.object({
-  taskId: z.string(),
-  status: z.enum(['completed', 'failed', 'stopped']),
-});
 
-const { user_message: userMessage, agent_message: agentMessage, interrupt } =
-  AgentMessageKindSchema.enum;
+const {
+  user_message: userMessage,
+  agent_message: agentMessage,
+  interrupt,
+} = AgentMessageKindSchema.enum;
 
 /**
  * Undelivered messages of an agent in queue order: the employee's message, the parent's message, and
  * a child's end as a report with the child's description and status. An `interrupt` is left out: it
- * carries nothing to show, the agent's status already reads «Прерван». Any other kind throws: an
- * agent's queue holds only these four.
+ * carries nothing to show, the agent's status already reads «Прерван»; so is the end of a question
+ * (data-model/design-runtime.md, «Ожидающие сообщения беседы»): the decision shows it. `confirmations` —
+ * the tree's confirmations, whose ids are the question tasks. Any other kind throws: an agent's queue
+ * holds only these four.
  */
 export function toPending(
   messages: readonly StepMessage[],
   views: readonly Pick<AgentsAgentView, 'agentId' | 'description'>[],
+  confirmations: readonly Pick<AgentConfirmation, 'decisionId'>[],
 ): PendingMessage[] {
-  const descriptions = new Map(views.map((view) => [view.agentId, view.description]));
+  const descriptions = new Map(
+    views.map((view) => [view.agentId, view.description]),
+  );
+  const questions = new Set(
+    confirmations.map((confirmation) => confirmation.decisionId),
+  );
+  const isQuestionEnd = (message: StepMessage): boolean =>
+    message.kind === CHILD_FINISHED_KIND &&
+    questions.has(ChildFinishedPayloadSchema.parse(message.payload).taskId);
   return messages
-    .filter((message) => message.kind !== interrupt)
+    .filter((message) => message.kind !== interrupt && !isQuestionEnd(message))
     .sort((left, right) => left.seq - right.seq)
     .map((message): PendingMessage => {
-      const base = { messageId: message.messageId, createdAt: iso(message.createdAt) };
+      const base = {
+        messageId: message.messageId,
+        createdAt: iso(message.createdAt),
+      };
       switch (message.kind) {
         case userMessage:
         case agentMessage:
@@ -226,7 +363,9 @@ export function toPending(
           };
         }
         default:
-          throw new Error(`Unknown message kind "${message.kind}" in the queue of an agent`);
+          throw new Error(
+            `Unknown message kind "${message.kind}" in the queue of an agent`,
+          );
       }
     });
 }

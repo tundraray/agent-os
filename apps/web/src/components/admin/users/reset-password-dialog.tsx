@@ -1,19 +1,16 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { PasswordField } from '@/components/password-field';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { passwordResetRules } from '@/lib/admin/form-rules';
 import { AdminForm } from '../admin-form';
-
-/** UXRD MC-23. */
-const TEXT = {
-  password: 'Новый пароль',
-  submit: 'Сбросить',
-  done: 'Пароль сброшен — передайте новый сотруднику',
-} as const;
-
-const titleFor = (name: string): string => `Новый пароль для ${name}`;
 
 type ResetPasswordDialogProps = {
   open: boolean;
@@ -30,27 +27,35 @@ type ResetPasswordDialogProps = {
  * UXRD AD-04 «Сбросить пароль» of a local account. The form mounts with the dialog's content, so the new
  * password lives only in the open dialog's state: a reopened dialog starts empty (Invariant 3).
  */
-export function ResetPasswordDialog({ open, onOpenChange, user, track }: ResetPasswordDialogProps) {
+export function ResetPasswordDialog({
+  open,
+  onOpenChange,
+  user,
+  track,
+}: ResetPasswordDialogProps) {
+  const t = useTranslations('admin.users.reset');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{titleFor(user.name)}</DialogTitle>
+          <DialogTitle>{t('title', { name: user.name })}</DialogTitle>
         </DialogHeader>
         <AdminForm
           variant="dialog"
           initialValues={{ password: '' }}
           validate={passwordResetRules}
-          onSubmit={({ password }) => track(() => adminApi.users.resetPassword(user.id, password))}
-          submitLabel={TEXT.submit}
-          savedText={TEXT.done}
+          onSubmit={({ password }) =>
+            track(() => adminApi.users.resetPassword(user.id, password))
+          }
+          submitLabel={t('submit')}
+          savedText={t('done')}
           onSaved={() => onOpenChange(false)}
           logEvent="admin: user password reset"
         >
           {(form) => (
             <PasswordField
               {...form.field('password')}
-              label={TEXT.password}
+              label={t('password')}
               autoComplete="new-password"
               panel
               value={form.values.password}

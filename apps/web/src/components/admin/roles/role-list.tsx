@@ -1,33 +1,27 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import type { RoleList as Roles, RoleSummary } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
+import { builtinRoleName } from '@/i18n/builtin-name';
+import type { Locale } from '@/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
-import { PANEL_TITLE } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
-import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import { useAdminTitles } from '../admin-header';
+import {
+  DataTable,
+  resourceTableState,
+  type DataTableColumn,
+  type DataTableRow,
+} from '../data-table';
 import { RoleNameDialog } from './role-name-dialog';
 
-/** UXRD MC-26; «да» / «—» of «Администраторы» — plan Notes 6. */
-const TEXT = {
-  create: 'Создать роль',
-  builtin: 'встроенная',
-  isAdmin: 'да',
-  notAdmin: '—',
-  loadFailed: 'Не удалось загрузить роли',
-} as const;
-
-const COLUMNS: readonly DataTableColumn[] = [
-  { header: 'Роль' },
-  { header: 'Сотрудников', align: 'end' },
-  { header: 'Администраторы' },
-];
+type RolesTranslator = ReturnType<typeof useTranslations<'admin.roles'>>;
 
 /** DC-5: the built-in role first; the rest keep the server's order (by name), nothing is sorted here. */
 const builtinFirst = (roles: Roles): Roles => [
@@ -35,38 +29,65 @@ const builtinFirst = (roles: Roles): Roles => [
   ...roles.filter((role) => !role.builtin),
 ];
 
-const toRow = (role: RoleSummary): DataTableRow => ({
-  key: role.id,
-  name: role.name,
-  href: adminRecordPath('roles', role.id),
-  cells: [
-    <span key="name" className="flex min-w-0 items-center gap-2">
-      <span className="truncate" title={role.name}>
-        {role.name}
-      </span>
-      {role.builtin && <StateBadge variant="source">{TEXT.builtin}</StateBadge>}
-    </span>,
-    role.memberCount,
-    role.isAdmin ? TEXT.isAdmin : TEXT.notAdmin,
-  ],
-});
+function toRow(
+  role: RoleSummary,
+  { t, locale }: { t: RolesTranslator; locale: Locale },
+): DataTableRow {
+  const name = builtinRoleName(role.name, locale);
+  return {
+    key: role.id,
+    name,
+    href: adminRecordPath('roles', role.id),
+    cells: [
+      <span key="name" className="flex min-w-0 items-center gap-2">
+        <span className="truncate" title={name}>
+          {name}
+        </span>
+        {role.builtin && (
+          <StateBadge variant="source">{t('builtin')}</StateBadge>
+        )}
+      </span>,
+      role.memberCount,
+      // The «Администраторы» column: a word for yes, a dash for no (plan Notes 6).
+      role.isAdmin ? t('isAdmin') : t('notAdmin'),
+    ],
+  };
+}
 
 /** UXRD AD-05: the roles list with «Создать роль». */
 export function RoleList() {
+  const titles = useAdminTitles();
+  const t = useTranslations('admin.roles');
+  const locale = useLocale();
   const roles = useResource(adminApi.roles.list, 'roles');
   const [creating, setCreating] = useState(false);
 
   // No empty state: the built-in role always exists.
-  const state = resourceTableState(roles, TEXT.loadFailed, (data) => ({ rows: builtinFirst(data).map(toRow) }));
+  const state = resourceTableState(roles, t('listLoadFailed'), (data) => ({
+    rows: builtinFirst(data).map((role) => toRow(role, { t, locale })),
+  }));
+  const columns: readonly DataTableColumn[] = [
+    { header: t('role') },
+    { header: t('memberCount'), align: 'end' },
+    { header: t('admins') },
+  ];
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('roles')}>
-        <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
-          {TEXT.create}
+      <PageHeader area={titles.panel} title={titles.section('roles')}>
+        <Button
+          size="sm"
+          className={CONTROL_SIZE}
+          onClick={() => setCreating(true)}
+        >
+          {t('create')}
         </Button>
       </PageHeader>
-      <DataTable caption={adminSectionTitle('roles')} columns={COLUMNS} state={state} />
+      <DataTable
+        caption={titles.section('roles')}
+        columns={columns}
+        state={state}
+      />
       <RoleNameDialog open={creating} onOpenChange={setCreating} />
     </>
   );

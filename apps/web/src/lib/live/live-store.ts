@@ -1,15 +1,19 @@
-import { LiveEventSchema, type LiveEvent } from "@agent-os/contracts";
-import { createStore, type StoreApi } from "zustand/vanilla";
+import { LiveEventSchema, type LiveEvent } from '@agent-os/contracts';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { apiRequest, describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import type { logger as appLogger } from "@/lib/logger";
+import {
+  apiRequest,
+  describeApiError,
+  isApiRequestError,
+} from '@/lib/api/api-request';
+import type { logger as appLogger } from '@/lib/logger';
 
-import type { AnnouncerStore } from "./announcer-store";
+import type { AnnouncerStore } from './announcer-store';
 
 /** What the stream watches: the open conversation or the open agent page. */
 export type LiveTarget = `thread:${string}` | `agent:${string}`;
 
-export type LiveConnection = "connecting" | "open" | "lost";
+export type LiveConnection = 'connecting' | 'open' | 'lost';
 
 /** The part of `EventSource` the store uses; a test passes its own source. */
 export type LiveEventSource = {
@@ -21,7 +25,7 @@ export type LiveEventSource = {
 /** Opens the stream; jsdom has no `EventSource`, so the function is injected. */
 export type OpenEventSource = (url: string) => LiveEventSource;
 
-export type LiveDelta = Extract<LiveEvent, { type: "delta" }>["data"];
+export type LiveDelta = Extract<LiveEvent, { type: 'delta' }>['data'];
 
 export type LiveState = {
   connection: LiveConnection;
@@ -43,7 +47,7 @@ export type LiveStore = StoreApi<LiveState> & {
   emitLocalTree: (threadId: string) => void;
 };
 
-type LiveLogger = Pick<typeof appLogger, "warn">;
+type LiveLogger = Pick<typeof appLogger, 'warn'>;
 
 /** `EventSource.CLOSED`, spelled out: the constant is absent where `EventSource` is. */
 const READY_STATE_CLOSED = 2;
@@ -52,13 +56,18 @@ const REOPEN_DELAY_MS = 2000;
 /** The longest `watch` waits for `ready` (design-web.md, KD-2). */
 const READY_WAIT_MS = 1000;
 
-const LIVE_EVENT_TYPES: readonly LiveEvent["type"][] = ["ready", "tree", "delta", "ping"];
+const LIVE_EVENT_TYPES: readonly LiveEvent['type'][] = [
+  'ready',
+  'tree',
+  'delta',
+  'ping',
+];
 
 const defaultOpenEventSource: OpenEventSource = (url) =>
   new EventSource(url, { withCredentials: true });
 
 function eventsUrl(target: LiveTarget | null): string {
-  const base = "/api/events";
+  const base = '/api/events';
   return target === null ? base : `${base}?watch=${encodeURIComponent(target)}`;
 }
 
@@ -69,17 +78,20 @@ function eventsUrl(target: LiveTarget | null): string {
  */
 async function sessionAlive(logger: LiveLogger): Promise<boolean> {
   try {
-    await apiRequest({ path: "/api/auth/me" });
+    await apiRequest({ path: '/api/auth/me' });
     return true;
   } catch (error) {
     if (isApiRequestError(error) && error.status === 401) return false;
-    logger.warn("live session probe failed; reopening", describeApiError(error));
+    logger.warn(
+      'live session probe failed; reopening',
+      describeApiError(error),
+    );
     return true;
   }
 }
 
 function frameData(event: Event): unknown {
-  return "data" in event ? event.data : undefined;
+  return 'data' in event ? event.data : undefined;
 }
 
 function subscribe<T>(listeners: Set<T>, listener: T): () => void {
@@ -102,7 +114,10 @@ export function createLiveStore({
   announcer: AnnouncerStore;
   logger: LiveLogger;
 }): LiveStore {
-  const state = createStore<LiveState>()(() => ({ connection: "connecting", target: null }));
+  const state = createStore<LiveState>()(() => ({
+    connection: 'connecting',
+    target: null,
+  }));
 
   const readyListeners = new Set<() => void>();
   const treeListeners = new Set<(threadId: string) => void>();
@@ -112,7 +127,10 @@ export function createLiveStore({
   let reopenTimer: ReturnType<typeof setTimeout> | null = null;
   /** The session probe in flight after the source closed; a newer open or `dispose` drops its answer. */
   let probe: object | null = null;
-  const readyWaiters = new Set<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }>();
+  const readyWaiters = new Set<{
+    resolve: () => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   function closeSource(): void {
     if (reopenTimer !== null) clearTimeout(reopenTimer);
@@ -148,47 +166,47 @@ export function createLiveStore({
   }
 
   function handleReady(): void {
-    const wasLost = state.getState().connection === "lost";
-    state.setState({ connection: "open" });
-    if (wasLost) announcer.getState().announce("announce.connectionRestored");
+    const wasLost = state.getState().connection === 'lost';
+    state.setState({ connection: 'open' });
+    if (wasLost) announcer.getState().announce('announce.connectionRestored');
     settleWaiters();
     for (const listener of readyListeners) listener();
   }
 
-  function handleFrame(type: LiveEvent["type"], event: Event): void {
+  function handleFrame(type: LiveEvent['type'], event: Event): void {
     let data: unknown;
     try {
       const raw = frameData(event);
-      data = typeof raw === "string" ? JSON.parse(raw) : raw;
+      data = typeof raw === 'string' ? JSON.parse(raw) : raw;
     } catch {
-      logger.warn("live frame dropped: not JSON", { eventType: type });
+      logger.warn('live frame dropped: not JSON', { eventType: type });
       return;
     }
     const parsed = LiveEventSchema.safeParse({ type, data });
     if (!parsed.success) {
-      logger.warn("live frame dropped: schema mismatch", { eventType: type });
+      logger.warn('live frame dropped: schema mismatch', { eventType: type });
       return;
     }
     const frame = parsed.data;
     switch (frame.type) {
-      case "ready":
+      case 'ready':
         handleReady();
         break;
-      case "tree":
+      case 'tree':
         dispatchTree(frame.data.threadId);
         break;
-      case "delta":
+      case 'delta':
         for (const listener of deltaListeners) listener(frame.data);
         break;
-      case "ping":
+      case 'ping':
         break;
     }
   }
 
   function handleError(failed: LiveEventSource): void {
-    if (state.getState().connection !== "lost") {
-      state.setState({ connection: "lost" });
-      announcer.getState().announce("announce.connectionLost");
+    if (state.getState().connection !== 'lost') {
+      state.setState({ connection: 'lost' });
+      announcer.getState().announce('announce.connectionLost');
     }
     // A CONNECTING source retries by itself; a CLOSED one never comes back, so the store reopens it
     // once the session is known to be alive.
@@ -214,7 +232,8 @@ export function createLiveStore({
   function open(): void {
     closeSource();
     // While `lost`, the bar stays until `ready`; otherwise a new stream is just connecting.
-    if (state.getState().connection !== "lost") state.setState({ connection: "connecting" });
+    if (state.getState().connection !== 'lost')
+      state.setState({ connection: 'connecting' });
     const opened = openEventSource(eventsUrl(state.getState().target));
     source = opened;
     // Events of a source closed meanwhile are stale; only the current source speaks.
@@ -223,18 +242,21 @@ export function createLiveStore({
         if (source === opened) handleFrame(type, event);
       });
     }
-    opened.addEventListener("error", () => {
+    opened.addEventListener('error', () => {
       if (source === opened) handleError(opened);
     });
   }
 
-  const isAlive = (): boolean => source !== null || reopenTimer !== null || probe !== null;
+  const isAlive = (): boolean =>
+    source !== null || reopenTimer !== null || probe !== null;
 
   return Object.assign(state, {
     watch: (target: LiveTarget | null): Promise<void> => {
       const current = state.getState();
       if (isAlive() && current.target === target) {
-        return current.connection === "open" ? Promise.resolve() : waitForReady();
+        return current.connection === 'open'
+          ? Promise.resolve()
+          : waitForReady();
       }
       state.setState({ target });
       const ready = waitForReady();
@@ -246,8 +268,10 @@ export function createLiveStore({
       settleWaiters();
     },
     onReady: (listener: () => void) => subscribe(readyListeners, listener),
-    onTree: (listener: (threadId: string) => void) => subscribe(treeListeners, listener),
-    onDelta: (listener: (delta: LiveDelta) => void) => subscribe(deltaListeners, listener),
+    onTree: (listener: (threadId: string) => void) =>
+      subscribe(treeListeners, listener),
+    onDelta: (listener: (delta: LiveDelta) => void) =>
+      subscribe(deltaListeners, listener),
     emitLocalTree: dispatchTree,
   });
 }

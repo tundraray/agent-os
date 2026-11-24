@@ -23,7 +23,8 @@ export const AccessErrorCode = {
   GRANT_TARGET_UNKNOWN: 'GRANT_TARGET_UNKNOWN',
   GRANT_INVALID: 'GRANT_INVALID',
 } as const;
-export type AccessErrorCode = (typeof AccessErrorCode)[keyof typeof AccessErrorCode];
+export type AccessErrorCode =
+  (typeof AccessErrorCode)[keyof typeof AccessErrorCode];
 
 /** `reason` of a 422 GRANT_INVALID. */
 export const GrantInvalidReasonSchema = z.enum([
@@ -39,11 +40,19 @@ export const ModelProviderInvalidReasonSchema = z.enum([
   'provider_unknown',
   'embeddings_not_supported',
 ]);
-export type ModelProviderInvalidReason = z.infer<typeof ModelProviderInvalidReasonSchema>;
+export type ModelProviderInvalidReason = z.infer<
+  typeof ModelProviderInvalidReasonSchema
+>;
 
 /** `reason` of a 422 MODEL_DEFAULT_INVALID. */
-export const ModelDefaultInvalidReasonSchema = z.enum(['model_unknown', 'not_chat', 'not_embedding']);
-export type ModelDefaultInvalidReason = z.infer<typeof ModelDefaultInvalidReasonSchema>;
+export const ModelDefaultInvalidReasonSchema = z.enum([
+  'model_unknown',
+  'not_chat',
+  'not_embedding',
+]);
+export type ModelDefaultInvalidReason = z.infer<
+  typeof ModelDefaultInvalidReasonSchema
+>;
 
 /** 422 MODEL_DEFAULT_INVALID of PUT /api/admin/model-defaults; `model` is the rejected id. */
 export const ModelDefaultInvalidErrorSchema = ApiErrorSchema.extend({
@@ -51,7 +60,9 @@ export const ModelDefaultInvalidErrorSchema = ApiErrorSchema.extend({
   reason: ModelDefaultInvalidReasonSchema,
   model: z.string().min(1),
 });
-export type ModelDefaultInvalidError = z.infer<typeof ModelDefaultInvalidErrorSchema>;
+export type ModelDefaultInvalidError = z.infer<
+  typeof ModelDefaultInvalidErrorSchema
+>;
 
 /** `reason` of a 422 GRANT_TARGET_UNKNOWN. */
 export const GrantTargetUnknownReasonSchema = z.enum([
@@ -59,7 +70,9 @@ export const GrantTargetUnknownReasonSchema = z.enum([
   'tool_unknown',
   'model_unknown',
 ]);
-export type GrantTargetUnknownReason = z.infer<typeof GrantTargetUnknownReasonSchema>;
+export type GrantTargetUnknownReason = z.infer<
+  typeof GrantTargetUnknownReasonSchema
+>;
 
 // ---------- Model catalogue ----------
 
@@ -108,7 +121,11 @@ export type LongContext = z.infer<typeof LongContextSchema>;
 const LongContextFieldSchema = LongContextSchema.nullable();
 
 /** Vector length of an embedding model; never changes. */
-const DimensionsSchema = z.number().int().min(EMBEDDING_DIMENSIONS_MIN).max(EMBEDDING_DIMENSIONS_MAX);
+const DimensionsSchema = z
+  .number()
+  .int()
+  .min(EMBEDDING_DIMENSIONS_MIN)
+  .max(EMBEDDING_DIMENSIONS_MAX);
 
 const chatModelFields = {
   id: ModelIdSchema,
@@ -131,7 +148,9 @@ export const CreateCatalogModelBodySchema = z.discriminatedUnion('purpose', [
   z.object(chatModelFields),
   z.object(embeddingModelFields),
 ]);
-export type CreateCatalogModelBody = z.infer<typeof CreateCatalogModelBodySchema>;
+export type CreateCatalogModelBody = z.infer<
+  typeof CreateCatalogModelBodySchema
+>;
 
 /** Row of GET /api/admin/models (by name); `provider` is the first part of the id. */
 export const CatalogModelSchema = z.discriminatedUnion('purpose', [
@@ -159,7 +178,9 @@ export const UpdateCatalogModelBodySchema = z
       body.inputUsdPerMTok !== undefined,
     { message: 'name, prices, longContext or inputUsdPerMTok is required' },
   );
-export type UpdateCatalogModelBody = z.infer<typeof UpdateCatalogModelBodySchema>;
+export type UpdateCatalogModelBody = z.infer<
+  typeof UpdateCatalogModelBodySchema
+>;
 
 // ---------- Model defaults ----------
 
@@ -179,7 +200,9 @@ export const UpdateModelDefaultsBodySchema = z.object({
   chatModel: ModelIdSchema.nullable(),
   embeddingModel: ModelIdSchema.nullable(),
 });
-export type UpdateModelDefaultsBody = z.infer<typeof UpdateModelDefaultsBodySchema>;
+export type UpdateModelDefaultsBody = z.infer<
+  typeof UpdateModelDefaultsBodySchema
+>;
 
 // ---------- Grants ----------
 
@@ -189,13 +212,19 @@ export type GrantEffect = z.infer<typeof GrantEffectSchema>;
 export const GrantTargetKindSchema = z.enum(['server', 'tool', 'model']);
 export type GrantTargetKind = z.infer<typeof GrantTargetKindSchema>;
 
-const serverTarget = z.object({ kind: z.literal('server'), server: z.string().min(1) });
+const serverTarget = z.object({
+  kind: z.literal('server'),
+  server: z.string().min(1),
+});
 const toolTarget = z.object({
   kind: z.literal('tool'),
   server: z.string().min(1),
   tool: z.string().min(1),
 });
-const modelTarget = z.object({ kind: z.literal('model'), model: ModelIdSchema });
+const modelTarget = z.object({
+  kind: z.literal('model'),
+  model: ModelIdSchema,
+});
 
 /** Target of a grant as the admin sends it. Server and tool names are text, as in the registry. */
 export const GrantTargetBodySchema = z.discriminatedUnion('kind', [
@@ -246,9 +275,12 @@ export const CreateGrantBodySchema = z
     target: GrantTargetBodySchema,
     quotaUsd: QuotaUsdBodySchema.optional(),
   })
-  .refine((body) => (body.roleId === undefined) !== (body.userId === undefined), {
-    message: 'exactly one of roleId and userId is required',
-  });
+  .refine(
+    (body) => (body.roleId === undefined) !== (body.userId === undefined),
+    {
+      message: 'exactly one of roleId and userId is required',
+    },
+  );
 export type CreateGrantBody = z.infer<typeof CreateGrantBodySchema>;
 
 /** Body of PATCH /api/admin/grants/:id; `null` removes the quota. */
@@ -263,7 +295,9 @@ export const ModelUnavailableReasonSchema = z.enum([
   'provider_disabled',
   'provider_key_missing',
 ]);
-export type ModelUnavailableReason = z.infer<typeof ModelUnavailableReasonSchema>;
+export type ModelUnavailableReason = z.infer<
+  typeof ModelUnavailableReasonSchema
+>;
 
 /** A chat model allowed to the employee now, with this month's spend. */
 export const MyModelSchema = z.object({

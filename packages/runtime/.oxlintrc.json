@@ -1,28 +1,46 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "rules": {
-    "typescript/no-floating-promises": "error",
-    "no-restricted-imports": [
-      "error",
-      {
-        "patterns": [
+  "extends": ["../../.oxlintrc.json"],
+  "env": {
+    "node": true
+  },
+  "overrides": [
+    {
+      // The shared list plus the layer rule of the engine (KD-6 of design-schema.md): its source
+      // builds no SQL and knows no table; the repositories of @agent-os/db do. Every table of the
+      // schema is exported under a lower-case name, while repositories, `Db`, modules, row types and
+      // tokens start upper-case, so one name pattern bans all tables, present and future. Tests
+      // write raw SQL and stay outside the ban.
+      "files": ["src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
           {
-            "group": ["@mastra/*", "@mastra/**"],
-            "message": "ADR-0001: the runtime owns tasks, events and recovery; Mastra stays inside handlers."
-          },
-          {
-            "group": ["@nestjs/*", "@nestjs/**"],
-            "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
-          },
-          {
-            "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
-            "message": "ADR-0004: a package is imported only through its single entry `.`."
+            "patterns": [
+              {
+                "group": ["@agent-os/db"],
+                "importNamePattern": "^[a-z]",
+                "message": "KD-6: the runtime knows no table; call a repository of @agent-os/db."
+              },
+              {
+                "group": ["drizzle-orm", "drizzle-orm/**"],
+                "message": "KD-6: the runtime builds no SQL; the repositories of @agent-os/db do."
+              },
+              {
+                "group": ["@sentry/*", "@sentry/**"],
+                "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
+              },
+              {
+                "group": ["@mastra/*", "@mastra/**"],
+                "message": "ADR-0004: Mastra is declared by packages/agents only."
+              },
+              {
+                "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+                "message": "ADR-0004: a package is imported only through its single entry `.` (or `./testing`)."
+              }
+            ]
           }
         ]
       }
-    ]
-  },
-  "env": {
-    "node": true
-  }
+    }
+  ]
 }

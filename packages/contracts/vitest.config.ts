@@ -1,7 +1,4 @@
 import { defineConfig } from 'vitest/config';
+import { unit } from '../../vitest.shared.mts';
 
-export default defineConfig({
-  test: {
-    include: ['src/**/*.spec.ts'],
-  },
-});
+export default defineConfig(unit);

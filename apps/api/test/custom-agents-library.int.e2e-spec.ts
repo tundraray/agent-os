@@ -26,7 +26,7 @@
 //   - `test/support/library.ts`: `createRecord(app, session, body)`, `getRecord`, `putRecord`, `shareWith(app, session, id, roleIds)`,
 //     `libraryRoutes(recordId)` (the table of every employee and panel route with its method and body, used by INT-1) and
 //     `auditOfRecord(pool, recordId)` over `app.audit_events` rows of the object type `library_record`.
-//   - the table list of `packages/db/test/migrations.e2e-spec.ts` gets `library_records` and `library_shares` (Appendix: Fact Disposition).
+//   - the table list of `packages/db/test/migrations.e2e-spec.ts` gets `agents`, `agent_versions` and `agent_shares` (data-model design-agents.md).
 //
 // Proven elsewhere, not repeated here (CLAUDE.md: one test at the lowest level that catches the defect):
 //   - 401 without a session and the 403 `ADMIN_REQUIRED` + `access_denied` row of `@AdminOnly()`: the route walk and row 2 of
@@ -92,8 +92,10 @@ import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   auditOfRecord,
+  BUILTIN,
   createRecord,
   createSystemRecord,
+  deepAgentBody,
   getRecord,
   libraryRoutes,
   listLibrary,
@@ -101,14 +103,9 @@ import {
   recordName,
   setSystemAudience,
   shareWith,
-  workflowBody,
   type LibraryRoute,
 } from './support/library';
-import {
-  BACKOFFICE_SERVER,
-  LOGS_SERVER,
-  runName,
-} from './support/mcp-servers';
+import { BACKOFFICE_SERVER, LOGS_SERVER, runName } from './support/mcp-servers';
 import {
   apiRequest,
   insertEmployee,
@@ -318,9 +315,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
 
   afterAll(async () => {
     if (harness !== undefined) {
-      // System records have no owner, so no cascade takes them; one open to everyone would stay in the developer's library.
+      // System records have no owner, so no cascade takes them; they are marked deleted, as the panel deletes them
+      // (data-model KD-7): a conversation may still run on one of their versions.
       await harness.pool.query(
-        'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+        'UPDATE app.agents SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
         [[...systemRecordIds]],
       );
       await restoreModels?.();
@@ -363,8 +361,11 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   4. UC-7 (AC-02.3): Given a system agent opened to `everyone` and Вера, who has no role; When Вера reads `GET /api/library`; Then the
   //      agent is not there; When the administrator gives Вера a role (`PUT /api/admin/users/:id/roles/:roleId`) and she reads again;
   //      Then it is there (no restart, no cache).
-  //   5. AC-12.2: Given a built-in system agent; When the administrator calls `DELETE /api/admin/library/:id`; Then 422
-  //      `RECORD_REJECTED`, reason `builtin`, and the record is still in the database.
+  //      Дина with no role sees the three default agents (`chat`, `general-purpose`, the default deep agent) all along (data-model DC-22).
+  //   5. AC-12.2, data-model DC-22: Given the default agent `chat`; When the administrator calls `DELETE /api/admin/library/:id` and
+  //      `PUT /api/admin/library/:id/audience` of it; Then 422 `RECORD_REJECTED` with reason `builtin` and `audience_fixed`, and the
+  //      agent is still in the database, not deleted. One default agent proves the wiring; the rule for any key is the unit rows of
+  //      `save-rules.spec.ts` and `audience-rules.spec.ts`.
   // Catches: a route (existing or added later) that reads a record by number without the visibility condition and so opens a colleague's
   //   or an administrator's view of a personal agent; a body or status that tells "exists but not yours" from "does not exist"; an
   //   administrator right that is treated as visibility; a non-administrator who changes a system record through the employee
@@ -491,7 +492,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       for (const name of [refusedSystemName, systemShapedName]) {
         expect(
           await countRows(
-            'SELECT count(*) FROM app.library_records WHERE owner_id IS NULL AND name = $1',
+            'SELECT count(*) FROM app.agents WHERE owner_id IS NULL AND name = $1',
             name,
           ),
           name,
@@ -501,7 +502,15 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       // Row 4 (UC-7, AC-02.3) - Given: the system agent open to everyone and Дина, who has no role; When: she reads
       // the library; Then: it is not there; When: the administrator gives her a role; Then: it is there at once
       const dina = await newEmployee('dina', 'Дина');
-      expect(await visibleIds(dina)).not.toContain(system.id);
+      const defaults = [
+        BUILTIN.chat,
+        BUILTIN.generalPurpose,
+        BUILTIN.deepAgent,
+      ];
+      const dinaSees = await visibleIds(dina);
+      expect(dinaSees).not.toContain(system.id);
+      // data-model DC-22: the default agents are seen by every enabled employee, one without a role too
+      for (const agent of defaults) expect(dinaSees).toContain(agent.id);
       await expectRefusal(
         apiRequest(app, dina, 'get', `/library/${system.id}`),
         404,
@@ -515,23 +524,36 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(await visibleIds(dina)).toContain(system.id);
       expect((await getRecord(app, dina, system.id)).canEdit).toBe(false);
 
-      // Row 5 (AC-12.2) - Given: a built-in system agent; When: the administrator deletes it through the panel;
-      // Then: 422 RECORD_REJECTED `builtin`, and the record is still there
-      const builtin = await newSystemAgent('Встроенный агент');
-      await harness.pool.query(
-        'UPDATE app.library_records SET builtin_key = $1 WHERE id = $2',
-        [`e2e-builtin-${randomUUID()}`, builtin.id],
-      );
+      // Row 5 (AC-12.2, data-model DC-22) - Given: a default agent; When: the administrator deletes it and sets its
+      // audience through the panel; Then: 422 RECORD_REJECTED `builtin` / `audience_fixed`, and it is still there
+      const defaultAgent = BUILTIN.chat;
       await expectRefusal(
-        apiRequest(app, admin, 'delete', `/admin/library/${builtin.id}`),
+        apiRequest(app, admin, 'delete', `/admin/library/${defaultAgent.id}`),
         422,
         'RECORD_REJECTED',
         'builtin',
       );
+      await expectRefusal(
+        apiRequest(
+          app,
+          admin,
+          'put',
+          `/admin/library/${defaultAgent.id}/audience`,
+          {
+            everyone: false,
+            roleIds: [],
+            userIds: [],
+            offerInChat: true,
+          },
+        ),
+        422,
+        'RECORD_REJECTED',
+        'audience_fixed',
+      );
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE id = $1',
-          builtin.id,
+          'SELECT count(*) FROM app.agents WHERE id = $1 AND deleted_at IS NULL',
+          defaultAgent.id,
         ),
       ).toBe(1);
     },
@@ -557,7 +579,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   1. UC-1 (AC-01.2): Аня creates an agent (`POST /api/library`) and opens it by number -> 201 then 200; name, description, "offer in
   //      chat" and content equal what she sent; `version` 1, the switch on, personal audience (no roles), no ban.
   //   2. UC-2 (AC-01.1, AC-02.2, AC-03.1): Аня is in «SRE» and «Оплаты», Борис in «SRE», Вера in none. `GET /api/auth/me/roles` of Аня
-  //      -> exactly those two (id and name). Аня shares an agent and a workflow with «SRE» (`PUT .../audience`); Борис opens both ->
+  //      -> exactly those two (id and name). Аня shares an agent and a deep agent with «SRE» (`PUT .../audience`); Борис opens both ->
   //      200 with the content; his `PUT` of the agent -> 403 `RECORD_READ_ONLY` and the record unchanged (version, prompt); Борис's view
   //      of the audience holds only his own roles (`member: true`), not «Оплаты»; Вера sees neither -> 404; the audit has two
   //      `library_audience` events of one shape (kind, object type, the same fields in "after").
@@ -569,12 +591,12 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //      (`PUT .../audience` with none) -> the agent is personal, Вера and Борис see nothing.
   //   5. UC-E6 (AC-11.2): Given two agents of Глеб - one personal, one open to «SRE» - and Борис in «SRE» (Борис sees the second);
   //      When the row of Глеб is deleted from `identity_users` in the database; Then Борис sees neither agent (`GET /api/library`, by
-  //      number -> 404), and there is no row of Глеб in `library_records` or of those records in `library_shares`; a role deleted from
-  //      the database takes its `library_shares` rows with it and no `library_*` audit event is written by either cascade.
+  //      number -> 404), and there is no row of Глеб in `agents` or of those records in `agent_shares`; a role deleted from
+  //      the database takes its `agent_shares` rows with it and no `library_*` audit event is written by either cascade.
   // Catches: membership copied into the record at share time (a role change that does not reach the record), an owner who loses his
   //   own record when he leaves the role, a share to a role the sharer is not in that passes, an audience that survives the role or
   //   the account (a missing foreign key cascade), a colleague who can write through a read-only view, a `/me/roles` that returns other
-  //   people's roles, a workflow shared by different rules than an agent.
+  //   people's roles, a deep agent shared by different rules than an agent.
   // @category: core-functionality
   // @dependency: LibraryController, LibraryService, IdentityDirectory (rolesOf, isActive), AuthController (me/roles), AdminRolesController, AuditLog, Postgres (cascade)
   // @complexity: high
@@ -626,14 +648,14 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
           { id: payments.id, name: runName('Оплаты') },
         ].sort(byId),
       );
-      // When: Аня shares the agent (with «SRE» and «Оплаты») and a workflow (with «SRE»)
-      const workflow = await createRecord(
+      // When: Аня shares the agent (with «SRE» and «Оплаты») and a deep agent (with «SRE»)
+      const deepAgent = await createRecord(
         app,
         anya,
-        workflowBody(recordName('Workflow Ани'), DEFAULT_MODEL),
+        deepAgentBody(recordName('Глубокий агент Ани'), DEFAULT_MODEL),
       );
       await shareWith(app, anya, created.id, [sre.id, payments.id]);
-      await shareWith(app, anya, workflow.id, [sre.id]);
+      await shareWith(app, anya, deepAgent.id, [sre.id]);
       // Then: Борис opens both by one rule, sees the content, and sees only his own role of the audience
       const borisAgent = await getRecord(app, boris, created.id);
       expect(borisAgent.content).toEqual(agentSent.content);
@@ -645,10 +667,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(borisAgent.audience).toStrictEqual({
         roles: [{ id: sre.id, name: runName('SRE'), member: true }],
       });
-      const borisWorkflow = await getRecord(app, boris, workflow.id);
-      expect(borisWorkflow.content).toEqual(workflow.content);
+      const borisDeepAgent = await getRecord(app, boris, deepAgent.id);
+      expect(borisDeepAgent.content).toEqual(deepAgent.content);
       expect(await visibleIds(boris)).toEqual(
-        expect.arrayContaining([created.id, workflow.id]),
+        expect.arrayContaining([created.id, deepAgent.id]),
       );
       // His save through the read-only view is refused and the record stays as it was.
       await expectRefusal(
@@ -664,7 +686,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       expect(afterBorisSave.version).toBe(1);
       expect(afterBorisSave.content).toEqual(agentSent.content);
       // Вера, in no role, sees neither.
-      for (const id of [created.id, workflow.id])
+      for (const id of [created.id, deepAgent.id])
         await expectRefusal(
           apiRequest(app, vera, 'get', `/library/${id}`),
           404,
@@ -672,29 +694,29 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         );
       const veraSees = await visibleIds(vera);
       expect(veraSees).not.toContain(created.id);
-      expect(veraSees).not.toContain(workflow.id);
-      // The agent and the workflow are shared by one rule: one `library_audience` event each, of one shape.
+      expect(veraSees).not.toContain(deepAgent.id);
+      // The agent and the deep agent are shared by one rule: one `library_audience` event each, of one shape.
       const agentShares = await libraryAudience(created.id);
-      const workflowShares = await libraryAudience(workflow.id);
+      const deepAgentShares = await libraryAudience(deepAgent.id);
       expect(agentShares).toHaveLength(1);
-      expect(workflowShares).toHaveLength(1);
+      expect(deepAgentShares).toHaveLength(1);
       const [agentShare] = agentShares;
-      const [workflowShare] = workflowShares;
-      expect(Object.keys(workflowShare?.after ?? {}).sort()).toEqual(
+      const [deepAgentShare] = deepAgentShares;
+      expect(Object.keys(deepAgentShare?.after ?? {}).sort()).toEqual(
         Object.keys(agentShare?.after ?? {}).sort(),
       );
       expect(agentShare).toMatchObject({ actor: anya.id, outcome: 'ok' });
-      expect(workflowShare).toMatchObject({
+      expect(deepAgentShare).toMatchObject({
         actor: anya.id,
         outcome: 'ok',
-        after: { kind: 'workflow', roleIds: [sre.id] },
+        after: { kind: 'deep_agent', roleIds: [sre.id] },
       });
 
       // Step 3 (UC-E3 first half, AC-04.1) - When: Аня adds «Финансы», which she is not in, or a role that does not
       // exist; Then: 422 `role_not_member`, the audience still holds only «SRE», no event added
       for (const foreign of [finance.id, randomUUID()])
         await expectRefusal(
-          apiRequest(app, anya, 'put', `/library/${workflow.id}/audience`, {
+          apiRequest(app, anya, 'put', `/library/${deepAgent.id}/audience`, {
             roleIds: [sre.id, foreign],
             offerInChat: true,
           }),
@@ -703,11 +725,11 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
           'role_not_member',
         );
       expect(
-        (await getRecord(app, anya, workflow.id)).audience.roles.map(
+        (await getRecord(app, anya, deepAgent.id)).audience.roles.map(
           (role) => role.id,
         ),
       ).toEqual([sre.id]);
-      expect(await libraryAudience(workflow.id)).toHaveLength(1);
+      expect(await libraryAudience(deepAgent.id)).toHaveLength(1);
 
       // Step 4 (UC-3, AC-11.3, AC-11.1, AC-04.3) - on the case's own employees and role: Ася owns the agent, Богдан
       // and Денис are members of «Дежурные»
@@ -799,13 +821,13 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       }
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE owner_id = $1',
+          'SELECT count(*) FROM app.agents WHERE owner_id = $1',
           gleb.id,
         ),
       ).toBe(0);
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_shares WHERE record_id = ANY($1::uuid[])',
+          'SELECT count(*) FROM app.agent_shares WHERE agent_id = ANY($1::uuid[])',
           [glebPersonal.id, glebShared.id],
         ),
       ).toBe(0);
@@ -816,7 +838,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       ]);
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_shares WHERE role_id = $1',
+          'SELECT count(*) FROM app.agent_shares WHERE role_id = $1',
           duty.id,
         ),
       ).toBe(0);
@@ -927,10 +949,10 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         model: DEFAULT_MODEL,
       });
       expect(copied.removedServers).toEqual([
-        { executor: null, servers: [LOGS_SERVER] },
+        { subagent: null, servers: [LOGS_SERVER] },
       ]);
       expect(copied.replacedModels).toEqual([
-        { executor: null, from: SECOND_MODEL, to: DEFAULT_MODEL },
+        { subagent: null, from: SECOND_MODEL, to: DEFAULT_MODEL },
       ]);
       const originalNow = await getRecord(app, alisa, original.id);
       expect(originalNow.version).toBe(1);
@@ -967,7 +989,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       );
       expect(
         await countRows(
-          'SELECT count(*) FROM app.library_records WHERE name = $1',
+          'SELECT count(*) FROM app.agents WHERE name = $1',
           refusedName,
         ),
       ).toBe(0);
@@ -1038,7 +1060,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   ban but leaves the audience (Борис still sees it), a ban list that leaks the prompt, an unban that leaves the ban in force, a
   //   disabled author whose records silently disappear for the role.
   // @category: core-functionality
-  // @dependency: AdminLibraryController, LibraryService, library repository (panel condition), AdminUsersController (disable/enable), AuditLog, Postgres
+  // @dependency: AdminLibraryController, LibraryPanelService, library repository (panel condition), AdminUsersController (disable/enable), AuditLog, Postgres
   // @complexity: medium
   it(
     'INT-4: closing access removes the audience and bans sharing, the panel never lists personal records and the ban list carries no content, unban lets the owner share again',
@@ -1236,13 +1258,15 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   вторая получает конфликт, и запись остаётся в версии 4"; AC-10.1 "Given Аня создала агента, поправила его, поделилась им,
   //   Борис его скопировал, а Аня закрыла доступ и удалила агента, then в аудите шесть записей, и ни одна не содержит текста
   //   промпта". Design: UC-E5, UC-6, KD-5, KD-7, invariants 6 and 8.
-  // Behavior: the save carries the version it started from -> a conditional update (`version = N`) -> 200 and N+1, or 409 and nothing;
+  // Behavior: the save carries the version it started from -> a new `agent_versions` row and the agent's pointer moved to it only while
+  //   version N is active (data-model design-agents.md KD-2) -> 200 and N+1, or 409 and nothing;
   //   each action writes one event in its own transaction with a field sample that has no prompt.
   // Steps (literal expected values):
   //   1. Given a fresh record `r` of Аня in version 3 (saved twice after create) and `before` = its audit events; When two `PUT
   //      /api/library/:id` with `version: 3` are sent one after another (second with other content); Then the first -> 200,
   //      `version` 4; the second -> 409 `RECORD_VERSION_CONFLICT`, one constant body; the record holds the FIRST content in version 4;
-  //      the second request added no audit event (a conflict leaves no trace) and a stale save with a rejected rule (422) added none.
+  //      the second request added no audit event (a conflict leaves no trace) and a stale save with a rejected rule (422) added none;
+  //      `agent_versions` holds exactly versions 1-4 of the record, each written by Аня, the earlier ones unchanged (data-model DC-16, DC-17).
   //   2. UC-6 on another fresh record: Аня creates an agent with a distinctive prompt phrase, edits it (version 2), shares it with a
   //      role, Борис (in the role) copies it, Аня removes all roles, Аня deletes the agent. The audit rows of object type
   //      `library_record` for this scenario are EXACTLY six, in order: `library_create`, `library_update`, `library_audience`,
@@ -1311,6 +1335,23 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       const stored = await getRecord(app, anya, record.id);
       expect(stored.version).toBe(4);
       expect(stored.content).toMatchObject({ prompt: 'Правка первой вкладки' });
+      // data-model DC-16, DC-17: every save is its own version row by Аня, earlier rows are untouched, and neither
+      // the 409 nor the 422 left a version
+      const { rows: versions } = await pool.query<{
+        number: number;
+        authorId: string | null;
+        prompt: string;
+      }>(
+        `SELECT number, author_id AS "authorId", content->>'prompt' AS prompt FROM app.agent_versions
+          WHERE agent_id = $1 ORDER BY number`,
+        [record.id],
+      );
+      expect(versions).toEqual([
+        { number: 1, authorId: anya.id, prompt: sent.content.prompt },
+        { number: 2, authorId: anya.id, prompt: 'Правка 1' },
+        { number: 3, authorId: anya.id, prompt: 'Правка 2' },
+        { number: 4, authorId: anya.id, prompt: 'Правка первой вкладки' },
+      ]);
       const eventsAfter = await auditOfRecord(pool, record.id);
       expect(eventsAfter).toHaveLength(eventsBefore + 1);
       expect(eventsAfter.at(-1)).toMatchObject({

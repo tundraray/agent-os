@@ -9,7 +9,8 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
+import { loggedRoute } from '../common/logged-route';
 import {
   AgentListQuerySchema,
   HistoryQuerySchema,
@@ -18,20 +19,20 @@ import {
   type AgentListQuery,
   type AgentPageView,
   type AwaitingCount,
+  type DeepAgentRunView,
   type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type AgentTasksView,
   type SendMessageRequest,
   type SendMessageResponse,
   type StopResponse,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
-import { APP_LOGGER } from '../logging/app-logger';
 import { AgentControlService } from './agent-control.service';
-import { type Command, runCommand } from './chat.errors';
+import { chatRoute, type Command } from './chat.errors';
 
 /**
  * The agent routes (design-chat.md, Contract «Агенты»). A malformed, missing or foreign `agentId`, and
@@ -44,7 +45,7 @@ export class AgentsController {
 
   constructor(
     private readonly control: AgentControlService,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.agents' });
   }
@@ -85,7 +86,10 @@ export class AgentsController {
       route: 'GET /agents/:agentId/history',
       fields: { ownerId, agentId },
       work: () => this.control.history(agentId, ownerId, query.afterSeq),
-      outcomeOf: (page) => ({ agentStatus: page.agent.status, entries: page.entries.length }),
+      outcomeOf: (page) => ({
+        agentStatus: page.agent.status,
+        entries: page.entries.length,
+      }),
     });
   }
 
@@ -105,10 +109,10 @@ export class AgentsController {
   }
 
   @Get(':agentId/run')
-  workflowRun(
+  deepAgentRun(
     @Param('agentId') agentId: string,
     @Req() req: AuthedRequest,
-  ): Promise<WorkflowRunView> {
+  ): Promise<DeepAgentRunView> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /agents/:agentId/run',
@@ -122,11 +126,26 @@ export class AgentsController {
     });
   }
 
+  @Get(':agentId/tasks')
+  tasks(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<AgentTasksView> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'GET /agents/:agentId/tasks',
+      fields: { ownerId, agentId },
+      work: () => this.control.tasks(agentId, ownerId),
+      outcomeOf: (list) => ({ tasks: list.tasks.length }),
+    });
+  }
+
   @Post(':agentId/messages')
   @HttpCode(202)
   send(
     @Param('agentId') agentId: string,
-    @Body(new ZodValidationPipe(SendMessageRequestSchema)) body: SendMessageRequest,
+    @Body(new ZodValidationPipe(SendMessageRequestSchema))
+    body: SendMessageRequest,
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
@@ -155,7 +174,10 @@ export class AgentsController {
 
   @Post(':agentId/stop')
   @HttpCode(200)
-  stop(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<StopResponse> {
+  stop(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<StopResponse> {
     const ownerId = req.user.id;
     return this.run({
       route: 'POST /agents/:agentId/stop',
@@ -167,7 +189,10 @@ export class AgentsController {
 
   @Post(':agentId/restart')
   @HttpCode(201)
-  restart(@Param('agentId') agentId: string, @Req() req: AuthedRequest): Promise<RestartResponse> {
+  restart(
+    @Param('agentId') agentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<RestartResponse> {
     const ownerId = req.user.id;
     return this.run({
       route: 'POST /agents/:agentId/restart',
@@ -178,6 +203,6 @@ export class AgentsController {
   }
 
   private run<T>(command: Command<T>): Promise<T> {
-    return runCommand(this.logger, command, 'AGENT_NOT_FOUND');
+    return loggedRoute(this.logger, command, chatRoute('AGENT_NOT_FOUND'));
   }
 }

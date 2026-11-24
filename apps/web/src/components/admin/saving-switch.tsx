@@ -1,9 +1,10 @@
-"use client";
+'use client';
 
-import { useId, useState } from "react";
-import { cn } from "cn";
-import { Switch } from "@/components/ui/switch";
-import { CAPTION, describeRefusal } from "./admin-form";
+import { useId, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
+import { cn } from 'cn';
+import { Switch } from '@/components/ui/switch';
+import { CAPTION, describeRefusal } from './admin-form';
 
 export type SavingSwitchProps = {
   /** The switch's accessible name, e.g. «Включено: {название}» in a table row. */
@@ -15,6 +16,8 @@ export type SavingSwitchProps = {
   labelOff?: string;
   /** In a table row the column header names the switch, so the label is read but not shown. */
   labelHidden?: boolean;
+  /** A hint under the label, the switch's description. */
+  hint?: string;
   /** The saved position, read from the resource. */
   checked: boolean;
   /** Saves the new position; on success the caller reads the resource again (Invariant 4). */
@@ -41,6 +44,7 @@ export function SavingSwitch({
   label,
   labelOff = label,
   labelHidden = false,
+  hint,
   checked,
   onSave,
   logEvent,
@@ -48,12 +52,14 @@ export function SavingSwitch({
   confirmOff,
   disabled = false,
 }: SavingSwitchProps) {
+  const tErrors = useTranslations('errors');
   const id = useId();
   const labelId = `${id}-label`;
+  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const [target, setTarget] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   // A new saved position from the re-read resource replaces the one shown since the save.
   const [savedChecked, setSavedChecked] = useState(checked);
   if (savedChecked !== checked) {
@@ -77,13 +83,19 @@ export function SavingSwitch({
       await onSave(next);
     } catch (cause) {
       setTarget(null);
-      setError(describeRefusal(cause, { logEvent })?.text ?? null);
+      setError(describeRefusal(tErrors, cause, { logEvent })?.text ?? null);
     } finally {
       setSaving(false);
     }
   }
 
   const shown = target ?? checked;
+  const describedBy = [
+    hint === undefined ? null : hintId,
+    error === null ? null : errorId,
+  ]
+    .filter((part) => part !== null)
+    .join(' ');
 
   return (
     <div className="flex flex-col gap-1">
@@ -93,18 +105,33 @@ export function SavingSwitch({
           disabled={saving || disabled}
           aria-label={labelHidden ? label : undefined}
           aria-labelledby={labelHidden ? undefined : labelId}
-          aria-describedby={error !== null ? errorId : undefined}
+          aria-describedby={describedBy === '' ? undefined : describedBy}
           onCheckedChange={(next) => void save(next)}
           className="pointer-coarse:after:-inset-3"
         />
         {!labelHidden && (
-          <span id={labelId} className={cn("text-data font-medium text-foreground", (saving || disabled) && "opacity-50")}>
+          <span
+            id={labelId}
+            className={cn(
+              'text-data font-medium text-foreground',
+              (saving || disabled) && 'opacity-50',
+            )}
+          >
             {shown ? label : labelOff}
           </span>
         )}
       </label>
+      {hint !== undefined && (
+        <p id={hintId} className={cn(CAPTION, 'text-muted-foreground')}>
+          {hint}
+        </p>
+      )}
       {error !== null && (
-        <p id={errorId} role="alert" className={cn(CAPTION, "text-destructive")}>
+        <p
+          id={errorId}
+          role="alert"
+          className={cn(CAPTION, 'text-destructive')}
+        >
           {error}
         </p>
       )}

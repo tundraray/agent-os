@@ -1,39 +1,40 @@
-"use client";
+'use client';
 
 import {
   type PropsWithChildren,
   useState,
   type FC,
   isValidElement,
-} from "react";
+} from 'react';
 import {
   XIcon,
   PlusIcon,
   FileText,
   Loader2Icon,
   AlertCircleIcon,
-} from "lucide-react";
+} from 'lucide-react';
 import {
   AttachmentPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
-} from "@assistant-ui/react";
+} from '@assistant-ui/react';
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogTitle,
   DialogContent,
   DialogTrigger,
-} from "@/components/ui/dialog";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { TooltipIconButton } from "@/components/tooltip-icon-button";
-import { useAttachmentState } from "./attachment-state";
-import { cn } from "@/lib/utils";
+} from '@/components/ui/dialog';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { TooltipIconButton } from '@/components/tooltip-icon-button';
+import { useAttachmentState } from './attachment-state';
+import { cn } from '@/lib/utils';
+import { useTranslations } from 'next-intl';
 
 type AttachmentPreviewProps = {
   src: string;
@@ -41,16 +42,17 @@ type AttachmentPreviewProps = {
 };
 
 const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src, name }) => {
+  const t = useTranslations('chat.attachment');
   const [isLoaded, setIsLoaded] = useState(false);
   return (
     <img
       src={src}
-      alt={`Просмотр: ${name}`}
+      alt={t('preview', { name })}
       className={cn(
-        "block h-auto max-h-[80vh] w-auto max-w-full rounded-sm object-contain transition-opacity duration-300 motion-reduce:transition-none",
+        'block h-auto max-h-[80vh] w-auto max-w-full rounded-sm object-contain transition-opacity duration-300 motion-reduce:transition-none',
         isLoaded
-          ? "aui-attachment-preview-image-loaded opacity-100"
-          : "aui-attachment-preview-image-loading opacity-0",
+          ? 'aui-attachment-preview-image-loaded opacity-100'
+          : 'aui-attachment-preview-image-loading opacity-0',
       )}
       onLoad={() => setIsLoaded(true)}
     />
@@ -67,6 +69,7 @@ const AttachmentPreviewDialog: FC<AttachmentPreviewDialogProps> = ({
   src,
   name,
 }) => {
+  const t = useTranslations('chat.attachment');
   if (!src) return children;
 
   return (
@@ -84,7 +87,7 @@ const AttachmentPreviewDialog: FC<AttachmentPreviewDialogProps> = ({
       />
       <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&>button]:hover:bg-foreground/80 [&_svg]:text-background p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
         <DialogTitle className="aui-sr-only sr-only">
-          Просмотр: {name}
+          {t('preview', { name })}
         </DialogTitle>
         <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden rounded-sm">
           <AttachmentPreview src={src} name={name} />
@@ -110,27 +113,21 @@ const AttachmentThumb: FC<{ src: string | undefined }> = ({ src }) => {
 };
 
 const AttachmentUI: FC = () => {
-  const {
-    isComposer,
-    src,
-    isImage,
-    name,
-    isUploading,
-    isError,
-    errorMessage,
-  } = useAttachmentState();
+  const { isComposer, src, isImage, name, isUploading, isError, errorMessage } =
+    useAttachmentState();
+  const t = useTranslations('chat.attachment');
 
   return (
     <TooltipProvider>
       <Tooltip>
         <AttachmentPrimitive.Root
           className={cn(
-            "aui-attachment-root relative",
+            'aui-attachment-root relative',
             isComposer &&
-              "animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none",
+              'animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none',
             isImage &&
               !isComposer &&
-              "aui-attachment-root-message only:*:first:size-24",
+              'aui-attachment-root-message only:*:first:size-24',
           )}
         >
           <AttachmentPreviewDialog src={src} name={name}>
@@ -138,22 +135,24 @@ const AttachmentUI: FC = () => {
               render={
                 <div
                   className={cn(
-                    "aui-attachment-tile bg-muted hover:after:bg-foreground/10 focus-visible:ring-ring relative size-14 overflow-hidden rounded-[calc(var(--composer-radius,1rem)-var(--composer-padding,8px))] transition-transform outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 motion-reduce:transition-none dark:after:ring-white/10",
+                    'aui-attachment-tile bg-muted hover:after:bg-foreground/10 focus-visible:ring-ring relative size-14 overflow-hidden rounded-[calc(var(--composer-radius,1rem)-var(--composer-padding,8px))] transition-transform outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 motion-reduce:transition-none dark:after:ring-white/10',
                     src
-                      ? "cursor-zoom-in active:scale-[0.96]"
-                      : "cursor-default",
+                      ? 'cursor-zoom-in active:scale-[0.96]'
+                      : 'cursor-default',
                     isError &&
-                      "after:ring-destructive/60 dark:after:ring-destructive/60",
+                      'after:ring-destructive/60 dark:after:ring-destructive/60',
                   )}
-                  role={src ? "button" : "group"}
+                  role={src ? 'button' : 'group'}
                   tabIndex={0}
-                  aria-label={`${src ? `Просмотр: ${name}` : `Вложение: ${name}`}${
-                    isError
-                      ? ", не удалось загрузить"
+                  aria-label={t('tile', {
+                    preview: src ? 'yes' : 'no',
+                    name,
+                    state: isError
+                      ? 'error'
                       : isUploading
-                        ? ", загружается"
-                        : ""
-                  }`}
+                        ? 'uploading'
+                        : 'done',
+                  })}
                 />
               }
             >
@@ -190,11 +189,12 @@ const AttachmentUI: FC = () => {
 };
 
 const AttachmentRemove: FC<{ name: string }> = ({ name }) => {
+  const t = useTranslations('chat.attachment');
   return (
     <AttachmentPrimitive.Remove
       render={
         <TooltipIconButton
-          tooltip={`Удалить: ${name}`}
+          tooltip={t('remove', { name })}
           className="aui-attachment-tile-remove absolute end-1 top-1 size-5 rounded-full bg-black/50! text-white after:absolute after:-inset-1.5 hover:bg-black/70! hover:text-white! active:scale-[0.96] motion-reduce:transition-none"
           side="top"
         />
@@ -226,16 +226,17 @@ export const ComposerAttachments: FC = () => {
 };
 
 export const ComposerAddAttachment: FC = () => {
+  const t = useTranslations('chat.attachment');
   return (
     <ComposerPrimitive.AddAttachment
       render={
         <TooltipIconButton
-          tooltip="Добавить вложение"
+          tooltip={t('add')}
           side="bottom"
           variant="ghost"
           size="icon"
           className="aui-composer-add-attachment text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full active:scale-[0.96] motion-reduce:transition-none"
-          aria-label="Добавить вложение"
+          aria-label={t('add')}
         />
       }
     >

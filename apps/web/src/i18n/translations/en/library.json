@@ -1,0 +1,329 @@
+{
+  "kind": "{kind, select, agent {agent} other {deep agent}}",
+  "cancel": "Cancel",
+  "retry": "Retry",
+  "open": "Open",
+  "screen": {
+    "title": "Library",
+    "createInChat": "Create in chat",
+    "fillForm": "Fill in a form",
+    "create": "Create",
+    "agentForm": "Agent form",
+    "template": "Make an agent that ",
+    "mine": "Mine",
+    "colleagues": "From colleagues",
+    "company": "From the company",
+    "groupCount": "{title} · {count}",
+    "noOwn": "No agents of your own yet",
+    "noOwnHint": "Describe in chat what the agent should do — for example: “Make an agent that collects new Sentry errors every morning.”",
+    "noShared": "Colleagues in your roles haven't shared anything yet",
+    "noRoles": "You have no roles, so there are no colleagues' agents here",
+    "noCompany": "Nothing from the company for you",
+    "failed": "Couldn't load the library",
+    "loading": "Loading the library…"
+  },
+  "row": {
+    "actions": "Actions: {name}",
+    "useInChat": "Use in chat",
+    "share": "Share",
+    "copy": "Copy to yourself",
+    "delete": "Delete",
+    "openInPanel": "Open in admin panel",
+    "readOnly": "Read-only — to use it, copy it to yourself",
+    "systems": "{count, plural, =1 {{names} isn't available to you — the {kind, select, agent {agent} other {deep agent}} will run without it} other {{names}{rest, plural, =0 {} other { and # more}} aren't available to you — the {kind, select, agent {agent} other {deep agent}} will run without them}}",
+    "modelUnavailable": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you"
+  },
+  "ban": "An administrator closed access · {date} — sharing isn't allowed",
+  "droppedServers": "Systems you have no access to weren't included: {servers}",
+  "subagentLine": "{subagent}: {text}",
+  "fields": {
+    "name": "Name",
+    "description": "Description",
+    "prompt": "Instructions",
+    "servers": "Systems",
+    "model": "Model",
+    "maxTurns": "Maximum steps",
+    "agents": "Can start",
+    "selfLearning": "Self-learning"
+  },
+  "brief": {
+    "title": "Brief",
+    "titleNamed": "Brief · {name}"
+  },
+  "editor": {
+    "newTitle": "{kind, select, agent {New agent} other {New deep agent}}",
+    "created": "{kind, select, agent {Agent created} other {Deep agent created}}",
+    "discarded": "Changes discarded",
+    "restore": "Undo",
+    "onlyAdmins": "Only administrators can see the {kind, select, agent {agent} other {deep agent}} for now",
+    "share": "Share",
+    "everyoneGets": "All employees see the {kind, select, agent {agent} other {deep agent}} — new runs will use the new version",
+    "launchHint": "To run it, press “Use in chat” or name the {kind, select, agent {agent} other {deep agent}} in chat.",
+    "header": {
+      "audience": "Who can see it: {who}",
+      "everyone": "all employees",
+      "chosen": "selected",
+      "onlyAdmins": "only administrators",
+      "chatAudience": "Everyone with the permissions sees it. This can't be changed.",
+      "refine": "Refine in chat",
+      "refineTemplate": "Refine “{name}”: ",
+      "saveFirst": "Save your changes first"
+    },
+    "panel": {
+      "region": "Saving",
+      "changed": "Unsaved changes",
+      "create": "Create",
+      "save": "Save",
+      "discard": "Discard changes",
+      "discardShort": "Discard",
+      "saveMine": "Save my changes",
+      "takeSaved": "Take the saved version"
+    }
+  },
+  "agentFields": {
+    "descriptionHint": "The chat decides when to call the agent from its description.",
+    "promptHint": "What the agent does and how. It sees only this text and its assignment.",
+    "serversHint": "The agent gets tools only from the systems the person who starts it has access to.",
+    "unavailable": "not available to you",
+    "lostServerRest": "— stays and works for those who have access",
+    "allServers": "All systems",
+    "allServersHint": "The agent gets every system, including ones connected later.",
+    "advanced": "More: model, maximum steps, who it can start",
+    "modelHint": "A stronger model is slower and costs more. The default model is enough for most tasks.",
+    "maxTurnsHint": "How many steps the agent takes in one run. When it reaches the limit, it stops and returns what it has done.",
+    "findAgent": "Find an agent…",
+    "noAgents": "No agents found",
+    "modelGone": "The {model} model is no longer available to you — the agent won't run",
+    "noModels": "The {model} model isn't available to you, and you have no other models — the agent won't run",
+    "replaceModel": "Replace with {model}",
+    "checks": {
+      "enterName": "Enter a name",
+      "oneLineName": "A name is one line, without control characters",
+      "enterDescription": "Enter a description",
+      "descriptionTooLong": "The description is longer than {max} characters",
+      "enterPrompt": "Enter instructions",
+      "wholeNumber": "Enter a whole number from {min} to {max}"
+    }
+  },
+  "team": {
+    "title": "Subagents · {count}",
+    "hint": "the agent decides whom to call and when",
+    "listLabel": "Subagents, the agent decides whom to call and when",
+    "final": "writes the answer",
+    "noServers": "no systems",
+    "allServers": "all systems",
+    "maxRuns": "How many times it can be called",
+    "upTo": "{count, plural, one {up to # time} other {up to # times}}",
+    "details": "Details"
+  },
+  "definition": {
+    "recipient": "The author is {author}.{roleCount, plural, =0 {} one { The {kind, select, agent {agent} other {deep agent}} is open to your role {roles}.} other { The {kind, select, agent {agent} other {deep agent}} is open to your roles {roles}.}} It works with your permissions and connected accounts. Changes in systems happen only after you confirm them. The author or an administrator can remove the {kind, select, agent {agent} other {deep agent}}.",
+    "brief": "The deep agent gets only the brief you approve before the run: the question, scope and result. It doesn't see the chat.",
+    "deepAgent": "Agent",
+    "deepAgentSummary": "{model} · {maxTurns, plural, one {up to # step} other {up to # steps}}",
+    "finalSubagent": "Who writes the answer",
+    "agentItself": "The agent itself",
+    "capabilities": "Capabilities",
+    "capability": {
+      "taskList": "task list",
+      "listDelegation": "list delegation",
+      "none": "none"
+    },
+    "expand": "Show all",
+    "collapse": "Collapse"
+  },
+  "recordPage": {
+    "colleagueHint": "Or name the {kind, select, agent {agent} other {deep agent}} in chat — the chat will start it itself.",
+    "ownNamesake": "You have your own {kind, select, agent {agent} other {deep agent}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
+    "severalNamesakes": "Several have this name: name it in chat and the one a colleague created earliest will start, a system one only when no other has the name. To start this one, press “Use in chat”.",
+    "readOnly": "The author opened the {kind, select, agent {agent} other {deep agent}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
+    "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you. The copy gets your model.",
+    "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {deep agent}} nor its copy will run."
+  },
+  "label": {
+    "mine": "yours",
+    "company": "from the company",
+    "onlyYou": "only you",
+    "unavailable": "{kind, select, agent {agent} other {deep agent}} unavailable",
+    "version": "· version {version}",
+    "remove": "Remove: {name}",
+    "spoken": {
+      "mine": "{kind, select, agent {your agent} other {your deep agent}}",
+      "author": "author {name}",
+      "version": "version {version}"
+    }
+  },
+  "copy": {
+    "title": "Copy “{name}” to yourself?",
+    "onlyYou": "Only you will see the copy. Changes to the original won't change it.",
+    "dropped": "Systems you have no access to won't be included:",
+    "allServers": "The copy gets the systems you have access to:",
+    "confirm": "Copy",
+    "saved": "Copy “{name}” saved",
+    "noModels": "Copy “{name}” saved, but it won't run: no models are available to you",
+    "replaced": "The {from} model isn't available to you — {to} is set instead"
+  },
+  "delete": {
+    "title": "Delete “{name}”?",
+    "everyone": "The {kind, select, agent {agent} other {deep agent}} will disappear for everyone it's open to. Runs already in progress will finish.",
+    "onlyYou": "The {kind, select, agent {agent} other {deep agent}} will be deleted for good. Runs already in progress will finish.",
+    "roles": "The {kind, select, agent {agent} other {deep agent}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.",
+    "confirm": "Delete",
+    "deleted": "{kind, select, agent {Agent} other {Deep agent}} deleted"
+  },
+  "share": {
+    "title": "Share “{name}”",
+    "who": "Who can see it",
+    "ownerAlways": "You always see it",
+    "leftRole": "you're no longer in this role",
+    "employeeDelivery": "How colleagues get “{name}”",
+    "adminDelivery": "How employees get “{name}”",
+    "offer": "Their chat suggests and starts the {kind, select, agent {agent} other {deep agent}}",
+    "libraryOnly": "Only in the library — to read and copy",
+    "consequence": "Colleagues will see that the {kind, select, agent {agent} other {deep agent}} is from you, and it will run with their permissions.",
+    "everyone": "All employees",
+    "selected": "Selected roles and employees",
+    "search": "Find a role or employee",
+    "searchPlaceholder": "Find a role or employee…",
+    "onlyAdmins": "Only administrators can see it for now",
+    "remove": "Remove: {name}, {holder, select, role {role} other {employee}}",
+    "save": "Save",
+    "nowSee": "Now visible to: {names}",
+    "onlyYouNow": "Now only you can see it",
+    "nowEveryone": "Now all employees can see it",
+    "rolesFailed": "Couldn't load roles",
+    "noMatches": "No one found",
+    "usersFailed": "Couldn't find employees"
+  },
+  "selfLearning": {
+    "hint": "The agent remembers where it found what, and all its later runs see it — whoever starts them, even without access to those systems. What the agent remembered about an employee only that employee sees.",
+    "kept": "The memory is kept: turn it back on and the agent continues from it.",
+    "on": "Self-learning is on",
+    "off": "Self-learning is off. The author can turn it on."
+  },
+  "card": {
+    "refineHint": "To change it, press “Refine in chat”.",
+    "refineUnavailable": "The chat changes only what only you can see. Close access in “Who can see” first.",
+    "saveFailed": "Couldn't save. Try again."
+  },
+  "scripts": {
+    "title": "Scripts · {count}",
+    "empty": "No scripts. A script is your code that the agent calls as its own tool.",
+    "add": "Add script",
+    "edit": "Edit",
+    "editNamed": "Edit: {name}",
+    "delete": "Delete",
+    "deleteNamed": "Delete: {name}",
+    "callerSelf": "Called by: the agent itself",
+    "callerSubagent": "Called by: subagent “{name}”",
+    "input": "Input: {input}",
+    "class": {
+      "read": "reads",
+      "write": "changes data"
+    },
+    "fields": {
+      "name": "Name",
+      "nameHint": "Latin letters, digits and _.",
+      "description": "Description for the agent",
+      "descriptionHint": "When to call the script and what it returns.",
+      "input": "Input",
+      "owner": "Who calls it",
+      "ownerSelf": "The agent itself",
+      "ownerSubagent": "Subagent “{name}”",
+      "class": "What it does",
+      "classRead": "Only reads",
+      "classWrite": "Changes data in external systems",
+      "code": "Code"
+    },
+    "save": "Save script",
+    "reread": "Reload",
+    "deleteTitle": "Delete the script “{name}”?",
+    "deleteBody": "New conversations won't get it.",
+    "errors": {
+      "name": "Name — up to 48 characters: Latin letters, digits and _, starting with a letter",
+      "nameTaken": "A script with this name already exists",
+      "description": "Description — 1 to 1000 characters on one line",
+      "input": "Input — up to 1000 characters on one line",
+      "code": "Enter the code — up to 64 KB, without hidden characters"
+    },
+    "change": {
+      "new": "new",
+      "changed": "changed",
+      "removed": "removed",
+      "before": "Before",
+      "after": "After"
+    }
+  },
+  "memory": {
+    "entry": "Memory",
+    "title": "Memory of “{name}”",
+    "openDeepAgent": "Open deep agent",
+    "selfLearningOff": "Self-learning is off: runs don't see this memory and don't add to it.",
+    "columns": {
+      "record": "Record",
+      "changed": "Changed"
+    },
+    "delete": "Delete",
+    "loadFailed": "Couldn't load the memory",
+    "empty": {
+      "title": "The agent hasn't remembered anything yet",
+      "text": "Records appear when the agent decides to remember something."
+    },
+    "deleteDialog": {
+      "title": "Delete the record?",
+      "body": "“{description}”. Agents won't see it anymore. This can't be undone."
+    },
+    "deleted": "Record deleted"
+  },
+  "training": {
+    "title": "Training “{name}”",
+    "startedBy": "Started by {name} · {at} · from version {version}",
+    "openConversation": "Open training conversation",
+    "spent": "spent {spent} of {cap}",
+    "recommended": "Recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
+    "notRecommended": "Not recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
+    "nothingToImprove": "The trainer found nothing to improve: {explanation}",
+    "nothingToImproveHidden": "The trainer found nothing to improve.",
+    "textsHidden": "Only the person who started the training sees its texts.",
+    "activate": "Make active",
+    "retrain": "Train again",
+    "activeSince": "Active since {at}",
+    "progress": "Training progress",
+    "changes": "What version {version} changes",
+    "agentPrompt": "Agent instructions",
+    "subagentPrompt": "Subagent “{name}” instructions",
+    "why": "Why",
+    "comparison": "Comparison on past tasks",
+    "baseVersion": "Version {version} · {active, select, true {active} other {previous}}",
+    "proposedVersion": "Version {version} · {active, select, true {active} other {new}}",
+    "errors": "Errors",
+    "calls": "Tool calls",
+    "avgCost": "Average task cost",
+    "columns": {
+      "task": "Task",
+      "outcome": "Outcome",
+      "errors": "Errors",
+      "calls": "Calls",
+      "cost": "Cost"
+    },
+    "verdict": {
+      "proposed_better": "new is better",
+      "base_better": "previous is better",
+      "equal": "equal",
+      "not_compared": "not compared"
+    },
+    "replay": "Replay on version {version}",
+    "loadFailed": "Couldn't load the result",
+    "retry": "Retry",
+    "activateTitle": "Make version {version} active?",
+    "activateBody": "New conversations of all employees will run on it; ones already started will finish on version {base}.",
+    "activated": "Version {version} is active",
+    "train": "Train",
+    "willSpend": "Will spend no more than {cap}",
+    "watch": "Watch the training",
+    "last": "Last training, {at}:",
+    "lastRecommended": "· recommended",
+    "lastNotRecommended": "· not recommended",
+    "openResult": "Open the result"
+  }
+}

@@ -11,7 +11,11 @@ type ShellErrorProps = {
 };
 
 const digestOf = (error: unknown): string | undefined =>
-  error instanceof Error && 'digest' in error && typeof error.digest === 'string' ? error.digest : undefined;
+  error instanceof Error &&
+  'digest' in error &&
+  typeof error.digest === 'string'
+    ? error.digest
+    : undefined;
 
 /**
  * Root error boundary: sits inside the root layout (theme, fonts, global styles stay active) and

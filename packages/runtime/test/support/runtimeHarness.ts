@@ -1,25 +1,30 @@
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { createDatabase, type Database } from '@agent-os/db';
+import { DATABASE, type Database, Db } from '@agent-os/db';
+import { databaseUrl } from '@agent-os/db/testing';
 import {
+  CLOCK,
   type Clock,
-  createRuntime,
+  HandlerRegistry,
+  Inbox,
   type ModelPrice,
   parseRuntimeConfig,
-  type Runtime,
   type RuntimeConfig,
+  RuntimeWorkers,
   systemClock,
   type TaskHandler,
+  TaskControl,
+  TaskEndHooks,
+  TokenLedger,
 } from '@agent-os/runtime';
-import { sql } from 'drizzle-orm';
-import { databaseUrl } from './database-url';
-import { ensureHandlerRowsTable } from './testHandlers';
+import { runtimeModules } from '@agent-os/runtime/testing';
+import { Test } from '@nestjs/testing';
+import { boundToDb, ensureHandlerRowsTable } from './testHandlers';
 
 /**
- * Test assembly of the runtime (design-runtime.md, Test Strategy): the package's own
- * `createRuntime` over its own pool, without `apps/api`. The package is imported by name, as the child of
- * E2E-1 imports it. A second instance is
- * a second harness over the same database.
+ * Test assembly of the runtime (design-runtime.md, Test Strategy): a Nest context of the package's
+ * own `RuntimeModule` over `DbModule` with its own pool, without `apps/api`. The package is imported
+ * by name, as the child of E2E-1 imports it.
  */
 
 /*
@@ -76,26 +81,25 @@ export interface RuntimeHarnessOptions {
   startWorkers?: boolean;
 }
 
-export interface RuntimeHarness extends Runtime {
+export interface RuntimeHarness {
+  readonly handlers: HandlerRegistry;
+  readonly tasks: TaskControl;
+  readonly inbox: Inbox;
+  /** Task end hooks; a test registers its own before the tasks end. */
+  readonly endHooks: TaskEndHooks;
+  readonly ledger: TokenLedger;
+  /** Starts the workers (`RuntimeWorkers.start`). */
+  start(): void;
+  /** Stops the workers (`RuntimeWorkers.stop`). */
+  stop(): Promise<void>;
   /** The Drizzle client of the runtime's pool. */
   readonly db: Database;
+  /** The runtime's `Db`: what handlers registered after the start are bound to (`handlersFor`). */
+  readonly runtimeDb: Db;
   /** Every record the runtime logged, in order: the in-memory sink of `@agent-os/common/testing`. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, then closes the pool — the pool is closed even when the stop fails. */
+  /** Closes the context: the workers stop, then `DbModule` closes the pool. */
   close(): Promise<void>;
-}
-
-/**
- * Moves the lease of the task's running step into the past, as if its process had stopped
- * beating: the next pass of a recovery sweeper requeues the step. Throws when the task is not
- * `running`, so a test never races a lease that was not there.
- */
-export async function expireLease(db: Database, taskId: string): Promise<void> {
-  const { rows } = await db.execute(sql`
-    UPDATE app.runtime_tasks SET lease_expires_at = now() - interval '1 minute'
-     WHERE task_id = ${taskId} AND status = 'running'
-    RETURNING task_id`);
-  if (rows.length !== 1) throw new Error(`Task ${taskId} has no running step to expire`);
 }
 
 /** Builds the runtime with the test handlers against the test database. */
@@ -111,31 +115,39 @@ export async function createRuntimeHarness(
     ...options.config,
   };
   const sink = memorySink();
-  const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
-  const database = createDatabase({
-    connectionString: databaseUrl(),
-    poolMax: config.dbPoolMax,
+  const logger = createLogger({
+    sinks: [sink],
+    secrets: [],
+    minLevel: 'debug',
   });
-  await ensureHandlerRowsTable(database.db);
-  const runtime = createRuntime({
-    database,
-    config,
-    logger,
-    clock: options.clock ?? systemClock,
-  });
-  for (const handler of options.handlers) runtime.handlers.register(handler);
-  if (options.startWorkers ?? true) runtime.start();
+  const app = await Test.createTestingModule({
+    imports: runtimeModules(logger, databaseUrl(), config),
+  })
+    .overrideProvider(CLOCK)
+    .useValue(options.clock ?? systemClock)
+    .compile();
+  const db = app.get<Database>(DATABASE);
+  const runtimeDb = app.get(Db);
+  await ensureHandlerRowsTable(runtimeDb);
+  const handlers = app.get(HandlerRegistry);
+  for (const handler of options.handlers)
+    handlers.register(boundToDb(handler, runtimeDb));
+  const workers = app.get(RuntimeWorkers);
+  // The context's start runs `onApplicationBootstrap`, which starts the workers; held workers
+  // start by `start()`. `close()` runs the shutdown hooks either way.
+  if (options.startWorkers ?? true) await app.init();
 
   return {
-    ...runtime,
-    db: database.db,
+    handlers,
+    tasks: app.get(TaskControl),
+    inbox: app.get(Inbox),
+    endHooks: app.get(TaskEndHooks),
+    ledger: app.get(TokenLedger),
+    start: () => workers.start(),
+    stop: () => workers.stop(),
+    db,
+    runtimeDb,
     logs: sink.records,
-    close: async () => {
-      try {
-        await runtime.stop();
-      } finally {
-        await database.close();
-      }
-    },
+    close: () => app.close(),
   };
 }

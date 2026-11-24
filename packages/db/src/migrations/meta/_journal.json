@@ -5,15 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1795216980700,
-      "tag": "0000_baseline",
+      "when": 1795483062374,
+      "tag": "0000_schema",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1795257457411,
-      "tag": "0001_identity_users_language",
+      "when": 1795483065668,
+      "tag": "0001_builtin_rows",
       "breakpoints": true
     }
   ]

@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import type { INestApplication } from '@nestjs/common';
 import {
   AgentListPageSchema,
@@ -8,6 +7,7 @@ import {
   AwaitingCountSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
+  DeepAgentRunViewSchema,
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
@@ -16,7 +16,6 @@ import {
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunViewSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -25,6 +24,7 @@ import {
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
+  type DeepAgentRunView,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
@@ -33,7 +33,6 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunView,
 } from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -48,9 +47,6 @@ export type { Method } from './session';
  * every success body is parsed with its `packages/contracts` schema (time fields are ISO strings), and an
  * unexpected status fails with the body.
  */
-
-/** Poll interval of {@link waitFor}. */
-const POLL_MS = 50;
 
 /** Fails unless the response has `status`; returns the body parsed with `schema`. */
 export async function expectBody<T>(
@@ -96,7 +92,7 @@ export interface ChatApi {
   awaiting(): Promise<AwaitingCount>;
   agentPage(agentId: string, afterSeq?: number): Promise<AgentPageView>;
   inherited(agentId: string, afterSeq?: number): Promise<InheritedHistory>;
-  run(agentId: string): Promise<WorkflowRunView>;
+  run(agentId: string): Promise<DeepAgentRunView>;
   sendToAgent(agentId: string, text: string): Promise<SendMessageResponse>;
   interruptAgent(agentId: string): Promise<InterruptResponse>;
   stopAgent(agentId: string): Promise<StopResponse>;
@@ -170,7 +166,12 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         { text },
       ),
     interrupt: (threadId) =>
-      ok(200, InterruptResponseSchema, 'post', `/threads/${threadId}/interrupt`),
+      ok(
+        200,
+        InterruptResponseSchema,
+        'post',
+        `/threads/${threadId}/interrupt`,
+      ),
 
     agentList: (cursor) =>
       ok(200, AgentListPageSchema, 'get', `/agents${cursorQuery(cursor)}`),
@@ -190,7 +191,7 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         `/agents/${agentId}/inherited${afterSeqQuery(afterSeq)}`,
       ),
     run: (agentId) =>
-      ok(200, WorkflowRunViewSchema, 'get', `/agents/${agentId}/run`),
+      ok(200, DeepAgentRunViewSchema, 'get', `/agents/${agentId}/run`),
     sendToAgent: (agentId, text) =>
       ok(
         202,
@@ -216,25 +217,4 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
       ),
     spend: () => ok(200, SpendResponseSchema, 'get', '/spend'),
   };
-}
-
-/** Polls `read` until `done` holds and returns that value; fails after `timeoutMs` with the last value. */
-export async function waitFor<T>(
-  read: () => Promise<T> | T,
-  done: (value: T) => boolean,
-  what: string,
-  timeoutMs = 30_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let value = await read();
-  while (!done(value)) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(value)}`,
-      );
-    }
-    await delay(POLL_MS);
-    value = await read();
-  }
-  return value;
 }

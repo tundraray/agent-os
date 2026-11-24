@@ -11,7 +11,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   LanguageBodySchema,
   nextPath,
@@ -28,7 +28,6 @@ import {
 import type { CookieOptions, Request, Response } from 'express';
 import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { APP_LOGGER } from '../logging/app-logger';
 import type { AuthedRequest } from './auth-user';
 import { LOGIN_REQUEST_TTL_MS } from './oidc-sign-in';
 import { ProvidersService } from './providers.service';
@@ -71,7 +70,7 @@ export class AuthController {
     private readonly sessions: SessionStore,
     private readonly users: UsersService,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'identity.auth' });
   }
@@ -207,7 +206,7 @@ export class AuthController {
       token === undefined ? undefined : await this.sessions.find(token);
     if (session === undefined) return;
     await this.sessions.end(session.sessionId);
-    await this.auditLog.record(null, {
+    await this.auditLog.record({
       kind: 'sign_out',
       actor: session.user.id,
       objectType: 'user',

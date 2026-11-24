@@ -31,7 +31,9 @@ const ADMIN_PATH = /^\/api\/admin(\/|$)/;
 async function readBody(request: Request): Promise<unknown> {
   const text = await request.text();
   if (text === '') return null;
-  return request.headers.get('content-type')?.includes('application/json') ? JSON.parse(text) : text;
+  return request.headers.get('content-type')?.includes('application/json')
+    ? JSON.parse(text)
+    : text;
 }
 
 /**
@@ -42,7 +44,12 @@ export function trackRequests(server: SetupServer): TrackedRequests {
   const requests: RecordedRequest[] = [];
   const listener = ({ request }: { request: Request }): void => {
     const url = new URL(request.url);
-    const entry: RecordedRequest = { method: request.method, path: url.pathname, search: url.search, body: null };
+    const entry: RecordedRequest = {
+      method: request.method,
+      path: url.pathname,
+      search: url.search,
+      body: null,
+    };
     requests.push(entry);
     if (request.body !== null) {
       void readBody(request.clone()).then((body) => {
@@ -54,7 +61,11 @@ export function trackRequests(server: SetupServer): TrackedRequests {
   onTestFinished(() => {
     server.events.removeListener('request:start', listener);
   });
-  return { requests, adminCount: () => requests.filter((request) => ADMIN_PATH.test(request.path)).length };
+  return {
+    requests,
+    adminCount: () =>
+      requests.filter((request) => ADMIN_PATH.test(request.path)).length,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -90,15 +101,22 @@ function recordingLogger(bound: LogFields): Logger {
  * Replacement of `@/lib/logger`, the web app's only log module (Sentry and console behind it):
  * `vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule)`.
  */
-export const loggerModule: typeof import('@/lib/logger') = { logger: recordingLogger({}) };
+export const loggerModule: typeof import('@/lib/logger') = {
+  logger: recordingLogger({}),
+};
 
 /** Every string inside a log record, Error messages, stacks and causes included. */
-function stringsOf(value: unknown, out: string[], seen: WeakSet<object>): string[] {
+function stringsOf(
+  value: unknown,
+  out: string[],
+  seen: WeakSet<object>,
+): string[] {
   if (typeof value === 'string') {
     out.push(value);
     return out;
   }
-  if (value === null || typeof value !== 'object' || seen.has(value)) return out;
+  if (value === null || typeof value !== 'object' || seen.has(value))
+    return out;
   seen.add(value);
   if (value instanceof Error) {
     out.push(value.name, value.message, value.stack ?? '');
@@ -123,22 +141,34 @@ type NowhereOptions = {
  * attribute, toasts and the announcer included), the value of every input and textarea, `document.title`, the
  * tab's address, both web storages, the logger stand-in's records and the arguments the `spies` were called with.
  */
-export function expectNowhere(value: string, { exceptInput, spies = [] }: NowhereOptions = {}): void {
+export function expectNowhere(
+  value: string,
+  { exceptInput, spies = [] }: NowhereOptions = {},
+): void {
   expect(value, 'expectNowhere needs a non-empty value').not.toBe('');
   expect(document.title, 'document.title').not.toContain(value);
   expect(window.location.href, 'the address').not.toContain(value);
 
-  const allowed = exceptInput === undefined ? null : screen.getByLabelText(exceptInput);
+  const allowed =
+    exceptInput === undefined ? null : screen.getByLabelText(exceptInput);
   // React mirrors a field's value into its `value` attribute, so the allowed field is cut out of the markup.
   const markup = document.documentElement.outerHTML;
-  expect(allowed === null ? markup : markup.replace(allowed.outerHTML, ''), 'document markup').not.toContain(value);
-  for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) {
+  expect(
+    allowed === null ? markup : markup.replace(allowed.outerHTML, ''),
+    'document markup',
+  ).not.toContain(value);
+  for (const field of document.querySelectorAll<
+    HTMLInputElement | HTMLTextAreaElement
+  >('input, textarea')) {
     if (field === allowed) continue;
     const name = field.getAttribute('aria-label') ?? (field.id || field.name);
     expect(field.value, `value of the field «${name}»`).not.toContain(value);
   }
 
-  for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
+  for (const [name, storage] of [
+    ['localStorage', localStorage],
+    ['sessionStorage', sessionStorage],
+  ] as const) {
     for (let index = 0; index < storage.length; index += 1) {
       const key = storage.key(index) ?? '';
       expect(`${key}=${storage.getItem(key)}`, name).not.toContain(value);
@@ -166,7 +196,12 @@ export function expectNowhere(value: string, { exceptInput, spies = [] }: Nowher
  * installs its own clipboard on `navigator`.
  */
 export function stubClipboard(): Mock<Clipboard['writeText']> {
-  const writeText = vi.fn<Clipboard['writeText']>().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const writeText = vi
+    .fn<Clipboard['writeText']>()
+    .mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true,
+  });
   return writeText;
 }

@@ -27,7 +27,11 @@ describe('LiveStore — closed stream probes the session (DC-13)', () => {
           probe();
           return status === 401
             ? HttpResponse.json(
-                { statusCode: 401, message: 'Unauthorized', errorCode: 'AUTH_REQUIRED' },
+                {
+                  statusCode: 401,
+                  message: 'Unauthorized',
+                  errorCode: 'AUTH_REQUIRED',
+                },
                 { status: 401 },
               )
             : HttpResponse.json(currentUser());
@@ -36,13 +40,19 @@ describe('LiveStore — closed stream probes the session (DC-13)', () => {
       const unauthorized = vi.fn();
       setUnauthorizedHandler(unauthorized);
       const source = createTestLiveSource();
-      const live = createLiveStore({ openEventSource: source.open, announcer: createAnnouncerStore(), logger: { warn: vi.fn() } });
+      const live = createLiveStore({
+        openEventSource: source.open,
+        announcer: createAnnouncerStore(),
+        logger: { warn: vi.fn() },
+      });
 
       void live.watch(null);
       source.fail({ closed: true });
 
       await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() => expect(unauthorized.mock.calls).toEqual(handlerCalls));
+      await vi.waitFor(() =>
+        expect(unauthorized.mock.calls).toEqual(handlerCalls),
+      );
       // The reopen is scheduled only once the probe settles: keep moving the clock until it shows.
       await vi.waitFor(async () => {
         await vi.advanceTimersByTimeAsync(2000);

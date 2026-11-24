@@ -11,7 +11,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
+import { AgentsMcp } from '@agent-os/agents';
 import {
   RegisterMcpServerBodySchema,
   UpdateMcpServerBodySchema,
@@ -22,13 +22,11 @@ import {
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
 import type { Response } from 'express';
-import { AccessService } from '../access/access.service';
 import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
 import { IdentitySettings } from '../identity/identity-settings';
-import { AGENTS } from './agents.tokens';
 import {
   adminServerPage,
   mcpCallbackUrl,
@@ -39,24 +37,22 @@ import { mcpAnswer } from './mcp.errors';
 
 /**
  * The MCP server registry for an administrator (design-mcp-connect.md, Contract «Реестр — для `admin`»).
- * Every write goes through `Agents.mcp` and is audited after it as `admin_change` on `mcp_server`; no answer
+ * Every write goes through `AgentsMcp` and is audited after it as `admin_change` on `mcp_server`; no answer
  * carries a token value (AC-13.5). The server's OAuth return address is built from `IdentitySettings.publicUrlFor`.
- * The grants on a removed server are deleted through `AccessService`: the registry does not read `access_*`.
  */
 @Controller('admin/mcp-servers')
 @AdminOnly()
 export class AdminMcpServersController {
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
     private readonly settings: IdentitySettings,
     private readonly auditLog: AuditLog,
-    private readonly access: AccessService,
   ) {}
 
   /** The servers by name. */
   @Get()
   list(): Promise<McpServerSummary[]> {
-    return mcpAnswer(this.agents.mcp.list());
+    return mcpAnswer(this.mcp.list());
   }
 
   /** 201 `McpServerView`; 409 MCP_SERVER_NAME_TAKEN, 422 MCP_SERVER_CHECK_FAILED with `reason`. */
@@ -71,9 +67,7 @@ export class AdminMcpServersController {
       await this.settings.publicUrlFor(),
       body.name,
     );
-    const write = await mcpAnswer(
-      this.agents.mcp.register({ ...body, redirectUrl }),
-    );
+    const write = await mcpAnswer(this.mcp.register({ ...body, redirectUrl }));
     await recordServerChange(this.auditLog, {
       actor,
       server: body.name,
@@ -85,7 +79,7 @@ export class AdminMcpServersController {
   /** `McpServerView`; 404 MCP_SERVER_NOT_FOUND. */
   @Get(':name')
   detail(@Param('name') name: string): Promise<McpServerView> {
-    return mcpAnswer(this.agents.mcp.get(name));
+    return mcpAnswer(this.mcp.get(name));
   }
 
   /** 302 to the authorization server with the admin target, or to `/admin/servers/<name>?error=connect_failed`. */
@@ -102,7 +96,7 @@ export class AdminMcpServersController {
       name,
     );
     const started = await mcpAnswer(
-      this.agents.mcp.beginConnect({
+      this.mcp.beginConnect({
         ownerId,
         server: name,
         target: 'admin',
@@ -126,7 +120,7 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
   ): Promise<McpServerView> {
     const actor = req.user.id;
-    const write = await mcpAnswer(this.agents.mcp.update(name, body));
+    const write = await mcpAnswer(this.mcp.update(name, body));
     await recordServerChange(this.auditLog, {
       actor,
       server: name,
@@ -143,7 +137,7 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
   ): Promise<RefreshMcpToolsResponse> {
     const actor = req.user.id;
-    const refresh = await mcpAnswer(this.agents.mcp.refreshTools(name, actor));
+    const refresh = await mcpAnswer(this.mcp.refreshTools(name, actor));
     await recordServerChange(this.auditLog, {
       actor,
       server: name,
@@ -157,10 +151,8 @@ export class AdminMcpServersController {
   }
 
   /**
-   * 204: the server, its accounts and the grants on it are removed; 404 MCP_SERVER_NOT_FOUND. The grants
-   * go first, in their own statement: the registry and the grants belong to different owners and share
-   * no transaction, and a failure between the two must leave a server without grants, never grants
-   * without a server.
+   * 204: the server is removed, and its accounts and the grants on it with it by the database's cascade;
+   * 404 MCP_SERVER_NOT_FOUND.
    */
   @Delete(':name')
   @HttpCode(204)
@@ -169,8 +161,7 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
   ): Promise<void> {
     const actor = req.user.id;
-    await this.access.removeServerGrants(actor, name);
-    const removal = await mcpAnswer(this.agents.mcp.remove(name));
+    const removal = await mcpAnswer(this.mcp.remove(name));
     await recordServerChange(this.auditLog, {
       actor,
       server: name,

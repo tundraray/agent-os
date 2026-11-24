@@ -1,51 +1,111 @@
 import type { Logger } from '@agent-os/common';
-import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
+import type {
+  DeepAgentContent,
+  ToolOutcome,
+  ToolRefusalReason,
+} from '@agent-os/contracts';
+import type { StoredToolResult } from '@agent-os/db';
+import type { StepContext, StepEffects } from '@agent-os/runtime';
 import type { z } from 'zod';
 
-import type { RunSnapshot } from '../start/snapshot';
+import type { RunStart } from '../start/run-definition';
 import type { SessionTool } from './tool-registry';
 
-/** `agent` of `start_agent` that starts a fork of the caller (KD-7). */
-export const FORK_AGENT = 'fork';
+/**
+ * What an agent declares of its tools — plain data its class makes from its definition. The library answers it
+ * with the session's tools: the external ones the owner's rights give, narrowed by `servers`, then the system
+ * ones named here.
+ */
+export interface ToolDeclaration {
+  /** Registry server names, or `*` for every server: they narrow the external tools the owner may use. */
+  readonly servers: readonly string[];
+  /** The system tools the agent has, by name, in the order the model sees them. */
+  readonly system: readonly string[];
+  /** The agent is a conversation's root: it also gets the tools registered `rootOnly`. */
+  readonly root: boolean;
+  /**
+   * Lines of whom the agent may start or call — the agents of `start_agent`, the subagents of `task` — for the
+   * description of the tool that does it; `null` — not listed, the tool keeps its own description.
+   */
+  readonly startable: readonly string[] | null;
+  /** Lines of the deep agents the agent may start, for the description of the tool that does it; `null` — not listed. */
+  readonly deepAgents: readonly string[] | null;
+  /** The agent keeps a task list. */
+  readonly taskList: boolean;
+  /** The agent may give the same work for a list of items. */
+  readonly listDelegation: boolean;
+  /** The saved scripts the agent owns: the library makes a `script__<name>` tool of each (self-learning scripts KD-4). */
+  readonly scripts: DeepAgentContent['scripts'];
+}
+
+/** How a tool reads for the agent that declares it. */
+export interface ToolDescription<Args> {
+  readonly description: string;
+  /** The schema of the agent's calls; without it the tool's own `argsSchema`. */
+  readonly argsSchema?: z.ZodType<Args>;
+}
+
+export { FORK_AGENT } from '@agent-os/contracts';
 
 /** What the spawn helper takes (design-runtime.md, «Операции `agents`»); owner and parent are the caller's. */
 export interface StartChildRequest {
-  /** The child's snapshot, resolved by `resolveStart` before the commit. */
-  readonly snapshot: RunSnapshot;
+  /** The child's version, name and model, resolved by `resolveStart` before the commit. */
+  readonly run: RunStart;
   readonly prompt: string;
   readonly description: string;
   /** Set only by `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
-  readonly forkedFrom?: { readonly agentId: string; readonly throughSeq: number };
+  readonly forkedFrom?: {
+    readonly throughSeq: number;
+  };
 }
 
 /**
  * Starts a child of the calling agent inside the step's commit transaction and returns its id at once
  * (design-agents.md, `tools.register`). It is bound to the transaction, the effects and the caller.
  */
-export type StartChild = (request: StartChildRequest) => Promise<{ agentId: string }>;
+export type StartChild = (
+  request: StartChildRequest,
+) => Promise<{ agentId: string }>;
 
 /** The agent whose model called the tool. */
 export interface ToolCaller {
   readonly agentId: string;
   readonly ownerId: string;
   readonly rootId: string;
-  /** `null` for a root session. */
+  /** The task that started the caller; `null` for a conversation's root. */
   readonly parentId: string | null;
+  /** The caller is a conversation's chat (`ChatAgent`): it starts records of the employee's live listing. */
+  readonly root: boolean;
   /** 0 for a root session. */
   readonly depth: number;
-  /** The caller's snapshot, from the input of its task (ADR-0017). */
-  readonly snapshot: RunSnapshot;
+  /** The caller's start: its version, read once when its object was made, its name and model (KD-6). */
+  readonly run: RunStart;
+  /** The servers the caller declares (`ToolDeclaration.servers`): a `run_code` run checks its calls against their tools. */
+  readonly servers: readonly string[];
+  /** The caller's tree is a training (its root is a `trainer` task): nothing is asked, no changing call is sent (KD-3). */
+  readonly training: boolean;
+  /**
+   * The caller's task list is fixed (the trainer's pool): no task is deleted or gets a new dependency, and the
+   * tasks with these numbers are moved by code only; `null` — an ordinary list.
+   */
+  readonly fixedTasks: readonly number[] | null;
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */
 export type ToolRunResult =
   | {
       readonly kind: 'done';
-      readonly outcome: Extract<ToolOutcome, 'success' | 'empty' | 'tool_error'>;
+      readonly outcome: Extract<
+        ToolOutcome,
+        'success' | 'empty' | 'tool_error' | 'recorded'
+      >;
       readonly text: string;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one (DC-14). */
       readonly output?: string | null;
+      /** The tools whose calls a code run of a training tree recorded and did not send, in call order. */
+      readonly recorded?: readonly string[];
+      /** The full result the step's commit stores under the call's id; the model got `text` (a wrapper when long). */
+      readonly stored?: StoredToolResult;
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
@@ -54,6 +114,8 @@ export type ToolRunResult =
       readonly reason: ToolRefusalReason;
       /** The refused model of a refusal by model; absent or `null` otherwise. */
       readonly refusalDetail?: { readonly model: string } | null;
+      /** What the model reads after `[refused: <reason>]` in the call's `tool_result` (deep-agents KD-4). */
+      readonly text?: string;
     };
 
 /** Input of a tool executed inside the commit transaction of the step: no external calls. */
@@ -61,11 +123,12 @@ export interface InCommitToolInput<Args, Prepared = unknown> {
   readonly callId: string;
   readonly args: Args;
   readonly caller: ToolCaller;
-  readonly tx: RuntimeTx;
   readonly effects: StepEffects;
   readonly startChild: StartChild;
   /** What the tool's `prepare` answered before the commit; absent for a tool without one. */
   readonly prepared?: Prepared;
+  /** `content` of the card the employee approved when the call runs on confirmation; absent otherwise (deep-agents KD-3). */
+  readonly confirmed?: unknown;
 }
 
 /** Input of a tool executed outside a transaction: it may call an external system. */
@@ -83,6 +146,15 @@ export interface OutsideToolInput<Args> {
   readonly confirmed?: unknown;
 }
 
+/** What `review` answers: the call is refused with its reason and text, or the card shows `content`. */
+export type ToolReview =
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      readonly text: string;
+    }
+  | { readonly kind: 'card'; readonly content: unknown };
+
 /** A tool that waits for the employee's decision before it runs (KD-4). */
 export interface ToolConfirmation<Args> {
   /** Decision kind of the request. */
@@ -91,18 +163,26 @@ export interface ToolConfirmation<Args> {
   required?(args: Args): boolean;
   /** What the employee is shown; JSON. `tools` is the session's tool set (code-execution KD-10). */
   content(args: Args, tools: readonly SessionTool[]): unknown;
+  /**
+   * The check before the card (deep-agents KD-3): reads what it needs outside any transaction, after the
+   * argument schema and the repeat rule, and refuses the call or gives the card's content. A refusal closes
+   * the call `refused` with its text and asks the employee nothing; without `review` the card is `content`.
+   */
+  review?(args: Args, caller: ToolCaller): Promise<ToolReview>;
   /** Whether the employee may edit the arguments when confirming. */
   readonly editableArgs: boolean;
 }
 
 /**
- * How an MCP tool call reads for the employee: the server's title of the tool and the labels of its
- * arguments by key. Built when a view is read, never stored; a tool or an argument without a title has
- * none. A built-in tool has none: the web takes its labels from its catalogue by the tool's name.
+ * How a tool call reads for the employee: for an MCP tool the server's title of the tool and the labels of
+ * its arguments by key; for a saved script its description and its code. Built when a view is read, never
+ * stored; a tool or an argument without a title has none. Another built-in tool has none: the web takes its
+ * labels from its catalogue by the tool's name.
  */
 export interface ToolDisplay {
   readonly toolTitle?: string;
   readonly argLabels?: Readonly<Record<string, string>>;
+  readonly scriptCode?: string;
 }
 
 interface AgentToolBase<Args> {
@@ -111,10 +191,15 @@ interface AgentToolBase<Args> {
   readonly description: string;
   readonly argsSchema: z.ZodType<Args>;
   readonly confirmation?: ToolConfirmation<Args>;
-  /** Only a session without a parent gets the tool (KD-6, Invariant 4). */
+  /**
+   * The description and the schema of a tool that depend on the agent — whom it may start, which fields its
+   * flags allow — built from its declaration; without it the tool reads the same for every agent.
+   */
+  describe?(declaration: ToolDeclaration): ToolDescription<Args>;
+  /** A conversation's root gets the tool without naming it, and nobody else does (KD-6, Invariant 4). */
   readonly rootOnly?: boolean;
   /**
-   * Every session gets the tool, without a grant, and no definition names it (tool-result-reading R-2):
+   * Every session gets the tool, without a grant, and no declaration names it (tool-result-reading R-2):
    * it reaches only what the session itself owns.
    */
   readonly everySession?: boolean;
@@ -127,14 +212,21 @@ interface AgentToolBase<Args> {
   loggedArgs?(args: Args): Record<string, unknown>;
 }
 
-/** Runs in the commit transaction of the step, with its `tx`, `effects` and the spawn helper. */
-export interface InCommitAgentTool<Args, Prepared = unknown> extends AgentToolBase<Args> {
+/** Runs in the commit transaction of the step, with its `effects` and the spawn helper. */
+export interface InCommitAgentTool<
+  Args,
+  Prepared = unknown,
+> extends AgentToolBase<Args> {
   readonly mode: 'in_commit';
   /**
    * Runs before the commit transaction opens and hands its answer to `execute`: what must not be asked
    * while the transaction holds a connection — the access gate (design-access.md KD-4).
    */
-  prepare?(input: { readonly args: Args; readonly caller: ToolCaller }): Promise<Prepared>;
+  prepare?(input: {
+    readonly callId: string;
+    readonly args: Args;
+    readonly caller: ToolCaller;
+  }): Promise<Prepared>;
   execute(input: InCommitToolInput<Args, Prepared>): Promise<ToolRunResult>;
 }
 
@@ -145,7 +237,9 @@ export interface OutsideAgentTool<Args> extends AgentToolBase<Args> {
 }
 
 /**
- * A tool of the package or of an upper part (design-agents.md, «Инструменты (`tools`)»). `execute`
- * and `content` are methods, so a tool with concrete arguments is an `AgentTool` of the registry.
+ * A tool registered in the tools library by the package or an upper part (design-agents.md, «Инструменты
+ * (`tools`)»): a system tool, or `run_code`. `execute`, `content` and `describe` are methods, so a tool with
+ * concrete arguments is an `AgentTool` of the registry.
  */
-export type AgentTool<Args = unknown> = InCommitAgentTool<Args> | OutsideAgentTool<Args>;
+export type AgentTool<Args = unknown> =
+  InCommitAgentTool<Args> | OutsideAgentTool<Args>;

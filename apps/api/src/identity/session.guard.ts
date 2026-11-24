@@ -5,11 +5,10 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Logger } from '@agent-os/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import type { Request } from 'express';
 import { AuditLog } from '../audit/audit-log';
-import { APP_LOGGER } from '../logging/app-logger';
 import { IS_ADMIN_ONLY } from './admin-only.decorator';
 import type { AuthedRequest, AuthUser } from './auth-user';
 import { identityError } from './identity.errors';
@@ -41,7 +40,7 @@ export class SessionGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly sessions: SessionStore,
     private readonly auditLog: AuditLog,
-    @Inject(APP_LOGGER) logger: Logger,
+    @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'identity.session-guard' });
   }
@@ -64,7 +63,7 @@ export class SessionGuard implements CanActivate {
 
     req.user = await this.userOf(readSessionToken(req), route);
     if (this.marked(context, IS_ADMIN_ONLY) && !req.user.isAdmin) {
-      await this.auditLog.record(null, {
+      await this.auditLog.record({
         kind: 'access_denied',
         actor: req.user.id,
         objectType: 'route',
@@ -102,12 +101,23 @@ export class SessionGuard implements CanActivate {
       );
     }
     await this.sessions.touch(session);
-    const { id, email, name, isAdmin, hasPassword, language } = session.user;
+    const {
+      id,
+      email,
+      name,
+      isAdmin,
+      trainOwn,
+      trainAny,
+      hasPassword,
+      language,
+    } = session.user;
     return {
       id,
       email,
       name,
       isAdmin,
+      trainOwn,
+      trainAny,
       hasPassword,
       language,
       sessionId: session.sessionId,

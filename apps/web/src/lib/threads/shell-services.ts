@@ -1,19 +1,50 @@
+import { createElement } from 'react';
 import { AuiConfig } from '@assistant-ui/react';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-list-store';
+import {
+  createAgentListStore,
+  type AgentListStore,
+} from '@/lib/agents/agent-list-store';
 import { authApi } from '@/lib/auth/auth-api';
-import { createCurrentUserStore, type CurrentUserStore } from '@/lib/auth/current-user';
+import {
+  createCurrentUserStore,
+  type CurrentUserStore,
+} from '@/lib/auth/current-user';
 import { createFeedStore, type FeedStore } from '@/lib/feed/feed-store';
 import { createLeaveGuard, type LeaveGuard } from '@/lib/leave-guard';
-import { createDraftHandoff, type DraftHandoff } from '@/lib/library/draft-handoff';
+import {
+  createCreatedHandoff,
+  type CreatedHandoff,
+} from '@/lib/library/created-handoff';
 import { libraryApi } from '@/lib/library/library-api';
-import { createLibraryIndex, type LibraryIndex } from '@/lib/library/library-index';
-import { createAnnouncerStore, type AnnouncerStore } from '@/lib/live/announcer-store';
-import { createLiveStore, type LiveStore, type OpenEventSource } from '@/lib/live/live-store';
+import {
+  createLibraryIndex,
+  type LibraryIndex,
+} from '@/lib/library/library-index';
+import {
+  createAnnouncerStore,
+  type AnnouncerStore,
+} from '@/lib/live/announcer-store';
+import {
+  createLiveStore,
+  type LiveStore,
+  type OpenEventSource,
+} from '@/lib/live/live-store';
 import { logger } from '@/lib/logger';
+import {
+  createWorkspaceStore,
+  type WorkspaceStore,
+} from '@/lib/shell/workspace-store';
 import { createComposerSeed, type ComposerSeed } from './composer-seed';
-import { createShellStatusStore, type ShellStatusStore } from './shell-status-store';
-import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
+import {
+  createShellStatusStore,
+  type ShellStatusStore,
+} from './shell-status-store';
+import {
+  createThreadListAdapter,
+  type OperationNotifier,
+} from './thread-list-adapter';
 import { threadsApiClient, type ThreadsApiClient } from './threads-api-client';
 
 /** One feed store per conversation opened in this tab. */
@@ -42,10 +73,12 @@ export type ShellServices = {
   readonly libraryIndex: LibraryIndex;
   /** Chip and template text carried to a conversation's composer (KD-5). */
   composerSeed: ComposerSeed;
-  /** A record draft carried from a conversation to the editor (KD-6). */
-  draftHandoff: DraftHandoff;
+  /** The editor page of a record just created (KD-6). */
+  createdHandoff: CreatedHandoff;
   /** Unsaved changes on screen, asked about before every navigation (KD-4). */
   leaveGuard: LeaveGuard;
+  /** Whether the diagram panel is open and on which tab (deep-agents KD-6). */
+  workspace: WorkspaceStore;
   listAdapter: ReturnType<typeof createThreadListAdapter>;
   auiConfig: AuiConfig;
   /** Loads `url` in the whole tab (a page outside the shell, an OAuth connect redirect). */
@@ -59,15 +92,25 @@ export type CreateShellServicesOptions = {
   location?: Pick<Location, 'assign'>;
 };
 
+type ThreadNoticeKey = keyof OperationNotifier;
+
+/** A thread operation's notice, translated where the toast renders, so it follows the interface language (KD-5). */
+function ThreadOperationNotice({ notice }: { notice: ThreadNoticeKey }) {
+  return useTranslations('shell.thread')(notice);
+}
+
+const noticeOf = (notice: ThreadNoticeKey) =>
+  createElement(ThreadOperationNotice, { notice });
+
 const notify: OperationNotifier = {
   renameFailed: () => {
-    toast.error('Не удалось переименовать беседу. Попробуйте ещё раз.');
+    toast.error(noticeOf('renameFailed'));
   },
   deleted: () => {
-    toast('Беседа удалена');
+    toast(noticeOf('deleted'));
   },
   deleteFailed: () => {
-    toast.error('Не удалось удалить беседу. Попробуйте ещё раз.');
+    toast.error(noticeOf('deleteFailed'));
   },
 };
 
@@ -83,9 +126,15 @@ type ThreadFeedsDeps = {
  * re-reads it; `ready` and the answer's text parts reach it only while the stream watches it,
  * because a `thread:` stream carries the parts of that conversation's root alone.
  */
-function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): ThreadFeeds {
+function createThreadFeeds({
+  api,
+  status,
+  live,
+  announcer,
+}: ThreadFeedsDeps): ThreadFeeds {
   const feeds = new Map<string, { store: FeedStore; release: () => void }>();
-  const watches = (remoteId: string): boolean => live.getState().target === `thread:${remoteId}`;
+  const watches = (remoteId: string): boolean =>
+    live.getState().target === `thread:${remoteId}`;
 
   return {
     forThread: (remoteId, itemId = remoteId) => {
@@ -129,15 +178,28 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
   };
 }
 
-/** Builds the shell's dependencies once per provider mount. Pure wiring, no React. */
-export function createShellServices({ openEventSource, location }: CreateShellServicesOptions = {}): ShellServices {
+/** Builds the shell's dependencies once per provider mount: wiring, no React state. */
+export function createShellServices({
+  openEventSource,
+  location,
+}: CreateShellServicesOptions = {}): ShellServices {
   const apiClient = threadsApiClient;
-  const currentUser = createCurrentUserStore({ read: authApi.me, endSession: authApi.signOut, location, logger });
+  const currentUser = createCurrentUserStore({
+    read: authApi.me,
+    endSession: authApi.signOut,
+    location,
+    logger,
+  });
   const status = createShellStatusStore();
   const announcer = createAnnouncerStore();
   const live = createLiveStore({ openEventSource, announcer, logger });
   const feeds = createThreadFeeds({ api: apiClient, status, live, announcer });
-  const listAdapter = createThreadListAdapter({ api: apiClient, status, notify, feeds });
+  const listAdapter = createThreadListAdapter({
+    api: apiClient,
+    status,
+    notify,
+    feeds,
+  });
   let agentList: AgentListStore | undefined;
   let libraryIndex: LibraryIndex | undefined;
 
@@ -157,8 +219,9 @@ export function createShellServices({ openEventSource, location }: CreateShellSe
       return libraryIndex;
     },
     composerSeed: createComposerSeed(),
-    draftHandoff: createDraftHandoff(),
+    createdHandoff: createCreatedHandoff(),
     leaveGuard: createLeaveGuard(),
+    workspace: createWorkspaceStore(),
     listAdapter,
     auiConfig: AuiConfig({}),
     // `window` is read at the call: the services are also built during server rendering.

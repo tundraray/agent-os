@@ -1,4 +1,8 @@
-import { createAgents, parseAgentsConfig } from '@agent-os/agents';
+import {
+  AGENT_TURN_CLIENT,
+  EMBEDDING_CLIENT,
+  parseAgentsConfig,
+} from '@agent-os/agents';
 import {
   createAccessGateDouble,
   createLibraryDouble,
@@ -7,9 +11,11 @@ import {
   type ScriptedModel,
 } from '@agent-os/agents/testing';
 import { consoleSink, createLogger } from '@agent-os/common';
+import { DATABASE, type Database } from '@agent-os/db';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
-import { createDatabase } from '@agent-os/db';
-import { createRuntime, type ModelPrice, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
+import { type ModelPrice, parseRuntimeConfig } from '@agent-os/runtime';
+import { runtimeModules, serveHarness } from '@agent-os/runtime/testing';
+import { Test } from '@nestjs/testing';
 import {
   CHILD_MODEL,
   CHILD_SCENARIO_ENV,
@@ -18,23 +24,19 @@ import {
   type ScenarioServers,
   writeRun,
 } from './codeRunChild';
+import { agentsModule } from './runtimeContext';
 
 /**
- * Entry of the code-execution E2E-1 child process, run from source through `tsx`. It plays the API process: the composition root of `createRuntime`
- * + `createAgents` with the REAL code executor (`createCodeRunner`, the default of `createAgents`), the
+ * Entry of the code-execution E2E-1 child process, run from source through `tsx`. It plays the API process: a Nest context of `DbModule`,
+ * `RuntimeModule` and `AgentsModule` with the REAL code executor (`createCodeRunner`, the default of the package), the
  * scripted model and the MCP fixture servers the test registered in the database at its own fixture
  * process. It reads its environment — `DATABASE_URL`, the Runtime
- * settings (workers on, short lease and reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
+ * settings (workers on, short reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
  * settings and the run's server names) — and logs every record as a JSON line to the console, which the
  * harness parses. It creates no agents and registers no server or model provider: the test process does. IPC:
- * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` stops the workers, the agents and the
- * pool, and exits 0. The test kills it from outside.
+ * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` closes the context — the workers stop,
+ * then the agents, then the pool — and exits 0. The test kills it from outside.
  */
-
-/** Messages of the child to the harness. */
-export type ChildMessage = { kind: 'ready' };
-/** Messages of the harness to the child. */
-export type HarnessMessage = { kind: 'stop' };
 
 /** The catalogue of the child: {@link CHILD_MODEL} priced as in `agentsHarness.ts`, input 1, output 5 USD per million tokens. */
 const CHILD_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
@@ -69,66 +71,56 @@ function scenarioModel(servers: ScenarioServers): ScriptedModel {
   return model;
 }
 
-function send(message: ChildMessage): void {
-  if (!process.send) throw new Error('The child process has no IPC channel');
-  process.send(message);
-}
-
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
+  const logger = createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'info',
+  });
   const scenario = readScenario();
-  const runtimeConfig = parseRuntimeConfig(process.env);
-  const agentsConfig = parseAgentsConfig(scenario.variables);
-  const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
-  const database = createDatabase({ connectionString, poolMax: runtimeConfig.dbPoolMax });
-  const runtime = createRuntime({
-    database,
-    config: runtimeConfig,
-    logger,
-    clock: systemClock,
-  });
-  const agents = createAgents({
-    database: database.db,
-    runtime,
-    logger,
-    config: agentsConfig,
-    turnClient: scenarioModel(scenario.servers).turnClient,
-    // Every owner of these tests is active; the audit hook is not asserted in the child.
-    access: createAccessGateDouble({
-      servers: scenario.access,
-      prices: CHILD_MODEL_PRICES,
-      defaultChatModel: CHILD_MODEL,
-    }),
+  // Steps read the version their task input names; the child's double holds none and reads it from the database.
+  const library = createLibraryDouble();
+  const app = await Test.createTestingModule({
+    imports: [
+      ...runtimeModules(
+        logger,
+        connectionString,
+        parseRuntimeConfig(process.env),
+      ),
+      agentsModule(parseAgentsConfig(scenario.variables), {
+        // Every owner of these tests is active; the audit hook is not asserted in the child.
+        access: createAccessGateDouble({
+          servers: scenario.access,
+          prices: CHILD_MODEL_PRICES,
+          defaultChatModel: CHILD_MODEL,
+        }),
+        audit: async () => {},
+        // Only the test process starts runs.
+        library,
+      }),
+    ],
+  })
+    .overrideProvider(AGENT_TURN_CLIENT)
+    .useValue(scenarioModel(scenario.servers).turnClient)
     // A child calls no embeddings; the double keeps the real provider client out of the test anyway.
-    embeddingClient: createScriptedEmbeddings().client,
-    audit: async () => {},
-    // Steps read the snapshot of their run from the task input; only the test process starts runs.
-    library: createLibraryDouble(),
-  });
-  await agents.start();
+    .overrideProvider(EMBEDDING_CLIENT)
+    .useValue(createScriptedEmbeddings().client)
+    .compile();
+  library.useDatabase(app.get<Database>(DATABASE));
+  // The registrations of `onModuleInit`, then the workers start.
+  await app.init();
 
-  process.on('message', (message: HarnessMessage) => {
-    if (message.kind !== 'stop') return;
-    runtime
-      .stop()
-      .finally(() => agents.stop())
-      .finally(() => database.close())
-      .then(
-        () => process.exit(0),
-        (error: unknown) => {
-          logger.error('code-run child stop failed', { error });
-          process.exit(1);
-        },
-      );
-  });
-
-  runtime.start();
-  send({ kind: 'ready' });
+  serveHarness(app, logger, 'code-run child');
 }
 
 main().catch((error: unknown) => {
-  createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'error' }).error('code-run child failed', {
+  createLogger({
+    sinks: [consoleSink()],
+    secrets: [],
+    minLevel: 'error',
+  }).error('code-run child failed', {
     error,
   });
   process.exit(1);

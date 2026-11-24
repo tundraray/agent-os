@@ -1,7 +1,7 @@
 import { CrashPoints } from './crash-points';
 
 const POINT = 'step.after-claim';
-const OTHER_POINT = 'inbox.before-wake';
+const OTHER_POINT = 'step.after-commit';
 const PASSES = 5;
 
 /** Passes (1-based) of {@link POINT} on which the injected exit was called, with code 137. */

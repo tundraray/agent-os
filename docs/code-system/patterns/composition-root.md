@@ -1,33 +1,51 @@
-# Функция сборки пакета
+# Модуль пакета
 
 ## Problem
 
-Пакет должен работать без NestJS (в тестах, в CLI) и всё равно запускаться и останавливаться вместе с сервером. Признак: пакет нуждается в настройках, базе, логгере или часах и имеет фоновые воркеры.
+Пакет бэкенда нуждается в настройках, базе, логгере, часах или портах приложения, имеет фоновые воркеры и должен стартовать и останавливаться вместе с сервером, а в тесте — собираться без всего приложения. Признак: новый пакет бэкенда, новый сервис пакета или новая зависимость от приложения.
 
 ## Shape
 
-- **Функция сборки** `createX(options)` живёт в корне пакета. Она принимает настройки уже разобранными, порты (логгер из `common`, часы, база) и отдаёт объект с сервисами пакета, а при фоновых воркерах — `start()` и `stop()`. Окружение она не читает.
-- **Разбор настроек** `parseXConfig(variables)` живёт в пакете и проверяет значения. Переменные окружения ему передаёт приложение.
-- **Модуль Nest** в `apps/api/src/<пакет>/` вызывает функцию сборки, кладёт результат в провайдер и привязывает `start` к `onApplicationBootstrap`, а `stop` — к `beforeApplicationShutdown`. Только этот модуль знает и про Nest, и про пакет.
-- Регистрация обработчиков и потребителей событий верхних пакетов идёт до `start()`, в модуле Nest верхнего пакета.
+- **Модуль пакета** — модуль NestJS в корне пакета (`DbModule`, `RuntimeModule`, `AgentsModule`) со статическим `forRootAsync({ imports, inject, useFactory })`. Фабрика отдаёт настройки уже разобранными; модуль кладёт их под свой токен. Модуль экспортирует только те сервисы, которые внедряют модули выше. `DbModule` и `RuntimeModule` глобальные; `AgentsModule` нет — его импортирует модуль `apps/api` и отдаёт дальше тем, кто импортирует его.
+- **Токены** — `Symbol` для всего, что не класс: настройки, часы, логгер пакета, порты. Они лежат в `*.tokens.ts` или в файле модуля; публичные экспортирует вход пакета. Сервис-класс сам служит своим токеном.
+- **Внедрение.** Потребитель внедряет сервис, который зовёт, а не объект-фасад пакета. У сервисов `runtime` и `agents` каждый параметр конструктора несёт явный `@Inject(...)`: дочерние процессы тестов идут под `tsx`, а он не выпускает метаданных декораторов. `Db` и репозитории в `db` — обычные классы без декораторов: `DbModule` создаёт их провайдерами-фабриками с явным списком `inject`, и метаданные им не нужны.
+- **Логгер** — токен `LOGGER` из `common`. Его даёт `LoggingModule` приложения, а пакет делает из него дочерний логгер со своим `component` ([logging.md](./logging.md)).
+- **Настройки.** Окружение читает только `apps/api`: модуль приложения вокруг пакета (например `ApiRuntimeModule`) передаёт прочитанные значения в фабрику `forRootAsync`. Разбор и проверка значений (`parseRuntimeConfig`, `parseAgentsConfig`) — обычные функции пакета.
+- **Порт.** Когда пакету нужен чужой домен (права, записи библиотеки, аудит), пакет объявляет интерфейс порта и токен. `apps/api` привязывает токен к своему сервису провайдером с `useExisting` в `AgentsPortsModule`, поэтому порт и маршруты приложения работают с одним экземпляром сервиса. Пакет не импортирует `apps/api`.
+- **Не провайдеры.** Чистые правила, объекты инструментов, `WorkerLoop` и разбор настроек остаются обычным кодом: их создаёт или зовёт провайдер, которому они нужны. Значения пакетов без NestJS (`createCodeRunner`, `createLogger`) входят в DI через провайдер-фабрику модуля, которому они нужны.
+
+### Фазы жизни
+
+| Фаза Nest | Что делает модуль |
+|---|---|
+| `onModuleInit` | регистрирует свои обработчики задач, живые типы задач, потребителей событий и инструменты; приложение проверяет, что неприменённых миграций нет |
+| `onApplicationBootstrap` | `RuntimeWorkers` запускает фоновые воркеры и прогрев объектов задач, когда все регистрации уже прошли; затем `agents` закрывает реестр инструментов: хук глобального `RuntimeModule` идёт раньше |
+| `beforeApplicationShutdown` | останавливает воркеры: идущие шаги возвращают задачи в очередь |
+| `onApplicationShutdown` | `DbModule` закрывает пул — последним |
+
+- **Тест** собирает только нужные модули (`DbModule` и `RuntimeModule` без `AppModule`) и подменяет один токен, например часы `CLOCK` или шов модели.
 
 ## Reference
 
-- `packages/runtime/src/create-runtime.ts`
+- `packages/db/src/db.module.ts` — `forRootAsync`, токены, провайдеры-фабрики `Db` и репозиториев, закрытие пула
+- `packages/runtime/src/runtime.module.ts` и `packages/runtime/src/workers/runtime-workers.ts` — модуль пакета и старт воркеров
+- `packages/agents/src/agents.module.ts`, `agents.tokens.ts`, `agents-registration.ts` — модуль пакета с портами и регистрациями
+- `apps/api/src/runtime/api-runtime.module.ts` — настройки из окружения и проверка миграций в `apps/api`
+- `apps/api/src/agents/agents-ports.module.ts` — привязка портов `agents` к сервисам приложения
+- `packages/runtime/test/support/runtimeHarness.ts` — сборка теста без `AppModule`
 
 ## Not For
 
 | Looks like | Use instead |
 |---|---|
-| сервис внутри одного пакета, которому нужен другой сервис того же пакета | обычный параметр конструктора внутри функции сборки |
-| код `apps/api`, который никто вне приложения не использует | обычный провайдер Nest |
+| сервис внутри одного пакета, которому нужен другой сервис того же пакета | обычное внедрение через конструктор |
+| код `apps/api`, который никто вне приложения не использует | обычный модуль и провайдер Nest |
+| модуль `apps/api`, который и реализует порт для `AgentsModule`, и зовёт его сервисы | [port-module-split.md](./port-module-split.md) |
 
 ## Used In
 
-- [design-runtime.md](../../features/agent-platform/design-runtime.md) — `createRuntime`, модуль `RuntimeModule` в `apps/api`
-- [design-agents.md](../../features/agent-platform/design-agents.md) — `createAgents`, `parseAgentsConfig`, модуль `AgentsModule`
-- [design-workflows.md](../../features/agent-platform/design-workflows.md) — `createWorkflows`, модуль `WorkflowsModule`
-- [design-chat.md](../../features/agent-platform/design-chat.md) — порядок сборки в `AppModule`, регистрация определения `chat` в фабрике провайдера
-- [design-identity.md](../../features/enterprise-access/design-identity.md) — порт `OwnerGate` в параметрах `createAgents`
+- [design-runtime.md](../../features/agent-platform/design-runtime.md) — `RuntimeModule`, старт и остановка воркеров
+- [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentsModule`, `parseAgentsConfig`
+- [design-chat.md](../../features/agent-platform/design-chat.md) — порядок модулей в `AppModule`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — `parseAgentsConfig` без файла серверов; адрес возврата OAuth — параметр операций подключения, а не настройка
-- [design-access.md](../../features/enterprise-access/design-access.md) — порт `AccessGate` и хук `audit` в параметрах `createAgents`
+- [design-access.md](../../features/enterprise-access/design-access.md) — порт `AccessGate` и аудит отказа

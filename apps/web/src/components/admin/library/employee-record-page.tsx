@@ -2,45 +2,49 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import type { RecordDetail, RecordKind, RecordSummary } from '@agent-os/contracts';
+import type { RecordDetail, RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { PANEL_TITLE, sectionParent } from '@/components/admin/admin-header';
+import { useAdminTitles } from '@/components/admin/admin-header';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
+import { AgentScripts } from '@/components/library/agent-script';
 import { DefinitionView } from '@/components/library/definition-view';
-import { KnowledgeButton } from '@/components/library/editor-header';
+import { MemoryButton } from '@/components/library/editor-header';
 import { RecordLabel } from '@/components/library/record-label';
+import { TrainingBlock } from '@/components/library/training-block';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { Button } from '@/components/ui/button';
 import { adminApi } from '@/lib/admin/admin-api';
-import { describeLibraryError, kindWord } from '@/lib/library/library-errors';
+import { builtinName, builtinRoleName } from '@/i18n/builtin-name';
+import type { Locale } from '@/i18n/pick-locale';
+import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
 import { adminLibraryTabPath, adminRecordPath } from '@/lib/shell-route';
-
-/** UXRD MC-18. */
-const TEXT = {
-  close: 'Закрыть доступ',
-  closeTitle: (name: string) => `Закрыть доступ к «${name}»?`,
-  closeBody: (kind: RecordKind, author: string, roles: string) =>
-    `${kindWord(kind, true)} станет личным у автора, ${author}: роли ${roles} перестанут его видеть. Поделиться им снова автор не сможет, пока вы не снимете запрет. Запуски, которые уже идут, доработают.`,
-  closed: 'Доступ закрыт',
-  roles: 'Роли',
-} as const;
 
 const EMPTY_VALUE = '—';
 
 /** The panel's own address of a record: links in the panel never lead to the employee's library. */
-export const panelRecordHref = (id: string): string => adminRecordPath('library', id);
+export const panelRecordHref = (id: string): string =>
+  adminRecordPath('library', id);
 
 /** An employee's record whose access the administrator closes: a row of «Открытые ролям» or AL-03. */
-export type ClosableRecord = Pick<RecordSummary, 'id' | 'kind' | 'name' | 'audience'> & {
+export type ClosableRecord = Pick<
+  RecordSummary,
+  'id' | 'kind' | 'name' | 'audience'
+> & {
   author: NonNullable<RecordSummary['author']>;
 };
 
-const rolesOf = (record: Pick<RecordSummary, 'audience'>): string =>
-  record.audience.roles.map((role) => role.name).join(', ');
+/** The roles a record is open to, in the page's language (KD-6). */
+const rolesOf = (
+  record: Pick<RecordSummary, 'audience'>,
+  locale: Locale,
+): string =>
+  record.audience.roles
+    .map((role) => builtinRoleName(role.name, locale))
+    .join(', ');
 
 type CloseAccessDialogProps = {
   record: ClosableRecord;
@@ -55,16 +59,29 @@ type CloseAccessDialogProps = {
  * `close` through `recordAction`, and `libraryIndex` is re-read (KD-2). A refusal stays in the dialog with its
  * text; «Отмена» and Esc send nothing.
  */
-export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: CloseAccessDialogProps) {
+export function CloseAccessDialog({
+  record,
+  open,
+  onOpenChange,
+  onClosed,
+}: CloseAccessDialogProps) {
   const t = useTranslations('errors');
+  const tLibrary = useTranslations('admin.library');
+  const locale = useLocale();
   const { libraryIndex } = useShellServices();
 
   async function close(): Promise<void> {
-    await recordAction({ recordId: record.id, kind: record.kind, action: 'close', version: null }, () =>
-      adminApi.library.close(record.id),
+    await recordAction(
+      {
+        recordId: record.id,
+        kind: record.kind,
+        action: 'close',
+        version: null,
+      },
+      () => adminApi.library.close(record.id),
     );
     void libraryIndex.refresh();
-    toast.success(TEXT.closed);
+    toast.success(tLibrary('closed'));
     onClosed();
   }
 
@@ -72,12 +89,20 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={TEXT.closeTitle(record.name)}
-      body={TEXT.closeBody(record.kind, record.author.name, rolesOf(record))}
-      confirmLabel={TEXT.close}
+      title={tLibrary('closeTitle', { name: record.name })}
+      body={tLibrary('closeBody', {
+        kind: record.kind,
+        author: record.author.name,
+        roleCount: record.audience.roles.length,
+        roles: rolesOf(record, locale),
+      })}
+      confirmLabel={tLibrary('close')}
       onConfirm={close}
       // `recordAction` has logged the refusal.
-      refusalText={(cause) => describeLibraryError(t, cause, { where: 'panel', kind: record.kind }).text}
+      refusalText={(cause) =>
+        describeLibraryError(t, cause, { where: 'panel', kind: record.kind })
+          .text
+      }
     />
   );
 }
@@ -86,40 +111,81 @@ type EmployeeRecordPageProps = { record: RecordDetail };
 
 /**
  * UXRD AL-03: an employee's record in the panel, read only — the record label with its author, the roles it is
- * open to and its definition «На странице»; «Что узнал workflow» (MC-7, a workflow only) and «Закрыть доступ» in
+ * open to and its definition «На странице»; «Память» (MC-7, a deep agent only) and «Закрыть доступ» in
  * the header. The administrator never edits it.
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */
 export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
+  const t = useTranslations('admin.library');
+  const tLibrary = useTranslations('library');
+  const locale = useLocale();
+  const titles = useAdminTitles();
   const router = useRouter();
   const [closing, setClosing] = useState(false);
-  const roles = rolesOf(record);
+  const roles = rolesOf(record, locale);
   const author = record.author;
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={record.name} parent={sectionParent('library')}>
-        <KnowledgeButton record={record} />
+      <PageHeader
+        area={titles.panel}
+        title={builtinName(record, locale)}
+        parent={titles.parent('library')}
+      >
+        <MemoryButton record={record} />
         {author !== null && (
-          <Button variant="outline" size="sm" className={CONTROL_SIZE} onClick={() => setClosing(true)}>
-            {TEXT.close}
+          <Button
+            variant="outline"
+            size="sm"
+            className={CONTROL_SIZE}
+            onClick={() => setClosing(true)}
+          >
+            {t('close')}
           </Button>
         )}
       </PageHeader>
       <div className="flex max-w-240 flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <RecordLabel variant="under" summary={record} href={panelRecordHref(record.id)} />
+          <RecordLabel
+            variant="under"
+            summary={record}
+            href={panelRecordHref(record.id)}
+          />
           <p className="text-data text-foreground">
-            <span className="text-muted-foreground">{TEXT.roles}: </span>
-            {roles === '' ? EMPTY_VALUE : roles}
+            {t.rich('rolesLine', {
+              roles: roles === '' ? EMPTY_VALUE : roles,
+              label: (chunks) => (
+                <span className="text-muted-foreground">{chunks}</span>
+              ),
+            })}
           </p>
         </div>
+        {record.kind === 'deep_agent' && (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm leading-5 text-foreground">
+              {tLibrary(
+                record.content.selfLearning
+                  ? 'selfLearning.on'
+                  : 'selfLearning.off',
+              )}
+            </p>
+            {record.builtinKey === null && (
+              <TrainingBlock
+                id={record.id}
+                selfLearning={record.content.selfLearning}
+              />
+            )}
+          </div>
+        )}
         <DefinitionView
           definition={record}
           missingRights={record.missingRights}
           variant="page"
           recordHref={panelRecordHref}
         />
+        {record.kind === 'deep_agent' && (
+          <AgentScripts scripts={record.content.scripts} />
+        )}
       </div>
       {author !== null && (
         <CloseAccessDialog

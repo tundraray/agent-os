@@ -1,4 +1,9 @@
-import type { AgentStatus, ChatStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
+import type {
+  AgentStatus,
+  ChatStatus,
+  TaskStatus,
+  WaitReason,
+} from '@agent-os/contracts';
 import { chatStatus } from './chat-status';
 
 type Row = {
@@ -8,7 +13,9 @@ type Row = {
   expected: { status: ChatStatus; failureReason: string | null };
 };
 
-// design-chat.md, State Transitions: the composer's status follows the root's view and its task.
+// design-chat.md, State Transitions: the composer's status follows the root's view and its task. data-model
+// design-runtime.md, «Статус агента», DC-38: a root waiting for its children is `awaiting_confirmation` only
+// with an open question, which its view carries.
 describe('chat status', () => {
   it.each<Row>([
     {
@@ -18,10 +25,16 @@ describe('chat status', () => {
       expected: { status: 'interrupted', failureReason: null },
     },
     {
-      name: 'root awaits a decision',
+      name: 'root waits for its children with an open question',
       root: { status: 'awaiting_confirmation', failureReason: null },
-      task: { status: 'waiting', waitReason: 'decision' },
+      task: { status: 'waiting', waitReason: 'children' },
       expected: { status: 'awaiting_confirmation', failureReason: null },
+    },
+    {
+      name: 'root waits for its children without an open question',
+      root: { status: 'working', failureReason: null },
+      task: { status: 'waiting', waitReason: 'children' },
+      expected: { status: 'working', failureReason: null },
     },
     {
       name: 'root failed on the turn limit',
@@ -59,7 +72,10 @@ describe('chat status', () => {
       task: { status: 'running', waitReason: null },
       expected: { status: 'working', failureReason: null },
     },
-  ])('chat status follows the root\'s task and view: $name', ({ root, task, expected }) => {
-    expect(chatStatus({ root, task })).toEqual(expected);
-  });
+  ])(
+    "chat status follows the root's task and view: $name",
+    ({ root, task, expected }) => {
+      expect(chatStatus({ root, task, training: false })).toEqual(expected);
+    },
+  );
 });

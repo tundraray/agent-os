@@ -6,22 +6,42 @@
 // `classifyRejection` and `ModelClient` are real; the seam, the gate, the registry and the ledger are doubles.
 import type { Logger } from '@agent-os/common';
 import type { ModelProviderState } from '@agent-os/contracts';
-import type { CallUsage, Clock, ModelCallRecord } from '@agent-os/runtime';
+import {
+  type CallUsage,
+  type Clock,
+  type ModelCallRecord,
+  systemClock,
+} from '@agent-os/runtime';
 
-import type { AccessDeniedEntry } from '../access-gate';
+import type { AuditRecord } from '../access-gate';
 import { createProviderRegistryDouble } from '../testing';
 import type { AgentTurnModelClient } from './mastra-turn';
-import { createModelClient } from './model-client';
+import { ModelClient } from './model-client';
 
 /** One provider answer of the seam: a rejection in the shape of `AI_APICallError`, or an answer with its usage. */
 type SeamAttempt =
   | { readonly status: number | null; readonly body?: string }
   | { readonly usage: CallUsage };
 
-const USAGE: CallUsage = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 };
-const NO_INPUT_USAGE: CallUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+const USAGE: CallUsage = {
+  inputTokens: 10,
+  outputTokens: 2,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+};
+const NO_INPUT_USAGE: CallUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+};
 
-const PRICE = { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheReadUsdPerMTok: 0.3, cacheWriteUsdPerMTok: 3.75 };
+const PRICE = {
+  inputUsdPerMTok: 3,
+  outputUsdPerMTok: 15,
+  cacheReadUsdPerMTok: 0.3,
+  cacheWriteUsdPerMTok: 3.75,
+};
 
 const PROVIDERS: Readonly<Record<string, ModelProviderState>> = {
   anthropic: 'ready',
@@ -33,39 +53,98 @@ const PROVIDERS: Readonly<Record<string, ModelProviderState>> = {
 
 const ANTHROPIC_TOOLS_BODY = JSON.stringify({
   type: 'error',
-  error: { type: 'invalid_request_error', message: 'tools.0.custom.input_schema: JSON schema is invalid' },
+  error: {
+    type: 'invalid_request_error',
+    message: 'tools.0.custom.input_schema: JSON schema is invalid',
+  },
 });
 const GEMINI_TOOLS_BODY = JSON.stringify({
   error: {
     code: 400,
-    message: "Invalid JSON payload received. Unknown name \"additionalProperties\" at 'tools[0].function_declarations[0].parameters'",
+    message:
+      'Invalid JSON payload received. Unknown name "additionalProperties" at \'tools[0].function_declarations[0].parameters\'',
     status: 'INVALID_ARGUMENT',
   },
 });
-const OPENAI_TOOLS_BODY = JSON.stringify({ error: { message: 'this model does not support tool use', param: 'tools' } });
-const OTHER_BAD_REQUEST_BODY = JSON.stringify({ error: { message: 'max_tokens: 99999999 > 64000' } });
-const KEY_BODY = JSON.stringify({ error: { type: 'authentication_error', message: 'invalid x-api-key' } });
+const OPENAI_TOOLS_BODY = JSON.stringify({
+  error: { message: 'this model does not support tool use', param: 'tools' },
+});
+const OTHER_BAD_REQUEST_BODY = JSON.stringify({
+  error: { message: 'max_tokens: 99999999 > 64000' },
+});
+const KEY_BODY = JSON.stringify({
+  error: { type: 'authentication_error', message: 'invalid x-api-key' },
+});
 
 function apiCallError(status: number | null, body: string | undefined): Error {
-  const error = new Error(`provider rejected the request (${status ?? 'network'})`);
+  const error = new Error(
+    `provider rejected the request (${status ?? 'network'})`,
+  );
   error.name = 'AI_APICallError';
-  return Object.assign(error, status === null ? {} : { statusCode: status }, body === undefined ? {} : { responseBody: body });
+  return Object.assign(
+    error,
+    status === null ? {} : { statusCode: status },
+    body === undefined ? {} : { responseBody: body },
+  );
 }
 
-function seamDouble(attempts: readonly SeamAttempt[], calls: { count: number }): AgentTurnModelClient {
+function seamDouble(
+  attempts: readonly SeamAttempt[],
+  calls: { count: number },
+): AgentTurnModelClient {
   return {
     async streamTurn() {
       const attempt = attempts[calls.count];
       calls.count += 1;
-      if (attempt === undefined) throw new Error(`No attempt ${calls.count} in the seam double`);
+      if (attempt === undefined)
+        throw new Error(`No attempt ${calls.count} in the seam double`);
       if ('status' in attempt) throw apiCallError(attempt.status, attempt.body);
-      return { finishReason: 'stop', text: 'ok', toolCalls: [], usage: attempt.usage };
+      return {
+        finishReason: 'stop',
+        text: 'ok',
+        toolCalls: [],
+        usage: attempt.usage,
+      };
     },
   };
 }
 
+type ModelClientArgs = ConstructorParameters<typeof ModelClient>;
+
+/** `ModelClient` from named doubles; the real clock unless a test gives its own. */
+function createModelClient(deps: {
+  turnClient: ModelClientArgs[0];
+  ledger: ModelClientArgs[1];
+  config: ModelClientArgs[2];
+  logger: ModelClientArgs[3];
+  access: ModelClientArgs[4];
+  providers: ModelClientArgs[5];
+  audit: ModelClientArgs[6];
+  clock?: Clock;
+  onTextDelta?: ModelClientArgs[9];
+}): ModelClient {
+  return new ModelClient(
+    deps.turnClient,
+    deps.ledger,
+    deps.config,
+    deps.logger,
+    deps.access,
+    deps.providers,
+    deps.audit,
+    deps.clock ?? systemClock,
+    { check: async () => 'allowed' as const },
+    deps.onTextDelta,
+  );
+}
+
 function loggerDouble(): Logger & { warn: ReturnType<typeof vi.fn> } {
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => logger };
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: () => logger,
+  };
   return logger;
 }
 
@@ -78,11 +157,22 @@ interface Row {
   readonly pauses: readonly number[];
   readonly ledgerRows: number;
   /** The `warn` that names the failure, or the estimate, with the fields it must carry. */
-  readonly log: { readonly message: string; readonly fields: Readonly<Record<string, unknown>> } | null;
+  readonly log: {
+    readonly message: string;
+    readonly fields: Readonly<Record<string, unknown>>;
+  } | null;
 }
 
-function failed(reason: string, statusCode: number | null, responseBody: string | null, provider = 'anthropic') {
-  return { message: 'model call failed', fields: { provider, reason, statusCode, responseBody } };
+function failed(
+  reason: string,
+  statusCode: number | null,
+  responseBody: string | null,
+  provider = 'anthropic',
+) {
+  return {
+    message: 'model call failed',
+    fields: { provider, reason, statusCode, responseBody },
+  };
 }
 
 describe('a provider rejection is a named reason with its retries, its ledger rows and its body in the log', () => {
@@ -132,7 +222,12 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         providerCalls: 1,
         pauses: [],
         ledgerRows: 0,
-        log: failed('provider_tools_rejected', 400, GEMINI_TOOLS_BODY, 'gemini'),
+        log: failed(
+          'provider_tools_rejected',
+          400,
+          GEMINI_TOOLS_BODY,
+          'gemini',
+        ),
       },
     ],
     [
@@ -144,7 +239,12 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         providerCalls: 1,
         pauses: [],
         ledgerRows: 0,
-        log: failed('provider_tools_rejected', 422, OPENAI_TOOLS_BODY, 'openai_compatible'),
+        log: failed(
+          'provider_tools_rejected',
+          422,
+          OPENAI_TOOLS_BODY,
+          'openai_compatible',
+        ),
       },
     ],
     [
@@ -163,7 +263,11 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
       '503 on all three attempts: two retries at 1 s and 3 s, provider_unavailable, no ledger row (AC-09.5)',
       {
         model: 'anthropic/claude-turn',
-        attempts: [{ status: 503 }, { status: 503 }, { status: 529, body: 'overloaded' }],
+        attempts: [
+          { status: 503 },
+          { status: 503 },
+          { status: 529, body: 'overloaded' },
+        ],
         outcome: 'model_error provider_unavailable 529',
         providerCalls: 3,
         pauses: [1000, 3000],
@@ -204,7 +308,10 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         providerCalls: 0,
         pauses: [],
         ledgerRows: 0,
-        log: { message: 'model provider not ready', fields: { provider: 'nowhere', reason: 'provider_missing' } },
+        log: {
+          message: 'model provider not ready',
+          fields: { provider: 'nowhere', reason: 'provider_missing' },
+        },
       },
     ],
     [
@@ -216,7 +323,10 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         providerCalls: 0,
         pauses: [],
         ledgerRows: 0,
-        log: { message: 'model provider not ready', fields: { provider: 'off', reason: 'provider_disabled' } },
+        log: {
+          message: 'model provider not ready',
+          fields: { provider: 'off', reason: 'provider_disabled' },
+        },
       },
     ],
     [
@@ -228,7 +338,10 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         providerCalls: 0,
         pauses: [],
         ledgerRows: 0,
-        log: { message: 'model provider not ready', fields: { provider: 'keyless', reason: 'provider_key_missing' } },
+        log: {
+          message: 'model provider not ready',
+          fields: { provider: 'keyless', reason: 'provider_key_missing' },
+        },
       },
     ],
     [
@@ -241,7 +354,8 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         pauses: [],
         ledgerRows: 1,
         log: {
-          message: 'model answer without input tokens recorded with estimated usage',
+          message:
+            'model answer without input tokens recorded with estimated usage',
           fields: { provider: 'openai_compatible', estimated: true },
         },
       },
@@ -250,7 +364,7 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
     const calls = { count: 0 };
     const pauses: number[] = [];
     const ledgerRows: ModelCallRecord[] = [];
-    const audits: AccessDeniedEntry[] = [];
+    const audits: AuditRecord[] = [];
     const verdictAsks: string[] = [];
     const logger = loggerDouble();
     const clock: Clock = {
@@ -296,12 +410,15 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
       messages: [{ role: 'user', content: 'Hi' }],
       tools: [],
       streamsText: false,
+      training: false,
       signal: new AbortController().signal,
       logger,
     });
 
     const outcome =
-      result.kind === 'model_error' ? `model_error ${result.reason} ${result.statusCode}` : result.kind;
+      result.kind === 'model_error'
+        ? `model_error ${result.reason} ${result.statusCode}`
+        : result.kind;
     expect(outcome).toBe(row.outcome);
     expect(verdictAsks).toEqual([row.model]);
     expect(calls.count).toBe(row.providerCalls);
@@ -309,7 +426,9 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
     expect(ledgerRows).toHaveLength(row.ledgerRows);
     expect(audits).toEqual([]);
     if (row.log !== null) {
-      const logged = logger.warn.mock.calls.filter(([message]) => message === row.log?.message);
+      const logged = logger.warn.mock.calls.filter(
+        ([message]) => message === row.log?.message,
+      );
       expect(logged.at(-1)?.[1]).toMatchObject(row.log.fields);
     }
   });
@@ -337,7 +456,10 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         maxOutputTokens: 64,
         signal: new AbortController().signal,
       }),
-    ).rejects.toMatchObject({ name: 'ModelNotConfiguredError', reason: 'model_not_configured' });
+    ).rejects.toMatchObject({
+      name: 'ModelNotConfiguredError',
+      reason: 'model_not_configured',
+    });
     expect(calls.count).toBe(0);
   });
 });

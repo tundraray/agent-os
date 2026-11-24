@@ -1,0 +1,143 @@
+{
+  "start_agent": {
+    "title": "Start agent",
+    "args": { "description": "Title", "agent": "Agent", "prompt": "Task" }
+  },
+  "message_agent": {
+    "title": "Message agent",
+    "args": { "agentId": "Agent", "message": "Message" }
+  },
+  "list_agents": { "title": "List agents", "args": {} },
+  "stop_agent": { "title": "Stop agent", "args": { "agentId": "Agent" } },
+  "run_code": {
+    "title": "Run code",
+    "args": {
+      "description": "Description",
+      "class": "Run type",
+      "script": "Script"
+    }
+  },
+  "try_script": {
+    "title": "Script trial run",
+    "args": {
+      "name": "Name",
+      "class": "Run type",
+      "owner": "Owner",
+      "input": "Input",
+      "code": "Code"
+    }
+  },
+  "read_tool_result": {
+    "title": "Read saved result",
+    "args": { "callId": "Call", "offset": "From line", "limit": "Lines" }
+  },
+  "search_tool_result": {
+    "title": "Search saved result",
+    "args": { "callId": "Call", "pattern": "Search for" }
+  },
+  "start_deep_agent": {
+    "title": "Start deep agent",
+    "args": {
+      "deepAgent": "Deep agent",
+      "question": "Question",
+      "boundaries": "Scope",
+      "result": "Result"
+    }
+  },
+  "task_create": {
+    "title": "New task",
+    "args": {
+      "subject": "Subject",
+      "description": "Description",
+      "activeForm": "In-progress text"
+    }
+  },
+  "task_update": {
+    "title": "Update task",
+    "args": {
+      "taskId": "Task",
+      "status": "Status",
+      "subject": "Subject",
+      "description": "Description",
+      "activeForm": "In-progress text",
+      "owner": "Owner",
+      "addBlockedBy": "Waits for",
+      "addBlocks": "Blocks"
+    }
+  },
+  "task_get": { "title": "Task", "args": { "taskId": "Task" } },
+  "task_list": { "title": "Task list", "args": {} },
+  "task": {
+    "title": "Delegate",
+    "args": {
+      "subagentType": "Subagent",
+      "description": "Assignment",
+      "instruction": "Instruction",
+      "items": "Items",
+      "answerFields": "Answer fields",
+      "taskId": "Task"
+    }
+  },
+  "remember": {
+    "title": "Remember",
+    "args": { "scope": "Scope", "description": "Description", "text": "Text" }
+  },
+  "read_memory": {
+    "title": "Read from memory",
+    "args": { "scope": "Scope", "description": "Description" }
+  },
+  "forget": {
+    "title": "Forget",
+    "args": { "scope": "Scope", "description": "Description" }
+  },
+  "list_records": { "title": "Library list", "args": {} },
+  "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
+  "create_record": {
+    "title": "Create record",
+    "args": {
+      "kind": "Kind",
+      "name": "Name",
+      "description": "Description",
+      "content": "Content",
+      "system": "System"
+    }
+  },
+  "edit_record": {
+    "title": "Edit record",
+    "args": {
+      "recordId": "Record",
+      "kind": "Kind",
+      "name": "Name",
+      "description": "Description",
+      "content": "Content",
+      "system": "System"
+    }
+  },
+  "delete_record": {
+    "title": "Delete record",
+    "args": { "recordId": "Record" }
+  },
+  "notepad_create": {
+    "title": "Create document",
+    "args": {
+      "title": "Title",
+      "description": "Description",
+      "text": "Text",
+      "report": "Report"
+    }
+  },
+  "notepad_append": {
+    "title": "Append to document",
+    "args": { "document": "Document", "text": "Text" }
+  },
+  "notepad_replace": {
+    "title": "Replace part of document",
+    "args": { "document": "Document", "old": "Was", "new": "Now" }
+  },
+  "notepad_read": {
+    "title": "Read document",
+    "args": { "document": "Document", "offset": "From line", "limit": "Lines" }
+  },
+  "notepad_list": { "title": "Notepad documents", "args": {} },
+  "notepad_past": { "title": "Past documents", "args": {} }
+}

@@ -27,7 +27,11 @@ function Screen({ names }: { names: readonly string[] }) {
         state={{
           status: 'ready',
           rows: rowsOf(names),
-          empty: { Icon: UsersIcon, title: 'Прав нет', description: 'Добавьте право.' },
+          empty: {
+            Icon: UsersIcon,
+            title: 'Прав нет',
+            description: 'Добавьте право.',
+          },
         }}
       />
     </>
@@ -37,9 +41,24 @@ function Screen({ names }: { names: readonly string[] }) {
 // UXRD Accessibility «Строка таблицы ушла», design-admin.md C3 · web.
 describe('DataTable', () => {
   it.each([
-    { left: 'Б', before: ['А', 'Б', 'В'], reducedMotion: false, focused: 'Убрать: В' },
-    { left: 'Б', before: ['А', 'Б', 'В'], reducedMotion: true, focused: 'Убрать: В' },
-    { left: 'Б', before: ['А', 'Б'], reducedMotion: false, focused: 'Убрать: А' },
+    {
+      left: 'Б',
+      before: ['А', 'Б', 'В'],
+      reducedMotion: false,
+      focused: 'Убрать: В',
+    },
+    {
+      left: 'Б',
+      before: ['А', 'Б', 'В'],
+      reducedMotion: true,
+      focused: 'Убрать: В',
+    },
+    {
+      left: 'Б',
+      before: ['А', 'Б'],
+      reducedMotion: false,
+      focused: 'Убрать: А',
+    },
     { left: 'А', before: ['А'], reducedMotion: true, focused: 'h1' },
   ])(
     'after a row leaves, focus goes to the next row, else the previous one, else the page h1 ($left of $before, reduced motion $reducedMotion)',
@@ -51,7 +70,9 @@ describe('DataTable', () => {
       rerender(<Screen names={before.filter((name) => name !== left)} />);
 
       const target =
-        focused === 'h1' ? screen.getByRole('heading', { name: 'Права' }) : screen.getByRole('button', { name: focused });
+        focused === 'h1'
+          ? screen.getByRole('heading', { name: 'Права' })
+          : screen.getByRole('button', { name: focused });
       await waitFor(() => expect(target).toHaveFocus());
     },
   );
@@ -60,7 +81,9 @@ describe('DataTable', () => {
   it('keeps a row action button in a wrapper as wide as its content', () => {
     render(<Screen names={['А']} />);
 
-    const cell = screen.getByRole('button', { name: 'Убрать: А' }).closest('td');
+    const cell = screen
+      .getByRole('button', { name: 'Убрать: А' })
+      .closest('td');
     expect(cell?.firstElementChild).toHaveClass('min-w-max');
   });
 });

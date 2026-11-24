@@ -17,12 +17,12 @@
 //   - that zod rejects `de`: the schema is library behaviour; the row below proves the route is wired to it, once
 
 import { randomUUID } from 'node:crypto';
-import { CurrentUserSchema } from '@agent-os/contracts';
+import { CurrentUserSchema, LOCALE_COOKIE } from '@agent-os/contracts';
 import type { INestApplication } from '@nestjs/common';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LOCALE_COOKIE, SESSION_COOKIE } from '../src/identity/session-cookie';
+import { SESSION_COOKIE } from '../src/identity/session-cookie';
 import { expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {

@@ -7,7 +7,7 @@
 // take at most 50 ms (p95).
 //
 // One boot of the real `AppModule` with runtime workers and the real library. One employee owns a hundred records (agents
-// and workflows, each with the longest description, so the listing runs past its budget and drops descriptions) and
+// and deep agents, each with the longest description, so the listing runs past its budget and drops descriptions) and
 // writes to his chat round after round. The tool registry times every build of the root's listing and logs it
 // (`chat listing built`, `durationMs`); the script reads those records. The model is the scripted double: no provider is
 // called.
@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { RECORD_DESCRIPTION_MAX_LENGTH } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { waitFor } from '@agent-os/db/testing';
 import {
   allowRole,
   HAIKU_TEST_PRICES,
@@ -23,14 +24,14 @@ import {
   runModel,
   useRunModels,
 } from '../support/access';
-import { chatApi, waitFor } from '../support/api';
+import { chatApi } from '../support/api';
 import { createTestApp } from '../support/createTestApp';
 import {
   agentBody,
   createRecord,
+  deepAgentBody,
   pointBuiltinsAt,
   recordName,
-  workflowBody,
 } from '../support/library';
 import { createEmployee, seedSuperAdmin } from '../support/session';
 
@@ -38,9 +39,9 @@ import { createEmployee, seedSuperAdmin } from '../support/session';
 const MODEL = runModel('chat-listing');
 /** «Performance Requirements»: the time to the first token grows by at most this much, p95. */
 const LISTING_P95_BUDGET_MS = 50;
-/** UC-N1: the employee sees a hundred records; a fifth of them are workflows. */
+/** UC-N1: the employee sees a hundred records; a fifth of them are deep agents. */
 const AGENTS = 80;
-const WORKFLOWS = 20;
+const DEEP_AGENTS = 20;
 const WARM_UP_ROUNDS = 5;
 const TIMED_ROUNDS = 30;
 const MEASUREMENT_MS = 300_000;
@@ -105,7 +106,9 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
       try {
         const task = 'UC-N1: hello';
         harness.model.completeText({ text: 'UC-N1' });
-        harness.model.script({ task }, [], { thereafter: { text: 'Принято.' } });
+        harness.model.script({ task }, [], {
+          thereafter: { text: 'Принято.' },
+        });
         const admin = await seedSuperAdmin(
           harness.app,
           `verify-admin-${randomUUID()}`,
@@ -133,10 +136,10 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
             description: longDescription(name),
           });
         }
-        for (let index = 1; index <= WORKFLOWS; index += 1) {
-          const name = recordName(`UC-N1 workflow ${index}`);
+        for (let index = 1; index <= DEEP_AGENTS; index += 1) {
+          const name = recordName(`UC-N1 deep agent ${index}`);
           await createRecord(harness.app, owner, {
-            ...workflowBody(name, MODEL),
+            ...deepAgentBody(name, MODEL),
             description: longDescription(name),
           });
         }
@@ -184,8 +187,10 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
           )}
 `,
         );
-        expect(first?.visible ?? 0).toBeGreaterThanOrEqual(AGENTS + WORKFLOWS);
-        expect(first?.described ?? 0).toBeLessThan(AGENTS + WORKFLOWS);
+        expect(first?.visible ?? 0).toBeGreaterThanOrEqual(
+          AGENTS + DEEP_AGENTS,
+        );
+        expect(first?.described ?? 0).toBeLessThan(AGENTS + DEEP_AGENTS);
         expect(p95Ms, 'listing p95, ms').toBeLessThanOrEqual(
           LISTING_P95_BUDGET_MS,
         );

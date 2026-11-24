@@ -10,10 +10,10 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import type {
-  Agents,
-  ModelProviderAuditState,
-  ProviderRegistryView,
+import {
+  AgentsProviders,
+  type ModelProviderAuditState,
+  type ProviderRegistryView,
 } from '@agent-os/agents';
 import {
   CreateModelProviderBodySchema,
@@ -28,7 +28,6 @@ import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
-import { AGENTS } from './agents.tokens';
 import { providerAnswer } from './model-providers.errors';
 
 const MODEL_PROVIDER_OBJECT_TYPE = 'model_provider';
@@ -53,7 +52,7 @@ async function recordProviderChange(
     };
   },
 ): Promise<void> {
-  await auditLog.record(null, {
+  await auditLog.record({
     kind: 'admin_change',
     actor,
     objectType: MODEL_PROVIDER_OBJECT_TYPE,
@@ -66,7 +65,7 @@ async function recordProviderChange(
 
 /**
  * The model provider registry for an administrator (design-core.md of model-providers, Contract «Для части
- * `web`»). Every write goes through `Agents.providers` and is audited after it as `admin_change` on
+ * `web`»). Every write goes through `AgentsProviders` and is audited after it as `admin_change` on
  * `model_provider`; no answer carries a key value, only `apiKeySet` and `apiKeyLast4` (DC-2). The number of
  * the provider's catalogue models comes from `AccessService` (KD-1): the registry does not read the catalogue.
  */
@@ -74,7 +73,7 @@ async function recordProviderChange(
 @AdminOnly()
 export class AdminModelProvidersController {
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsProviders) private readonly providers: AgentsProviders,
     private readonly access: AccessService,
     private readonly auditLog: AuditLog,
   ) {}
@@ -82,7 +81,7 @@ export class AdminModelProvidersController {
   /** The providers by name. */
   @Get()
   async list(): Promise<ModelProviderView[]> {
-    const views = await this.agents.providers.list();
+    const views = await this.providers.list();
     return Promise.all(views.map((view) => this.withCatalogModels(view)));
   }
 
@@ -94,7 +93,7 @@ export class AdminModelProvidersController {
     @Req() req: AuthedRequest,
   ): Promise<ModelProviderView> {
     const actor = req.user.id;
-    const write = await providerAnswer(this.agents.providers.create(body));
+    const write = await providerAnswer(this.providers.create(body));
     await recordProviderChange(this.auditLog, {
       actor,
       provider: body.name,
@@ -106,7 +105,7 @@ export class AdminModelProvidersController {
   /** `ModelProviderView`; 404 MODEL_PROVIDER_NOT_FOUND. */
   @Get(':name')
   async detail(@Param('name') name: string): Promise<ModelProviderView> {
-    const view = await providerAnswer(this.agents.providers.get(name));
+    const view = await providerAnswer(this.providers.get(name));
     return this.withCatalogModels(view);
   }
 
@@ -119,7 +118,7 @@ export class AdminModelProvidersController {
     @Req() req: AuthedRequest,
   ): Promise<ModelProviderView> {
     const actor = req.user.id;
-    const write = await providerAnswer(this.agents.providers.update(name, body));
+    const write = await providerAnswer(this.providers.update(name, body));
     await recordProviderChange(this.auditLog, {
       actor,
       provider: name,
@@ -137,10 +136,10 @@ export class AdminModelProvidersController {
   ): Promise<void> {
     const actor = req.user.id;
     // A registered name holds no LIKE wildcard, so the count below reads only this provider's models.
-    await providerAnswer(this.agents.providers.get(name));
+    await providerAnswer(this.providers.get(name));
     const catalogModels = await this.access.countModelsOfProvider(name);
     const removal = await providerAnswer(
-      this.agents.providers.remove({ name, catalogModels }),
+      this.providers.remove({ name, catalogModels }),
     );
     await recordProviderChange(this.auditLog, {
       actor,
@@ -153,7 +152,7 @@ export class AdminModelProvidersController {
   @Post(':name/check')
   @HttpCode(200)
   check(@Param('name') name: string): Promise<ModelProviderCheck> {
-    return providerAnswer(this.agents.providers.check(name));
+    return providerAnswer(this.providers.check(name));
   }
 
   private async withCatalogModels(

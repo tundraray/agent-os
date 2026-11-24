@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { useFormatter, useTranslations } from 'next-intl';
 import type { SignInSettings } from '@agent-os/contracts';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
@@ -10,41 +11,33 @@ import {
   signInSettingsRules,
   type SignInSettingsValues,
 } from '@/lib/admin/form-rules';
+import type { Formatter } from '@/i18n/formats';
 import { cn } from '@/lib/utils';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
 import { DataTable, resourceTableState } from '../data-table';
-
-/** UXRD MC-33; «Сохранить» — MC-20. */
-const TEXT = {
-  title: 'Настройки входа',
-  publicUrl: 'Публичный адрес Agent OS',
-  idle: 'Без активности',
-  absolute: 'Всего с момента входа',
-  hours: 'часов',
-  idleHint: 'От 0,25 до 24 часов.',
-  absoluteHint: 'От 1 до 720 часов (30 суток), не меньше срока без активности.',
-  note: 'Новые сроки действуют и для уже вошедших сотрудников — с их следующего запроса. Новый адрес перенесите в «Данные для провайдера» у каждого провайдера.',
-  save: 'Сохранить',
-  saved: 'Настройки входа сохранены',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
-  loadFailed: 'Не удалось загрузить настройки входа',
-} as const;
 
 /**
  * DC-7: the form shows hours; until an address is saved, the address the administrator opened the web at,
  * which is also where the browser reaches the API. Runs only on `useResource` data, so in the browser.
  */
-const valuesOf = (settings: SignInSettings): SignInSettingsValues => ({
+const valuesOf = (
+  format: Formatter,
+  settings: SignInSettings,
+): SignInSettingsValues => ({
   publicUrl: settings.publicUrl ?? window.location.origin,
-  idleHours: minutesToHours(settings.idleMinutes),
-  absoluteHours: minutesToHours(settings.absoluteMinutes),
+  idleHours: minutesToHours(format, settings.idleMinutes),
+  absoluteHours: minutesToHours(format, settings.absoluteMinutes),
 });
 
 /**
  * UXRD AD-14: one form, one «Сохранить» — the address and both limits go in one `PUT`, in minutes (FR-26).
  * Called after `signInSettingsRules` passed, so both hours read as numbers.
  */
-async function save({ publicUrl, idleHours, absoluteHours }: SignInSettingsValues): Promise<void> {
+async function save({
+  publicUrl,
+  idleHours,
+  absoluteHours,
+}: SignInSettingsValues): Promise<void> {
   await adminApi.signInSettings.update({
     publicUrl: publicUrl.trim(),
     idleMinutes: minutesOf(idleHours),
@@ -54,33 +47,41 @@ async function save({ publicUrl, idleHours, absoluteHours }: SignInSettingsValue
 
 function minutesOf(hours: string): number {
   const minutes = hoursToMinutes(hours);
-  if (minutes === null) throw new Error('Sign-in settings: hours were sent unchecked');
+  if (minutes === null)
+    throw new Error('Sign-in settings: hours were sent unchecked');
   return minutes;
 }
 
+/** UXRD AD-14 (texts MC-33, `admin.signIn.settings`). */
 export function SignInSettingsForm() {
   const headingId = useId();
+  const t = useTranslations('admin.signIn.settings');
+  const format = useFormatter();
   const settings = useResource(adminApi.signInSettings.get, 'sign-in-settings');
   const data = settings.data;
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {TEXT.title}
+        {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={TEXT.title} columns={[]} state={resourceTableState(settings, TEXT.loadFailed)} />
+        <DataTable
+          caption={t('title')}
+          columns={[]}
+          state={resourceTableState(settings, t('loadFailed'))}
+        />
       ) : (
         <>
           {/* Every save moves `updatedAt`: the new read starts the form from the values the server now holds. */}
           <AdminForm
             key={data.updatedAt ?? 'defaults'}
             variant="page"
-            initialValues={valuesOf(data)}
+            initialValues={valuesOf(format, data)}
             validate={signInSettingsRules}
             onSubmit={save}
-            submitLabel={TEXT.save}
-            savedText={TEXT.saved}
+            submitLabel={t('save')}
+            savedText={t('saved')}
             onSaved={settings.reload}
             logEvent="admin: sign-in settings"
           >
@@ -88,7 +89,7 @@ export function SignInSettingsForm() {
               <>
                 <AdminTextField
                   {...form.field('publicUrl')}
-                  label={TEXT.publicUrl}
+                  label={t('publicUrl')}
                   mono
                   type="url"
                   inputMode="url"
@@ -97,20 +98,20 @@ export function SignInSettingsForm() {
                 />
                 <AdminTextField
                   {...form.field('idleHours')}
-                  label={TEXT.idle}
-                  hint={TEXT.idleHint}
+                  label={t('idle')}
+                  hint={t('idleHint')}
                   inputMode="decimal"
-                  suffix={TEXT.hours}
+                  suffix={t('hours')}
                   inputClassName="w-24"
                   value={form.values.idleHours}
                   onChange={(value) => form.set('idleHours', value)}
                 />
                 <AdminTextField
                   {...form.field('absoluteHours')}
-                  label={TEXT.absolute}
-                  hint={TEXT.absoluteHint}
+                  label={t('absolute')}
+                  hint={t('absoluteHint')}
                   inputMode="decimal"
-                  suffix={TEXT.hours}
+                  suffix={t('hours')}
                   inputClassName="w-24"
                   value={form.values.absoluteHours}
                   onChange={(value) => form.set('absoluteHours', value)}
@@ -118,7 +119,9 @@ export function SignInSettingsForm() {
               </>
             )}
           </AdminForm>
-          <p className={cn(CAPTION, 'max-w-160 text-muted-foreground')}>{TEXT.note}</p>
+          <p className={cn(CAPTION, 'max-w-160 text-muted-foreground')}>
+            {t('note')}
+          </p>
         </>
       )}
     </section>

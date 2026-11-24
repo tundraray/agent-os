@@ -44,7 +44,7 @@
 
 #### KD-5: Образ веба — сборка standalone с корнем трассировки в корне репозитория, двухэтапный Dockerfile по образцу API и свой файл исключений `apps/web/Dockerfile.dockerignore`
 
-Сборка standalone (`output: 'standalone'`) кладёт в `.next/standalone` готовый `server.js` и только те файлы `node_modules`, которые нужны серверу. Корень трассировки (`outputFileTracingRoot`) — корень репозитория, иначе пакеты workspace и хранилище pnpm не попадут в выборку. Dockerfile повторяет образ API: `node:26-bookworm-slim`, `pnpm@10.9.0`, установка только для `web` и его зависимостей, сборка, затем чистый второй этап с `tini`, `NODE_ENV=production`, `HOSTNAME=0.0.0.0`, портом 3000 и пользователем `node`. Каталог приложения принадлежит `node`, потому что Next пишет кэш в `.next/cache`. Статические файлы (`.next/static`, `public`) копируются рядом с `server.js`, так как standalone их сам не переносит.
+Сборка standalone (`output: 'standalone'`) кладёт в `.next/standalone` готовый `server.js` и только те файлы `node_modules`, которые нужны серверу. Корень трассировки (`outputFileTracingRoot`) — корень репозитория, иначе пакеты workspace и хранилище pnpm не попадут в выборку. Dockerfile повторяет образ API: `node:26-bookworm-slim`, `pnpm@10.9.0`, установка только для `web` и его зависимостей, сборка, затем чистый второй этап с `tini`, `NODE_ENV=production`, `HOSTNAME=0.0.0.0`, портом 3000 и пользователем `node`. Каталог приложения принадлежит `node`, потому что Next пишет кэш в `.next/cache`. Статические файлы (`.next/static`) копируются рядом с `server.js`, так как standalone их сам не переносит.
 
 Корневой `.dockerignore` прячет `apps/web` из контекста ради образа API. BuildKit берёт файл `<Dockerfile>.dockerignore` рядом с Dockerfile вместо корневого ([Docker docs, .dockerignore files](https://docs.docker.com/build/concepts/context/#dockerignore-files)). Поэтому у веба свой `apps/web/Dockerfile.dockerignore`: тот же список, но прячет исходники API, а не веба, и оставляет манифест `apps/api/package.json` для lockfile. Корневой файл и образ API не меняются. Job `web-image` в `docker.yml` — копия `api-image` с именем образа `-web`, своим Dockerfile и кэшем `type=gha,scope=web`; кэш API остаётся в области по умолчанию, и две сборки не затирают друг другу кэш.
 
@@ -614,7 +614,7 @@ sequenceDiagram
 - `apps/web/README.md`: шаги 1–2 — без фразы о CORS, `.env.local` только с необязательными `SENTRY_DSN` и `API_INTERNAL_URL`.
 - `apps/api/README.md`, раздел Docker: `FRONTEND_ORIGIN` — адрес веба, ссылка на запуск стека compose.
 - `apps/api/.env.example` и `apps/web/.env.example` — по тем же правилам.
-- Каталог кода: [web-api-client.md](../../code-system/patterns/web-api-client.md) (ядро и путь без адреса, образец) и строка «клиент API в `apps/web`» в [README.md](../../code-system/README.md) — правятся вместе с этим документом.
+- Каталог кода: [web-api-client.md](../../code-system/patterns/web-api-client.md) (ядро и путь без адреса, образец) и описание клиента API в [code-system/packages/web.md](../../code-system/packages/web.md) — правятся вместе с этим документом.
 
 ## Test Strategy
 
@@ -662,7 +662,7 @@ sequenceDiagram
 | Сценарий | Шаги | Проверяемый сигнал |
 |---|---|---|
 | Пересылка на настоящем стеке (первая) | Собрать образ веба с тегом `…-web:latest` (KD-6), поднять стек, открыть беседу; запустить агента, который отвечает потоком, затем молчит дольше двух минут | В Network один запрос `GET /api/events` без `content-encoding`, во вкладке EventStream события `delta` приходят по одному, `ping` каждые 20 с, переподключений нет; текст растёт по ходу ответа |
-| Запуск из исходников | `pnpm --filter web dev` и `pnpm --filter api start:dev`, те же шаги | Те же сигналы на `localhost:3000` |
+| Запуск из исходников | `pnpm --filter web dev` и `pnpm --filter api dev`, те же шаги | Те же сигналы на `localhost:3000` |
 | DSN при запуске | Запустить веб с DSN, вызвать ошибку в браузере и на сервере; перезапустить с другим DSN | В cookie `aos_sentry_dsn` текущий DSN; запросы `envelope` уходят в проект текущего DSN |
 
 Если события приходят пачкой или поток рвётся без команды API, работа останавливается, и вопрос возвращается владельцу. Варианты для него: свой сервер Next с `http-proxy` вместо `rewrites` или nginx перед вебом.

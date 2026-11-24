@@ -1,28 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
-import {
-  identityRoleMembers,
-  identityRoles,
-  identitySessions,
-  identitySettings,
-  identityUsers,
-  type Database,
-  type DatabaseConnection,
-} from '@agent-os/db';
+import { Injectable } from '@nestjs/common';
+import { IdentitySessionsRepository } from '@agent-os/db';
 import {
   LanguageSchema,
+  parseSettingsValue,
   UserStatusSchema,
   type Language,
   type UserStatus,
 } from '@agent-os/contracts';
-import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { SettingsService } from '../settings/settings.service';
 import { isSessionExpired, needsTouch } from './session-lifetime';
-import { readSessionLimits, sessionLimitColumns } from './settings.repository';
-
-/** `ended_reason` of a session ended by a block (KD-4, DC-9). */
-export const ENDED_BY_BLOCK = 'account_disabled';
 
 /** Random bytes of a session token (KD-2). */
 const TOKEN_BYTES = 32;
@@ -49,6 +36,10 @@ export interface FoundSession {
     status: UserStatus;
     /** The personal mark or any role with the admin right. */
     isAdmin: boolean;
+    /** Any role with the right to train own agents (KD-8). */
+    trainOwn: boolean;
+    /** Any role with the right to train any agent (KD-8). */
+    trainAny: boolean;
     /** A local account: it has a password. */
     hasPassword: boolean;
     /** The chosen interface language, or null while there is no choice. */
@@ -61,83 +52,30 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-/** The personal admin mark or a membership in a role with the admin right. */
-const IS_ADMIN = sql<boolean>`(${identityUsers.isAdmin} or exists (
-  select 1 from ${identityRoleMembers}
-  join ${identityRoles} on ${identityRoles.id} = ${identityRoleMembers.roleId}
-  where ${identityRoleMembers.userId} = ${identityUsers.id} and ${identityRoles.isAdmin}
-))`;
-
-// ---------- Writes in the caller's transaction (repository-over-transaction.md: executor first) ----------
-
-/** Opens a session of the employee and deletes his rows older than the absolute limit. */
-export async function openSession(
-  executor: Executor,
-  userId: string,
-): Promise<OpenedSession> {
-  const limits = await readSessionLimits(executor);
-  await executor
-    .delete(identitySessions)
-    .where(
-      and(
-        eq(identitySessions.userId, userId),
-        lt(
-          identitySessions.createdAt,
-          sql`now() - make_interval(mins => ${limits.absoluteMinutes})`,
-        ),
-      ),
-    );
-  const token = randomBytes(TOKEN_BYTES).toString('base64url');
-  const [row] = await executor
-    .insert(identitySessions)
-    .values({ tokenHash: hashToken(token), userId })
-    .returning({ id: identitySessions.id });
-  if (row === undefined)
-    throw new Error('identity_sessions insert returned no row');
-  return { sessionId: row.id, token };
-}
-
-/**
- * Ends every live session of the employee with the block's reason (KD-4): the rows stay, so a
- * request with such a cookie can answer ACCOUNT_DISABLED instead of AUTH_REQUIRED (DC-9).
- */
-export async function endSessionsByBlock(
-  executor: Executor,
-  userId: string,
-): Promise<void> {
-  await executor
-    .update(identitySessions)
-    .set({ endedReason: ENDED_BY_BLOCK })
-    .where(
-      and(
-        eq(identitySessions.userId, userId),
-        isNull(identitySessions.endedReason),
-      ),
-    );
-}
-
-/** Deletes every session of the employee (a password reset, a repair by the operator command). */
-export async function deleteSessionsOf(
-  executor: Executor,
-  userId: string,
-): Promise<void> {
-  await executor
-    .delete(identitySessions)
-    .where(eq(identitySessions.userId, userId));
-}
+/** `ended_reason` of a session ended by a block (KD-4, DC-9). */
+export const ENDED_BY_BLOCK = 'account_disabled';
 
 /**
  * Sessions as rows of `identity_sessions` (KD-2, ADR-0001): the browser holds 32 random bytes in
- * base64url, the database their SHA-256. Limits are not stored in the row: they are read from
- * `identity_settings` with the session, so a new value applies from the next request. The request
- * path's own reads and writes, on the pool.
+ * base64url, the database their SHA-256. Limits are not stored in the row: the value of the
+ * `sign_in_settings` key is read with the session and parsed by its schema on every request, so a new value
+ * applies from the next request. The request
+ * path's own reads and writes, on the pool; the queries are in `IdentitySessionsRepository`.
  */
 @Injectable()
 export class SessionStore {
-  private readonly db: Database;
+  constructor(
+    private readonly sessions: IdentitySessionsRepository,
+    private readonly settings: SettingsService,
+  ) {}
 
-  constructor(@Inject(RUNTIME_DATABASE) database: DatabaseConnection) {
-    this.db = database.db;
+  /** Opens a session of the employee and deletes his rows older than the absolute limit. */
+  async open(userId: string): Promise<OpenedSession> {
+    const { value } = await this.settings.read('sign_in_settings');
+    await this.sessions.deleteOlderThan(userId, value.absoluteMinutes);
+    const token = randomBytes(TOKEN_BYTES).toString('base64url');
+    const sessionId = await this.sessions.insert(userId, hashToken(token));
+    return { sessionId, token };
   }
 
   /** The session of the token with its employee, admin right and expiry, or undefined when there is none. */
@@ -145,25 +83,7 @@ export class SessionStore {
     token: string,
     now: Date = new Date(),
   ): Promise<FoundSession | undefined> {
-    const [row] = await this.db
-      .select({
-        sessionId: identitySessions.id,
-        createdAt: identitySessions.createdAt,
-        lastSeenAt: identitySessions.lastSeenAt,
-        endedReason: identitySessions.endedReason,
-        userId: identityUsers.id,
-        email: identityUsers.email,
-        name: identityUsers.name,
-        status: identityUsers.status,
-        isAdmin: IS_ADMIN,
-        hasPassword: sql<boolean>`${identityUsers.passwordHash} is not null`,
-        language: identityUsers.language,
-        ...sessionLimitColumns,
-      })
-      .from(identitySessions)
-      .innerJoin(identityUsers, eq(identityUsers.id, identitySessions.userId))
-      .innerJoin(identitySettings, sql`true`)
-      .where(eq(identitySessions.tokenHash, hashToken(token)));
+    const row = await this.sessions.findByTokenHash(hashToken(token));
     if (row === undefined) return undefined;
     const {
       userId,
@@ -171,23 +91,27 @@ export class SessionStore {
       name,
       status,
       isAdmin,
+      trainOwn,
+      trainAny,
       hasPassword,
       language,
-      idleMinutes,
-      absoluteMinutes,
+      signInSettings,
     } = row;
+    const limits = parseSettingsValue('sign_in_settings', signInSettings);
     return {
       sessionId: row.sessionId,
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt,
       endedReason: row.endedReason,
-      expired: isSessionExpired(row, { idleMinutes, absoluteMinutes }, now),
+      expired: isSessionExpired(row, limits, now),
       user: {
         id: userId,
         email,
         name,
         status: UserStatusSchema.parse(status),
         isAdmin,
+        trainOwn,
+        trainAny,
         hasPassword,
         language: LanguageSchema.nullable().parse(language),
       },
@@ -200,16 +124,11 @@ export class SessionStore {
     now: Date = new Date(),
   ): Promise<void> {
     if (!needsTouch(session.lastSeenAt, now)) return;
-    await this.db
-      .update(identitySessions)
-      .set({ lastSeenAt: now })
-      .where(eq(identitySessions.id, session.sessionId));
+    await this.sessions.touch(session.sessionId, now);
   }
 
   /** Sign-out: the row is deleted. */
   async end(sessionId: string): Promise<void> {
-    await this.db
-      .delete(identitySessions)
-      .where(eq(identitySessions.id, sessionId));
+    await this.sessions.delete(sessionId);
   }
 }

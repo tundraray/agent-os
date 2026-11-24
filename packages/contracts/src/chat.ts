@@ -8,15 +8,14 @@ import {
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
 } from './agents';
+import { DocumentRefSchema } from './notepad';
 import {
+  AgentContentSchema,
+  DeepAgentContentSchema,
   IdSchema,
-  RECORD_NAME_MAX_LENGTH,
   RecordKindSchema,
-  SaveOwnRefusalSchema,
   VersionSchema,
-  withContentByKind,
 } from './library';
-import { DecisionStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
 
 /**
@@ -31,8 +30,10 @@ export const HISTORY_PAGE_SIZE = 500;
 /** Page size of GET /api/agents. */
 export const AGENT_PAGE_SIZE = 20;
 
-/** Decision kind of a workflow brief (design-workflows.md, «Инструмент `start_workflow`»). */
-export const WORKFLOWS_BRIEF_CONFIRMATION = 'workflows.brief';
+/** Decision kind of a deep agent's brief (deep-agents design-agent-types.md, «`start_deep_agent`»). */
+export const AGENTS_BRIEF_CONFIRMATION = 'agents.brief';
+/** Decision kind of a record tool's card: create, edit or delete a library record (KD-3). */
+export const LIBRARY_RECORD_CONFIRMATION = 'library.record';
 
 const ChatTextSchema = z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH);
 const SeqSchema = z.number().int().nonnegative();
@@ -50,20 +51,6 @@ export const SendMessageRequestSchema = z.object({
   recordId: z.string().min(1).optional(),
 });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
-
-/**
- * Body of POST /threads/:threadId/drafts/:draftId: save the draft (optionally under another name),
- * reject it, or mark it saved through the editor as the employee's own record `recordId`.
- */
-export const DraftActionRequestSchema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.literal('save'),
-    name: z.string().trim().min(1).max(RECORD_NAME_MAX_LENGTH).optional(),
-  }),
-  z.object({ action: z.literal('reject') }),
-  z.object({ action: z.literal('saved_in_editor'), recordId: z.string().min(1) }),
-]);
-export type DraftActionRequest = z.infer<typeof DraftActionRequestSchema>;
 
 /** Query of the history routes: entries with a greater `seq`; 0 by default. */
 export const HistoryQuerySchema = z.object({
@@ -92,15 +79,21 @@ export type EventsQuery = z.infer<typeof EventsQuerySchema>;
 // Command responses
 
 /** 202 of a sent message; null for the first message of a conversation, which becomes the task. */
-export const SendMessageResponseSchema = z.object({ messageId: z.string().min(1).nullable() });
+export const SendMessageResponseSchema = z.object({
+  messageId: z.string().min(1).nullable(),
+});
 export type SendMessageResponse = z.infer<typeof SendMessageResponseSchema>;
 
 /** 200 of POST /threads/:threadId/interrupt and POST /agents/:agentId/interrupt; the request has no body. */
-export const InterruptResponseSchema = z.object({ outcome: z.enum(['interrupted', 'not_active']) });
+export const InterruptResponseSchema = z.object({
+  outcome: z.enum(['interrupted', 'not_active']),
+});
 export type InterruptResponse = z.infer<typeof InterruptResponseSchema>;
 
 /** 200 of POST /agents/:agentId/stop: the ids of the stopped agents. */
-export const StopResponseSchema = z.object({ stopped: z.array(z.string().min(1)) });
+export const StopResponseSchema = z.object({
+  stopped: z.array(z.string().min(1)),
+});
 export type StopResponse = z.infer<typeof StopResponseSchema>;
 
 /** 201 of POST /agents/:agentId/restart: the new agent. */
@@ -121,7 +114,9 @@ export const SpendResponseSchema = z.object({
 export type SpendResponse = z.infer<typeof SpendResponseSchema>;
 
 /** GET /agents/awaiting: open decision requests in all the owner's conversations. */
-export const AwaitingCountSchema = z.object({ count: z.number().int().nonnegative() });
+export const AwaitingCountSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
 export type AwaitingCount = z.infer<typeof AwaitingCountSchema>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -129,7 +124,7 @@ export type AwaitingCount = z.infer<typeof AwaitingCountSchema>;
 
 /**
  * The record a run started from, as it was at the start (design-runtime.md, «Данные для `web`»):
- * `author` is `null` for a system record, `executor` is the executor's name for a workflow step.
+ * `author` is `null` for a system record, `subagent` is the subagent's name for a run of a subagent.
  * The record's live state the web reads from GET /api/library by `recordId`.
  */
 export const RunOriginSchema = z.object({
@@ -139,7 +134,7 @@ export const RunOriginSchema = z.object({
   name: z.string().min(1),
   author: z.object({ id: IdSchema, name: z.string() }).nullable(),
   builtinKey: z.string().min(1).nullable(),
-  executor: z.string().min(1).nullable(),
+  subagent: z.string().min(1).nullable(),
 });
 export type RunOrigin = z.infer<typeof RunOriginSchema>;
 
@@ -160,7 +155,9 @@ export const AgentViewSchema = z.object({
   model: z.string().min(1),
   status: AgentStatusSchema,
   failureReason: z.string().nullable(),
-  forkedFrom: z.object({ agentId: z.string().min(1), throughSeq: SeqSchema }).nullable(),
+  forkedFrom: z
+    .object({ agentId: z.string().min(1), throughSeq: SeqSchema })
+    .nullable(),
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
 });
@@ -193,7 +190,11 @@ export type AgentListPage = z.infer<typeof AgentListPageSchema>;
 // History
 
 /** How a child agent ended, as its parent learns it. */
-const ChildEndSchema = AgentStatusSchema.extract(['completed', 'failed', 'stopped']);
+const ChildEndSchema = AgentStatusSchema.extract([
+  'completed',
+  'failed',
+  'stopped',
+]);
 
 function entry<K extends string, C extends z.ZodType>(kind: K, content: C) {
   return z.object({
@@ -211,6 +212,8 @@ function entry<K extends string, C extends z.ZodType>(kind: K, content: C) {
 const ToolDisplayShape = {
   toolTitle: z.string().min(1).optional(),
   argLabels: z.record(z.string(), z.string()).optional(),
+  /** The code of a saved script, on a call of that script. */
+  scriptCode: z.string().optional(),
 };
 
 /** A tool call of a model answer; an open call carries its state. */
@@ -238,8 +241,14 @@ export type ChipRecord = z.infer<typeof ChipRecordSchema>;
  * first message becomes the root's task.
  */
 export const HistoryEntrySchema = z.discriminatedUnion('kind', [
-  entry('task', z.object({ text: z.string(), record: ChipRecordSchema.nullable() })),
-  entry('user_message', z.object({ text: z.string(), record: ChipRecordSchema.nullable() })),
+  entry(
+    'task',
+    z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+  ),
+  entry(
+    'user_message',
+    z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+  ),
   entry('agent_message', z.object({ text: z.string(), agentId: z.string() })),
   entry(
     'child_report',
@@ -249,6 +258,7 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       status: ChildEndSchema,
       reason: z.string().nullable(),
       text: z.string().nullable(),
+      document: DocumentRefSchema.nullable(),
       toolCalls: z.number().int().nonnegative(),
       durationMs: z.number().int().nonnegative(),
     }),
@@ -271,12 +281,26 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       text: z.string().nullable(),
       /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
       output: z.string().nullable().optional(),
+      /** A `try_script` call: the tools whose calls were recorded and not sent, in call order; absent for other tools. */
+      recorded: z.array(z.string()).optional(),
       startedAt: z.iso.datetime().nullable(),
       finishedAt: z.iso.datetime().nullable(),
     }),
   ),
-  entry('notice', z.object({ text: z.string() })),
-  entry('event', z.object({ event: HistoryEventSchema, reason: z.string().nullable() })),
+  entry(
+    'notice',
+    z.object({
+      text: z.string(),
+      /** The numbers of the open tasks an agent's refused answer left (MC-15); absent for other notices. */
+      openTasks: z.array(z.number().int().positive()).optional(),
+      /** The final subagent whose completed report a deep agent's refused answer lacked (MC-15); absent for other notices. */
+      missingReport: z.string().min(1).optional(),
+    }),
+  ),
+  entry(
+    'event',
+    z.object({ event: HistoryEventSchema, reason: z.string().nullable() }),
+  ),
   entry('compaction', z.object({ summary: z.string(), throughSeq: SeqSchema })),
 ]);
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
@@ -304,9 +328,51 @@ export type PendingMessage = z.infer<typeof PendingMessageSchema>;
 
 export const ConfirmationKindSchema = z.enum([
   AGENTS_TOOL_CONFIRMATION,
-  WORKFLOWS_BRIEF_CONFIRMATION,
+  AGENTS_BRIEF_CONFIRMATION,
+  LIBRARY_RECORD_CONFIRMATION,
 ]);
 export type ConfirmationKind = z.infer<typeof ConfirmationKindSchema>;
+
+/** What a record tool's card does to the record. */
+export const LibraryRecordActionSchema = z.enum(['create', 'edit', 'delete']);
+export type LibraryRecordAction = z.infer<typeof LibraryRecordActionSchema>;
+
+/** The card of one record kind: `next` and `previous` hold the content of that kind. */
+function libraryRecordCardOf<K extends string, C extends z.ZodType>(
+  kind: K,
+  content: C,
+) {
+  const text = { name: z.string(), description: z.string(), content };
+  return z.object({
+    action: LibraryRecordActionSchema,
+    /** The record; on `create` the id `review` chose for it. */
+    recordId: IdSchema,
+    kind: z.literal(kind),
+    system: z.boolean(),
+    /** The record after the change; `null` on `delete`. */
+    next: z.object(text).nullable(),
+    /** The saved record and the version the employee saw; `null` on `create`. */
+    previous: z.object({ ...text, version: VersionSchema }).nullable(),
+  });
+}
+
+/** Content of a `library.record` card (deep-agents design-agent-types.md, KD-3). */
+export const LibraryRecordCardSchema = z.discriminatedUnion('kind', [
+  libraryRecordCardOf(RecordKindSchema.enum.agent, AgentContentSchema),
+  libraryRecordCardOf(RecordKindSchema.enum.deep_agent, DeepAgentContentSchema),
+]);
+export type LibraryRecordCard = z.infer<typeof LibraryRecordCardSchema>;
+
+/**
+ * Status of a confirmation: `open` while its question waits, `resolved` once answered, `cancelled`
+ * once a stop ended it.
+ */
+export const ConfirmationStatusSchema = z.enum([
+  'open',
+  'resolved',
+  'cancelled',
+]);
+export type ConfirmationStatus = z.infer<typeof ConfirmationStatusSchema>;
 
 /** A decision request in any status. */
 export const ConfirmationSchema = z.object({
@@ -321,9 +387,9 @@ export const ConfirmationSchema = z.object({
   server: z.string().nullable(),
   /** The arguments the model requested. */
   args: z.unknown(),
-  /** The card content: the tool's confirmation content (for a brief: `workflow` and its three fields). */
+  /** The card content: the tool's confirmation content (for a brief: the deep agent and its three fields). */
   content: z.unknown(),
-  status: DecisionStatusSchema,
+  status: ConfirmationStatusSchema,
   /** Set when `resolved`: the decision and the arguments the call ran with. */
   resolution: z.object({ approve: z.boolean(), args: z.unknown() }).nullable(),
   createdAt: z.iso.datetime(),
@@ -348,35 +414,37 @@ export type ChatStatus = z.infer<typeof ChatStatusSchema>;
 /** Next `afterSeq` to read from, or null when everything is read. */
 const NextAfterSeqSchema = SeqSchema.nullable();
 
-/** State of a record draft (design-runtime.md, State Transitions): only `pending` waits. */
-export const DraftStateSchema = z.enum([
-  'pending',
-  'saved',
-  'saved_in_editor',
-  'rejected',
-  'superseded',
+/** What the conversation last did to the record in focus (KD-6). */
+export const RecordFocusActionSchema = z.enum([
+  'read',
+  'created',
+  'changed',
+  'deleted',
+  'started',
 ]);
-export type DraftState = z.infer<typeof DraftStateSchema>;
+export type RecordFocusAction = z.infer<typeof RecordFocusActionSchema>;
+
+/** The record in focus: the conversation's last successful record action. */
+export const RecordFocusSchema = z.object({
+  recordId: IdSchema,
+  action: RecordFocusActionSchema,
+  at: z.iso.datetime(),
+});
+export type RecordFocus = z.infer<typeof RecordFocusSchema>;
 
 /**
- * A record draft of a conversation (design-runtime.md, «Данные для `web`»): `callId` is the
- * `draft_record` call its card stands at; `recordId` and `baseVersion` are the edited record or
- * `null` for a new one; `refusal` is the reason of the last refused `saveOwn`.
+ * The training an agent of a training tree belongs to (self-learning design-training.md, «Беседа обучения и
+ * беседы повторов»): the trained agent, the training — the id of the tree's root — and whether this is the
+ * trainer's own conversation rather than a replay. `null` outside a training tree.
  */
-export const DraftViewSchema = withContentByKind({
-  draftId: z.string().min(1),
-  callId: z.string().min(1),
-  name: z.string(),
-  description: z.string(),
-  recordId: IdSchema.nullable(),
-  baseVersion: VersionSchema.nullable(),
-  state: DraftStateSchema,
-  refusal: SaveOwnRefusalSchema.nullable(),
-  savedRecordId: IdSchema.nullable(),
-  createdAt: z.iso.datetime(),
-  resolvedAt: z.iso.datetime().nullable(),
-});
-export type DraftView = z.infer<typeof DraftViewSchema>;
+export const ConversationTrainingSchema = z
+  .object({
+    agentId: IdSchema,
+    trainingId: IdSchema,
+    isRoot: z.boolean(),
+  })
+  .nullable();
+export type ConversationTraining = z.infer<typeof ConversationTrainingSchema>;
 
 /** GET /threads/:threadId/history. */
 export const ConversationViewSchema = z.object({
@@ -395,8 +463,9 @@ export const ConversationViewSchema = z.object({
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   agents: z.array(AgentNodeSchema),
-  /** Every draft of the conversation. */
-  drafts: z.array(DraftViewSchema),
+  /** `null` while the chat has not touched a record. */
+  focus: RecordFocusSchema.nullable(),
+  training: ConversationTrainingSchema,
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 
@@ -413,6 +482,7 @@ export const AgentPageViewSchema = z.object({
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   children: z.array(AgentNodeSchema),
+  training: ConversationTrainingSchema,
 });
 export type AgentPageView = z.infer<typeof AgentPageViewSchema>;
 
@@ -424,28 +494,100 @@ export const InheritedHistorySchema = z.object({
 export type InheritedHistory = z.infer<typeof InheritedHistorySchema>;
 
 /**
- * GET /agents/:agentId/run (design-runtime.md, «Данные для `web`»): the workflow record the run
- * started from, its brief, the coordinator and the team of its snapshot. `steps` are the
- * coordinator's children in creation order, each with `origin.executor`; executors of `team` outside
- * `steps` were not called. `limitRefusals` — every `run_limit` refusal.
+ * GET /agents/:agentId/run (deep-agents design-agent-types.md, «Маршруты»): the deep agent record the
+ * run started from, its brief, the deep agent and the team of its snapshot. `steps` are the deep agent's
+ * children in creation order, each with `origin.subagent`; subagents of `team` outside `steps` were not
+ * called. `limitRefusals` — every `run_limit` refusal.
  */
-export const WorkflowRunViewSchema = z.object({
+export const DeepAgentRunViewSchema = z.object({
   origin: RunOriginSchema,
-  brief: z.object({ question: z.string().min(1), boundaries: z.string(), result: z.string() }),
-  coordinator: AgentViewSchema,
+  brief: z.object({
+    question: z.string().min(1),
+    boundaries: z.string(),
+    result: z.string(),
+  }),
+  deepAgent: AgentViewSchema,
   team: z.array(
     z.object({
       name: z.string().min(1),
-      role: z.string().min(1),
       maxRuns: z.number().int().positive(),
-      /** The executor whose report becomes the answer. */
+      /** The subagent whose report becomes the answer. */
       final: z.boolean(),
     }),
   ),
   steps: z.array(AgentViewSchema),
-  limitRefusals: z.array(z.object({ executor: z.string().min(1), at: z.iso.datetime() })),
+  limitRefusals: z.array(
+    z.object({ subagent: z.string().min(1), at: z.iso.datetime() }),
+  ),
 });
-export type WorkflowRunView = z.infer<typeof WorkflowRunViewSchema>;
+export type DeepAgentRunView = z.infer<typeof DeepAgentRunViewSchema>;
+
+/**
+ * Status of a task of a session's task list (deep-agents design-task-list.md, Data Model); not the runtime's
+ * `TaskStatusSchema`. A deleted task leaves the list, so `deleted` is no stored status.
+ */
+export const SessionTaskStatusSchema = z.enum([
+  'pending',
+  'in_progress',
+  'completed',
+]);
+export type SessionTaskStatus = z.infer<typeof SessionTaskStatusSchema>;
+
+/**
+ * One task of a session's list (Contract «`GET /api/agents/:agentId/tasks`»): its number in the session counts
+ * from 1 and is never reused; `blockedBy` — the numbers of the tasks that must be completed first.
+ */
+export const SessionTaskViewSchema = z.object({
+  id: z.number().int().positive(),
+  subject: z.string().min(1),
+  description: z.string().min(1),
+  activeForm: z.string().min(1).nullable(),
+  status: SessionTaskStatusSchema,
+  owner: z.string().min(1).nullable(),
+  blockedBy: z.array(z.number().int().positive()),
+});
+export type SessionTaskView = z.infer<typeof SessionTaskViewSchema>;
+
+/**
+ * Status of a delegation (deep-agents design-task.md, «Запись и маршрут»), not of a task of the list: `running` —
+ * the subagent's runtime task is queued, running or waiting; `cancelled` — it was stopped.
+ */
+export const DelegationStatusSchema = z.enum([
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type DelegationStatus = z.infer<typeof DelegationStatusSchema>;
+
+/** Limits of a delegation row: the item and the answer are cut, the full ones stay in the subagent's history. */
+export const DELEGATION_ITEM_MAX_CHARS = 200;
+export const DELEGATION_ANSWER_MAX_CHARS = 300;
+
+/**
+ * One subagent of the agent's `task` calls: the subagent's session, its assignment (the description or the item), the
+ * task of the list the `task` call named, and how it ended.
+ */
+export const DelegationViewSchema = z.object({
+  agentId: z.string().min(1),
+  subagent: z.string().min(1),
+  item: z.string().max(DELEGATION_ITEM_MAX_CHARS),
+  taskId: z.number().int().positive().nullable(),
+  status: DelegationStatusSchema,
+  answer: z.string().max(DELEGATION_ANSWER_MAX_CHARS).nullable(),
+  reason: z.string().nullable(),
+});
+export type DelegationView = z.infer<typeof DelegationViewSchema>;
+
+/**
+ * GET /agents/:agentId/tasks: the session's tasks by number, empty for a session without a list, and the subagents
+ * of its `task` calls in call order, empty for an agent that delegated nothing.
+ */
+export const AgentTasksViewSchema = z.object({
+  tasks: z.array(SessionTaskViewSchema),
+  delegations: z.array(DelegationViewSchema),
+});
+export type AgentTasksView = z.infer<typeof AgentTasksViewSchema>;
 
 // ---------------------------------------------------------------------------------------------------
 // Live stream
@@ -453,7 +595,10 @@ export type WorkflowRunView = z.infer<typeof WorkflowRunViewSchema>;
 /** An event of GET /events: `type` is the SSE event name, `data` its JSON body. */
 export const LiveEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), data: z.object({}) }),
-  z.object({ type: z.literal('tree'), data: z.object({ threadId: z.string().min(1) }) }),
+  z.object({
+    type: z.literal('tree'),
+    data: z.object({ threadId: z.string().min(1) }),
+  }),
   z.object({
     type: z.literal('delta'),
     data: z.object({

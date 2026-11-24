@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createLogger,
+  errorText,
   sentrySink,
   withoutQueryParamsText,
   type LogLevel,
@@ -23,7 +24,11 @@ function sentryDouble() {
 function setup(minLevel: LogLevel = 'debug', secrets: string[] = [SECRET]) {
   const memory = memorySink();
   const sentry = sentryDouble();
-  const logger = createLogger({ sinks: [memory, sentrySink(sentry)], secrets, minLevel });
+  const logger = createLogger({
+    sinks: [memory, sentrySink(sentry)],
+    secrets,
+    minLevel,
+  });
   return { memory, sentry, logger };
 }
 
@@ -36,13 +41,31 @@ describe('logger redacts, expands and truncates before both sinks', () => {
   it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
     [
       'field by name in any case',
-      { Password: 'p1', TOKEN: 't1', apiKey: 'k1', Authorization: 'Bearer x', user: 'ann' },
-      { Password: '[redacted]', TOKEN: '[redacted]', apiKey: '[redacted]', Authorization: '[redacted]', user: 'ann' },
+      {
+        Password: 'p1',
+        TOKEN: 't1',
+        apiKey: 'k1',
+        Authorization: 'Bearer x',
+        user: 'ann',
+      },
+      {
+        Password: '[redacted]',
+        TOKEN: '[redacted]',
+        apiKey: '[redacted]',
+        Authorization: '[redacted]',
+        user: 'ann',
+      },
     ],
     [
       'field by name in a nested object and array',
-      { request: { headers: { cookie: 'c=1', accept: 'json' } }, list: [{ dsn: 'https://d' }, 'plain'] },
-      { request: { headers: { cookie: '[redacted]', accept: 'json' } }, list: [{ dsn: '[redacted]' }, 'plain'] },
+      {
+        request: { headers: { cookie: 'c=1', accept: 'json' } },
+        list: [{ dsn: 'https://d' }, 'plain'],
+      },
+      {
+        request: { headers: { cookie: '[redacted]', accept: 'json' } },
+        list: [{ dsn: '[redacted]' }, 'plain'],
+      },
     ],
     [
       'secret value inside a field string',
@@ -65,8 +88,15 @@ describe('logger redacts, expands and truncates before both sinks', () => {
 
     logger.warn(`retry with ${SECRET}`);
 
-    expect(only(memory)).toMatchObject({ level: 'warn', message: 'retry with [redacted]', fields: {} });
-    expect(sentry.logger.warn).toHaveBeenCalledWith('retry with [redacted]', {});
+    expect(only(memory)).toMatchObject({
+      level: 'warn',
+      message: 'retry with [redacted]',
+      fields: {},
+    });
+    expect(sentry.logger.warn).toHaveBeenCalledWith(
+      'retry with [redacted]',
+      {},
+    );
   });
 
   it('ignores empty secrets', () => {
@@ -74,13 +104,19 @@ describe('logger redacts, expands and truncates before both sinks', () => {
 
     logger.info('plain text', { note: 'kept as is' });
 
-    expect(only(memory)).toMatchObject({ message: 'plain text', fields: { note: 'kept as is' } });
+    expect(only(memory)).toMatchObject({
+      message: 'plain text',
+      fields: { note: 'kept as is' },
+    });
   });
 
   it('redacts by value only secrets of 8 or more characters; a shorter one still by field name', () => {
     const { memory, logger } = setup('debug', ['agent', 'pass-123']);
 
-    logger.info('agents started with pass-123', { table: 'agent_sessions', password: 'agent' });
+    logger.info('agents started with pass-123', {
+      table: 'agent_sessions',
+      password: 'agent',
+    });
 
     expect(only(memory)).toMatchObject({
       message: 'agents started with [redacted]',
@@ -103,23 +139,36 @@ describe('logger redacts, expands and truncates before both sinks', () => {
         name: 'Error',
         message: 'request failed',
         stack: 'Error: request failed\n    at outer',
-        cause: { name: 'TypeError', message: 'bad key [redacted]', stack: 'TypeError: bad key\n    at inner' },
+        cause: {
+          name: 'TypeError',
+          message: 'bad key [redacted]',
+          stack: 'TypeError: bad key\n    at inner',
+        },
       },
     };
     expect(only(memory).fields).toEqual(expectedFields);
     expect(sentry.logger.error).toHaveBeenCalledTimes(1);
-    expect(sentry.logger.error).toHaveBeenCalledWith('step failed', expectedFields);
+    expect(sentry.logger.error).toHaveBeenCalledWith(
+      'step failed',
+      expectedFields,
+    );
     expect(sentry.captureException).toHaveBeenCalledTimes(1);
     const [captured, context] = sentry.captureException.mock.calls[0]!;
     expect(captured).toBeInstanceOf(Error);
-    expect(captured).toMatchObject({ name: 'Error', message: 'request failed', stack: 'Error: request failed\n    at outer' });
+    expect(captured).toMatchObject({
+      name: 'Error',
+      message: 'request failed',
+      stack: 'Error: request failed\n    at outer',
+    });
     expect(context).toEqual({ extra: expectedFields });
   });
 
   it('builds the Sentry exception from the redacted error', () => {
     const { sentry, logger } = setup();
 
-    logger.error('auth failed', { error: new Error(`token ${SECRET} rejected`) });
+    logger.error('auth failed', {
+      error: new Error(`token ${SECRET} rejected`),
+    });
 
     const [captured] = sentry.captureException.mock.calls[0]!;
     expect((captured as Error).message).toBe('token [redacted] rejected');
@@ -144,7 +193,11 @@ params: ${params.join(',')}`,
     const param = 'client-secret-value-42';
     const query = 'update "identity_providers" set "options" = $1';
 
-    const failure = new QueryError(query, [param, 7], new Error('deadlock detected'));
+    const failure = new QueryError(
+      query,
+      [param, 7],
+      new Error('deadlock detected'),
+    );
 
     logger.error('provider update failed', { error: failure });
 
@@ -155,11 +208,17 @@ params: ${params.join(',')}`,
       message: `Failed query: ${query}`,
       cause: { message: 'deadlock detected' },
     });
-    expect((fields.error as { stack: string }).stack).toContain('logger.spec.ts');
+    expect((fields.error as { stack: string }).stack).toContain(
+      'logger.spec.ts',
+    );
     const [captured] = sentry.captureException.mock.calls[0]!;
     expect(String((captured as Error).stack)).not.toContain(param);
     // The message as text: what Sentry's `beforeSend` cuts for an error the SDK captured by itself.
-    expect(withoutQueryParamsText(failure.message)).toBe(`Failed query: ${query}`);
+    expect(withoutQueryParamsText(failure.message)).toBe(
+      `Failed query: ${query}`,
+    );
+    // The text kept on a task or shown to the model: the database's message only (A1).
+    expect(errorText(failure)).toBe('deadlock detected');
   });
 
   it('expands a non-Error thrown value into a message', () => {
@@ -176,16 +235,24 @@ params: ${params.join(',')}`,
 
     logger.info('big', { body: long });
 
-    expect(only(memory).fields).toEqual({ body: `${'a'.repeat(16 * 1024)}…[truncated 10 bytes]` });
+    expect(only(memory).fields).toEqual({
+      body: `${'a'.repeat(16 * 1024)}…[truncated 10 bytes]`,
+    });
   });
 
   it('child adds its fields to every record', () => {
     const { memory, logger } = setup();
-    const child: Logger = logger.child({ taskId: 't-1' }).child({ stepId: 's-2' });
+    const child: Logger = logger
+      .child({ taskId: 't-1' })
+      .child({ stepId: 's-2' });
 
     child.info('step started', { durationMs: 5 });
 
-    expect(only(memory).fields).toEqual({ taskId: 't-1', stepId: 's-2', durationMs: 5 });
+    expect(only(memory).fields).toEqual({
+      taskId: 't-1',
+      stepId: 's-2',
+      durationMs: 5,
+    });
   });
 
   it('minLevel drops records below it', () => {

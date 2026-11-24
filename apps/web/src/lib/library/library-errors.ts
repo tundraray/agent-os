@@ -4,16 +4,17 @@ import {
   LibraryRejectReasonSchema,
   ModelUnavailableReasonSchema,
   RecordNameTakenReasonSchema,
+  TrainingErrorCode,
   type RecordKind,
   type RecordSummary,
-  type SaveOwnRefusal,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { failedText } from '@/components/i18n/server-text';
+import { failedText } from '@/i18n/server-text';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { formatModel, type ErrorsTranslator } from '@/lib/agents/format';
+import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
+import type { ErrorsTranslator } from '@/i18n/catalog';
 
 /**
  * Texts of the library's errors and refusals and where each one shows (design-web.md, «Ошибки и их
@@ -21,45 +22,36 @@ import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
  * function takes the `errors` messages, and a text that quotes the server is a node with its language mark.
  */
 
-/** «агент» / «workflow», or with a capital letter at the start of a sentence. */
-export function kindWord(kind: RecordKind, capital = false): string {
-  const word = kind === 'agent' ? 'агент' : 'workflow';
-  return capital ? word.charAt(0).toUpperCase() + word.slice(1) : word;
-}
-
-/** MC-13 (and the MC-4 notice): systems that did not come in, because the author has no access to them. */
-export const DROPPED_SERVERS = 'Не вошли системы, к которым у вас нет доступа:';
-
-export const droppedServersText = (servers: readonly string[]): string => `${DROPPED_SERVERS} ${servers.join(', ')}`;
-
 /** MC-14: why «Поделиться» is unavailable on the owner's record; `null` — it is available. */
-export function shareBlockedReason(record: Pick<RecordSummary, 'ban'>, noRoles: boolean): string | null {
-  if (record.ban !== null) return 'Доступ закрыл администратор — делиться нельзя';
-  return noRoles ? 'У вас нет ролей — поделиться не с кем' : null;
-}
-
-/** The reason of a failed request in the server's words, or «нет связи с сервером» — the {причина} of MC-13. */
-export function failureReason(cause: unknown): string {
-  if (isApiRequestError(cause) && cause.kind === 'network') return 'нет связи с сервером';
-  return cause instanceof Error ? cause.message : String(cause);
+export function shareBlockedReason(
+  t: ErrorsTranslator,
+  record: Pick<RecordSummary, 'ban'>,
+  noRoles: boolean,
+): string | null {
+  if (record.ban !== null) return t('library.shareBlocked.banned');
+  return noRoles ? t('library.shareBlocked.noRoles') : null;
 }
 
 /**
- * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a workflow
- * the viewer sees but whose knowledge is closed to them (AC-11.3). Any other refusal stays an error.
+ * The memory and training result screens show «Не найдено» only for this: a 404, or a 403 `MEMORY_FORBIDDEN`
+ * or `TRAINING_FORBIDDEN` of a deep agent the viewer sees but whose memory or training is closed to them
+ * (UXRD ME-04). Any other refusal stays an error.
  */
-export const isKnowledgeHidden = (error: unknown): boolean =>
+export const isHiddenFromViewer = (error: unknown): boolean =>
   isNotFound(error) ||
   (isApiRequestError(error) &&
     error.kind === 'http' &&
     error.status === 403 &&
-    error.code === LibraryErrorCode.KNOWLEDGE_FORBIDDEN);
+    (error.code === LibraryErrorCode.MEMORY_FORBIDDEN ||
+      error.code === TrainingErrorCode.TRAINING_FORBIDDEN));
 
 /** MC-4. */
-export const copyFailed = (t: ErrorsTranslator, cause: unknown): ReactNode => failedText(t, 'copy', cause);
+export const copyFailed = (t: ErrorsTranslator, cause: unknown): ReactNode =>
+  failedText(t, 'copy', cause);
 
 /** MC-5. */
-export const deleteFailed = (t: ErrorsTranslator, cause: unknown): ReactNode => failedText(t, 'delete', cause);
+export const deleteFailed = (t: ErrorsTranslator, cause: unknown): ReactNode =>
+  failedText(t, 'delete', cause);
 
 /** Where the answer came from: the same code reads differently in different places. */
 export type LibraryErrorWhere =
@@ -69,7 +61,13 @@ export type LibraryErrorWhere =
   | 'panel'
   | 'message'
   | 'first_message'
-  | 'restart';
+  | 'restart'
+  /** The script form on the deep agent's card (self-learning MC-15). */
+  | 'script'
+  /** Under «Обучить» and «Обучить заново» (self-learning MC-9). */
+  | 'train'
+  /** In the activation dialog (self-learning MC-12). */
+  | 'activate';
 
 /** What the caller knows about the request that the error alone does not say. */
 export type LibraryErrorContext = {
@@ -82,8 +80,6 @@ export type LibraryErrorContext = {
   model?: string;
   /** A server on the form the author has no access to (422 `server_not_allowed`). */
   server?: string;
-  /** The executor whose card a server error belongs to (a model error stays at the «Модель» field). */
-  executor?: string;
   /** The role the owner is no longer in (422 `role_not_member`). */
   role?: string;
   /** A refused restart: the record is the viewer's own. */
@@ -102,14 +98,17 @@ export type LibraryErrorPlace =
   /** MC-10 above the save panel. */
   | { at: 'conflict' }
   | { at: 'field'; field: LibraryErrorField }
-  | { at: 'executor'; executor: string }
   | { at: 'form' }
   | { at: 'notice' }
   /** The notice under the message field. */
   | { at: 'composer' };
 
 /** `open` — the notice carries «Открыть» to the record (MC-16). */
-export type LibraryErrorText = { place: LibraryErrorPlace; text: ReactNode; open: boolean };
+export type LibraryErrorText = {
+  place: LibraryErrorPlace;
+  text: ReactNode;
+  open: boolean;
+};
 
 const START_REFUSED = 'START_REFUSED';
 
@@ -119,6 +118,9 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
     case 'editor':
     case 'share':
     case 'panel':
+    case 'script':
+    case 'train':
+    case 'activate':
       return { at: 'form' };
     case 'record_page':
     case 'restart':
@@ -129,61 +131,112 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
   }
 }
 
-const at = (place: LibraryErrorPlace, text: ReactNode, open = false): LibraryErrorText => ({ place, text, open });
+const at = (
+  place: LibraryErrorPlace,
+  text: ReactNode,
+  open = false,
+): LibraryErrorText => ({ place, text, open });
 
-/** The «Системы» field of a server error, or the executor's card when the caller names it. */
-const serversPlace = (context: LibraryErrorContext): LibraryErrorPlace =>
-  context.executor === undefined ? { at: 'field', field: 'servers' } : { at: 'executor', executor: context.executor };
+/** The «Системы» field of a server error. */
+const SERVERS_PLACE: LibraryErrorPlace = { at: 'field', field: 'servers' };
 
 /** The refused model of a 409 `START_REFUSED` body, as the core reads it. */
-const refusedModel = (error: ApiRequestError): string | null => error.model ?? null;
+const refusedModel = (error: ApiRequestError): string | null =>
+  error.model ?? null;
 
 /**
  * model-providers MC-12 of a refused start: «{Причина} — {вид} не запустился» for a start refused for the
  * model's provider or for no default chat model; `null` — another reason. `model` is null only on
  * `model_not_configured`, or when the refusal names no model.
  */
-function providerNotStarted(t: ErrorsTranslator, reason: string | null | undefined, model: string | null, kind: RecordKind): string | null {
-  if (reason === 'model_not_configured') return t('library.providerNotStarted.model_not_configured', { kind });
+function providerNotStarted(
+  t: ErrorsTranslator,
+  reason: string | null | undefined,
+  model: string | null,
+  kind: RecordKind,
+): string | null {
+  if (reason === 'model_not_configured')
+    return t('library.providerNotStarted.model_not_configured', { kind });
   const provider = ModelUnavailableReasonSchema.safeParse(reason);
   if (!provider.success) return null;
   return model === null
     ? t(`library.providerNotStarted.unnamed.${provider.data}`, { kind })
-    : t(`library.providerNotStarted.named.${provider.data}`, { kind, model: formatModel(model) });
+    : t(`library.providerNotStarted.named.${provider.data}`, {
+        kind,
+        model: formatModel(model),
+      });
 }
 
 /** MC-16 of a start refused for the model, with what the viewer can do: change its model, or copy it. */
-function modelNotStarted(t: ErrorsTranslator, model: string | null, kind: RecordKind, own: boolean): string {
-  if (model === null) return t(own ? 'library.notStarted.ownUnnamed' : 'library.notStarted.otherUnnamed', { kind });
-  return t(own ? 'library.notStarted.own' : 'library.notStarted.other', { kind, model: formatModel(model) });
+function modelNotStarted(
+  t: ErrorsTranslator,
+  model: string | null,
+  kind: RecordKind,
+  own: boolean,
+): string {
+  if (model === null)
+    return t(
+      own ? 'library.notStarted.ownUnnamed' : 'library.notStarted.otherUnnamed',
+      { kind },
+    );
+  return t(own ? 'library.notStarted.own' : 'library.notStarted.other', {
+    kind,
+    model: formatModel(model),
+  });
 }
 
 /** The first message of a new conversation, refused at start: model-providers MC-11, or MC-16 with «чат». */
-function firstMessageRefused(t: ErrorsTranslator, error: ApiRequestError): LibraryErrorText | null {
+function firstMessageRefused(
+  t: ErrorsTranslator,
+  error: ApiRequestError,
+): LibraryErrorText | null {
   const model = refusedModel(error);
-  if (error.reason === 'model_not_configured') return at({ at: 'composer' }, t('library.chatModelNotConfigured'));
+  if (error.reason === 'model_not_configured')
+    return at({ at: 'composer' }, t('library.chatModelNotConfigured'));
   if (ModelUnavailableReasonSchema.safeParse(error.reason).success) {
-    return at({ at: 'composer' }, replyFailureText(t, error.reason ?? null, model));
+    return at(
+      { at: 'composer' },
+      replyFailureText(t, error.reason ?? null, model),
+    );
   }
-  const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
-  return byModel && model !== null ? at({ at: 'composer' }, t('library.chatNotStarted', { model: formatModel(model) })) : null;
+  const byModel =
+    error.reason === 'model_not_allowed' ||
+    error.reason === 'model_not_connected';
+  return byModel && model !== null
+    ? at(
+        { at: 'composer' },
+        t('library.chatNotStarted', { model: formatModel(model) }),
+      )
+    : null;
 }
 
 /** 409 `START_REFUSED`: MC-16 (or MC-12 for a provider reason) at «Запустить с нуля» and on a message. */
-function startRefused(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText | null {
+function startRefused(
+  t: ErrorsTranslator,
+  error: ApiRequestError,
+  context: LibraryErrorContext,
+): LibraryErrorText | null {
   if (context.where === 'first_message') return firstMessageRefused(t, error);
   const place = placeOf(context.where);
   const kind = context.kind ?? 'agent';
   const model = refusedModel(error);
-  if (error.reason === 'record_unavailable') return at(place, t('library.unavailable', { kind }));
+  if (error.reason === 'record_unavailable')
+    return at(place, t('library.unavailable', { kind }));
   const byProvider = providerNotStarted(t, error.reason, model, kind);
   if (byProvider !== null) return at(place, byProvider, true);
-  const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
-  if (!byModel || model === null) return at(place, failedText(t, 'save', error));
+  const byModel =
+    error.reason === 'model_not_allowed' ||
+    error.reason === 'model_not_connected';
+  if (!byModel || model === null)
+    return at(place, failedText(t, 'save', error));
   return at(place, modelNotStarted(t, model, kind, context.own === true), true);
 }
 
-function rejected(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
+function rejected(
+  t: ErrorsTranslator,
+  error: ApiRequestError,
+  context: LibraryErrorContext,
+): LibraryErrorText {
   const form = placeOf(context.where);
   const fallback = failedText(t, 'save', error);
   const reason = LibraryRejectReasonSchema.safeParse(error.reason);
@@ -191,20 +244,29 @@ function rejected(t: ErrorsTranslator, error: ApiRequestError, context: LibraryE
   switch (reason.data) {
     case 'server_not_allowed':
       return at(
-        serversPlace(context),
-        context.server === undefined ? fallback : t('library.serverNotAllowed', { server: context.server }),
+        SERVERS_PLACE,
+        context.server === undefined
+          ? fallback
+          : t('library.serverNotAllowed', { server: context.server }),
       );
     case 'all_servers_not_allowed':
-      return at(serversPlace(context), fallback);
+      return at(SERVERS_PLACE, fallback);
     case 'model_not_allowed':
       return at(
         { at: 'field', field: 'model' },
-        context.model === undefined ? fallback : t('library.modelNotAllowed', { model: formatModel(context.model) }),
+        context.model === undefined
+          ? fallback
+          : t('library.modelNotAllowed', { model: formatModel(context.model) }),
       );
     case 'agent_not_visible':
       return at({ at: 'field', field: 'agents' }, fallback);
     case 'role_not_member':
-      return at(form, context.role === undefined ? fallback : t('library.roleNotMember', { role: context.role }));
+      return at(
+        form,
+        context.role === undefined
+          ? fallback
+          : t('library.roleNotMember', { role: context.role }),
+      );
     case 'sharing_banned':
       return at(form, t('library.sharingBanned'));
     case 'audience_fixed':
@@ -214,23 +276,43 @@ function rejected(t: ErrorsTranslator, error: ApiRequestError, context: LibraryE
   }
 }
 
-function nameTaken(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
+function nameTaken(
+  t: ErrorsTranslator,
+  error: ApiRequestError,
+  context: LibraryErrorContext,
+): LibraryErrorText {
   const place: LibraryErrorPlace = { at: 'field', field: 'name' };
   const reason = RecordNameTakenReasonSchema.safeParse(error.reason);
-  if (reason.success && reason.data === 'system') return at(place, t('library.systemName'));
-  if (reason.success && context.kind !== undefined && context.name !== undefined) {
-    return at(place, t('library.nameTaken', { kind: context.kind, name: context.name }));
+  if (reason.success && reason.data === 'system')
+    return at(place, t('library.systemName'));
+  if (
+    reason.success &&
+    context.kind !== undefined &&
+    context.name !== undefined
+  ) {
+    return at(
+      place,
+      t('library.nameTaken', { kind: context.kind, name: context.name }),
+    );
   }
   return at(place, failedText(t, 'save', error));
 }
 
-function conflict(t: ErrorsTranslator, context: LibraryErrorContext): LibraryErrorText {
+function conflict(
+  t: ErrorsTranslator,
+  context: LibraryErrorContext,
+): LibraryErrorText {
+  if (context.where === 'script')
+    return at({ at: 'conflict' }, t('library.conflict.script'));
   const fields = context.changedFields ?? [];
   const admin = context.admin === true;
   const text =
     fields.length === 0
       ? t(admin ? 'library.conflict.admin' : 'library.conflict.own')
-      : t(admin ? 'library.conflict.adminFields' : 'library.conflict.ownFields', { fields: fields.join(', ') });
+      : t(
+          admin ? 'library.conflict.adminFields' : 'library.conflict.ownFields',
+          { fields: fields.join(', ') },
+        );
   return at({ at: 'conflict' }, text);
 }
 
@@ -242,19 +324,49 @@ function conflict(t: ErrorsTranslator, context: LibraryErrorContext): LibraryErr
 export function describeLibraryError(
   t: ErrorsTranslator,
   error: unknown,
-  context: LibraryErrorContext & { where: Exclude<LibraryErrorWhere, 'message' | 'first_message'> },
+  context: LibraryErrorContext & {
+    where: Exclude<LibraryErrorWhere, 'message' | 'first_message'>;
+  },
 ): LibraryErrorText;
-export function describeLibraryError(t: ErrorsTranslator, error: unknown, context: LibraryErrorContext): LibraryErrorText | null;
-export function describeLibraryError(t: ErrorsTranslator, error: unknown, context: LibraryErrorContext): LibraryErrorText | null {
-  const inMessage = context.where === 'message' || context.where === 'first_message';
+export function describeLibraryError(
+  t: ErrorsTranslator,
+  error: unknown,
+  context: LibraryErrorContext,
+): LibraryErrorText | null;
+export function describeLibraryError(
+  t: ErrorsTranslator,
+  error: unknown,
+  context: LibraryErrorContext,
+): LibraryErrorText | null {
+  // A training's refusals are read by code and message only: its `START_REFUSED` carries no model (MC-9, MC-12).
+  if (context.where === 'train' || context.where === 'activate') {
+    return at(
+      { at: 'form' },
+      isApiRequestError(error) &&
+        error.code === TrainingErrorCode.TRAINING_NO_PAST_TASKS
+        ? t('library.noPastTasks')
+        : failedText(t, context.where, error),
+    );
+  }
+  const inMessage =
+    context.where === 'message' || context.where === 'first_message';
   if (!isApiRequestError(error) || error.kind === 'network') {
-    return inMessage ? null : at(placeOf(context.where), failedText(t, 'save', error));
+    return inMessage
+      ? null
+      : at(placeOf(context.where), failedText(t, 'save', error));
   }
 
   switch (error.code) {
     case LibraryErrorCode.RECORD_NOT_FOUND:
-      if (context.where === 'record_page' || context.where === 'editor') return at({ at: 'screen' }, t('library.notFound'));
-      if (inMessage) return context.kind === undefined ? null : at({ at: 'composer' }, t('library.unavailable', { kind: context.kind }));
+      if (context.where === 'record_page' || context.where === 'editor')
+        return at({ at: 'screen' }, t('library.notFound'));
+      if (inMessage)
+        return context.kind === undefined
+          ? null
+          : at(
+              { at: 'composer' },
+              t('library.unavailable', { kind: context.kind }),
+            );
       break;
     case LibraryErrorCode.RECORD_VERSION_CONFLICT:
       return conflict(t, context);
@@ -265,42 +377,14 @@ export function describeLibraryError(t: ErrorsTranslator, error: unknown, contex
     case START_REFUSED:
       return startRefused(t, error, context);
   }
-  return inMessage ? null : at(placeOf(context.where), failedText(t, 'save', error));
-}
-
-/**
- * MC-8 on a draft card: why a draft's save was refused (a 200 whose draft keeps waiting with `refusal`).
- * `version_conflict` has no line here: the card shows the MC-15 stale line instead.
- */
-export function describeDraftRefusal(
-  t: ErrorsTranslator,
-  refusal: SaveOwnRefusal,
-  context: { kind: RecordKind; name: string; model?: string },
-): string | null {
-  switch (refusal) {
-    case 'version_conflict':
-      return null;
-    case 'name_taken':
-      return t('library.nameTaken', { kind: context.kind, name: context.name });
-    case 'system_name':
-      return t('library.systemName');
-    case 'model_not_allowed':
-      return context.model === undefined
-        ? t('library.draftModelNotAllowed')
-        : t('library.modelNotAllowed', { model: formatModel(context.model) });
-    case 'not_found':
-      return t('library.unavailable', { kind: context.kind });
-    case 'shared':
-      return t('library.shared', { kind: context.kind });
-    default:
-      // The UXRD has no MC-8 text for these reasons, and a 200 refusal carries no server message to quote.
-      return t('library.draftOther');
-  }
+  return inMessage
+    ? null
+    : at(placeOf(context.where), failedText(t, 'save', error));
 }
 
 /** What the tool-call block knows about the refused call. */
 export type RefusalContext = {
-  /** `start_agent`, `start_workflow` or `draft_record`. */
+  /** `start_agent` or `start_deep_agent`. */
   tool: string;
   kind: RecordKind;
   /** `refusalDetail.model` of the result, never the call's arguments. */
@@ -309,8 +393,6 @@ export type RefusalContext = {
   recordId: string | null;
   /** The record is the viewer's own. */
   own: boolean;
-  /** The record is the company's (a system record). */
-  company?: boolean;
 };
 
 export type RefusalText = {
@@ -320,8 +402,7 @@ export type RefusalText = {
 
 /**
  * The text and action of a refused library call (MC-16, MC-17; model-providers MC-12). `null` — not the library's refusal,
- * or one without a UXRD text (`read_only` on a colleague's record, `invalid_arguments` of `draft_record`):
- * the block shows the platform's general refusal text.
+ * or one without a UXRD text: the block shows the platform's general refusal text.
  */
 export function describeRefusal(
   t: ErrorsTranslator,
@@ -329,19 +410,16 @@ export function describeRefusal(
   context: RefusalContext,
 ): RefusalText | null {
   const { kind, model, recordId } = context;
-  const open = recordId === null ? null : { label: t('library.open'), recordId };
+  const open =
+    recordId === null ? null : { label: t('library.open'), recordId };
   switch (reason) {
     case 'record_unavailable':
       return { text: t('library.unavailable', { kind }), action: null };
     case 'model_not_allowed':
-      return { text: modelNotStarted(t, model, kind, context.own), action: open };
-    case 'shared':
       return {
-        text: t('library.shared', { kind }),
-        action: recordId === null ? null : { label: t('library.openInEditor'), recordId },
+        text: modelNotStarted(t, model, kind, context.own),
+        action: open,
       };
-    case 'read_only':
-      return context.company === true ? { text: t('library.companyReadOnly'), action: null } : null;
     case 'run_limit':
       return { text: t('library.runLimit'), action: null };
     case 'model_not_configured':

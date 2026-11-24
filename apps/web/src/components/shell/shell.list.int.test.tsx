@@ -19,7 +19,11 @@ import userEvent from '@testing-library/user-event';
 import type { SendMessageResponse } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { conversationWithTurns, threadList, threadSummary } from '@/test/fixtures';
+import {
+  conversationWithTurns,
+  threadList,
+  threadSummary,
+} from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
@@ -41,7 +45,7 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
   // ROI (AC-01.5 retry): 2.0 | Business Value: 7 | Frequency: 2 | Legal: false | Defect Detection: 8 (retry must call threads.reload, not no-op)
   // Behavior: GET /api/threads → 200 with body failing schema → sidebar SB-09 Error in role="alert";
   //   composer still accepts input and first send creates a new thread (POST /api/threads, then, once the stream watches it,
-//   POST /api/threads/t-new/messages);
+  //   POST /api/threads/t-new/messages);
   //   click «Повторить» → second GET /api/threads (no cursor) → 200 → list rendered
   // Fails when: the adapter passes the invalid payload through / throws into the React tree / blocks the composer;
   //   «Повторить» does not re-request page 1, requests with a cursor, or the error state persists after success
@@ -59,15 +63,26 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
     server.use(
       http.get(`${API}/api/threads`, ({ request }) => {
         listUrls.push(new URL(request.url));
-        if (listUrls.length === 1) return HttpResponse.json({ threads: [{ id: 42 }], nextCursor: 'x' });
+        if (listUrls.length === 1)
+          return HttpResponse.json({ threads: [{ id: 42 }], nextCursor: 'x' });
         return HttpResponse.json(
           threadList([
-            threadSummary({ id: 't-new', title: null, updatedAt: '2026-10-28T11:00:00.000Z' }),
-            threadSummary({ id: 'a', title: 'План релиза', updatedAt: '2026-10-28T10:00:00.000Z' }),
+            threadSummary({
+              id: 't-new',
+              title: null,
+              updatedAt: '2026-10-28T11:00:00.000Z',
+            }),
+            threadSummary({
+              id: 'a',
+              title: 'План релиза',
+              updatedAt: '2026-10-28T10:00:00.000Z',
+            }),
           ]),
         );
       }),
-      http.post(`${API}/api/threads`, () => HttpResponse.json(threadNew, { status: 201 })),
+      http.post(`${API}/api/threads`, () =>
+        HttpResponse.json(threadNew, { status: 201 }),
+      ),
       http.post(`${API}/api/threads/t-new/messages`, () => {
         accepted = true;
         const body: SendMessageResponse = { messageId: null };
@@ -76,8 +91,17 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
       http.get(`${API}/api/threads/t-new/history`, () =>
         // Before its first message the conversation does not exist: a read is 404, as on the server.
         accepted
-          ? HttpResponse.json(conversationWithTurns(threadNew, ['Привет', 'Привет!']))
-          : HttpResponse.json({ statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' }, { status: 404 }),
+          ? HttpResponse.json(
+              conversationWithTurns(threadNew, ['Привет', 'Привет!']),
+            )
+          : HttpResponse.json(
+              {
+                statusCode: 404,
+                message: 'Thread not found',
+                errorCode: 'THREAD_NOT_FOUND',
+              },
+              { status: 404 },
+            ),
       ),
       http.get(`${API}/api/threads/t-new`, () => HttpResponse.json(threadNew)),
     );
@@ -85,7 +109,10 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
     const recordPost = async ({ request }: { request: Request }) => {
       if (request.method !== 'POST') return;
       const text = await request.clone().text();
-      posts.push({ path: new URL(request.url).pathname, body: text === '' ? undefined : JSON.parse(text) });
+      posts.push({
+        path: new URL(request.url).pathname,
+        body: text === '' ? undefined : JSON.parse(text),
+      });
     };
     server.events.on('request:start', recordPost);
     onTestFinished(() => {
@@ -93,13 +120,22 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
     });
     const user = userEvent.setup();
     const { live } = renderWithRuntime({ pathname: '/', pointer: 'fine' });
-    expect(screen.getByRole('status', { name: 'Загружаем беседы…' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('status', { name: 'Загружаем беседы…' }),
+    ).toBeInTheDocument();
 
     // Act 1: the list fails, the composer sends a new chat
     await screen.findByRole('alert');
-    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Привет');
+    await user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Привет',
+    );
     await user.keyboard('{Enter}');
-    await waitFor(() => expect(live.current()?.url).toBe(`${API}/api/events?watch=thread%3At-new`));
+    await waitFor(() =>
+      expect(live.current()?.url).toBe(
+        `${API}/api/events?watch=thread%3At-new`,
+      ),
+    );
     live.emit('ready', {});
     await screen.findByText('Привет!');
 
@@ -109,10 +145,16 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
     expect(alert).toHaveTextContent('Не удалось загрузить беседы');
     const retry = within(history).getByRole('button', { name: 'Повторить' });
     expect(alert).not.toContainElement(retry);
-    expect(screen.queryByRole('status', { name: 'Загружаем беседы…' })).toBeNull();
-    for (const button of screen.getAllByRole('button', { name: 'Новый чат' })) expect(button).toBeEnabled();
+    expect(
+      screen.queryByRole('status', { name: 'Загружаем беседы…' }),
+    ).toBeNull();
+    for (const button of screen.getAllByRole('button', { name: 'Новый чат' }))
+      expect(button).toBeEnabled();
     await waitFor(() =>
-      expect(posts.map((post) => post.path)).toEqual(['/api/threads', '/api/threads/t-new/messages']),
+      expect(posts.map((post) => post.path)).toEqual([
+        '/api/threads',
+        '/api/threads/t-new/messages',
+      ]),
     );
     expect(posts[1].body).toEqual({ text: 'Привет' });
     expect(screen.getByText('Привет')).toBeInTheDocument();
@@ -120,12 +162,16 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
 
     // Act 2 (AC-01.5 retry)
     await user.click(retry);
-    const link = await within(history).findByRole('link', { name: 'План релиза' });
+    const link = await within(history).findByRole('link', {
+      name: 'План релиза',
+    });
 
     // Assert 2
     expect(listUrls).toHaveLength(2);
     expect(listUrls[1].searchParams.has('cursor')).toBe(false);
-    expect(within(history).getByRole('heading', { level: 2, name: 'Сегодня' })).toBeInTheDocument();
+    expect(
+      within(history).getByRole('heading', { level: 2, name: 'Сегодня' }),
+    ).toBeInTheDocument();
     expect(link).toHaveAttribute('href', '/chat/a');
     expect(screen.queryByText('Не удалось загрузить беседы')).toBeNull();
   });

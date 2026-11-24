@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isRenderableImageSrc, linkPolicy, type LinkPolicy } from './markdown-policy';
+import {
+  isRenderableImageSrc,
+  linkPolicy,
+  type LinkPolicy,
+} from './markdown-policy';
 
 describe('linkPolicy', () => {
   it.each<[string | undefined, LinkPolicy]>([
@@ -10,7 +14,10 @@ describe('linkPolicy', () => {
     ['', { kind: 'unsafe' }],
     [undefined, { kind: 'unsafe' }],
     ['https://example.com', { kind: 'new-tab', href: 'https://example.com' }],
-    ['http://example.com/page', { kind: 'new-tab', href: 'http://example.com/page' }],
+    [
+      'http://example.com/page',
+      { kind: 'new-tab', href: 'http://example.com/page' },
+    ],
     ['/chat/x', { kind: 'new-tab', href: '/chat/x' }],
     ['./a', { kind: 'new-tab', href: './a' }],
     ['?q', { kind: 'new-tab', href: '?q' }],

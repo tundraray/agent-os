@@ -72,7 +72,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { describe, expect, it, vi } from 'vitest';
-import { expectNowhere, trackRequests, type TrackedRequests } from '@/test/admin-support';
+import {
+  expectNowhere,
+  trackRequests,
+  type TrackedRequests,
+} from '@/test/admin-support';
 import {
   agentContent,
   catalogModel,
@@ -91,7 +95,10 @@ import { createTestLiveSource } from '@/test/live-source';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
-vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
+vi.mock(
+  '@/lib/logger',
+  async () => (await import('@/test/admin-support')).loggerModule,
+);
 
 const API = 'http://api.test';
 // Intl separates a Russian amount and its currency sign with U+00A0.
@@ -111,42 +118,85 @@ type Sent = { method: string; path: string; body: unknown };
 const changesSince = ({ requests }: TrackedRequests, from: number): Sent[] =>
   requests
     .slice(from)
-    .filter((request) => request.path.startsWith('/api/admin/') && request.method !== 'GET')
+    .filter(
+      (request) =>
+        request.path.startsWith('/api/admin/') && request.method !== 'GET',
+    )
     .map(({ method, path, body }) => ({ method, path, body }));
 
 /** KD-1: the three reads of «Модели», sorted; after each change the page makes each of them exactly once. */
-const SECTION_READS = ['/api/admin/model-defaults', '/api/admin/model-providers', '/api/admin/models'];
+const SECTION_READS = [
+  '/api/admin/model-defaults',
+  '/api/admin/model-providers',
+  '/api/admin/models',
+];
 
 /** The reads of the three resources of «Модели» since request number `from`, sorted. */
-const sectionReadsSince = ({ requests }: TrackedRequests, from: number): string[] =>
+const sectionReadsSince = (
+  { requests }: TrackedRequests,
+  from: number,
+): string[] =>
   requests
     .slice(from)
-    .filter((request) => request.method === 'GET' && SECTION_READS.includes(request.path))
+    .filter(
+      (request) =>
+        request.method === 'GET' && SECTION_READS.includes(request.path),
+    )
     .map((request) => request.path)
     .sort();
 
 /** Since `from` the page sent exactly `sent` (method, path and body literally), then read each of the three resources once. */
-async function expectSentThenReread(tracked: TrackedRequests, from: number, sent: Sent[]): Promise<void> {
+async function expectSentThenReread(
+  tracked: TrackedRequests,
+  from: number,
+  sent: Sent[],
+): Promise<void> {
   await waitFor(() => expect(changesSince(tracked, from)).toEqual(sent));
-  await waitFor(() => expect(sectionReadsSince(tracked, from)).toEqual(SECTION_READS));
+  await waitFor(() =>
+    expect(sectionReadsSince(tracked, from)).toEqual(SECTION_READS),
+  );
 }
 
 /** The property names of a sent JSON body, sorted: «no `apiKey`» is the absence of the property, not an empty or null value (KD-4). */
 function bodyKeys(sent: Sent | undefined): string[] {
   const body = sent?.body;
-  return typeof body === 'object' && body !== null ? Object.keys(body).sort() : [];
+  return typeof body === 'object' && body !== null
+    ? Object.keys(body).sort()
+    : [];
 }
 
-const apiError = (status: number, errorCode: string, message: string, extra: Record<string, unknown> = {}): Response =>
-  HttpResponse.json({ statusCode: status, message, errorCode, ...extra }, { status });
+const apiError = (
+  status: number,
+  errorCode: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+): Response =>
+  HttpResponse.json(
+    { statusCode: status, message, errorCode, ...extra },
+    { status },
+  );
 
 /** A contract schema, as far as the fake backend uses it. */
-type BodySchema<Body> = { safeParse: (value: unknown) => { success: true; data: Body } | { success: false } };
+type BodySchema<Body> = {
+  safeParse: (
+    value: unknown,
+  ) => { success: true; data: Body } | { success: false };
+};
 
 /** A change's body read with the contract's own schema: another shape is answered `400`, so the row that sent it fails. */
-async function withBody<Body>(request: Request, schema: BodySchema<Body>, answer: (body: Body) => Response): Promise<Response> {
+async function withBody<Body>(
+  request: Request,
+  schema: BodySchema<Body>,
+  answer: (body: Body) => Response,
+): Promise<Response> {
   const body = schema.safeParse(await request.json());
-  return body.success ? answer(body.data) : apiError(400, 'VALIDATION_FAILED', 'Request body does not match the contract');
+  return body.success
+    ? answer(body.data)
+    : apiError(
+        400,
+        'VALIDATION_FAILED',
+        'Request body does not match the contract',
+      );
 }
 
 const DEFAULT_URL: Readonly<Record<ModelProviderKind, string>> = {
@@ -160,14 +210,23 @@ const DEFAULT_URL: Readonly<Record<ModelProviderKind, string>> = {
  * the store and every read returns it, so what a row shows after a change can only come from the new read. A key is kept
  * only as «set» with its last four characters, as `core` keeps it. No DELETE handler: a case that expects one adds it.
  */
-function modelsBackend(providers: ModelProviderView[], models: CatalogModel[] = []) {
+function modelsBackend(
+  providers: ModelProviderView[],
+  models: CatalogModel[] = [],
+) {
   const store = { providers: [...providers], models };
   const handlers = [
-    http.get(`${API}/api/auth/me`, () => HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров' }))),
+    http.get(`${API}/api/auth/me`, () =>
+      HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров' })),
+    ),
     http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
-    http.get(`${API}/api/admin/model-defaults`, () => HttpResponse.json(modelDefaults())),
+    http.get(`${API}/api/admin/model-defaults`, () =>
+      HttpResponse.json(modelDefaults()),
+    ),
     http.get(`${API}/api/admin/models`, () => HttpResponse.json(store.models)),
-    http.get(`${API}/api/admin/model-providers`, () => HttpResponse.json(store.providers)),
+    http.get(`${API}/api/admin/model-providers`, () =>
+      HttpResponse.json(store.providers),
+    ),
     http.post(`${API}/api/admin/model-providers`, ({ request }) =>
       withBody(request, CreateModelProviderBodySchema, (body) => {
         const keyRequired = body.kind !== 'openai_compatible';
@@ -179,29 +238,46 @@ function modelsBackend(providers: ModelProviderView[], models: CatalogModel[] = 
           apiKeySet: body.apiKey !== undefined,
           apiKeyLast4: body.apiKey?.slice(-4) ?? null,
           keyRequired,
-          state: keyRequired && body.apiKey === undefined ? 'key_missing' : 'ready',
+          state:
+            keyRequired && body.apiKey === undefined ? 'key_missing' : 'ready',
         });
         store.providers.push(created);
         return HttpResponse.json(created, { status: 201 });
       }),
     ),
-    http.patch(`${API}/api/admin/model-providers/:name`, ({ params, request }) =>
-      withBody(request, UpdateModelProviderBodySchema, (body) => {
-        const index = store.providers.findIndex((provider) => provider.name === params.name);
-        const found = store.providers[index];
-        if (found === undefined) return apiError(404, ModelProviderErrorCode.MODEL_PROVIDER_NOT_FOUND, 'Model provider not found');
-        const baseUrl = body.baseUrl === undefined ? found.baseUrl : body.baseUrl;
-        const key = body.apiKey === undefined ? {} : { apiKeySet: body.apiKey !== null, apiKeyLast4: body.apiKey?.slice(-4) ?? null };
-        const changed = modelProviderView({
-          ...found,
-          ...key,
-          baseUrl,
-          effectiveBaseUrl: baseUrl ?? DEFAULT_URL[found.kind],
-          enabled: body.enabled ?? found.enabled,
-        });
-        store.providers[index] = changed;
-        return HttpResponse.json(changed);
-      }),
+    http.patch(
+      `${API}/api/admin/model-providers/:name`,
+      ({ params, request }) =>
+        withBody(request, UpdateModelProviderBodySchema, (body) => {
+          const index = store.providers.findIndex(
+            (provider) => provider.name === params.name,
+          );
+          const found = store.providers[index];
+          if (found === undefined)
+            return apiError(
+              404,
+              ModelProviderErrorCode.MODEL_PROVIDER_NOT_FOUND,
+              'Model provider not found',
+            );
+          const baseUrl =
+            body.baseUrl === undefined ? found.baseUrl : body.baseUrl;
+          const key =
+            body.apiKey === undefined
+              ? {}
+              : {
+                  apiKeySet: body.apiKey !== null,
+                  apiKeyLast4: body.apiKey?.slice(-4) ?? null,
+                };
+          const changed = modelProviderView({
+            ...found,
+            ...key,
+            baseUrl,
+            effectiveBaseUrl: baseUrl ?? DEFAULT_URL[found.kind],
+            enabled: body.enabled ?? found.enabled,
+          });
+          store.providers[index] = changed;
+          return HttpResponse.json(changed);
+        }),
     ),
   ];
   return { store, handlers };
@@ -211,14 +287,20 @@ function modelsBackend(providers: ModelProviderView[], models: CatalogModel[] = 
 function providerCells(table: HTMLElement, name: string): string[] {
   const row = table.querySelector(`tr[data-row-key="${name}"]`);
   if (row === null) throw new Error(`no provider row «${name}»`);
-  return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '').slice(0, 4);
+  return Array.from(
+    row.querySelectorAll('td'),
+    (cell) => cell.textContent ?? '',
+  ).slice(0, 4);
 }
 
 /** The cells of the catalogue row `id` as their text, the «⋯» cell aside: model and id, provider, purpose, four prices. */
 function catalogCells(table: HTMLElement, id: string): string[] {
   const row = table.querySelector(`tr[data-row-key="${id}"]`);
   if (row === null) throw new Error(`no catalogue row «${id}»`);
-  return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '').slice(0, 7);
+  return Array.from(
+    row.querySelectorAll('td'),
+    (cell) => cell.textContent ?? '',
+  ).slice(0, 7);
 }
 
 describe('model-providers / web - integration (jsdom + MSW)', () => {
@@ -249,13 +331,19 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     const user = userEvent.setup({ delay: null });
     const view = renderWithRuntime({ pathname: '/admin/models' });
     const spies = [view.router.push, view.router.replace, view.assign];
-    expect(await screen.findByRole('heading', { level: 1, name: 'Модели' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Модели' }),
+    ).toBeInTheDocument();
     expect(await screen.findByText('Провайдеров пока нет')).toBeInTheDocument();
 
     // Act: «Добавить провайдера» -> Google Gemini (the type puts `google` into «Имя») -> the key -> «Добавить»
-    await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить провайдера' }),
+    );
     let dialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
-    await user.click(within(dialog).getByRole('radio', { name: 'Google Gemini' }));
+    await user.click(
+      within(dialog).getByRole('radio', { name: 'Google Gemini' }),
+    );
     expect(within(dialog).getByLabelText('Имя')).toHaveValue('google');
     await user.type(within(dialog).getByLabelText('Ключ (необязательно)'), key);
     let mark = api.requests.length;
@@ -263,10 +351,16 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
 
     // Assert: one POST whose body carries the typed key, then one read of each of the three resources
     await expectSentThenReread(api, mark, [
-      { method: 'POST', path: '/api/admin/model-providers', body: { name: 'google', kind: 'gemini', apiKey: key } },
+      {
+        method: 'POST',
+        path: '/api/admin/model-providers',
+        body: { name: 'google', kind: 'gemini', apiKey: key },
+      },
     ]);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(await screen.findByText('Провайдер google добавлен')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Провайдер google добавлен'),
+    ).toBeInTheDocument();
     const table = await screen.findByRole('table', { name: 'Провайдеры' });
     await waitFor(() =>
       expect(providerCells(table, 'google')).toEqual([
@@ -279,12 +373,19 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     expectNowhere(key, { spies });
 
     // Act: an OpenAI-compatible `local` with an address and an empty key field
-    await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить провайдера' }),
+    );
     dialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
-    await user.click(within(dialog).getByRole('radio', { name: 'OpenAI-совместимый' }));
+    await user.click(
+      within(dialog).getByRole('radio', { name: 'OpenAI-совместимый' }),
+    );
     await user.clear(within(dialog).getByLabelText('Имя'));
     await user.type(within(dialog).getByLabelText('Имя'), 'local');
-    await user.type(within(dialog).getByLabelText('Адрес (необязательно)'), 'http://vllm.corp:8000/v1');
+    await user.type(
+      within(dialog).getByLabelText('Адрес (необязательно)'),
+      'http://vllm.corp:8000/v1',
+    );
     mark = api.requests.length;
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
 
@@ -293,40 +394,70 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
       {
         method: 'POST',
         path: '/api/admin/model-providers',
-        body: { name: 'local', kind: 'openai_compatible', baseUrl: 'http://vllm.corp:8000/v1' },
+        body: {
+          name: 'local',
+          kind: 'openai_compatible',
+          baseUrl: 'http://vllm.corp:8000/v1',
+        },
       },
     ]);
-    expect(bodyKeys(changesSince(api, mark)[0])).toEqual(['baseUrl', 'kind', 'name']);
+    expect(bodyKeys(changesSince(api, mark)[0])).toEqual([
+      'baseUrl',
+      'kind',
+      'name',
+    ]);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() =>
-      expect(providerCells(table, 'local')).toEqual(['localhttp://vllm.corp:8000/v1', 'OpenAI-совместимый', 'без ключа', '0']),
+      expect(providerCells(table, 'local')).toEqual([
+        'localhttp://vllm.corp:8000/v1',
+        'OpenAI-совместимый',
+        'без ключа',
+        '0',
+      ]),
     );
-    expect(within(table).getByRole('switch', { name: 'Включён: google' })).toBeChecked();
-    expect(within(table).getByRole('switch', { name: 'Включён: local' })).toBeChecked();
+    expect(
+      within(table).getByRole('switch', { name: 'Включён: google' }),
+    ).toBeChecked();
+    expect(
+      within(table).getByRole('switch', { name: 'Включён: local' }),
+    ).toBeChecked();
 
     // Act: «Изменить» of `google`: the key is shown only as set with its ending, there is no field holding it
-    await user.click(within(table).getByRole('button', { name: 'Действия: google' }));
+    await user.click(
+      within(table).getByRole('button', { name: 'Действия: google' }),
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'Изменить' }));
     dialog = await screen.findByRole('dialog', { name: 'Провайдер google' });
     const keyGroup = within(dialog).getByRole('group', { name: 'Ключ' });
     expect(keyGroup).toHaveTextContent('Задан');
     expect(within(keyGroup).getByText('…x9Qz')).toBeInTheDocument();
-    expect(within(keyGroup).getByRole('button', { name: 'Заменить: Ключ' })).toBeInTheDocument();
+    expect(
+      within(keyGroup).getByRole('button', { name: 'Заменить: Ключ' }),
+    ).toBeInTheDocument();
     expect(dialog.querySelector('input[type="password"]')).toBeNull();
     expectNowhere(key, { spies });
 
     // Act: only the address changes; «Сохранить» without «Заменить»
-    await user.type(within(dialog).getByLabelText('Адрес (необязательно)'), 'https://gemini-proxy.corp.example/v1');
+    await user.type(
+      within(dialog).getByLabelText('Адрес (необязательно)'),
+      'https://gemini-proxy.corp.example/v1',
+    );
     mark = api.requests.length;
     await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
 
     // Assert: the PATCH body is exactly `{ baseUrl }` - no `apiKey` property; the three resources are read again; the row keeps the ending
     await expectSentThenReread(api, mark, [
-      { method: 'PATCH', path: '/api/admin/model-providers/google', body: { baseUrl: 'https://gemini-proxy.corp.example/v1' } },
+      {
+        method: 'PATCH',
+        path: '/api/admin/model-providers/google',
+        body: { baseUrl: 'https://gemini-proxy.corp.example/v1' },
+      },
     ]);
     expect(bodyKeys(changesSince(api, mark)[0])).toEqual(['baseUrl']);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(await screen.findByText('Провайдер google сохранён')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Провайдер google сохранён'),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(providerCells(table, 'google')).toEqual([
         'googlehttps://gemini-proxy.corp.example/v1',
@@ -388,14 +519,28 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
 
     // Row A: «Удалить» of `google` opens «Нельзя удалить» with the count and one button; no DELETE is sent
     let mark = api.requests.length;
-    await user.click(within(table).getByRole('button', { name: 'Действия: google' }));
+    await user.click(
+      within(table).getByRole('button', { name: 'Действия: google' }),
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-    const blocked = await screen.findByRole('alertdialog', { name: 'Нельзя удалить «google»' });
-    expect(within(blocked).getByText('Моделей этого провайдера в каталоге: 2. Сначала уберите их из каталога.')).toBeInTheDocument();
-    expect(within(blocked).getAllByRole('button').map((button) => button.textContent)).toEqual(['Понятно']);
+    const blocked = await screen.findByRole('alertdialog', {
+      name: 'Нельзя удалить «google»',
+    });
+    expect(
+      within(blocked).getByText(
+        'Моделей этого провайдера в каталоге: 2. Сначала уберите их из каталога.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(blocked)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Понятно']);
     await user.click(within(blocked).getByRole('button', { name: 'Понятно' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(api.requests.slice(mark).filter((request) => request.method === 'DELETE')).toEqual([]);
+    expect(
+      api.requests.slice(mark).filter((request) => request.method === 'DELETE'),
+    ).toEqual([]);
     expect(changesSince(api, mark)).toEqual([]);
     expect(providerCells(table, 'google')[0]).toBe('googleадрес по умолчанию');
 
@@ -405,26 +550,56 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     server.use(
       ...backend.handlers,
       http.delete(`${API}/api/admin/model-providers/:name`, ({ params }) => {
-        const local = backend.store.providers.find((provider) => provider.name === params.name);
+        const local = backend.store.providers.find(
+          (provider) => provider.name === params.name,
+        );
         if (local !== undefined) local.catalogModels = 1;
-        return apiError(409, ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS, 'Model provider has catalog models', { count: 1 });
+        return apiError(
+          409,
+          ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS,
+          'Model provider has catalog models',
+          { count: 1 },
+        );
       }),
     );
     mark = api.requests.length;
-    await user.click(within(table).getByRole('button', { name: 'Действия: local' }));
+    await user.click(
+      within(table).getByRole('button', { name: 'Действия: local' }),
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-    const confirm = await screen.findByRole('alertdialog', { name: 'Удалить провайдера «local»?' });
-    expect(within(confirm).getByText('Ключ провайдера удалится вместе с ним. Вернуть нельзя.')).toBeInTheDocument();
+    const confirm = await screen.findByRole('alertdialog', {
+      name: 'Удалить провайдера «local»?',
+    });
+    expect(
+      within(confirm).getByText(
+        'Ключ провайдера удалится вместе с ним. Вернуть нельзя.',
+      ),
+    ).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
 
     // Assert (row B): exactly one DELETE, the dialog stays open with the MC-5 refusal, the three resources are read again
     expect(
-      await within(confirm).findByText('Не удалось удалить: у провайдера есть модели в каталоге. Сначала уберите их.'),
+      await within(confirm).findByText(
+        'Не удалось удалить: у провайдера есть модели в каталоге. Сначала уберите их.',
+      ),
     ).toBeInTheDocument();
-    await expectSentThenReread(api, mark, [{ method: 'DELETE', path: '/api/admin/model-providers/local', body: null }]);
-    expect(screen.getByRole('alertdialog', { name: 'Удалить провайдера «local»?' })).toBe(confirm);
+    await expectSentThenReread(api, mark, [
+      {
+        method: 'DELETE',
+        path: '/api/admin/model-providers/local',
+        body: null,
+      },
+    ]);
+    expect(
+      screen.getByRole('alertdialog', { name: 'Удалить провайдера «local»?' }),
+    ).toBe(confirm);
     await waitFor(() =>
-      expect(providerCells(table, 'local')).toEqual(['localhttp://vllm.corp:8000/v1', 'OpenAI-совместимый', 'без ключа', '1']),
+      expect(providerCells(table, 'local')).toEqual([
+        'localhttp://vllm.corp:8000/v1',
+        'OpenAI-совместимый',
+        'без ключа',
+        '1',
+      ]),
     );
   });
 
@@ -451,7 +626,12 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     // Arrange: providers `anthropic` and `google`, an empty catalogue; `POST /api/admin/models` builds the row with the response schema
     const providers = [
       modelProviderView(),
-      modelProviderView({ name: 'google', kind: 'gemini', effectiveBaseUrl: DEFAULT_URL.gemini, apiKeyLast4: 'Gm4k' }),
+      modelProviderView({
+        name: 'google',
+        kind: 'gemini',
+        effectiveBaseUrl: DEFAULT_URL.gemini,
+        apiKeyLast4: 'Gm4k',
+      }),
     ];
     const backend = modelsBackend(providers);
     const createModel = http.post(`${API}/api/admin/models`, ({ request }) =>
@@ -465,48 +645,78 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     const api = trackRequests(server);
     const user = userEvent.setup({ delay: null });
     renderWithRuntime({ pathname: '/admin/models' });
-    const providersTable = await screen.findByRole('table', { name: 'Провайдеры' });
-    await waitFor(() => expect(providerCells(providersTable, 'google')[1]).toBe('Google Gemini'));
+    const providersTable = await screen.findByRole('table', {
+      name: 'Провайдеры',
+    });
+    await waitFor(() =>
+      expect(providerCells(providersTable, 'google')[1]).toBe('Google Gemini'),
+    );
 
     const openDialog = async (): Promise<HTMLElement> => {
       await user.click(screen.getByRole('button', { name: 'Добавить модель' }));
       return screen.findByRole('dialog', { name: 'Добавить модель' });
     };
-    const chooseProvider = async (dialog: HTMLElement, option: string): Promise<void> => {
-      await user.click(within(dialog).getByRole('combobox', { name: 'Провайдер' }));
+    const chooseProvider = async (
+      dialog: HTMLElement,
+      option: string,
+    ): Promise<void> => {
+      await user.click(
+        within(dialog).getByRole('combobox', { name: 'Провайдер' }),
+      );
       await user.click(await screen.findByRole('option', { name: option }));
       await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
     };
-    const field = (dialog: HTMLElement, name: string): HTMLElement => within(dialog).getByRole('textbox', { name });
+    const field = (dialog: HTMLElement, name: string): HTMLElement =>
+      within(dialog).getByRole('textbox', { name });
 
     // Act: «Добавить модель» -> `anthropic`: the purpose offers «Чат» only
     let dialog = await openDialog();
-    await user.click(within(dialog).getByRole('combobox', { name: 'Провайдер' }));
-    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
-      'anthropic · Anthropic',
-      'google · Google Gemini',
-    ]);
-    await user.click(screen.getByRole('option', { name: 'anthropic · Anthropic' }));
+    await user.click(
+      within(dialog).getByRole('combobox', { name: 'Провайдер' }),
+    );
+    expect(
+      (await screen.findAllByRole('option')).map(
+        (option) => option.textContent,
+      ),
+    ).toEqual(['anthropic · Anthropic', 'google · Google Gemini']);
+    await user.click(
+      screen.getByRole('option', { name: 'anthropic · Anthropic' }),
+    );
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
 
     // Assert (AC-13.2): no «Эмбеддинги» radio exists for an Anthropic provider; «Чат» is chosen, the caption says why
-    expect(within(dialog).queryByRole('radio', { name: 'Эмбеддинги' })).toBeNull();
+    expect(
+      within(dialog).queryByRole('radio', { name: 'Эмбеддинги' }),
+    ).toBeNull();
     expect(within(dialog).getByRole('radio', { name: 'Чат' })).toBeChecked();
-    expect(within(dialog).getByText('У Anthropic нет моделей эмбеддингов.')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('У Anthropic нет моделей эмбеддингов.'),
+    ).toBeInTheDocument();
 
     // Act: `google`, «Чат», `gemini-2.5-flash`, four prices typed with a comma, no long-request prices
     await chooseProvider(dialog, 'google · Google Gemini');
-    expect(within(dialog).getByRole('radio', { name: 'Эмбеддинги' })).not.toBeChecked();
+    expect(
+      within(dialog).getByRole('radio', { name: 'Эмбеддинги' }),
+    ).not.toBeChecked();
     expect(within(dialog).getByRole('radio', { name: 'Чат' })).toBeChecked();
-    await user.type(field(dialog, 'Имя модели у провайдера'), 'gemini-2.5-flash');
+    await user.type(
+      field(dialog, 'Имя модели у провайдера'),
+      'gemini-2.5-flash',
+    );
     await user.type(field(dialog, 'Название'), 'Gemini 2.5 Flash');
     await user.type(field(dialog, 'Вход'), '0,3');
     await user.type(field(dialog, 'Выход'), '2,5');
     await user.type(field(dialog, 'Запись в кэш'), '1');
     await user.type(field(dialog, 'Чтение из кэша'), '0,03');
-    expect(within(dialog).getByRole('checkbox', { name: 'Другие цены для длинных запросов' })).not.toBeChecked();
+    expect(
+      within(dialog).getByRole('checkbox', {
+        name: 'Другие цены для длинных запросов',
+      }),
+    ).not.toBeChecked();
     let mark = api.requests.length;
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить модель' }));
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Добавить модель' }),
+    );
 
     // Assert (AC-13.1, DC-2): the chat body is the whole id, `purpose: 'chat'` and the prices - no embedding field; the three resources are read again
     await expectSentThenReread(api, mark, [
@@ -517,12 +727,23 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
           id: 'google/gemini-2.5-flash',
           name: 'Gemini 2.5 Flash',
           purpose: 'chat',
-          prices: { inputUsdPerMTok: 0.3, outputUsdPerMTok: 2.5, cacheWriteUsdPerMTok: 1, cacheReadUsdPerMTok: 0.03 },
+          prices: {
+            inputUsdPerMTok: 0.3,
+            outputUsdPerMTok: 2.5,
+            cacheWriteUsdPerMTok: 1,
+            cacheReadUsdPerMTok: 0.03,
+          },
           longContext: null,
         },
       },
     ]);
-    expect(bodyKeys(changesSince(api, mark)[0])).toEqual(['id', 'longContext', 'name', 'prices', 'purpose']);
+    expect(bodyKeys(changesSince(api, mark)[0])).toEqual([
+      'id',
+      'longContext',
+      'name',
+      'prices',
+      'purpose',
+    ]);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     // Act: `google`, «Эмбеддинги»: one price and the dimensions, no output or cache price, no long-request prices
@@ -530,15 +751,26 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     await chooseProvider(dialog, 'google · Google Gemini');
     await user.click(within(dialog).getByRole('radio', { name: 'Эмбеддинги' }));
     for (const absent of ['Выход', 'Запись в кэш', 'Чтение из кэша']) {
-      expect(within(dialog).queryByRole('textbox', { name: absent })).toBeNull();
+      expect(
+        within(dialog).queryByRole('textbox', { name: absent }),
+      ).toBeNull();
     }
-    expect(within(dialog).queryByRole('checkbox', { name: 'Другие цены для длинных запросов' })).toBeNull();
-    await user.type(field(dialog, 'Имя модели у провайдера'), 'gemini-embedding-001');
+    expect(
+      within(dialog).queryByRole('checkbox', {
+        name: 'Другие цены для длинных запросов',
+      }),
+    ).toBeNull();
+    await user.type(
+      field(dialog, 'Имя модели у провайдера'),
+      'gemini-embedding-001',
+    );
     await user.type(field(dialog, 'Название'), 'Gemini Embedding 001');
     await user.type(field(dialog, 'Вход'), '0,15');
     await user.type(field(dialog, 'Размерность'), '768');
     mark = api.requests.length;
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить модель' }));
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Добавить модель' }),
+    );
 
     // Assert (AC-05.1..AC-05.3, DC-2): the embedding body carries the input price and the dimensions and no chat price field
     await expectSentThenReread(api, mark, [
@@ -554,11 +786,19 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
         },
       },
     ]);
-    expect(bodyKeys(changesSince(api, mark)[0])).toEqual(['dimensions', 'id', 'inputUsdPerMTok', 'name', 'purpose']);
+    expect(bodyKeys(changesSince(api, mark)[0])).toEqual([
+      'dimensions',
+      'id',
+      'inputUsdPerMTok',
+      'name',
+      'purpose',
+    ]);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     // Assert: the catalogue read back (both purposes, built by the response schema) shows «Чат» and «Эмбеддинги · 768»
-    const catalogue = await screen.findByRole('table', { name: 'Каталог моделей' });
+    const catalogue = await screen.findByRole('table', {
+      name: 'Каталог моделей',
+    });
     await waitFor(() =>
       expect(catalogCells(catalogue, 'google/gemini-embedding-001')).toEqual([
         'Gemini Embedding 001google/gemini-embedding-001',
@@ -584,7 +824,10 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     dialog = await openDialog();
     await chooseProvider(dialog, 'google · Google Gemini');
     await user.click(within(dialog).getByRole('radio', { name: 'Эмбеддинги' }));
-    await user.type(field(dialog, 'Имя модели у провайдера'), 'text-embedding-004');
+    await user.type(
+      field(dialog, 'Имя модели у провайдера'),
+      'text-embedding-004',
+    );
     await user.type(field(dialog, 'Название'), 'Text Embedding 004');
     await user.type(field(dialog, 'Вход'), '0,1');
     await user.type(field(dialog, 'Размерность'), '768');
@@ -593,24 +836,43 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
         reason: 'provider_unknown',
         text: 'Не удалось сохранить: провайдера google больше нет. Закройте окно и откройте его снова.',
       },
-      { reason: 'embeddings_not_supported', text: 'Не удалось сохранить: провайдер этого типа не считает эмбеддинги' },
+      {
+        reason: 'embeddings_not_supported',
+        text: 'Не удалось сохранить: провайдер этого типа не считает эмбеддинги',
+      },
     ];
     for (const refusal of refusals) {
       server.use(
         http.post(
           `${API}/api/admin/models`,
-          () => apiError(422, AccessErrorCode.MODEL_PROVIDER_INVALID, 'Model provider invalid', { reason: refusal.reason }),
+          () =>
+            apiError(
+              422,
+              AccessErrorCode.MODEL_PROVIDER_INVALID,
+              'Model provider invalid',
+              { reason: refusal.reason },
+            ),
           { once: true },
         ),
       );
-      await user.click(within(dialog).getByRole('button', { name: 'Добавить модель' }));
+      await user.click(
+        within(dialog).getByRole('button', { name: 'Добавить модель' }),
+      );
 
       // Assert (MC-7): the dialog stays open with the form error, and every typed value is still there
       expect(await within(dialog).findByText(refusal.text)).toBeInTheDocument();
-      expect(screen.getByRole('dialog', { name: 'Добавить модель' })).toBe(dialog);
-      expect(within(dialog).getByRole('combobox', { name: 'Провайдер' })).toHaveTextContent('google · Google Gemini');
-      expect(within(dialog).getByRole('radio', { name: 'Эмбеддинги' })).toBeChecked();
-      expect(field(dialog, 'Имя модели у провайдера')).toHaveValue('text-embedding-004');
+      expect(screen.getByRole('dialog', { name: 'Добавить модель' })).toBe(
+        dialog,
+      );
+      expect(
+        within(dialog).getByRole('combobox', { name: 'Провайдер' }),
+      ).toHaveTextContent('google · Google Gemini');
+      expect(
+        within(dialog).getByRole('radio', { name: 'Эмбеддинги' }),
+      ).toBeChecked();
+      expect(field(dialog, 'Имя модели у провайдера')).toHaveValue(
+        'text-embedding-004',
+      );
       expect(field(dialog, 'Название')).toHaveValue('Text Embedding 004');
       expect(field(dialog, 'Вход')).toHaveValue('0,1');
       expect(field(dialog, 'Размерность')).toHaveValue('768');
@@ -647,7 +909,11 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     const TYPED = 'Собери сводку по инцидентам за неделю.';
     const recordId = fixtureId(51);
     const recordPath = `/api/library/${recordId}`;
-    const myModel = (model: string, name: string, unavailableReason: ModelUnavailableReason | null): MyModel => ({
+    const myModel = (
+      model: string,
+      name: string,
+      unavailableReason: ModelUnavailableReason | null,
+    ): MyModel => ({
       model,
       name,
       unavailableReason,
@@ -661,35 +927,61 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     const putBodiesSince = (from: number): unknown[] =>
       api.requests
         .slice(from)
-        .filter((request) => request.method === 'PUT' && request.path === recordPath)
+        .filter(
+          (request) => request.method === 'PUT' && request.path === recordPath,
+        )
         .map((request) => request.body);
     /** The answer of the record's `PUT`, switched per row. */
-    let putAnswer: () => Response = () => apiError(500, 'UNEXPECTED', 'No PUT expected yet');
+    let putAnswer: () => Response = () =>
+      apiError(500, 'UNEXPECTED', 'No PUT expected yet');
     /** The employee's own agent on `model`, his models and choices; `/api/library/choices` comes before `/api/library/:id`. */
     const openEditor = async (model: string) => {
       server.use(
-        http.get(`${API}/api/auth/me/roles`, () => HttpResponse.json([] satisfies MyRoleList)),
+        http.get(`${API}/api/auth/me/roles`, () =>
+          HttpResponse.json([] satisfies MyRoleList),
+        ),
         http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
         http.get(`${API}/api/library/choices`, () =>
-          HttpResponse.json({ servers: ['logs'], defaultModel: HAIKU, defaultMaxTurns: 20 } satisfies LibraryChoices),
+          HttpResponse.json({
+            servers: ['logs'],
+            defaultModel: HAIKU,
+            defaultMaxTurns: 20,
+          } satisfies LibraryChoices),
         ),
         http.get(`${API}/api/library/:id`, ({ params }) =>
           params['id'] === recordId
-            ? HttpResponse.json(recordDetail({ id: recordId, version: 3, content: agentContent({ model }) }))
+            ? HttpResponse.json(
+                recordDetail({
+                  id: recordId,
+                  version: 3,
+                  content: agentContent({ model }),
+                }),
+              )
             : undefined,
         ),
         http.get(`${API}/api/access/models`, () =>
           HttpResponse.json({
             month: '2026-11',
-            models: [myModel(HAIKU, 'Claude Haiku 4.5', null), myModel(GEMINI, 'Gemini 2.5 Flash', 'provider_disabled')],
+            models: [
+              myModel(HAIKU, 'Claude Haiku 4.5', null),
+              myModel(GEMINI, 'Gemini 2.5 Flash', 'provider_disabled'),
+            ],
           }),
         ),
         http.put(`${API}/api/library/:id`, () => putAnswer()),
       );
       const view = renderWithRuntime({ pathname: `/library/${recordId}` });
       const prompt = await screen.findByRole('textbox', { name: 'Инструкция' });
-      await user.click(screen.getByRole('button', { name: 'Дополнительно: модель, максимум шагов, кого может запускать' }));
-      return { view, prompt, panel: screen.getByRole('region', { name: 'Сохранение' }) };
+      await user.click(
+        screen.getByRole('button', {
+          name: 'Дополнительно: модель, максимум шагов, кого может запускать',
+        }),
+      );
+      return {
+        view,
+        prompt,
+        panel: screen.getByRole('region', { name: 'Сохранение' }),
+      };
     };
     /** Opens «Модель» and returns its options (the list is in a portal). */
     const modelOptionsShown = async (): Promise<HTMLElement[]> => {
@@ -703,15 +995,27 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
 
     // Arrange: his agent is on Gemini 2.5 Flash, whose provider `google` is off; the save answers the saved record
     putAnswer = () =>
-      HttpResponse.json(recordDetail({ id: recordId, version: 4, content: agentContent({ model: GEMINI, prompt: TYPED }) }));
+      HttpResponse.json(
+        recordDetail({
+          id: recordId,
+          version: 4,
+          content: agentContent({ model: GEMINI, prompt: TYPED }),
+        }),
+      );
     const broken = await openEditor(GEMINI);
 
     // Assert (AC-14.3, MC-12): the banner names the reason and offers the working default; nothing is replaced by itself
-    const banner = await screen.findByText('Провайдер модели Gemini 2.5 Flash выключен — агент не запустится');
+    const banner = await screen.findByText(
+      'Провайдер модели Gemini 2.5 Flash выключен — агент не запустится',
+    );
     expect(banner.closest('[role="alert"]')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'Заменить на Claude Haiku 4.5' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Заменить на Claude Haiku 4.5' }),
+    ).toBeInTheDocument();
     const field = screen.getByRole('combobox', { name: 'Модель' });
-    await waitFor(() => expect(field).toHaveTextContent('Gemini 2.5 Flash · google'));
+    await waitFor(() =>
+      expect(field).toHaveTextContent('Gemini 2.5 Flash · google'),
+    );
 
     // Assert (AC-14.1, MP-08): the record's own model first, not choosable, with provider and reason; then the working model with its provider
     let options = await modelOptionsShown();
@@ -732,29 +1036,52 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     await user.type(broken.prompt, TYPED);
     expect(broken.panel).toHaveTextContent('Есть несохранённые изменения');
     let mark = api.requests.length;
-    await user.click(within(broken.panel).getByRole('button', { name: 'Сохранить' }));
+    await user.click(
+      within(broken.panel).getByRole('button', { name: 'Сохранить' }),
+    );
 
     // Assert (DC-3): one PUT with the same model and the version the edit started from; the save went through, the form is clean
-    expect(await within(broken.panel).findByText('Сохранено')).toBeInTheDocument();
+    expect(
+      await within(broken.panel).findByText('Сохранено'),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(putBodiesSince(mark)).toEqual([
-        expect.objectContaining({ version: 3, content: expect.objectContaining({ model: GEMINI, prompt: TYPED }) }),
+        expect.objectContaining({
+          version: 3,
+          content: expect.objectContaining({ model: GEMINI, prompt: TYPED }),
+        }),
       ]),
     );
     expect(broken.panel).not.toHaveTextContent('Есть несохранённые изменения');
-    expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveTextContent('Gemini 2.5 Flash · google');
+    expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveTextContent(
+      'Gemini 2.5 Flash · google',
+    );
     broken.view.unmount();
 
     // Short row: a model with no right at all keeps today's mark, and the server refuses the save at the field
     resetRow();
-    putAnswer = () => apiError(422, LibraryErrorCode.RECORD_REJECTED, 'Record rejected', { reason: 'model_not_allowed' });
+    putAnswer = () =>
+      apiError(422, LibraryErrorCode.RECORD_REJECTED, 'Record rejected', {
+        reason: 'model_not_allowed',
+      });
     const lost = await openEditor(SONNET);
-    expect(await screen.findByText('Модель Sonnet вам больше недоступна — агент не запустится')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveTextContent('Sonnet'));
+    expect(
+      await screen.findByText(
+        'Модель Sonnet вам больше недоступна — агент не запустится',
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('combobox', { name: 'Модель' }),
+      ).toHaveTextContent('Sonnet'),
+    );
 
     // Assert (short row): Sonnet first with «у вас недоступна»; the model of the disabled provider is not offered at all
     options = await modelOptionsShown();
-    expect(options.map((option) => option.textContent)).toEqual(['Sonnetу вас недоступна', 'Claude Haiku 4.5anthropic']);
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Sonnetу вас недоступна',
+      'Claude Haiku 4.5anthropic',
+    ]);
     expect(options[0]).toHaveAttribute('aria-disabled', 'true');
     await closeList();
 
@@ -762,13 +1089,24 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     await user.clear(lost.prompt);
     await user.type(lost.prompt, TYPED);
     mark = api.requests.length;
-    await user.click(within(lost.panel).getByRole('button', { name: 'Сохранить' }));
+    await user.click(
+      within(lost.panel).getByRole('button', { name: 'Сохранить' }),
+    );
 
     // Assert (short row): the refusal stands at «Модель», the typed instruction stays, the PUT carried Sonnet
-    expect(await screen.findByText('Модель Sonnet вам недоступна — выберите другую')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveAttribute('aria-invalid', 'true');
+    expect(
+      await screen.findByText('Модель Sonnet вам недоступна — выберите другую'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
     expect(lost.prompt).toHaveValue(TYPED);
-    expect(putBodiesSince(mark)).toEqual([expect.objectContaining({ content: expect.objectContaining({ model: SONNET }) })]);
+    expect(putBodiesSince(mark)).toEqual([
+      expect.objectContaining({
+        content: expect.objectContaining({ model: SONNET }),
+      }),
+    ]);
     lost.view.unmount();
 
     // Arrange (AC-14.2): the administrator on the role «SRE»; the catalogue holds a chat model of each provider and an embedding model of
@@ -799,32 +1137,55 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
       catalogModel({ id: HAIKU, name: 'Claude Haiku 4.5' }),
       catalogModel({ id: GEMINI, name: 'Gemini 2.5 Flash' }),
       catalogModel({ id: 'local/qwen-3', name: 'Qwen 3' }),
-      catalogModel({ id: 'local/bge-m3', name: 'BGE M3', purpose: 'embedding', inputUsdPerMTok: 0.02, dimensions: 1024 }),
+      catalogModel({
+        id: 'local/bge-m3',
+        name: 'BGE M3',
+        purpose: 'embedding',
+        inputUsdPerMTok: 0.02,
+        dimensions: 1024,
+      }),
     ];
     server.use(
-      http.get(`${API}/api/auth/me`, () => HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров' }))),
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров' })),
+      ),
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
-      http.get(`${API}/api/admin/roles/:id`, () => HttpResponse.json(roleDetail({ id: SRE, name: 'SRE' }))),
+      http.get(`${API}/api/admin/roles/:id`, () =>
+        HttpResponse.json(roleDetail({ id: SRE, name: 'SRE' })),
+      ),
       http.get(`${API}/api/admin/grants`, () => HttpResponse.json([])),
-      http.get(`${API}/api/admin/mcp-servers`, () => HttpResponse.json([] satisfies McpServerSummary[])),
+      http.get(`${API}/api/admin/mcp-servers`, () =>
+        HttpResponse.json([] satisfies McpServerSummary[]),
+      ),
       http.get(`${API}/api/admin/models`, () => HttpResponse.json(catalogue)),
-      http.get(`${API}/api/admin/model-providers`, () => HttpResponse.json(providers)),
+      http.get(`${API}/api/admin/model-providers`, () =>
+        HttpResponse.json(providers),
+      ),
     );
     const view = renderWithRuntime({ pathname: `/admin/roles/${SRE}` });
-    expect(await screen.findByRole('heading', { level: 1, name: 'SRE' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'SRE' }),
+    ).toBeInTheDocument();
 
     // Act (AC-14.2): «Добавить право» -> «Модель» -> open «Модель»
-    await user.click(await screen.findByRole('button', { name: 'Добавить право' }));
-    const grantDialog = await screen.findByRole('dialog', { name: 'Добавить право' });
-    await user.click(within(grantDialog).getByRole('radio', { name: 'Модель' }));
-    await user.click(within(grantDialog).getByRole('combobox', { name: 'Модель' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Добавить право' }),
+    );
+    const grantDialog = await screen.findByRole('dialog', {
+      name: 'Добавить право',
+    });
+    await user.click(
+      within(grantDialog).getByRole('radio', { name: 'Модель' }),
+    );
+    await user.click(
+      within(grantDialog).getByRole('combobox', { name: 'Модель' }),
+    );
 
     // Assert (AC-14.2): chat models of working providers only - neither Gemini (provider off) nor BGE M3 (embedding)
     await waitFor(() =>
-      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-        'Claude Haiku 4.5 · anthropic',
-        'Qwen 3 · local',
-      ]),
+      expect(
+        screen.getAllByRole('option').map((option) => option.textContent),
+      ).toEqual(['Claude Haiku 4.5 · anthropic', 'Qwen 3 · local']),
     );
     await user.keyboard('{Escape}');
     await user.keyboard('{Escape}');
@@ -834,21 +1195,37 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     // Arrange (company editor): the catalogue holds a chat model and an embedding model of the working `local`
     server.use(
       http.get(`${API}/api/library/choices`, () =>
-        HttpResponse.json({ servers: ['logs'], defaultModel: HAIKU, defaultMaxTurns: 20 } satisfies LibraryChoices),
+        HttpResponse.json({
+          servers: ['logs'],
+          defaultModel: HAIKU,
+          defaultMaxTurns: 20,
+        } satisfies LibraryChoices),
       ),
       http.get(`${API}/api/admin/models`, () =>
         HttpResponse.json([
           catalogModel({ id: HAIKU, name: 'Claude Haiku 4.5' }),
-          catalogModel({ id: 'local/bge-m3', name: 'BGE M3', purpose: 'embedding', inputUsdPerMTok: 0.02, dimensions: 1024 }),
+          catalogModel({
+            id: 'local/bge-m3',
+            name: 'BGE M3',
+            purpose: 'embedding',
+            inputUsdPerMTok: 0.02,
+            dimensions: 1024,
+          }),
         ]),
       ),
     );
     renderWithRuntime({ pathname: '/admin/library/new/agent' });
-    await user.click(await screen.findByRole('button', { name: 'Дополнительно: модель, максимум шагов, кого может запускать' }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Дополнительно: модель, максимум шагов, кого может запускать',
+      }),
+    );
     options = await modelOptionsShown();
 
     // Assert: the company record editor offers chat models only - the embedding model is not among the options
-    expect(options.map((option) => option.textContent)).toEqual(['Claude Haiku 4.5anthropic']);
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Claude Haiku 4.5anthropic',
+    ]);
   });
 
   // AC: AC-09.2, AC-09.3, AC-09.4, AC-09.5 "Сбой из-за провайдера называет причину"; AC-04.2, AC-02.1, AC-09.1 (первое сообщение без модели по
@@ -874,43 +1251,79 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
   it('INT-5: a provider failure shows its words in the reply block inside a conversation and at the message field for a refused first message', async () => {
     const user = userEvent.setup({ delay: null });
     const api = trackRequests(server);
-    const DISABLED = 'Провайдер модели Haiku выключен. Обратитесь к администратору Agent OS.';
-    const UNAVAILABLE = 'Провайдер модели Haiku не отвечает. Попробуйте перегенерировать позже.';
-    const NOT_CONFIGURED = 'Модель для чата не настроена. Обратитесь к администратору Agent OS.';
+    const DISABLED =
+      'Провайдер модели Haiku выключен. Обратитесь к администратору Agent OS.';
+    const UNAVAILABLE =
+      'Провайдер модели Haiku не отвечает. Попробуйте перегенерировать позже.';
+    const NOT_CONFIGURED =
+      'Модель для чата не настроена. Обратитесь к администратору Agent OS.';
 
     /** The texts of the reply error blocks (TH-08) in the feed, in order. */
     const replyErrors = (): string[] =>
-      Array.from(document.querySelectorAll('[data-slot="message-error"]'), (block) => block.textContent ?? '');
+      Array.from(
+        document.querySelectorAll('[data-slot="message-error"]'),
+        (block) => block.textContent ?? '',
+      );
     /** DC-4: a provider failure of the root is no event line - neither the provider failure line nor any «Сбой: …». */
     const expectNoFailureLine = (): void => {
-      expect(document.querySelector('[data-slot="provider-failure"]')).toBeNull();
+      expect(
+        document.querySelector('[data-slot="provider-failure"]'),
+      ).toBeNull();
       expect(document.body).not.toHaveTextContent('Сбой:');
     };
 
     // Arrange (row A): conversation `a`, its root on `anthropic/claude-haiku-5-5`; the first run ended `provider_disabled`
     const THREAD = threadSummary({ id: 'a', title: 'Сводка смены' });
     const failed = (seq: number, reason: string): HistoryEntry =>
-      historyEntry({ kind: 'event', seq, content: { event: 'failed', reason } });
-    const firstRun = [historyEntry({ kind: 'task', seq: 1, content: { text: 'Сводка по инцидентам за ночь' } }), failed(2, 'provider_disabled')];
+      historyEntry({
+        kind: 'event',
+        seq,
+        content: { event: 'failed', reason },
+      });
+    const firstRun = [
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Сводка по инцидентам за ночь' },
+      }),
+      failed(2, 'provider_disabled'),
+    ];
     const viewOf = (entries: HistoryEntry[], failureReason: string) =>
       conversationView({
         thread: THREAD,
-        chat: { status: 'idle', failureReason, rootAgentId: 'root', model: 'anthropic/claude-haiku-5-5' },
+        chat: {
+          status: 'idle',
+          failureReason,
+          rootAgentId: 'root',
+          model: 'anthropic/claude-haiku-5-5',
+        },
         entries,
       });
     let held = viewOf(firstRun, 'provider_disabled');
     server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([THREAD]))),
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([THREAD])),
+      ),
       http.get(`${API}/api/threads/a`, () => HttpResponse.json(THREAD)),
       http.get(`${API}/api/threads/a/history`, ({ request }) => {
-        const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
-        return HttpResponse.json({ ...held, entries: held.entries.filter((entry) => entry.seq > afterSeq) });
+        const afterSeq = Number(
+          new URL(request.url).searchParams.get('afterSeq'),
+        );
+        return HttpResponse.json({
+          ...held,
+          entries: held.entries.filter((entry) => entry.seq > afterSeq),
+        });
       }),
     );
     const live = createTestLiveSource();
-    const conversation = renderWithRuntime({ pathname: '/chat/a', liveSource: live });
+    const conversation = renderWithRuntime({
+      pathname: '/chat/a',
+      liveSource: live,
+    });
     await screen.findByText('Сводка по инцидентам за ночь');
-    await waitFor(() => expect(live.current()?.url).toBe(`${API}/api/events?watch=thread%3Aa`));
+    await waitFor(() =>
+      expect(live.current()?.url).toBe(`${API}/api/events?watch=thread%3Aa`),
+    );
 
     // Assert (row A, DC-4): the reply error block with the MC-11 words, read out as an alert; no event line for the failure
     await waitFor(() => expect(replyErrors()).toEqual([DISABLED]));
@@ -919,7 +1332,15 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
 
     // Act (row A): a second run ends `provider_unavailable`; the stream's `ready` re-reads the conversation
     held = viewOf(
-      [...firstRun, historyEntry({ kind: 'user_message', seq: 3, content: { text: 'Попробуй ещё раз' } }), failed(4, 'provider_unavailable')],
+      [
+        ...firstRun,
+        historyEntry({
+          kind: 'user_message',
+          seq: 3,
+          content: { text: 'Попробуй ещё раз' },
+        }),
+        failed(4, 'provider_unavailable'),
+      ],
       'provider_unavailable',
     );
     live.emit('ready', {});
@@ -936,15 +1357,30 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     const fresh = createTestLiveSource();
     server.use(
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
-      http.post(`${API}/api/threads`, () => HttpResponse.json(threadSummary({ id: 't-1', title: null }), { status: 201 })),
-      http.get(`${API}/api/threads/:id`, ({ params }) => HttpResponse.json(threadSummary({ id: String(params.id), title: null }))),
-      http.post(`${API}/api/threads/:id/messages`, () =>
-        apiError(409, 'START_REFUSED', 'Start refused', { reason: 'model_not_configured', model: null }),
+      http.post(`${API}/api/threads`, () =>
+        HttpResponse.json(threadSummary({ id: 't-1', title: null }), {
+          status: 201,
+        }),
       ),
-      http.delete(`${API}/api/threads/:id`, () => new HttpResponse(null, { status: 204 })),
+      http.get(`${API}/api/threads/:id`, ({ params }) =>
+        HttpResponse.json(
+          threadSummary({ id: String(params.id), title: null }),
+        ),
+      ),
+      http.post(`${API}/api/threads/:id/messages`, () =>
+        apiError(409, 'START_REFUSED', 'Start refused', {
+          reason: 'model_not_configured',
+          model: null,
+        }),
+      ),
+      http.delete(
+        `${API}/api/threads/:id`,
+        () => new HttpResponse(null, { status: 204 }),
+      ),
     );
     const newChat = renderWithRuntime({ pathname: '/', liveSource: fresh });
-    const composer = (): HTMLElement => screen.getByRole('textbox', { name: 'Сообщение' });
+    const composer = (): HTMLElement =>
+      screen.getByRole('textbox', { name: 'Сообщение' });
     await screen.findByText('Чем могу помочь?');
 
     // Act (row B): type and send; the conversation is created, watched, the message refused, the empty conversation removed
@@ -956,7 +1392,9 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     newChat.setPathname('/chat/t-1');
     await waitFor(() => expect(fresh.current()?.url).toBe(watchUrl));
     fresh.emit('ready', {});
-    await waitFor(() => expect(newChat.router.replace).toHaveBeenCalledWith('/'));
+    await waitFor(() =>
+      expect(newChat.router.replace).toHaveBeenCalledWith('/'),
+    );
     newChat.setPathname('/');
 
     // Assert (row B, DC-5): MC-11 under the field as an alert that describes it; the typed text is still there; no reply error block
@@ -968,7 +1406,11 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
     expect(
       api.requests
         .slice(mark)
-        .filter((request) => request.method === 'POST' && request.path === '/api/threads/t-1/messages')
+        .filter(
+          (request) =>
+            request.method === 'POST' &&
+            request.path === '/api/threads/t-1/messages',
+        )
         .map((request) => request.body),
     ).toEqual([{ text: TYPED }]);
   });

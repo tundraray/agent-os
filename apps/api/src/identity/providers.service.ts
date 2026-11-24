@@ -1,18 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Logger } from '@agent-os/common';
-import type {
-  CreateProviderBody,
-  ProviderButtonList,
-  ProviderList,
-  ProviderView,
-  UpdateProviderBody,
+import { LOGGER, type Logger } from '@agent-os/common';
+import {
+  ProviderTypeSchema,
+  type CreateProviderBody,
+  type ProviderButtonList,
+  type ProviderList,
+  type ProviderView,
+  type UpdateProviderBody,
 } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
-import type { RuntimeTx } from '@agent-os/runtime';
+import { IdentityProvidersRepository, Db } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
-import { APP_LOGGER } from '../logging/app-logger';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { identityError } from './identity.errors';
 import { IdentitySettings } from './identity-settings';
 import { redirectUriOf, SIGN_IN_SCOPES } from './oidc-sign-in';
@@ -21,16 +19,10 @@ import {
   parseProviderType,
   resolveProviderOptions,
   toOptionsView,
+  toProvider,
+  type Provider,
   type ProviderOptionsInput,
 } from './provider-options';
-import {
-  findProvider,
-  insertProvider,
-  listProviderButtons,
-  listProviders,
-  updateProvider,
-  type Provider,
-} from './providers.repository';
 
 /**
  * The provider fields an audit entry keeps. The secret appears only when the admin sent a new one,
@@ -68,25 +60,30 @@ function logState(provider: Omit<Provider, 'id'>) {
  */
 @Injectable()
 export class ProvidersService {
-  private readonly db: Database;
-
   constructor(
-    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    private readonly db: Db,
+    private readonly providers: IdentityProvidersRepository,
     private readonly auditLog: AuditLog,
     private readonly settings: IdentitySettings,
-    @Inject(APP_LOGGER) private readonly logger: Logger,
-  ) {
-    this.db = database.db;
-  }
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
 
   /** The providers in creation order. */
-  list(): Promise<ProviderList> {
-    return listProviders(this.db);
+  async list(): Promise<ProviderList> {
+    const rows = await this.providers.list();
+    return rows.map((row) => ({
+      ...row,
+      type: ProviderTypeSchema.parse(row.type),
+    }));
   }
 
   /** The enabled providers in creation order: the buttons of the sign-in page. */
-  buttons(): Promise<ProviderButtonList> {
-    return listProviderButtons(this.db);
+  async buttons(): Promise<ProviderButtonList> {
+    const rows = await this.providers.listEnabled();
+    return rows.map((row) => ({
+      ...row,
+      type: ProviderTypeSchema.parse(row.type),
+    }));
   }
 
   /** One provider with the data for its registration at the provider. 404 PROVIDER_NOT_FOUND. */
@@ -109,14 +106,11 @@ export class ProvidersService {
       fetch: globalThis.fetch,
     });
     const publicUrl = await this.settings.publicUrlFor();
-    const provider = await this.db.transaction(async (tx) => {
-      const created = await insertProvider(tx, {
-        type,
-        name: body.name,
-        options,
-      });
+    const provider = await this.db.transaction(async () => {
+      const created = toProvider(
+        await this.providers.insert({ type, name: body.name, options }),
+      );
       await this.recordChange(
-        tx,
         actorId,
         created.id,
         null,
@@ -170,10 +164,9 @@ export class ProvidersService {
       throw identityError('PROVIDER_INCOMPLETE');
     }
     const publicUrl = await this.settings.publicUrlFor();
-    await this.db.transaction(async (tx) => {
-      await updateProvider(tx, providerId, after);
+    await this.db.transaction(async () => {
+      await this.providers.update(providerId, after);
       await this.recordChange(
-        tx,
         actorId,
         providerId,
         auditState(before),
@@ -209,13 +202,12 @@ export class ProvidersService {
   }
 
   private recordChange(
-    tx: RuntimeTx,
     actorId: string,
     providerId: string,
     before: ReturnType<typeof auditState> | null,
     after: ReturnType<typeof auditState>,
   ): Promise<void> {
-    return this.auditLog.record(tx, {
+    return this.auditLog.record({
       kind: 'admin_change',
       actor: actorId,
       objectType: 'provider',
@@ -229,8 +221,8 @@ export class ProvidersService {
   /** A provider id that is not a UUID answers 404 like a missing one. */
   private async findOr404(providerId: string): Promise<Provider> {
     if (!isUuid(providerId)) throw identityError('PROVIDER_NOT_FOUND');
-    const provider = await findProvider(this.db, providerId);
-    if (provider === undefined) throw identityError('PROVIDER_NOT_FOUND');
-    return provider;
+    const row = await this.providers.find(providerId);
+    if (row === undefined) throw identityError('PROVIDER_NOT_FOUND');
+    return toProvider(row);
   }
 }

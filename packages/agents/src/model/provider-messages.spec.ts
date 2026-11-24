@@ -1,13 +1,22 @@
 import fc from 'fast-check';
 import type { AnswerCall, HistoryEntry } from '../history/history';
 import type { AgentTurnMessage } from './mastra-turn';
-import { buildProviderMessages, envelope, type ProviderMessagesInput } from './provider-messages';
+import {
+  buildProviderMessages,
+  envelope,
+  type ProviderMessagesInput,
+} from './provider-messages';
 
 // Invariant 3, KD-1, KD-7, Security «Input Validation»; AC-07.1, AC-07.2, AC-25.1, AC-27.1 (the assembly half).
 
 const AT = new Date('2026-11-14T10:00:00.000Z');
 
-const task = (seq: number, text: string): HistoryEntry => ({ seq, kind: 'task', createdAt: AT, content: { text, record: null } });
+const task = (seq: number, text: string): HistoryEntry => ({
+  seq,
+  kind: 'task',
+  createdAt: AT,
+  content: { text, record: null },
+});
 const userMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
   kind: 'user_message',
@@ -26,7 +35,11 @@ const call = (callId: string, args: unknown = {}): AnswerCall => ({
   server: 'logs',
   args,
 });
-const answer = (seq: number, text: string, toolCalls: AnswerCall[] = []): HistoryEntry => ({
+const answer = (
+  seq: number,
+  text: string,
+  toolCalls: AnswerCall[] = [],
+): HistoryEntry => ({
   seq,
   kind: 'model_answer',
   createdAt: AT,
@@ -49,7 +62,11 @@ const result = (seq: number, callId: string, text: string): HistoryEntry => ({
     finishedAt: null,
   },
 });
-const compaction = (seq: number, summary: string, throughSeq: number): HistoryEntry => ({
+const compaction = (
+  seq: number,
+  summary: string,
+  throughSeq: number,
+): HistoryEntry => ({
   seq,
   kind: 'compaction',
   createdAt: AT,
@@ -60,9 +77,13 @@ const confirmation = (seq: number, callId: string): HistoryEntry => ({
   seq,
   kind: 'tool_confirmation',
   createdAt: AT,
-  content: { callId },
+  content: { callId, questionId: `q-${callId}` },
 });
-const decision = (seq: number, callId: string, args?: unknown): HistoryEntry => ({
+const decision = (
+  seq: number,
+  callId: string,
+  args?: unknown,
+): HistoryEntry => ({
   seq,
   kind: 'tool_decision',
   createdAt: AT,
@@ -72,7 +93,11 @@ const sent = (seq: number, callId: string, args?: unknown): HistoryEntry => ({
   seq,
   kind: 'tool_sent',
   createdAt: AT,
-  content: { callId, startedAt: AT.toISOString(), ...(args === undefined ? {} : { args }) },
+  content: {
+    callId,
+    startedAt: AT.toISOString(),
+    ...(args === undefined ? {} : { args }),
+  },
 });
 
 const resultMessage = (callId: string, text: string) => ({
@@ -80,7 +105,11 @@ const resultMessage = (callId: string, text: string) => ({
   toolName: 'mcp__logs__search_logs',
   output: envelope('tool search_logs', 'logs', text),
 });
-const toolCall = (callId: string, args: unknown = {}) => ({ toolCallId: callId, toolName: 'mcp__logs__search_logs', args });
+const toolCall = (callId: string, args: unknown = {}) => ({
+  toolCallId: callId,
+  toolName: 'mcp__logs__search_logs',
+  args,
+});
 
 describe("history becomes provider messages with every message after its answer's last result", () => {
   it.each<[string, ProviderMessagesInput, AgentTurnMessage[]]>([
@@ -98,10 +127,17 @@ describe("history becomes provider messages with every message after its answer'
       },
       [
         { role: 'user', content: 'find the incident' },
-        { role: 'assistant', content: 'searching', toolCalls: [toolCall('c1')] },
+        {
+          role: 'assistant',
+          content: 'searching',
+          toolCalls: [toolCall('c1')],
+        },
         { role: 'tool', results: [resultMessage('c1', 'found')] },
         { role: 'user', content: 'also check yesterday' },
-        { role: 'user', content: envelope('parent agent message', 'parent-1', 'hurry up') },
+        {
+          role: 'user',
+          content: envelope('parent agent message', 'parent-1', 'hurry up'),
+        },
         { role: 'assistant', content: 'done', toolCalls: [] },
       ],
     ],
@@ -119,10 +155,57 @@ describe("history becomes provider messages with every message after its answer'
       },
       [
         { role: 'user', content: 'find the incident' },
-        { role: 'assistant', content: 'two searches', toolCalls: [toolCall('c1'), toolCall('c2')] },
-        { role: 'tool', results: [resultMessage('c1', 'first'), resultMessage('c2', 'second')] },
+        {
+          role: 'assistant',
+          content: 'two searches',
+          toolCalls: [toolCall('c1'), toolCall('c2')],
+        },
+        {
+          role: 'tool',
+          results: [
+            resultMessage('c1', 'first'),
+            resultMessage('c2', 'second'),
+          ],
+        },
         { role: 'user', content: 'stop after this' },
         { role: 'assistant', content: 'done', toolCalls: [] },
+      ],
+    ],
+    [
+      // DC-44: the model reads why a child failed — its reason and the failure's text — not only the reason.
+      'a failed child’s report carries the failure’s text',
+      {
+        entries: [
+          task(1, 'compare suppliers'),
+          {
+            seq: 2,
+            kind: 'child_report',
+            createdAt: AT,
+            content: {
+              agentId: 'child-2',
+              description: 'supplier B',
+              status: 'failed',
+              reason: 'model_error',
+              message: 'provider answered 529 overloaded',
+              text: null,
+              document: null,
+              toolCalls: 3,
+              durationMs: 1200,
+            },
+          },
+        ],
+      },
+      [
+        { role: 'user', content: 'compare suppliers' },
+        {
+          role: 'user',
+          content: envelope(
+            'child agent report',
+            'child-2',
+            'Agent "supplier B" ended: failed (model_error). Tool calls: 3, duration: 1200 ms.\n' +
+              'Error: provider answered 529 overloaded',
+          ),
+        },
       ],
     ],
     [
@@ -161,7 +244,14 @@ describe("history becomes provider messages with every message after its answer'
         ],
       },
       [
-        { role: 'user', content: envelope('summary of the earlier history', 'agents', 'the incident is in the logs') },
+        {
+          role: 'user',
+          content: envelope(
+            'summary of the earlier history',
+            'agents',
+            'the incident is in the logs',
+          ),
+        },
         { role: 'user', content: 'what next?' },
       ],
     ],
@@ -170,7 +260,10 @@ describe("history becomes provider messages with every message after its answer'
       {
         entries: [
           task(1, 'find the incident'),
-          answer(2, 'two searches', [call('c1', { level: 'info' }), call('c2', { level: 'info' })]),
+          answer(2, 'two searches', [
+            call('c1', { level: 'info' }),
+            call('c2', { level: 'info' }),
+          ]),
           confirmation(3, 'c1'),
           decision(4, 'c1', { level: 'error' }),
           sent(5, 'c1', { level: 'error' }),
@@ -187,9 +280,18 @@ describe("history becomes provider messages with every message after its answer'
         {
           role: 'assistant',
           content: 'two searches',
-          toolCalls: [toolCall('c1', { level: 'error' }), toolCall('c2', { level: 'info' })],
+          toolCalls: [
+            toolCall('c1', { level: 'error' }),
+            toolCall('c2', { level: 'info' }),
+          ],
         },
-        { role: 'tool', results: [resultMessage('c1', 'first'), resultMessage('c2', 'second')] },
+        {
+          role: 'tool',
+          results: [
+            resultMessage('c1', 'first'),
+            resultMessage('c2', 'second'),
+          ],
+        },
         { role: 'user', content: 'stop after this' },
       ],
     ],
@@ -216,54 +318,84 @@ describe("history becomes provider messages with every message after its answer'
     const answerShape = fc.record({
       before: fc.nat({ max: 2 }),
       afterResults: fc.integer({ min: 0, max: 3 }).chain((callCount) =>
-        fc.array(fc.nat({ max: 2 }), { minLength: callCount + 1, maxLength: callCount + 1 }),
+        fc.array(fc.nat({ max: 2 }), {
+          minLength: callCount + 1,
+          maxLength: callCount + 1,
+        }),
       ),
     });
 
     fc.assert(
-      fc.property(fc.array(answerShape, { minLength: 1, maxLength: 6 }), (answers) => {
-        const entries: HistoryEntry[] = [task(1, 'task')];
-        let messageCount = 0;
-        const append = (make: (seq: number) => HistoryEntry): void => {
-          entries.push(make(entries.length + 1));
-        };
-        const appendMessages = (count: number): void => {
-          for (let index = 0; index < count; index += 1) {
-            messageCount += 1;
-            const text = `message ${messageCount}`;
-            append((seq) => (messageCount % 2 === 0 ? agentMessage(seq, text) : userMessage(seq, text)));
-          }
-        };
+      fc.property(
+        fc.array(answerShape, { minLength: 1, maxLength: 6 }),
+        (answers) => {
+          const entries: HistoryEntry[] = [task(1, 'task')];
+          let messageCount = 0;
+          const append = (make: (seq: number) => HistoryEntry): void => {
+            entries.push(make(entries.length + 1));
+          };
+          const appendMessages = (count: number): void => {
+            for (let index = 0; index < count; index += 1) {
+              messageCount += 1;
+              const text = `message ${messageCount}`;
+              append((seq) =>
+                messageCount % 2 === 0
+                  ? agentMessage(seq, text)
+                  : userMessage(seq, text),
+              );
+            }
+          };
 
-        answers.forEach((shape, answerIndex) => {
-          appendMessages(shape.before);
-          const callCount = shape.afterResults.length - 1;
-          const callIds = Array.from({ length: callCount }, (_, position) => `a${answerIndex}c${position}`);
-          append((seq) => answer(seq, `answer ${answerIndex}`, callIds.map((callId) => call(callId))));
-          appendMessages(shape.afterResults[0] ?? 0);
-          for (const [position, callId] of callIds.entries()) {
-            append((seq) => result(seq, callId, `result ${callId}`));
-            appendMessages(shape.afterResults[position + 1] ?? 0);
-          }
-        });
+          answers.forEach((shape, answerIndex) => {
+            appendMessages(shape.before);
+            const callCount = shape.afterResults.length - 1;
+            const callIds = Array.from(
+              { length: callCount },
+              (_, position) => `a${answerIndex}c${position}`,
+            );
+            append((seq) =>
+              answer(
+                seq,
+                `answer ${answerIndex}`,
+                callIds.map((callId) => call(callId)),
+              ),
+            );
+            appendMessages(shape.afterResults[0] ?? 0);
+            for (const [position, callId] of callIds.entries()) {
+              append((seq) => result(seq, callId, `result ${callId}`));
+              appendMessages(shape.afterResults[position + 1] ?? 0);
+            }
+          });
 
-        const messages = buildProviderMessages({ entries });
+          const messages = buildProviderMessages({ entries });
 
-        messages.forEach((message, index) => {
-          if (message.role !== 'assistant' || message.toolCalls.length === 0) return;
-          const next = messages[index + 1];
-          expect(next?.role).toBe('tool');
-          const resultIds = next?.role === 'tool' ? next.results.map((toolResult) => toolResult.toolCallId) : [];
-          expect(resultIds.sort()).toEqual(message.toolCalls.map((toolCall) => toolCall.toolCallId).sort());
-        });
-        const toolMessages = messages.filter((message) => message.role === 'tool');
-        const assistantsWithCalls = messages.filter(
-          (message) => message.role === 'assistant' && message.toolCalls.length > 0,
-        );
-        expect(toolMessages).toHaveLength(assistantsWithCalls.length);
-        // The task plus every delivered message reaches the model exactly once.
-        expect(messages.filter((message) => message.role === 'user')).toHaveLength(messageCount + 1);
-      }),
+          messages.forEach((message, index) => {
+            if (message.role !== 'assistant' || message.toolCalls.length === 0)
+              return;
+            const next = messages[index + 1];
+            expect(next?.role).toBe('tool');
+            const resultIds =
+              next?.role === 'tool'
+                ? next.results.map((toolResult) => toolResult.toolCallId)
+                : [];
+            expect(resultIds.sort()).toEqual(
+              message.toolCalls.map((toolCall) => toolCall.toolCallId).sort(),
+            );
+          });
+          const toolMessages = messages.filter(
+            (message) => message.role === 'tool',
+          );
+          const assistantsWithCalls = messages.filter(
+            (message) =>
+              message.role === 'assistant' && message.toolCalls.length > 0,
+          );
+          expect(toolMessages).toHaveLength(assistantsWithCalls.length);
+          // The task plus every delivered message reaches the model exactly once.
+          expect(
+            messages.filter((message) => message.role === 'user'),
+          ).toHaveLength(messageCount + 1);
+        },
+      ),
     );
   });
 });

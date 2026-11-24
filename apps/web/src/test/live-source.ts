@@ -8,7 +8,10 @@ const OPEN = 1;
 const CLOSED = 2;
 
 /** One source the store opened: its URL and whether the store has closed it since. */
-export type OpenedLiveSource = { readonly url: string; readonly closed: boolean };
+export type OpenedLiveSource = {
+  readonly url: string;
+  readonly closed: boolean;
+};
 
 export type TestLiveSource = {
   /** Passed to `ChatShell` in place of `new EventSource(url)`. */
@@ -23,7 +26,10 @@ export type TestLiveSource = {
    */
   mostOpenAtOnce: () => number;
   /** Delivers one `/api/events` frame to the current source, as the server sends it (`data` is JSON). */
-  emit: <T extends LiveEvent['type']>(type: T, data: Extract<LiveEvent, { type: T }>['data']) => void;
+  emit: <T extends LiveEvent['type']>(
+    type: T,
+    data: Extract<LiveEvent, { type: T }>['data'],
+  ) => void;
   /** Fires `error` on the current source; `closed: true` leaves it CLOSED (it never comes back by itself). */
   fail: (options?: { closed?: boolean }) => void;
 };
@@ -61,7 +67,8 @@ export function createTestLiveSource(): TestLiveSource {
 
   const requireCurrent = (action: string): TestEventSource => {
     const source = current();
-    if (source === undefined) throw new Error(`test live source: no open source to ${action}`);
+    if (source === undefined)
+      throw new Error(`test live source: no open source to ${action}`);
     return source;
   };
 
@@ -69,7 +76,10 @@ export function createTestLiveSource(): TestLiveSource {
     open: (url) => {
       const source = new TestEventSource(url);
       sources.push(source);
-      mostOpen = Math.max(mostOpen, sources.filter((opened) => !opened.closed).length);
+      mostOpen = Math.max(
+        mostOpen,
+        sources.filter((opened) => !opened.closed).length,
+      );
       return source;
     },
     mostOpenAtOnce: () => mostOpen,
@@ -78,13 +88,17 @@ export function createTestLiveSource(): TestLiveSource {
     },
     current: () => {
       const source = current();
-      return source === undefined ? undefined : { url: source.url, closed: source.closed };
+      return source === undefined
+        ? undefined
+        : { url: source.url, closed: source.closed };
     },
     emit: (type, data) => {
       const source = requireCurrent(`emit «${type}»`);
       act(() => {
         source.readyState = OPEN;
-        source.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
+        source.dispatchEvent(
+          new MessageEvent(type, { data: JSON.stringify(data) }),
+        );
       });
     },
     fail: ({ closed = false } = {}) => {

@@ -19,7 +19,7 @@ const ANSWERS: Record<LibraryErrorCode, { status: number; message: string }> = {
   },
   RECORD_NAME_TAKEN: { status: 409, message: 'Record name is taken' },
   RECORD_REJECTED: { status: 422, message: 'Record is rejected' },
-  KNOWLEDGE_FORBIDDEN: { status: 403, message: 'Knowledge is not open to you' },
+  MEMORY_FORBIDDEN: { status: 403, message: 'Memory is not open to you' },
 };
 
 /** The answer of a library error code, body `ApiErrorSchema`; `reason` for RECORD_NAME_TAKEN and RECORD_REJECTED. */

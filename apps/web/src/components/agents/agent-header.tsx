@@ -1,48 +1,53 @@
-"use client";
+'use client';
 
-import { useEffect, useId, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useEffect, useId, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   ThreadsErrorCodeSchema,
   type AgentStatus as AgentStatusValue,
   type RecordSummary,
   type RunOrigin,
-} from "@agent-os/contracts";
-import { CircleStopIcon, MoreHorizontalIcon, RotateCcwIcon, type LucideIcon } from "lucide-react";
-import { toast } from "sonner";
-import { AgentStatus } from "@/components/agents/agent-status";
-import { runRecord, useLiveRecord } from "@/components/agents/run-card";
-import { useLeaveThenGo } from "@/components/library/use-in-chat";
-import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
-import { isApiRequestError } from "@/lib/api/api-request";
-import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
-import type { FeedStore } from "@/lib/feed/feed-store";
-import { selectAgent } from "@/lib/feed/to-feed";
-import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
-import { describeLibraryError, kindWord } from "@/lib/library/library-errors";
-import { agentPath, recordPath } from "@/lib/shell-route";
+} from '@agent-os/contracts';
+import {
+  CircleStopIcon,
+  MoreHorizontalIcon,
+  RotateCcwIcon,
+  type LucideIcon,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { AgentStatus } from '@/components/agents/agent-status';
+import { runRecord, useLiveRecord } from '@/components/agents/run-card';
+import { useLeaveThenGo } from '@/components/library/use-in-chat';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
+import { isApiRequestError } from '@/lib/api/api-request';
+import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
+import type { FeedStore } from '@/lib/feed/feed-store';
+import { selectAgent } from '@/lib/feed/to-feed';
+import { focusAfterNewChat, focusShellTarget } from '@/lib/focus';
+import { describeLibraryError } from '@/lib/library/library-errors';
+import { agentPath, recordPath } from '@/lib/shell-route';
+import type { AgentsTranslator } from '@/i18n/catalog';
 
-/** MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»). */
+/**
+ * MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»); its
+ * label is `agents.header.{name}` and its failure `agents.header.{name}Failed`.
+ */
 type Control = {
-  label: string;
+  name: 'stop' | 'restart';
   Icon: LucideIcon;
-  failure: string;
 };
 
-const STOP: Control = {
-  label: "Остановить",
-  Icon: CircleStopIcon,
-  failure: "Не удалось остановить агента. Попробуйте ещё раз.",
-};
+const STOP: Control = { name: 'stop', Icon: CircleStopIcon };
 
-const RESTART: Control = {
-  label: "Запустить с нуля",
-  Icon: RotateCcwIcon,
-  failure: "Не удалось запустить агента с нуля.",
-};
+const RESTART: Control = { name: 'restart', Icon: RotateCcwIcon };
 
 const CONTROL_BY_STATUS: Record<AgentStatusValue, Control> = {
   working: STOP,
@@ -52,9 +57,6 @@ const CONTROL_BY_STATUS: Record<AgentStatusValue, Control> = {
   failed: RESTART,
   stopped: RESTART,
 };
-
-/** MC-11: the mobile menu's accessible name. */
-const MENU_LABEL = "Действия с агентом";
 
 /**
  * The agent a «Запустить с нуля» opened: its header focuses its `h1` once its page has read it. Module
@@ -67,7 +69,11 @@ let focusOnAgent: string | null = null;
  * `NOT_FINISHED`, `PARENT_FINISHED` and `START_REFUSED` included — shows its notice and re-reads the real
  * status. The store has already logged the failure with its kind, code and `agentId`.
  */
-async function runControl(feed: FeedStore, notify: (error: unknown) => void, run: () => Promise<void>): Promise<void> {
+async function runControl(
+  feed: FeedStore,
+  notify: (error: unknown) => void,
+  run: () => Promise<void>,
+): Promise<void> {
   try {
     await run();
   } catch (error) {
@@ -81,12 +87,20 @@ async function runControl(feed: FeedStore, notify: (error: unknown) => void, run
  * the live version; a record gone from the read list cannot start. An unread list says nothing yet.
  */
 function restartHint(
+  t: AgentsTranslator,
   record: RunOrigin | null,
   live: RecordSummary | null | undefined,
 ): { text: string; blocked: boolean } | null {
   if (record === null || live === undefined) return null;
-  if (live === null) return { text: `${kindWord(record.kind, true)} недоступен — запустить с нуля нельзя`, blocked: true };
-  return { text: `Пойдёт на версии ${live.version}`, blocked: false };
+  if (live === null)
+    return {
+      text: t('header.restartUnavailable', { kind: record.kind }),
+      blocked: true,
+    };
+  return {
+    text: t('header.restartVersion', { version: live.version }),
+    blocked: false,
+  };
 }
 
 /**
@@ -97,12 +111,19 @@ function restartHint(
  */
 export function AgentHeader() {
   const feed = useFeed();
-  if (feed === null) throw new Error("AgentHeader must be used inside AgentFeedProvider");
+  if (feed === null)
+    throw new Error('AgentHeader must be used inside AgentFeedProvider');
 
   const router = useRouter();
-  const t = useTranslations("errors");
+  const t = useTranslations('errors');
+  const tAgents = useTranslations('agents');
   const agent = useFeedSelector((state) => selectAgent(state.view), null);
   const loadError = useFeedSelector((state) => state.loadError, null);
+  // A training tree's agent has no control: a replay has no «Стоп», and the server refuses its restart (KD-3).
+  const inTraining = useFeedSelector(
+    (state) => (state.view?.training ?? null) !== null,
+    false,
+  );
   // One command at a time: a second press while the first is in flight does nothing.
   const busy = useRef(false);
 
@@ -113,16 +134,17 @@ export function AgentHeader() {
     if (agentId === null) return;
     if (agentId === focusOnAgent) {
       focusOnAgent = null;
-      focusShellTarget("page-title");
+      focusShellTarget('page-title');
       return;
     }
     focusAfterNewChat();
   }, [agentId]);
 
-  const control = agent === null ? null : CONTROL_BY_STATUS[agent.status];
+  const control =
+    agent === null || inTraining ? null : CONTROL_BY_STATUS[agent.status];
   const record = agent === null ? null : runRecord(agent);
-  const live = useLiveRecord(record?.recordId ?? "");
-  const hint = control === RESTART ? restartHint(record, live) : null;
+  const live = useLiveRecord(record?.recordId ?? '');
+  const hint = control === RESTART ? restartHint(tAgents, record, live) : null;
   const hintId = useId();
   const leaveThenGo = useLeaveThenGo();
 
@@ -134,12 +156,22 @@ export function AgentHeader() {
       isApiRequestError(error) &&
       error.code === ThreadsErrorCodeSchema.enum.START_REFUSED
     ) {
-      const refused = describeLibraryError(t, error, { where: "restart", kind: record.kind, own: live?.mine === true });
-      const open = () => leaveThenGo(() => router.push(recordPath(record.recordId)));
-      toast.error(refused.text, refused.open ? { action: { label: "Открыть", onClick: open } } : undefined);
+      const refused = describeLibraryError(t, error, {
+        where: 'restart',
+        kind: record.kind,
+        own: live?.mine === true,
+      });
+      const open = () =>
+        leaveThenGo(() => router.push(recordPath(record.recordId)));
+      toast.error(
+        refused.text,
+        refused.open
+          ? { action: { label: tAgents('header.open'), onClick: open } }
+          : undefined,
+      );
       return;
     }
-    if (control !== null) toast.error(control.failure);
+    if (control !== null) toast.error(tAgents(`header.${control.name}Failed`));
   };
 
   const onControl = (): void => {
@@ -166,10 +198,20 @@ export function AgentHeader() {
         aria-busy={agent === null && loadError === null ? true : undefined}
         className="min-w-0 shrink truncate px-1 text-sm font-medium outline-none"
       >
-        {agent !== null && <span title={agent.description}>{agent.description}</span>}
-        {agent === null && loadError === null && <Skeleton aria-hidden className="h-4 w-40" />}
+        {agent !== null && (
+          <span title={agent.description}>{agent.description}</span>
+        )}
+        {agent === null && loadError === null && (
+          <Skeleton aria-hidden className="h-4 w-40" />
+        )}
       </h1>
-      {agent !== null && <AgentStatus variant="label" status={agent.status} className="hidden md:inline-flex" />}
+      {agent !== null && (
+        <AgentStatus
+          variant="label"
+          status={agent.status}
+          className="hidden md:inline-flex"
+        />
+      )}
       {control !== null && (
         <>
           {hint !== null && (
@@ -187,7 +229,7 @@ export function AgentHeader() {
             aria-describedby={hint === null ? undefined : hintId}
           >
             <control.Icon aria-hidden />
-            {control.label}
+            {tAgents(`header.${control.name}`)}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -196,7 +238,7 @@ export function AgentHeader() {
                   variant="ghost"
                   size="icon"
                   className="ml-auto size-11 shrink-0 md:hidden [&_svg]:size-4.5"
-                  aria-label={MENU_LABEL}
+                  aria-label={tAgents('header.menu')}
                   aria-haspopup="menu"
                 />
               }
@@ -211,9 +253,13 @@ export function AgentHeader() {
               >
                 <control.Icon aria-hidden />
                 <span className="flex min-w-0 flex-col">
-                  {control.label}
+                  {tAgents(`header.${control.name}`)}
                   {/* A touch screen has no tooltip: the menu shows the hint under the label. */}
-                  {hint !== null && <span className="text-muted-foreground text-xs leading-4">{hint.text}</span>}
+                  {hint !== null && (
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {hint.text}
+                    </span>
+                  )}
                 </span>
               </DropdownMenuItem>
             </DropdownMenuContent>

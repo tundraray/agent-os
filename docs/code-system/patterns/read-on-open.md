@@ -24,8 +24,9 @@
 | список, который обновляет поток событий и видит вся оболочка | хранилище zustand в сервисах оболочки, как `lib/agents/agent-list-store.ts` |
 | значение, которое читают один раз на загрузку страницы несколько компонентов | общее значение модуля, как `lib/spend.ts`, или значение `CurrentUser` |
 | кэш между страницами, фоновое обновление | не нужен: данные читаются при открытии; библиотека кэша — отдельное решение |
-
 ## Used In
 
 - [design-admin.md](../../features/enterprise-access/design-admin.md) — KD-4: таблицы и страницы записей панели
-- [design-web.md](../../features/custom-agents/design-web.md) — страницы библиотеки и раздел панели «Агенты и workflow»
+- [design-web.md](../../features/custom-agents/design-web.md) — страницы библиотеки и раздел панели «Агенты»
+- [design-training-web.md](../../features/self-learning/design-training-web.md) — состояние обучения на карточке и экран результата обучения
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — документ в карточке отчёта и вкладка «Документы» панели беседы; перечитываются по `live.onTree`, как список задач (KD-7)

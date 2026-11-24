@@ -1,0 +1,29 @@
+{
+  // The one oxlint setup of the repository; every workspace `.oxlintrc.json` extends it. The import
+  // bans are the rules a package follows (docs/code-system/README.md, Layer Map; ADR-0004). A
+  // workspace with other layer rules restates the whole `no-restricted-imports` list: oxlint
+  // replaces the options of a rule, it does not merge them. `env` is not inherited through `extends`,
+  // so each workspace states its own.
+  "rules": {
+    "typescript/no-floating-promises": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@sentry/*", "@sentry/**"],
+            "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
+          },
+          {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: Mastra is declared by packages/agents only."
+          },
+          {
+            "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+            "message": "ADR-0004: a package is imported only through its single entry `.` (or `./testing`)."
+          }
+        ]
+      }
+    ]
+  }
+}

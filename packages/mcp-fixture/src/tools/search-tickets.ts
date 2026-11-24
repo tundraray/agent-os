@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { pageOf } from '../cursor';
-import { TICKET_ASSIGNEES, TICKET_STATUSES, TICKET_TEAMS, trackerTickets } from '../tracker';
+import {
+  TICKET_ASSIGNEES,
+  TICKET_STATUSES,
+  TICKET_TEAMS,
+  trackerTickets,
+} from '../tracker';
 import { defineTool } from './fixture-tool';
 
 /** Small pages on purpose: a full summary needs the cursor (AC-01.4, paged search). */
@@ -10,7 +15,12 @@ const SearchTicketsArgsSchema = z.strictObject({
   status: z.enum(TICKET_STATUSES).optional().meta({ title: 'Статус' }),
   team: z.enum(TICKET_TEAMS).optional().meta({ title: 'Команда' }),
   assignee: z.enum(TICKET_ASSIGNEES).optional().meta({ title: 'Исполнитель' }),
-  pageSize: z.int().min(1).max(SEARCH_PAGE_SIZE_MAX).default(SEARCH_PAGE_SIZE_MAX).meta({ title: 'Размер страницы' }),
+  pageSize: z
+    .int()
+    .min(1)
+    .max(SEARCH_PAGE_SIZE_MAX)
+    .default(SEARCH_PAGE_SIZE_MAX)
+    .meta({ title: 'Размер страницы' }),
   cursor: z.string().min(1).max(1024).optional().meta({ title: 'Курсор' }),
 });
 

@@ -4,7 +4,9 @@ import { useContext, type ComponentProps } from 'react';
 import Link from 'next/link';
 import { ShellActionsContext, ShellServicesContext } from './shell-actions';
 
-type ShellLinkProps = Omit<ComponentProps<typeof Link>, 'href'> & { href: string };
+type ShellLinkProps = Omit<ComponentProps<typeof Link>, 'href'> & {
+  href: string;
+};
 
 /**
  * `next/link` that respects unsaved changes (KD-4): while nothing is held it navigates as a plain link, in the
@@ -18,7 +20,12 @@ export function ShellLink({ href, onNavigate, ...props }: ShellLinkProps) {
 
   const guardNavigate: ShellLinkProps['onNavigate'] = (event) => {
     onNavigate?.(event);
-    if (leaveGuard === undefined || actions === null || leaveGuard.getState().held === null) return;
+    if (
+      leaveGuard === undefined ||
+      actions === null ||
+      leaveGuard.getState().held === null
+    )
+      return;
     event.preventDefault();
     actions.leaveTo(href);
   };

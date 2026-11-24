@@ -1,4 +1,4 @@
-import type { Language } from '@agent-os/contracts';
+import { LOCALE_COOKIE, type Language } from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 
 /** The cookie that carries the session token (KD-2). */
@@ -53,9 +53,6 @@ export function setSessionCookie(res: Response, token: string): void {
 export function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE, cookieOptions());
 }
-
-/** The copy of the employee's interface language that the Next server reads (i18n design-web.md, KD-2). */
-export const LOCALE_COOKIE = 'aos_locale';
 
 /** Gives the browser the chosen language, or removes the cookie when there is no choice (`null`). */
 export function setLocaleCookie(

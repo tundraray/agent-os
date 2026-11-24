@@ -1,57 +1,102 @@
-import { render, screen, within } from "@/test/render";
-import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
-import type { MyModels } from "@agent-os/contracts";
-import { server } from "@/test/msw-server";
-import { ModelsSection } from "./models-section";
+import { render, screen, within } from '@/test/render';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it } from 'vitest';
+import type { MyModels } from '@agent-os/contracts';
+import { server } from '@/test/msw-server';
+import { ModelsSection } from './models-section';
 
-const API = "http://api.test";
+const API = 'http://api.test';
 // Intl separates a Russian amount and its currency sign with U+00A0.
 const NBSP = String.fromCharCode(0xa0);
 
 function serveModels(body: MyModels): void {
-  server.use(http.get(`${API}/api/access/models`, () => HttpResponse.json(body)));
+  server.use(
+    http.get(`${API}/api/access/models`, () => HttpResponse.json(body)),
+  );
 }
 
 const cellsOf = (row: HTMLElement): string[] =>
   within(row)
-    .getAllByRole("cell")
-    .map((cell) => cell.textContent ?? "");
+    .getAllByRole('cell')
+    .map((cell) => cell.textContent ?? '');
 
-describe("«Модели и расход» (MA-02)", () => {
+describe('«Модели и расход» (MA-02)', () => {
   // AC-23.1, DC-9: remaining never below zero, «без предела» without a quota, the exhausted label.
-  it("shows a row per allowed model with spend, quota and remaining, «без предела» without a quota and «Квота исчерпана» with remaining 0,00 $", async () => {
+  it('shows a row per allowed model with spend, quota and remaining, «без предела» without a quota and «Квота исчерпана» with remaining 0,00 $', async () => {
     serveModels({
-      month: "2026-11",
+      month: '2026-11',
       models: [
-        { model: "anthropic/haiku", name: "Haiku", unavailableReason: null, spentUsd: 3.1, quotaUsd: null, remainingUsd: null, exhausted: false },
-        { model: "anthropic/opus", name: "Opus", unavailableReason: null, spentUsd: 12.5, quotaUsd: 50, remainingUsd: 37.5, exhausted: false },
-        { model: "anthropic/sonnet", name: "Sonnet", unavailableReason: null, spentUsd: 100.4, quotaUsd: 100, remainingUsd: 0, exhausted: true },
+        {
+          model: 'anthropic/haiku',
+          name: 'Haiku',
+          unavailableReason: null,
+          spentUsd: 3.1,
+          quotaUsd: null,
+          remainingUsd: null,
+          exhausted: false,
+        },
+        {
+          model: 'anthropic/opus',
+          name: 'Opus',
+          unavailableReason: null,
+          spentUsd: 12.5,
+          quotaUsd: 50,
+          remainingUsd: 37.5,
+          exhausted: false,
+        },
+        {
+          model: 'anthropic/sonnet',
+          name: 'Sonnet',
+          unavailableReason: null,
+          spentUsd: 100.4,
+          quotaUsd: 100,
+          remainingUsd: 0,
+          exhausted: true,
+        },
       ],
     });
     render(<ModelsSection />);
 
-    expect(await screen.findByRole("heading", { name: "Модели и расход за ноябрь" })).toBeInTheDocument();
-    const table = screen.getByRole("table");
+    expect(
+      await screen.findByRole('heading', { name: 'Модели и расход за ноябрь' }),
+    ).toBeInTheDocument();
+    const table = screen.getByRole('table');
     const header = within(table)
-      .getAllByRole("columnheader")
+      .getAllByRole('columnheader')
       .map((cell) => cell.textContent);
-    expect(header).toEqual(["Модель", "Расход", "Квота", "Остаток"]);
-    const [, haiku, opus, sonnet] = within(table).getAllByRole("row");
+    expect(header).toEqual(['Модель', 'Расход', 'Квота', 'Остаток']);
+    const [, haiku, opus, sonnet] = within(table).getAllByRole('row');
     // The name cell holds the provider Caption under the name (model-providers MP-08).
-    expect(cellsOf(haiku!)).toEqual(["Haikuanthropic", `3,10${NBSP}$`, "без предела", "—"]);
-    expect(cellsOf(opus!)).toEqual(["Opusanthropic", `12,50${NBSP}$`, `50${NBSP}$`, `37,50${NBSP}$`]);
-    expect(cellsOf(sonnet!)).toEqual(["Sonnetanthropic", `100,40${NBSP}$`, `100${NBSP}$`, `0,00${NBSP}$Квота исчерпана`]);
+    expect(cellsOf(haiku!)).toEqual([
+      'Haikuanthropic',
+      `3,10${NBSP}$`,
+      'без предела',
+      '—',
+    ]);
+    expect(cellsOf(opus!)).toEqual([
+      'Opusanthropic',
+      `12,50${NBSP}$`,
+      `50${NBSP}$`,
+      `37,50${NBSP}$`,
+    ]);
+    expect(cellsOf(sonnet!)).toEqual([
+      'Sonnetanthropic',
+      `100,40${NBSP}$`,
+      `100${NBSP}$`,
+      `0,00${NBSP}$Квота исчерпана`,
+    ]);
   });
 
   // AC-23.1: an employee with no allowed model reads MC-9 instead of an empty table.
-  it("shows MC-9 when the list is empty", async () => {
-    serveModels({ month: "2026-11", models: [] });
+  it('shows MC-9 when the list is empty', async () => {
+    serveModels({ month: '2026-11', models: [] });
     render(<ModelsSection />);
 
     expect(
-      await screen.findByText("Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS."),
+      await screen.findByText(
+        'Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 });

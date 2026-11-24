@@ -32,14 +32,25 @@ export async function answerWithFault(
       return Response.json({
         jsonrpc: '2.0',
         id,
-        error: { code: fault.code, message: fault.message ?? `fixture fault: JSON-RPC error ${fault.code}` },
+        error: {
+          code: fault.code,
+          message:
+            fault.message ?? `fixture fault: JSON-RPC error ${fault.code}`,
+        },
       });
     case 'invalid_result':
       await serve();
       // `content` must be an array of content blocks, so the client's `CallToolResult` schema rejects this.
-      return Response.json({ jsonrpc: '2.0', id, result: { content: 'not a content array' } });
+      return Response.json({
+        jsonrpc: '2.0',
+        id,
+        result: { content: 'not a content array' },
+      });
     case 'malformed_json':
       await serve();
-      return new Response(MALFORMED_BODY, { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(MALFORMED_BODY, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
   }
 }

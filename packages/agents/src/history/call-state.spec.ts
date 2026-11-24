@@ -9,7 +9,11 @@ const SENT_AT = '2026-11-20T10:00:05.000Z';
 
 type Content<K extends HistoryEntry['kind']> = HistoryContent<K>;
 
-function entry<K extends HistoryEntry['kind']>(seq: number, kind: K, content: Content<K>): HistoryEntry {
+function entry<K extends HistoryEntry['kind']>(
+  seq: number,
+  kind: K,
+  content: Content<K>,
+): HistoryEntry {
   // The kind and its content are given together; TypeScript cannot correlate them across the union.
   return { seq, kind, createdAt: AT, content } as HistoryEntry;
 }
@@ -17,13 +21,27 @@ function entry<K extends HistoryEntry['kind']>(seq: number, kind: K, content: Co
 const answer = (seq: number, ...callIds: string[]): HistoryEntry =>
   entry(seq, 'model_answer', {
     text: 'calling',
-    toolCalls: callIds.map((callId) => ({ callId, tool: 'purge', server: 'logs', args: { days: 30 } })),
+    toolCalls: callIds.map((callId) => ({
+      callId,
+      tool: 'purge',
+      server: 'logs',
+      args: { days: 30 },
+    })),
   });
-const confirmation = (seq: number, callId: string) => entry(seq, 'tool_confirmation', { callId });
+const confirmation = (seq: number, callId: string) =>
+  entry(seq, 'tool_confirmation', { callId, questionId: `q-${callId}` });
 const decision = (seq: number, callId: string, args?: unknown) =>
-  entry(seq, 'tool_decision', { callId, approved: true, ...(args === undefined ? {} : { args }) });
+  entry(seq, 'tool_decision', {
+    callId,
+    approved: true,
+    ...(args === undefined ? {} : { args }),
+  });
 const sent = (seq: number, callId: string, args?: unknown) =>
-  entry(seq, 'tool_sent', { callId, startedAt: SENT_AT, ...(args === undefined ? {} : { args }) });
+  entry(seq, 'tool_sent', {
+    callId,
+    startedAt: SENT_AT,
+    ...(args === undefined ? {} : { args }),
+  });
 const attempt = (seq: number, callId: string, number: number) =>
   entry(seq, 'run_attempt', { callId, attempt: number });
 const RESULT: Content<'tool_result'> = {
@@ -71,17 +89,32 @@ describe('the state of a tool call is derived from the records its history holds
     ],
     [
       'the intent without a result is sending, with the time it went out',
-      [answer(2, 'c1'), confirmation(3, 'c1'), decision(4, 'c1'), sent(5, 'c1')],
+      [
+        answer(2, 'c1'),
+        confirmation(3, 'c1'),
+        decision(4, 'c1'),
+        sent(5, 'c1'),
+      ],
       [`c1 2/0 sending {"days":30} sent=${SENT_AT} attempts=0 result=-`],
     ],
     [
       'the intent of an edited call carries the arguments that went out',
-      [answer(2, 'c1'), confirmation(3, 'c1'), decision(4, 'c1', { days: 7 }), sent(5, 'c1', { days: 7 })],
+      [
+        answer(2, 'c1'),
+        confirmation(3, 'c1'),
+        decision(4, 'c1', { days: 7 }),
+        sent(5, 'c1', { days: 7 }),
+      ],
       [`c1 2/0 sending {"days":7} sent=${SENT_AT} attempts=0 result=-`],
     ],
     [
       'a result closes the call whatever came before, and the other call of the answer stays open',
-      [answer(2, 'c1', 'c2'), confirmation(3, 'c1'), sent(4, 'c1'), entry(5, 'tool_result', RESULT)],
+      [
+        answer(2, 'c1', 'c2'),
+        confirmation(3, 'c1'),
+        sent(4, 'c1'),
+        entry(5, 'tool_result', RESULT),
+      ],
       [
         `c1 2/0 done {"days":30} sent=${SENT_AT} attempts=0 result=success`,
         'c2 2/1 requested {"days":30} sent=- attempts=0 result=-',

@@ -13,10 +13,10 @@ cp apps/api/.env.example apps/api/.env
 pnpm --filter api build                      # one bundle in apps/api/dist: the app, the packages' source, the CLI entries, the migrations
 pnpm --filter api db:migrate                 # applies the migrations; the app only checks them
 printf '%s' '<password>' | pnpm --filter api identity:super-admin --login admin --name Admin --email admin@example.com
-pnpm --filter api start:dev                  # http://localhost:4000/api
+pnpm --filter api dev                        # http://localhost:4000/api
 ```
 
-The workspace packages (`packages/*`) have no build of their own: the Nest CLI's rspack builder (`rspack.config.js`) compiles their TypeScript source into `apps/api/dist` together with the app, the CLI entries (`migrate-cli`, `super-admin-cli`, `seed-mcp-cli`, `seed-access-cli`), the code executor (`dist/executor`) and the migrations (`dist/migrations`). `start:dev` rebuilds and restarts on a change in `apps/api/src` or in a package's source. The build does not check types; `pnpm typecheck` does.
+The workspace packages (`packages/*`) have no build of their own: the Nest CLI's rspack builder (`rspack.config.js`) compiles their TypeScript source into `apps/api/dist` together with the app, the CLI entries (`migrate-cli`, `super-admin-cli`, `seed-mcp-cli`, `seed-access-cli`), the code executor (`dist/executor`) and the migrations (`dist/migrations`). `dev` rebuilds and restarts on a change in `apps/api/src` or in a package's source. The build does not check types; `pnpm typecheck` does.
 
 MCP servers for local runs, in two more terminals once the API is up:
 

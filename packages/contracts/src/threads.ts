@@ -49,12 +49,11 @@ export const ThreadsErrorCodeSchema = z.enum([
   'AGENT_NOT_FOUND',
   'RUN_NOT_FOUND',
   'DECISION_NOT_FOUND',
+  'DOCUMENT_NOT_FOUND',
   'INVALID_ARGUMENTS',
   'NOT_FINISHED',
   'PARENT_FINISHED',
   'START_REFUSED',
-  'DRAFT_NOT_FOUND',
-  'DRAFT_RESOLVED',
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
 

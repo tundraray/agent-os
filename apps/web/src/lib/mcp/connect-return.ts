@@ -4,31 +4,38 @@
  * is absent when the return matched no connection request.
  */
 export type ConnectReturn =
-  | { readonly kind: "connected"; readonly server: string }
-  | { readonly kind: "failed"; readonly server: string | null };
+  | { readonly kind: 'connected'; readonly server: string }
+  | { readonly kind: 'failed'; readonly server: string | null };
 
 /**
  * The outcome of the administrator's own connection, handed back on `/admin/servers/<name>` (design-admin.md,
  * DC-9): `?connected=1`, `?error=connect_failed` or `?error=tools_failed`.
  */
-export type AdminConnectReturn = "connected" | "connect_failed" | "tools_failed";
+export type AdminConnectReturn =
+  'connected' | 'connect_failed' | 'tools_failed';
 
-const RETURN_PARAMS = ["connected", "error", "server"] as const;
+const RETURN_PARAMS = ['connected', 'error', 'server'] as const;
 
 function parseConnectReturn(params: URLSearchParams): ConnectReturn | null {
-  const connected = params.get("connected");
-  if (connected !== null && connected !== "") return { kind: "connected", server: connected };
-  if (params.get("error") === "connect_failed") {
-    const server = params.get("server");
-    return { kind: "failed", server: server === null || server === "" ? null : server };
+  const connected = params.get('connected');
+  if (connected !== null && connected !== '')
+    return { kind: 'connected', server: connected };
+  if (params.get('error') === 'connect_failed') {
+    const server = params.get('server');
+    return {
+      kind: 'failed',
+      server: server === null || server === '' ? null : server,
+    };
   }
   return null;
 }
 
-function parseAdminConnectReturn(params: URLSearchParams): AdminConnectReturn | null {
-  if (params.get("connected") === "1") return "connected";
-  const error = params.get("error");
-  if (error === "connect_failed" || error === "tools_failed") return error;
+function parseAdminConnectReturn(
+  params: URLSearchParams,
+): AdminConnectReturn | null {
+  if (params.get('connected') === '1') return 'connected';
+  const error = params.get('error');
+  if (error === 'connect_failed' || error === 'tools_failed') return error;
   return null;
 }
 
@@ -36,12 +43,20 @@ function parseAdminConnectReturn(params: URLSearchParams): AdminConnectReturn | 
  * Reads the outcome from the address once and removes the return parameters, so a reload does not repeat it.
  * The address is left as it was when it carries no outcome.
  */
-function takeReturn<Outcome>(parse: (params: URLSearchParams) => Outcome | null): Outcome | null {
+function takeReturn<Outcome>(
+  parse: (params: URLSearchParams) => Outcome | null,
+): Outcome | null {
   const outcome = parse(new URLSearchParams(window.location.search));
   if (outcome === null) return null;
   const url = new URL(window.location.href);
   for (const name of RETURN_PARAMS) url.searchParams.delete(name);
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  // `null`, not the current state: Next's router takes an outside replace into its own address only when the
+  // state lacks its marker, and otherwise puts the old query back on its next refresh (the language switch).
+  window.history.replaceState(
+    null,
+    '',
+    `${url.pathname}${url.search}${url.hash}`,
+  );
   return outcome;
 }
 

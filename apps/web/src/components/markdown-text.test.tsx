@@ -24,11 +24,15 @@ describe('MarkdownText link and image policy', () => {
     renderMarkdown('[s](https://example.com)');
 
     // jsdom drops the leading space of the inline sr-only hint from the accessible name; browsers keep it.
-    const link = await screen.findByRole('link', { name: /^s ?\(откроется в новой вкладке\)$/ });
+    const link = await screen.findByRole('link', {
+      name: /^s ?\(откроется в новой вкладке\)$/,
+    });
     expect(link).toHaveAttribute('href', 'https://example.com');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    expect(screen.getByText('(откроется в новой вкладке)')).toHaveClass('sr-only');
+    expect(screen.getByText('(откроется в новой вкладке)')).toHaveClass(
+      'sr-only',
+    );
   });
 
   it('keeps a footnote fragment link in the same document', async () => {
@@ -63,7 +67,9 @@ describe('MarkdownText link and image policy', () => {
   it('shows a placeholder for an image source no link may point at', async () => {
     renderMarkdown('![a](data:image/png;base64,iVBORw0KGgo=)');
 
-    expect(await screen.findByText('[Изображение недоступно: a]')).toBeInTheDocument();
+    expect(
+      await screen.findByText('[Изображение недоступно: a]'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
   });
@@ -71,6 +77,8 @@ describe('MarkdownText link and image policy', () => {
   it('labels the code block copy button in Russian', async () => {
     renderMarkdown('```ts\nconst a = 1\n```');
 
-    expect(await screen.findByRole('button', { name: 'Копировать' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Копировать' }),
+    ).toBeInTheDocument();
   });
 });

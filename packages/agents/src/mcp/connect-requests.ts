@@ -1,5 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
+import { Injectable } from '@nestjs/common';
+
 /** How long a connection request stays valid (design-mcp-connect.md, Runtime settings). */
 const CONNECT_REQUEST_TTL_MS = 10 * 60 * 1000;
 const STATE_BYTES = 32;
@@ -31,6 +33,7 @@ export interface ConnectRequest extends ConnectRequestInput {
  * connections). A request is taken at most once, within 10 minutes and only by the employee who
  * began it (DC-5, Invariant 5).
  */
+@Injectable()
 export class ConnectRequests {
   private readonly byState = new Map<string, ConnectRequest>();
 
@@ -38,11 +41,15 @@ export class ConnectRequests {
    * Stores a new request in place of the owner's earlier one for the server — a pair has at most one;
    * `state` is 32 random bytes in base64url.
    */
-  open(input: ConnectRequestInput): { readonly id: string; readonly state: string } {
+  open(input: ConnectRequestInput): {
+    readonly id: string;
+    readonly state: string;
+  } {
     const createdAt = new Date();
     this.dropExpired(createdAt);
     for (const [state, request] of this.byState) {
-      if (request.ownerId === input.ownerId && request.server === input.server) this.byState.delete(state);
+      if (request.ownerId === input.ownerId && request.server === input.server)
+        this.byState.delete(state);
     }
     const id = randomUUID();
     const state = randomBytes(STATE_BYTES).toString('base64url');

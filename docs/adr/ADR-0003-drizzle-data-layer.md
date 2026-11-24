@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Правило custom-миграций и исходного набора — по [design-schema.md](../features/data-model/design-schema.md) фичи `data-model`, KD-7 (2026-11-23).
 
 ## Decision
 
@@ -18,9 +18,9 @@ Accepted
 
 ## Context
 
-[ADR-0002](ADR-0002-app-schema-migrations.md) отвёл таблицам приложения схему `app` и выбрал node-pg-migrate с `.sql`-файлами, а запросы при этом пишутся на сыром `pg`. Кода на этом решении ещё нет. Runtime исследований и следующий за ним `chat-storage` дают сотни запросов к одним таблицам.
+ADR-0002 отвёл таблицам приложения схему `app` и выбрал node-pg-migrate с `.sql`-файлами, а запросы при этом пишутся на сыром `pg`. Кода на этом решении ещё нет. Runtime исследований и следующий за ним `chat-storage` дают сотни запросов к одним таблицам.
 
-Запросы runtime требуют от слоя данных многого: частичный UNIQUE и `INSERT … ON CONFLICT` с арбитром по нему, блокировки строк `FOR NO KEY UPDATE` и `FOR UPDATE OF … SKIP LOCKED`, рекурсивный CTE проверки цикла, savepoint во вложенной транзакции, `bytea`, составные FK с каскадом, CHECK и identity ([design-runtime.md](../features/research-runtime/design-runtime.md), KD-3, Data Model). Таблицы `mastra_*` и `audit_events` в `public` остаются чужими. Приложение работает несколькими экземплярами и само не мигрирует.
+Запросы runtime требуют от слоя данных многого: частичный UNIQUE и `INSERT … ON CONFLICT` с арбитром по нему, блокировки строк `FOR NO KEY UPDATE` и `FOR UPDATE OF … SKIP LOCKED`, рекурсивный CTE проверки цикла, savepoint во вложенной транзакции, `bytea`, составные FK с каскадом, CHECK и identity. Таблицы `mastra_*` и `audit_events` в `public` остаются чужими. Приложение работает несколькими экземплярами и само не мигрирует.
 
 ## Rationale
 
@@ -110,9 +110,10 @@ flowchart LR
 
 ## Implementation Guidance
 
-- Модель схемы `app` — один модуль; каждая таблица, ограничение и индекс схемы `app` объявляются в нём, таблицы фичи несут её префикс (`research_`, `chat_`)
-- Конструкцию, которую модель не выражает (триггер, функция), добавляет custom-миграция drizzle-kit; DDL при старте сервиса не используется
-- Сгенерированный SQL ревьюится в PR как код; миграции только вперёд, применённый файл не меняется
+- Модель схемы `app` — один модуль; каждая таблица, ограничение и индекс схемы `app` объявляются в нём, а имя таблицы говорит, что в ней лежит (`conversations`, `settings`, `runtime_tasks`)
+- Сгенерированный SQL руками не правится. То, чего модель не выражает, — расширение `vector`, триггер, функция и строки, без которых система не работает (роль «Супер-администратор», строки настроек, агенты по умолчанию), — лежит в своей custom-миграции drizzle-kit (`generate --custom`), которую пишут руками. Строки данных есть только в миграции встроенных строк; DDL при старте сервиса не используется
+- Модуль схемы не экспортирует объект `pgSchema('app')`: схему создаёт мигратор до первого файла, под таблицу журнала, а экспортированный объект заставил бы генератор написать `CREATE SCHEMA`, который падает на любой базе
+- Сгенерированный SQL ревьюится в PR как код; миграции только вперёд, применённый файл не меняется. Пока базы создаются заново, а не переносятся (PoC), историю можно свернуть в один исходный набор — расширение, схема, встроенные строки, — созданный тем же генератором
 - Миграции применяет одна функция проекта: выделенное соединение, advisory lock, мигратор drizzle-orm; `drizzle-kit push` к общим базам не применяется
 - Журнал миграций живёт в схеме `app` (по умолчанию библиотека пишет в схему `drizzle`): функция миграций передаёт схему журнала явно, и каждый вызывающий — скрипт, e2e-обвязка, проверка при старте — пользуется только ею
 - Приложение при старте только сверяет файлы миграций с журналом и не мигрирует само
@@ -121,9 +122,8 @@ flowchart LR
 
 ## Related Information
 
-- [ADR-0002](ADR-0002-app-schema-migrations.md) — схема `app` и node-pg-migrate; инструмент заменён этим ADR
 - [ADR-0001](ADR-0001-durable-runtime-owner.md) — runtime, чьи таблицы первыми живут в схеме `app`
-- [design-runtime.md](../features/research-runtime/design-runtime.md) — KD-2, Data Model, Migration Strategy, Appendix: Evidence (spike Drizzle, обходы и ограничение `OF` неполными именами таблиц)
+- [design-schema.md](../features/data-model/design-schema.md) — KD-7, «Исходный набор миграций»
 - [Drizzle — Migrations](https://orm.drizzle.team/docs/migrations) — `generate`, `migrate`, программный `migrate()`
 - [Drizzle — drizzle.config](https://orm.drizzle.team/docs/drizzle-config-file) — `schemaFilter`, `migrations.schema` и `migrations.table`
 - [Drizzle — custom migrations](https://orm.drizzle.team/docs/kit-custom-migrations) — `generate --custom`

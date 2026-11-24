@@ -3,7 +3,10 @@ import type { ModelPrice } from '@agent-os/runtime';
 /** The employee's tool rights; the pair check needs no database once the grants are read. */
 export type ToolAccess =
   | { readonly kind: 'owner_disabled' }
-  | { readonly kind: 'allowed'; readonly allows: (server: string, tool: string) => boolean };
+  | {
+      readonly kind: 'allowed';
+      readonly allows: (server: string, tool: string) => boolean;
+    };
 
 /** Why a model call is refused (design-access.md, «Как AccessGate решает о вызове модели»). */
 export type ModelRefusalReason =
@@ -36,11 +39,14 @@ export type EmbeddingVerdict =
       readonly inputUsdPerMTok: number;
       readonly dimensions: number;
     }
-  | { readonly kind: 'refused'; readonly reason: 'owner_disabled' | 'model_not_configured' };
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'owner_disabled' | 'model_not_configured';
+    };
 
 /**
  * Rights, quotas, the model catalogue and the default models as the agents see them (design-access.md,
- * «Пакеты»; ADR-0015; design-core.md KD-5, KD-6). The upper part supplies it to `createAgents`; the package
+ * «Пакеты»; ADR-0015; design-core.md KD-5, KD-6). The upper part provides it as `ACCESS_GATE`; the package
  * reads no environment.
  */
 export interface AccessGate {
@@ -48,7 +54,7 @@ export interface AccessGate {
   model(ownerId: string, model: string): Promise<ModelVerdict>;
   /** The id of the default chat model, or `null` while none is chosen. */
   defaultChatModel(): Promise<string | null>;
-  /** `ownerId` `null` — the platform's own call, written on the `platform` owner. */
+  /** `ownerId` `null` — the platform's own call, written to the ledger with no owner. */
   embedding(ownerId: string | null): Promise<EmbeddingVerdict>;
 }
 
@@ -63,8 +69,25 @@ export interface AccessDeniedEntry {
   readonly reason: string;
 }
 
-/** Writes an `access_denied` record; supplied by the upper part together with the gate. */
-export type AccessAudit = (entry: AccessDeniedEntry) => Promise<void>;
+/**
+ * A refused MCP call whose arguments the model got wrong — invalid for the tool's schema or a repeat of the
+ * same call (agent-harness design-core.md KD-6): a model's mistake, kept apart from `access_denied`.
+ */
+export interface ToolCallRefusedEntry {
+  readonly kind: 'tool_call_refused';
+  readonly actor: string;
+  readonly objectType: 'tool';
+  /** `<server>/<tool>`. */
+  readonly objectId: string;
+  readonly outcome: 'rejected';
+  readonly reason: 'invalid_arguments' | 'repeated_call';
+}
+
+/** A record the agents write to the audit. */
+export type AuditRecord = AccessDeniedEntry | ToolCallRefusedEntry;
+
+/** Writes an audit record of a refused call; supplied by the upper part together with the gate. */
+export type AccessAudit = (entry: AuditRecord) => Promise<void>;
 
 /** A model or tool call stopped because the owner is disabled or unknown; the call does not start. */
 export class OwnerDisabledError extends Error {

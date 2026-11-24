@@ -1,61 +1,60 @@
-"use client";
+'use client';
 
 import {
   ComposerAttachments,
   UserMessageAttachments,
-} from "@/components/assistant-ui/elements/attachment.aui";
-import { File, getFileHref } from "@/components/file";
-import { ThreadFollowupSuggestions } from "@/components/assistant-ui/elements/follow-up-suggestions.aui";
-import { Image as MessageImage } from "@/components/image";
-import { MarkdownText } from "@/components/markdown-text";
+} from '@/components/assistant-ui/elements/attachment.aui';
+import { File, getFileHref } from '@/components/file';
+import { ThreadFollowupSuggestions } from '@/components/assistant-ui/elements/follow-up-suggestions.aui';
+import { Image as MessageImage } from '@/components/image';
+import { MarkdownText } from '@/components/markdown-text';
 import {
   Reasoning,
   ReasoningContent,
   ReasoningRoot,
   ReasoningText,
   ReasoningTrigger,
-} from "@/components/assistant-ui/elements/reasoning.aui";
-import { ToolFallback } from "@/components/assistant-ui/elements/tool-fallback.aui";
+} from '@/components/assistant-ui/elements/reasoning.aui';
+import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback.aui';
 import {
   ToolGroupContent,
   ToolGroupRoot,
   ToolGroupTrigger,
-} from "@/components/assistant-ui/elements/tool-group.aui";
-import { AgentReport } from "@/components/agents/agent-report";
-import { DecisionCard } from "@/components/agents/decision-card";
-import { DraftCard } from "@/components/agents/draft-card";
-import { EventLine } from "@/components/agents/event-line";
-import { InterruptButton } from "@/components/agents/interrupt-button";
-import { QueueTray } from "@/components/agents/queue-tray";
-import { RunCard } from "@/components/agents/run-card";
-import { RecordLabel } from "@/components/library/record-label";
-import { TooltipIconButton } from "@/components/tooltip-icon-button";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useShellServices } from "@/components/shell/shell-actions";
-import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
+} from '@/components/assistant-ui/elements/tool-group.aui';
+import { AgentReport } from '@/components/agents/agent-report';
+import { DecisionCard } from '@/components/agents/decision-card';
+import { EventLine, AnswerRefusedLine } from '@/components/agents/event-line';
+import { InterruptButton } from '@/components/agents/interrupt-button';
+import { QueueTray } from '@/components/agents/queue-tray';
+import { RunCard } from '@/components/agents/run-card';
+import { RecordLabel } from '@/components/library/record-label';
+import { TooltipIconButton } from '@/components/tooltip-icon-button';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useShellServices } from '@/components/shell/shell-actions';
+import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
 import {
   canInterrupt,
   FEED_PART,
   trayEntries,
   type DecisionPartData,
-  type DraftPartData,
   type EventPartData,
   type OptimisticEntry,
+  type AnswerRefusedPartData,
   type ReportPartData,
   type RunCardPartData,
-} from "@/lib/feed/to-feed";
-import { useTranslations } from "next-intl";
-import { replyFailureText } from "@/lib/access/access-texts";
-import { describeLibraryError } from "@/lib/library/library-errors";
-import type { ErrorsTranslator } from "@/lib/agents/format";
-import { focusShellTarget } from "@/lib/focus";
-import { recordPath } from "@/lib/shell-route";
-import type { SeedTarget } from "@/lib/threads/composer-seed";
-import type { SendFailure } from "@/lib/threads/shell-status-store";
-import { cn } from "@/lib/utils";
-import { ChipRecordSchema, type ChipRecord } from "@agent-os/contracts";
-import { useStore } from "zustand";
+} from '@/lib/feed/to-feed';
+import { useTranslations } from 'next-intl';
+import { replyFailureText } from '@/lib/access/access-texts';
+import { describeLibraryError } from '@/lib/library/library-errors';
+import { focusShellTarget } from '@/lib/focus';
+import { recordPath } from '@/lib/shell-route';
+import type { ChatTranslator, ErrorsTranslator } from '@/i18n/catalog';
+import type { SeedTarget } from '@/lib/threads/composer-seed';
+import type { SendFailure } from '@/lib/threads/shell-status-store';
+import { cn } from '@/lib/utils';
+import { ChipRecordSchema, type ChipRecord } from '@agent-os/contracts';
+import { useStore } from 'zustand';
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -72,7 +71,7 @@ import {
   type ToolCallMessagePartComponent,
   useAui,
   useAuiState,
-} from "@assistant-ui/react";
+} from '@assistant-ui/react';
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -86,7 +85,7 @@ import {
   ThumbsDownIcon,
   ThumbsUpIcon,
   TriangleAlertIcon,
-} from "lucide-react";
+} from 'lucide-react';
 import {
   createContext,
   useContext,
@@ -101,7 +100,7 @@ import {
   type FormEvent,
   type PropsWithChildren,
   type ReactNode,
-} from "react";
+} from 'react';
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -119,7 +118,7 @@ const DefaultToolGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({
     >
       <ToolGroupTrigger
         count={group.indices.length}
-        active={group.status.type === "running"}
+        active={group.status.type === 'running'}
       />
       <ToolGroupContent>{children}</ToolGroupContent>
     </ToolGroupRoot>
@@ -127,9 +126,9 @@ const DefaultToolGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({
 };
 
 const shouldShowComposerResume = (s: AssistantState) =>
-  !!s.thread.canResume && s.composer.type === "thread" && s.composer.isEmpty;
+  !!s.thread.canResume && s.composer.type === 'thread' && s.composer.isEmpty;
 
-const reasoningDuration = (timing: ThreadGroupPart["timing"]) =>
+const reasoningDuration = (timing: ThreadGroupPart['timing']) =>
   timing?.completedAt === undefined
     ? undefined
     : Math.round((timing.completedAt - timing.startedAt) / 1000);
@@ -147,40 +146,39 @@ const reasoningDuration = (timing: ThreadGroupPart["timing"]) =>
  * renders after the feed in place of the tray and the composer.
  * `FeedHeader` renders above the first message of the feed (the agent page's
  * meta line and inherited history). `TaskBrief`, when set, replaces the task's
- * text with the workflow brief under the caption «Задание» (AV-03, MC-21).
+ * text with the deep agent brief under the caption «Задание» (AV-03, deep-agents MC-22).
+ * `Feed`, when set, takes the place of the whole feed — header, earlier entries
+ * and messages — while the tray and the composer stay (a deep agent's tab
+ * «Задачи», deep-agents DA-04).
  */
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
-    | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
-    | undefined;
+    ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
   ReasoningGroup?:
-    | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
-    | undefined;
+    ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
   TaskGroup?: ComponentType<{ group: ThreadGroupPart }> | undefined;
   ComposerExtra?: ComponentType | undefined;
   DeletedNotice?: ComponentType | undefined;
   FeedHeader?: ComponentType | undefined;
   TaskBrief?: ComponentType | undefined;
+  Feed?: ComponentType | undefined;
 };
 
 const messageGroupBy = groupPartByType({
-  reasoning: ["group-chainOfThought", "group-reasoning"],
-  "tool-call": ["group-chainOfThought", "group-tool"],
-  "standalone-tool-call": [],
+  reasoning: ['group-chainOfThought', 'group-reasoning'],
+  'tool-call': ['group-chainOfThought', 'group-tool'],
+  'standalone-tool-call': [],
 });
 
 type ThreadGroupKey =
-  | "group-chainOfThought"
-  | "group-reasoning"
-  | "group-tool"
-  | "group-task";
+  'group-chainOfThought' | 'group-reasoning' | 'group-tool' | 'group-task';
 
 const TASK_GROUP_PATH: readonly ThreadGroupKey[] = [
-  "group-chainOfThought",
-  "group-task",
+  'group-chainOfThought',
+  'group-task',
 ];
 
 const taskAwareGroupBy = (
@@ -188,7 +186,7 @@ const taskAwareGroupBy = (
   context?: Parameters<typeof messageGroupBy>[1],
 ): readonly ThreadGroupKey[] => {
   const path = messageGroupBy(part, context);
-  return part.type === "tool-call" &&
+  return part.type === 'tool-call' &&
     part.messages !== undefined &&
     path.length > 0 &&
     !context?.toolUIs?.[part.toolName]?.length
@@ -212,8 +210,6 @@ export type ThreadProps = {
   seedTarget?: SeedTarget | undefined;
 };
 
-const DEFAULT_PLACEHOLDER = "Спросите что-нибудь…";
-
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
 const ThreadComponentsContext =
@@ -233,34 +229,38 @@ const isHistoryLoadingView = (s: AssistantState) =>
   !s.threads.isLoading;
 
 /** TH-05: feed skeleton; fades in after 150 ms so fast loads do not flash. */
-const ThreadHistorySkeleton: FC = () => (
-  <div
-    data-slot="aui_thread-history-skeleton"
-    role="status"
-    aria-label="Загружаем беседу…"
-    className="animate-in fade-in fill-mode-both flex flex-col gap-y-6 [animation-delay:150ms] [animation-duration:200ms] motion-reduce:animate-none"
-  >
-    <span className="sr-only">Загружаем беседу…</span>
-    <Skeleton className="ml-auto h-9 w-2/5 rounded-xl motion-reduce:animate-none" />
-    <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-11/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-4/5 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-3/5 motion-reduce:animate-none" />
+const ThreadHistorySkeleton: FC = () => {
+  const t = useTranslations('chat');
+  return (
+    <div
+      data-slot="aui_thread-history-skeleton"
+      role="status"
+      aria-label={t('historyLoading')}
+      className="animate-in fade-in fill-mode-both flex flex-col gap-y-6 [animation-delay:150ms] [animation-duration:200ms] motion-reduce:animate-none"
+    >
+      <span className="sr-only">{t('historyLoading')}</span>
+      <Skeleton className="ml-auto h-9 w-2/5 rounded-xl motion-reduce:animate-none" />
+      <div className="flex flex-col gap-y-2">
+        <Skeleton className="h-4 w-11/12 motion-reduce:animate-none" />
+        <Skeleton className="h-4 w-4/5 motion-reduce:animate-none" />
+        <Skeleton className="h-4 w-3/5 motion-reduce:animate-none" />
+      </div>
+      <Skeleton className="ml-auto h-9 w-1/3 rounded-xl motion-reduce:animate-none" />
+      <div className="flex flex-col gap-y-2">
+        <Skeleton className="h-4 w-10/12 motion-reduce:animate-none" />
+        <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
+      </div>
     </div>
-    <Skeleton className="ml-auto h-9 w-1/3 rounded-xl motion-reduce:animate-none" />
-    <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-10/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
-    </div>
-  </div>
-);
+  );
+};
 
 export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
   historyPending = false,
-  composerPlaceholder = DEFAULT_PLACEHOLDER,
+  composerPlaceholder,
   seedTarget,
 }) => {
+  const t = useTranslations('chat');
   const isNewChat = useAuiState(isNewChatView);
 
   return (
@@ -268,7 +268,7 @@ export const Thread: FC<ThreadProps> = ({
       <ThreadRoot
         isEmpty={isNewChat && !historyPending}
         historyPending={historyPending}
-        placeholder={composerPlaceholder}
+        placeholder={composerPlaceholder ?? t('placeholder')}
         seedTarget={seedTarget}
       />
     </ThreadComponentsContext.Provider>
@@ -281,16 +281,25 @@ const ThreadRoot: FC<{
   placeholder: string;
   seedTarget: SeedTarget | undefined;
 }> = ({ isEmpty, historyPending, placeholder, seedTarget }) => {
-  const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader } = useContext(ThreadComponentsContext);
+  const {
+    Welcome = ThreadWelcome,
+    DeletedNotice,
+    FeedHeader,
+    Feed,
+  } = useContext(ThreadComponentsContext);
+  const training = useFeedSelector(
+    (state) => state.view?.training ?? null,
+    null,
+  );
 
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, transparent)",
-        ["--composer-radius" as string]: "1rem",
-        ["--composer-padding" as string]: "8px",
+        ['--composer-bg' as string]:
+          'color-mix(in oklab, var(--color-muted) 30%, transparent)',
+        ['--composer-radius' as string]: '1rem',
+        ['--composer-padding' as string]: '8px',
       }}
     >
       <ThreadPrimitive.Viewport
@@ -300,11 +309,15 @@ const ThreadRoot: FC<{
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
-            isEmpty && "md:justify-center",
+            'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
+            isEmpty && 'md:justify-center',
           )}
         >
-          {historyPending ? (
+          {Feed ? (
+            <div data-slot="aui_feed-replacement" className="mb-6 px-2">
+              <Feed />
+            </div>
+          ) : historyPending ? (
             <ThreadHistorySkeleton />
           ) : (
             <>
@@ -316,7 +329,10 @@ const ThreadRoot: FC<{
               </AuiIf>
 
               {FeedHeader && (
-                <div data-slot="aui_feed-header" className="mb-6 flex flex-col gap-y-3 px-2">
+                <div
+                  data-slot="aui_feed-header"
+                  className="mb-6 flex flex-col gap-y-3 px-2"
+                >
                   <FeedHeader />
                 </div>
               )}
@@ -336,24 +352,34 @@ const ThreadRoot: FC<{
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
-              "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+              'aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]',
               // Below 768 px the composer stays at the bottom even in an empty thread (D-10).
               isEmpty
-                ? "max-md:sticky max-md:bottom-0 max-md:mt-auto"
-                : "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
+                ? 'max-md:sticky max-md:bottom-0 max-md:mt-auto'
+                : 'sticky bottom-0 mt-auto rounded-t-(--composer-radius)',
             )}
           >
             <ThreadScrollToBottom />
             {!historyPending && <ThreadFollowupSuggestions />}
             {DeletedNotice ? (
               <DeletedNotice />
+            ) : training !== null ? (
+              <TrainingLine root={training.isRoot} />
             ) : (
               <>
                 <FeedTray />
                 {seedTarget === undefined ? (
-                  <Composer sendBlocked={historyPending} placeholder={placeholder} chip={null} />
+                  <Composer
+                    sendBlocked={historyPending}
+                    placeholder={placeholder}
+                    chip={null}
+                  />
                 ) : (
-                  <SeededComposer sendBlocked={historyPending} placeholder={placeholder} target={seedTarget} />
+                  <SeededComposer
+                    sendBlocked={historyPending}
+                    placeholder={placeholder}
+                    target={seedTarget}
+                  />
                 )}
               </>
             )}
@@ -373,49 +399,68 @@ const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
-  const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
-  const isFeedPart = useAuiState((s) => feedKindOf(s) === "part");
+  const isSpoken = useAuiState((s) => s.message.metadata.modality === 'voice');
+  const isFeedPart = useAuiState((s) => feedKindOf(s) === 'part');
 
   if (isSpoken) return <SpokenMessage />;
   if (isFeedPart) return <FeedPartMessage />;
-  if (role === "user") return <UserMessage />;
+  if (role === 'user') return <UserMessage />;
   return <AssistantMessageComponent />;
 };
 
 /** `FeedMessageMeta.kind` of a feed message (lib/feed/to-feed.ts); undefined for any other runtime. */
-const feedKindOf = (s: AssistantState): unknown => s.message.metadata.custom["kind"];
+const feedKindOf = (s: AssistantState): unknown =>
+  s.message.metadata.custom['kind'];
 
 /**
  * MC-9, MC-10 (the task captions — custom-agents MC-21): the caption above a message or an answer. On a conversation the task is the first
  * message with no caption, an employee's message never has one; a message the employee did not write
  * names its source, and on an agent page the answer that ended a turn is «Отчёт» (AV-04).
  */
-function sourceCaption(custom: Record<string, unknown>, onAgentPage: boolean): string | null {
-  switch (custom["kind"]) {
-    case "task":
-      return onAgentPage ? "Поручение" : null;
-    case "parent": {
-      if (custom["fromConversation"] === true) return "От беседы";
-      const sender = custom["senderDescription"];
+function sourceCaption(
+  t: ChatTranslator,
+  custom: Record<string, unknown>,
+  onAgentPage: boolean,
+): string | null {
+  switch (custom['kind']) {
+    case 'task':
+      return onAgentPage ? t('caption.assignment') : null;
+    case 'parent': {
+      if (custom['fromConversation'] === true) return t('caption.fromChat');
+      const sender = custom['senderDescription'];
       // The feed knows the sender's description only for an agent's parent; MC-10 has no other wording.
-      return typeof sender === "string" ? `От агента «${sender}»` : "От агента";
+      return typeof sender === 'string'
+        ? t('caption.fromAgent', { sender })
+        : t('caption.fromAgentUnnamed');
     }
-    case "answer":
-      return custom["report"] === true ? "Отчёт" : null;
+    case 'answer':
+      return custom['report'] === true ? t('caption.report') : null;
     default:
       return null;
   }
 }
 
 const useSourceCaption = (): string | null => {
-  const onAgentPage = useFeedSelector((state) => state.view?.kind === "agent", false);
-  return useAuiState((s) => sourceCaption(s.message.metadata.custom, onAgentPage));
+  const t = useTranslations('chat');
+  const onAgentPage = useFeedSelector(
+    (state) => state.view?.kind === 'agent',
+    false,
+  );
+  return useAuiState((s) =>
+    sourceCaption(t, s.message.metadata.custom, onAgentPage),
+  );
 };
 
-const SourceCaption: FC<{ text: string; className?: string }> = ({ text, className }) => (
+const SourceCaption: FC<{ text: string; className?: string }> = ({
+  text,
+  className,
+}) => (
   <p
     data-slot="aui_message-source"
-    className={cn("text-muted-foreground text-xs leading-4 font-medium", className)}
+    className={cn(
+      'text-muted-foreground text-xs leading-4 font-medium',
+      className,
+    )}
   >
     {text}
   </p>
@@ -433,21 +478,10 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
     <DecisionCard
       confirmation={data.confirmation}
       byChat={data.byChat}
-      onDecide={(approve, args) => feed.decide(data.confirmation.decisionId, approve, args)}
-    />
-  );
-};
-
-const DraftPart: DataMessagePartComponent<DraftPartData> = ({ data }) => {
-  const feed = useFeed();
-  // Draft parts come only from a conversation's feed, whose store sends the draft's actions.
-  if (feed === null) return null;
-  return (
-    <DraftCard
-      draft={data.draft}
-      previous={data.previous}
-      threadId={data.threadId}
-      onAction={(action) => feed.draftAction(data.draft.draftId, action)}
+      saved={data.saved}
+      onDecide={(approve, args) =>
+        feed.decide(data.confirmation.decisionId, approve, args)
+      }
     />
   );
 };
@@ -460,6 +494,10 @@ const EventPart: DataMessagePartComponent<EventPartData> = ({ data }) => (
   <EventLine data={data} />
 );
 
+const AnswerRefusedPart: DataMessagePartComponent<AnswerRefusedPartData> = ({
+  data,
+}) => <AnswerRefusedLine data={data} />;
+
 /** The feed's `data-*` parts by name (spike S-1, e): each renders its own component. */
 const FEED_PART_COMPONENTS = {
   data: {
@@ -468,7 +506,7 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.decision]: DecisionPart,
       [FEED_PART.report]: ReportPart,
       [FEED_PART.event]: EventPart,
-      [FEED_PART.draft]: DraftPart,
+      [FEED_PART.answerRefused]: AnswerRefusedPart,
     },
   },
 };
@@ -488,16 +526,16 @@ const FeedPartMessage: FC = () => (
   </MessagePrimitive.Root>
 );
 
-type VoiceRunPosition = "single" | "start" | "middle" | "end";
+type VoiceRunPosition = 'single' | 'start' | 'middle' | 'end';
 
 const useVoiceRunPosition = (): VoiceRunPosition =>
   useAuiState((s) => {
     const before =
-      s.thread.messages[s.message.index - 1]?.metadata.modality === "voice";
+      s.thread.messages[s.message.index - 1]?.metadata.modality === 'voice';
     const after =
-      s.thread.messages[s.message.index + 1]?.metadata.modality === "voice";
-    if (before) return after ? "middle" : "end";
-    return after ? "start" : "single";
+      s.thread.messages[s.message.index + 1]?.metadata.modality === 'voice';
+    if (before) return after ? 'middle' : 'end';
+    return after ? 'start' : 'single';
   });
 
 const SpokenText: TextMessagePartComponent = ({ text }) => (
@@ -505,13 +543,14 @@ const SpokenText: TextMessagePartComponent = ({ text }) => (
 );
 
 const SpokenMessage: FC = () => {
+  const t = useTranslations('chat');
   const role = useAuiState((s) => s.message.role);
   const position = useVoiceRunPosition();
   const isSpeaking = useAuiState(
     (s) =>
-      s.message.role === "assistant" && s.message.status?.type === "running",
+      s.message.role === 'assistant' && s.message.status?.type === 'running',
   );
-  const opensExchange = position === "start" || position === "single";
+  const opensExchange = position === 'start' || position === 'single';
 
   return (
     <MessagePrimitive.Root
@@ -519,11 +558,11 @@ const SpokenMessage: FC = () => {
       data-role={role}
       data-voice-run={position}
       className={cn(
-        "aui-spoken-message bg-muted/40 mx-2 px-3 py-1.5 [contain-intrinsic-size:auto_48px] [content-visibility:auto]",
-        position === "single" && "rounded-xl py-2",
-        position === "start" && "rounded-t-xl pt-2",
-        position === "middle" && "-mt-6",
-        position === "end" && "-mt-6 rounded-b-xl pb-2",
+        'aui-spoken-message bg-muted/40 mx-2 px-3 py-1.5 [contain-intrinsic-size:auto_48px] [content-visibility:auto]',
+        position === 'single' && 'rounded-xl py-2',
+        position === 'start' && 'rounded-t-xl pt-2',
+        position === 'middle' && '-mt-6',
+        position === 'end' && '-mt-6 rounded-b-xl pb-2',
       )}
     >
       {opensExchange && (
@@ -532,7 +571,7 @@ const SpokenMessage: FC = () => {
           className="text-muted-foreground mb-1.5 flex items-center gap-1.5 text-xs"
         >
           <PhoneIcon className="size-3" aria-hidden />
-          <span>Голосовой разговор</span>
+          <span>{t('voice.header')}</span>
         </div>
       )}
       <div
@@ -540,14 +579,14 @@ const SpokenMessage: FC = () => {
         className="text-foreground flex items-start gap-2 text-sm leading-relaxed"
       >
         <span className="text-muted-foreground mt-1 shrink-0" aria-hidden>
-          {role === "user" ? (
+          {role === 'user' ? (
             <MicIcon className="size-3.5" />
           ) : (
             <AudioLinesIcon className="size-3.5" />
           )}
         </span>
         <span className="sr-only">
-          {role === "user" ? "Вы сказали" : "Ассистент сказал"}
+          {role === 'user' ? t('voice.userSaid') : t('voice.assistantSaid')}
         </span>
         <div className="min-w-0 flex-1 wrap-break-word">
           <MessagePrimitive.Parts components={{ Text: SpokenText }} />
@@ -556,7 +595,7 @@ const SpokenMessage: FC = () => {
               data-slot="aui_spoken-message-indicator"
               role="status"
               className="text-muted-foreground ms-1 animate-pulse font-sans motion-reduce:animate-none"
-              aria-label="Ассистент говорит"
+              aria-label={t('voice.speaking')}
             >
               ●
             </span>
@@ -569,17 +608,23 @@ const SpokenMessage: FC = () => {
 };
 
 const SpokenActionBar: FC = () => {
+  const t = useTranslations('chat');
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="always"
       className="aui-spoken-action-bar text-muted-foreground flex shrink-0 gap-1"
     >
-      <ActionBarPrimitive.Copy render={<TooltipIconButton tooltip="Копировать" className="size-6" />}><AuiIf condition={(s) => s.message.isCopied}>
-                      <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out motion-reduce:animate-none" />
-                    </AuiIf><AuiIf condition={(s) => !s.message.isCopied}>
-                      <CopyIcon className="animate-in zoom-in-75 fade-in duration-150 motion-reduce:animate-none" />
-                    </AuiIf></ActionBarPrimitive.Copy>
+      <ActionBarPrimitive.Copy
+        render={<TooltipIconButton tooltip={t('copy')} className="size-6" />}
+      >
+        <AuiIf condition={(s) => s.message.isCopied}>
+          <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out motion-reduce:animate-none" />
+        </AuiIf>
+        <AuiIf condition={(s) => !s.message.isCopied}>
+          <CopyIcon className="animate-in zoom-in-75 fade-in duration-150 motion-reduce:animate-none" />
+        </AuiIf>
+      </ActionBarPrimitive.Copy>
     </ActionBarPrimitive.Root>
   );
 };
@@ -602,6 +647,7 @@ const nextFocusable = (start: Element) => {
 };
 
 const ThreadLoadEarlier: FC = () => {
+  const t = useTranslations('chat');
   const { announcer } = useShellServices();
   const visible = useAuiState(
     (s) => s.thread.hasEarlier || s.thread.isLoadingEarlier,
@@ -623,7 +669,7 @@ const ThreadLoadEarlier: FC = () => {
   }, [visible]);
 
   useEffect(() => {
-    if (loading) announcer.getState().announce("announce.loadingEarlier");
+    if (loading) announcer.getState().announce('announce.loadingEarlier');
   }, [loading, announcer]);
 
   return (
@@ -635,30 +681,52 @@ const ThreadLoadEarlier: FC = () => {
       }}
     >
       {visible && (
-        <ThreadPrimitive.LoadEarlier render={<Button variant="ghost" size="sm" data-slot="aui_thread-load-earlier" className="aui-thread-load-earlier text-muted-foreground mb-6 self-center rounded-full" />}><span
-                            className={cn(loading && "shimmer motion-reduce:animate-none")}
-                          >
-                            {loading ? "Загружаем предыдущие сообщения…" : "Показать предыдущие сообщения"}
-                          </span></ThreadPrimitive.LoadEarlier>
+        <ThreadPrimitive.LoadEarlier
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              data-slot="aui_thread-load-earlier"
+              className="aui-thread-load-earlier text-muted-foreground mb-6 self-center rounded-full"
+            />
+          }
+        >
+          <span className={cn(loading && 'shimmer motion-reduce:animate-none')}>
+            {loading ? t('loadingEarlier') : t('loadEarlier')}
+          </span>
+        </ThreadPrimitive.LoadEarlier>
       )}
     </div>
   );
 };
 
 const ThreadScrollToBottom: FC = () => {
+  const t = useTranslations('chat');
   return (
-    <ThreadPrimitive.ScrollToBottom render={<TooltipIconButton tooltip="К последнему сообщению" variant="outline" className="aui-thread-scroll-to-bottom motion-reduce:transition-none dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible" />}><ArrowDownIcon /></ThreadPrimitive.ScrollToBottom>
+    <ThreadPrimitive.ScrollToBottom
+      render={
+        <TooltipIconButton
+          tooltip={t('scrollToBottom')}
+          variant="outline"
+          className="aui-thread-scroll-to-bottom motion-reduce:transition-none dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
+        />
+      }
+    >
+      <ArrowDownIcon />
+    </ThreadPrimitive.ScrollToBottom>
   );
 };
 
+/** The shell's greeting (`shell.welcome`) for a thread that is given no `Welcome` slot. */
 const ThreadWelcome: FC = () => {
+  const t = useTranslations('shell.welcome');
   return (
     <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
       <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200 motion-reduce:animate-none">
-        Чем могу помочь?
+        {t('title')}
       </p>
       <p className="aui-thread-welcome-message-inner-2 text-muted-foreground fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-sm duration-200 motion-reduce:animate-none">
-        Задайте вопрос, попросите текст или разбор задачи.
+        {t('hint')}
       </p>
     </div>
   );
@@ -666,10 +734,11 @@ const ThreadWelcome: FC = () => {
 
 // TH-03: one column below 640 px, a 2×2 grid from 640 px; the cards cascade in 40 ms apart.
 const ThreadSuggestions: FC = () => {
+  const t = useTranslations('chat');
   return (
     <div
       role="group"
-      aria-label="Подсказки"
+      aria-label={t('suggestions')}
       className="aui-thread-welcome-suggestions grid w-full grid-cols-1 gap-2 sm:grid-cols-2 [&>*:nth-child(2)]:[animation-delay:40ms] [&>*:nth-child(3)]:[animation-delay:80ms] [&>*:nth-child(4)]:[animation-delay:120ms]"
     >
       <ThreadPrimitive.Suggestions>
@@ -690,7 +759,7 @@ const ThreadSuggestionItem: FC = () => {
         />
       }
     >
-      <SuggestionPrimitive.Title className="aui-thread-welcome-suggestion-text-1 text-foreground text-sm font-medium" />{" "}
+      <SuggestionPrimitive.Title className="aui-thread-welcome-suggestion-text-1 text-foreground text-sm font-medium" />{' '}
       <SuggestionPrimitive.Description className="aui-thread-welcome-suggestion-text-2 text-muted-foreground text-[13px] empty:hidden" />
     </SuggestionPrimitive.Trigger>
   );
@@ -699,9 +768,6 @@ const ThreadSuggestionItem: FC = () => {
 // Enter submits the form (requestSubmit); a prevented submit skips the root's own send.
 const preventSubmit = (event: FormEvent<HTMLFormElement>) =>
   event.preventDefault();
-
-/** UXRD MC-27, verbatim. */
-const SEND_FAILED = "Не удалось отправить сообщение. Попробуйте ещё раз.";
 
 /** Failures whose text went back to the field: a remounted composer does not paste it again. */
 const returnedFailures = new WeakSet<object>();
@@ -715,44 +781,57 @@ const returnedFailures = new WeakSet<object>();
  */
 const useSendFailure = (newThreadFailure: SendFailure | null): ReactNode => {
   const aui = useAui();
-  const t = useTranslations("errors");
-  const failure = useFeedSelector((state) => state.sendFailure, newThreadFailure);
+  const t = useTranslations('errors');
+  const tChat = useTranslations('chat');
+  const failure = useFeedSelector(
+    (state) => state.sendFailure,
+    newThreadFailure,
+  );
 
   useEffect(() => {
     if (failure === null || returnedFailures.has(failure)) return;
     returnedFailures.add(failure);
     const typed = aui.composer.getState().text;
-    aui.composer.setText(typed === "" ? failure.text : `${failure.text}\n${typed}`);
+    aui.composer.setText(
+      typed === '' ? failure.text : `${failure.text}\n${typed}`,
+    );
   }, [aui, failure]);
 
   if (failure === null) return null;
-  return describeLibraryError(t, failure.cause, failure.context)?.text ?? SEND_FAILED;
+  // UXRD MC-27 when the library has no text for the cause.
+  return (
+    describeLibraryError(t, failure.cause, failure.context)?.text ??
+    tChat('sendFailed')
+  );
 };
 
 /** Chips already announced (MC-19): a remounted composer, or the chip following a new conversation, stays quiet. */
 const announcedChips = new WeakSet<ChipRecord>();
 
-/** custom-agents MC-20: the field's hint under a chip. */
-const chipPlaceholder = (chip: ChipRecord): string =>
-  chip.kind === "agent"
-    ? `Опишите задачу для «${chip.name}»…`
-    : `Опишите, что разобрать, — чат подготовит задание для «${chip.name}»…`;
-
 /**
  * custom-agents KD-5, CH-01: the composer of a conversation takes its target's template text once and
- * shows its chip until an accepted send, «✕» or a new chip; a new chip is announced (MC-19). Focus is
- * put in the field by whoever put the seed (`useInChat`).
+ * shows its chip until an accepted send, «✕» or a new chip; a new chip is announced (MC-19) and puts
+ * its hint in the field (MC-20). Focus is put in the field by whoever put the seed (`useInChat`).
  */
-const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: SeedTarget }> = ({
-  sendBlocked,
-  placeholder,
-  target,
-}) => {
+const SeededComposer: FC<{
+  sendBlocked: boolean;
+  placeholder: string;
+  target: SeedTarget;
+}> = ({ sendBlocked, placeholder, target }) => {
   const aui = useAui();
+  const t = useTranslations('chat');
   const { composerSeed, announcer, status } = useShellServices();
-  const newThreadFailure = useStore(status, (state) => state.newThreadSendFailure);
-  const chip = useStore(composerSeed, (state) => state.chips.get(target) ?? null);
-  const textWaiting = useStore(composerSeed, (state) => state.texts.has(target));
+  const newThreadFailure = useStore(
+    status,
+    (state) => state.newThreadSendFailure,
+  );
+  const chip = useStore(
+    composerSeed,
+    (state) => state.chips.get(target) ?? null,
+  );
+  const textWaiting = useStore(composerSeed, (state) =>
+    state.texts.has(target),
+  );
 
   useEffect(() => {
     if (!textWaiting) return;
@@ -763,20 +842,35 @@ const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: Se
   useEffect(() => {
     if (chip === null || announcedChips.has(chip)) return;
     announcedChips.add(chip);
-    announcer.getState().announce("announce.chipInComposer", { name: chip.name });
+    announcer
+      .getState()
+      .announce('announce.chipInComposer', { name: chip.name });
   }, [announcer, chip]);
 
   const removeChip = (): void => {
     composerSeed.clear(target);
-    focusShellTarget("composer");
+    focusShellTarget('composer');
   };
 
   return (
     <Composer
       sendBlocked={sendBlocked}
-      placeholder={chip === null ? placeholder : chipPlaceholder(chip)}
+      placeholder={
+        chip === null
+          ? placeholder
+          : t('chipPlaceholder', { kind: chip.kind, name: chip.name })
+      }
       newThreadFailure={newThreadFailure}
-      chip={chip === null ? null : <RecordLabel chip={chip} variant="chip" onRemove={removeChip} className="self-start" />}
+      chip={
+        chip === null ? null : (
+          <RecordLabel
+            chip={chip}
+            variant="chip"
+            onRemove={removeChip}
+            className="self-start"
+          />
+        )
+      }
     />
   );
 };
@@ -784,11 +878,48 @@ const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: Se
 /** CV-04: the queue tray of the screen's feed above the composer; nothing without a feed. */
 const FeedTray: FC = () => (useFeed() === null ? null : <FeedQueueTray />);
 
+/**
+ * Self-learning TR-01, MC-10: a training's conversation and its replays take no message. The root's line carries
+ * «Стоп» while the training works, which stops the root, and says the training is over once it is not.
+ */
+const TrainingLine: FC<{ root: boolean }> = ({ root }) => {
+  const t = useTranslations('chat.training');
+  const feed = useFeed();
+  const working = useFeedSelector((state) => canInterrupt(state.view), false);
+  const [stopFailed, setStopFailed] = useState(false);
+  const stop = () => {
+    setStopFailed(false);
+    // `command` has logged the refusal.
+    void feed?.stop().catch(() => setStopFailed(true));
+  };
+  return (
+    <div className="flex flex-col gap-1 px-2">
+      <div className="text-muted-foreground flex min-h-9 items-center justify-between gap-2 text-sm leading-5">
+        <p>{root && !working ? t('ended') : t('readOnly')}</p>
+        {root && working && (
+          <Button variant="outline" size="sm" onClick={stop}>
+            <SquareIcon aria-hidden />
+            {t('stop')}
+          </Button>
+        )}
+      </div>
+      {stopFailed && (
+        <p role="alert" className="text-destructive text-xs leading-4">
+          {t('stopFailed')}
+        </p>
+      )}
+    </div>
+  );
+};
+
 const NO_OPTIMISTIC: readonly OptimisticEntry[] = [];
 
 const FeedQueueTray: FC = () => {
   const view = useFeedSelector((state) => state.view, null);
-  const optimistic = useFeedSelector((state) => state.optimistic, NO_OPTIMISTIC);
+  const optimistic = useFeedSelector(
+    (state) => state.optimistic,
+    NO_OPTIMISTIC,
+  );
   const tray = useMemo(() => trayEntries(view, optimistic), [view, optimistic]);
   return <QueueTray tray={tray} />;
 };
@@ -799,6 +930,7 @@ const Composer: FC<{
   chip: ReactNode;
   newThreadFailure?: SendFailure | null;
 }> = ({ sendBlocked, placeholder, chip, newThreadFailure = null }) => {
+  const t = useTranslations('chat');
   const failure = useSendFailure(newThreadFailure);
   const sendFailed = failure !== null;
   const failureId = useId();
@@ -821,7 +953,7 @@ const Composer: FC<{
           rows={1}
           autoFocus={false}
           enterKeyHint="send"
-          aria-label="Сообщение"
+          aria-label={t('composer.message')}
           aria-describedby={sendFailed ? failureId : undefined}
           name="message"
           addAttachmentOnPaste={false}
@@ -849,13 +981,17 @@ const Composer: FC<{
  */
 const FeedInterrupt: FC = () => {
   const feed = useFeed();
-  const interruptible = useFeedSelector((state) => canInterrupt(state.view), false);
+  const interruptible = useFeedSelector(
+    (state) => canInterrupt(state.view),
+    false,
+  );
   if (feed === null || !interruptible) return null;
   return <InterruptButton onInterrupt={() => feed.interrupt()} />;
 };
 
 /** «Отправить» stays available while the agent works (FR-16); stopping the agent is «Прервать». */
 const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
+  const t = useTranslations('chat');
   const { ComposerExtra } = useContext(ThreadComponentsContext);
 
   return (
@@ -866,18 +1002,75 @@ const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
-            <ComposerPrimitive.Dictate render={<TooltipIconButton tooltip="Голосовой ввод" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full" aria-label="Начать голосовой ввод" />}><MicIcon className="aui-composer-dictate-icon size-4" /></ComposerPrimitive.Dictate>
+            <ComposerPrimitive.Dictate
+              render={
+                <TooltipIconButton
+                  tooltip={t('composer.dictate')}
+                  side="bottom"
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full"
+                  aria-label={t('composer.startDictation')}
+                />
+              }
+            >
+              <MicIcon className="aui-composer-dictate-icon size-4" />
+            </ComposerPrimitive.Dictate>
           </AuiIf>
           <AuiIf condition={(s) => s.composer.dictation != null}>
-            <ComposerPrimitive.StopDictation render={<TooltipIconButton tooltip="Остановить диктовку" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-stop-dictation text-destructive size-7 rounded-full" aria-label="Остановить диктовку" />}><SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current motion-reduce:animate-none" /></ComposerPrimitive.StopDictation>
+            <ComposerPrimitive.StopDictation
+              render={
+                <TooltipIconButton
+                  tooltip={t('composer.stopDictation')}
+                  side="bottom"
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="aui-composer-stop-dictation text-destructive size-7 rounded-full"
+                  aria-label={t('composer.stopDictation')}
+                />
+              }
+            >
+              <SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current motion-reduce:animate-none" />
+            </ComposerPrimitive.StopDictation>
           </AuiIf>
         </AuiIf>
         <FeedInterrupt />
         <AuiIf condition={(s) => !shouldShowComposerResume(s)}>
-          <ComposerPrimitive.Send disabled={sendBlocked} render={<TooltipIconButton tooltip="Отправить" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label="Отправить" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+          <ComposerPrimitive.Send
+            disabled={sendBlocked}
+            render={
+              <TooltipIconButton
+                tooltip={t('composer.send')}
+                side="bottom"
+                type="button"
+                variant="default"
+                size="icon"
+                className="aui-composer-send size-7 rounded-full"
+                aria-label={t('composer.send')}
+              />
+            }
+          >
+            <ArrowUpIcon className="aui-composer-send-icon size-4" />
+          </ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={shouldShowComposerResume}>
-          <ComposerPrimitive.Resume render={<TooltipIconButton tooltip="Продолжить генерацию" side="bottom" type="button" variant="default" size="icon" className="aui-composer-resume size-7 rounded-full" aria-label="Продолжить генерацию" />}><PlayIcon className="aui-composer-resume-icon size-4" /></ComposerPrimitive.Resume>
+          <ComposerPrimitive.Resume
+            render={
+              <TooltipIconButton
+                tooltip={t('composer.resume')}
+                side="bottom"
+                type="button"
+                variant="default"
+                size="icon"
+                className="aui-composer-resume size-7 rounded-full"
+                aria-label={t('composer.resume')}
+              />
+            }
+          >
+            <PlayIcon className="aui-composer-resume-icon size-4" />
+          </ComposerPrimitive.Resume>
         </AuiIf>
       </div>
     </div>
@@ -896,21 +1089,33 @@ const MessageError: FC = () => (
 
 /** The text of a reply error: by the `ReplyErrorData` toFeed puts on the message, or the generic one. */
 function replyErrorText(t: ErrorsTranslator, error: unknown): string {
-  if (typeof error !== "object" || error === null) return replyFailureText(t, null, null);
-  const reason: unknown = Reflect.get(error, "reason");
-  const model: unknown = Reflect.get(error, "model");
-  return replyFailureText(t, typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
+  if (typeof error !== 'object' || error === null)
+    return replyFailureText(t, null, null);
+  const reason: unknown = Reflect.get(error, 'reason');
+  const model: unknown = Reflect.get(error, 'model');
+  return replyFailureText(
+    t,
+    typeof reason === 'string' ? reason : null,
+    typeof model === 'string' ? model : null,
+  );
 }
 
 const ReplyErrorBlock: FC = () => {
-  const t = useTranslations("errors");
-  const error = useAuiState((s) => (s.message.status?.type === "incomplete" ? s.message.status.error : undefined));
+  const t = useTranslations('errors');
+  const error = useAuiState((s) =>
+    s.message.status?.type === 'incomplete'
+      ? s.message.status.error
+      : undefined,
+  );
   return (
     <div
       data-slot="message-error"
       className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
     >
-      <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
+      <TriangleAlertIcon
+        aria-hidden
+        className="text-destructive mt-0.5 size-4 shrink-0"
+      />
       <p role="alert" className="text-foreground line-clamp-2 min-w-0">
         {replyErrorText(t, error)}
       </p>
@@ -925,11 +1130,12 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
     TaskGroup: TaskGroupComponent,
   } = useContext(ThreadComponentsContext);
+  const t = useTranslations('chat');
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
   const isBlank = useAuiState(isBlankReply);
   const caption = useSourceCaption();
 
-  const ACTION_BAR_PT = "pt-1.5";
+  const ACTION_BAR_PT = 'pt-1.5';
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
   const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
 
@@ -938,8 +1144,8 @@ const AssistantMessage: FC = () => {
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       className={cn(
-        "group/message fade-in slide-in-from-bottom-1 animate-in relative duration-150 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]",
-        !isBlank && "-mb-7.5 pb-7.5",
+        'group/message fade-in slide-in-from-bottom-1 animate-in relative duration-150 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]',
+        !isBlank && '-mb-7.5 pb-7.5',
       )}
     >
       {isBlank ? (
@@ -950,30 +1156,36 @@ const AssistantMessage: FC = () => {
             data-slot="aui_assistant-message-content"
             className="text-foreground px-2 leading-relaxed wrap-break-word"
           >
-            {caption !== null && <SourceCaption text={caption} className="mb-1" />}
+            {caption !== null && (
+              <SourceCaption text={caption} className="mb-1" />
+            )}
             <MessagePrimitive.GroupedParts groupBy={groupBy}>
               {({ part, children }) => {
                 switch (part.type) {
-                  case "group-chainOfThought":
-                    return <div data-slot="aui_chain-of-thought">{children}</div>;
-                  case "group-task":
+                  case 'group-chainOfThought':
+                    return (
+                      <div data-slot="aui_chain-of-thought">{children}</div>
+                    );
+                  case 'group-task':
                     return TaskGroupComponent ? (
                       <TaskGroupComponent group={part} />
                     ) : null;
-                  case "group-tool":
+                  case 'group-tool':
                     if (ToolGroup) {
                       return <ToolGroup group={part}>{children}</ToolGroup>;
                     }
                     return (
-                      <DefaultToolGroup group={part}>{children}</DefaultToolGroup>
+                      <DefaultToolGroup group={part}>
+                        {children}
+                      </DefaultToolGroup>
                     );
-                  case "group-reasoning": {
+                  case 'group-reasoning': {
                     if (ReasoningGroup) {
                       return (
                         <ReasoningGroup group={part}>{children}</ReasoningGroup>
                       );
                     }
-                    const running = part.status.type === "running";
+                    const running = part.status.type === 'running';
                     return (
                       <ReasoningRoot streaming={running}>
                         <ReasoningTrigger
@@ -986,34 +1198,40 @@ const AssistantMessage: FC = () => {
                       </ReasoningRoot>
                     );
                   }
-                  case "text":
+                  case 'text':
                     return <MarkdownText />;
-                  case "reasoning":
+                  case 'reasoning':
                     return <Reasoning {...part} />;
-                  case "tool-call":
+                  case 'tool-call':
                     return part.toolUI ?? <ToolFallbackComponent {...part} />;
-                  case "data":
+                  case 'data':
                     return part.dataRendererUI;
-                  case "file":
+                  case 'file':
                     return (
-                      <div data-slot="aui_assistant-message-file" className="py-1">
+                      <div
+                        data-slot="aui_assistant-message-file"
+                        className="py-1"
+                      >
                         <MessageFile {...part} />
                       </div>
                     );
-                  case "image":
+                  case 'image':
                     return (
-                      <div data-slot="aui_assistant-message-image" className="py-1">
+                      <div
+                        data-slot="aui_assistant-message-image"
+                        className="py-1"
+                      >
                         <MessageImage {...part} />
                       </div>
                     );
-                  case "indicator":
+                  case 'indicator':
                     return (
                       <span
                         data-slot="aui_assistant-message-indicator"
                         className="animate-pulse font-sans motion-reduce:animate-none"
-                        aria-label="Ассистент отвечает…"
+                        aria-label={t('replying')}
                       >
-                        {"●"}
+                        {'●'}
                       </span>
                     );
                   default:
@@ -1026,7 +1244,7 @@ const AssistantMessage: FC = () => {
 
           <div
             data-slot="aui_assistant-message-footer"
-            className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+            className={cn('ms-2 flex items-center', ACTION_BAR_HEIGHT)}
           >
             <AssistantActionBar />
           </div>
@@ -1039,14 +1257,16 @@ const AssistantMessage: FC = () => {
 // A reply with no parts that is not being generated (e.g. the stub an error before the first token
 // leaves) shows no row: only its error block, if any.
 const isBlankReply = (s: AssistantState) =>
-  s.message.parts.length === 0 && s.message.status?.type !== "running";
+  s.message.parts.length === 0 && s.message.status?.type !== 'running';
 
 const hasVisibleText = (s: AssistantState) =>
-  s.message.parts.some((part) => part.type === "text" && part.text.trim() !== "");
+  s.message.parts.some(
+    (part) => part.type === 'text' && part.text.trim() !== '',
+  );
 
 // The feed's draft is `complete` for the library (so «Отправить» stays open) and is still being written.
 const isGeneratingReply = (s: AssistantState) =>
-  s.message.status?.type === "running" || feedKindOf(s) === "draft";
+  s.message.status?.type === 'running' || feedKindOf(s) === 'draft';
 
 /**
  * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last message
@@ -1057,51 +1277,75 @@ const useActionBarVisibility = () => {
   const isLast = useAuiState((s) => s.message.isLast);
   return isLast
     ? undefined
-    : "opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none";
+    : 'opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none';
 };
 
-const MessageCopy: FC<{ className?: string }> = ({ className }) => (
-  <>
-    <AuiIf condition={hasVisibleText}>
-      <ActionBarPrimitive.Copy
-        render={<TooltipIconButton tooltip="Копировать" className={className} />}
-      >
-        <AuiIf condition={(s) => s.message.isCopied}>
-          <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out motion-reduce:animate-none" />
-        </AuiIf>
-        <AuiIf condition={(s) => !s.message.isCopied}>
-          <CopyIcon className="animate-in zoom-in-75 fade-in duration-150 motion-reduce:animate-none" />
-        </AuiIf>
-      </ActionBarPrimitive.Copy>
-    </AuiIf>
-    <CopiedStatus />
-  </>
-);
+const MessageCopy: FC<{ className?: string }> = ({ className }) => {
+  const t = useTranslations('chat');
+  return (
+    <>
+      <AuiIf condition={hasVisibleText}>
+        <ActionBarPrimitive.Copy
+          render={
+            <TooltipIconButton tooltip={t('copy')} className={className} />
+          }
+        >
+          <AuiIf condition={(s) => s.message.isCopied}>
+            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out motion-reduce:animate-none" />
+          </AuiIf>
+          <AuiIf condition={(s) => !s.message.isCopied}>
+            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150 motion-reduce:animate-none" />
+          </AuiIf>
+        </ActionBarPrimitive.Copy>
+      </AuiIf>
+      <CopiedStatus />
+    </>
+  );
+};
 
 /** «Скопировано» goes to the shell's only live region (UXRD, «Объявления»). */
 const CopiedStatus: FC = () => {
   const { announcer } = useShellServices();
   const isCopied = useAuiState((s) => s.message.isCopied);
   useEffect(() => {
-    if (isCopied) announcer.getState().announce("announce.copied");
+    if (isCopied) announcer.getState().announce('announce.copied');
   }, [isCopied, announcer]);
   return null;
 };
 
 const AssistantActionBar: FC = () => {
+  const t = useTranslations('chat');
   const visibility = useActionBarVisibility();
   return (
     <AuiIf condition={(s) => !isGeneratingReply(s)}>
       <ActionBarPrimitive.Root
         className={cn(
-          "aui-assistant-action-bar-root text-muted-foreground -ms-1 flex gap-1",
+          'aui-assistant-action-bar-root text-muted-foreground -ms-1 flex gap-1',
           visibility,
         )}
       >
         <MessageCopy />
         <AuiIf condition={(s) => s.thread.capabilities.feedback}>
-          <ActionBarPrimitive.FeedbackPositive render={<TooltipIconButton tooltip="Полезный ответ" className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground" />}><ThumbsUpIcon /></ActionBarPrimitive.FeedbackPositive>
-          <ActionBarPrimitive.FeedbackNegative render={<TooltipIconButton tooltip="Неполезный ответ" className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground" />}><ThumbsDownIcon /></ActionBarPrimitive.FeedbackNegative>
+          <ActionBarPrimitive.FeedbackPositive
+            render={
+              <TooltipIconButton
+                tooltip={t('feedback.positive')}
+                className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground"
+              />
+            }
+          >
+            <ThumbsUpIcon />
+          </ActionBarPrimitive.FeedbackPositive>
+          <ActionBarPrimitive.FeedbackNegative
+            render={
+              <TooltipIconButton
+                tooltip={t('feedback.negative')}
+                className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground"
+              />
+            }
+          >
+            <ThumbsDownIcon />
+          </ActionBarPrimitive.FeedbackNegative>
         </AuiIf>
       </ActionBarPrimitive.Root>
     </AuiIf>
@@ -1109,7 +1353,7 @@ const AssistantActionBar: FC = () => {
 };
 
 const MessageFile: FileMessagePartComponent = (part) => {
-  const image = part.mimeType.toLowerCase().startsWith("image/")
+  const image = part.mimeType.toLowerCase().startsWith('image/')
     ? getFileHref(part.data, part.mimeType, part.sourceType)
     : null;
   if (!image) return <File {...part} />;
@@ -1141,14 +1385,17 @@ function isChipRecord(value: unknown): value is ChipRecord {
 
 const UserMessage: FC = () => {
   const { TaskBrief } = useContext(ThreadComponentsContext);
-  const isTask = useAuiState((s) => feedKindOf(s) === "task");
+  const isTask = useAuiState((s) => feedKindOf(s) === 'task');
   // custom-agents KD-5: the record chip the message was sent with (`FeedMessageMeta.record`).
-  const sentRecord = useAuiState((s): unknown => s.message.metadata.custom["record"]);
+  const sentRecord = useAuiState(
+    (s): unknown => s.message.metadata.custom['record'],
+  );
   const record = isChipRecord(sentRecord) ? sentRecord : null;
-  // AV-03: a workflow coordinator's task reads as its brief.
+  // AV-03: a deep agent's task reads as its brief.
   const Brief = isTask ? TaskBrief : undefined;
+  const t = useTranslations('chat');
   const sourceCaptionText = useSourceCaption();
-  const caption = Brief ? "Задание" : sourceCaptionText;
+  const caption = Brief ? t('caption.brief') : sourceCaptionText;
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -1156,7 +1403,10 @@ const UserMessage: FC = () => {
       data-role="user"
     >
       {caption !== null && (
-        <SourceCaption text={caption} className="col-start-2 -mb-1 justify-self-end" />
+        <SourceCaption
+          text={caption}
+          className="col-start-2 -mb-1 justify-self-end"
+        />
       )}
       {record !== null && (
         <RecordLabel
@@ -1191,7 +1441,7 @@ const UserActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
       className={cn(
-        "aui-user-action-bar-root text-muted-foreground flex flex-col items-end",
+        'aui-user-action-bar-root text-muted-foreground flex flex-col items-end',
         visibility,
       )}
     >

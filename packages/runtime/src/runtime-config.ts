@@ -18,13 +18,10 @@ const RuntimeEnvSchema = z.object({
   RUNTIME_CONCURRENCY: integer(16, 1),
   RUNTIME_POLL_MS: integer(500, 1),
   RUNTIME_NOTIFY: onOff('on'),
-  RUNTIME_LEASE_MS: integer(30_000, 1),
-  RUNTIME_HEARTBEAT_MS: integer(10_000, 1),
   RUNTIME_REAPER_MS: integer(5_000, 1),
   RUNTIME_MAX_RECOVERIES: integer(3, 0),
   RUNTIME_STEP_MS: integer(900_000, 1_000),
   RUNTIME_SHUTDOWN_GRACE_MS: integer(5_000, 0),
-  RUNTIME_DELIVERY_MAX_ATTEMPTS: integer(5, 1),
   DB_POOL_MAX: integer(10, 1),
   INBOX_PAYLOAD_MAX_BYTES: integer(1_048_576, 1),
   // Passed through unparsed: its only parser is crash-points.ts.
@@ -39,17 +36,15 @@ export interface RuntimeConfig {
   /** `RUNTIME_CONCURRENCY`: steps one instance runs at once. */
   concurrency: number;
   pollMs: number;
-  /** `RUNTIME_NOTIFY`: `off` — polling only, no NOTIFY wake-ups or interrupt signals. */
+  /** `RUNTIME_NOTIFY`: `off` — polling only, no NOTIFY wake-ups of the dispatcher. */
   notify: boolean;
-  leaseMs: number;
-  heartbeatMs: number;
+  /** `RUNTIME_REAPER_MS`: period of the recovery sweeper. */
   reaperMs: number;
   /** `RUNTIME_MAX_RECOVERIES`: losses of one step in a row before the task fails. */
   maxRecoveries: number;
   /** `RUNTIME_STEP_MS`: limit of one step's duration. */
   stepMs: number;
   shutdownGraceMs: number;
-  deliveryMaxAttempts: number;
   dbPoolMax: number;
   /** `INBOX_PAYLOAD_MAX_BYTES`: max UTF-8 size of a message payload. */
   inboxPayloadMaxBytes: number;
@@ -80,13 +75,10 @@ export function parseRuntimeConfig(
     concurrency: s.RUNTIME_CONCURRENCY,
     pollMs: s.RUNTIME_POLL_MS,
     notify: s.RUNTIME_NOTIFY === 'on',
-    leaseMs: s.RUNTIME_LEASE_MS,
-    heartbeatMs: s.RUNTIME_HEARTBEAT_MS,
     reaperMs: s.RUNTIME_REAPER_MS,
     maxRecoveries: s.RUNTIME_MAX_RECOVERIES,
     stepMs: s.RUNTIME_STEP_MS,
     shutdownGraceMs: s.RUNTIME_SHUTDOWN_GRACE_MS,
-    deliveryMaxAttempts: s.RUNTIME_DELIVERY_MAX_ATTEMPTS,
     dbPoolMax: s.DB_POOL_MAX,
     inboxPayloadMaxBytes: s.INBOX_PAYLOAD_MAX_BYTES,
     crashAt: s.RUNTIME_CRASH_AT,

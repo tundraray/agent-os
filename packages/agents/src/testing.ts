@@ -1,22 +1,46 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  AgentContentSchema,
+  type AgentVersion,
+  DeepAgentContentSchema,
   ModelProviderKindSchema,
+  McpErrorCode,
+  NOTEPAD_CREATE_TOOL,
+  nameWinner,
+  type McpServerMode,
   type ModelProviderState,
   type RecordBody,
   type RecordHeader,
+  RecordKindSchema,
   type ResolvedRecord,
   type ToolCallState,
   type ToolOutcome,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import type { Database } from '@agent-os/db';
+import {
+  agents,
+  AgentsRepository,
+  agentVersions,
+  MessagesRepository,
+  type Database,
+  Db,
+} from '@agent-os/db';
+import {
+  FIXTURE_SHARED_TOKEN,
+  type FixtureProcess,
+  type FixtureSource,
+} from '@agent-os/mcp-fixture';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
+import { REPORT_DOCUMENT_NOTICE } from './deep/deep-agent';
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
 import type { EmbeddingClient } from './embeddings/embedding-client';
 import { foldCalls } from './history/call-state';
-import { history } from './store/history.repository';
+import type { AgentsMcp } from './mcp/mcp';
+import { McpError } from './mcp/mcp-errors';
+import type { McpServerWrite } from './mcp/mcp-registry';
+import { History } from './store/history';
 import type { EmbeddingInputType } from './providers/adapters';
 import type { ProviderReadiness } from './providers/provider-readiness';
 import type { AgentsProviders } from './providers/provider-registry';
@@ -32,7 +56,7 @@ import type {
 
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
- * `@agent-os/agents/testing`): an `AgentTurnModelClient` for `createAgents({ turnClient })`, so it stands
+ * `@agent-os/agents/testing`): an `AgentTurnModelClient` behind `AGENT_TURN_CLIENT`, so it stands
  * INSIDE `ModelClient`, below its ledger write — the token ledger, the retries, the text parts with
  * their offsets and the provider messages are the package's own. A script is a list of replies of one
  * agent; every call is recorded with the messages exactly as the provider would get them, which is the
@@ -41,9 +65,6 @@ import type {
  * reply may be computed from the call's input; a reply may be a provider error. A call of
  * `agents.completeText` (`purpose: 'complete_text'`) is answered by the separate text script.
  */
-
-/** The largest `seq` a history can have: `agent_messages.seq` is a Postgres `integer`. */
-const MAX_SEQ = 2_147_483_647;
 
 /** Usage of an answer that names none: below any compaction threshold of the tests. */
 export const DEFAULT_USAGE: CallUsage = {
@@ -84,7 +105,9 @@ export function createLatch(): Latch {
     },
     reached(count = 1) {
       if (arrived >= count) return Promise.resolve();
-      return new Promise<void>((resolve) => countWaiters.push({ count, resolve }));
+      return new Promise<void>((resolve) =>
+        countWaiters.push({ count, resolve }),
+      );
     },
     open() {
       isOpen = true;
@@ -132,6 +155,8 @@ export interface ScriptedAnswer {
   /** Over {@link DEFAULT_USAGE}. */
   readonly usage?: Partial<CallUsage>;
   readonly latch?: Latch;
+  /** The answer ends at the output length limit: the double reports `finishReason: 'length'` (KD-3). */
+  readonly cutOff?: true;
 }
 
 /**
@@ -143,25 +168,32 @@ export interface ScriptedAnswer {
 export interface ScriptedModelError {
   readonly kind: 'model_error';
   readonly statusCode: number;
+  /** Each failing call waits on it first, so a test decides when the agent fails. */
+  readonly latch?: Latch;
 }
 
-export function modelError(statusCode = DEFAULT_ERROR_STATUS): ScriptedModelError {
-  return { kind: 'model_error', statusCode };
+export function modelError(
+  statusCode = DEFAULT_ERROR_STATUS,
+  latch?: Latch,
+): ScriptedModelError {
+  return { kind: 'model_error', statusCode, ...(latch && { latch }) };
 }
 
-/** A reply computed from the call's input: the messages exactly as the provider would get them. */
+/** A reply computed from the call's input: the messages exactly as the provider would get them, and the call itself. */
 export type ReplyFromInput = (
   messages: readonly AgentTurnMessage[],
+  call: RecordedModelCall,
 ) => ScriptedAnswer | ScriptedModelError;
 
 /** What a script answers one call with. */
-export type ScriptedReply = ScriptedAnswer | ScriptedModelError | ReplyFromInput;
+export type ScriptedReply =
+  ScriptedAnswer | ScriptedModelError | ReplyFromInput;
 
 /** A model call as the double received it. */
 export interface RecordedModelCall {
   readonly agentName: string;
   readonly model: string;
-  /** The system text exactly as the provider would get it: the definition's prompt, the knowledge block, the standing rules. */
+  /** The system text exactly as the provider would get it: the definition's prompt, the memory block, the standing rules. */
   readonly instructions: string;
   /** The session's messages exactly as the provider would get them. */
   readonly messages: readonly AgentTurnMessage[];
@@ -210,12 +242,16 @@ export interface TextScript {
 }
 
 export interface ScriptedModel {
-  /** The double, for `createAgents({ turnClient })`. */
+  /** The double, behind `AGENT_TURN_CLIENT`. */
   readonly turnClient: AgentTurnModelClient;
   /** Every agent call of every script, in order of arrival; `completeText` calls are not among them. */
   readonly calls: readonly RecordedModelCall[];
   /** Adds the replies of one agent. */
-  script(key: ScriptKey, replies: readonly ScriptedReply[], options?: ScriptOptions): Script;
+  script(
+    key: ScriptKey,
+    replies: readonly ScriptedReply[],
+    options?: ScriptOptions,
+  ): Script;
   /**
    * Sets the reply to every `completeText` call: an answer (its latch holds the call), or a provider
    * error on every attempt. Without it a `completeText` call fails as a defect of the test.
@@ -235,19 +271,34 @@ function describeKey(key: ScriptKey): string {
   return 'task' in key ? `task "${key.task}"` : `agent "${key.agent}"`;
 }
 
-function isModelError(reply: ScriptedAnswer | ScriptedModelError): reply is ScriptedModelError {
+function isModelError(
+  reply: ScriptedAnswer | ScriptedModelError,
+): reply is ScriptedModelError {
   return 'kind' in reply && reply.kind === 'model_error';
 }
 
 /** The rejection the provider client gives: `classifyRejection` reads it by `name`, `statusCode` and `responseBody`. */
-function providerError(caller: string, statusCode: number, responseBody?: string): Error {
-  const error = new Error(`Scripted provider error ${statusCode} for ${caller}`);
+function providerError(
+  caller: string,
+  statusCode: number,
+  responseBody?: string,
+): Error {
+  const error = new Error(
+    `Scripted provider error ${statusCode} for ${caller}`,
+  );
   error.name = 'AI_APICallError';
-  return Object.assign(error, { statusCode }, responseBody === undefined ? {} : { responseBody });
+  return Object.assign(
+    error,
+    { statusCode },
+    responseBody === undefined ? {} : { responseBody },
+  );
 }
 
 /** Resolves the waiters whose count the calls reached. */
-function resolveWaiters(waiters: { count: number; resolve: () => void }[], arrived: number): void {
+function resolveWaiters(
+  waiters: { count: number; resolve: () => void }[],
+  arrived: number,
+): void {
   for (const waiter of waiters.slice()) {
     if (arrived >= waiter.count) {
       waiters.splice(waiters.indexOf(waiter), 1);
@@ -267,13 +318,18 @@ async function streamAnswer(
 ): Promise<AgentTurnGeneration> {
   await answer.latch?.pass(signal);
   signal.throwIfAborted();
-  const parts = typeof answer.text === 'string' ? [answer.text] : (answer.text ?? []);
+  const parts =
+    typeof answer.text === 'string' ? [answer.text] : (answer.text ?? []);
   for (const part of parts) {
     if (part !== '') onText(part);
   }
   const calls = toolCalls();
   return {
-    finishReason: calls.length > 0 ? 'tool-calls' : 'stop',
+    finishReason: answer.cutOff
+      ? 'length'
+      : calls.length > 0
+        ? 'tool-calls'
+        : 'stop',
     text: parts.join(''),
     toolCalls: calls,
     usage: { ...DEFAULT_USAGE, ...answer.usage },
@@ -289,12 +345,69 @@ export function createScriptedModel(): ScriptedModel {
   function scriptOf(call: AgentTurnCall): ScriptState {
     for (const message of [...call.messages].reverse()) {
       if (message.role !== 'user') continue;
-      const byTask = scripts.find((state) => 'task' in state.key && state.key.task === message.content);
+      const byTask = scripts.find(
+        (state) => 'task' in state.key && state.key.task === message.content,
+      );
       if (byTask !== undefined) return byTask;
     }
-    const byAgent = scripts.find((state) => 'agent' in state.key && state.key.agent === call.agentName);
+    const byAgent = scripts.find(
+      (state) => 'agent' in state.key && state.key.agent === call.agentName,
+    );
     if (byAgent !== undefined) return byAgent;
     throw new Error(`No script answers a call of agent ${call.agentName}`);
+  }
+
+  /** Ids of the report document calls the double wrote itself. */
+  const reportCallIds = new Set<string>();
+
+  /**
+   * A deep agent must end with a report document: after its notice the double writes one, then repeats the
+   * answer the notice interrupted, so a script lists only the answer and not the document.
+   */
+  function reportReply(call: AgentTurnCall): AgentTurnGeneration | undefined {
+    const last = call.messages.at(-1);
+    const answer = [...call.messages]
+      .reverse()
+      .find(
+        (message) => message.role === 'assistant' && message.content !== '',
+      );
+    const text = answer?.role === 'assistant' ? answer.content : '';
+    if (
+      last?.role === 'user' &&
+      last.content.includes(REPORT_DOCUMENT_NOTICE)
+    ) {
+      nextCallId += 1;
+      const toolCallId = `call-${nextCallId}`;
+      reportCallIds.add(toolCallId);
+      return {
+        finishReason: 'tool-calls',
+        text: '',
+        toolCalls: [
+          {
+            toolCallId,
+            toolName: NOTEPAD_CREATE_TOOL,
+            args: {
+              title: 'Report',
+              description: 'The result of the run',
+              text,
+              report: true,
+            },
+          },
+        ],
+        usage: DEFAULT_USAGE,
+      };
+    }
+    if (
+      last?.role === 'tool' &&
+      last.results.some((result) => reportCallIds.has(result.toolCallId))
+    )
+      return {
+        finishReason: 'stop',
+        text,
+        toolCalls: [],
+        usage: DEFAULT_USAGE,
+      };
+    return undefined;
   }
 
   const textCalls: RecordedTextCall[] = [];
@@ -302,7 +415,10 @@ export function createScriptedModel(): ScriptedModel {
   let textReply: ScriptedAnswer | ScriptedModelError | undefined;
 
   /** Answers a `completeText` call from the text script. */
-  async function answerText(call: AgentTurnCall, options: StreamTurnOptions): Promise<AgentTurnGeneration> {
+  async function answerText(
+    call: AgentTurnCall,
+    options: StreamTurnOptions,
+  ): Promise<AgentTurnGeneration> {
     const prompt = call.messages[0];
     textCalls.push({
       model: call.model,
@@ -310,14 +426,21 @@ export function createScriptedModel(): ScriptedModel {
       prompt: prompt?.role === 'user' ? prompt.content : '',
     });
     resolveWaiters(textWaiters, textCalls.length);
-    if (textReply === undefined) throw new Error('No text script answers a completeText call');
-    if (isModelError(textReply)) throw providerError('completeText', textReply.statusCode);
+    if (textReply === undefined)
+      throw new Error('No text script answers a completeText call');
+    if (isModelError(textReply))
+      throw providerError('completeText', textReply.statusCode);
     return streamAnswer(textReply, options, () => []);
   }
 
   const turnClient: AgentTurnModelClient = {
     async streamTurn(call, options): Promise<AgentTurnGeneration> {
       if (call.purpose === 'complete_text') return answerText(call, options);
+      const report = reportReply(call);
+      if (report !== undefined) {
+        if (report.text !== '') options.onText(report.text);
+        return report;
+      }
       const state = scriptOf(call);
       const recorded: RecordedModelCall = {
         agentName: call.agentName,
@@ -325,7 +448,9 @@ export function createScriptedModel(): ScriptedModel {
         instructions: call.instructions,
         messages: call.messages,
         toolNames: call.tools.map((tool) => tool.name),
-        toolDescriptions: Object.fromEntries(call.tools.map((tool) => [tool.name, tool.description])),
+        toolDescriptions: Object.fromEntries(
+          call.tools.map((tool) => [tool.name, tool.description]),
+        ),
         toolCallIds: [],
       };
       calls.push(recorded);
@@ -335,18 +460,30 @@ export function createScriptedModel(): ScriptedModel {
 
       const reply = state.replies[index] ?? state.thereafter;
       if (reply === undefined) {
-        throw new Error(`Script of ${describeKey(state.key)} has no answer for call ${index + 1}`);
+        throw new Error(
+          `Script of ${describeKey(state.key)} has no answer for call ${index + 1}`,
+        );
       }
-      const answer = typeof reply === 'function' ? reply(call.messages) : reply;
-      if (isModelError(answer)) throw providerError(`agent ${call.agentName}`, answer.statusCode);
+      const answer =
+        typeof reply === 'function' ? reply(call.messages, recorded) : reply;
+      if (isModelError(answer)) {
+        await answer.latch?.pass(options.signal);
+        throw providerError(`agent ${call.agentName}`, answer.statusCode);
+      }
 
       const generation = await streamAnswer(answer, options, () =>
         (answer.calls ?? []).map((scripted) => {
           nextCallId += 1;
-          return { toolCallId: `call-${nextCallId}`, toolName: scripted.tool, args: scripted.args };
+          return {
+            toolCallId: `call-${nextCallId}`,
+            toolName: scripted.tool,
+            args: scripted.args,
+          };
         }),
       );
-      recorded.toolCallIds.push(...generation.toolCalls.map((toolCall) => toolCall.toolCallId));
+      recorded.toolCallIds.push(
+        ...generation.toolCalls.map((toolCall) => toolCall.toolCallId),
+      );
       return generation;
     },
   };
@@ -360,7 +497,9 @@ export function createScriptedModel(): ScriptedModel {
         calls: textCalls,
         called(count) {
           if (textCalls.length >= count) return Promise.resolve();
-          return new Promise<void>((resolve) => textWaiters.push({ count, resolve }));
+          return new Promise<void>((resolve) =>
+            textWaiters.push({ count, resolve }),
+          );
         },
       };
     },
@@ -377,7 +516,9 @@ export function createScriptedModel(): ScriptedModel {
         calls: state.calls,
         called(count) {
           if (state.calls.length >= count) return Promise.resolve();
-          return new Promise<void>((resolve) => state.waiters.push({ count, resolve }));
+          return new Promise<void>((resolve) =>
+            state.waiters.push({ count, resolve }),
+          );
         },
       };
     },
@@ -398,7 +539,7 @@ export interface RecordedEmbeddingCall {
 }
 
 /**
- * The embeddings seam double (ADR-0004), for `createAgents({ embeddingClient })`: it stands below the service,
+ * The embeddings seam double (ADR-0004), behind `EMBEDDING_CLIENT`: it stands below the service,
  * so the batches, retries, ledger rows and checks are the package's own. The switches are read on every call.
  */
 export interface ScriptedEmbeddings {
@@ -432,17 +573,40 @@ export function createScriptedEmbeddings(): ScriptedEmbeddings {
     failure: null,
     vectorOf: null,
     client: {
-      async embed({ connection, modelName, texts, inputType, dimensions, signal }) {
+      async embed({
+        connection,
+        modelName,
+        texts,
+        inputType,
+        dimensions,
+        signal,
+      }) {
         signal.throwIfAborted();
         const model = `${connection.name}/${modelName}`;
-        calls.push({ model, apiKey: connection.apiKey, texts, inputType, dimensions });
+        calls.push({
+          model,
+          apiKey: connection.apiKey,
+          texts,
+          inputType,
+          dimensions,
+        });
         const { failure, vectorOf } = scripted;
-        if (failure !== null) throw providerError(`embeddings of ${model}`, failure.statusCode, failure.body);
+        if (failure !== null)
+          throw providerError(
+            `embeddings of ${model}`,
+            failure.statusCode,
+            failure.body,
+          );
         const length = scripted.vectorLength ?? dimensions;
-        const byLength = (text: string) => Array.from({ length }, (_, index) => text.length + index);
+        const byLength = (text: string) =>
+          Array.from({ length }, (_, index) => text.length + index);
         return {
-          vectors: texts.map((text) => (vectorOf === null ? byLength(text) : [...vectorOf(text, model)])),
-          inputTokens: scripted.withoutTokenCount ? null : texts.length * SCRIPTED_EMBEDDING_TOKENS_PER_TEXT,
+          vectors: texts.map((text) =>
+            vectorOf === null ? byLength(text) : [...vectorOf(text, model)],
+          ),
+          inputTokens: scripted.withoutTokenCount
+            ? null
+            : texts.length * SCRIPTED_EMBEDDING_TOKENS_PER_TEXT,
         };
       },
     },
@@ -484,7 +648,9 @@ export interface AccessGateDoubleOptions {
    * `{ <owner id>: { <model>: <refusal> } }`: a refusal of a model for one owner, before `refusedModels`;
    * read on every question, so a test may withdraw a model from an owner mid-run by adding to the object.
    */
-  readonly ownerModelRefusals?: Readonly<Record<string, Readonly<Record<string, ModelRefusal>>>>;
+  readonly ownerModelRefusals?: Readonly<
+    Record<string, Readonly<Record<string, ModelRefusal>>>
+  >;
   /** The default chat model; `null` (no model chosen) by default. */
   readonly defaultChatModel?: string | null;
   /**
@@ -503,10 +669,16 @@ const EVERY_OWNER = '*';
  * An `AccessGate` for the package's tests (ADR-0004: a double of the package's own contract): rights by
  * server from a table, prices from literals, no database. `apps/api` implements the real one over its tables.
  */
-export function createAccessGateDouble(options: AccessGateDoubleOptions): AccessGate {
-  const disabled = (ownerId: string): boolean => options.refusedOwners?.includes(ownerId) === true;
+export function createAccessGateDouble(
+  options: AccessGateDoubleOptions,
+): AccessGate {
+  const disabled = (ownerId: string): boolean =>
+    options.refusedOwners?.includes(ownerId) === true;
   const serversOf = (ownerId: string): ReadonlySet<string> =>
-    new Set([...(options.servers?.[ownerId] ?? []), ...(options.servers?.[EVERY_OWNER] ?? [])]);
+    new Set([
+      ...(options.servers?.[ownerId] ?? []),
+      ...(options.servers?.[EVERY_OWNER] ?? []),
+    ]);
   return {
     async tools(ownerId) {
       if (disabled(ownerId)) return { kind: 'owner_disabled' };
@@ -514,8 +686,11 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
       return { kind: 'allowed', allows: (server) => servers.has(server) };
     },
     async model(ownerId, model) {
-      if (disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
-      const refusal = options.ownerModelRefusals?.[ownerId]?.[model] ?? options.refusedModels?.[model];
+      if (disabled(ownerId))
+        return { kind: 'refused', reason: 'owner_disabled' };
+      const refusal =
+        options.ownerModelRefusals?.[ownerId]?.[model] ??
+        options.refusedModels?.[model];
       if (refusal !== undefined) return refusal;
       const price = options.prices[model];
       return price === undefined
@@ -526,8 +701,14 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
       return options.defaultChatModel ?? null;
     },
     async embedding(ownerId) {
-      if (ownerId !== null && disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
-      return options.embedding?.() ?? { kind: 'refused', reason: 'model_not_configured' };
+      if (ownerId !== null && disabled(ownerId))
+        return { kind: 'refused', reason: 'owner_disabled' };
+      return (
+        options.embedding?.() ?? {
+          kind: 'refused',
+          reason: 'model_not_configured',
+        }
+      );
     },
   };
 }
@@ -558,7 +739,12 @@ export function createProviderRegistryDouble(
       };
     },
     async readiness(names) {
-      return new Map(names.map((name): [string, ProviderReadiness] => [name, states[name] ?? 'missing']));
+      return new Map(
+        names.map((name): [string, ProviderReadiness] => [
+          name,
+          states[name] ?? 'missing',
+        ]),
+      );
     },
   };
 }
@@ -591,9 +777,17 @@ export interface LibraryDoubleEdit {
 }
 
 /**
- * The `RecordLibrary` double (ADR-0004; design-runtime.md, «Порт `RecordLibrary`»): records in memory and
- * the changes an author or an admin makes while runs go on. A record is visible to its owner always, to
- * others while it is not closed or hidden from them and they are its audience.
+ * The `RecordLibrary` double (ADR-0004; data-model design-agents.md, «Порт `RecordLibrary`»): records and
+ * their versions in memory, and the changes an author or an admin makes while runs go on. A record is visible
+ * to its owner always, to others while they are its audience. A
+ * version is never dropped: a removed record's conversations still read theirs.
+ *
+ * Given a database (`useDatabase`), the double writes the rows of every agent and version it gives out into
+ * `agents` and `agent_versions` at the first read that gives them out (`ON CONFLICT (id) DO NOTHING`), so a
+ * conversation's foreign key on its version holds, and reads a version it does not hold from there — the
+ * version another process's double wrote. The agent rows carry a deletion mark and no key: they take no
+ * unique name or key of the shared test database, and who sees what is still decided here, in memory. The
+ * owner of a row is the record's owner, so it must be a real employee.
  */
 export interface LibraryDouble extends RecordLibrary {
   /** Adds a record at version 1 and returns its id. */
@@ -601,128 +795,266 @@ export interface LibraryDouble extends RecordLibrary {
   /** Saves a new version. */
   edit(recordId: string, change: LibraryDoubleEdit): void;
   remove(recordId: string): void;
-  /** An admin closes the record: only its owner sees it. */
-  close(recordId: string): void;
-  /** The viewer stops seeing the record, as one taken out of its role. */
-  hideFrom(recordId: string, viewerId: string): void;
+  /**
+   * Writes and reads the rows through `db` from now on; the returned release stops that, unless another
+   * database was given since.
+   */
+  useDatabase(db: Database): () => void;
   /** Every `resolve` call in order: who asked for which record. */
-  readonly resolveCalls: readonly { readonly viewerId: string; readonly recordId: string }[];
+  readonly resolveCalls: readonly {
+    readonly viewerId: string;
+    readonly recordId: string;
+  }[];
 }
 
 interface StoredRecord {
   readonly id: string;
   name: string;
   description: string;
-  version: number;
-  body: RecordBody;
+  /** The id of the active version: always the newest. */
+  versionId: string;
   readonly ownerId: string | null;
   readonly ownerName: string;
   readonly everyone: boolean;
   readonly viewers: ReadonlySet<string>;
-  readonly hiddenFrom: Set<string>;
-  closed: boolean;
   readonly shared: boolean;
   readonly offerInChat: boolean;
   readonly builtinKey: string | null;
 }
 
+/** An agent row the double writes: what it was when it gave the agent out first. */
+interface AgentRowOf {
+  readonly id: string;
+  readonly kind: RecordBody['kind'];
+  readonly ownerId: string | null;
+  readonly name: string;
+  readonly description: string;
+}
+
 export function createLibraryDouble(): LibraryDouble {
+  let db: Database | null = null;
   const records = new Map<string, StoredRecord>();
+  /** Every version of every record ever added, by id; never dropped. */
+  const versions = new Map<string, AgentVersion>();
+  /** The agent of each version, as the row is written. */
+  const agentOfVersion = new Map<string, AgentRowOf>();
+  const written = new Set<string>();
   const resolveCalls: { viewerId: string; recordId: string }[] = [];
 
   function stored(recordId: string): StoredRecord {
     const record = records.get(recordId);
-    if (record === undefined) throw new Error(`The library double holds no record ${recordId}`);
+    if (record === undefined)
+      throw new Error(`The library double holds no record ${recordId}`);
     return record;
+  }
+
+  function versionOf(versionId: string): AgentVersion {
+    const version = versions.get(versionId);
+    if (version === undefined)
+      throw new Error(`The library double holds no version ${versionId}`);
+    return version;
+  }
+
+  function addVersion(record: StoredRecord, body: RecordBody): string {
+    const previous = versions.get(record.versionId);
+    const version: AgentVersion = {
+      id: randomUUID(),
+      agentId: record.id,
+      number: previous === undefined ? 1 : previous.number + 1,
+      ...structuredClone(body),
+    };
+    versions.set(version.id, version);
+    agentOfVersion.set(version.id, {
+      id: record.id,
+      kind: body.kind,
+      ownerId: record.ownerId,
+      name: record.name,
+      description: record.description,
+    });
+    return version.id;
+  }
+
+  /** Writes the agent row and the version row of `versionId` once; without a database, nothing. */
+  async function persist(versionId: string): Promise<void> {
+    if (db === null || written.has(versionId)) return;
+    const version = versionOf(versionId);
+    const agent = agentOfVersion.get(versionId);
+    if (agent === undefined)
+      throw new Error(
+        `The library double has no agent of version ${versionId}`,
+      );
+    if (!written.has(agent.id)) {
+      await db
+        .insert(agents)
+        .values({ ...agent, deletedAt: new Date() })
+        .onConflictDoNothing({ target: agents.id });
+      written.add(agent.id);
+    }
+    await db
+      .insert(agentVersions)
+      .values({
+        id: version.id,
+        agentId: version.agentId,
+        number: version.number,
+        content: version.content,
+      })
+      .onConflictDoNothing({ target: agentVersions.id });
+    written.add(versionId);
   }
 
   function visibleTo(record: StoredRecord, viewerId: string): boolean {
     if (record.ownerId === viewerId) return true;
-    if (record.closed || record.hiddenFrom.has(viewerId)) return false;
     return record.everyone || record.viewers.has(viewerId);
   }
 
-  function headerOf(record: StoredRecord, viewerId: string): RecordHeader {
+  function headerOf(
+    record: StoredRecord,
+    viewerId: string | null,
+  ): RecordHeader {
+    const version = versionOf(record.versionId);
     return {
       id: record.id,
-      kind: record.body.kind,
+      kind: version.kind,
       name: record.name,
       description: record.description,
-      version: record.version,
+      version: version.number,
+      versionId: version.id,
       builtinKey: record.builtinKey,
       author:
-        record.ownerId === null ? null : { id: record.ownerId, name: record.ownerName, disabled: false },
-      mine: record.ownerId === viewerId,
+        record.ownerId === null
+          ? null
+          : { id: record.ownerId, name: record.ownerName, disabled: false },
+      mine: viewerId !== null && record.ownerId === viewerId,
       shared: record.shared,
       offerInChat: record.offerInChat,
     };
   }
 
-  function resolvedOf(record: StoredRecord | undefined, viewerId: string): ResolvedRecord | null {
-    if (record === undefined || !visibleTo(record, viewerId)) return null;
+  async function resolvedOf(
+    record: StoredRecord,
+    viewerId: string | null,
+  ): Promise<ResolvedRecord> {
+    await persist(record.versionId);
     const { kind: _kind, ...header } = headerOf(record, viewerId);
-    return { ...header, ...structuredClone(record.body) };
+    const version = versionOf(record.versionId);
+    const body: RecordBody =
+      version.kind === 'agent'
+        ? { kind: 'agent', content: structuredClone(version.content) }
+        : { kind: 'deep_agent', content: structuredClone(version.content) };
+    return { ...header, ...body };
   }
 
   return {
     resolveCalls,
     add(record) {
       const id = record.id ?? randomUUID();
-      if (records.has(id)) throw new Error(`The library double already holds record ${id}`);
+      if (records.has(id))
+        throw new Error(`The library double already holds record ${id}`);
       const body: RecordBody =
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
-          : { kind: 'workflow', content: record.content };
-      records.set(id, {
+          : { kind: 'deep_agent', content: record.content };
+      const stored: StoredRecord = {
         id,
         name: record.name,
         description: record.description ?? `${record.name} description`,
-        version: 1,
-        body: structuredClone(body),
+        versionId: '',
         ownerId: record.ownerId,
         ownerName: record.ownerName ?? record.ownerId ?? 'system',
         everyone: record.everyone ?? false,
         viewers: new Set(record.viewers ?? []),
-        hiddenFrom: new Set(),
-        closed: false,
         shared: record.shared ?? false,
         offerInChat: record.offerInChat ?? false,
         builtinKey: record.builtinKey ?? null,
-      });
+      };
+      stored.versionId = addVersion(stored, body);
+      records.set(id, stored);
       return id;
     },
     edit(recordId, change) {
       const record = stored(recordId);
-      if (change.body !== undefined && change.body.kind !== record.body.kind) {
-        throw new Error(`Record ${recordId} is a ${record.body.kind}, not a ${change.body.kind}`);
+      const current = versionOf(record.versionId);
+      if (change.body !== undefined && change.body.kind !== current.kind) {
+        throw new Error(
+          `Record ${recordId} is a ${current.kind}, not a ${change.body.kind}`,
+        );
       }
       record.name = change.name ?? record.name;
       record.description = change.description ?? record.description;
-      record.body = change.body === undefined ? record.body : structuredClone(change.body);
-      record.version += 1;
+      const body: RecordBody =
+        change.body ??
+        (current.kind === 'agent'
+          ? { kind: 'agent', content: current.content }
+          : { kind: 'deep_agent', content: current.content });
+      record.versionId = addVersion(record, body);
     },
     remove(recordId) {
       stored(recordId);
       records.delete(recordId);
     },
-    close(recordId) {
-      stored(recordId).closed = true;
-    },
-    hideFrom(recordId, viewerId) {
-      stored(recordId).hiddenFrom.add(viewerId);
+    useDatabase(database) {
+      db = database;
+      return () => {
+        if (db === database) db = null;
+      };
     },
     async resolve(viewerId, recordId) {
       resolveCalls.push({ viewerId, recordId });
-      return resolvedOf(records.get(recordId), viewerId);
-    },
-    async resolveBuiltin(viewerId, builtinKey) {
-      const record = [...records.values()].find((candidate) => candidate.builtinKey === builtinKey);
+      const record = records.get(recordId);
+      if (record === undefined || !visibleTo(record, viewerId)) return null;
       return resolvedOf(record, viewerId);
     },
+    async resolveByName(viewerId, name, kind) {
+      const visible = [...records.values()].filter((record) =>
+        visibleTo(record, viewerId),
+      );
+      // Records are held in the order they were added: the earliest created comes first, as in `listVisible`.
+      const winner = nameWinner(
+        visible.map((record) => headerOf(record, viewerId)),
+        kind,
+        name,
+      );
+      return winner === null ? null : resolvedOf(stored(winner.id), viewerId);
+    },
+    async resolveBuiltin(builtinKey) {
+      const record = [...records.values()].find(
+        (candidate) => candidate.builtinKey === builtinKey,
+      );
+      if (record === undefined)
+        throw new Error(
+          `The library double holds no default agent ${builtinKey}`,
+        );
+      return resolvedOf(record, null);
+    },
     async listVisible(viewerId) {
-      return [...records.values()]
-        .filter((record) => visibleTo(record, viewerId))
-        .map((record) => headerOf(record, viewerId));
+      const visible = [...records.values()].filter((record) =>
+        visibleTo(record, viewerId),
+      );
+      for (const record of visible) await persist(record.versionId);
+      return visible.map((record) => headerOf(record, viewerId));
+    },
+    async version(versionId) {
+      if (versions.has(versionId)) {
+        await persist(versionId);
+        return structuredClone(versionOf(versionId));
+      }
+      if (db === null)
+        throw new Error(`The library double holds no version ${versionId}`);
+      const row = await new AgentsRepository(new Db(db)).findVersion(versionId);
+      if (row === undefined)
+        throw new Error(`The database holds no agent version ${versionId}`);
+      const identity = { id: row.id, agentId: row.agentId, number: row.number };
+      return RecordKindSchema.parse(row.kind) === 'agent'
+        ? {
+            ...identity,
+            kind: 'agent',
+            content: AgentContentSchema.parse(row.content),
+          }
+        : {
+            ...identity,
+            kind: 'deep_agent',
+            content: DeepAgentContentSchema.parse(row.content),
+          };
     },
   };
 }
@@ -750,11 +1082,17 @@ export interface ToolCallRow {
 }
 
 /**
- * The tool calls of an agent, by answer and position, folded from its whole history in `agent_messages`
- * by the package's own `foldCalls` — one row per call, whatever was compacted since.
+ * The tool calls of an agent, by answer and position, folded from its whole history in `messages`
+ * (every entry after `seq` 0) by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
-export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await history.through(db, agentId, MAX_SEQ);
+export async function toolCallRowsOf(
+  db: Database,
+  agentId: string,
+): Promise<ToolCallRow[]> {
+  const entries = await new History(new MessagesRepository(new Db(db))).after(
+    agentId,
+    0,
+  );
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {
@@ -766,8 +1104,95 @@ export async function toolCallRowsOf(db: Database, agentId: string): Promise<Too
       resultText: result?.text ?? null,
       childTaskId: result?.childTaskId ?? null,
       startedAt: startedAt === null ? null : new Date(startedAt),
-      finishedAt: result?.finishedAt == null ? null : new Date(result.finishedAt),
+      finishedAt:
+        result?.finishedAt == null ? null : new Date(result.finishedAt),
       output: result?.output ?? null,
     };
   });
+}
+
+/**
+ * MCP servers of the tests in the registry (design-mcp-connect.md, KD-7). The tests run on the developer's
+ * database, whose registry holds the developer's own `logs`, `backoffice` and `tracker` (`seed:mcp`), so a
+ * test never registers those names: every server of a test run is `<source>-t<runId>` (`runName` of the
+ * suite's `mcp-servers.ts`), and the suite's global setup deletes the run's servers in its teardown.
+ */
+
+/**
+ * The OAuth return address of `server` the tests register and connect with. The tests never open it: a
+ * connecting test reads the code, and the server of the address, from the authorization server's redirect.
+ */
+export function mcpRedirectUrl(server: string): string {
+  return `http://localhost:3000/api/mcp/oauth/callback/${encodeURIComponent(server)}`;
+}
+
+/** The registry part of the package the server helpers need. */
+interface McpOf {
+  readonly mcp: AgentsMcp;
+}
+
+export interface TestServer {
+  readonly name: string;
+  readonly url: string;
+  readonly mode: McpServerMode;
+  /** Required for `shared`. */
+  readonly sharedToken?: string;
+}
+
+/** Deletes the server named `name` when the registry has it. */
+export async function removeServer(agents: McpOf, name: string): Promise<void> {
+  try {
+    await agents.mcp.remove(name);
+  } catch (error) {
+    if (!(
+      error instanceof McpError &&
+      error.code === McpErrorCode.MCP_SERVER_NOT_FOUND
+    ))
+      throw error;
+  }
+}
+
+/**
+ * Registers `server` through the registry (the server check included), replacing a row of the same name
+ * left by an earlier harness of the run, which may point at a stopped fixture process.
+ */
+export async function registerServer(
+  agents: McpOf,
+  server: TestServer,
+): Promise<McpServerWrite> {
+  await removeServer(agents, server.name);
+  const common = {
+    name: server.name,
+    url: server.url,
+    redirectUrl: mcpRedirectUrl(server.name),
+  };
+  if (server.mode === 'oauth')
+    return agents.mcp.register({ ...common, mode: 'oauth' });
+  if (server.sharedToken === undefined)
+    throw new Error(`Shared server ${server.name} needs a shared token`);
+  return agents.mcp.register({
+    ...common,
+    mode: 'shared',
+    sharedToken: server.sharedToken,
+  });
+}
+
+/**
+ * Registers the run's server of each source, named by `nameOf` (the suite's `runName`), at the fixture
+ * process's shared-token path.
+ */
+export async function registerFixtureServers(
+  agents: McpOf,
+  fixture: FixtureProcess,
+  sources: readonly FixtureSource[],
+  nameOf: (source: FixtureSource) => string,
+): Promise<void> {
+  for (const source of sources) {
+    await registerServer(agents, {
+      name: nameOf(source),
+      url: fixture.sharedUrl(source),
+      mode: 'shared',
+      sharedToken: FIXTURE_SHARED_TOKEN,
+    });
+  }
 }

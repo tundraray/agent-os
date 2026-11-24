@@ -1,26 +1,39 @@
 'use client';
 
-import type { RecordDetail, RecordKind } from '@agent-os/contracts';
+import { useTranslations } from 'next-intl';
+import type { RecordDetail } from '@agent-os/contracts';
 import { RecordPlaceholder } from '@/components/admin/admin-header';
 import { blankAgent } from '@/components/library/agent-fields';
-import { RecordEditor, type RecordEditorProps, type RecordEditorSource } from '@/components/library/record-editor';
-import { blankWorkflow } from '@/components/library/workflow-fields';
+import { DeepAgentCard } from '@/components/library/deep-agent-card';
+import {
+  RecordEditor,
+  type RecordEditorSource,
+} from '@/components/library/record-editor';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { libraryApi } from '@/lib/library/library-api';
+import type { AgentRecord } from '@/lib/library/record-rules';
 
-// Not in MC-18, which names the failed read «Не удалось загрузить» + «Повторить».
-const LOAD_FAILED = 'Не удалось загрузить';
-
-/** `/admin/library/<id>` of a company record (no author): AL-02, the editor in mode `system`. */
-export function SystemRecordPage({ record, handoff }: { record: RecordDetail; handoff: RecordEditorProps['handoff'] }) {
-  return <SystemEditor start={{ saved: record }} handoff={handoff} />;
+/**
+ * `/admin/library/<id>` of a company record (no author): AL-02, the agent editor in mode `system`; a company deep
+ * agent opens in its card (deep-agents UXRD DA-13).
+ */
+export function SystemRecordPage({
+  record,
+  created,
+}: {
+  record: RecordDetail;
+  created: boolean;
+}) {
+  if (record.kind === 'deep_agent')
+    return <DeepAgentCard mode="system" record={record} />;
+  return <SystemEditor start={{ saved: record }} created={created} />;
 }
 
-/** `/admin/library/new/{kind}`: the empty form of a company agent or workflow (AL-02). */
-export function NewSystemRecordPage({ kind }: { kind: RecordKind }) {
-  return <SystemEditor start={{ newKind: kind }} handoff={null} />;
+/** `/admin/library/new/agent`: the empty form of a company agent (AL-02); a deep agent has no form (UXRD KD-1). */
+export function NewSystemRecordPage() {
+  return <SystemEditor start="new" created={false} />;
 }
 
 /**
@@ -32,30 +45,39 @@ export function NewSystemRecordPage({ kind }: { kind: RecordKind }) {
  */
 function SystemEditor({
   start,
-  handoff,
+  created,
 }: {
-  start: { saved: RecordDetail } | { newKind: RecordKind };
-  handoff: RecordEditorProps['handoff'];
+  start: { saved: AgentRecord } | 'new';
+  created: boolean;
 }) {
+  const t = useTranslations('admin.library');
   const choices = useResource(libraryApi.choices, 'choices', 'library');
   const servers = useResource(adminApi.servers.list, 'servers', 'library');
   const models = useResource(adminApi.models.list, 'models', 'library');
-  const providers = useResource(adminApi.modelProviders.list, 'model-providers', 'library');
+  const providers = useResource(
+    adminApi.modelProviders.list,
+    'model-providers',
+    'library',
+  );
   const providerList = providers.data;
 
   if (choices.data === undefined || servers.data === undefined) {
     const waiting = choices.data === undefined ? choices : servers;
-    return <RecordPlaceholder section="library" resource={waiting} loadFailed={LOAD_FAILED} />;
+    return (
+      <RecordPlaceholder
+        section="library"
+        resource={waiting}
+        loadFailed={t('loadFailed')}
+      />
+    );
   }
   const source: RecordEditorSource =
-    'saved' in start
-      ? start
-      : { blank: start.newKind === 'agent' ? blankAgent(choices.data) : blankWorkflow(choices.data) };
+    start === 'new' ? { blank: blankAgent(choices.data) } : start;
   return (
     <RecordEditor
       mode="system"
       source={source}
-      handoff={handoff}
+      created={created}
       choices={{
         ...choices.data,
         servers: servers.data.map((server) => server.name),
@@ -68,7 +90,10 @@ function SystemEditor({
                 .map((model) => ({
                   model: model.id,
                   name: model.name,
-                  unavailableReason: modelUnavailableReason(model.id, providerList),
+                  unavailableReason: modelUnavailableReason(
+                    model.id,
+                    providerList,
+                  ),
                 })),
       }}
     />

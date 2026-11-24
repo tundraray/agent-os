@@ -8,8 +8,8 @@
     "./testing": "./src/testing.ts"
   },
   "scripts": {
-    "lint": "oxlint --type-aware --deny-warnings src/",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint --type-aware --deny-warnings",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {

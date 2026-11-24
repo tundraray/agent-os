@@ -9,8 +9,8 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
-  WORKFLOW_RECORD_ID,
-  workflowOrigin,
+  DEEP_AGENT_NAME,
+  deepAgentOrigin,
 } from '@/test/fixtures';
 
 import {
@@ -21,6 +21,7 @@ import {
   trayEntries,
   type DraftPart,
   type OptimisticEntry,
+  type AnswerRefusedPartData,
 } from './to-feed';
 
 /** `id` and the non-text parts of each message: `tool:<name>#<callId>` or the `data-*` part type. */
@@ -29,7 +30,14 @@ function summary(messages: readonly ThreadMessageLike[]): string[] {
     const parts = typeof message.content === 'string' ? [] : message.content;
     const marks = parts.flatMap((part) => {
       if (part.type === 'text') return [];
-      if (part.type === 'tool-call') return [`tool:${part.toolName}#${part.toolCallId}`];
+      if (part.type === 'tool-call')
+        return [`tool:${part.toolName}#${part.toolCallId}`];
+      if (part.type === 'data-answer-refused') {
+        const data = part.data as AnswerRefusedPartData;
+        return [
+          `${part.type}:${'missingReport' in data ? data.missingReport : data.openTasks.join(',')}`,
+        ];
+      }
       return [part.type];
     });
     return [message.id, ...marks].join(' ');
@@ -39,7 +47,10 @@ function summary(messages: readonly ThreadMessageLike[]): string[] {
 const task = historyEntry({ kind: 'task', seq: 1 });
 
 /** A model answer at `seq` with text and finished calls `calls` (callId, tool). */
-function answer(seq: number, calls: ReadonlyArray<[callId: string, tool: string]> = []): HistoryEntry {
+function answer(
+  seq: number,
+  calls: ReadonlyArray<[callId: string, tool: string]> = [],
+): HistoryEntry {
   return historyEntry({
     kind: 'model_answer',
     seq,
@@ -56,7 +67,12 @@ function answer(seq: number, calls: ReadonlyArray<[callId: string, tool: string]
   });
 }
 
-function result(seq: number, callId: string, tool: string, outcome: 'success' | 'refused'): HistoryEntry {
+function result(
+  seq: number,
+  callId: string,
+  tool: string,
+  outcome: 'success' | 'refused',
+): HistoryEntry {
   return historyEntry({
     kind: 'tool_result',
     seq,
@@ -75,6 +91,26 @@ const notice: HistoryEntry = {
   kind: 'notice',
   createdAt: fixtureTime(2),
   content: { text: 'Заметка для модели' },
+};
+/** A refusal over open tasks: the model's text names other numbers, so the line must come from `openTasks`. */
+const answerRefused: HistoryEntry = {
+  seq: 5,
+  kind: 'notice',
+  createdAt: fixtureTime(5),
+  content: {
+    text: 'You cannot finish yet: 9. [in_progress] x',
+    openTasks: [2, 3],
+  },
+};
+/** A refusal for want of the final subagent's completed report: the line names it from `missingReport`. */
+const reportNotice: HistoryEntry = {
+  seq: 6,
+  kind: 'notice',
+  createdAt: fixtureTime(6),
+  content: {
+    text: 'You cannot finish: there is no report of subagent "other" yet.',
+    missingReport: 'answer',
+  },
 };
 const compaction: HistoryEntry = {
   seq: 3,
@@ -104,18 +140,35 @@ describe('toFeed', () => {
           result(3, 'c1', 'create_ticket', 'success'),
           answer(4),
         ],
-        decisions: [confirmation({ decisionId: 'd1', agentId: 'root', createdAt: fixtureTime(2.5) })],
+        decisions: [
+          confirmation({
+            decisionId: 'd1',
+            agentId: 'root',
+            createdAt: fixtureTime(2.5),
+          }),
+        ],
       }),
       draft: null,
       optimistic: [],
-      feed: ['seq-1', 'seq-2 tool:create_ticket#c1', 'decision-d1 data-decision', 'seq-4'],
+      feed: [
+        'seq-1',
+        'seq-2 tool:create_ticket#c1',
+        'decision-d1 data-decision',
+        'seq-4',
+      ],
       tray: [],
     },
     {
       name: 'a background agent request sits where it arrived',
       view: conversationView({
         entries: [task, answer(2), answer(3)],
-        decisions: [confirmation({ decisionId: 'd2', agentId: 'a1', createdAt: fixtureTime(2.5) })],
+        decisions: [
+          confirmation({
+            decisionId: 'd2',
+            agentId: 'a1',
+            createdAt: fixtureTime(2.5),
+          }),
+        ],
       }),
       draft: null,
       optimistic: [],
@@ -123,20 +176,20 @@ describe('toFeed', () => {
       tray: [],
     },
     {
-      name: 'the coordinator run card sits right under the brief card',
+      name: 'the deep agent run card sits right under the brief card',
       view: conversationView({
         entries: [
           task,
-          answer(2, [['c2', 'start_workflow']]),
-          result(3, 'c2', 'start_workflow', 'success'),
+          answer(2, [['c2', 'start_deep_agent']]),
+          result(3, 'c2', 'start_deep_agent', 'success'),
           answer(4),
         ],
         decisions: [
           confirmation({
             decisionId: 'brief',
             agentId: 'root',
-            kind: 'workflows.brief',
-            tool: 'start_workflow',
+            kind: 'agents.brief',
+            tool: 'start_deep_agent',
             server: null,
             status: 'resolved',
             resolution: { approve: true, args: {} },
@@ -148,14 +201,20 @@ describe('toFeed', () => {
           agentNode({
             agentId: 'w1',
             name: 'Исследование',
-            origin: workflowOrigin(),
+            origin: deepAgentOrigin(),
             createdAt: fixtureTime(2.5),
           }),
         ],
       }),
       draft: null,
       optimistic: [],
-      feed: ['seq-1', 'seq-2', 'decision-brief data-decision', 'agent-w1 data-run-card', 'seq-4'],
+      feed: [
+        'seq-1',
+        'seq-2',
+        'decision-brief data-decision',
+        'agent-w1 data-run-card',
+        'seq-4',
+      ],
       tray: [],
     },
     {
@@ -169,7 +228,12 @@ describe('toFeed', () => {
       }),
       draft: null,
       optimistic: [],
-      feed: ['seq-1', 'seq-2', 'decision-d2 data-decision', 'decision-d1 data-decision'],
+      feed: [
+        'seq-1',
+        'seq-2',
+        'decision-d2 data-decision',
+        'decision-d1 data-decision',
+      ],
       tray: [],
     },
     {
@@ -193,16 +257,43 @@ describe('toFeed', () => {
     },
     {
       name: 'notice and compaction stay out of the feed',
-      view: conversationView({ entries: [task, notice, compaction, answer(4)] }),
+      view: conversationView({
+        entries: [task, notice, compaction, answer(4)],
+      }),
       draft: null,
       optimistic: [],
       feed: ['seq-1', 'seq-4'],
       tray: [],
     },
     {
+      // uxrd.md MC-15, deep-agents KD-5: the employee sees the refusal, built from the numbers in the entry.
+      name: 'a notice over open tasks is a feed line with their numbers',
+      view: conversationView({
+        entries: [task, notice, answer(4), answerRefused],
+      }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-4', 'seq-5 data-answer-refused:2,3'],
+      tray: [],
+    },
+    {
+      // uxrd.md MC-15, deep-agents AC-05.1: the refusal for a lacking final report names the subagent from the entry.
+      name: 'a notice over a lacking final report is a feed line with the subagent name',
+      view: conversationView({ entries: [task, answer(4), reportNotice] }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-4', 'seq-6 data-answer-refused:answer'],
+      tray: [],
+    },
+    {
       name: 'a feed entry whose messageId is queued stays at the end and out of the tray; the draft is last',
       view: conversationView({
-        chat: { status: 'working', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'working',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: [task, answer(2)],
         pending: [
           pendingMessage({ messageId: 'm1', text: 'И приложи ссылки' }),
@@ -214,68 +305,168 @@ describe('toFeed', () => {
       feed: ['seq-1', 'seq-2', 'local-o1', 'draft'],
       tray: ['m2'],
     },
-  ])('toFeed places entries by seq and decisions and run cards after the last entry created not later than them: $name', ({ view, draft, optimistic, feed, tray }) => {
-    const feedView = feedViewOf(view);
+  ])(
+    'toFeed places entries by seq and decisions and run cards after the last entry created not later than them: $name',
+    ({ view, draft, optimistic, feed, tray }) => {
+      const feedView = feedViewOf(view);
 
-    expect(summary(toFeed(feedView, draft, optimistic))).toEqual(feed);
-    expect(trayEntries(feedView, optimistic).entries.map((entry) => entry.id)).toEqual(tray);
-  });
+      expect(summary(toFeed(feedView, draft, optimistic))).toEqual(feed);
+      expect(
+        trayEntries(feedView, optimistic).entries.map((entry) => entry.id),
+      ).toEqual(tray);
+    },
+  );
 
-  // UXRD run card part 4: the workflow card shows the question of the brief that started it.
-  it('the workflow run card carries the question the brief ran with', () => {
+  // UXRD run card part 4: the deep agent card shows the question of the brief that started it; data-model KD-5:
+  // the brief names its deep agent by name (here in another case), and another deep agent's brief is not its.
+  it('the deep agent run card carries the question the brief ran with', () => {
     const view = conversationView({
       decisions: [
         confirmation({
           decisionId: 'brief',
           agentId: 'root',
-          kind: 'workflows.brief',
-          args: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
-          content: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
+          kind: 'agents.brief',
+          args: {
+            deepAgent: 'исследование',
+            question: 'Исходный',
+            boundaries: '',
+            result: '',
+          },
+          content: {
+            deepAgent: 'исследование',
+            question: 'Исходный',
+            boundaries: '',
+            result: '',
+          },
           status: 'resolved',
-          resolution: { approve: true, args: { workflow: WORKFLOW_RECORD_ID, question: 'Исправленный', boundaries: '', result: '' } },
+          resolution: {
+            approve: true,
+            args: {
+              deepAgent: 'исследование',
+              question: 'Исправленный',
+              boundaries: '',
+              result: '',
+            },
+          },
           createdAt: fixtureTime(2.2),
           resolvedAt: fixtureTime(2.4),
+        }),
+        confirmation({
+          decisionId: 'other-brief',
+          agentId: 'root',
+          kind: 'agents.brief',
+          args: {
+            deepAgent: 'Ресерч логов',
+            question: 'Чужой',
+            boundaries: '',
+            result: '',
+          },
+          content: {
+            deepAgent: 'Ресерч логов',
+            question: 'Чужой',
+            boundaries: '',
+            result: '',
+          },
+          status: 'resolved',
+          resolution: {
+            approve: true,
+            args: {
+              deepAgent: 'Ресерч логов',
+              question: 'Чужой',
+              boundaries: '',
+              result: '',
+            },
+          },
+          createdAt: fixtureTime(2.3),
+          resolvedAt: fixtureTime(2.35),
         }),
       ],
       agents: [
         agentNode({
           agentId: 'w1',
-          name: 'Исследование',
-          origin: workflowOrigin(),
+          name: DEEP_AGENT_NAME,
+          origin: deepAgentOrigin(),
           createdAt: fixtureTime(2.5),
         }),
       ],
     });
 
     const card = toFeed(feedViewOf(view), null, [])
-      .flatMap((message) => (typeof message.content === 'string' ? [] : message.content))
+      .flatMap((message) =>
+        typeof message.content === 'string' ? [] : message.content,
+      )
       .find((part) => part.type === 'data-run-card');
 
-    expect(card).toMatchObject({ data: { agentId: 'w1', briefQuestion: 'Исправленный' } });
+    expect(card).toMatchObject({
+      data: { agentId: 'w1', briefQuestion: 'Исправленный' },
+    });
   });
 
   // The `delta` rule: a part delivered twice or after a gap neither doubles nor loses text.
-  it.each<{ name: string; draft: string | null; part: DraftPart; expected: string | null }>([
-    { name: 'offset 0 in the middle of a draft starts it anew', draft: 'Привет', part: { offset: 0, text: 'Заново' }, expected: 'Заново' },
-    { name: 'offset equal to the length appends', draft: 'Привет', part: { offset: 6, text: ', мир' }, expected: 'Привет, мир' },
-    { name: 'a repeated part is dropped', draft: 'Привет', part: { offset: 3, text: 'вет' }, expected: 'Привет' },
-    { name: 'a part after a gap is dropped', draft: 'Привет', part: { offset: 9, text: 'дела' }, expected: 'Привет' },
-    { name: 'a part without a start is dropped', draft: null, part: { offset: 4, text: 'мир' }, expected: null },
-  ])('draft parts follow the offset rule: $name', ({ draft, part, expected }) => {
-    expect(applyDraftPart(draft, part)).toBe(expected);
-  });
+  it.each<{
+    name: string;
+    draft: string | null;
+    part: DraftPart;
+    expected: string | null;
+  }>([
+    {
+      name: 'offset 0 in the middle of a draft starts it anew',
+      draft: 'Привет',
+      part: { offset: 0, text: 'Заново' },
+      expected: 'Заново',
+    },
+    {
+      name: 'offset equal to the length appends',
+      draft: 'Привет',
+      part: { offset: 6, text: ', мир' },
+      expected: 'Привет, мир',
+    },
+    {
+      name: 'a repeated part is dropped',
+      draft: 'Привет',
+      part: { offset: 3, text: 'вет' },
+      expected: 'Привет',
+    },
+    {
+      name: 'a part after a gap is dropped',
+      draft: 'Привет',
+      part: { offset: 9, text: 'дела' },
+      expected: 'Привет',
+    },
+    {
+      name: 'a part without a start is dropped',
+      draft: null,
+      part: { offset: 4, text: 'мир' },
+      expected: null,
+    },
+  ])(
+    'draft parts follow the offset rule: $name',
+    ({ draft, part, expected }) => {
+      expect(applyDraftPart(draft, part)).toBe(expected);
+    },
+  );
 
   // KD-2: a `delta` that arrives after its stored answer was read leaves no draft behind the answer.
   it('a late delta after the stored answer is dropped by the next read that finds the chat idle', () => {
     const view = feedViewOf(
       conversationView({
-        chat: { status: 'idle', failureReason: null, rootAgentId: 'root', model: 'claude-haiku-4-5' },
+        chat: {
+          status: 'idle',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
         entries: [task, answer(2)],
       }),
     );
     const late = applyDraftPart(null, { offset: 0, text: 'Заметка ' });
 
-    const draft = draftAfterRead({ draftAtStart: late, draft: late, added: 0, view });
+    const draft = draftAfterRead({
+      draftAtStart: late,
+      draft: late,
+      added: 0,
+      view,
+    });
 
     expect(summary(toFeed(view, draft, []))).toEqual(['seq-1', 'seq-2']);
   });

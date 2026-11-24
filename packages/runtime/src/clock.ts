@@ -2,7 +2,7 @@
 export type CancelTimer = () => void;
 
 /**
- * Port of time, randomness and timers of the runtime, passed to `createRuntime` so that leases,
+ * Port of time, randomness and timers of the runtime (the `CLOCK` provider), replaceable so that
  * deadlines, backoff with jitter and polling are deterministic in tests (design-runtime.md,
  * Test Boundaries).
  */

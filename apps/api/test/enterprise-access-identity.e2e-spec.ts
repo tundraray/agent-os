@@ -49,7 +49,7 @@ const COMMAND_ENTRY = 'dist/super-admin-cli.js';
 
 /** The sources the compiled entry runs, relative to `API_DIR`. */
 const COMMAND_SOURCES = [
-  'src/identity/super-admin-cli.ts',
+  'src/cli/super-admin-cli.ts',
   'src/identity/super-admin.ts',
   'src/identity/password.ts',
 ] as const;

@@ -9,10 +9,10 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import type {
-  Agents,
-  McpConnectResult,
-  McpServerAuditState,
+import {
+  AgentsMcp,
+  type McpConnectResult,
+  type McpServerAuditState,
 } from '@agent-os/agents';
 import type { McpConnection } from '@agent-os/contracts';
 import type { Response } from 'express';
@@ -21,7 +21,6 @@ import type { AuthedRequest } from '../identity/auth-user';
 import { identityError } from '../identity/identity.errors';
 import { IdentitySettings } from '../identity/identity-settings';
 import { frontendOrigin } from '../identity/session-cookie';
-import { AGENTS } from './agents.tokens';
 import { mcpAnswer } from './mcp.errors';
 
 /** The audit object of a registry server (design-mcp-connect.md, «Реестр — для `admin`»). */
@@ -43,7 +42,7 @@ export async function recordServerChange(
     };
   },
 ): Promise<void> {
-  await auditLog.record(null, {
+  await auditLog.record({
     kind: 'admin_change',
     actor,
     objectType: MCP_SERVER_OBJECT_TYPE,
@@ -127,7 +126,7 @@ function single(value: unknown): string | undefined {
 @Controller('mcp')
 export class McpConnectionsController {
   constructor(
-    @Inject(AGENTS) private readonly agents: Agents,
+    @Inject(AgentsMcp) private readonly mcp: AgentsMcp,
     private readonly settings: IdentitySettings,
     private readonly auditLog: AuditLog,
   ) {}
@@ -136,7 +135,7 @@ export class McpConnectionsController {
   @Get('connections')
   connections(@Req() req: AuthedRequest): Promise<McpConnection[]> {
     const ownerId = req.user.id;
-    return mcpAnswer(this.agents.mcp.connections(ownerId));
+    return mcpAnswer(this.mcp.connections(ownerId));
   }
 
   /** 302 to the authorization server, or to `/account?error=connect_failed&server=<name>`. */
@@ -153,7 +152,7 @@ export class McpConnectionsController {
       publicUrl === null
         ? ({ kind: 'refused' } as const)
         : await mcpAnswer(
-            this.agents.mcp.beginConnect({
+            this.mcp.beginConnect({
               ownerId,
               server,
               target: 'employee',
@@ -183,7 +182,7 @@ export class McpConnectionsController {
   ): Promise<void> {
     const ownerId = req.user.id;
     const result = await mcpAnswer(
-      this.agents.mcp.finishConnect({
+      this.mcp.finishConnect({
         ownerId,
         isAdmin: req.user.isAdmin,
         server,
@@ -194,7 +193,7 @@ export class McpConnectionsController {
       }),
     );
     if (result.outcome === 'access_denied' && result.server !== null) {
-      await this.auditLog.record(null, {
+      await this.auditLog.record({
         kind: 'access_denied',
         actor: ownerId,
         objectType: MCP_SERVER_OBJECT_TYPE,
@@ -221,6 +220,6 @@ export class McpConnectionsController {
     @Req() req: AuthedRequest,
   ): Promise<void> {
     const ownerId = req.user.id;
-    await mcpAnswer(this.agents.mcp.disconnect(ownerId, server));
+    await mcpAnswer(this.mcp.disconnect(ownerId, server));
   }
 }

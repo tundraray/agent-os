@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { type QuickJSWASMModule, newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core';
+import {
+  type QuickJSWASMModule,
+  newQuickJSWASMModuleFromVariant,
+} from 'quickjs-emscripten-core';
 import type { RunLimits } from './protocol';
 import { type ScriptEnd, runScript } from './sandbox';
 
@@ -17,7 +20,9 @@ const ROOMY_TIMEOUT_MS = 4_000;
 let quickJs: QuickJSWASMModule;
 
 beforeAll(async () => {
-  quickJs = await newQuickJSWASMModuleFromVariant(import('@jitl/quickjs-wasmfile-release-sync'));
+  quickJs = await newQuickJSWASMModuleFromVariant(
+    import('@jitl/quickjs-wasmfile-release-sync'),
+  );
 });
 
 interface Run {
@@ -29,6 +34,7 @@ async function run(script: string, limits: RunLimits = LIMITS): Promise<Run> {
   const output: string[] = [];
   const end = await runScript({
     script,
+    input: null,
     limits,
     quickJs,
     bridge: {
@@ -47,32 +53,62 @@ describe('a script reaches nothing outside the QuickJS sandbox', () => {
     {
       name: 'process',
       script: 'return process.pid;',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: 'process' is not defined", line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: 'process' is not defined",
+        line: 1,
+      },
     },
     {
       name: 'require',
       script: 'return require("fs");',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: 'require' is not defined", line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: 'require' is not defined",
+        line: 1,
+      },
     },
     {
       name: 'fetch',
       script: 'return await fetch("http://127.0.0.1/");',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: 'fetch' is not defined", line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: 'fetch' is not defined",
+        line: 1,
+      },
     },
     {
       name: 'import()',
       script: 'return await import("fs");',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: could not load module 'fs'", line: null },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: could not load module 'fs'",
+        line: null,
+      },
     },
     {
       name: 'WebAssembly',
       script: 'return WebAssembly.Module;',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: 'WebAssembly' is not defined", line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: 'WebAssembly' is not defined",
+        line: 1,
+      },
     },
     {
       name: 'Intl',
       script: 'return new Intl.NumberFormat();',
-      end: { op: 'error', reason: 'exception', text: "ReferenceError: 'Intl' is not defined", line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: "ReferenceError: 'Intl' is not defined",
+        line: 1,
+      },
     },
     {
       name: 'the constructor chain reaches only the QuickJS global object',
@@ -83,14 +119,20 @@ describe('a script reaches nothing outside the QuickJS sandbox', () => {
     },
     {
       name: 'a polluted Object.prototype and a global do not survive into the next run',
-      previous: 'Object.prototype.polluted = "yes";\nglobalThis.leaked = "first run";\nreturn 1;',
+      previous:
+        'Object.prototype.polluted = "yes";\nglobalThis.leaked = "first run";\nreturn 1;',
       script: 'return [typeof ({}).polluted, typeof globalThis.leaked];',
       end: { op: 'done', value: '["undefined","undefined"]' },
     },
     {
       name: 'a syntax error on line 3',
       script: 'const a = 1;\nconst b = 2;\nconst = 3;',
-      end: { op: 'error', reason: 'syntax', text: 'SyntaxError: variable name expected', line: 3 },
+      end: {
+        op: 'error',
+        reason: 'syntax',
+        text: 'SyntaxError: variable name expected',
+        line: 3,
+      },
     },
     {
       name: 'an exception on line 5',
@@ -135,7 +177,12 @@ describe('a script stops at every limit with its reason', () => {
     {
       name: 'deep recursion',
       script: 'function down(n) { return down(n + 1) + 1; }\nreturn down(0);',
-      end: { op: 'error', reason: 'exception', text: 'InternalError: stack overflow', line: 1 },
+      end: {
+        op: 'error',
+        reason: 'exception',
+        text: 'InternalError: stack overflow',
+        line: 1,
+      },
       outputAtLeast: 0,
     },
     {
@@ -147,7 +194,8 @@ describe('a script stops at every limit with its reason', () => {
     },
     {
       name: 'a stream of console.log',
-      script: 'for (let i = 0; i < 3000; i++) console.log("line", i);\nreturn "printed";',
+      script:
+        'for (let i = 0; i < 3000; i++) console.log("line", i);\nreturn "printed";',
       timeoutMs: ROOMY_TIMEOUT_MS,
       end: { op: 'done', value: '"printed"' },
       lastOutput: '[вывод обрезан]',
@@ -171,13 +219,25 @@ describe('a script stops at every limit with its reason', () => {
       end: { op: 'error', reason: 'result_not_json', text: null, line: null },
       outputAtLeast: 0,
     },
-  ])('$name', async ({ script, end, lastOutput, outputAtLeast, timeoutMs = LIMITS.timeoutMs }) => {
-    const result = await run(script, { ...LIMITS, timeoutMs });
+  ])(
+    '$name',
+    async ({
+      script,
+      end,
+      lastOutput,
+      outputAtLeast,
+      timeoutMs = LIMITS.timeoutMs,
+    }) => {
+      const result = await run(script, { ...LIMITS, timeoutMs });
 
-    expect(result.end).toEqual(end);
-    expect(result.output.at(-1)).toBe(lastOutput);
-    const outputBytes = result.output.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
-    expect(outputBytes).toBeGreaterThanOrEqual(outputAtLeast);
-    expect(outputBytes).toBeLessThanOrEqual(16 * 1024);
-  });
+      expect(result.end).toEqual(end);
+      expect(result.output.at(-1)).toBe(lastOutput);
+      const outputBytes = result.output.reduce(
+        (sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1,
+        0,
+      );
+      expect(outputBytes).toBeGreaterThanOrEqual(outputAtLeast);
+      expect(outputBytes).toBeLessThanOrEqual(16 * 1024);
+    },
+  );
 });

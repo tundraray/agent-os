@@ -1,15 +1,24 @@
 import { rmSync } from 'node:fs';
 import { inspect } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import type { Agents } from '@agent-os/agents';
+import {
+  AGENT_TURN_CLIENT,
+  AgentsEmbeddings,
+  AgentsMcp,
+  AgentsProviders,
+  EMBEDDING_CLIENT,
+  ViewOperations,
+} from '@agent-os/agents';
 import {
   createScriptedEmbeddings,
   createScriptedModel,
   type ScriptedEmbeddings,
   type ScriptedModel,
+  registerFixtureServers,
 } from '@agent-os/agents/testing';
-import type { DatabaseConnection } from '@agent-os/db';
+import { DATABASE_CONNECTION, type DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
   type FixtureFaultRule,
@@ -18,19 +27,12 @@ import {
   type FixtureSource,
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
-import type { Runtime } from '@agent-os/runtime';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
-import {
-  AGENTS,
-  AGENT_TURN_CLIENT,
-  EMBEDDING_CLIENT,
-} from '../../src/agents/agents.tokens';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens';
-import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens';
-import { registerFixtureServers } from './mcp-servers';
+import { runName } from './mcp-servers';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
@@ -58,6 +60,14 @@ export interface TestAppOptions {
   captureLog?: boolean;
 }
 
+/** The services of the agents package the tests reach directly. */
+export interface TestAgents {
+  readonly mcp: AgentsMcp;
+  readonly providers: AgentsProviders;
+  readonly embeddings: AgentsEmbeddings;
+  readonly sessions: ViewOperations;
+}
+
 export interface TestApp {
   /** Initialised app with `configureApp` applied: requests go to `/api/...`. */
   app: INestApplication<App>;
@@ -67,11 +77,9 @@ export interface TestApp {
   fixtureLog: FixtureFiles;
   /** The fixture process started for `mcpServers`; reading it without that option throws. */
   readonly fixture: FixtureProcess;
-  /** The app's agents package (`AGENTS`), for reads the API does not offer. */
-  agents: Agents;
-  /** The app's runtime (`RUNTIME`). */
-  runtime: Runtime;
-  /** The app's pool (`RUNTIME_DATABASE`): rows the plan's tests name and `pg_terminate_backend`. */
+  /** The app's agents services, for reads the API does not offer. */
+  agents: TestAgents;
+  /** The app's pool (`DATABASE_CONNECTION`): rows the plan's tests name and `pg_terminate_backend`. */
   pool: DatabaseConnection['pool'];
   /** With `captureLog`: the console lines (logger records are JSON lines) from the boot until `close`; else empty. */
   log: readonly string[];
@@ -120,8 +128,9 @@ export async function createTestApp(
         .useValue(options.providerEndpoints.google);
     }
     const moduleRef = await builder.compile();
-    app = moduleRef.createNestApplication<INestApplication<App>>();
-    configureApp(app);
+    const nestApp = moduleRef.createNestApplication<NestExpressApplication>();
+    configureApp(nestApp);
+    app = nestApp;
     await app.init();
     await app.listen(0, '127.0.0.1');
   } catch (error) {
@@ -132,7 +141,12 @@ export async function createTestApp(
     restoreEnv();
   }
 
-  const agents = app.get<Agents>(AGENTS);
+  const agents: TestAgents = {
+    mcp: app.get(AgentsMcp),
+    providers: app.get(AgentsProviders),
+    embeddings: app.get(AgentsEmbeddings),
+    sessions: app.get(ViewOperations),
+  };
   const close = async () => {
     try {
       await app.close();
@@ -144,7 +158,12 @@ export async function createTestApp(
   };
   if (fixtureProcess !== undefined && options.mcpServers !== undefined) {
     try {
-      await registerFixtureServers(agents, fixtureProcess, options.mcpServers);
+      await registerFixtureServers(
+        agents,
+        fixtureProcess,
+        options.mcpServers,
+        runName,
+      );
     } catch (error) {
       await close();
       throw error;
@@ -165,8 +184,7 @@ export async function createTestApp(
       return fixtureProcess;
     },
     agents,
-    runtime: app.get<Runtime>(RUNTIME),
-    pool: app.get<DatabaseConnection>(RUNTIME_DATABASE).pool,
+    pool: app.get<DatabaseConnection>(DATABASE_CONNECTION).pool,
     log: log?.lines ?? [],
     close,
   };

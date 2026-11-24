@@ -32,14 +32,23 @@ export type CreateLibraryIndexInput = {
   logger: Pick<typeof appLogger, 'warn'>;
 };
 
-export function createLibraryIndex({ read, logger }: CreateLibraryIndexInput): LibraryIndex {
-  const store = createStore<LibraryIndexState>()(() => ({ status: 'idle', records: null }));
+export function createLibraryIndex({
+  read,
+  logger,
+}: CreateLibraryIndexInput): LibraryIndex {
+  const store = createStore<LibraryIndexState>()(() => ({
+    status: 'idle',
+    records: null,
+  }));
 
   async function readList(): Promise<void> {
     store.setState({ status: 'loading' });
     try {
       const rows = await read();
-      store.setState({ status: 'ready', records: new Map(rows.map((row) => [row.id, row])) });
+      store.setState({
+        status: 'ready',
+        records: new Map(rows.map((row) => [row.id, row])),
+      });
     } catch (error) {
       // The list before the failure stays: a label keeps its last known state (Flow 3, Failure handling).
       logger.warn('library: list read failed', describeApiError(error));

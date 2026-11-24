@@ -1,9 +1,9 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import type { Database } from '@agent-os/db';
+import type { Db } from '@agent-os/db';
 import type {
-  RuntimeTx,
+  ChildTask,
   StepContext,
-  StepDecision,
   StepResult,
   TaskHandler,
 } from '@agent-os/runtime';
@@ -24,8 +24,8 @@ import { z } from 'zod';
 export const HANDLER_ROWS_TABLE = 'public.e2e_handler_rows';
 
 /** Creates {@link HANDLER_ROWS_TABLE} once; the harness calls it before building the runtime. */
-export async function ensureHandlerRowsTable(db: Database): Promise<void> {
-  await db.execute(
+export async function ensureHandlerRowsTable(db: Db): Promise<void> {
+  await db.client.execute(
     sql.raw(
       `CREATE TABLE IF NOT EXISTS ${HANDLER_ROWS_TABLE} (
          task_id uuid NOT NULL,
@@ -113,14 +113,15 @@ export function createGateBook(): GateBook {
 export const DEAF_SIGNAL: AbortSignal = new AbortController().signal;
 
 /**
- * What one scripted step does; `throw` raises `error` from `step` instead of returning. With a
- * `gate` the step holds at it before answering; with `deaf` it holds there through its signal.
+ * What one scripted step does; `throw` raises `error` from `step` instead of returning; `ask` waits
+ * with a question asked in its commit (`effects.ask`). With a `gate` the step holds at it before
+ * answering; with `deaf` it holds there through its signal.
  */
 export type ScriptedStep = (
   | { outcome: 'continue' }
   | { outcome: 'wait' }
   | { outcome: 'complete'; result: unknown }
-  | { outcome: 'await_decision'; kind: string; payload: unknown }
+  | { outcome: 'ask'; kind: string; payload: unknown }
   | { outcome: 'throw'; error: Error }
 ) & { gate?: Gate; deaf?: boolean };
 
@@ -128,7 +129,6 @@ export type ScriptedStep = (
 export interface SeenMessage {
   seq: number;
   kind: string;
-  sender: string;
   payload: unknown;
   revive: boolean;
 }
@@ -138,7 +138,18 @@ export interface StepView {
   taskId: string;
   stepNo: number;
   messages: SeenMessage[];
-  decision: StepDecision | null;
+}
+
+/** The `child_finished` of the question `questionId` among the messages a step saw. */
+export function answerSeen(
+  view: StepView,
+  questionId: string,
+): SeenMessage | undefined {
+  return view.messages.find(
+    (message) =>
+      message.kind === 'child_finished' &&
+      (message.payload as { taskId?: unknown }).taskId === questionId,
+  );
 }
 
 export interface ScriptedHandlerOptions {
@@ -158,22 +169,50 @@ function viewOf(ctx: StepContext): StepView {
     messages: ctx.messages.map((message) => ({
       seq: message.seq,
       kind: message.kind,
-      sender: message.sender,
       payload: message.payload,
       revive: message.revive,
     })),
-    decision: ctx.decision,
+  };
+}
+
+/** The `Db` of the runtime that runs the handler's step or commit; set by {@link boundToDb}. */
+const handlerDb = new AsyncLocalStorage<Db>();
+
+/**
+ * The handler with `db` — the `Db` of the runtime it is registered in — as the database its steps
+ * and commits write through, so that {@link writeHandlerRow} joins the transaction of a commit or
+ * a guard. A handler object may be bound to several runtimes, each with its own `Db`.
+ */
+export function boundToDb(handler: TaskHandler, db: Db): TaskHandler {
+  return {
+    type: handler.type,
+    inputSchema: handler.inputSchema,
+    step: (ctx) =>
+      handlerDb.run(db, async (): Promise<StepResult> => {
+        const result = await handler.step(ctx);
+        const { commit } = result;
+        if (!commit) return result;
+        return {
+          ...result,
+          commit: (effects) => handlerDb.run(db, () => commit(effects)),
+        };
+      }),
   };
 }
 
 /**
- * Writes the step's handler row inside the commit. `attempt` is read from the task row, which the
- * commit holds FOR UPDATE after checking that the claimed attempt is still current: it is the
- * attempt that committed the step.
+ * Writes the step's handler row in the transaction open where it is called: the commit's or a
+ * guard's. `attempt` is read from the task row after the commit checked that the claimed attempt
+ * is still current: it is the attempt that committed the step.
  */
 export function writeHandlerRow(ctx: StepContext, note: string | null) {
-  return async (tx: RuntimeTx) => {
-    await tx.execute(sql`
+  return async () => {
+    const db = handlerDb.getStore();
+    if (!db)
+      throw new Error(
+        'writeHandlerRow called outside a handler bound by boundToDb',
+      );
+    await db.client.execute(sql`
       INSERT INTO ${sql.raw(HANDLER_ROWS_TABLE)} (task_id, step_no, attempt, resumed_after_loss, note)
       SELECT task_id, ${ctx.stepNo}, attempt, ${ctx.resumedAfterLoss}, ${note}
         FROM app.runtime_tasks WHERE task_id = ${ctx.taskId}`);
@@ -190,21 +229,77 @@ export function scriptedHandler(options: ScriptedHandlerOptions): TaskHandler {
     async step(ctx: StepContext): Promise<StepResult> {
       const scripted = steps[Math.min(ctx.stepNo, steps.length - 1)];
       seen?.push(viewOf(ctx));
-      if (scripted.gate) await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
+      if (scripted.gate)
+        await scripted.gate.pass(scripted.deaf ? DEAF_SIGNAL : ctx.signal);
       if (scripted.outcome === 'throw') throw scripted.error;
-      return { ...outcomeOf(scripted), commit: writeHandlerRow(ctx, note ?? null) };
+      const writeRow = writeHandlerRow(ctx, note ?? null);
+      if (scripted.outcome === 'ask') {
+        const { kind, payload } = scripted;
+        return {
+          outcome: 'wait',
+          commit: async (effects) => {
+            await effects.ask({ kind, payload });
+            await writeRow();
+          },
+        };
+      }
+      return { ...outcomeOf(scripted), commit: writeRow };
     },
   };
 }
 
-function outcomeOf(scripted: Exclude<ScriptedStep, { outcome: 'throw' }>): StepResult {
+/** Note of the handler row written by the commit that created awaited children. */
+const AWAITED_SPAWNED_NOTE = 'spawned:awaited';
+
+export interface AwaitingParentOptions {
+  type: string;
+  /**
+   * Step `n` creates `groups[n]` as awaited children and waits for them (KD-2); a step past the end
+   * creates none and waits for messages.
+   */
+  groups: readonly (readonly ChildTask[])[];
+  /** Receives the view of every step's context, in call order. */
+  seen?: StepView[];
+  /** The ids of the awaited children each committed step created, by step number. */
+  spawned?: Map<number, string[]>;
+}
+
+/** A parent that waits for groups of awaited children created with `effects.spawn`. */
+export function awaitingParentHandler(
+  options: AwaitingParentOptions,
+): TaskHandler {
+  const { type, groups, seen, spawned } = options;
+  return {
+    type,
+    inputSchema: z.record(z.string(), z.unknown()),
+    async step(ctx: StepContext): Promise<StepResult> {
+      seen?.push(viewOf(ctx));
+      const group = groups[ctx.stepNo];
+      if (!group)
+        return { outcome: 'wait', commit: writeHandlerRow(ctx, null) };
+      return {
+        outcome: 'wait',
+        commit: async (effects) => {
+          const ids: string[] = [];
+          for (const child of group)
+            ids.push(await effects.spawn({ ...child, awaited: true }));
+          // Set, not pushed: a repeated commit transaction overwrites what a rolled-back one left.
+          spawned?.set(ctx.stepNo, ids);
+          await writeHandlerRow(ctx, AWAITED_SPAWNED_NOTE)();
+        },
+      };
+    },
+  };
+}
+
+function outcomeOf(
+  scripted: Exclude<ScriptedStep, { outcome: 'throw' | 'ask' }>,
+): StepResult {
   switch (scripted.outcome) {
     case 'continue':
     case 'wait':
       return { outcome: scripted.outcome };
     case 'complete':
       return { outcome: 'complete', result: scripted.result };
-    case 'await_decision':
-      return { outcome: 'await_decision', kind: scripted.kind, payload: scripted.payload };
   }
 }

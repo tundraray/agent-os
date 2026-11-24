@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { createLeaveGuard, type LeaveGuard } from './leave-guard';
 
-type Outcome = { leave: boolean; held: string | null; question: { name: string } | null };
+type Outcome = {
+  leave: boolean;
+  held: string | null;
+  question: { name: string } | null;
+};
 
 /** Each row drives a fresh guard and returns the answer of its `confirmLeave()`. */
-const cases: Array<[title: string, run: (guard: LeaveGuard) => Promise<boolean>, expected: Outcome]> = [
-  ['nothing held: leaves without a question', (guard) => guard.confirmLeave(), { leave: true, held: null, question: null }],
+const cases: Array<
+  [
+    title: string,
+    run: (guard: LeaveGuard) => Promise<boolean>,
+    expected: Outcome,
+  ]
+> = [
+  [
+    'nothing held: leaves without a question',
+    (guard) => guard.confirmLeave(),
+    { leave: true, held: null, question: null },
+  ],
   [
     'released before navigating: leaves without a question',
     (guard) => {

@@ -15,8 +15,13 @@ import { usePathname } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
 import { RotateCwIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
-import { SidebarGroup, SidebarGroupLabel, SidebarMenu } from '@/components/ui/sidebar';
+import {
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+} from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
 import { focusAfterNewChat } from '@/lib/focus';
@@ -34,7 +39,6 @@ import {
   THREAD_LINK_ATTRIBUTE,
   THREAD_ROW_ATTRIBUTE,
   ThreadHistoryItem,
-  UNTITLED_THREAD_TITLE,
 } from './thread-history-item';
 import { useShellServices, useShellStatus } from './shell-actions';
 
@@ -58,7 +62,10 @@ export type ThreadHistoryListViewProps = {
   state: ThreadHistoryListState;
   pagination: ThreadListPagination;
   /** Renders one SB-06 row; the container decides which row is active. `onRequestDelete` opens DLG-01 for the row. */
-  renderItem: (entry: ThreadListEntry, onRequestDelete: () => void) => ReactNode;
+  renderItem: (
+    entry: ThreadListEntry,
+    onRequestDelete: () => void,
+  ) => ReactNode;
   /** The thread open in the main area: after its deletion focus follows the route change, not the list. */
   openThreadId: string | undefined;
   /** A deletion confirmed in DLG-01. */
@@ -68,36 +75,63 @@ export type ThreadHistoryListViewProps = {
 const THREAD_LINK_SELECTOR = `a[${THREAD_LINK_ATTRIBUTE}]`;
 
 /** SB-03 «Новый чат»: the only control inside the sidebar with this shortcut. */
-const SIDEBAR_NEW_CHAT_SELECTOR = '[data-slot="sidebar"] [aria-keyshortcuts="Control+Shift+O Meta+Shift+O"]';
+const SIDEBAR_NEW_CHAT_SELECTOR =
+  '[data-slot="sidebar"] [aria-keyshortcuts="Control+Shift+O Meta+Shift+O"]';
 
 function rowsOf(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(`[${THREAD_ROW_ATTRIBUTE}]`));
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(`[${THREAD_ROW_ATTRIBUTE}]`),
+  );
 }
 
-const isRowOf = (threadId: string) => (row: HTMLElement) => row.getAttribute(THREAD_ROW_ATTRIBUTE) === threadId;
+const isRowOf = (threadId: string) => (row: HTMLElement) =>
+  row.getAttribute(THREAD_ROW_ATTRIBUTE) === threadId;
 
 /**
  * UXRD 7.4, deleting a thread that is not open: the next thread link, else the previous one, else SB-03.
  * Read before the row leaves the list.
  */
-function focusTargetAfterRemoval(root: HTMLElement, threadId: string): HTMLElement | null {
+function focusTargetAfterRemoval(
+  root: HTMLElement,
+  threadId: string,
+): HTMLElement | null {
   const rows = rowsOf(root);
   const index = rows.findIndex(isRowOf(threadId));
-  const neighbours = index === -1 ? [] : [...rows.slice(index + 1), ...rows.slice(0, index).reverse()];
+  const neighbours =
+    index === -1
+      ? []
+      : [...rows.slice(index + 1), ...rows.slice(0, index).reverse()];
   for (const row of neighbours) {
     const link = row.querySelector<HTMLElement>(THREAD_LINK_SELECTOR);
     if (link !== null) return link;
   }
-  return root.ownerDocument.querySelector<HTMLElement>(SIDEBAR_NEW_CHAT_SELECTOR);
+  return root.ownerDocument.querySelector<HTMLElement>(
+    SIDEBAR_NEW_CHAT_SELECTOR,
+  );
 }
 
 /** The SB-07 «⋯» of a row: DLG-01 returns focus there when cancelled. */
-function actionsButtonOf(root: HTMLElement, threadId: string): HTMLElement | null {
-  return rowsOf(root).find(isRowOf(threadId))?.querySelector<HTMLElement>(`[${THREAD_ACTIONS_ATTRIBUTE}]`) ?? null;
+function actionsButtonOf(
+  root: HTMLElement,
+  threadId: string,
+): HTMLElement | null {
+  return (
+    rowsOf(root)
+      .find(isRowOf(threadId))
+      ?.querySelector<HTMLElement>(`[${THREAD_ACTIONS_ATTRIBUTE}]`) ?? null
+  );
 }
 
 /** Widths of the seven loading rows (UXRD 6.4 Loading). */
-const SKELETON_ROW_WIDTHS = ['44%', '72%', '56%', '88%', '64%', '48%', '76%'] as const;
+const SKELETON_ROW_WIDTHS = [
+  '44%',
+  '72%',
+  '56%',
+  '88%',
+  '64%',
+  '48%',
+  '76%',
+] as const;
 
 /** Widths of the three next-page loading rows (UXRD 6.8 Loading). */
 const MORE_SKELETON_ROW_WIDTHS = ['68%', '52%', '80%'] as const;
@@ -109,16 +143,29 @@ const AUTO_LOAD_ROOT_MARGIN = '0px 0px 200px 0px';
 const SIDEBAR_SCROLL_SELECTOR = '[data-sidebar="content"]';
 
 /** A click with `detail === 0` came from Enter/Space, not a pointer. */
-const clickSource = (event: MouseEvent<HTMLElement>): LoadMoreSource => (event.detail === 0 ? 'keyboard' : 'pointer');
+const clickSource = (event: MouseEvent<HTMLElement>): LoadMoreSource =>
+  event.detail === 0 ? 'keyboard' : 'pointer';
 
 const entryIdsOf = (state: ThreadHistoryListState): ReadonlySet<string> =>
-  new Set(state.kind === 'ready' ? state.groups.flatMap((group) => group.entries.map((entry) => entry.id)) : []);
+  new Set(
+    state.kind === 'ready'
+      ? state.groups.flatMap((group) => group.entries.map((entry) => entry.id))
+      : [],
+  );
 
 /** ↑/↓ — previous/next thread link across group boundaries, Home/End — first/last; other keys are left alone. */
 function moveFocusBetweenLinks(event: KeyboardEvent<HTMLElement>): void {
   const target = event.target;
-  if (!(target instanceof HTMLAnchorElement) || !target.matches(THREAD_LINK_SELECTOR)) return;
-  const links = Array.from(event.currentTarget.querySelectorAll<HTMLAnchorElement>(THREAD_LINK_SELECTOR));
+  if (
+    !(target instanceof HTMLAnchorElement) ||
+    !target.matches(THREAD_LINK_SELECTOR)
+  )
+    return;
+  const links = Array.from(
+    event.currentTarget.querySelectorAll<HTMLAnchorElement>(
+      THREAD_LINK_SELECTOR,
+    ),
+  );
   const index = links.indexOf(target);
   const last = links.length - 1;
   const nextIndex = {
@@ -133,10 +180,19 @@ function moveFocusBetweenLinks(event: KeyboardEvent<HTMLElement>): void {
 }
 
 /** SB-04/05/09/10: the thread list by date groups, its loading skeleton, empty text, load error and next page; DLG-01 for its rows. */
-export function ThreadHistoryListView({ state, pagination, renderItem, openThreadId, onDelete }: ThreadHistoryListViewProps) {
+export function ThreadHistoryListView({
+  state,
+  pagination,
+  renderItem,
+  openThreadId,
+  onDelete,
+}: ThreadHistoryListViewProps) {
+  const t = useTranslations('shell');
   const rootRef = useRef<HTMLDivElement>(null);
   // The entry outlives `deleteOpen` so the dialog keeps its text through the exit animation.
-  const [pendingDelete, setPendingDelete] = useState<ThreadListEntry | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ThreadListEntry | null>(
+    null,
+  );
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deleteFinalFocus = useRef<HTMLElement | null>(null);
   // «Повторить» unmounts while the list reloads: focus follows to the result (UXRD 6.4 Error).
@@ -148,7 +204,8 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
   useEffect(() => {
     if (!retryHadFocus.current || state.kind === 'loading') return;
     retryHadFocus.current = false;
-    const selector = state.kind === 'ready' ? THREAD_LINK_SELECTOR : '[data-list-retry]';
+    const selector =
+      state.kind === 'ready' ? THREAD_LINK_SELECTOR : '[data-list-retry]';
     rootRef.current?.querySelector<HTMLElement>(selector)?.focus();
   }, [state.kind]);
 
@@ -161,19 +218,24 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
     const target = loadMoreFailed
       ? root.querySelector<HTMLElement>('[data-load-more-retry]')
       : rowsOf(root)
-          .find((row) => !idsBefore.has(row.getAttribute(THREAD_ROW_ATTRIBUTE) ?? ''))
+          .find(
+            (row) =>
+              !idsBefore.has(row.getAttribute(THREAD_ROW_ATTRIBUTE) ?? ''),
+          )
           ?.querySelector<HTMLElement>(THREAD_LINK_SELECTOR);
     target?.focus();
   }, [isLoadingMore, loadMoreFailed]);
 
   const loadMore = (source: LoadMoreSource): void => {
-    idsBeforeKeyboardLoad.current = source === 'keyboard' ? entryIdsOf(state) : null;
+    idsBeforeKeyboardLoad.current =
+      source === 'keyboard' ? entryIdsOf(state) : null;
     pagination.onLoadMore(source);
   };
 
   const requestDelete = (entry: ThreadListEntry): void => {
     const root = rootRef.current;
-    deleteFinalFocus.current = root === null ? null : actionsButtonOf(root, entry.id);
+    deleteFinalFocus.current =
+      root === null ? null : actionsButtonOf(root, entry.id);
     setPendingDelete(entry);
     setDeleteOpen(true);
   };
@@ -183,53 +245,73 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
     const root = rootRef.current;
     // The open thread hands focus to the route change; any other moves it to a neighbour picked before its row leaves.
     deleteFinalFocus.current =
-      pendingDelete.id === openThreadId || root === null ? null : focusTargetAfterRemoval(root, pendingDelete.id);
+      pendingDelete.id === openThreadId || root === null
+        ? null
+        : focusTargetAfterRemoval(root, pendingDelete.id);
     onDelete(pendingDelete);
   };
 
   // A reply may start or finish while the dialog is open: the A-4 paragraph follows the live entry.
   const liveDeleteEntry =
     pendingDelete !== null && state.kind === 'ready'
-      ? (state.groups.flatMap((group) => group.entries).find((entry) => entry.id === pendingDelete.id) ?? pendingDelete)
+      ? (state.groups
+          .flatMap((group) => group.entries)
+          .find((entry) => entry.id === pendingDelete.id) ?? pendingDelete)
       : pendingDelete;
-  const renderRow = (entry: ThreadListEntry): ReactNode => renderItem(entry, () => requestDelete(entry));
+  const renderRow = (entry: ThreadListEntry): ReactNode =>
+    renderItem(entry, () => requestDelete(entry));
 
   return (
-    <div ref={rootRef} className="flex flex-col" onKeyDown={moveFocusBetweenLinks}>
+    <div
+      ref={rootRef}
+      className="flex flex-col"
+      onKeyDown={moveFocusBetweenLinks}
+    >
       {state.kind === 'loading' && <ListSkeleton />}
       {state.kind === 'error' && (
         <div className="flex flex-col items-start gap-2 px-4 py-2 text-[13px]">
-          <p role="alert">Не удалось загрузить беседы</p>
+          <p role="alert">{t('list.loadFailed')}</p>
           <Button
             data-list-retry=""
             variant="outline"
             size="sm"
             onClick={(event) => {
-              retryHadFocus.current = document.activeElement === event.currentTarget;
+              retryHadFocus.current =
+                document.activeElement === event.currentTarget;
               state.onRetry();
             }}
           >
             <RotateCwIcon aria-hidden />
-            Повторить
+            {t('list.retry')}
           </Button>
         </div>
       )}
       {state.kind === 'ready' && state.groups.length === 0 && (
         <div className="px-4 py-2 text-[13px]">
-          <p className="text-sidebar-foreground">Пока нет бесед</p>
-          <p className="text-muted-foreground">Начните новый чат — он появится здесь.</p>
+          <p className="text-sidebar-foreground">{t('list.empty')}</p>
+          <p className="text-muted-foreground">{t('list.emptyHint')}</p>
         </div>
       )}
       {state.kind === 'ready' &&
-        state.groups.map((group) => <ThreadGroupSection key={group.key} group={group} renderItem={renderRow} />)}
+        state.groups.map((group) => (
+          <ThreadGroupSection
+            key={group.key}
+            group={group}
+            renderItem={renderRow}
+          />
+        ))}
       {state.kind === 'ready' && pagination.hasMore && (
-        <NextPage isLoadingMore={isLoadingMore} loadMoreFailed={loadMoreFailed} onLoadMore={loadMore} />
+        <NextPage
+          isLoadingMore={isLoadingMore}
+          loadMoreFailed={loadMoreFailed}
+          onLoadMore={loadMore}
+        />
       )}
       {liveDeleteEntry !== null && (
         <DeleteThreadDialog
           open={deleteOpen}
           threadId={liveDeleteEntry.remoteId}
-          threadTitle={liveDeleteEntry.title ?? UNTITLED_THREAD_TITLE}
+          threadTitle={liveDeleteEntry.title ?? t('thread.untitled')}
           onConfirm={confirmDelete}
           onOpenChange={setDeleteOpen}
           finalFocus={deleteFinalFocus}
@@ -239,27 +321,52 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
   );
 }
 
-function ThreadGroupSection({ group, renderItem }: { group: ThreadGroup; renderItem: (entry: ThreadListEntry) => ReactNode }) {
+function ThreadGroupSection({
+  group,
+  renderItem,
+}: {
+  group: ThreadGroup;
+  renderItem: (entry: ThreadListEntry) => ReactNode;
+}) {
+  const t = useTranslations('shell.dateGroup');
   const headingId = useId();
   return (
     <SidebarGroup className="py-0 pt-4 first:pt-2">
-      <SidebarGroupLabel id={headingId} render={<h2 />} className="text-muted-foreground h-6 text-xs">
-        {group.label}
+      <SidebarGroupLabel
+        id={headingId}
+        render={<h2 />}
+        className="text-muted-foreground h-6 text-xs"
+      >
+        {t(group.key)}
       </SidebarGroupLabel>
-      <SidebarMenu aria-labelledby={headingId}>{group.entries.map(renderItem)}</SidebarMenu>
+      <SidebarMenu aria-labelledby={headingId}>
+        {group.entries.map(renderItem)}
+      </SidebarMenu>
     </SidebarGroup>
   );
 }
 
 /** SB-10: «Показать ещё», its loading rows or its error, under the last group (UXRD 6.8). */
-function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadListPagination, 'hasMore'>) {
+function NextPage({
+  isLoadingMore,
+  loadMoreFailed,
+  onLoadMore,
+}: Omit<ThreadListPagination, 'hasMore'>) {
+  const t = useTranslations('shell.list');
   if (isLoadingMore) {
     return (
-      <div role="status" aria-label="Загружаем ещё беседы…" className="flex flex-col px-2">
-        <span className="sr-only">Загружаем ещё беседы…</span>
+      <div
+        role="status"
+        aria-label={t('loadingMore')}
+        className="flex flex-col px-2"
+      >
+        <span className="sr-only">{t('loadingMore')}</span>
         {MORE_SKELETON_ROW_WIDTHS.map((width) => (
           <div key={width} aria-hidden className="flex h-9 items-center px-2">
-            <Skeleton className="h-4 motion-reduce:animate-none" style={{ width }} />
+            <Skeleton
+              className="h-4 motion-reduce:animate-none"
+              style={{ width }}
+            />
           </div>
         ))}
       </div>
@@ -268,10 +375,15 @@ function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadList
   if (loadMoreFailed) {
     return (
       <div className="flex flex-col items-start gap-2 px-4 py-2 text-[13px]">
-        <p role="alert">Не удалось загрузить ещё беседы</p>
-        <Button data-load-more-retry="" variant="outline" size="sm" onClick={(event) => onLoadMore(clickSource(event))}>
+        <p role="alert">{t('loadMoreFailed')}</p>
+        <Button
+          data-load-more-retry=""
+          variant="outline"
+          size="sm"
+          onClick={(event) => onLoadMore(clickSource(event))}
+        >
           <RotateCwIcon aria-hidden />
-          Повторить
+          {t('retry')}
         </Button>
       </div>
     );
@@ -280,7 +392,10 @@ function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadList
 }
 
 /** «Показать ещё»: a click, or the button nearing the sidebar's visible edge, loads the next page. */
-function ShowMoreButton({ onLoadMore }: Pick<ThreadListPagination, 'onLoadMore'>) {
+function ShowMoreButton({
+  onLoadMore,
+}: Pick<ThreadListPagination, 'onLoadMore'>) {
+  const t = useTranslations('shell.list');
   const buttonRef = useRef<HTMLButtonElement>(null);
   const loadOnView = useEffectEvent(() => onLoadMore('viewport'));
 
@@ -291,7 +406,10 @@ function ShowMoreButton({ onLoadMore }: Pick<ThreadListPagination, 'onLoadMore'>
       (records) => {
         if (records.some((record) => record.isIntersecting)) loadOnView();
       },
-      { root: button.closest(SIDEBAR_SCROLL_SELECTOR), rootMargin: AUTO_LOAD_ROOT_MARGIN },
+      {
+        root: button.closest(SIDEBAR_SCROLL_SELECTOR),
+        rootMargin: AUTO_LOAD_ROOT_MARGIN,
+      },
     );
     observer.observe(button);
     return () => observer.disconnect();
@@ -306,22 +424,32 @@ function ShowMoreButton({ onLoadMore }: Pick<ThreadListPagination, 'onLoadMore'>
         className="w-full"
         onClick={(event) => onLoadMore(clickSource(event))}
       >
-        Показать ещё<span className="sr-only"> беседы</span>
+        {t.rich('showMore', {
+          hidden: (chunks) => <span className="sr-only">{chunks}</span>,
+        })}
       </Button>
     </div>
   );
 }
 
 function ListSkeleton() {
+  const t = useTranslations('shell.list');
   return (
-    <div role="status" aria-label="Загружаем беседы…" className="flex flex-col gap-0 px-2 pt-2">
-      <span className="sr-only">Загружаем беседы…</span>
+    <div
+      role="status"
+      aria-label={t('loading')}
+      className="flex flex-col gap-0 px-2 pt-2"
+    >
+      <span className="sr-only">{t('loading')}</span>
       <div aria-hidden className="flex h-12 items-center px-2">
         <Skeleton className="h-3 w-20 motion-reduce:animate-none" />
       </div>
       {SKELETON_ROW_WIDTHS.map((width) => (
         <div key={width} aria-hidden className="flex h-9 items-center px-2">
-          <Skeleton className="h-4 motion-reduce:animate-none" style={{ width }} />
+          <Skeleton
+            className="h-4 motion-reduce:animate-none"
+            style={{ width }}
+          />
         </div>
       ))}
     </div>
@@ -351,17 +479,24 @@ export function ThreadHistoryList() {
     () =>
       threadItems
         .filter((item) => item.status === 'regular')
-        .map(
-          (item): ThreadListEntry => ({
-            id: item.id,
-            remoteId: item.remoteId,
-            title: item.title,
-            activityAt: entryActivityAt({ lastMessageAt: item.lastMessageAt, activityAt: activityAt[item.id] }, now),
-          }),
-        ),
+        .map((item): ThreadListEntry => ({
+          id: item.id,
+          remoteId: item.remoteId,
+          title: item.title,
+          activityAt: entryActivityAt(
+            {
+              lastMessageAt: item.lastMessageAt,
+              activityAt: activityAt[item.id],
+            },
+            now,
+          ),
+        })),
     [threadItems, activityAt, now],
   );
-  const groups = useMemo(() => groupThreadsByDate(entries, now), [entries, now]);
+  const groups = useMemo(
+    () => groupThreadsByDate(entries, now),
+    [entries, now],
+  );
 
   // The skeleton covers the first load and a retry after an error; a later reload keeps the list on screen.
   const hasError = loadError !== undefined && loadError !== null;
@@ -374,10 +509,15 @@ export function ThreadHistoryList() {
   useEffect(() => {
     if (!onePageLoaded) return;
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && !aui.threads.getState().isLoading) void aui.threads.reload();
+      if (
+        document.visibilityState === 'visible' &&
+        !aui.threads.getState().isLoading
+      )
+        void aui.threads.reload();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [aui, onePageLoaded]);
 
   useEffect(() => {
@@ -407,20 +547,29 @@ export function ThreadHistoryList() {
       onDelete={(entry) => {
         if (entry.id === mainThreadId) focusOnRoot.current = true;
         // The store-level `delete()` returns nothing; the item runtime's promise tells a finished deletion.
-        const item = aui.threads.item({ id: entry.id }).__internal_getRuntime?.();
+        const item = aui.threads
+          .item({ id: entry.id })
+          .__internal_getRuntime?.();
         if (item === undefined) {
-          logger.error('[web-shell] thread delete unavailable: no item runtime', { threadId: entry.id });
+          logger.error(
+            '[web-shell] thread delete unavailable: no item runtime',
+            { threadId: entry.id },
+          );
           return;
         }
         item.delete().then(
           // design-web.md, Risks: the tree, the counter and an open agent page of this thread re-read.
           () => {
-            if (entry.remoteId !== undefined) services.live.emitLocalTree(entry.remoteId);
+            if (entry.remoteId !== undefined)
+              services.live.emitLocalTree(entry.remoteId);
           },
           (error: unknown) => {
             // A failed DELETE is already reported by the list adapter (toast, rollback, log).
             if (!isApiRequestError(error)) {
-              logger.error('[web-shell] thread delete failed', { threadId: entry.id, ...describeApiError(error) });
+              logger.error('[web-shell] thread delete failed', {
+                threadId: entry.id,
+                ...describeApiError(error),
+              });
             }
           },
         );
@@ -430,7 +579,10 @@ export function ThreadHistoryList() {
           key={entry.id}
           entry={entry}
           isActive={entry.id === mainThreadId}
-          titlePending={entry.remoteId !== undefined && titleWaiting[entry.remoteId] === true}
+          titlePending={
+            entry.remoteId !== undefined &&
+            titleWaiting[entry.remoteId] === true
+          }
           // A failed PATCH: the list adapter shows the toast, the runtime rolls the title back and logs the rejection.
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}

@@ -1,4 +1,7 @@
-import type { ModelProviderKind, ModelProviderState } from '@agent-os/contracts';
+import type {
+  ModelProviderKind,
+  ModelProviderState,
+} from '@agent-os/contracts';
 
 import { PROVIDER_KINDS } from './provider-kinds';
 
@@ -16,13 +19,18 @@ export interface ProviderReadinessInput {
  * design-core.md, Terms «Готовность провайдера»: the first condition that holds, in the order `missing`,
  * `disabled`, `key_missing`, `ready` — so a disabled provider without a key is `disabled`.
  */
-export function providerReadiness(provider: ProviderReadinessInput | null): ProviderReadiness {
+export function providerReadiness(
+  provider: ProviderReadinessInput | null,
+): ProviderReadiness {
   return provider === null ? 'missing' : providerState(provider);
 }
 
 /** The state of a registered provider: `providerReadiness` past `missing`. */
-export function providerState(provider: ProviderReadinessInput): ModelProviderState {
+export function providerState(
+  provider: ProviderReadinessInput,
+): ModelProviderState {
   if (!provider.enabled) return 'disabled';
-  if (PROVIDER_KINDS[provider.kind].keyRequired && provider.apiKey === null) return 'key_missing';
+  if (PROVIDER_KINDS[provider.kind].keyRequired && provider.apiKey === null)
+    return 'key_missing';
   return 'ready';
 }

@@ -1,30 +1,33 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   AgentListPageSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
+  AgentTasksViewSchema,
   AwaitingCountSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
-  DraftViewSchema,
+  DeepAgentRunViewSchema,
+  DocumentSchema,
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
   SendMessageResponseSchema,
   SpendResponseSchema,
   StopResponseSchema,
+  ThreadDocumentsViewSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunViewSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
+  type AgentTasksView,
   type AwaitingCount,
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
-  type DraftActionRequest,
-  type DraftView,
+  type DeepAgentRunView,
+  type Document,
   type InheritedHistory,
   type InterruptResponse,
   type RenameThreadRequest,
@@ -33,25 +36,37 @@ import {
   type SendMessageResponse,
   type SpendResponse,
   type StopResponse,
+  type ThreadDocumentsView,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunView,
-} from "@agent-os/contracts";
-import { apiRequest } from "@/lib/api/api-request";
+} from '@agent-os/contracts';
+import { apiRequest } from '@/lib/api/api-request';
 
-const threadRoute = (threadId: string): string => `/api/threads/${encodeURIComponent(threadId)}`;
+const threadRoute = (threadId: string): string =>
+  `/api/threads/${encodeURIComponent(threadId)}`;
 
 async function listThreads(cursor?: string): Promise<ThreadListResponse> {
-  const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return apiRequest({ path: `/api/threads${query}`, schema: ThreadListResponseSchema });
+  const query =
+    cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  return apiRequest({
+    path: `/api/threads${query}`,
+    schema: ThreadListResponseSchema,
+  });
 }
 
 async function getThread(threadId: string): Promise<ThreadSummary> {
-  return apiRequest({ path: threadRoute(threadId), schema: ThreadSummarySchema });
+  return apiRequest({
+    path: threadRoute(threadId),
+    schema: ThreadSummarySchema,
+  });
 }
 
 async function createThread(): Promise<ThreadSummary> {
-  return apiRequest({ path: "/api/threads", method: "POST", schema: ThreadSummarySchema });
+  return apiRequest({
+    path: '/api/threads',
+    method: 'POST',
+    schema: ThreadSummarySchema,
+  });
 }
 
 async function renameThread({
@@ -64,7 +79,7 @@ async function renameThread({
   const body: RenameThreadRequest = { title };
   return apiRequest({
     path: threadRoute(threadId),
-    method: "PATCH",
+    method: 'PATCH',
     body,
     schema: ThreadSummarySchema,
   });
@@ -72,13 +87,17 @@ async function renameThread({
 
 /** 204 on success; 404 surfaces as kind `not_found` and the caller decides what it means. */
 async function deleteThread(threadId: string): Promise<void> {
-  await apiRequest({ path: threadRoute(threadId), method: "DELETE" });
+  await apiRequest({ path: threadRoute(threadId), method: 'DELETE' });
 }
 
-const agentRoute = (agentId: string): string => `/api/agents/${encodeURIComponent(agentId)}`;
+const agentRoute = (agentId: string): string =>
+  `/api/agents/${encodeURIComponent(agentId)}`;
 const afterSeqQuery = (afterSeq: number): string => `?afterSeq=${afterSeq}`;
 
-async function getConversation(threadId: string, afterSeq: number): Promise<ConversationView> {
+async function getConversation(
+  threadId: string,
+  afterSeq: number,
+): Promise<ConversationView> {
   return apiRequest({
     path: `${threadRoute(threadId)}/history${afterSeqQuery(afterSeq)}`,
     schema: ConversationViewSchema,
@@ -86,7 +105,29 @@ async function getConversation(threadId: string, afterSeq: number): Promise<Conv
 }
 
 async function getThreadAgents(threadId: string): Promise<AgentNode[]> {
-  return apiRequest({ path: `${threadRoute(threadId)}/agents`, schema: z.array(AgentNodeSchema) });
+  return apiRequest({
+    path: `${threadRoute(threadId)}/agents`,
+    schema: z.array(AgentNodeSchema),
+  });
+}
+
+async function getThreadDocuments(
+  threadId: string,
+): Promise<ThreadDocumentsView> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/documents`,
+    schema: ThreadDocumentsViewSchema,
+  });
+}
+
+async function getThreadDocument(
+  threadId: string,
+  documentId: number,
+): Promise<Document> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/documents/${documentId}`,
+    schema: DocumentSchema,
+  });
 }
 
 /**
@@ -98,72 +139,83 @@ async function sendThreadMessage(
   text: string,
   recordId?: string,
 ): Promise<SendMessageResponse> {
-  const body: SendMessageRequest = recordId === undefined ? { text } : { text, recordId };
+  const body: SendMessageRequest =
+    recordId === undefined ? { text } : { text, recordId };
   return apiRequest({
     path: `${threadRoute(threadId)}/messages`,
-    method: "POST",
+    method: 'POST',
     body,
     schema: SendMessageResponseSchema,
-  });
-}
-
-/**
- * Saves, rejects or marks a draft saved in the editor. A refused `save` is a 200 whose draft stays
- * `pending` with its `refusal`; 404 `DRAFT_NOT_FOUND` / `RECORD_NOT_FOUND` and 409 `DRAFT_RESOLVED` throw.
- */
-async function draftAction(
-  threadId: string,
-  draftId: string,
-  action: DraftActionRequest,
-): Promise<DraftView> {
-  return apiRequest({
-    path: `${threadRoute(threadId)}/drafts/${encodeURIComponent(draftId)}`,
-    method: "POST",
-    body: action,
-    schema: DraftViewSchema,
   });
 }
 
 async function interruptThread(threadId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${threadRoute(threadId)}/interrupt`,
-    method: "POST",
+    method: 'POST',
     schema: InterruptResponseSchema,
   });
 }
 
 async function listAgents(cursor?: string): Promise<AgentListPage> {
-  const query = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return apiRequest({ path: `/api/agents${query}`, schema: AgentListPageSchema });
+  const query =
+    cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  return apiRequest({
+    path: `/api/agents${query}`,
+    schema: AgentListPageSchema,
+  });
 }
 
 async function getAwaitingCount(): Promise<AwaitingCount> {
-  return apiRequest({ path: "/api/agents/awaiting", schema: AwaitingCountSchema });
+  return apiRequest({
+    path: '/api/agents/awaiting',
+    schema: AwaitingCountSchema,
+  });
 }
 
-async function getAgentPage(agentId: string, afterSeq: number): Promise<AgentPageView> {
+async function getAgentPage(
+  agentId: string,
+  afterSeq: number,
+): Promise<AgentPageView> {
   return apiRequest({
     path: `${agentRoute(agentId)}/history${afterSeqQuery(afterSeq)}`,
     schema: AgentPageViewSchema,
   });
 }
 
-async function getInherited(agentId: string, afterSeq: number): Promise<InheritedHistory> {
+async function getInherited(
+  agentId: string,
+  afterSeq: number,
+): Promise<InheritedHistory> {
   return apiRequest({
     path: `${agentRoute(agentId)}/inherited${afterSeqQuery(afterSeq)}`,
     schema: InheritedHistorySchema,
   });
 }
 
-async function getRun(agentId: string): Promise<WorkflowRunView> {
-  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: WorkflowRunViewSchema });
+async function getRun(agentId: string): Promise<DeepAgentRunView> {
+  return apiRequest({
+    path: `${agentRoute(agentId)}/run`,
+    schema: DeepAgentRunViewSchema,
+  });
 }
 
-async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {
+/** The session's tasks by number and its delegations in order; both empty for an agent without them. */
+async function getAgentTasks(agentId: string): Promise<AgentTasksView> {
+  return apiRequest({
+    path: `${agentRoute(agentId)}/tasks`,
+    schema: AgentTasksViewSchema,
+  });
+}
+
+async function sendAgentMessage(
+  agentId: string,
+  text: string,
+): Promise<SendMessageResponse> {
   const body: SendMessageRequest = { text };
   return apiRequest({
     path: `${agentRoute(agentId)}/messages`,
-    method: "POST",
+    method: 'POST',
     body,
     schema: SendMessageResponseSchema,
   });
@@ -172,7 +224,7 @@ async function sendAgentMessage(agentId: string, text: string): Promise<SendMess
 async function interruptAgent(agentId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/interrupt`,
-    method: "POST",
+    method: 'POST',
     schema: InterruptResponseSchema,
   });
 }
@@ -180,7 +232,7 @@ async function interruptAgent(agentId: string): Promise<InterruptResponse> {
 async function stopAgent(agentId: string): Promise<StopResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/stop`,
-    method: "POST",
+    method: 'POST',
     schema: StopResponseSchema,
   });
 }
@@ -189,23 +241,26 @@ async function stopAgent(agentId: string): Promise<StopResponse> {
 async function restartAgent(agentId: string): Promise<RestartResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/restart`,
-    method: "POST",
+    method: 'POST',
     schema: RestartResponseSchema,
   });
 }
 
 /** `args` are the tool's full arguments when the brief or call was edited. */
-async function decide(decisionId: string, decision: DecisionRequest): Promise<DecisionResponse> {
+async function decide(
+  decisionId: string,
+  decision: DecisionRequest,
+): Promise<DecisionResponse> {
   return apiRequest({
     path: `/api/decisions/${encodeURIComponent(decisionId)}`,
-    method: "POST",
+    method: 'POST',
     body: decision,
     schema: DecisionResponseSchema,
   });
 }
 
 async function getSpend(): Promise<SpendResponse> {
-  return apiRequest({ path: "/api/spend", schema: SpendResponseSchema });
+  return apiRequest({ path: '/api/spend', schema: SpendResponseSchema });
 }
 
 export const threadsApiClient = {
@@ -216,14 +271,16 @@ export const threadsApiClient = {
   deleteThread,
   getConversation,
   getThreadAgents,
+  getThreadDocuments,
+  getThreadDocument,
   sendThreadMessage,
-  draftAction,
   interruptThread,
   listAgents,
   getAwaitingCount,
   getAgentPage,
   getInherited,
   getRun,
+  getAgentTasks,
   sendAgentMessage,
   interruptAgent,
   stopAgent,

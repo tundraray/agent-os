@@ -2,39 +2,90 @@ import type { AgentStatus } from '@agent-os/contracts';
 import { type AgentStatusInput, agentStatus } from './agent-view';
 
 // State Transitions (MC-3 labels) and KD-3: «Прерван» is visible right after the command, from the
-// pending `interrupt`, and after the step took it, from the session's mark.
-const PLAIN = { pendingInterrupt: false, sessionInterrupted: false };
+// pending `interrupt`, and after the step took it, from the session's mark. data-model design-runtime.md,
+// «Статус агента», DC-38: `awaiting_confirmation` only while the agent waits for its children with an open question.
+const PLAIN = {
+  pendingInterrupt: false,
+  sessionInterrupted: false,
+  openQuestion: false,
+};
 
 describe('agent status is derived from the task status and the session mark', () => {
   it.each<[string, AgentStatusInput, AgentStatus]>([
-    ['queued is working', { ...PLAIN, taskStatus: 'queued', waitReason: null }, 'working'],
-    ['running is working', { ...PLAIN, taskStatus: 'running', waitReason: null }, 'working'],
-    ['waiting for messages is working', { ...PLAIN, taskStatus: 'waiting', waitReason: 'messages' }, 'working'],
     [
-      'waiting for a decision awaits confirmation',
-      { ...PLAIN, taskStatus: 'waiting', waitReason: 'decision' },
+      'queued is working',
+      { ...PLAIN, taskStatus: 'queued', waitReason: null },
+      'working',
+    ],
+    [
+      'running is working',
+      { ...PLAIN, taskStatus: 'running', waitReason: null },
+      'working',
+    ],
+    [
+      'waiting for messages is working',
+      { ...PLAIN, taskStatus: 'waiting', waitReason: 'messages' },
+      'working',
+    ],
+    [
+      'waiting for children with an open question awaits confirmation',
+      {
+        ...PLAIN,
+        taskStatus: 'waiting',
+        waitReason: 'children',
+        openQuestion: true,
+      },
       'awaiting_confirmation',
     ],
     [
+      'waiting for children without an open question is working',
+      { ...PLAIN, taskStatus: 'waiting', waitReason: 'children' },
+      'working',
+    ],
+    [
       'queued with a pending interrupt is interrupted',
-      { ...PLAIN, taskStatus: 'queued', waitReason: null, pendingInterrupt: true },
+      {
+        ...PLAIN,
+        taskStatus: 'queued',
+        waitReason: null,
+        pendingInterrupt: true,
+      },
       'interrupted',
     ],
     [
       'running with a pending interrupt is interrupted',
-      { ...PLAIN, taskStatus: 'running', waitReason: null, pendingInterrupt: true },
+      {
+        ...PLAIN,
+        taskStatus: 'running',
+        waitReason: null,
+        pendingInterrupt: true,
+      },
       'interrupted',
     ],
     [
       'waiting for messages with the session mark is interrupted',
-      { ...PLAIN, taskStatus: 'waiting', waitReason: 'messages', sessionInterrupted: true },
+      {
+        ...PLAIN,
+        taskStatus: 'waiting',
+        waitReason: 'messages',
+        sessionInterrupted: true,
+      },
       'interrupted',
     ],
-    ['completed', { ...PLAIN, taskStatus: 'completed', waitReason: null }, 'completed'],
+    [
+      'completed',
+      { ...PLAIN, taskStatus: 'completed', waitReason: null },
+      'completed',
+    ],
     ['failed', { ...PLAIN, taskStatus: 'failed', waitReason: null }, 'failed'],
     [
       'stopped, even with a stale interrupted mark',
-      { ...PLAIN, taskStatus: 'stopped', waitReason: null, sessionInterrupted: true },
+      {
+        ...PLAIN,
+        taskStatus: 'stopped',
+        waitReason: null,
+        sessionInterrupted: true,
+      },
       'stopped',
     ],
   ])('%s', (_, input, expected) => {

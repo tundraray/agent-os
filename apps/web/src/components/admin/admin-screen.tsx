@@ -18,7 +18,8 @@ type AdminScreenProps = { section: AdminSection; page: AdminPage };
  * Accessibility), here and nowhere else.
  */
 export function AdminScreen({ section, page }: AdminScreenProps) {
-  const pageKey = page.kind === 'record' || page.kind === 'knowledge' ? page.key : null;
+  const pageKey =
+    page.kind === 'record' || page.kind === 'memory' ? page.key : null;
   useEffect(() => {
     focusShellTarget('page-title');
   }, [section, page.kind, pageKey]);

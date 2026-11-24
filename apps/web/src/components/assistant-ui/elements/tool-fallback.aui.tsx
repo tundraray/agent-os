@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { memo, useState, type ReactNode } from "react";
-import { useFormatter, useMessages, useTranslations } from "next-intl";
+import Link from 'next/link';
+import { memo, useState, type ReactNode } from 'react';
+import { useFormatter, useMessages, useTranslations } from 'next-intl';
 import {
   BanIcon,
   ChevronRightIcon,
@@ -13,63 +13,143 @@ import {
   CircleStopIcon,
   CircleXIcon,
   KeyRoundIcon,
+  PencilOffIcon,
   UnplugIcon,
   type LucideIcon,
-} from "lucide-react";
-import { useAuiState, type ToolCallMessagePartComponent } from "@assistant-ui/react";
+} from 'lucide-react';
+import {
+  useAuiState,
+  type ToolCallMessagePartComponent,
+} from '@assistant-ui/react';
 import {
   IdSchema,
-  RecordKindSchema,
+  LIST_RECORDS_TOOL,
+  MEMORY_TOOLS,
+  NOTEPAD_CREATE_TOOL,
+  NOTEPAD_TOOLS,
+  START_AGENT_TOOL,
+  START_DEEP_AGENT_TOOL,
+  scriptNameOf,
   ToolCallStateSchema,
+  TRY_SCRIPT_TOOL,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  type ChatRecordTool,
   type RecordKind,
   type ToolOutcome,
   type ToolRefusalReason,
-} from "@agent-os/contracts";
-import { z } from "zod";
-import { agentStatusGlyph, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
-import { useLiveRecord } from "@/components/agents/run-card";
-import { ValueRows } from "@/components/agents/value-rows";
-import { ShellLink } from "@/components/shell/shell-link";
-import { refusalText } from "@/lib/access/access-texts";
-import type { ErrorsTranslator } from "@/lib/agents/format";
-import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
-import { flatRows, valueRows } from "@/lib/agents/value-rows";
-import type { ToolCallArtifact } from "@/lib/feed/to-feed";
-import { builtinToolLabels } from "@/lib/i18n/builtin-name";
-import { formatListTime } from "@/lib/i18n/formats";
-import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
-import { logger } from "@/lib/logger";
-import { ACCOUNT_PATH, recordPath } from "@/lib/shell-route";
-import { cn } from "@/lib/utils";
+} from '@agent-os/contracts';
+import { z } from 'zod';
+import {
+  agentStatusGlyph,
+  FadeSlot,
+  StatusGlyph,
+} from '@/components/agents/agent-status';
+import { useLiveRecord, useRecordNamed } from '@/components/agents/run-card';
+import { ValueRows } from '@/components/agents/value-rows';
+import { ShellLink } from '@/components/shell/shell-link';
+import { refusalText } from '@/lib/access/access-texts';
+import { NO_RUN_VALUE, runCodeView } from '@/lib/agents/run-code';
+import { flatRows, valueRows } from '@/lib/agents/value-rows';
+import {
+  isRecordTool,
+  RECORD_CHANGE_TOOLS,
+  type ToolCallArtifact,
+} from '@/lib/feed/to-feed';
+import { toolCallLabels } from '@/i18n/builtin-name';
+import type {
+  AgentsTranslator,
+  ChatTranslator,
+  ErrorsTranslator,
+} from '@/i18n/catalog';
+import { formatListTime } from '@/i18n/formats';
+import {
+  describeRefusal,
+  type RefusalText,
+} from '@/lib/library/library-errors';
+import { logger } from '@/lib/logger';
+import { ACCOUNT_PATH, recordPath } from '@/lib/shell-route';
+import { cn } from '@/lib/utils';
 import {
   CollapsibleRoot as Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "./collapsible-root";
+} from './collapsible-root';
 
-/** The eleven outcomes of tool-call.md: the nine finished ones and two of an open call. */
-type CallOutcome = ToolOutcome | "running" | "awaiting_confirmation";
+/** The outcomes of tool-call.md: the finished ones and two of an open call. */
+type CallOutcome = ToolOutcome | 'running' | 'awaiting_confirmation';
 
-type OutcomeLook = { label: string; Icon: LucideIcon; tone: string; showsResult: boolean };
+type OutcomeLook = { Icon: LucideIcon; tone: string; showsResult: boolean };
 
-/** MC-22 texts, icons and colour roles (tool-call.md, States). */
+/** Icons and colour roles of the outcomes (tool-call.md, States); the MC-22 texts are `chat.tool.outcome`. */
 const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
-  running: { label: "выполняется", ...agentStatusGlyph("working"), showsResult: false },
-  success: { label: "готово", Icon: CircleCheckIcon, tone: "text-success", showsResult: true },
-  empty: { label: "пустой результат", Icon: CircleIcon, tone: "text-muted-foreground", showsResult: true },
-  tool_error: { label: "ошибка инструмента", Icon: CircleXIcon, tone: "text-destructive", showsResult: false },
-  transport_failure: { label: "нет связи с сервером", Icon: UnplugIcon, tone: "text-destructive", showsResult: false },
-  refused: { label: "отказано", Icon: BanIcon, tone: "text-destructive", showsResult: false },
-  auth_required: { label: "нужен вход в аккаунт", Icon: KeyRoundIcon, tone: "text-warning", showsResult: false },
-  awaiting_confirmation: { label: "ждёт подтверждения", ...agentStatusGlyph("awaiting_confirmation"), showsResult: false },
-  rejected: { label: "отклонено", Icon: CircleMinusIcon, tone: "text-muted-foreground", showsResult: false },
-  interrupted: { label: "прервано", Icon: CircleStopIcon, tone: "text-muted-foreground", showsResult: false },
-  unknown: { label: "исход неизвестен", Icon: CircleQuestionMarkIcon, tone: "text-warning", showsResult: false },
+  running: { ...agentStatusGlyph('working'), showsResult: false },
+  success: { Icon: CircleCheckIcon, tone: 'text-success', showsResult: true },
+  empty: { Icon: CircleIcon, tone: 'text-muted-foreground', showsResult: true },
+  tool_error: {
+    Icon: CircleXIcon,
+    tone: 'text-destructive',
+    showsResult: false,
+  },
+  transport_failure: {
+    Icon: UnplugIcon,
+    tone: 'text-destructive',
+    showsResult: false,
+  },
+  refused: { Icon: BanIcon, tone: 'text-destructive', showsResult: false },
+  auth_required: {
+    Icon: KeyRoundIcon,
+    tone: 'text-warning',
+    showsResult: false,
+  },
+  awaiting_confirmation: {
+    ...agentStatusGlyph('awaiting_confirmation'),
+    showsResult: false,
+  },
+  rejected: {
+    Icon: CircleMinusIcon,
+    tone: 'text-muted-foreground',
+    showsResult: false,
+  },
+  recorded: {
+    Icon: PencilOffIcon,
+    tone: 'text-muted-foreground',
+    showsResult: false,
+  },
+  interrupted: {
+    Icon: CircleStopIcon,
+    tone: 'text-muted-foreground',
+    showsResult: false,
+  },
+  unknown: {
+    Icon: CircleQuestionMarkIcon,
+    tone: 'text-warning',
+    showsResult: false,
+  },
 };
 
 const ArgLabelsSchema = z.record(z.string(), z.string());
+const RecordedSchema = z.array(z.string()).min(1);
+const MemoryArgsSchema = z.object({ description: z.string() });
+const NotepadCreateArgsSchema = z.object({ title: z.string() });
+/** The first line of a notepad tool's result on one document; `.` stops at its end (design-notepad.md, «Веб»). */
+const NOTEPAD_RESULT_TITLE = /^Document \d+: (.*)/;
+
+/**
+ * The title of a notepad call's document (self-learning MC-13): `notepad_create`'s argument, the others' first
+ * result line; null for the lists and before the result.
+ */
+function notepadTitle(
+  toolName: string,
+  args: unknown,
+  result: unknown,
+): string | null {
+  if (toolName === NOTEPAD_CREATE_TOOL)
+    return NotepadCreateArgsSchema.safeParse(args).data?.title ?? null;
+  return typeof result === 'string'
+    ? (NOTEPAD_RESULT_TITLE.exec(result)?.[1] ?? null)
+    : null;
+}
 
 /** Values outside the built contract, each warned about once per page. */
 const warnedValues = new Set<string>();
@@ -78,37 +158,43 @@ function warnOnce(field: string, value: unknown): void {
   const key = `${field}:${String(value)}`;
   if (warnedValues.has(key)) return;
   warnedValues.add(key);
-  logger.warn("[web-feed] tool call carries a value outside the contract", { field, value: String(value) });
+  logger.warn('[web-feed] tool call carries a value outside the contract', {
+    field,
+    value: String(value),
+  });
 }
 
 /** A field of the part's `artifact`, which assistant-ui types as `unknown`. */
 function field(artifact: unknown, key: keyof ToolCallArtifact): unknown {
-  if (typeof artifact !== "object" || artifact === null) return undefined;
+  if (typeof artifact !== 'object' || artifact === null) return undefined;
   const value: unknown = Reflect.get(artifact, key);
   return value;
 }
 
-function textField(artifact: unknown, key: keyof ToolCallArtifact): string | null {
+function textField(
+  artifact: unknown,
+  key: keyof ToolCallArtifact,
+): string | null {
   const value = field(artifact, key);
-  return typeof value === "string" ? value : null;
+  return typeof value === 'string' ? value : null;
 }
 
 /**
  * The outcome of a call from the `artifact` toFeed puts on its part. A value the contract does not hold
- * reads as «исход неизвестен» and is warned about once.
+ * reads as `unknown` and is warned about once.
  */
 function outcomeOf(artifact: unknown): CallOutcome {
-  const state = ToolCallStateSchema.safeParse(field(artifact, "state"));
+  const state = ToolCallStateSchema.safeParse(field(artifact, 'state'));
   if (!state.success) {
-    warnOnce("state", field(artifact, "state"));
-    return "unknown";
+    warnOnce('state', field(artifact, 'state'));
+    return 'unknown';
   }
-  if (state.data === "requested" || state.data === "sending") return "running";
-  if (state.data === "awaiting_confirmation") return "awaiting_confirmation";
-  const outcome = ToolOutcomeSchema.safeParse(field(artifact, "outcome"));
+  if (state.data === 'requested' || state.data === 'sending') return 'running';
+  if (state.data === 'awaiting_confirmation') return 'awaiting_confirmation';
+  const outcome = ToolOutcomeSchema.safeParse(field(artifact, 'outcome'));
   if (!outcome.success) {
-    warnOnce("outcome", field(artifact, "outcome"));
-    return "unknown";
+    warnOnce('outcome', field(artifact, 'outcome'));
+    return 'unknown';
   }
   return outcome.data;
 }
@@ -117,54 +203,62 @@ const RefusalDetailSchema = z.object({ model: z.string() });
 
 /** The refused model of a refusal by model: `refusalDetail.model` of the result, never the call's arguments. */
 function refusedModel(artifact: unknown): string | null {
-  const detail = RefusalDetailSchema.safeParse(field(artifact, "refusalDetail"));
+  const detail = RefusalDetailSchema.safeParse(
+    field(artifact, 'refusalDetail'),
+  );
   return detail.success ? detail.data.model : null;
 }
 
 function refusalReasonOf(artifact: unknown): ToolRefusalReason | null {
-  const reason = ToolRefusalReasonSchema.safeParse(field(artifact, "refusalReason"));
+  const reason = ToolRefusalReasonSchema.safeParse(
+    field(artifact, 'refusalReason'),
+  );
   return reason.success ? reason.data : null;
 }
 
-type ReasonLine = { content: ReactNode; hint: string | undefined };
+type ReasonLine = { content: ReactNode };
 
 /**
- * MC-10 or MC-22 text of a refusal (`refusalText`); a code outside them (or none) reads as the platform's
- * refusal with the code as its hint (KD-6).
+ * MC-10 or MC-22 text of a refusal (`refusalText`); a code the catalogue does not hold (or none) reads as
+ * the platform's refusal, with nothing of the raw code shown.
  */
 function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
   const reason = refusalReasonOf(artifact);
-  const text = reason === null ? null : refusalText(t, reason, refusedModel(artifact));
-  return text !== null
-    ? { content: text, hint: undefined }
-    : { content: t("platformRefusal"), hint: textField(artifact, "refusalReason") ?? undefined };
+  const text =
+    reason === null ? null : refusalText(t, reason, refusedModel(artifact));
+  return { content: text ?? t('platformRefusal') };
 }
 
-/** The library's create and start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
-const LIBRARY_TOOLS = new Set(["start_agent", "start_workflow", "draft_record"]);
+/** The library's start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
+const LIBRARY_TOOLS = new Set<string>([
+  START_AGENT_TOOL,
+  START_DEEP_AGENT_TOOL,
+]);
 
 /**
- * The record a library call names and its kind: `agent` of `start_agent` (only a record id — not a fork
- * or an executor's name), `workflow` of `start_workflow`, `recordId` and `kind` of `draft_record`.
+ * The name a start call gives and the kind it starts (data-model design-agents.md, KD-5): `agent` of
+ * `start_agent`, `deepAgent` of `start_deep_agent`; an empty name when the argument is not a string.
  */
-function libraryCallOf(toolName: string, args: unknown): { recordId: string | null; kind: RecordKind | null } {
-  const arg = (key: string): unknown =>
-    typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
-  const id = (value: unknown): string | null => {
-    const parsed = IdSchema.safeParse(value);
-    return parsed.success ? parsed.data : null;
+function libraryCallOf(
+  toolName: string,
+  args: unknown,
+): { name: string; kind: RecordKind } {
+  const arg = (key: string): string => {
+    const value: unknown =
+      typeof args === 'object' && args !== null
+        ? Reflect.get(args, key)
+        : undefined;
+    return typeof value === 'string' ? value : '';
   };
-  if (toolName === "start_agent") return { recordId: id(arg("agent")), kind: "agent" };
-  if (toolName === "start_workflow") return { recordId: id(arg("workflow")), kind: "workflow" };
-  const kind = RecordKindSchema.safeParse(arg("kind"));
-  return { recordId: id(arg("recordId")), kind: kind.success ? kind.data : null };
+  return toolName === START_AGENT_TOOL
+    ? { name: arg('agent'), kind: 'agent' }
+    : { name: arg('deepAgent'), kind: 'deep_agent' };
 }
 
-function ReasonParagraph({ content, hint }: ReasonLine) {
+function ReasonParagraph({ content }: ReasonLine) {
   return (
     <p
       data-slot="tool-fallback-reason"
-      title={hint}
       className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4"
     >
       {content}
@@ -172,38 +266,50 @@ function ReasonParagraph({ content, hint }: ReasonLine) {
   );
 }
 
-const LINK_CLASS = "text-foreground underline underline-offset-2";
+const LINK_CLASS = 'text-foreground underline underline-offset-2';
 
 /**
- * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» or «Открыть в редакторе» to the
- * record's page; a refusal without a library text (`model_not_connected`, `read_only` on a colleague's
- * record, `invalid_arguments`) keeps the general line. Whose the record is comes from the library list.
+ * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» to the page of the record its name
+ * starts, found in the library list, which also says whose it is. A refusal without a library text
+ * (`model_not_connected`, `invalid_arguments`) and a call no record answers — a temporary agent — keep the
+ * general line.
  */
-function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; args: unknown; artifact: unknown }) {
-  const t = useTranslations("errors");
+function LibraryRefusalLine({
+  toolName,
+  args,
+  artifact,
+}: {
+  toolName: string;
+  args: unknown;
+  artifact: unknown;
+}) {
+  const t = useTranslations('errors');
   const call = libraryCallOf(toolName, args);
-  // No list holds an empty id: a call without a record reads as one the list does not hold.
-  const live = useLiveRecord(call.recordId ?? "");
-  const refusal: RefusalText | null = describeRefusal(t, refusalReasonOf(artifact), {
-    tool: toolName,
-    kind: call.kind ?? live?.kind ?? "agent",
-    model: refusedModel(artifact),
-    recordId: call.recordId,
-    own: live?.mine === true,
-    company: live != null && live.author === null,
-  });
+  const live = useRecordNamed(call.kind, call.name);
+  const refusal: RefusalText | null =
+    live == null
+      ? null
+      : describeRefusal(t, refusalReasonOf(artifact), {
+          tool: toolName,
+          kind: call.kind,
+          model: refusedModel(artifact),
+          recordId: live.id,
+          own: live.mine,
+        });
   if (refusal === null) return <ReasonParagraph {...refusalOf(t, artifact)} />;
   const { action } = refusal;
   return (
     <ReasonParagraph
-      hint={undefined}
       content={
         <>
           {refusal.text}
           {action !== null ? (
             <>
-              {" "}
-              <ShellLink href={recordPath(action.recordId)} className={LINK_CLASS}>
+              {' '}
+              <ShellLink
+                href={recordPath(action.recordId)}
+                className={LINK_CLASS}
+              >
                 {action.label}
               </ShellLink>
             </>
@@ -215,23 +321,75 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
 }
 
 /**
+ * MC-23: a record tool's block names its record — «Чтение «{имя}»», «Создание «{имя}»» — by the name the feed
+ * knows, else by the live library list; a record known by neither reads by the catalogue's title.
+ */
+function useRecordToolTitle(
+  toolName: ChatRecordTool,
+  args: unknown,
+  artifact: unknown,
+): string | null {
+  const t = useTranslations('agents.recordTool');
+  const recordId = IdSchema.safeParse(
+    typeof args === 'object' && args !== null
+      ? Reflect.get(args, 'recordId')
+      : undefined,
+  );
+  // No list holds an empty id: a call without a record reads as one the list does not hold.
+  const live = useLiveRecord(recordId.success ? recordId.data : '');
+  if (toolName === LIST_RECORDS_TOOL) return t(LIST_RECORDS_TOOL);
+  const name = textField(artifact, 'recordName') ?? live?.name ?? null;
+  return name === null ? null : t(toolName, { name });
+}
+
+/** A record tool's block: the library list is read only here, so other blocks never subscribe to it. */
+function RecordToolBlock(props: ToolBlockProps & { toolName: ChatRecordTool }) {
+  const title = useRecordToolTitle(props.toolName, props.args, props.artifact);
+  return <ToolBlock {...props} title={title} />;
+}
+
+/**
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
  * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
+ * A record tool that changes a record reads its refusal as «Не сохранено:» and the platform's text as is (KD-4).
  */
-function reasonLine(t: ErrorsTranslator, outcome: CallOutcome, artifact: unknown, server: string): ReasonLine | null {
-  if (outcome === "refused") return refusalOf(t, artifact);
-  if (outcome === "auth_required") {
+function reasonLine(
+  t: ErrorsTranslator,
+  tChat: ChatTranslator,
+  tAgents: AgentsTranslator,
+  {
+    outcome,
+    artifact,
+    server,
+    toolName,
+    result,
+  }: {
+    outcome: CallOutcome;
+    artifact: unknown;
+    server: string;
+    toolName: string;
+    result: unknown;
+  },
+): ReasonLine | null {
+  if (
+    outcome === 'refused' &&
+    RECORD_CHANGE_TOOLS.has(toolName) &&
+    typeof result === 'string' &&
+    result !== ''
+  ) {
+    return { content: tAgents('recordCard.notSaved', { reason: result }) };
+  }
+  if (outcome === 'refused') return refusalOf(t, artifact);
+  if (outcome === 'auth_required') {
     return {
-      content: (
-        <>
-          Подключите аккаунт {server} в разделе «
+      content: tChat.rich('tool.authRequired', {
+        server,
+        link: (chunks) => (
           <Link href={ACCOUNT_PATH} className={LINK_CLASS}>
-            Мой доступ
+            {chunks}
           </Link>
-          »
-        </>
-      ),
-      hint: undefined,
+        ),
+      }),
     };
   }
   return null;
@@ -239,7 +397,7 @@ function reasonLine(t: ErrorsTranslator, outcome: CallOutcome, artifact: unknown
 
 /** A result that is JSON text reads as its value; any other result stays as it is. */
 function parsedResult(result: unknown): unknown {
-  if (typeof result !== "string") return result;
+  if (typeof result !== 'string') return result;
   try {
     const value: unknown = JSON.parse(result);
     return value;
@@ -255,45 +413,129 @@ function parsedResult(result: unknown): unknown {
  * and, for a finished call with a result, the result — as rows when it is a flat object. Decisions are
  * not taken here — DecisionCard does that (KD-5).
  */
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsText, result, artifact }) => {
+const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+  toolName,
+  args,
+  argsText,
+  result,
+  artifact,
+}) => {
+  const props = { toolName, args, argsText, result, artifact };
+  return isRecordTool(toolName) ? (
+    <RecordToolBlock {...props} toolName={toolName} />
+  ) : (
+    <ToolBlock {...props} />
+  );
+};
+
+type ToolBlockProps = {
+  toolName: string;
+  args: unknown;
+  argsText: string;
+  result: unknown;
+  artifact: unknown;
+  /** The block's own title (a record tool's, MC-23); the catalogue's or the server's when absent or null. */
+  title?: string | null;
+};
+
+function ToolBlock({
+  toolName,
+  args,
+  argsText,
+  result,
+  artifact,
+  title,
+}: ToolBlockProps) {
   const [open, setOpen] = useState(false);
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
-  const t = useTranslations("errors");
+  const t = useTranslations('errors');
+  const tChat = useTranslations('chat');
+  const tAgents = useTranslations('agents');
   const { tools } = useMessages();
 
   const outcome = outcomeOf(artifact);
   const look = OUTCOME_LOOK[outcome];
-  const server = textField(artifact, "server");
-  // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the answer.
-  const builtin = server === null ? builtinToolLabels(tools, toolName) : null;
-  const toolTitle = server === null ? null : textField(artifact, "toolTitle");
-  const toolLabel = builtin?.title ?? toolTitle ?? toolName;
-  const argLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
-  const labels = builtin?.args ?? (argLabels.success ? argLabels.data : undefined);
-  const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
+  const outcomeText = tChat(`tool.outcome.${outcome}`);
+  const server = textField(artifact, 'server');
+  const scriptName = scriptNameOf(toolName, server);
+  const trial = server === null && toolName === TRY_SCRIPT_TOOL;
+  const toolTitle =
+    server !== null || scriptName !== null
+      ? textField(artifact, 'toolTitle')
+      : null;
+  const sentLabels = ArgLabelsSchema.safeParse(field(artifact, 'argLabels'));
+  const { title: catalogueTitle, args: labels } = toolCallLabels(tools, {
+    tool: toolName,
+    server,
+    toolTitle,
+    argLabels: sentLabels.success ? sentLabels.data : undefined,
+  });
+  const toolLabel = title ?? scriptName ?? catalogueTitle;
+  const runCode = runCodeView(
+    {
+      tool: toolName,
+      server,
+      args,
+      scriptCode: textField(artifact, 'scriptCode'),
+    },
+    tools,
+  );
+  const memoryDescription =
+    server === null && MEMORY_TOOLS.some((name) => name === toolName)
+      ? (MemoryArgsSchema.safeParse(args).data?.description ?? null)
+      : null;
+  const documentTitle =
+    server === null && NOTEPAD_TOOLS.some((name) => name === toolName)
+      ? notepadTitle(toolName, args, result)
+      : null;
   /**
-   * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a
-   * titled MCP tool; without a title the server stands in the first line.
+   * The second header line: a code run's description (code-execution UXRD, KD-4) or draft name, a saved
+   * script's «скрипт агента · {описание}» (self-learning KD-4), a memory call's record
+   * description or a notepad call's document title (self-learning MC-13), or «name · server» of a titled MCP
+   * tool; without a title the server stands in the first line.
    */
   const secondLine =
-    runCode?.description ?? (toolTitle !== null && server !== null ? `${toolName} · ${server}` : null);
+    (scriptName !== null && toolTitle !== null
+      ? tChat('tool.savedScript', { description: toolTitle })
+      : null) ??
+    runCode?.description ??
+    memoryDescription ??
+    documentTitle ??
+    (toolTitle !== null && server !== null ? `${toolName} · ${server}` : null);
   const at =
-    textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
+    textField(artifact, 'startedAt') ??
+    textField(artifact, 'finishedAt') ??
+    messageCreatedAt.toISOString();
   const time = formatListTime(format, at);
   // The library line reads the library list from the shell, so other blocks never mount it.
-  const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
-  const reason = libraryRefusal ? null : reasonLine(t, outcome, artifact, server ?? toolName);
+  const libraryRefusal = outcome === 'refused' && LIBRARY_TOOLS.has(toolName);
+  const reason = libraryRefusal
+    ? null
+    : reasonLine(t, tChat, tAgents, {
+        outcome,
+        artifact,
+        server: server ?? toolName,
+        toolName,
+        result,
+      });
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
-  const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
+  const shownResult =
+    runCode !== null && (result === undefined || result === '')
+      ? NO_RUN_VALUE
+      : result;
   const resultText =
     look.showsResult && shownResult !== undefined
-      ? typeof shownResult === "string"
+      ? typeof shownResult === 'string'
         ? shownResult
         : JSON.stringify(shownResult, null, 2)
       : null;
   /** A successful code run's printed lines under its end (KD-3); absent when the script printed nothing. */
-  const output = runCode !== null && look.showsResult ? textField(artifact, "output") : null;
+  const output =
+    runCode !== null && look.showsResult ? textField(artifact, 'output') : null;
+  /** MC-10: the tools a code run in a training tree recorded and did not send; no line when there were none. */
+  const recorded =
+    RecordedSchema.safeParse(field(artifact, 'recorded')).data ?? null;
 
   return (
     <Collapsible
@@ -305,7 +547,11 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
     >
       <CollapsibleTrigger
         data-slot="tool-fallback-trigger"
-        aria-label={`${toolLabel}: ${look.label}, ${time}`}
+        aria-label={tChat('tool.trigger', {
+          tool: toolLabel,
+          outcome: outcomeText,
+          time,
+        })}
         className="group/trigger hover:bg-accent focus-visible:ring-ring flex w-full min-w-0 flex-col rounded-lg px-2 text-start text-sm outline-none focus-visible:ring-2"
       >
         <span className="flex h-8 w-full min-w-0 items-center gap-2 pointer-coarse:h-11">
@@ -314,16 +560,34 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
             className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--duration-panel) group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none"
           />
           <FadeSlot swapKey={outcome} className={look.tone}>
-            <StatusGlyph Icon={look.Icon} spinning={outcome === "running"} />
+            <StatusGlyph Icon={look.Icon} spinning={outcome === 'running'} />
           </FadeSlot>
-          <span className="text-foreground min-w-0 truncate" title={toolLabel}>
+          <span
+            className={cn(
+              'text-foreground min-w-0 truncate',
+              scriptName !== null && 'font-mono',
+            )}
+            title={toolLabel}
+          >
             {toolLabel}
           </span>
           {server !== null && secondLine === null ? (
-            <span className="text-muted-foreground min-w-0 truncate text-xs">{server}</span>
+            <span className="text-muted-foreground min-w-0 truncate text-xs">
+              {server}
+            </span>
           ) : null}
-          <span className={cn("ms-auto shrink-0 text-xs whitespace-nowrap", look.tone)}>{look.label}</span>
-          <time dateTime={at} className="text-muted-foreground shrink-0 text-xs tabular-nums">
+          <span
+            className={cn(
+              'ms-auto shrink-0 text-xs whitespace-nowrap',
+              look.tone,
+            )}
+          >
+            {outcomeText}
+          </span>
+          <time
+            dateTime={at}
+            className="text-muted-foreground shrink-0 text-xs tabular-nums"
+          >
             {time}
           </time>
         </span>
@@ -331,27 +595,34 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           <span
             data-slot="tool-fallback-second-line"
             title={secondLine}
-            className="text-muted-foreground block h-4 w-full truncate ps-12 text-xs leading-4"
+            className={cn(
+              'text-muted-foreground block h-4 w-full truncate ps-12 text-xs leading-4',
+              trial && 'font-mono',
+            )}
           >
             {secondLine}
           </span>
         ) : null}
       </CollapsibleTrigger>
       {libraryRefusal ? (
-        <LibraryRefusalLine toolName={toolName} args={args} artifact={artifact} />
+        <LibraryRefusalLine
+          toolName={toolName}
+          args={args}
+          artifact={artifact}
+        />
       ) : reason !== null ? (
         <ReasonParagraph {...reason} />
       ) : null}
       <CollapsibleContent
         data-slot="tool-fallback-content"
         className={cn(
-          "overflow-hidden",
-          "data-open:animate-collapsible-down data-closed:animate-collapsible-up [--tw-duration:var(--duration-panel)] motion-reduce:animate-none",
+          'overflow-hidden',
+          'data-open:animate-collapsible-down data-closed:animate-collapsible-up [--tw-duration:var(--duration-panel)] motion-reduce:animate-none',
         )}
       >
         <div className="flex flex-col gap-2 px-2 pt-1 pb-2">
           <ValueRows
-            label="Аргументы"
+            label={tChat('tool.arguments')}
             rows={runCode?.rows ?? valueRows(args, labels)}
             script={runCode?.script}
             raw={argsText}
@@ -360,21 +631,36 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           />
           {resultText !== null ? (
             <ValueRows
-              label="Результат"
+              label={tChat('tool.result')}
               rows={flatRows(parsedResult(shownResult))}
               raw={resultText}
               disclosure={false}
               density="data"
             />
           ) : null}
-          {output !== null && output !== "" ? (
-            <ValueRows label={SCRIPT_OUTPUT_LABEL} rows={null} raw={output} disclosure={false} density="data" />
+          {output !== null && output !== '' ? (
+            <ValueRows
+              label={tChat('tool.scriptOutput')}
+              rows={null}
+              raw={output}
+              disclosure={false}
+              density="data"
+            />
+          ) : null}
+          {recorded !== null ? (
+            <p className="text-muted-foreground flex items-start gap-1.5 text-xs leading-4">
+              <PencilOffIcon aria-hidden className="size-3.5 shrink-0" />
+              <span className="min-w-0 break-words">
+                {tChat('tool.recordedLine')}{' '}
+                <span className="font-mono">{recorded.join(', ')}</span>
+              </span>
+            </p>
           ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>
   );
-};
+}
 
 export const ToolFallback = memo(ToolFallbackImpl);
-ToolFallback.displayName = "ToolFallback";
+ToolFallback.displayName = 'ToolFallback';

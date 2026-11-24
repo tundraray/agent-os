@@ -55,9 +55,17 @@ type PageHeaderProps = {
  * state. The `h1` is the shell's `page-title` focus target. The screen also titles the tab:
  * «{заголовок} — {родитель} — {область} — Agent OS», leaving out the parts it has not (MC-1, MC-7, MC-18).
  */
-export function PageHeader({ title, parent, area, badge, children }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  parent,
+  area,
+  badge,
+  children,
+}: PageHeaderProps) {
   const slot = useSyncExternalStore(subscribeSlot, readSlot, readNoSlot);
-  const tabParts = [title, parent?.title, area].filter((part): part is string => part !== undefined);
+  const tabParts = [title, parent?.title, area].filter(
+    (part): part is string => part !== undefined,
+  );
   useDocumentTitle(pageTitle(...tabParts));
   if (slot === null) return null;
 
@@ -73,7 +81,10 @@ export function PageHeader({ title, parent, area, badge, children }: PageHeaderP
             >
               {parent.title}
             </ShellLink>
-            <ChevronRightIcon aria-hidden className="hidden size-3.5 shrink-0 text-muted-foreground md:block" />
+            <ChevronRightIcon
+              aria-hidden
+              className="hidden size-3.5 shrink-0 text-muted-foreground md:block"
+            />
           </>
         )}
         <h1

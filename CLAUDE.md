@@ -17,8 +17,19 @@ Agent OS is a proof of concept, not a product in production.
 - Describe the architecture: layers, package boundaries and dependency direction are written down (Design Docs, ADRs, `docs/code-system/`) and kept in step with the code.
 - Use common patterns: solve a problem the way the codebase and the ecosystem already solve it. A new pattern needs a reason and goes into the architecture description.
 
+## Backend structure
+
+- One database, one place for it: `packages/db` holds the schema and every repository. No table query lives anywhere else.
+- A repository only reads and writes rows in the caller's transaction. A service holds the logic of an operation, opens the transaction and maps rows into domain objects.
+- Services are NestJS `@Injectable` classes. Repositories are plain classes that take `Db` in the constructor; `DbModule` builds them. Everything is wired by modules in `apps/api`, `packages/db`, `packages/runtime` and `packages/agents`; no hand-written composition functions.
+- Pure rules and data stay plain functions and values; do not turn them into providers.
+- `packages/common`, `packages/contracts` and `packages/code-runner` stay free of NestJS.
+
+Each app and package has its own `CLAUDE.md` with the rules local to it.
+
 ## Tests
 
+- E2E and verify suites migrate the database named by `DATABASE_URL` as soon as their config loads, even for a listing. Point them at a test database before any such command; never at the development database.
 - Few tests, on what is critical: security and rights checks, isolation between users, data integrity, money and limits, restarts and concurrency, and the main path of each feature.
 - Many tests are a cost, not a virtue: they mostly duplicate each other and only add run time. Before adding a test, check that no existing test already catches the same defect.
 - No tests for trivial code, library behaviour, or the same behaviour at several levels. One test at the lowest level that catches the defect.

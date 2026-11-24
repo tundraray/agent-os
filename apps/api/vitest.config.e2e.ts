@@ -1,20 +1,11 @@
 import { defineConfig } from 'vitest/config';
+import { apiProcess, e2e, migrated } from '../../vitest.shared.mts';
 
-export default defineConfig({
-  resolve: { tsconfigPaths: true },
-  test: {
-    globals: true,
-    root: './',
-    // Runtime instances of parallel files share one database, and the outbox relay and recovery
-    // sweeper are not scoped to a workflow type: they would deliver or requeue another file's rows.
-    fileParallelism: false,
-    include: ['**/*.e2e-spec.ts'],
-    // Migrations are applied once before the suite; the app's start only checks them.
-    globalSetup: ['./test/support/migrate.global-setup.ts'],
+export default defineConfig(
+  e2e({
+    ...migrated,
+    ...apiProcess,
     // Harness default: no runtime workers (chat e2e); a test that needs them turns them on itself.
     env: { RUNTIME_WORKERS: process.env.RUNTIME_WORKERS ?? 'off' },
-    // The worker is the API process: `process._debugProcess` from an executor process targets it,
-    // and the flag protects only the process it is given to (design-code-execution.md, Constraints).
-    execArgv: ['--disable-sigusr1'],
-  },
-});
+  }),
+);

@@ -26,7 +26,7 @@ interface AgentWindow {
 }
 
 /**
- * The `onTextDelta` hook of `createAgents` (design-chat.md KD-3, C3 «живые обновления»): publishes an
+ * The receiver of the agents' text parts, `ON_TEXT_DELTA` (design-chat.md KD-3, C3 «живые обновления»): publishes an
  * agent's text parts to NOTIFY. A part opening an answer (`offset` 0) or arriving after a pause goes at
  * once and opens a 100 ms window; the parts arriving within the window go out as one coalesced part
  * with the offset of its first part, and that opens the next window. A part with `offset` 0 (a retry)

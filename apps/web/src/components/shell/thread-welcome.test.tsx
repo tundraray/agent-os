@@ -14,10 +14,13 @@ import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { ShellServicesContext } from './shell-actions';
-import { WELCOME_SUGGESTIONS } from '@/lib/welcome-suggestions';
+import { welcomeSuggestions } from '@/lib/welcome-suggestions';
+import { testTranslator } from '@/test/intl';
 import { ShellWelcome } from './shell-welcome';
 
-const config = AuiConfig({ suggestions: Suggestions(WELCOME_SUGGESTIONS) });
+const config = AuiConfig({
+  suggestions: Suggestions(welcomeSuggestions(testTranslator('chat'))),
+});
 
 function WelcomeHarness({ adapter }: { adapter: ChatModelAdapter }) {
   const runtime = useLocalRuntime(adapter);
@@ -37,7 +40,9 @@ function WelcomeHarness({ adapter }: { adapter: ChatModelAdapter }) {
 function lastUserText(options: ChatModelRunOptions): string {
   const last = options.messages.at(-1);
   if (last === undefined || last.role !== 'user') return '';
-  return last.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  return last.content
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('');
 }
 
 describe('ShellWelcome + welcome suggestions — TH-02 / TH-03 (AC-08.2, S-9)', () => {
@@ -53,7 +58,9 @@ describe('ShellWelcome + welcome suggestions — TH-02 / TH-03 (AC-08.2, S-9)', 
     render(<WelcomeHarness adapter={adapter} />);
 
     expect(screen.getByText('Чем могу помочь?')).toBeInTheDocument();
-    expect(screen.getByText('Задайте вопрос, попросите текст или разбор задачи.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Задайте вопрос, попросите текст или разбор задачи.'),
+    ).toBeInTheDocument();
     const suggestions = screen.getByRole('group', { name: 'Подсказки' });
     const cards = within(suggestions).getAllByRole('button');
     expect(cards.map((card) => card.textContent)).toEqual([
@@ -64,11 +71,17 @@ describe('ShellWelcome + welcome suggestions — TH-02 / TH-03 (AC-08.2, S-9)', 
     ]);
     expect(suggestions).not.toHaveTextContent('>');
 
-    await user.click(within(suggestions).getByRole('button', { name: /Объясни простыми словами/ }));
+    await user.click(
+      within(suggestions).getByRole('button', {
+        name: /Объясни простыми словами/,
+      }),
+    );
 
     expect(await screen.findByText('Готово.')).toBeInTheDocument();
     expect(run).toHaveBeenCalledOnce();
-    expect(lastUserText(run.mock.calls[0][0])).toBe('Объясни простыми словами, что такое OKR и как их ставить');
+    expect(lastUserText(run.mock.calls[0][0])).toBe(
+      'Объясни простыми словами, что такое OKR и как их ставить',
+    );
     expect(screen.queryByText('Чем могу помочь?')).toBeNull();
   });
 });

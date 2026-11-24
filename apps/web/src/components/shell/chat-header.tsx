@@ -3,22 +3,38 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
-import { MenuIcon, PanelLeftIcon, PanelLeftOpenIcon, PanelRightIcon, SquarePenIcon } from 'lucide-react';
+import {
+  MenuIcon,
+  PanelLeftIcon,
+  PanelLeftOpenIcon,
+  PanelRightIcon,
+  SquarePenIcon,
+} from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSidebar } from '@/components/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
-import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
+import { useFeedStoreSelector } from '@/lib/feed/feed-context';
+import {
+  parseShellRoute,
+  trainingPath,
+  type ShellRoute,
+} from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
-import { useMainViewState } from './main-view';
+import { useConversationFeed, useMainViewState } from './main-view';
 import { PageHeaderSlot } from './page-header';
+import { ShellLink } from './shell-link';
 import { useShellActions, useShellStatus } from './shell-actions';
-import { UNTITLED_THREAD_TITLE } from './thread-history-item';
 import { WORKSPACE_ID } from './workspace-panel';
 
 /**
@@ -40,8 +56,10 @@ export type ChatHeaderViewProps = {
   scrolled?: boolean;
   /** Content of the HD-03 slot in place of the title, with its own `h1` (the agent page's AV-01). */
   heading?: ReactNode;
-  /** HD-04 «Рабочая область»; agent routes have no workspace (UXRD KD-1). */
+  /** HD-04 «Схема» (deep-agents DA-12): the panel from 1024 px, the drawer below it; agent routes have none (UXRD KD-1). */
   showWorkspaceToggle?: boolean;
+  /** The open conversation's one action before «Схема»: a training's «Результат обучения» (self-learning KD-3). */
+  action?: ReactNode;
 };
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
@@ -57,7 +75,10 @@ export function ChatHeaderView({
   scrolled = false,
   heading,
   showWorkspaceToggle = true,
+  action,
 }: ChatHeaderViewProps) {
+  const t = useTranslations('shell');
+  const tCommon = useTranslations('common');
   const { open, toggleSidebar } = useSidebar();
   const menuButtonProps = { [MENU_BUTTON_ATTRIBUTE]: '' };
   const sidebarShortcut = useShortcutLabel('toggle-sidebar');
@@ -69,40 +90,52 @@ export function ChatHeaderView({
       // A panel screen's actions take a second line below 768 px; every other heading fills one line.
       className="bg-background flex min-h-(--header-height) shrink-0 flex-wrap items-center gap-x-1 border-b border-transparent px-2 md:flex-nowrap md:px-3 data-scrolled:border-border"
     >
-      <WithTooltip label={`Меню · ${sidebarShortcut}`}>
+      <WithTooltip
+        label={t('header.menuTooltip', { shortcut: sidebarShortcut })}
+      >
         <Button
           {...menuButtonProps}
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'size-11 md:hidden')}
-          aria-label="Меню"
+          aria-label={t('header.menu')}
           aria-haspopup="dialog"
           onClick={toggleSidebar}
         >
           <MenuIcon aria-hidden />
         </Button>
       </WithTooltip>
-      <WithTooltip label={`Боковая панель · ${sidebarShortcut}`}>
+      <WithTooltip
+        label={t('header.sidebarTooltip', { shortcut: sidebarShortcut })}
+      >
         <Button
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'hidden size-8 md:inline-flex')}
-          aria-label="Боковая панель"
+          aria-label={tCommon('sidebar')}
           aria-expanded={open}
           aria-controls={SIDEBAR_ID}
           aria-keyshortcuts="Control+B Meta+B"
           onClick={toggleSidebar}
         >
-          {open ? <PanelLeftIcon aria-hidden /> : <PanelLeftOpenIcon aria-hidden />}
+          {open ? (
+            <PanelLeftIcon aria-hidden />
+          ) : (
+            <PanelLeftOpenIcon aria-hidden />
+          )}
         </Button>
       </WithTooltip>
       {heading ?? <PageTitle title={title} />}
+      {action}
       {showWorkspaceToggle && (
         <Button
           variant="ghost"
           size="icon"
-          className={cn(iconButton, 'aria-expanded:bg-accent hidden size-8 lg:inline-flex')}
-          aria-label="Рабочая область"
+          className={cn(
+            iconButton,
+            'aria-expanded:bg-accent size-8 pointer-coarse:size-11',
+          )}
+          aria-label={t('schema.title')}
           aria-expanded={workspaceOpen}
           aria-controls={workspaceOpen ? WORKSPACE_ID : undefined}
           data-shell-focus="workspace-toggle"
@@ -111,12 +144,14 @@ export function ChatHeaderView({
           <PanelRightIcon aria-hidden />
         </Button>
       )}
-      <WithTooltip label={`Новый чат · ${newChatShortcut}`}>
+      <WithTooltip
+        label={t('sidebar.newChatTooltip', { shortcut: newChatShortcut })}
+      >
         <Button
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'size-11 md:hidden')}
-          aria-label="Новый чат"
+          aria-label={t('sidebar.newChat')}
           aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
           onClick={onNewChat}
         >
@@ -128,7 +163,13 @@ export function ChatHeaderView({
 }
 
 /** Header icon button with its name and shortcut in a tooltip below it. */
-function WithTooltip({ label, children }: { label: string; children: ReactElement }) {
+function WithTooltip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactElement;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
@@ -139,6 +180,7 @@ function WithTooltip({ label, children }: { label: string; children: ReactElemen
 
 /** HD-03: the page's level-one heading; focused programmatically after navigation with a coarse pointer. */
 function PageTitle({ title }: { title: HeaderTitle }) {
+  const t = useTranslations('shell.sidebar');
   return (
     <h1
       tabIndex={-1}
@@ -146,8 +188,12 @@ function PageTitle({ title }: { title: HeaderTitle }) {
       aria-busy={title.kind === 'loading' ? true : undefined}
       className="min-w-0 flex-1 truncate px-1 text-sm font-medium outline-none"
     >
-      {title.kind === 'hidden' && <span className="sr-only">Новый чат</span>}
-      {title.kind === 'loading' && <Skeleton aria-hidden className="h-4 w-40" />}
+      {title.kind === 'hidden' && (
+        <span className="sr-only">{t('newChat')}</span>
+      )}
+      {title.kind === 'loading' && (
+        <Skeleton aria-hidden className="h-4 w-40" />
+      )}
       {title.kind === 'text' && (
         <ShimmerLabel active={title.pending} title={title.text}>
           {title.text}
@@ -166,18 +212,47 @@ type ChatHeaderProps = {
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
  * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
  * which needs `AgentFeedProvider` above; a panel or library address → the slot its screen fills through
- * `PageHeader` (AD-01, LB-01); none of them has the workspace button.
+ * `PageHeader` (AD-01, LB-01); none of them has the diagram button.
  */
-export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
+export function ChatHeader({
+  workspaceOpen,
+  onToggleWorkspace,
+}: ChatHeaderProps) {
   const { newChat } = useShellActions();
+  const t = useTranslations('shell.page');
+  const tChat = useTranslations('chat.training');
   const route = parseShellRoute(usePathname());
   const title = useHeaderTitle();
   const scrolled = useThreadScrolled();
+  const routeTitle = ROUTE_TITLES[route.kind];
+  const training = useFeedStoreSelector(
+    useConversationFeed(),
+    (state) => state.view?.training ?? null,
+    null,
+  );
 
   return (
     <ChatHeaderView
-      title={ROUTE_TITLES[route.kind] ?? title}
+      title={
+        routeTitle === undefined
+          ? title
+          : { kind: 'text', text: t(routeTitle), pending: false }
+      }
       heading={routeHeading(route)}
+      action={
+        route.kind === 'chat' && training?.isRoot === true ? (
+          <ShellLink
+            href={trainingPath(training.agentId, training.trainingId)}
+            className={buttonVariants({
+              variant: 'outline',
+              size: 'sm',
+              className: 'shrink-0 pointer-coarse:h-11',
+            })}
+          >
+            {tChat('result')}
+          </ShellLink>
+        ) : undefined
+      }
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}
@@ -189,15 +264,17 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
 
 function routeHeading(route: ShellRoute): ReactNode {
   if (route.kind === 'agent') return <AgentHeader />;
-  if (route.kind === 'admin' || route.kind === 'library') return <PageHeaderSlot />;
+  if (route.kind === 'admin' || route.kind === 'library')
+    return <PageHeaderSlot />;
   return undefined;
 }
 
 /** Fixed page headings: «Агенты» (agent-platform MC-4), «Мой доступ» (enterprise-access MC-7). */
-const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
-  agents: { kind: 'text', text: 'Агенты', pending: false },
-  account: { kind: 'text', text: 'Мой доступ', pending: false },
-};
+const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], 'agents' | 'account'>> =
+  {
+    agents: 'agents',
+    account: 'account',
+  };
 
 /**
  * `/` → hidden. `/chat/<id>` → empty on TH-06 / TH-07; loading while the main view is switching or until
@@ -205,17 +282,26 @@ const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
  * or the pending placeholder.
  */
 function useHeaderTitle(): HeaderTitle {
+  const t = useTranslations('shell.thread');
   const { view, routeThreadId } = useMainViewState();
   const mainItem = useAuiState(selectMainItem);
   const remoteId = mainItem?.remoteId;
-  const titleWaiting = useShellStatus((s) => remoteId !== undefined && s.titleWaiting[remoteId] === true);
+  const titleWaiting = useShellStatus(
+    (s) => remoteId !== undefined && s.titleWaiting[remoteId] === true,
+  );
 
   if (routeThreadId === undefined) return { kind: 'hidden' };
-  if (view.kind === 'not-found' || view.kind === 'load-error') return { kind: 'empty' };
-  if (view.kind === 'switching' || mainItem === undefined || remoteId !== routeThreadId) return { kind: 'loading' };
+  if (view.kind === 'not-found' || view.kind === 'load-error')
+    return { kind: 'empty' };
+  if (
+    view.kind === 'switching' ||
+    mainItem === undefined ||
+    remoteId !== routeThreadId
+  )
+    return { kind: 'loading' };
   const text = mainItem.title?.trim() ?? '';
   if (text !== '') return { kind: 'text', text, pending: false };
-  return { kind: 'text', text: UNTITLED_THREAD_TITLE, pending: titleWaiting };
+  return { kind: 'text', text: t('untitled'), pending: titleWaiting };
 }
 
 /** Whether the thread feed is scrolled away from its top; the viewport is owned by `Thread`. */
@@ -226,12 +312,19 @@ function useThreadScrolled(): boolean {
     // Scroll events do not bubble: listen in the capture phase and keep only the feed's viewport.
     const onScroll = (event: Event) => {
       const target = event.target;
-      if (target instanceof HTMLElement && target.matches(THREAD_VIEWPORT_SELECTOR)) {
+      if (
+        target instanceof HTMLElement &&
+        target.matches(THREAD_VIEWPORT_SELECTOR)
+      ) {
         setScrolled(target.scrollTop > 0);
       }
     };
-    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => document.removeEventListener('scroll', onScroll, { capture: true });
+    document.addEventListener('scroll', onScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () =>
+      document.removeEventListener('scroll', onScroll, { capture: true });
   }, []);
 
   return scrolled;

@@ -31,7 +31,10 @@ export function providerNameTaken(name: string): ModelProviderError {
   );
 }
 
-export function providerHasModels(name: string, count: number): ModelProviderError {
+export function providerHasModels(
+  name: string,
+  count: number,
+): ModelProviderError {
   return new ModelProviderError(
     ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS,
     `Model provider ${name} has ${count} models in the catalogue`,

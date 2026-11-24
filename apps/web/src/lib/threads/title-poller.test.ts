@@ -4,17 +4,30 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
-import { createShellStatusStore, type ShellStatusStore } from './shell-status-store';
+import {
+  createShellStatusStore,
+  type ShellStatusStore,
+} from './shell-status-store';
 import { threadsApiClient } from './threads-api-client';
 import { createTitlePollStream } from './title-poller';
 
 const REMOTE_ID = 't-1';
 const THREAD_URL = `http://api.test/api/threads/${REMOTE_ID}`;
 
-const message = (role: 'user' | 'assistant', text: string, id: string): ThreadMessage =>
-  fromThreadMessageLike({ role, content: text }, id, { type: 'complete', reason: 'stop' });
+const message = (
+  role: 'user' | 'assistant',
+  text: string,
+  id: string,
+): ThreadMessage =>
+  fromThreadMessageLike({ role, content: text }, id, {
+    type: 'complete',
+    reason: 'stop',
+  });
 
-const firstExchange = [message('user', 'Привет', 'm1'), message('assistant', 'Здравствуйте', 'm2')];
+const firstExchange = [
+  message('user', 'Привет', 'm1'),
+  message('assistant', 'Здравствуйте', 'm2'),
+];
 
 /** Reads the stream to its end and returns the concatenated text it emitted. */
 async function readText(stream: AssistantStream): Promise<string> {
@@ -64,10 +77,18 @@ describe('lib/threads/title-poller: createTitlePollStream', () => {
   });
 
   const startPoll = (messages: readonly ThreadMessage[]) =>
-    readText(createTitlePollStream({ remoteId: REMOTE_ID, messages, deps: { api: threadsApiClient, status } }));
+    readText(
+      createTitlePollStream({
+        remoteId: REMOTE_ID,
+        messages,
+        deps: { api: threadsApiClient, status },
+      }),
+    );
 
   it('closes at once without requests while the thread has no assistant answer', async () => {
-    const requestTimes = serveThread(() => HttpResponse.json(threadSummary({ id: REMOTE_ID, title: null })));
+    const requestTimes = serveThread(() =>
+      HttpResponse.json(threadSummary({ id: REMOTE_ID, title: null })),
+    );
     const waiting = recordTitleWaiting(status);
 
     const text = startPoll([message('user', 'Привет', 'm1')]);
@@ -80,7 +101,12 @@ describe('lib/threads/title-poller: createTitlePollStream', () => {
 
   it('emits the title from the third request, one second apart, and clears titleWaiting', async () => {
     const requestTimes = serveThread((n) =>
-      HttpResponse.json(threadSummary({ id: REMOTE_ID, title: n === 3 ? 'План поездки' : null })),
+      HttpResponse.json(
+        threadSummary({
+          id: REMOTE_ID,
+          title: n === 3 ? 'План поездки' : null,
+        }),
+      ),
     );
     const waiting = recordTitleWaiting(status);
 
@@ -93,7 +119,9 @@ describe('lib/threads/title-poller: createTitlePollStream', () => {
   });
 
   it('stops after 15 requests in the 15 s window and closes the stream empty', async () => {
-    const requestTimes = serveThread(() => HttpResponse.json(threadSummary({ id: REMOTE_ID, title: null })));
+    const requestTimes = serveThread(() =>
+      HttpResponse.json(threadSummary({ id: REMOTE_ID, title: null })),
+    );
     const waiting = recordTitleWaiting(status);
 
     const text = startPoll(firstExchange);
@@ -101,13 +129,16 @@ describe('lib/threads/title-poller: createTitlePollStream', () => {
 
     expect(await text).toBe('');
     expect(requestTimes.map((at) => at - startedAt)).toEqual([
-      0, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000, 8_000, 9_000, 10_000, 11_000, 12_000, 13_000, 14_000,
+      0, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000, 8_000, 9_000, 10_000,
+      11_000, 12_000, 13_000, 14_000,
     ]);
     expect(waiting).toEqual([false, true, false]);
   });
 
   it('stops on 404 without further requests', async () => {
-    const requestTimes = serveThread(() => HttpResponse.json({ error: 'not_found' }, { status: 404 }));
+    const requestTimes = serveThread(() =>
+      HttpResponse.json({ error: 'not_found' }, { status: 404 }),
+    );
     const waiting = recordTitleWaiting(status);
 
     const text = startPoll(firstExchange);

@@ -11,10 +11,14 @@ import type { ProviderConnection } from './provider-registry';
 export type EmbeddingInputType = 'document' | 'query';
 
 /** Provider options of a request or a message, keyed by the provider's name in the AI SDK. */
-export type ProviderOptions = Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
+export type ProviderOptions = Readonly<
+  Record<string, Readonly<Record<string, JsonValue>>>
+>;
 
 /** An AI SDK embedding model; the three provider packages share one `@ai-sdk/provider`. */
-export type EmbeddingModel = ReturnType<OpenAICompatibleProvider['embeddingModel']>;
+export type EmbeddingModel = ReturnType<
+  OpenAICompatibleProvider['embeddingModel']
+>;
 
 /** The one request of the connection check: a `GET` of the provider's model list, no model is called (FR-15). */
 export interface CheckRequest {
@@ -28,7 +32,10 @@ export interface ProviderEmbeddings {
    * What the kind tells the provider about the texts and the catalogue's `dimensions` of the vectors;
    * `undefined` when it tells nothing.
    */
-  providerOptions(inputType: EmbeddingInputType, dimensions: number): ProviderOptions | undefined;
+  providerOptions(
+    inputType: EmbeddingInputType,
+    dimensions: number,
+  ): ProviderOptions | undefined;
 }
 
 /**
@@ -63,7 +70,10 @@ export function providerAdapter(kind: ModelProviderKind): ProviderAdapter {
 }
 
 /** The header that carries the key, or no header when the provider has no key. */
-export function keyHeader(name: string, value: string | null): Record<string, string> {
+export function keyHeader(
+  name: string,
+  value: string | null,
+): Record<string, string> {
   return value === null ? {} : { [name]: value };
 }
 
@@ -87,7 +97,10 @@ function textField(value: unknown, field: string): string {
  * error's `message` and `param` — under `error` as Anthropic, Gemini and OpenAI send it, or at the top of
  * the body as vLLM does. A body that is not JSON gives empty strings.
  */
-export function rejectionText(statusCode: number, body: string): ProviderErrorText | null {
+export function rejectionText(
+  statusCode: number,
+  body: string,
+): ProviderErrorText | null {
   if (!TOOLS_REJECTION_STATUSES.has(statusCode)) return null;
   let parsed: unknown;
   try {
@@ -95,6 +108,12 @@ export function rejectionText(statusCode: number, body: string): ProviderErrorTe
   } catch {
     return { message: '', param: '' };
   }
-  const error = typeof parsed === 'object' && parsed !== null && 'error' in parsed ? parsed.error : parsed;
-  return { message: textField(error, 'message'), param: textField(error, 'param') };
+  const error =
+    typeof parsed === 'object' && parsed !== null && 'error' in parsed
+      ? parsed.error
+      : parsed;
+  return {
+    message: textField(error, 'message'),
+    param: textField(error, 'param'),
+  };
 }

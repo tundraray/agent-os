@@ -15,6 +15,7 @@ import type { ConversationView } from '@agent-os/contracts';
 import { consoleSink, createLogger } from '@agent-os/common';
 import type { Response } from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import {
   allowRole,
   HAIKU_TEST_PRICES,
@@ -22,7 +23,7 @@ import {
   runModel,
   useRunModels,
 } from '../support/access';
-import { chatApi, type ChatApi, waitFor } from '../support/api';
+import { chatApi, type ChatApi } from '../support/api';
 import { createTestApp } from '../support/createTestApp';
 import { pointBuiltinsAt } from '../support/library';
 import { createEmployee, seedSuperAdmin } from '../support/session';

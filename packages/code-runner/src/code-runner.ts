@@ -33,7 +33,13 @@ const QUICKJS_FFI_TYPES = '@jitl/quickjs-ffi-types';
 /** A failed run's `text` is the script's own message (`syntax`, `exception`), `null` otherwise; the caller words the reason. */
 export type RunOutcome =
   | { status: 'returned'; value: string | null; output: string }
-  | { status: 'failed'; reason: FailReason; text: string | null; line: number | null; output: string };
+  | {
+      status: 'failed';
+      reason: FailReason;
+      text: string | null;
+      line: number | null;
+      output: string;
+    };
 
 /** A request of the script, as the executor sent it; nothing in it is trusted. */
 export type BridgeRequest =
@@ -48,9 +54,14 @@ export type RequestAnswer =
 
 export interface RunRequest {
   script: string;
+  /** A JSON value the script sees as the global `input`. */
+  input: unknown;
   limits: RunLimits;
   /** Called strictly one request at a time; `signal` aborts when the run ends first. */
-  onRequest(request: BridgeRequest, signal: AbortSignal): Promise<RequestAnswer>;
+  onRequest(
+    request: BridgeRequest,
+    signal: AbortSignal,
+  ): Promise<RequestAnswer>;
   signal?: AbortSignal;
   /** Bound to the run's identifiers. */
   logger: Logger;
@@ -83,7 +94,10 @@ interface QuickJsPaths {
  * is its only readable directory besides QuickJS.
  */
 const EXECUTOR_ENTRY = fileURLToPath(
-  new URL(`./executor/executor-main${path.extname(import.meta.url)}`, import.meta.url),
+  new URL(
+    `./executor/executor-main${path.extname(import.meta.url)}`,
+    import.meta.url,
+  ),
 );
 
 /** The first Node major whose permission model also denies network (ADR-0011); below it TCP and DNS stay open. */
@@ -102,7 +116,10 @@ export function createCodeRunner(options: CodeRunnerOptions): CodeRunner {
   assertNetworkBarrier(process.versions.node);
   const entryPath = options.entryPath ?? EXECUTOR_ENTRY;
   const quickJs = resolveQuickJs();
-  const readPaths = options.readPaths ?? [path.dirname(entryPath), ...quickJs.storeEntries];
+  const readPaths = options.readPaths ?? [
+    path.dirname(entryPath),
+    ...quickJs.storeEntries,
+  ];
   const args = [
     '--permission',
     ...readPaths.map((readPath) => `--allow-fs-read=${readPath}`),
@@ -112,7 +129,11 @@ export function createCodeRunner(options: CodeRunnerOptions): CodeRunner {
     quickJs.variantRoot,
   ];
   let active = 0;
-  options.logger.info('code runner created', { entryPath, readPaths, maxConcurrent: options.maxConcurrent });
+  options.logger.info('code runner created', {
+    entryPath,
+    readPaths,
+    maxConcurrent: options.maxConcurrent,
+  });
 
   return {
     async run(request) {
@@ -136,9 +157,17 @@ export function createCodeRunner(options: CodeRunnerOptions): CodeRunner {
 
 /** The QuickJS package roots and their pnpm store entries, by real path (spike, "Флаги spawn"). */
 function resolveQuickJs(): QuickJsPaths {
-  const coreRoot = packageRoot(QUICKJS_CORE, realpathSync(fileURLToPath(import.meta.resolve(QUICKJS_CORE))));
-  const variantRoot = packageRoot(QUICKJS_VARIANT, realpathSync(fileURLToPath(import.meta.resolve(QUICKJS_VARIANT))));
-  const ffiTypesRoot = realpathSync(path.join(coreRoot, '..', QUICKJS_FFI_TYPES));
+  const coreRoot = packageRoot(
+    QUICKJS_CORE,
+    realpathSync(fileURLToPath(import.meta.resolve(QUICKJS_CORE))),
+  );
+  const variantRoot = packageRoot(
+    QUICKJS_VARIANT,
+    realpathSync(fileURLToPath(import.meta.resolve(QUICKJS_VARIANT))),
+  );
+  const ffiTypesRoot = realpathSync(
+    path.join(coreRoot, '..', QUICKJS_FFI_TYPES),
+  );
   return {
     coreRoot,
     variantRoot,
@@ -153,7 +182,8 @@ function resolveQuickJs(): QuickJsPaths {
 function packageRoot(name: string, realFile: string): string {
   const marker = path.join('node_modules', name);
   const at = realFile.lastIndexOf(marker + path.sep);
-  if (at < 0) throw new Error(`Cannot find the package root of ${name} in ${realFile}`);
+  if (at < 0)
+    throw new Error(`Cannot find the package root of ${name} in ${realFile}`);
   return realFile.slice(0, at + marker.length);
 }
 
@@ -163,11 +193,18 @@ function storeEntry(root: string, name: string): string {
 }
 
 /** A failed outcome; `finish` fills in the run's output. */
-function failed(reason: FailReason, line: number | null = null, text: string | null = null): RunOutcome {
+function failed(
+  reason: FailReason,
+  line: number | null = null,
+  text: string | null = null,
+): RunOutcome {
   return { status: 'failed', reason, text, line, output: '' };
 }
 
-function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> {
+function runInProcess(
+  args: string[],
+  request: RunRequest,
+): Promise<RunOutcome> {
   return new Promise((resolve) => {
     const { limits, logger } = request;
     const startedAt = Date.now();
@@ -190,7 +227,10 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
     };
 
     // The one end of a run (Flow 4): stop taking requests, cancel the call in flight, kill the process, record one outcome.
-    const finish = (end: RunOutcome, fields: Record<string, unknown> = {}): void => {
+    const finish = (
+      end: RunOutcome,
+      fields: Record<string, unknown> = {},
+    ): void => {
       if (outcome !== null) return;
       outcome = { ...end, output: output.text() };
       clearTimeout(timer);
@@ -198,7 +238,12 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
       queue.length = 0;
       inFlight?.abort();
       if (!closed) child.kill('SIGKILL');
-      const level = end.status === 'failed' && end.reason !== 'exception' && end.reason !== 'syntax' ? 'warn' : 'info';
+      const level =
+        end.status === 'failed' &&
+        end.reason !== 'exception' &&
+        end.reason !== 'syntax'
+          ? 'warn'
+          : 'info';
       logger[level]('code run finished', {
         pid: child.pid,
         status: end.status,
@@ -211,7 +256,10 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
     };
 
     const violate = (violation: ProtocolViolation): void => {
-      logger.warn('code executor broke the protocol', { pid: child.pid, violation });
+      logger.warn('code executor broke the protocol', {
+        pid: child.pid,
+        violation,
+      });
       finish(failed('protocol'), { violation });
     };
 
@@ -228,7 +276,12 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
         else reply(next.id, answer);
       } catch (error) {
         if (outcome !== null) return;
-        logger.error('code run request handler failed', { pid: child.pid, op: next.op, requestId: next.id, error });
+        logger.error('code run request handler failed', {
+          pid: child.pid,
+          op: next.op,
+          requestId: next.id,
+          error,
+        });
         finish(failed('handler_failed'));
       } finally {
         inFlight = null;
@@ -236,7 +289,10 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
       void pump();
     };
 
-    const reply = (id: number, answer: Exclude<RequestAnswer, { kind: 'finish' }>): void => {
+    const reply = (
+      id: number,
+      answer: Exclude<RequestAnswer, { kind: 'finish' }>,
+    ): void => {
       const message: HostMessage =
         answer.kind === 'value'
           ? { op: 'reply', id, ok: true, value: answer.value }
@@ -247,7 +303,12 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
         finish(failed('memory'), { dataBytes });
         return;
       }
-      logger.debug('code run request answered', { pid: child.pid, requestId: id, kind: answer.kind, bytes: frame.length });
+      logger.debug('code run request answered', {
+        pid: child.pid,
+        requestId: id,
+        kind: answer.kind,
+        bytes: frame.length,
+      });
       child.stdin?.write(frame);
     };
 
@@ -256,8 +317,10 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
         case 'call': {
           const bytes = Buffer.byteLength(JSON.stringify(message.args), 'utf8');
           argsBytes += bytes;
-          if (bytes > CALL_ARGS_MAX_BYTES) return violate('call_args_too_large');
-          if (argsBytes > RUN_ARGS_MAX_BYTES) return violate('run_args_too_large');
+          if (bytes > CALL_ARGS_MAX_BYTES)
+            return violate('call_args_too_large');
+          if (argsBytes > RUN_ARGS_MAX_BYTES)
+            return violate('run_args_too_large');
           logger.debug('code run request received', {
             pid: child.pid,
             op: 'call',
@@ -282,13 +345,23 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
           return;
         case 'done':
           // An honest executor sends `error` with `result_too_large` instead; the API process checks again.
-          if (message.value !== null && Buffer.byteLength(message.value, 'utf8') > limits.resultMaxBytes) {
-            logger.warn('code executor broke the protocol', { pid: child.pid, violation: 'result_too_large' });
+          if (
+            message.value !== null &&
+            Buffer.byteLength(message.value, 'utf8') > limits.resultMaxBytes
+          ) {
+            logger.warn('code executor broke the protocol', {
+              pid: child.pid,
+              violation: 'result_too_large',
+            });
             return finish(failed('result_too_large'), {
               violation: 'result_too_large',
             });
           }
-          return finish({ status: 'returned', value: message.value, output: '' });
+          return finish({
+            status: 'returned',
+            value: message.value,
+            output: '',
+          });
         case 'error':
           return finish(failed(message.reason, message.line, message.text));
       }
@@ -303,7 +376,8 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
         if ('violation' in parsed) return violate(parsed.violation);
         take(parsed.message);
       }
-      if (decoded.violation !== undefined && outcome === null) violate(decoded.violation);
+      if (decoded.violation !== undefined && outcome === null)
+        violate(decoded.violation);
     };
 
     const onAbort = (): void => finish(failed('aborted'));
@@ -314,7 +388,10 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
     );
 
     try {
-      child = spawn(process.execPath, args, { env: {}, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(process.execPath, args, {
+        env: {},
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
     } catch (error) {
       clearTimeout(timer);
       logger.error('code executor did not start', { error });
@@ -330,10 +407,14 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
     request.signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.on('data', onStdout);
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
+      stderrTail = (stderrTail + chunk.toString('utf8')).slice(
+        -STDERR_TAIL_BYTES,
+      );
     });
     // A write to a dead process fails with EPIPE; its end is recorded by `close` below.
-    child.stdin?.on('error', (error) => logger.debug('code executor stdin closed', { pid: child.pid, error }));
+    child.stdin?.on('error', (error) =>
+      logger.debug('code executor stdin closed', { pid: child.pid, error }),
+    );
     child.on('error', (error) => {
       logger.error('code executor process error', { pid: child.pid, error });
       if (child.pid === undefined) {
@@ -343,12 +424,24 @@ function runInProcess(args: string[], request: RunRequest): Promise<RunOutcome> 
     });
     child.on('close', (exitCode, signal) => {
       closed = true;
-      logger.info('code executor exited', { pid: child.pid, exitCode, signal, durationMs: Date.now() - startedAt });
+      logger.info('code executor exited', {
+        pid: child.pid,
+        exitCode,
+        signal,
+        durationMs: Date.now() - startedAt,
+      });
       finish(failed('crashed'), { exitCode, signal, stderr: stderrTail });
       settle();
     });
 
-    child.stdin?.write(encodeFrame({ op: 'start', script: request.script, limits }));
+    child.stdin?.write(
+      encodeFrame({
+        op: 'start',
+        script: request.script,
+        input: request.input,
+        limits,
+      }),
+    );
   });
 }
 

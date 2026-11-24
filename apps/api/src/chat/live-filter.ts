@@ -1,7 +1,8 @@
 import { isUuid } from '../common/is-uuid';
 
 /** What a stream watches besides the owner's tree notes: a conversation's root or one agent. */
-export type Watch = { kind: 'thread'; threadId: string } | { kind: 'agent'; agentId: string };
+export type Watch =
+  { kind: 'thread'; threadId: string } | { kind: 'agent'; agentId: string };
 
 /** A stream as the filter sees it: whose it is and what it watches. */
 export interface LiveStream {
@@ -33,7 +34,10 @@ export function parseWatch(value: string | undefined): Watch | null {
 }
 
 /** A `tree` note of a conversation goes to every stream of the conversation's owner (DC-4). */
-export function noteTargets<S extends LiveStream>(ownerId: string, streams: Iterable<S>): S[] {
+export function noteTargets<S extends LiveStream>(
+  ownerId: string,
+  streams: Iterable<S>,
+): S[] {
   return [...streams].filter((stream) => stream.ownerId === ownerId);
 }
 
@@ -42,10 +46,16 @@ export function noteTargets<S extends LiveStream>(ownerId: string, streams: Iter
  * — for a part of the root — that watch the root's conversation, whose id is the root's. So a
  * `thread:` stream opened before the first message receives the root's parts as soon as there are any.
  */
-export function deltaTargets<S extends LiveStream>(delta: DeltaAddress, streams: Iterable<S>): S[] {
+export function deltaTargets<S extends LiveStream>(
+  delta: DeltaAddress,
+  streams: Iterable<S>,
+): S[] {
   return [...streams].filter((stream) => {
     if (stream.ownerId !== delta.ownerId || stream.watch === null) return false;
-    if (stream.watch.kind === 'agent') return stream.watch.agentId === delta.agentId;
-    return delta.agentId === delta.rootId && stream.watch.threadId === delta.rootId;
+    if (stream.watch.kind === 'agent')
+      return stream.watch.agentId === delta.agentId;
+    return (
+      delta.agentId === delta.rootId && stream.watch.threadId === delta.rootId
+    );
   });
 }

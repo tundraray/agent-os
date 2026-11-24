@@ -46,7 +46,9 @@ export class CallLog {
   ): Fault | undefined {
     const entries = this.read();
     const occurrence =
-      entries.filter((entry) => entry.tool === call.tool && entry.argsHash === call.argsHash).length + 1;
+      entries.filter(
+        (entry) => entry.tool === call.tool && entry.argsHash === call.argsHash,
+      ).length + 1;
     const fault = decide(occurrence);
     const entry: CallLogEntry = {
       seq: entries.length + 1,

@@ -115,7 +115,7 @@ spawn(process.execPath, [
 
 - `NODE_OPTIONS=--disable-sigusr1 node -e …` — флаг допускается в `NODE_OPTIONS` (код 0). Не выбран: `NODE_OPTIONS` наследуют все дочерние процессы API (серверы MCP по stdio), а в скриптах `package.json` переменная окружения на Windows требует `cross-env`.
 - `nest start --exec "node --disable-sigusr1"` — работает. В `@nestjs/cli` 12.0.11 `--shell` по умолчанию `true`, и `start.action.js:spawnChildProcess` склеивает `[binaryToRun, ...processArgs].join(' ')` и запускает через оболочку. Проверено тем же вызовом: процесс получил `execArgv = ['--disable-sigusr1', '--enable-source-maps']`.
-- **Выбранная форма** (для T1.1): `start` — `nest start --exec "node --disable-sigusr1"`; `start:dev` и `dev` — `nest start --watch --exec "node --disable-sigusr1"`; `start:prod` — `node --disable-sigusr1 dist/main`. `start:debug` не меняется.
+- **Выбранная форма** (для T1.1): `start` — `nest start --exec "node --disable-sigusr1"`; `dev` — `nest start --watch --exec "node --disable-sigusr1"`; `start:prod` — `node --disable-sigusr1 dist/main`. `start:debug` не меняется.
 - **vitest 4.1.12: `test.execArgv: ['--disable-sigusr1']`** (`InlineConfig.execArgv`, «Pass additional arguments to `node` process when spawning the worker»). Действует на пул `forks` — он по умолчанию, в конфигурациях репозитория `pool` не задан. Проверено: процесс-работник получает флаг, `_debugProcess(pid работника)` из другого процесса бросает `The system cannot find the file specified`; в контрольном прогоне без опции вызов проходит.
 
 ## Вердикт по утверждениям дизайна
