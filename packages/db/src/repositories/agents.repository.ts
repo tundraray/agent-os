@@ -78,29 +78,6 @@ export type AgentInsertOutcome =
   | { readonly outcome: 'inserted'; readonly id: string }
   | { readonly outcome: 'name_taken' };
 
-export interface NewAgentVersion {
-  readonly agentId: string;
-  /** The number of the version the save started from; it must still be the active one. */
-  readonly fromNumber: number;
-  readonly name: string;
-  readonly description: string;
-  /** The kind never changes; only the content is written. */
-  readonly content: unknown;
-  readonly authorId: string;
-}
-
-/**
- * `stale` — the agent is not active in `fromNumber` (or is gone): the caller tells a conflict from a gone
- * agent. `number_taken` — another save took the next number. Every outcome but `saved` may come after a
- * write; `name_taken` and `number_taken` come from the database and abort the transaction they ran in, so
- * it must be rolled back.
- */
-export type AgentSaveOutcome =
-  | { readonly outcome: 'saved'; readonly version: number }
-  | { readonly outcome: 'stale' }
-  | { readonly outcome: 'number_taken' }
-  | { readonly outcome: 'name_taken' };
-
 /** The holders an agent gets; an employee agent holds only roles (the service keeps that). */
 export interface AgentHolderIds {
   readonly everyone: boolean;
@@ -244,7 +221,20 @@ export class AgentsRepository {
    * A version by its id with its agent's kind, whatever the agent's visibility or deletion mark: a
    * conversation reads the version it started on (KD-6).
    */
-  async findVersion(id: string): Promise<AgentVersionRow | undefined> {
+  findVersion(id: string): Promise<AgentVersionRow | undefined> {
+    return this.versionWhere(eq(agentVersions.id, id));
+  }
+
+  /** The version a training proposed (`training_id`), if it proposed one. */
+  findTrainingVersion(
+    trainingId: string,
+  ): Promise<AgentVersionRow | undefined> {
+    return this.versionWhere(eq(agentVersions.trainingId, trainingId));
+  }
+
+  private async versionWhere(
+    condition: SQL,
+  ): Promise<AgentVersionRow | undefined> {
     const [row] = await this.db.client
       .select({
         id: agentVersions.id,
@@ -255,7 +245,7 @@ export class AgentsRepository {
       })
       .from(agentVersions)
       .innerJoin(agents, eq(agents.id, agentVersions.agentId))
-      .where(eq(agentVersions.id, id));
+      .where(condition);
     return row;
   }
 
@@ -364,24 +354,74 @@ export class AgentsRepository {
   }
 
   /**
-   * Saves a new version and makes it active with the agent's name and description, only while the
-   * agent is active in the version numbered `fromNumber` (KD-2). The agent row is written first, so a
-   * concurrent save of the same agent waits for this one and then finds its number no longer active.
+   * Adds a version with the agent's next number; the agent row and its pointer stay (KD-3). `number_taken` —
+   * a concurrent write took the number; it comes from the database and aborts the transaction it ran in. The
+   * author is an employee or a training (self-learning design-training.md, KD-6).
    */
-  async insertVersion(change: NewAgentVersion): Promise<AgentSaveOutcome> {
-    const fromVersion = this.db.client
+  async createVersion(
+    version: {
+      readonly agentId: string;
+      readonly content: unknown;
+    } & ({ readonly authorId: string } | { readonly trainingId: string }),
+  ): Promise<
+    | {
+        readonly outcome: 'created';
+        readonly id: string;
+        readonly number: number;
+      }
+    | { readonly outcome: 'number_taken' }
+  > {
+    try {
+      const [row] = await this.db.client
+        .insert(agentVersions)
+        .values({
+          agentId: version.agentId,
+          number: sql`(select coalesce(max(${agentVersions.number}), 0) + 1 from ${agentVersions} where ${agentVersions.agentId} = ${version.agentId})`,
+          content: version.content,
+          ...('authorId' in version
+            ? { authorId: version.authorId }
+            : { trainingId: version.trainingId }),
+        })
+        .returning({ id: agentVersions.id, number: agentVersions.number });
+      if (row === undefined)
+        throw new Error(
+          `agent_versions insert of agent ${version.agentId} returned no row`,
+        );
+      return { outcome: 'created', ...row };
+    } catch (error) {
+      if (uniqueViolation(error) === VERSION_NUMBER_KEY)
+        return { outcome: 'number_taken' };
+      throw error;
+    }
+  }
+
+  /**
+   * Points the agent at `versionId` with its name and description, in one guarded update: only while the
+   * agent is not deleted and active in the version numbered `expectedNumber` (KD-3). A concurrent save of
+   * the same agent waits on the row and then finds its number no longer active — `stale`. `name_taken`
+   * comes from the database and aborts the transaction it ran in.
+   */
+  async activateVersion(change: {
+    readonly agentId: string;
+    readonly versionId: string;
+    readonly expectedNumber: number;
+    readonly name: string;
+    readonly description: string;
+  }): Promise<'activated' | 'stale' | 'name_taken'> {
+    const expectedVersion = this.db.client
       .select({ id: agentVersions.id })
       .from(agentVersions)
       .where(
         and(
           eq(agentVersions.agentId, change.agentId),
-          eq(agentVersions.number, change.fromNumber),
+          eq(agentVersions.number, change.expectedNumber),
         ),
       );
     try {
       const [agent] = await this.db.client
         .update(agents)
         .set({
+          activeVersionId: change.versionId,
           name: change.name,
           description: change.description,
           updatedAt: sql`now()`,
@@ -390,33 +430,13 @@ export class AgentsRepository {
           and(
             eq(agents.id, change.agentId),
             notDeleted,
-            inArray(agents.activeVersionId, fromVersion),
+            inArray(agents.activeVersionId, expectedVersion),
           ),
         )
         .returning({ id: agents.id });
-      if (agent === undefined) return { outcome: 'stale' };
-      const [version] = await this.db.client
-        .insert(agentVersions)
-        .values({
-          agentId: change.agentId,
-          number: sql`(select coalesce(max(${agentVersions.number}), 0) + 1 from ${agentVersions} where ${agentVersions.agentId} = ${change.agentId})`,
-          content: change.content,
-          authorId: change.authorId,
-        })
-        .returning({ id: agentVersions.id, number: agentVersions.number });
-      if (version === undefined)
-        throw new Error(
-          `agent_versions insert of agent ${change.agentId} returned no row`,
-        );
-      await this.db.client
-        .update(agents)
-        .set({ activeVersionId: version.id })
-        .where(eq(agents.id, change.agentId));
-      return { outcome: 'saved', version: version.number };
+      return agent === undefined ? 'stale' : 'activated';
     } catch (error) {
-      if (isNameCollision(error)) return { outcome: 'name_taken' };
-      if (uniqueViolation(error) === VERSION_NUMBER_KEY)
-        return { outcome: 'number_taken' };
+      if (isNameCollision(error)) return 'name_taken';
       throw error;
     }
   }
@@ -468,7 +488,7 @@ export class AgentsRepository {
     return row !== undefined;
   }
 
-  /** Marks the agent deleted (KD-7); its versions, holders and knowledge stay as rows. */
+  /** Marks the agent deleted (KD-7); its versions, holders and memory records stay as rows. */
   async markDeleted(id: string): Promise<void> {
     await this.db.client
       .update(agents)

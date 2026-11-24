@@ -196,97 +196,134 @@
     "usersFailed": "Couldn't find employees"
   },
   "selfLearning": {
-    "hint": "Runs remember where they found what, and every later run gets it — whoever starts it, even without access to those systems.",
-    "kept": "The knowledge is kept: turn it back on and runs continue from it."
+    "hint": "The agent remembers where it found what, and all its later runs see it — whoever starts them, even without access to those systems. What the agent remembered about an employee only that employee sees.",
+    "kept": "The memory is kept: turn it back on and the agent continues from it.",
+    "on": "Self-learning is on",
+    "off": "Self-learning is off. The author can turn it on."
   },
   "card": {
     "refineHint": "To change it, press “Refine in chat”.",
     "refineUnavailable": "The chat changes only what only you can see. Close access in “Who can see” first.",
     "saveFailed": "Couldn't save. Try again."
   },
-  "knowledge": {
-    "entry": "What the deep agent learned",
-    "title": "What “{name}” learned",
+  "scripts": {
+    "title": "Scripts · {count}",
+    "empty": "No scripts. A script is your code that the agent calls as its own tool.",
+    "add": "Add script",
+    "edit": "Edit",
+    "editNamed": "Edit: {name}",
+    "delete": "Delete",
+    "deleteNamed": "Delete: {name}",
+    "callerSelf": "Called by: the agent itself",
+    "callerSubagent": "Called by: subagent “{name}”",
+    "input": "Input: {input}",
+    "class": {
+      "read": "reads",
+      "write": "changes data"
+    },
+    "fields": {
+      "name": "Name",
+      "nameHint": "Latin letters, digits and _.",
+      "description": "Description for the agent",
+      "descriptionHint": "When to call the script and what it returns.",
+      "input": "Input",
+      "owner": "Who calls it",
+      "ownerSelf": "The agent itself",
+      "ownerSubagent": "Subagent “{name}”",
+      "class": "What it does",
+      "classRead": "Only reads",
+      "classWrite": "Changes data in external systems",
+      "code": "Code"
+    },
+    "save": "Save script",
+    "reread": "Reload",
+    "deleteTitle": "Delete the script “{name}”?",
+    "deleteBody": "New conversations won't get it.",
+    "errors": {
+      "name": "Name — up to 48 characters: Latin letters, digits and _, starting with a letter",
+      "nameTaken": "A script with this name already exists",
+      "description": "Description — 1 to 1000 characters on one line",
+      "input": "Input — up to 1000 characters on one line",
+      "code": "Enter the code — up to 64 KB, without hidden characters"
+    },
+    "change": {
+      "new": "new",
+      "changed": "changed",
+      "removed": "removed",
+      "before": "Before",
+      "after": "After"
+    }
+  },
+  "memory": {
+    "entry": "Memory",
+    "title": "Memory of “{name}”",
     "openDeepAgent": "Open deep agent",
+    "selfLearningOff": "Self-learning is off: runs don't see this memory and don't add to it.",
     "columns": {
       "record": "Record",
-      "kind": "Type",
-      "confirmations": "Confirmations",
-      "date": "Date"
+      "changed": "Changed"
     },
     "delete": "Delete",
-    "loading": "Loading knowledge…",
-    "loadFailed": "Couldn't load the knowledge",
+    "loadFailed": "Couldn't load the memory",
     "empty": {
-      "nothingTitle": "The deep agent hasn't learned anything yet",
-      "nothingText": "Knowledge appears after the first finished run. Stopped runs don't teach.",
-      "offTitle": "Self-learning is off",
-      "offText": "{audience, select, panel {The author can turn it on.} other {Turn it on on the deep agent's page — runs will start remembering where they found what.}}"
+      "title": "The agent hasn't remembered anything yet",
+      "text": "Records appear when the agent decides to remember something."
     },
-    "lines": {
-      "scopeAll": "Runs get {active, plural, one {# record} other {all # records}} · knowledge takes {percent}% of the space",
-      "scopeSome": "For any question, runs get {always} of {active, plural, one {# record} other {# records}} · knowledge takes {percent}% of the space",
-      "doesNotFit": "{beyond, plural, one {# doesn't fit} other {# don't fit}}: records confirmed less often drop out first, and among equals the oldest.",
-      "byTopic": "{beyond} more only on the question's topic: a run gives up to half the space to the records closest in meaning to the question, the rest to the most confirmed, and among equals the newest.",
-      "selfLearningOff": "Self-learning is off: runs don't get this knowledge and don't add to it.{audience, select, panel { The author can turn it on.} other {}}",
-      "outdated": "{outdated, plural, one {# more is outdated — runs don't get it.} other {# more are outdated — runs don't get them.}}",
-      "lessonsOff": "Lessons don't go into runs now — an administrator turned them off. Facts and “searched — found nothing” go as usual.",
-      "selectionNoModel": "Selection by meaning is off: no model is chosen for it — an administrator chooses it in the panel, under “Models”. While it is off, the most confirmed records fill the space.",
-      "selectionFailed": "Selection by meaning is off: the {model} model didn't answer or refused — an administrator can check it in the panel, under “Models”. While it is off, the most confirmed records fill the space.",
-      "selectionPreparing": "Selection by meaning doesn't cover all records yet: {pending, plural, one {# is} other {# are}} still being prepared for it; until then they go into runs by confirmations."
-    },
-    "lastRun": {
-      "done": "Last run, {at}: {results}",
-      "added": "{count} added",
-      "confirmed": "{count} confirmed",
-      "outdated": "{count} outdated",
-      "nothingNew": "nothing new found",
-      "taughtNothing": "Last run, {at}, taught nothing",
-      "taughtNothingBecause": "Last run, {at}, taught nothing:",
-      "reason": {
-        "stopped": "the run was stopped",
-        "owner_disabled": "the person who started it is disabled",
-        "quota_exhausted": "the person who started it ran out of quota for the {model} model",
-        "model_not_connected": "the {model} model is disconnected",
-        "model_not_allowed": "the person who started it no longer has access to the {model} model",
-        "no_models_allowed": "the person who started it has no access to any model — an administrator grants it",
-        "model_error": "the {model} model didn't answer",
-        "invalid_answer": "the {model} model twice gave an answer that couldn't be read",
-        "interrupted": "the work was interrupted by a server failure"
-      }
-    },
-    "tabs": {
-      "all": "All · {count}",
-      "facts": "Facts · {count}",
-      "lessons": "Lessons · {count}",
-      "searchedNothing": "Searched — found nothing · {count}",
-      "doesNotFit": "Don't fit · {count}",
-      "byTopic": "Only on topic · {count}"
-    },
-    "noMatches": {
-      "facts": "No facts",
-      "lessons": "No lessons",
-      "searchedNothing": "No “searched — found nothing” records"
-    },
-    "kinds": {
-      "fact": "fact",
-      "lesson": "work lesson",
-      "searchedNothing": "searched — found nothing"
-    },
-    "marks": {
-      "outdated": "outdated",
-      "lessonsOff": "lessons off",
-      "byTopic": "only on topic",
-      "doesNotFit": "doesn't fit"
-    },
-    "nothingFound": "nothing",
     "deleteDialog": {
-      "recordTitle": "Delete the record?",
-      "entityTitle": "Delete “{text}”?",
-      "record": "“{text}”. Later steps of runs won't get it. This can't be undone — the deep agent may learn it again.",
-      "entity": "Later steps of runs won't get it. This can't be undone — the deep agent may learn it again.",
-      "entityWithRelations": "Its relations are deleted with it: {relations}. Later steps of runs won't get them. This can't be undone — the deep agent may learn it again."
+      "title": "Delete the record?",
+      "body": "“{description}”. Agents won't see it anymore. This can't be undone."
     },
-    "deleted": "{relations, plural, =0 {Deleted} other {Deleted with relations: {relations}}}"
+    "deleted": "Record deleted"
+  },
+  "training": {
+    "title": "Training “{name}”",
+    "startedBy": "Started by {name} · {at} · from version {version}",
+    "openConversation": "Open training conversation",
+    "spent": "spent {spent} of {cap}",
+    "recommended": "Recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
+    "notRecommended": "Not recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
+    "nothingToImprove": "The trainer found nothing to improve: {explanation}",
+    "nothingToImproveHidden": "The trainer found nothing to improve.",
+    "textsHidden": "Only the person who started the training sees its texts.",
+    "activate": "Make active",
+    "retrain": "Train again",
+    "activeSince": "Active since {at}",
+    "progress": "Training progress",
+    "changes": "What version {version} changes",
+    "agentPrompt": "Agent instructions",
+    "subagentPrompt": "Subagent “{name}” instructions",
+    "why": "Why",
+    "comparison": "Comparison on past tasks",
+    "baseVersion": "Version {version} · active",
+    "proposedVersion": "Version {version} · new",
+    "errors": "Errors",
+    "calls": "Tool calls",
+    "avgCost": "Average task cost",
+    "columns": {
+      "task": "Task",
+      "outcome": "Outcome",
+      "errors": "Errors",
+      "calls": "Calls",
+      "cost": "Cost"
+    },
+    "verdict": {
+      "proposed_better": "new is better",
+      "base_better": "previous is better",
+      "equal": "equal",
+      "not_compared": "not compared"
+    },
+    "replay": "Replay on version {version}",
+    "loadFailed": "Couldn't load the result",
+    "retry": "Retry",
+    "activateTitle": "Make version {version} active?",
+    "activateBody": "New conversations of all employees will run on it; ones already started will finish on version {base}.",
+    "activated": "Version {version} is active",
+    "train": "Train",
+    "willSpend": "Will spend no more than {cap}",
+    "watch": "Watch the training",
+    "last": "Last training, {at}:",
+    "lastRecommended": "· recommended",
+    "lastNotRecommended": "· not recommended",
+    "openResult": "Open the result"
   }
 }

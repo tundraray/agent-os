@@ -17,6 +17,16 @@
       "script": "Script"
     }
   },
+  "try_script": {
+    "title": "Script trial run",
+    "args": {
+      "name": "Name",
+      "class": "Run type",
+      "owner": "Owner",
+      "input": "Input",
+      "code": "Code"
+    }
+  },
   "read_tool_result": {
     "title": "Read saved result",
     "args": { "callId": "Call", "offset": "From line", "limit": "Lines" }
@@ -68,6 +78,18 @@
       "taskId": "Task"
     }
   },
+  "remember": {
+    "title": "Remember",
+    "args": { "scope": "Scope", "description": "Description", "text": "Text" }
+  },
+  "read_memory": {
+    "title": "Read from memory",
+    "args": { "scope": "Scope", "description": "Description" }
+  },
+  "forget": {
+    "title": "Forget",
+    "args": { "scope": "Scope", "description": "Description" }
+  },
   "list_records": { "title": "Library list", "args": {} },
   "read_record": { "title": "Read record", "args": { "recordId": "Record" } },
   "create_record": {
@@ -94,5 +116,28 @@
   "delete_record": {
     "title": "Delete record",
     "args": { "recordId": "Record" }
-  }
+  },
+  "notepad_create": {
+    "title": "Create document",
+    "args": {
+      "title": "Title",
+      "description": "Description",
+      "text": "Text",
+      "report": "Report"
+    }
+  },
+  "notepad_append": {
+    "title": "Append to document",
+    "args": { "document": "Document", "text": "Text" }
+  },
+  "notepad_replace": {
+    "title": "Replace part of document",
+    "args": { "document": "Document", "old": "Was", "new": "Now" }
+  },
+  "notepad_read": {
+    "title": "Read document",
+    "args": { "document": "Document", "offset": "From line", "limit": "Lines" }
+  },
+  "notepad_list": { "title": "Notepad documents", "args": {} },
+  "notepad_past": { "title": "Past documents", "args": {} }
 }

@@ -197,6 +197,7 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
         const startedAt = performance.now();
         const outcome = await runner.run({
           script: '',
+          input: null,
           limits,
           onRequest: () =>
             Promise.reject(new Error('the empty script makes no request')),

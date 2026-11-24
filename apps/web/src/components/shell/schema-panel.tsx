@@ -9,7 +9,12 @@ import type {
   Confirmation,
   RecordFocus,
   RecordKind,
+  ThreadDocumentsView,
 } from '@agent-os/contracts';
+import {
+  DocumentsTab,
+  useThreadDocuments,
+} from '@/components/agents/notepad-document';
 import {
   SessionTaskList,
   useAgentTasks,
@@ -50,6 +55,8 @@ const selectRoot = (state: FeedState): string | null =>
   state.view?.kind === 'thread' ? state.view.chat.rootAgentId : null;
 const selectThread = (state: FeedState): string | null =>
   state.view?.kind === 'thread' ? state.view.threadId : null;
+const selectTrainingRoot = (state: FeedState): boolean =>
+  state.view?.training?.isRoot === true;
 
 /** The conversation's own task list as the panel and its automatic open read it. */
 export type ChatTasks = {
@@ -103,12 +110,30 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
   const { workspace } = useShellServices();
   const tab = useStore(workspace, (state) => state.tab);
   const focus = useFeedSelector(selectFocus, null);
+  const threadId = useFeedSelector(selectThread, null);
+  const documents = useThreadDocuments(threadId);
+  const documentsShown = (documents.data?.documents.length ?? 0) > 0;
+  // A training's root has no «Схема»: its course is the tab «Задачи» (self-learning KD-3).
+  const trainingRoot = useFeedSelector(selectTrainingRoot, false);
+  const tasksShown = chatTasks.tabShown || trainingRoot;
 
-  if (!chatTasks.tabShown) return <FocusSchema focus={focus} />;
+  if (!tasksShown && !documentsShown) return <FocusSchema focus={focus} />;
+  // A tab this conversation does not have reads as its first one.
+  const shownTab =
+    (tab === 'tasks' && !tasksShown) ||
+    (tab === 'documents' && !documentsShown) ||
+    (tab === 'schema' && trainingRoot)
+      ? trainingRoot
+        ? 'tasks'
+        : 'schema'
+      : tab;
   return (
     <SchemaTabs
-      tasks={chatTasks.tasks}
-      tab={tab}
+      withSchema={!trainingRoot}
+      tasks={tasksShown ? chatTasks.tasks : null}
+      documents={documentsShown ? documents : null}
+      threadId={threadId}
+      tab={shownTab}
       onTab={(next) => workspace.setTab(next)}
       focus={focus}
     />
@@ -116,17 +141,33 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
 }
 
 type SchemaTabsProps = {
-  tasks: Resource<AgentTasksView>;
+  withSchema: boolean;
+  /** null — the conversation has no tab «Задачи». */
+  tasks: Resource<AgentTasksView> | null;
+  /** null — the conversation has no documents yet, so no tab «Документы». */
+  documents: Resource<ThreadDocumentsView> | null;
+  threadId: string | null;
   tab: SchemaTab;
   onTab: (tab: SchemaTab) => void;
   focus: RecordFocus | null;
 };
 
-/** «Схема» and «Задачи · {N}» (MC-9): «Задачи» shows the conversation's list whatever record is in focus. */
-function SchemaTabs({ tasks, tab, onTab, focus }: SchemaTabsProps) {
+/**
+ * «Схема», «Задачи · {N}» (MC-9) and «Документы · {n}» (self-learning UXRD DC-02): «Задачи» and «Документы» show the
+ * conversation's own whatever record is in focus.
+ */
+function SchemaTabs({
+  withSchema,
+  tasks,
+  documents,
+  threadId,
+  tab,
+  onTab,
+  focus,
+}: SchemaTabsProps) {
   const t = useTranslations('agents.tasks');
+  const tDocuments = useTranslations('agents.documents');
   const tSchema = useTranslations('shell.schema');
-  const count = tasks.data?.tasks.length ?? 0;
   return (
     <Tabs
       value={tab}
@@ -134,19 +175,39 @@ function SchemaTabs({ tasks, tab, onTab, focus }: SchemaTabsProps) {
       className="gap-3"
     >
       <TabsList className="w-full">
-        <TabsTrigger value="schema" className="pointer-coarse:h-11">
-          {tSchema('title')}
-        </TabsTrigger>
-        <TabsTrigger value="tasks" className="pointer-coarse:h-11">
-          {t('tabs.tasks', { count })}
-        </TabsTrigger>
+        {withSchema && (
+          <TabsTrigger value="schema" className="pointer-coarse:h-11">
+            {tSchema('title')}
+          </TabsTrigger>
+        )}
+        {tasks !== null && (
+          <TabsTrigger value="tasks" className="pointer-coarse:h-11">
+            {t('tabs.tasks', { count: tasks.data?.tasks.length ?? 0 })}
+          </TabsTrigger>
+        )}
+        {documents !== null && (
+          <TabsTrigger value="documents" className="pointer-coarse:h-11">
+            {tDocuments('tab', {
+              count: documents.data?.documents.length ?? 0,
+            })}
+          </TabsTrigger>
+        )}
       </TabsList>
-      <TabsContent value="schema">
-        <FocusSchema focus={focus} />
-      </TabsContent>
-      <TabsContent value="tasks">
-        <SessionTaskList tasks={tasks} layout="panel" />
-      </TabsContent>
+      {withSchema && (
+        <TabsContent value="schema">
+          <FocusSchema focus={focus} />
+        </TabsContent>
+      )}
+      {tasks !== null && (
+        <TabsContent value="tasks">
+          <SessionTaskList tasks={tasks} layout="panel" />
+        </TabsContent>
+      )}
+      {documents !== null && (
+        <TabsContent value="documents">
+          <DocumentsTab threadId={threadId} documents={documents} />
+        </TabsContent>
+      )}
     </Tabs>
   );
 }

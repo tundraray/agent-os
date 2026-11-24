@@ -55,13 +55,29 @@ export interface PanelServerFacts extends ServerFacts {
   readonly registryServers: readonly string[];
 }
 
-/** A deep agent whose knowledge graph is open to the actor: what the knowledge routes need. */
-export interface KnowledgeTarget {
-  readonly recordId: string;
+/** A deep agent whose memory is open to the actor: what the memory routes need. */
+export interface MemoryTarget {
+  readonly agentId: string;
   /** The flag of the deep agent's last version. */
   readonly selfLearning: boolean;
-  /** The servers of the deep agent and of its subagents in the last version, without repeats (`*` as is). */
-  readonly servers: readonly string[];
+}
+
+/** A deep agent the actor sees, with what the training rule and routes need (self-learning design-training.md, KD-8). */
+export interface TrainingTarget {
+  readonly agentId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly builtinKey: string | null;
+  /** The actor is the agent's author. */
+  readonly isAuthor: boolean;
+  /**
+   * The panel shows it — a system agent, or an employee agent open to a role and not banned; read only for a
+   * holder of the right to train any agent, `false` for the others, whom the rule does not ask.
+   */
+  readonly inPanel: boolean;
+  readonly activeVersion: { readonly id: string; readonly number: number };
+  /** The flag of the active version. */
+  readonly selfLearning: boolean;
 }
 
 /** Why a save is refused; each route answers it with its own error. */
@@ -144,9 +160,11 @@ export interface ChatContext {
 
 /**
  * Why a chat change is refused: a refusal of the save, or a rule only the chat has — a record with
- * holders (`shared`), a system record for a non-admin (`admin_only`).
+ * holders (`shared`), a system record for a non-admin (`admin_only`), an edit that leaves a saved script
+ * without its owner (`script_owner`).
  */
-export type ChatRefusalCode = SaveRefusal | 'shared' | 'admin_only';
+export type ChatRefusalCode =
+  SaveRefusal | 'shared' | 'admin_only' | 'script_owner';
 
 /** A refused chat change, with the part of the record the rule is about when one is. */
 export interface ChatRefusal {

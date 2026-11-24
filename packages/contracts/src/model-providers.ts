@@ -113,3 +113,19 @@ export const UpdateModelProviderBodySchema = z
 export type UpdateModelProviderBody = z.infer<
   typeof UpdateModelProviderBodySchema
 >;
+
+/** Why an embeddings call gave no vectors. */
+export const EmbeddingFailureReasonSchema = z.enum([
+  'model_not_configured',
+  'owner_disabled',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_error',
+  'dimension_mismatch',
+]);
+export type EmbeddingFailureReason = z.infer<
+  typeof EmbeddingFailureReasonSchema
+>;

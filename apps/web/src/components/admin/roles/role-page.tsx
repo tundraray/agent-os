@@ -5,7 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { UsersIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
+import {
+  IdentityErrorCode,
+  type RoleDetail,
+  type UpdateRoleBody,
+} from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
@@ -59,8 +63,8 @@ export function RolePage({ id }: { id: string }) {
   /** Every change: the refusal of a gone or built-in role reads the role again and still reaches its control. */
   const change = rereadOnNotFound(role.reload, isBuiltinRefusal);
 
-  const saveAdmin = async (isAdmin: boolean): Promise<void> => {
-    await change(() => adminApi.roles.update(id, { isAdmin }));
+  const save = async (body: UpdateRoleBody): Promise<void> => {
+    await change(() => adminApi.roles.update(id, body));
     role.reload();
   };
 
@@ -98,9 +102,26 @@ export function RolePage({ id }: { id: string }) {
           label={t('adminRight')}
           checked={data.builtin || data.isAdmin}
           disabled={data.builtin}
-          onSave={saveAdmin}
+          onSave={(isAdmin) => save({ isAdmin })}
           logEvent={ADMIN_RIGHT_LOG_EVENT}
           confirmOn={() => setGrantingAdmin(true)}
+        />
+        {/* RT-01: the training rights save at once; the built-in role has both, on and unavailable. */}
+        <SavingSwitch
+          label={t('trainOwn.label')}
+          hint={data.builtin ? t('alwaysOn') : t('trainOwn.hint')}
+          checked={data.builtin || data.trainOwn}
+          disabled={data.builtin}
+          onSave={(trainOwn) => save({ trainOwn })}
+          logEvent="admin: role train own"
+        />
+        <SavingSwitch
+          label={t('trainAny.label')}
+          hint={data.builtin ? t('alwaysOn') : t('trainAny.hint')}
+          checked={data.builtin || data.trainAny}
+          disabled={data.builtin}
+          onSave={(trainAny) => save({ trainAny })}
+          logEvent="admin: role train any"
         />
         <GrantsSection holder={{ kind: 'role', id }} />
         <MembersSection members={data.members} />
@@ -129,7 +150,7 @@ export function RolePage({ id }: { id: string }) {
             title={t('grantAdminTitle', { role: name })}
             body={t('grantAdminBody', { members: data.members.length })}
             confirmLabel={t('grantAdmin')}
-            onConfirm={() => saveAdmin(true)}
+            onConfirm={() => save({ isAdmin: true })}
             logEvent={ADMIN_RIGHT_LOG_EVENT}
           />
         </>

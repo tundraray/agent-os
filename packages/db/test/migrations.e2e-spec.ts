@@ -8,8 +8,8 @@
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
 // AC-RT-8: "Домены CHECK статусов в схеме app совпадают со значениями enum в packages/contracts" — the `runtime_*` tables
 // (task status and wait reason from packages/contracts/src/runtime.ts).
-// DC-9, DC-10 (data-model/design-schema.md, KD-7): the baseline set of three files — the `vector` extension, the generated
-// schema, the built-in rows — creates the whole schema `app`; after it, only the tables of "Таблицы части" and the
+// DC-9, DC-10 (data-model/design-schema.md, KD-7): the baseline set of two files — the generated schema, the built-in rows
+// — creates the whole schema `app`; after it, only the tables of "Таблицы части" and the
 // unrenamed groups are in `app`. DC-28 (data-model/design-agents.md, "Таблицы каталога"): the catalogue is `agents`,
 // `agent_versions`, `agent_shares`; the kind and the default-agent key domains come from packages/contracts/src/library.ts.
 // The conversation CHECK domains (history kind, tool call state, outcome, refusal reason)
@@ -23,15 +23,10 @@ import { join } from 'node:path';
 import {
   BuiltinKeySchema,
   CALL_RECORD_KINDS,
-  EmbeddingFailureReasonSchema,
   GrantEffectSchema,
   GrantTargetKindSchema,
   HistoryEntryKindSchema,
-  KnowledgeItemKindSchema,
-  KnowledgeItemTypeSchema,
   LanguageSchema,
-  LastExtractionReasonSchema,
-  LastExtractionStatusSchema,
   McpServerModeSchema,
   ModelProviderKindSchema,
   ModelPurposeSchema,
@@ -57,13 +52,6 @@ const ROW_TIMEOUT_MS = 120_000;
 const APP_TABLES = [
   '__drizzle_migrations',
   'access_grants',
-  'agent_knowledge_embedding',
-  'agent_knowledge_entities',
-  'agent_knowledge_questions',
-  'agent_knowledge_relations',
-  'agent_knowledge_runs',
-  'agent_knowledge_settings',
-  'agent_knowledge_vectors',
   'agent_shares',
   'agent_versions',
   'agents',
@@ -71,6 +59,7 @@ const APP_TABLES = [
   'code_calls',
   'conversation_tasks',
   'conversations',
+  'documents',
   'identity_login_requests',
   'identity_providers',
   'identity_role_members',
@@ -79,6 +68,7 @@ const APP_TABLES = [
   'identity_users',
   'mcp_accounts',
   'mcp_servers',
+  'memories',
   'messages',
   'model_providers',
   'models',
@@ -87,6 +77,7 @@ const APP_TABLES = [
   'runtime_tasks',
   'settings',
   'tool_results',
+  'trainings',
 ];
 
 /** Stand-in for chat data: a `public` table named like Mastra's, with known rows. */
@@ -259,21 +250,6 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         agents_builtin_key_check: sorted(BuiltinKeySchema.options),
         conversation_tasks_status_check: sorted(
           SessionTaskStatusSchema.options,
-        ),
-        agent_knowledge_relations_kind_check: sorted(
-          KnowledgeItemKindSchema.options,
-        ),
-        agent_knowledge_runs_last_status_check: sorted(
-          LastExtractionStatusSchema.options,
-        ),
-        agent_knowledge_runs_last_reason_check: sorted(
-          LastExtractionReasonSchema.options,
-        ),
-        agent_knowledge_embedding_last_reason_check: sorted(
-          EmbeddingFailureReasonSchema.options,
-        ),
-        agent_knowledge_vectors_key_kind_check: sorted(
-          KnowledgeItemTypeSchema.options,
         ),
         settings_key_check: sorted(SettingsKeySchema.options),
       });

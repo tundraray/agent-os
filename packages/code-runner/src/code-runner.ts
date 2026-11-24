@@ -54,6 +54,8 @@ export type RequestAnswer =
 
 export interface RunRequest {
   script: string;
+  /** A JSON value the script sees as the global `input`. */
+  input: unknown;
   limits: RunLimits;
   /** Called strictly one request at a time; `signal` aborts when the run ends first. */
   onRequest(
@@ -433,7 +435,12 @@ function runInProcess(
     });
 
     child.stdin?.write(
-      encodeFrame({ op: 'start', script: request.script, limits }),
+      encodeFrame({
+        op: 'start',
+        script: request.script,
+        input: request.input,
+        limits,
+      }),
     );
   });
 }

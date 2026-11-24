@@ -25,7 +25,6 @@ import {
 import type { AgentsConfig } from './config';
 import { createEmbeddingClient } from './embeddings/embedding-client';
 import { AgentsEmbeddings } from './embeddings/embeddings';
-import { AgentsKnowledge } from './knowledge/knowledge';
 import { ConnectRequests } from './mcp/connect-requests';
 import { AgentsMcp } from './mcp/mcp';
 import { McpAccounts } from './mcp/mcp-accounts';
@@ -35,6 +34,7 @@ import { createMastraTurnClient } from './model/mastra-turn';
 import { ModelClient } from './model/model-client';
 import { ControlOperations } from './operations/control-operations';
 import { StartOperations } from './operations/start-operations';
+import { TrainingOperations } from './operations/training-operations';
 import { ViewOperations } from './operations/view-operations';
 import { AgentsProviders } from './providers/provider-registry';
 import { CallRecords } from './store/call-records';
@@ -43,6 +43,7 @@ import { Sessions } from './store/sessions';
 import { RunCodeTool } from './tools/external/run-code';
 import { ToolRegistry } from './tools/tool-registry';
 import { ToolRunner } from './tools/tool-runner';
+import { TrainingBudget } from './training/training-budget';
 
 /**
  * Where the composition root gets the agents settings from (parsed by `parseAgentsConfig`), the modules that
@@ -65,14 +66,14 @@ const PUBLIC_SERVICES = [
   StartOperations,
   ControlOperations,
   ViewOperations,
+  // The start of a training (self-learning design-training.md, KD-1).
+  TrainingOperations,
   // The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014).
   AgentsMcp,
   // The model provider registry: the only entry point of `apps/api` to `model_providers` (ADR-0019).
   AgentsProviders,
   // Vectors on the default embedding model for the platform's own features (KD-6).
   AgentsEmbeddings,
-  // The knowledge graphs of self-learning deep agents and their settings: the only entry point to `agent_knowledge_*`.
-  AgentsKnowledge,
   // `completeText`: one call of the default chat model outside any task (the conversation title).
   ModelClient,
 ];
@@ -127,6 +128,7 @@ export class AgentsModule {
         McpAccounts,
         McpRegistry,
         ToolRunner,
+        TrainingBudget,
         RunCodeTool,
         AgentDeps,
         AgentFactory,

@@ -13,8 +13,10 @@ const ADMIN_PATH_PREFIX = `${ADMIN_PATH}/`;
 /** Outside `/admin/servers/…` because a server may be named `new`. */
 const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
-/** After a record id: what a deep agent has learned (self-learning design-web.md KD-2). */
-const KNOWLEDGE_SUFFIX = '/knowledge';
+/** After a record id: a deep agent's memory (self-learning UXRD ME-01). */
+const MEMORY_SUFFIX = '/memory';
+/** After a record id, before a training id: a training's result (self-learning UXRD TR-02). */
+const TRAINING_SEGMENT = '/training/';
 /** After an agent id: the deep agent page's tab «Задачи» (deep-agents UXRD DA-04); «Ход работы» is the page's own address. */
 const TASKS_SUFFIX = '/tasks';
 
@@ -40,14 +42,15 @@ export type AdminPage =
   | { kind: 'list'; tab?: LibraryTab }
   | { kind: 'new' }
   | { kind: 'record'; key: string }
-  | { kind: 'knowledge'; key: string };
+  | { kind: 'memory'; key: string };
 
-/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent, or what a deep agent has learned. */
+/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent, a deep agent's memory or a training's result. */
 export type LibraryPage =
   | { kind: 'list' }
   | { kind: 'record'; id: string }
   | { kind: 'new' }
-  | { kind: 'knowledge'; id: string };
+  | { kind: 'memory'; id: string }
+  | { kind: 'training'; id: string; trainingId: string };
 
 /** The tab of a deep agent's page carried in its address; absent — «Ход работы» (deep-agents UXRD DA-04). */
 export type AgentTab = 'tasks';
@@ -76,9 +79,13 @@ export const libraryPath = (): string => LIBRARY_PATH;
 export const recordPath = (id: string): string =>
   `${LIBRARY_PATH_PREFIX}${encodeURIComponent(id)}`;
 
-/** The only way an employee's knowledge page path of a deep agent is built. */
-export const knowledgePath = (id: string): string =>
-  `${recordPath(id)}${KNOWLEDGE_SUFFIX}`;
+/** The only way an employee's memory page path of a deep agent is built. */
+export const memoryPath = (id: string): string =>
+  `${recordPath(id)}${MEMORY_SUFFIX}`;
+
+/** The only way a training's result path is built. */
+export const trainingPath = (id: string, trainingId: string): string =>
+  `${recordPath(id)}${TRAINING_SEGMENT}${encodeURIComponent(trainingId)}`;
 
 /** The only way an employee's "new agent" path is built. */
 export const newAgentPath = (): string => NEW_AGENT_PATH;
@@ -91,9 +98,9 @@ export const adminPath = (section: AdminSection): string =>
 export const adminRecordPath = (section: AdminSection, key: string): string =>
   `${adminPath(section)}/${encodeURIComponent(key)}`;
 
-/** The only way the panel's knowledge page path of a company deep agent is built. */
-export const adminKnowledgePath = (key: string): string =>
-  `${adminRecordPath('library', key)}${KNOWLEDGE_SUFFIX}`;
+/** The only way the panel's memory page path of a company deep agent is built. */
+export const adminMemoryPath = (key: string): string =>
+  `${adminRecordPath('library', key)}${MEMORY_SUFFIX}`;
 
 /** The only way a panel "new record" path is built. */
 export const adminNewPath = (section: 'sign-in' | 'servers'): string =>
@@ -128,7 +135,7 @@ function singleSegment(
   }
 }
 
-/** A tab, the new-agent or a knowledge address of «Агенты и глубокие агенты»; checked before a record id, which is a UUID. */
+/** A tab, the new-agent or a memory address of «Агенты и глубокие агенты»; checked before a record id, which is a UUID. */
 function libraryAdminPage(pathname: string): AdminPage | undefined {
   const tab = LIBRARY_TABS.find(
     (candidate) => pathname === adminLibraryTabPath(candidate),
@@ -138,9 +145,9 @@ function libraryAdminPage(pathname: string): AdminPage | undefined {
   const key = singleSegment(
     pathname,
     `${adminPath('library')}/`,
-    KNOWLEDGE_SUFFIX,
+    MEMORY_SUFFIX,
   );
-  return key === undefined ? undefined : { kind: 'knowledge', key };
+  return key === undefined ? undefined : { kind: 'memory', key };
 }
 
 /** `/admin` and any unknown path under it open «Сотрудники». */
@@ -166,15 +173,16 @@ function parseAdminPage(pathname: string): {
   return { section: 'users', page: { kind: 'list' } };
 }
 
-/** `/library`, an id after it, the new-agent address or an id's knowledge; any other path under it opens the list. */
+/** `/library`, an id after it, the new-agent address, an id's memory or training; any other path under it opens the list. */
 function parseLibraryPage(pathname: string): LibraryPage {
   if (pathname === NEW_AGENT_PATH) return { kind: 'new' };
-  const knowledgeId = singleSegment(
-    pathname,
-    LIBRARY_PATH_PREFIX,
-    KNOWLEDGE_SUFFIX,
-  );
-  if (knowledgeId !== undefined) return { kind: 'knowledge', id: knowledgeId };
+  const memoryId = singleSegment(pathname, LIBRARY_PATH_PREFIX, MEMORY_SUFFIX);
+  if (memoryId !== undefined) return { kind: 'memory', id: memoryId };
+  const [head = '', tail = ''] = pathname.split(TRAINING_SEGMENT);
+  const trainingRecordId = singleSegment(head, LIBRARY_PATH_PREFIX);
+  const trainingId = singleSegment(tail, '');
+  if (trainingRecordId !== undefined && trainingId !== undefined)
+    return { kind: 'training', id: trainingRecordId, trainingId };
   const id = singleSegment(pathname, LIBRARY_PATH_PREFIX);
   return id === undefined ? { kind: 'list' } : { kind: 'record', id };
 }
@@ -189,7 +197,7 @@ export function parseShellRoute(pathname: string | null): ShellRoute {
   if (pathname === ADMIN_PATH || pathname.startsWith(ADMIN_PATH_PREFIX)) {
     return { kind: 'admin', ...parseAdminPage(pathname) };
   }
-  // The tab is parsed before a single agent id, as a knowledge address before a record id.
+  // The tab is parsed before a single agent id, as a memory address before a record id.
   const tasksAgentId = singleSegment(pathname, AGENT_PATH_PREFIX, TASKS_SUFFIX);
   if (tasksAgentId !== undefined)
     return { kind: 'agent', agentId: tasksAgentId, tab: 'tasks' };

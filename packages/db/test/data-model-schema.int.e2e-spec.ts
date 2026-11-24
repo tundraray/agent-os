@@ -16,9 +16,8 @@
 //   creating nothing is a CI command, not a vitest case.
 // - DC-5 "every settings row exists and passes its key's schema": every API suite reads `sign_in_settings` on each request and the
 //   group suites read their own key from the migrated database; a missing or invalid seed breaks them all. No test of its own.
-// - DC-13, a task and a ledger row of the platform are written without an owner: the `knowledge.embed` task of INT-11 in
-//   `packages/agents/test/self-learning-core.int.e2e-spec.ts` and the ledger row of INT-5 row C in
-//   `apps/api/test/model-providers-core.int.e2e-spec.ts`, both written by the real code.
+// - DC-13, the platform's own work is written without an owner: the ledger row of INT-5 row C in
+//   `apps/api/test/model-providers-core.int.e2e-spec.ts`, written by the real code.
 // - DC-11 (runtime imports no table) is the lint of `packages/runtime`. DC-15 (dropped columns are absent) has no test:
 //   `typecheck` shows only that no code names a dropped column; that the columns are gone is checked by the schema review.
 // - Row counts, column lists and the names of foreign keys are not asserted: that would restate the schema file.

@@ -11,6 +11,7 @@ export {
   OwnerDisabledError,
   type ToolAccess,
 } from './access-gate';
+export { reportOf } from './agent/deliver';
 export type { AgentView } from './agent-view';
 export { inRootLaunchSet } from './chat-listing';
 export { type AgentsConfig, parseAgentsConfig } from './config';
@@ -32,16 +33,6 @@ export {
   type EmbedResult,
 } from './embeddings/embeddings';
 export { AgentsError, type StartRefusalDetail } from './errors';
-export {
-  AgentsKnowledge,
-  type KnowledgeEntityDelete,
-  type KnowledgeEntityDeletion,
-  type KnowledgeRelationDelete,
-  type KnowledgeRelationDeletion,
-  type KnowledgeSettingsChange,
-  type KnowledgeSettingsUpdate,
-  type KnowledgeViewRequest,
-} from './knowledge/knowledge';
 export { AgentsMcp, type McpConnectResult } from './mcp/mcp';
 export type {
   McpConnectBegin,
@@ -72,6 +63,11 @@ export type {
 } from './operations/agent-sessions';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';
+export {
+  type TrainingStart,
+  type TrainingStartRequest,
+  TrainingOperations,
+} from './operations/training-operations';
 export type { RootSession } from './store/sessions';
 export { ViewOperations } from './operations/view-operations';
 export type { DeepAgentRun } from './deep/deep-agent-run';

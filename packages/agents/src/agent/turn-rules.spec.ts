@@ -110,7 +110,7 @@ describe('a cut-off answer is not a report', () => {
         finalSubagent: 'answer',
         finalSubagentReport: { status: 'completed', text: 'final report' },
       },
-      { kind: 'complete', report: 'final report' },
+      { kind: 'complete', report: 'final report', document: null },
     ],
   ])('%s', (_, input, outcome) => {
     expect(endOfTurn(input)).toStrictEqual(outcome);
@@ -169,7 +169,7 @@ describe('an agent with open tasks does not finish its turn', () => {
     [
       'no open task: the answer is the report',
       CHILD,
-      { kind: 'complete', report: 'my own answer' },
+      { kind: 'complete', report: 'my own answer', document: null },
     ],
     [
       'open tasks come before the final subagent rule, even after its completed report',
@@ -244,6 +244,7 @@ describe('a subagent asked for answer fields', () => {
       {
         kind: 'complete',
         report: '{"вывод":"рост ошибок","источники":"логи оплат"}',
+        document: null,
       },
     ],
     [

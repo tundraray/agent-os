@@ -11,10 +11,17 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import {
+  CHAT_TASK_TYPE,
+  DEEP_AGENT_TASK_TYPE,
+  TaskStatusSchema,
+} from '@agent-os/contracts';
 import type { Db } from '../db';
 import {
   agents,
   agentVersions,
+  codeCalls,
   conversations,
   identityUsers,
   messages,
@@ -120,6 +127,8 @@ const CONVERSATION_COLUMNS = {
   builtinKey: agents.builtinKey,
 };
 
+const { completed, failed } = TaskStatusSchema.enum;
+
 const ROOT_COLUMNS = {
   rootId: conversations.id,
   ownerId: conversations.ownerId,
@@ -160,13 +169,9 @@ export class ConversationsRepository {
   /**
    * Inserts the session and its `task` entry with `seq` 1 unless the session exists: both the
    * starter and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps their race safe.
-   * A root session starts with an empty title and its list time. `true` — this call created the
-   * session.
+   * A root session starts with an empty title and its list time.
    */
-  async create(
-    session: NewConversationRow,
-    taskEntry: unknown,
-  ): Promise<boolean> {
+  async create(session: NewConversationRow, taskEntry: unknown): Promise<void> {
     const created = await this.db.client
       .insert(conversations)
       .values({
@@ -175,14 +180,13 @@ export class ConversationsRepository {
       })
       .onConflictDoNothing({ target: conversations.id })
       .returning({ id: conversations.id });
-    if (created.length === 0) return false;
+    if (created.length === 0) return;
     await this.db.client.insert(messages).values({
       conversationId: session.id,
       seq: TASK_ENTRY_SEQ,
       kind: 'task',
       content: taskEntry,
     });
-    return true;
   }
 
   /** The session row of the agent with its origin; `undefined` when it has none yet. */
@@ -330,6 +334,79 @@ export class ConversationsRepository {
       .where(and(ownedLiveRoot(rootId, ownerId), eq(conversations.title, '')))
       .returning({ id: conversations.id });
     return rows.length > 0;
+  }
+
+  /**
+   * The past tasks of an agent across every owner, newest first (self-learning design-training.md, KD-2): the
+   * conversations of `deep_agent` tasks on the agent's versions directly under a chat, ended with an answer or an
+   * error, not deleted. A training's and a replay's conversations are never among them: their root is no chat.
+   * At most `limit`; with `conversationId`, only that conversation when it is one.
+   */
+  pastTasks(
+    agentId: string,
+    options: { readonly limit: number; readonly conversationId?: string },
+  ): Promise<{ id: string }[]> {
+    const parent = alias(runtimeTasks, 'parent');
+    return this.db.client
+      .select({ id: conversations.id })
+      .from(conversations)
+      .innerJoin(
+        agentVersions,
+        eq(agentVersions.id, conversations.agentVersionId),
+      )
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, conversations.id))
+      .innerJoin(parent, eq(parent.taskId, runtimeTasks.parentId))
+      .where(
+        and(
+          eq(agentVersions.agentId, agentId),
+          eq(runtimeTasks.type, DEEP_AGENT_TASK_TYPE),
+          eq(parent.type, CHAT_TASK_TYPE),
+          inArray(runtimeTasks.status, [completed, failed]),
+          isLive,
+          options.conversationId === undefined
+            ? undefined
+            : eq(conversations.id, options.conversationId),
+        ),
+      )
+      .orderBy(desc(runtimeTasks.createdSeq))
+      .limit(options.limit);
+  }
+
+  /**
+   * The MCP tools each run called, with the subtree of its subagents: the calls of its model answers and the
+   * calls its code made (`code_calls`), one row per run, server and tool.
+   */
+  async serversCalled(
+    runIds: readonly string[],
+  ): Promise<{ runId: string; server: string; tool: string }[]> {
+    if (runIds.length === 0) return [];
+    const ids = sql.join(
+      runIds.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    );
+    const result = await this.db.client.execute<{
+      runId: string;
+      server: string;
+      tool: string;
+    }>(sql`
+      with recursive tree (task_id, run_id) as (
+        select task_id, task_id from ${runtimeTasks} where task_id in (${ids})
+        union all
+        select child.task_id, tree.run_id
+        from ${runtimeTasks} child join tree on child.parent_id = tree.task_id
+      )
+      select distinct tree.run_id as "runId", called.server, called.tool
+      from tree
+      join lateral (
+        select answer_call->>'server' as server, answer_call->>'tool' as tool
+        from ${messages} answer, jsonb_array_elements(answer.content->'toolCalls') answer_call
+        where answer.conversation_id = tree.task_id and answer.kind = 'model_answer'
+        union all
+        select code_call.server, code_call.tool
+        from ${codeCalls} code_call
+        where code_call.conversation_id = tree.task_id
+      ) called on called.server is not null`);
+    return result.rows;
   }
 
   /** Conversations meeting the condition, each joined to its version, the version's agent and the agent's owner. */

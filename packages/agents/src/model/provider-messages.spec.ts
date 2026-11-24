@@ -188,6 +188,7 @@ describe("history becomes provider messages with every message after its answer'
               reason: 'model_error',
               message: 'provider answered 529 overloaded',
               text: null,
+              document: null,
               toolCalls: 3,
               durationMs: 1200,
             },

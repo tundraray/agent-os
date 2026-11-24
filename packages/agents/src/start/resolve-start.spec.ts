@@ -91,6 +91,7 @@ function deepAgentContent(): DeepAgentContent {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   };
 }
 

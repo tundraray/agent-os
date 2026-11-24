@@ -11,9 +11,10 @@ import {
   Thread,
   type ThreadComponents,
 } from '@/components/assistant-ui/elements/thread.aui';
-import { KnowledgePage } from '@/components/library/knowledge-page';
+import { MemoryPage } from '@/components/library/memory-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
+import { TrainingPage } from '@/components/library/training-page';
 import { FeedProvider } from '@/lib/feed/feed-context';
 import type { FeedStore } from '@/lib/feed/feed-store';
 import { focusShellTarget } from '@/lib/focus';
@@ -102,10 +103,19 @@ export function MainView() {
   if (route.kind === 'admin') return <AdminGate route={route} />;
   if (route.kind === 'library' && route.page.kind === 'list')
     return <LibraryScreen />;
-  // Self-learning KD-2: a deep agent's knowledge; a new key per deep agent, so nothing of one carries over to the next.
-  if (route.kind === 'library' && route.page.kind === 'knowledge') {
+  // Self-learning ME-01: a deep agent's memory; a new key per deep agent, so nothing of one carries over to the next.
+  if (route.kind === 'library' && route.page.kind === 'memory') {
     return (
-      <KnowledgePage key={route.page.id} id={route.page.id} variant="library" />
+      <MemoryPage key={route.page.id} id={route.page.id} variant="library" />
+    );
+  }
+  if (route.kind === 'library' && route.page.kind === 'training') {
+    return (
+      <TrainingPage
+        key={route.page.trainingId}
+        id={route.page.id}
+        trainingId={route.page.trainingId}
+      />
     );
   }
   // A new key per record: the copy dialog and focus of one record never carry over to the next.

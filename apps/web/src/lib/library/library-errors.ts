@@ -4,6 +4,7 @@ import {
   LibraryRejectReasonSchema,
   ModelUnavailableReasonSchema,
   RecordNameTakenReasonSchema,
+  TrainingErrorCode,
   type RecordKind,
   type RecordSummary,
   type ToolRefusalReason,
@@ -32,15 +33,17 @@ export function shareBlockedReason(
 }
 
 /**
- * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a deep agent
- * the viewer sees but whose knowledge is closed to them (AC-11.3). Any other refusal stays an error.
+ * The memory and training result screens show «Не найдено» only for this: a 404, or a 403 `MEMORY_FORBIDDEN`
+ * or `TRAINING_FORBIDDEN` of a deep agent the viewer sees but whose memory or training is closed to them
+ * (UXRD ME-04). Any other refusal stays an error.
  */
-export const isKnowledgeHidden = (error: unknown): boolean =>
+export const isHiddenFromViewer = (error: unknown): boolean =>
   isNotFound(error) ||
   (isApiRequestError(error) &&
     error.kind === 'http' &&
     error.status === 403 &&
-    error.code === LibraryErrorCode.KNOWLEDGE_FORBIDDEN);
+    (error.code === LibraryErrorCode.MEMORY_FORBIDDEN ||
+      error.code === TrainingErrorCode.TRAINING_FORBIDDEN));
 
 /** MC-4. */
 export const copyFailed = (t: ErrorsTranslator, cause: unknown): ReactNode =>
@@ -58,7 +61,13 @@ export type LibraryErrorWhere =
   | 'panel'
   | 'message'
   | 'first_message'
-  | 'restart';
+  | 'restart'
+  /** The script form on the deep agent's card (self-learning MC-15). */
+  | 'script'
+  /** Under «Обучить» and «Обучить заново» (self-learning MC-9). */
+  | 'train'
+  /** In the activation dialog (self-learning MC-12). */
+  | 'activate';
 
 /** What the caller knows about the request that the error alone does not say. */
 export type LibraryErrorContext = {
@@ -109,6 +118,9 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
     case 'editor':
     case 'share':
     case 'panel':
+    case 'script':
+    case 'train':
+    case 'activate':
       return { at: 'form' };
     case 'record_page':
     case 'restart':
@@ -290,6 +302,8 @@ function conflict(
   t: ErrorsTranslator,
   context: LibraryErrorContext,
 ): LibraryErrorText {
+  if (context.where === 'script')
+    return at({ at: 'conflict' }, t('library.conflict.script'));
   const fields = context.changedFields ?? [];
   const admin = context.admin === true;
   const text =
@@ -324,6 +338,16 @@ export function describeLibraryError(
   error: unknown,
   context: LibraryErrorContext,
 ): LibraryErrorText | null {
+  // A training's refusals are read by code and message only: its `START_REFUSED` carries no model (MC-9, MC-12).
+  if (context.where === 'train' || context.where === 'activate') {
+    return at(
+      { at: 'form' },
+      isApiRequestError(error) &&
+        error.code === TrainingErrorCode.TRAINING_NO_PAST_TASKS
+        ? t('library.noPastTasks')
+        : failedText(t, context.where, error),
+    );
+  }
   const inMessage =
     context.where === 'message' || context.where === 'first_message';
   if (!isApiRequestError(error) || error.kind === 'network') {

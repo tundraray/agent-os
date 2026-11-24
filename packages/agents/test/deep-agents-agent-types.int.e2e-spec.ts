@@ -129,6 +129,7 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
           taskList: true,
           listDelegation: true,
           selfLearning: false,
+          scripts: [],
         }),
       );
       const fixture = createFixtureFiles();
@@ -323,6 +324,9 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
         expect(
           history.filter((line) => line.includes(TASK_BLOCK_HEADING)),
         ).toEqual([]);
+        const reportNotice = expect.stringContaining(
+          'notice: You cannot finish yet: this run has no report document',
+        );
         expect(history).toEqual([
           ...firstAnswer,
           'model_answer:  [task_update]',
@@ -336,12 +340,20 @@ describe('deep-agents / task-list - the list belongs to the session: written wit
           'tool_result: task_update success',
           'tool_result: task_update success',
           'model_answer: all done []',
+          reportNotice,
+          'model_answer:  [notepad_create]',
+          'tool_result: notepad_create success',
+          'model_answer: all done []',
           'event: continued',
           'user_message: Add one more check',
           'model_answer:  [task_create]',
           'tool_result: task_create success',
           'model_answer:  [task_update]',
           'tool_result: task_update success',
+          'model_answer: done again []',
+          reportNotice,
+          'model_answer:  [notepad_create]',
+          'tool_result: notepad_create success',
           'model_answer: done again []',
         ]);
 

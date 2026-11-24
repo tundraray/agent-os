@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { LogFields } from '@agent-os/common';
 import {
+  DeepAgentContentSchema,
   LibraryRecordCardSchema,
   type LibraryRecordCard,
   type RecordBody,
@@ -101,16 +102,50 @@ function chatScope(
   return { outcome: 'allowed', scope: 'employee', record };
 }
 
-/** The stored flag of a deep agent; an agent has none. */
-function selfLearningOf(body: RecordBody): boolean {
-  return body.kind === 'deep_agent' && body.content.selfLearning;
+/**
+ * The record with the deep agent's fields the chat never sets (KD-2): the self-learning flag and the scripts
+ * of `previous`, or off and none on a create.
+ */
+function withKeptFields(
+  record: ChatRecordInput,
+  previous: RecordBody | null,
+): ChatRecordInput {
+  const { body } = record;
+  if (body.kind !== 'deep_agent') return record;
+  const { selfLearning, scripts } =
+    previous?.kind === 'deep_agent'
+      ? previous.content
+      : { selfLearning: false, scripts: [] };
+  return {
+    ...record,
+    body: {
+      kind: 'deep_agent',
+      content: { ...body.content, selfLearning, scripts },
+    },
+  };
 }
 
-/** The body with the self-learning flag set, which only a deep agent holds. */
-function withSelfLearning(body: RecordBody, selfLearning: boolean): RecordBody {
-  return body.kind === 'deep_agent'
-    ? { kind: 'deep_agent', content: { ...body.content, selfLearning } }
-    : body;
+/** A chat edit that leaves a kept script without its owner, by the content's own rule (KD-2). */
+function scriptOwnerRefusal(record: ChatRecordInput): ChatRefusal | undefined {
+  const { body } = record;
+  if (body.kind !== 'deep_agent') return undefined;
+  const issues =
+    DeepAgentContentSchema.safeParse(body.content).error?.issues ?? [];
+  // The tool's schema checked the rest of the content: any other issue here is a defect.
+  const other = issues.find(
+    ({ path }) => path[0] !== 'scripts' || path[2] !== 'owner',
+  );
+  if (other !== undefined)
+    throw new Error(
+      `Unexpected deep agent content issue at ${other.path.join('.')}`,
+    );
+  const [issue] = issues;
+  if (issue === undefined) return undefined;
+  const owner = body.content.scripts[Number(issue.path[1])]?.owner;
+  return chatRefused('script_owner', {
+    path: issue.path.join('.'),
+    values: owner == null ? [] : [owner],
+  });
 }
 
 /** The content of a `library.record` card (Contract «Содержимое карточки `library.record`»). */
@@ -258,7 +293,7 @@ export class LibraryChatService {
    * The save of an approved card in the step's transaction (Invariant 3): the same
    * checks run again on the version the card showed — another version is `version_conflict` — and the
    * record's version and its audit event are written at a savepoint of the step's transaction. The
-   * self-learning flag is the stored one on an edit and off on a create (Invariant 4).
+   * self-learning flag and the scripts are the stored ones on an edit, off and none on a create (KD-2).
    */
   saveChatChange(
     context: ChatContext,
@@ -284,10 +319,7 @@ export class LibraryChatService {
     if (change.action === 'create') {
       if (change.system && !context.actor.isAdmin)
         return chatRefused('admin_only', SYSTEM_FIELD);
-      const next = {
-        ...change.record,
-        body: withSelfLearning(change.record.body, false),
-      };
+      const next = withKeptFields(change.record, null);
       const scope = change.system ? 'system' : 'employee';
       const request = this.chatSaveRequest(context, scope, null, next);
       const check = await this.saving.checkSave(request);
@@ -319,10 +351,9 @@ export class LibraryChatService {
           previous,
         }),
       };
-    const next = {
-      ...change.record,
-      body: withSelfLearning(change.record.body, selfLearningOf(previous.body)),
-    };
+    const next = withKeptFields(change.record, previous.body);
+    const ownerless = scriptOwnerRefusal(next);
+    if (ownerless !== undefined) return ownerless;
     const request = this.chatSaveRequest(context, scope.scope, previous, next);
     const check = await this.saving.checkSave(request);
     if (check.outcome === 'refused') return chatRefusedBy(check, request);
@@ -349,10 +380,12 @@ export class LibraryChatService {
       if (card.system && !context.actor.isAdmin)
         return chatRefused('admin_only', SYSTEM_FIELD);
       const scope = card.system ? 'system' : 'employee';
-      const request = this.chatSaveRequest(context, scope, null, {
-        ...next,
-        body: withSelfLearning(next.body, false),
-      });
+      const request = this.chatSaveRequest(
+        context,
+        scope,
+        null,
+        withKeptFields(next, null),
+      );
       return chatSaved(
         await this.saving.save({ ...request, newId: card.recordId }),
         request,
@@ -376,10 +409,10 @@ export class LibraryChatService {
     }
     if (next === null)
       throw new Error(`edit card of record ${card.recordId} has no record`);
-    const request = this.chatSaveRequest(context, scope.scope, current, {
-      ...next,
-      body: withSelfLearning(next.body, selfLearningOf(current.body)),
-    });
+    const kept = withKeptFields(next, current.body);
+    const ownerless = scriptOwnerRefusal(kept);
+    if (ownerless !== undefined) return ownerless;
+    const request = this.chatSaveRequest(context, scope.scope, current, kept);
     return chatSaved(await this.saving.save(request), request);
   }
 

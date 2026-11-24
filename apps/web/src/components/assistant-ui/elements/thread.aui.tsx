@@ -287,6 +287,10 @@ const ThreadRoot: FC<{
     FeedHeader,
     Feed,
   } = useContext(ThreadComponentsContext);
+  const training = useFeedSelector(
+    (state) => state.view?.training ?? null,
+    null,
+  );
 
   return (
     <ThreadPrimitive.Root
@@ -359,6 +363,8 @@ const ThreadRoot: FC<{
             {!historyPending && <ThreadFollowupSuggestions />}
             {DeletedNotice ? (
               <DeletedNotice />
+            ) : training !== null ? (
+              <TrainingLine root={training.isRoot} />
             ) : (
               <>
                 <FeedTray />
@@ -871,6 +877,40 @@ const SeededComposer: FC<{
 
 /** CV-04: the queue tray of the screen's feed above the composer; nothing without a feed. */
 const FeedTray: FC = () => (useFeed() === null ? null : <FeedQueueTray />);
+
+/**
+ * Self-learning TR-01, MC-10: a training's conversation and its replays take no message. The root's line carries
+ * «Стоп» while the training works, which stops the root, and says the training is over once it is not.
+ */
+const TrainingLine: FC<{ root: boolean }> = ({ root }) => {
+  const t = useTranslations('chat.training');
+  const feed = useFeed();
+  const working = useFeedSelector((state) => canInterrupt(state.view), false);
+  const [stopFailed, setStopFailed] = useState(false);
+  const stop = () => {
+    setStopFailed(false);
+    // `command` has logged the refusal.
+    void feed?.stop().catch(() => setStopFailed(true));
+  };
+  return (
+    <div className="flex flex-col gap-1 px-2">
+      <div className="text-muted-foreground flex min-h-9 items-center justify-between gap-2 text-sm leading-5">
+        <p>{root && !working ? t('ended') : t('readOnly')}</p>
+        {root && working && (
+          <Button variant="outline" size="sm" onClick={stop}>
+            <SquareIcon aria-hidden />
+            {t('stop')}
+          </Button>
+        )}
+      </div>
+      {stopFailed && (
+        <p role="alert" className="text-destructive text-xs leading-4">
+          {t('stopFailed')}
+        </p>
+      )}
+    </div>
+  );
+};
 
 const NO_OPTIMISTIC: readonly OptimisticEntry[] = [];
 

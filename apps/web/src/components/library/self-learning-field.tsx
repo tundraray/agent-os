@@ -13,8 +13,8 @@ export type SelfLearningFieldProps = {
   checked: boolean;
   /** Saves the record with the flag flipped; a refusal is already logged by the caller's `recordAction`. */
   onSave: (checked: boolean) => Promise<void>;
-  /** The knowledge screen of the deep agent; `null` where the page has its own entry to it. */
-  knowledgeHref: string | null;
+  /** The memory screen of the deep agent; `null` where the page has its own entry to it. */
+  memoryHref: string | null;
 };
 
 /**
@@ -26,7 +26,7 @@ export type SelfLearningFieldProps = {
 export function SelfLearningField({
   checked,
   onSave,
-  knowledgeHref,
+  memoryHref,
 }: SelfLearningFieldProps) {
   const id = useId();
   const t = useTranslations('library');
@@ -107,12 +107,12 @@ export function SelfLearningField({
           {t('card.saveFailed')}
         </p>
       )}
-      {knowledgeHref !== null && (
+      {memoryHref !== null && (
         <ShellLink
-          href={knowledgeHref}
+          href={memoryHref}
           className="text-primary focus-visible:ring-ring/50 inline-flex w-fit items-center gap-1 rounded-sm text-sm leading-5 font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 pointer-coarse:min-h-11"
         >
-          {t('knowledge.entry')}
+          {t('memory.entry')}
           <ArrowRight aria-hidden className="size-3.5" />
         </ShellLink>
       )}

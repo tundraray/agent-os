@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import {
-  RUN_CODE_TOOL,
+  isCodeRunCall,
   type RunCodeArgs,
   type ToolOutcome,
   type ToolRefusalReason,
@@ -150,7 +150,7 @@ export function createCodeCall(options: {
         text: detail === undefined ? text : `${text}: ${detail}`,
       };
     };
-    if (name === RUN_CODE_TOOL || scope.agentToolNames.includes(name)) {
+    if (isCodeRunCall(name, null) || scope.agentToolNames.includes(name)) {
       return refuse('not_callable_from_code');
     }
     if (
@@ -196,7 +196,7 @@ export function createCodeCall(options: {
       return refuse('changing_in_read_run');
     }
     const mcpCall: McpCall = { ...call, tool: call.tool };
-    const execution = await callMcp(mcpCall, scope.signal);
+    const execution = await callMcp(mcpCall, scope.signal, scope.logger);
     return execution.kind === 'refused' ? refuse(execution.reason) : execution;
   }
 

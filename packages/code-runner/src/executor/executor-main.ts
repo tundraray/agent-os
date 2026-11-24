@@ -56,6 +56,7 @@ const take = (message: HostMessage): void => {
   started = true;
   void runScript({
     script: message.script,
+    input: message.input,
     limits: message.limits,
     quickJs,
     bridge: {

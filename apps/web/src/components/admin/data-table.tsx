@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
 } from 'react';
 import Link from 'next/link';
 import {
+  ChevronRightIcon,
   CircleXIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
@@ -48,7 +50,8 @@ const SKELETON_WIDTHS = [
   'w-2/5',
   'w-3/5',
 ] as const;
-const FOCUSABLE = 'a[href], button:not(:disabled)';
+/** A row's expand button is skipped: focus after a departure goes to the row's link or action. */
+const FOCUSABLE = 'a[href], button:not(:disabled):not([data-row-expand])';
 
 export type DataTableColumn = {
   header: string;
@@ -82,6 +85,8 @@ export type DataTableRow = {
   href?: string;
   /** Row with actions: buttons or the «⋯» menu at the right end (`DataTableProps.actionsAs`). */
   actions?: readonly DataTableAction[];
+  /** Expandable row: the first cell is the button that shows this text under the row. */
+  text?: ReactNode;
   /** Parts of the record shown under it, always expanded. */
   nested?: ReadonlyArray<{ key: string; cells: readonly ReactNode[] }>;
   /** The last action on the row failed: the text is shown under the row. */
@@ -161,6 +166,8 @@ type DataTableProps = {
   state: DataTableState;
   /** Up to two actions read as buttons; the screen picks the «⋯» menu where the UXRD draws one. */
   actionsAs?: 'buttons' | 'menu';
+  /** «Две строки» below 768 px: no header, the first cell, then the others joined by « · ». Plain rows only. */
+  twoLines?: boolean;
 };
 
 type Leaving = { row: DataTableRow; afterKey: string | null };
@@ -278,6 +285,7 @@ export function DataTable({
   columns,
   state,
   actionsAs = 'buttons',
+  twoLines = false,
 }: DataTableProps) {
   const rows = state.status === 'ready' ? state.rows : NO_ROWS;
   const [shown, setShown] = useState<Shown>({
@@ -326,8 +334,32 @@ export function DataTable({
 
   return (
     <div className={cn('flex flex-col', hasResult && '@container')}>
+      {twoLines && (
+        <ul aria-label={caption} className="divide-y divide-border md:hidden">
+          {state.rows.map((row) => (
+            <li key={row.key} className="flex flex-col gap-0.5 py-2">
+              <div className="text-sm leading-5 text-foreground">
+                {row.cells[0]}
+              </div>
+              <div className="text-xs leading-4 text-muted-foreground">
+                {row.cells.slice(1).map((cell, index) => (
+                  <span key={columns[index + 1]?.header ?? index}>
+                    {index > 0 && ' · '}
+                    {cell}
+                  </span>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {/* `mb-px`: the table's scroll container would cut the last row's 3 px focus ring by its last pixel. */}
-      <Table className="mb-px text-data text-foreground">
+      <Table
+        className={cn(
+          'mb-px text-data text-foreground',
+          twoLines && 'max-md:hidden',
+        )}
+      >
         <TableCaption className="sr-only">{caption}</TableCaption>
         <HeaderRow columns={columns} withActions={hasActions} />
         <TableBody ref={bodyRef}>
@@ -450,6 +482,8 @@ function RowGroup({
   leaving,
 }: RowGroupProps) {
   const t = useTranslations('admin.table');
+  const [expanded, setExpanded] = useState(false);
+  const textId = useId();
   const interactive =
     row.href !== undefined ||
     (row.actions !== undefined && row.actions.length > 0);
@@ -463,7 +497,8 @@ function RowGroup({
     'group/row h-8 border-border transition-[height] duration-(--duration-fast) hover:bg-transparent data-leaving:h-0 motion-reduce:transition-none pointer-coarse:h-11 pointer-coarse:data-leaving:h-0';
   const columnCount = columns.length + (withActions ? 1 : 0);
   const lineUnder = row.result !== undefined || row.error !== undefined;
-  const followed = (row.nested?.length ?? 0) > 0 || lineUnder;
+  const open = expanded && row.text !== undefined;
+  const followed = (row.nested?.length ?? 0) > 0 || lineUnder || open;
 
   return (
     <>
@@ -484,6 +519,24 @@ function RowGroup({
             <Collapsible shrinks={shrinks(columns, index)}>
               {index === 0 && row.href !== undefined ? (
                 <RowLink href={row.href}>{cell}</RowLink>
+              ) : index === 0 && row.text !== undefined ? (
+                <button
+                  type="button"
+                  data-row-expand
+                  aria-expanded={expanded}
+                  aria-controls={textId}
+                  onClick={() => setExpanded(!expanded)}
+                  className="flex w-full min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+                >
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn(
+                      'size-3.5 shrink-0 text-muted-foreground',
+                      expanded && 'rotate-90',
+                    )}
+                  />
+                  {cell}
+                </button>
               ) : (
                 cell
               )}
@@ -502,6 +555,26 @@ function RowGroup({
           </TableCell>
         )}
       </TableRow>
+      {open && (
+        <TableRow
+          {...groupProps}
+          className={cn(
+            'border-border hover:bg-transparent',
+            lineUnder && 'border-b-0',
+          )}
+        >
+          <TableCell colSpan={columnCount} className="pr-3 pb-2 pl-8">
+            <Collapsible shrinks>
+              <p
+                id={textId}
+                className="text-sm leading-5 wrap-break-word whitespace-pre-wrap text-foreground"
+              >
+                {row.text}
+              </p>
+            </Collapsible>
+          </TableCell>
+        </TableRow>
+      )}
       {row.nested?.map((nested, nestedIndex) => (
         <TableRow
           key={nested.key}

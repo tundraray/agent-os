@@ -21,7 +21,7 @@ import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { OwnerDisabledError } from '../../access-gate';
 import { AGENTS_CONFIG, CODE_RUNNER, MASK_SECRETS } from '../../agents.tokens';
 import type { AgentsConfig, CodeRunConfig } from '../../config';
-import { CallRecords, interruptedRunOutcome } from '../../store/call-records';
+import { CallRecords } from '../../store/call-records';
 import type { CodeCallScope } from '../code-call';
 import { RESULT_NOT_FOUND } from '../large-result';
 import type {
@@ -33,6 +33,7 @@ import type {
 import { callTargetOf, ToolRegistry } from '../tool-registry';
 import { ToolRunner } from '../tool-runner';
 import { canCallOf } from './can-call';
+import { createScriptTool } from './script-tool';
 
 /** What the texts of a run name: the run settings with its result limit. */
 type RunTextSettings = Omit<CodeRunConfig, 'maxConcurrent'>;
@@ -219,23 +220,40 @@ function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+/** What one code run executes: `run_code`'s script, a saved script or a draft (self-learning scripts KD-5). */
+export interface CodeRunRequest {
+  readonly code: string;
+  readonly runClass: RunCodeArgs['class'];
+  /** The script's global `input`: `null` for `run_code`. */
+  readonly input: unknown;
+  readonly description: string;
+  /** The saved script's name; `null` for `run_code`. */
+  readonly scriptName: string | null;
+}
+
+/** The one path of a code run; every entry (`run_code`, a script tool) calls the same instance. */
+export type CodeRun = (
+  request: CodeRunRequest,
+  call: OutsideToolInput<unknown>,
+) => Promise<ToolRunResult>;
+
 /** One run: what the requests of its script are checked against and written with. */
 interface RunScope {
   readonly caller: ToolCaller;
   readonly callId: string;
-  readonly runArgs: RunCodeArgs;
   readonly attempt: number;
   readonly codeScope: CodeCallScope;
-  readonly guard: OutsideToolInput<RunCodeArgs>['guard'];
+  readonly guard: OutsideToolInput<unknown>['guard'];
   readonly logger: Logger;
 }
 
 /**
- * `run_code` (design-code-execution.md, Contract «Инструмент `run_code`»; KD-3, KD-6, KD-7, KD-10,
- * KD-11): runs the model's script through `CodeRunner` on behalf of the owner. Every tool call of the
- * script gets its audit row through the step's `guard` before it reaches its server.
+ * The code run (design-code-execution.md, Contract «Инструмент `run_code`»; KD-3, KD-6, KD-7, KD-10,
+ * KD-11): runs a script through `CodeRunner` on behalf of the owner, with one set of the employees'
+ * run places for every entry. Every tool call of the script gets its audit row through the step's
+ * `guard` before it reaches its server.
  */
-function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
+function createCodeRun(deps: RunCodeDeps): CodeRun {
   const texts = runTexts(deps.codeRun);
   const seats = createSeats(deps.codeRun.maxConcurrentPerUser);
 
@@ -303,7 +321,10 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     if (execution.kind === 'aborted') {
       // A record that the call was cancelled, not a new action: its own transaction, no `guard` (Flow 4).
       await deps.codeCallRows.close(key, {
-        outcome: interruptedRunOutcome(run.runArgs),
+        outcome:
+          run.codeScope.runClass === 'write'
+            ? ToolOutcomeSchema.enum.unknown
+            : ToolOutcomeSchema.enum.interrupted,
         finishedAt: new Date(),
       });
       return { kind: 'finish', reason: 'aborted' };
@@ -369,20 +390,26 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
   /** Starts the run and turns its end into the tool's result. */
   async function runScript(
     run: RunScope,
-    input: OutsideToolInput<RunCodeArgs>,
+    request: CodeRunRequest,
+    signal: AbortSignal,
   ): Promise<ToolRunResult> {
     const startedAt = Date.now();
     let calls = 0;
     let fenced = false;
+    // The tools whose calls a training tree recorded and did not send, in call order (design-training.md).
+    const recorded: string[] = [];
     run.logger.info('code run started', {
-      runClass: run.runArgs.class,
-      confirmed: run.runArgs.class === 'write',
-      scriptSha256: sha256(run.runArgs.script),
+      runClass: request.runClass,
+      confirmed: request.runClass === 'write',
+      scriptSha256: sha256(request.code),
+      scriptName: request.scriptName,
+      versionNumber: run.caller.run.version.number,
       attempt: run.attempt,
-      description: run.runArgs.description,
+      description: request.description,
     });
     const outcome = await deps.codeRunner.run({
-      script: run.runArgs.script,
+      script: request.code,
+      input: request.input,
       limits: {
         timeoutMs: deps.codeRun.timeoutMs,
         memoryMb: deps.codeRun.memoryMb,
@@ -392,11 +419,15 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
         if (request.op === 'read') return answerRead(run, request);
         calls += 1;
         const answer = await answerCall(run, request, calls, runSignal);
-        if (answer !== 'fenced') return answer;
-        fenced = true;
-        return { kind: 'finish', reason: 'aborted' };
+        if (answer === 'fenced') {
+          fenced = true;
+          return { kind: 'finish', reason: 'aborted' };
+        }
+        if (answer.kind === 'error' && answer.error.outcome === 'recorded')
+          recorded.push(request.name);
+        return answer;
       },
-      signal: input.signal,
+      signal,
       logger: run.logger,
     });
 
@@ -415,20 +446,21 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       calls,
       durationMs: Date.now() - startedAt,
     });
-    return result;
+    return recorded.length === 0 ? result : { ...result, recorded };
   }
 
   /** The attempt of a run: 1 for `write` (it has no `run_attempt` record); for `read`, recorded through `guard` (KD-7). */
   async function attemptOf(
-    input: OutsideToolInput<RunCodeArgs>,
+    runClass: RunCodeArgs['class'],
+    call: OutsideToolInput<unknown>,
     logger: Logger,
   ): Promise<number | DoneResult> {
-    if (input.args.class === 'write') return 1;
-    const bumped = await input.guard(() =>
-      deps.callRecords.startAttempt(
-        { taskId: input.caller.agentId, callId: input.callId },
-        input.args,
-      ),
+    if (runClass === 'write') return 1;
+    const bumped = await call.guard(() =>
+      deps.callRecords.startAttempt({
+        taskId: call.caller.agentId,
+        callId: call.callId,
+      }),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');
@@ -445,6 +477,63 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
     return bumped.value;
   }
 
+  return async (request, call) => {
+    const { caller, callId } = call;
+    const logger = call.logger.child({ runId: callId });
+    // A `write` run starts only with the list of its decided request (DC-16); a `read` run has none.
+    let confirmedNames: readonly string[] | undefined;
+    if (request.runClass === 'write') {
+      const confirmed = confirmedNamesOf(call.confirmed);
+      if (!confirmed.ok) {
+        logger.warn(
+          'code run not started: the decided request has no readable list',
+        );
+        return failure(confirmed.text);
+      }
+      confirmedNames = confirmed.names;
+    }
+    const release = seats.take(caller.ownerId);
+    if (release === undefined) {
+      logger.warn('code run refused: the employee has no free run place', {
+        maxConcurrentPerUser: deps.codeRun.maxConcurrentPerUser,
+      });
+      return failure(texts.perUserLimit);
+    }
+    try {
+      const attempt = await attemptOf(request.runClass, call, logger);
+      if (typeof attempt !== 'number') return attempt;
+      const { registry } = deps;
+      // The servers the caller declares from its snapshot, not the library's record now (ADR-0011, ADR-0017).
+      const snapshot = await registry.declaredMcpTools(caller.servers);
+      return await runScript(
+        {
+          caller,
+          callId,
+          attempt,
+          guard: call.guard,
+          logger,
+          codeScope: {
+            caller,
+            snapshot,
+            runClass: request.runClass,
+            ...(confirmedNames === undefined ? {} : { confirmedNames }),
+            agentToolNames: registry.toolNames(),
+            callId,
+            signal: call.signal,
+            logger,
+          },
+        },
+        request,
+        call.signal,
+      );
+    } finally {
+      release();
+    }
+  };
+}
+
+/** `run_code`: the model's own script, a thin entry into the code run. */
+function createRunCodeTool(codeRun: CodeRun): OutsideAgentTool<RunCodeArgs> {
   return {
     name: RUN_CODE_TOOL,
     mode: 'outside',
@@ -457,69 +546,31 @@ function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
       content: (args, tools) => ({ canCall: canCallOf(args.script, tools) }),
     },
 
-    async execute(input) {
-      const { args, caller, callId } = input;
-      const logger = input.logger.child({ runId: callId });
-
-      let confirmedNames: readonly string[] | undefined;
-      if (args.class === 'write') {
-        const confirmed = confirmedNamesOf(input.confirmed);
-        if (!confirmed.ok) {
-          logger.warn(
-            'code run not started: the decided request has no readable list',
-          );
-          return failure(confirmed.text);
-        }
-        confirmedNames = confirmed.names;
-      }
-
-      const release = seats.take(caller.ownerId);
-      if (release === undefined) {
-        logger.warn('code run refused: the employee has no free run place', {
-          maxConcurrentPerUser: deps.codeRun.maxConcurrentPerUser,
-        });
-        return failure(texts.perUserLimit);
-      }
-      try {
-        const attempt = await attemptOf(input, logger);
-        if (typeof attempt !== 'number') return attempt;
-        const { registry } = deps;
-        // The servers the caller declares from its snapshot, not the library's record now (ADR-0011, ADR-0017).
-        const snapshot = await registry.declaredMcpTools(caller.servers);
-        return await runScript(
-          {
-            caller,
-            callId,
-            runArgs: args,
-            attempt,
-            guard: input.guard,
-            logger,
-            codeScope: {
-              caller,
-              snapshot,
-              runClass: args.class,
-              ...(confirmedNames === undefined ? {} : { confirmedNames }),
-              agentToolNames: registry.toolNames(),
-              callId,
-              signal: input.signal,
-              logger,
-            },
-          },
-          input,
-        );
-      } finally {
-        release();
-      }
+    execute(input) {
+      const { args } = input;
+      return codeRun(
+        {
+          code: args.script,
+          runClass: args.class,
+          input: null,
+          description: args.description,
+          scriptName: null,
+        },
+        input,
+      );
     },
   };
 }
 
 /**
- * Builds `run_code` and hands it to the tools library when the module starts: the tool reads the registry, so
- * the registry gets it through `useRunCode` rather than its constructor (no provider cycle).
+ * Builds the one code run, with one set of run places, and hands the tools library `run_code` and the builder
+ * of a script's tool over it when the module starts: the run reads the registry, so the registry gets them
+ * through `useCodeRun` rather than its constructor (no provider cycle).
  */
 @Injectable()
 export class RunCodeTool implements OnModuleInit {
+  private codeRun: CodeRun | undefined;
+
   constructor(
     @Inject(CODE_RUNNER) private readonly codeRunner: CodeRunner,
     @Inject(CallRecords) private readonly callRecords: CallRecords,
@@ -536,17 +587,29 @@ export class RunCodeTool implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.registry.useRunCode(
-      createRunCodeTool({
-        codeRunner: this.codeRunner,
-        callRecords: this.callRecords,
-        codeCallRows: this.codeCallRows,
-        toolResultRows: this.toolResultRows,
-        registry: this.registry,
-        runner: this.runner,
-        codeRun: this.config.codeRun,
-        maskSecrets: this.maskSecrets,
-      }),
+    const codeRun = createCodeRun({
+      codeRunner: this.codeRunner,
+      callRecords: this.callRecords,
+      codeCallRows: this.codeCallRows,
+      toolResultRows: this.toolResultRows,
+      registry: this.registry,
+      runner: this.runner,
+      codeRun: this.config.codeRun,
+      maskSecrets: this.maskSecrets,
+    });
+    this.codeRun = codeRun;
+    this.registry.useCodeRun(createRunCodeTool(codeRun), (script) =>
+      createScriptTool(script, codeRun),
     );
+  }
+
+  /** The same code run `run_code` and the scripts use, for the trainer's `try_script`: one set of run places. */
+  run(
+    request: CodeRunRequest,
+    call: OutsideToolInput<unknown>,
+  ): Promise<ToolRunResult> {
+    if (this.codeRun === undefined)
+      throw new Error('The code run is used before RunCodeTool started');
+    return this.codeRun(request, call);
   }
 }

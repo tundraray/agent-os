@@ -1,4 +1,8 @@
-import { ALL_SERVERS, McpServerModeSchema } from '@agent-os/contracts';
+import {
+  ALL_SERVERS,
+  McpServerModeSchema,
+  type Script,
+} from '@agent-os/contracts';
 import {
   McpAccountsRepository,
   McpServersRepository,
@@ -31,8 +35,8 @@ export type McpSessionTool = OfferedTool & {
 /**
  * A tool one session offers its model, and what runs it. `kind` says whose it is: a `system` tool is the
  * platform's own — the agent declares it by name, or gets it as a root or as every session does; an
- * `external` tool is chosen by the owner's rights alone — a tool of an MCP server (`mcp`), or `run_code`
- * (`tool`), which only calls such tools.
+ * `external` tool is chosen by the owner's rights alone — a tool of an MCP server (`mcp`), or `run_code` and
+ * a saved script's tool (`tool`), which only call such tools.
  */
 export type SessionTool =
   | (OfferedTool & {
@@ -103,8 +107,16 @@ export function loggedArgsOf(
 @Injectable()
 export class ToolRegistry {
   private readonly tools = new Map<string, AgentTool>();
-  /** `run_code`: in every session, never named by a declaration (code-execution KD-3, DC-1). */
-  private runCode: AgentTool | undefined;
+  /**
+   * `run_code`, in every session and never named by a declaration (code-execution KD-3, DC-1), and the builder of
+   * a saved script's tool; both run over the one code run.
+   */
+  private codeRun:
+    | {
+        readonly runCode: AgentTool;
+        readonly scriptTool: (script: Script) => AgentTool;
+      }
+    | undefined;
   private sealed = false;
 
   constructor(
@@ -118,15 +130,18 @@ export class ToolRegistry {
   ) {}
 
   /**
-   * Sets `run_code`, once: the tool is built over the registry, so it arrives after the registry is made. A
-   * second call, or a name a registered tool already has, throws.
+   * Sets `run_code` and the builder of a script's tool, once: they are built over the registry, so they arrive
+   * after the registry is made. A second call, or a name a registered tool already has, throws.
    */
-  useRunCode(tool: AgentTool): void {
-    if (this.runCode !== undefined)
-      throw new Error(`Tool ${tool.name} is set as run_code twice`);
-    if (this.tools.has(tool.name))
-      throw new Error(`Tool ${tool.name} is registered twice`);
-    this.runCode = tool;
+  useCodeRun(
+    runCode: AgentTool,
+    scriptTool: (script: Script) => AgentTool,
+  ): void {
+    if (this.codeRun !== undefined)
+      throw new Error(`Tool ${runCode.name} is set as run_code twice`);
+    if (this.tools.has(runCode.name))
+      throw new Error(`Tool ${runCode.name} is registered twice`);
+    this.codeRun = { runCode, scriptTool };
   }
 
   /**
@@ -139,7 +154,7 @@ export class ToolRegistry {
         `Tool ${tool.name} is registered after start(): register tools before it`,
       );
     }
-    if (this.tools.has(tool.name) || tool.name === this.runCode?.name) {
+    if (this.tools.has(tool.name) || tool.name === this.codeRun?.runCode.name) {
       throw new Error(`Tool ${tool.name} is registered twice`);
     }
     this.tools.set(tool.name, tool);
@@ -155,9 +170,9 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
-  /** A registered tool, or `run_code`, by its name. */
+  /** A registered tool, or `run_code`, by its name; a script's tool is not among them. */
   toolOf(name: string): AgentTool | undefined {
-    const runCode = this.runCodeTool();
+    const { runCode } = this.codeRunTools();
     return name === runCode.name ? runCode : this.tools.get(name);
   }
 
@@ -234,14 +249,14 @@ export class ToolRegistry {
     return mcpToolsOf(await this.enabledServers(servers));
   }
 
-  /** `run_code`, which every tool set and every lookup by name needs: `useRunCode` sets it before them. */
-  private runCodeTool(): AgentTool {
-    if (this.runCode === undefined) {
+  /** `run_code` and the script builder, which every tool set and every lookup by name needs: `useCodeRun` sets them before them. */
+  private codeRunTools(): NonNullable<ToolRegistry['codeRun']> {
+    if (this.codeRun === undefined) {
       throw new Error(
-        'The tool registry is used before run_code was set: call useRunCode() first',
+        'The tool registry is used before run_code was set: call useCodeRun() first',
       );
     }
-    return this.runCode;
+    return this.codeRun;
   }
 
   private declared(name: string): AgentTool {
@@ -253,9 +268,12 @@ export class ToolRegistry {
     return tool;
   }
 
-  /** The declared tools, the root's tools for a root, the tools of every session, then `run_code` (KD-6). */
+  /**
+   * The declared tools, the root's tools for a root, the tools of every session, then `run_code` (KD-6) and the
+   * tool of each script the declaration owns (self-learning scripts KD-4).
+   */
   private registeredTools(declaration: ToolDeclaration): SessionTool[] {
-    const runCode = this.runCodeTool();
+    const { runCode, scriptTool } = this.codeRunTools();
     const all = [...this.tools.values()];
     const system = [
       ...declaration.system.map((name) => this.declared(name)),
@@ -264,13 +282,15 @@ export class ToolRegistry {
     ];
     return [
       ...system.map((tool) => systemTool(tool, declaration)),
-      {
-        kind: 'external',
-        name: runCode.name,
-        description: runCode.description,
-        inputSchema: runCode.argsSchema,
-        tool: runCode,
-      },
+      ...[runCode, ...declaration.scripts.map(scriptTool)].map(
+        (tool): SessionTool => ({
+          kind: 'external',
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.argsSchema,
+          tool,
+        }),
+      ),
     ];
   }
 

@@ -190,6 +190,10 @@ export const RoleSummarySchema = z.object({
   name: z.string(),
   memberCount: z.number().int().nonnegative(),
   isAdmin: z.boolean(),
+  /** The right to train the employee's own agents (KD-8). */
+  trainOwn: z.boolean(),
+  /** The right to train any agent of the catalogue or the panel (KD-8). */
+  trainAny: z.boolean(),
   builtin: z.boolean(),
 });
 export type RoleSummary = z.infer<typeof RoleSummarySchema>;
@@ -210,11 +214,16 @@ export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 export const CreateRoleBodySchema = z.object({ name: RoleNameSchema });
 export type CreateRoleBody = z.infer<typeof CreateRoleBodySchema>;
 
-/** Body of PATCH /api/admin/roles/:id: `name` and/or `isAdmin`. */
+/** Body of PATCH /api/admin/roles/:id: at least one of `name`, `isAdmin`, `trainOwn`, `trainAny`. */
 export const UpdateRoleBodySchema = z
-  .object({ name: RoleNameSchema.optional(), isAdmin: z.boolean().optional() })
-  .refine((body) => body.name !== undefined || body.isAdmin !== undefined, {
-    message: 'name or isAdmin is required',
+  .object({
+    name: RoleNameSchema.optional(),
+    isAdmin: z.boolean().optional(),
+    trainOwn: z.boolean().optional(),
+    trainAny: z.boolean().optional(),
+  })
+  .refine((body) => Object.values(body).some((v) => v !== undefined), {
+    message: 'name, isAdmin, trainOwn or trainAny is required',
   });
 export type UpdateRoleBody = z.infer<typeof UpdateRoleBodySchema>;
 

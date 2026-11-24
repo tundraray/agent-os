@@ -207,6 +207,7 @@ describe('data-model / agents: a child takes its model, version and name from th
             taskList: false,
             listDelegation: false,
             selfLearning: false,
+            scripts: [],
           }),
         );
         const model = createScriptedModel();

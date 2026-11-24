@@ -6,6 +6,7 @@ import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
   CHAT_BUILTIN_KEY,
+  TRAINER_BUILTIN_KEY,
   type BannedRecord,
   type RecordSummary,
 } from '@agent-os/contracts';
@@ -21,7 +22,7 @@ import {
   type DataTableRow,
 } from '@/components/admin/data-table';
 import { DeleteRecordDialog } from '@/components/library/delete-record-dialog';
-import { KnowledgePage } from '@/components/library/knowledge-page';
+import { MemoryPage } from '@/components/library/memory-page';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
@@ -54,7 +55,7 @@ import {
   panelRecordHref,
   type ClosableRecord,
 } from './employee-record-page';
-import { KnowledgeSettingsForm } from './knowledge-settings-form';
+import { SelfLearningSettingsForm } from './self-learning-settings-form';
 import { LibrarySettingsForm } from './library-settings-form';
 import { useCreatedHandoff } from '@/components/library/record-editor';
 import { NewSystemRecordPage, SystemRecordPage } from './system-record-page';
@@ -95,8 +96,8 @@ type LibrarySectionProps = {
 export function LibrarySection({ page }: LibrarySectionProps) {
   if (page.kind === 'record')
     return <LibraryRecord key={page.key} id={page.key} />;
-  if (page.kind === 'knowledge')
-    return <KnowledgePage key={page.key} id={page.key} variant="panel" />;
+  if (page.kind === 'memory')
+    return <MemoryPage key={page.key} id={page.key} variant="panel" />;
   if (page.kind === 'new') return <NewSystemRecordPage />;
   return (
     <LibraryTabs
@@ -173,7 +174,7 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
             <div className="flex flex-col gap-8">
               <SystemTab caption={t('tabs.system')} />
               <LibrarySettingsForm />
-              <KnowledgeSettingsForm />
+              <SelfLearningSettingsForm />
             </div>
           )}
           {tab === 'shared' && (
@@ -216,7 +217,10 @@ function NameCell({ name, extra }: { name: string; extra?: ReactNode }) {
 function AudienceCell({ record }: { record: RecordSummary }) {
   const t = useTranslations('admin.library');
   const locale = useLocale();
-  if (record.builtinKey === CHAT_BUILTIN_KEY)
+  if (
+    record.builtinKey === CHAT_BUILTIN_KEY ||
+    record.builtinKey === TRAINER_BUILTIN_KEY
+  )
     return <>{t('everyoneWithRights')}</>;
   if (record.audience.everyone === true) return <>{t('everyone')}</>;
   const holders = [

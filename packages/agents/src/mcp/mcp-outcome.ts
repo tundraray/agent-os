@@ -3,7 +3,10 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 import type { McpCallResponse } from './mcp-client';
 import type { McpFailureReason } from './mcp-failure';
 
-/** The outcomes an MCP response can have; refusals, rejections and interruptions are decided elsewhere. */
+/**
+ * The outcomes an MCP call can have: those of a response, and `recorded` of a call never sent; refusals,
+ * rejections and interruptions are decided elsewhere.
+ */
 export type McpOutcome = Extract<
   ToolOutcome,
   | 'success'
@@ -12,6 +15,7 @@ export type McpOutcome = Extract<
   | 'transport_failure'
   | 'unknown'
   | 'auth_required'
+  | 'recorded'
 >;
 
 export interface McpOutcomeResult {

@@ -2,6 +2,9 @@ import {
   type AgentVersion,
   type DeepAgentContent,
   GENERAL_PURPOSE_SUBAGENT,
+  MEMORY_TOOLS,
+  NOTEPAD_PAST_TOOL,
+  NOTEPAD_TOOLS,
   SUBAGENT_MAX_RUNS_MAX,
   type Subagent,
 } from '@agent-os/contracts';
@@ -12,11 +15,20 @@ import type { RunDefinition, RunStart } from '../start/run-definition';
 /** The tool a deep agent assigns work to its subagents with (deep-agents/design-task.md KD-6). */
 export const TASK_TOOL = 'task';
 
+/** A subagent writes in its deep agent's notepad but does not list past documents (KD-3). */
+const SUBAGENT_NOTEPAD_TOOLS = NOTEPAD_TOOLS.filter(
+  (tool) => tool !== NOTEPAD_PAST_TOOL,
+);
+
 /** A version of a deep agent. */
 export type DeepAgentVersion = Extract<AgentVersion, { kind: 'deep_agent' }>;
 
 /** One subagent a deep agent may call: its version's, or the built-in `general-purpose`. */
 export type TeamMember = Subagent;
+
+/** How the run's result is written: the deep agent and its final subagent get it (design-notepad.md KD-4). */
+const REPORT_RULE =
+  'Write the full result for the employee as a notepad document marked as the report, a large one in parts; keep your last message short and name the document in it.';
 
 /** The platform text every deep agent gets after its record's prompt (deep-agents KD-2; design-task.md KD-6). */
 export const DEEP_AGENT_RULES = [
@@ -34,11 +46,11 @@ export const LIST_DELEGATION_RULES = [
   'Its result is a table with one row per item; a table too long is cut, and the full one is read with read_tool_result.',
 ].join('\n');
 
-/** Who ends the run (DC-7): the final subagent's answer, or the deep agent's own answer. */
+/** Who writes the report and ends the run (DC-7, KD-4): the deep agent itself, or its final subagent. */
 function finishRule(finalSubagent: string | null): string {
   return finalSubagent === null
-    ? 'When the work is done, write the answer yourself as plain text without tool calls.'
-    : `The answer is the last message of ${finalSubagent} given a single task: after it has finished, end with a short text without tool calls.`;
+    ? `${REPORT_RULE}\nWhen the work is done, end with a short message without tool calls.`
+    : `The report document is written by ${finalSubagent}, never by you. The answer is the last message of ${finalSubagent} given a single task: after it has finished, end with a short text without tool calls.`;
 }
 
 /** The record's prompt first, then the platform rules (KD-2). */
@@ -86,38 +98,6 @@ function teamLine(subagent: TeamMember): string {
   );
 }
 
-/**
- * The servers lessons are checked against, without repeats, `*` kept as is (deep-agents KD-1): the deep
- * agent calls tools itself, so its own servers count beside those of every subagent.
- */
-function learningServers(content: DeepAgentContent): string[] {
-  return [
-    ...new Set([
-      ...content.servers,
-      ...content.subagents.flatMap((subagent) => subagent.servers),
-    ]),
-  ];
-}
-
-/** A run that learns: the deep agent and the servers of the lessons. */
-export interface LearningRun {
-  readonly recordId: string;
-  readonly servers: readonly string[];
-}
-
-/**
- * The learning of every run on a deep agent's version, the deep agent's and each team member's alike
- * (self-learning design-core.md KD-2; deep-agents KD-1); `null` — it does not learn. The flag is the
- * version's, never the agent's now.
- */
-function learningOf(version: DeepAgentVersion): LearningRun | null {
-  if (!version.content.selfLearning) return null;
-  return {
-    recordId: version.agentId,
-    servers: learningServers(version.content),
-  };
-}
-
 /** The deep agent's branch of `runDefinition`: the version's prompt with the platform rules, `task` and the team. */
 export function deepAgentDefinition(
   run: RunStart,
@@ -129,13 +109,18 @@ export function deepAgentDefinition(
     prompt: deepAgentPrompt(content),
     model: run.model,
     maxTurns: content.maxTurns,
-    tools: [TASK_TOOL],
+    // Every deep agent keeps a notepad (design-notepad.md KD-3); with self-learning on it also gets the memory tools.
+    tools: [
+      TASK_TOOL,
+      ...NOTEPAD_TOOLS,
+      ...(content.selfLearning ? MEMORY_TOOLS : []),
+    ],
     servers: content.servers,
     startable: delegationTeam(content).map(teamLine),
     agents: [],
     taskList: content.taskList,
     listDelegation: content.listDelegation,
-    learning: learningOf(version),
+    scripts: content.scripts.filter((script) => script.owner === null),
   };
 }
 
@@ -147,7 +132,10 @@ function teamMember(
   return delegationTeam(content).find((member) => member.name === name) ?? null;
 }
 
-/** A team member's branch of `runDefinition`: the member alone, no system tools, the deep agent's learning. */
+/**
+ * A team member's branch of `runDefinition`: the member alone, with the notepad of its deep agent's run but
+ * not its past documents, and the deep agent's memory tools.
+ */
 export function subagentDefinition(
   run: RunStart,
   version: DeepAgentVersion,
@@ -161,16 +149,23 @@ export function subagentDefinition(
   }
   return {
     name: run.name,
-    prompt: member.prompt,
+    prompt:
+      name === version.content.finalSubagent
+        ? `${member.prompt}\n\n${REPORT_RULE}`
+        : member.prompt,
     model: run.model,
     maxTurns: member.maxTurns,
-    tools: [],
+    tools: [
+      ...SUBAGENT_NOTEPAD_TOOLS,
+      ...(version.content.selfLearning ? MEMORY_TOOLS : []),
+    ],
     servers: member.servers,
     startable: [],
     agents: [],
     taskList: member.taskList,
     listDelegation: false,
-    learning: learningOf(version),
+    // `general-purpose` never owns a script (KD-4).
+    scripts: version.content.scripts.filter((script) => script.owner === name),
   };
 }
 

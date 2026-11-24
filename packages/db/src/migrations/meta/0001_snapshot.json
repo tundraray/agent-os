@@ -1,6 +1,6 @@
 {
-  "id": "009f2ce7-1cf9-4125-a87a-b1746a384f2f",
-  "prevId": "5605cadc-c49a-44c7-a2bb-f2d560b4f01b",
+  "id": "0f4f0d48-2962-4adb-99e6-c379c441bd77",
+  "prevId": "223b2fd3-10ca-4a32-945f-a74adefff00a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -109,15 +109,15 @@
           "primaryKey": false,
           "notNull": true,
           "identity": {
-            "type": "always",
             "name": "runtime_tasks_created_seq_seq",
-            "schema": "app",
             "increment": "1",
-            "startWith": "1",
             "minValue": "1",
             "maxValue": "9223372036854775807",
+            "startWith": "1",
             "cache": "1",
-            "cycle": false
+            "cycle": false,
+            "schema": "app",
+            "type": "always"
           }
         },
         "updated_at": {
@@ -144,6 +144,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "exclusive_key": {
+          "name": "exclusive_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -164,10 +170,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"app\".\"runtime_tasks\".\"status\" = 'queued'",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"app\".\"runtime_tasks\".\"status\" = 'queued'",
+          "concurrently": false
         },
         "runtime_tasks_root_idx": {
           "name": "runtime_tasks_root_idx",
@@ -180,9 +186,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "runtime_tasks_parent_idx": {
           "name": "runtime_tasks_parent_idx",
@@ -195,53 +201,75 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
+        },
+        "runtime_tasks_exclusive_key_idx": {
+          "name": "runtime_tasks_exclusive_key_idx",
+          "columns": [
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "exclusive_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"app\".\"runtime_tasks\".\"exclusive_key\" is not null and \"app\".\"runtime_tasks\".\"status\" in ('queued', 'running', 'waiting')",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "runtime_tasks_owner_id_identity_users_id_fk": {
           "name": "runtime_tasks_owner_id_identity_users_id_fk",
           "tableFrom": "runtime_tasks",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "runtime_tasks_parent_id_runtime_tasks_task_id_fk": {
           "name": "runtime_tasks_parent_id_runtime_tasks_task_id_fk",
           "tableFrom": "runtime_tasks",
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
           "columnsFrom": [
             "parent_id"
           ],
+          "tableTo": "runtime_tasks",
+          "schemaTo": "app",
           "columnsTo": [
             "task_id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "runtime_tasks_root_id_runtime_tasks_task_id_fk": {
           "name": "runtime_tasks_root_id_runtime_tasks_task_id_fk",
           "tableFrom": "runtime_tasks",
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
           "columnsFrom": [
             "root_id"
           ],
+          "tableTo": "runtime_tasks",
+          "schemaTo": "app",
           "columnsTo": [
             "task_id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -285,15 +313,15 @@
           "primaryKey": false,
           "notNull": true,
           "identity": {
-            "type": "always",
             "name": "runtime_inbox_seq_seq",
-            "schema": "app",
             "increment": "1",
-            "startWith": "1",
             "minValue": "1",
             "maxValue": "9223372036854775807",
+            "startWith": "1",
             "cache": "1",
-            "cycle": false
+            "cycle": false,
+            "schema": "app",
+            "type": "always"
           }
         },
         "kind": {
@@ -347,26 +375,26 @@
             }
           ],
           "isUnique": false,
-          "where": "\"app\".\"runtime_inbox\".\"delivered_at\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"app\".\"runtime_inbox\".\"delivered_at\" is null",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "runtime_inbox_recipient_id_runtime_tasks_task_id_fk": {
           "name": "runtime_inbox_recipient_id_runtime_tasks_task_id_fk",
           "tableFrom": "runtime_inbox",
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
           "columnsFrom": [
             "recipient_id"
           ],
+          "tableTo": "runtime_tasks",
+          "schemaTo": "app",
           "columnsTo": [
             "task_id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -459,9 +487,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "runtime_model_calls_task_idx": {
           "name": "runtime_model_calls_task_idx",
@@ -474,39 +502,39 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "runtime_model_calls_owner_id_identity_users_id_fk": {
           "name": "runtime_model_calls_owner_id_identity_users_id_fk",
           "tableFrom": "runtime_model_calls",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "runtime_model_calls_task_id_runtime_tasks_task_id_fk": {
           "name": "runtime_model_calls_task_id_runtime_tasks_task_id_fk",
           "tableFrom": "runtime_model_calls",
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
           "columnsFrom": [
             "task_id"
           ],
+          "tableTo": "runtime_tasks",
+          "schemaTo": "app",
           "columnsTo": [
             "task_id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -658,9 +686,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
+        },
+        "conversations_agent_version_idx": {
+          "name": "conversations_agent_version_idx",
+          "columns": [
+            {
+              "expression": "agent_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "conversations_parent_idx": {
           "name": "conversations_parent_idx",
@@ -673,9 +716,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "conversations_owner_page_idx": {
           "name": "conversations_owner_page_idx",
@@ -700,68 +743,68 @@
             }
           ],
           "isUnique": false,
-          "where": "\"app\".\"conversations\".\"parent_id\" IS NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"app\".\"conversations\".\"parent_id\" IS NULL",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "conversations_id_runtime_tasks_task_id_fk": {
           "name": "conversations_id_runtime_tasks_task_id_fk",
           "tableFrom": "conversations",
-          "tableTo": "runtime_tasks",
-          "schemaTo": "app",
           "columnsFrom": [
             "id"
           ],
+          "tableTo": "runtime_tasks",
+          "schemaTo": "app",
           "columnsTo": [
             "task_id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "conversations_parent_id_conversations_id_fk": {
           "name": "conversations_parent_id_conversations_id_fk",
           "tableFrom": "conversations",
-          "tableTo": "conversations",
-          "schemaTo": "app",
           "columnsFrom": [
             "parent_id"
           ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "conversations_owner_id_identity_users_id_fk": {
           "name": "conversations_owner_id_identity_users_id_fk",
           "tableFrom": "conversations",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "conversations_agent_version_id_agent_versions_id_fk": {
           "name": "conversations_agent_version_id_agent_versions_id_fk",
           "tableFrom": "conversations",
-          "tableTo": "agent_versions",
-          "schemaTo": "app",
           "columnsFrom": [
             "agent_version_id"
           ],
+          "tableTo": "agent_versions",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         }
       },
       "compositePrimaryKeys": {},
@@ -813,12 +856,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -845,9 +882,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "messages_call_once_idx": {
           "name": "messages_call_once_idx",
@@ -872,48 +909,26 @@
             }
           ],
           "isUnique": true,
+          "with": {},
+          "method": "btree",
           "where": "\"app\".\"messages\".\"kind\" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'tool_result')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "messages_result_idx": {
-          "name": "messages_result_idx",
-          "columns": [
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "finished_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"app\".\"messages\".\"kind\" = 'tool_result'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "messages_conversation_id_conversations_id_fk": {
           "name": "messages_conversation_id_conversations_id_fk",
           "tableFrom": "messages",
-          "tableTo": "conversations",
-          "schemaTo": "app",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -935,10 +950,6 @@
         "messages_call_id_check": {
           "name": "messages_call_id_check",
           "value": "(\"app\".\"messages\".\"call_id\" is not null) = (\"app\".\"messages\".\"kind\" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'run_attempt', 'tool_result'))"
-        },
-        "messages_finished_at_check": {
-          "name": "messages_finished_at_check",
-          "value": "(\"app\".\"messages\".\"finished_at\" is not null) = (\"app\".\"messages\".\"kind\" = 'tool_result')"
         }
       },
       "isRLSEnabled": false
@@ -984,16 +995,16 @@
         "tool_results_conversation_id_conversations_id_fk": {
           "name": "tool_results_conversation_id_conversations_id_fk",
           "tableFrom": "tool_results",
-          "tableTo": "conversations",
-          "schemaTo": "app",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1080,16 +1091,16 @@
         "code_calls_conversation_id_conversations_id_fk": {
           "name": "code_calls_conversation_id_conversations_id_fk",
           "tableFrom": "code_calls",
-          "tableTo": "conversations",
-          "schemaTo": "app",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1108,7 +1119,7 @@
       "checkConstraints": {
         "code_calls_outcome_check": {
           "name": "code_calls_outcome_check",
-          "value": "\"app\".\"code_calls\".\"outcome\" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required')"
+          "value": "\"app\".\"code_calls\".\"outcome\" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required', 'recorded')"
         },
         "code_calls_refusal_reason_check": {
           "name": "code_calls_refusal_reason_check",
@@ -1191,16 +1202,16 @@
         "conversation_tasks_conversation_id_conversations_id_fk": {
           "name": "conversation_tasks_conversation_id_conversations_id_fk",
           "tableFrom": "conversation_tasks",
-          "tableTo": "conversations",
-          "schemaTo": "app",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1361,30 +1372,30 @@
         "mcp_accounts_owner_id_identity_users_id_fk": {
           "name": "mcp_accounts_owner_id_identity_users_id_fk",
           "tableFrom": "mcp_accounts",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "mcp_accounts_server_mcp_servers_name_fk": {
           "name": "mcp_accounts_server_mcp_servers_name_fk",
           "tableFrom": "mcp_accounts",
-          "tableTo": "mcp_servers",
-          "schemaTo": "app",
           "columnsFrom": [
             "server"
           ],
+          "tableTo": "mcp_servers",
+          "schemaTo": "app",
           "columnsTo": [
             "name"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1546,9 +1557,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "identity_users_login_idx": {
           "name": "identity_users_login_idx",
@@ -1561,9 +1572,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -1606,6 +1617,20 @@
           "notNull": true,
           "default": false
         },
+        "train_own": {
+          "name": "train_own",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "train_any": {
+          "name": "train_any",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "builtin": {
           "name": "builtin",
           "type": "boolean",
@@ -1627,15 +1652,15 @@
           "columns": [
             {
               "expression": "lower(\"name\")",
-              "asc": true,
               "isExpression": true,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -1674,39 +1699,39 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "identity_role_members_role_id_identity_roles_id_fk": {
           "name": "identity_role_members_role_id_identity_roles_id_fk",
           "tableFrom": "identity_role_members",
-          "tableTo": "identity_roles",
-          "schemaTo": "app",
           "columnsFrom": [
             "role_id"
           ],
+          "tableTo": "identity_roles",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "identity_role_members_user_id_identity_users_id_fk": {
           "name": "identity_role_members_user_id_identity_users_id_fk",
           "tableFrom": "identity_role_members",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "user_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1848,26 +1873,26 @@
         "identity_login_requests_provider_id_identity_providers_id_fk": {
           "name": "identity_login_requests_provider_id_identity_providers_id_fk",
           "tableFrom": "identity_login_requests",
-          "tableTo": "identity_providers",
-          "schemaTo": "app",
           "columnsFrom": [
             "provider_id"
           ],
+          "tableTo": "identity_providers",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "identity_login_requests_state_key": {
           "name": "identity_login_requests_state_key",
-          "nullsNotDistinct": false,
           "columns": [
             "state"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -1930,35 +1955,35 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "identity_sessions_user_id_identity_users_id_fk": {
           "name": "identity_sessions_user_id_identity_users_id_fk",
           "tableFrom": "identity_sessions",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "user_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "identity_sessions_token_hash_key": {
           "name": "identity_sessions_token_hash_key",
-          "nullsNotDistinct": false,
           "columns": [
             "token_hash"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -2074,16 +2099,16 @@
         "models_provider_model_providers_name_fk": {
           "name": "models_provider_model_providers_name_fk",
           "tableFrom": "models",
-          "tableTo": "model_providers",
-          "schemaTo": "app",
           "columnsFrom": [
             "provider"
           ],
+          "tableTo": "model_providers",
+          "schemaTo": "app",
           "columnsTo": [
             "name"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         }
       },
       "compositePrimaryKeys": {},
@@ -2196,9 +2221,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "access_grants_server_idx": {
           "name": "access_grants_server_idx",
@@ -2211,74 +2236,73 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "access_grants_role_id_identity_roles_id_fk": {
           "name": "access_grants_role_id_identity_roles_id_fk",
           "tableFrom": "access_grants",
-          "tableTo": "identity_roles",
-          "schemaTo": "app",
           "columnsFrom": [
             "role_id"
           ],
+          "tableTo": "identity_roles",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "access_grants_user_id_identity_users_id_fk": {
           "name": "access_grants_user_id_identity_users_id_fk",
           "tableFrom": "access_grants",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "user_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "access_grants_server_mcp_servers_name_fk": {
           "name": "access_grants_server_mcp_servers_name_fk",
           "tableFrom": "access_grants",
-          "tableTo": "mcp_servers",
-          "schemaTo": "app",
           "columnsFrom": [
             "server"
           ],
+          "tableTo": "mcp_servers",
+          "schemaTo": "app",
           "columnsTo": [
             "name"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "access_grants_model_models_id_fk": {
           "name": "access_grants_model_models_id_fk",
           "tableFrom": "access_grants",
-          "tableTo": "models",
-          "schemaTo": "app",
           "columnsFrom": [
             "model"
           ],
+          "tableTo": "models",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "access_grants_holder_target_key": {
           "name": "access_grants_holder_target_key",
-          "nullsNotDistinct": true,
           "columns": [
             "role_id",
             "user_id",
@@ -2287,7 +2311,8 @@
             "server",
             "tool",
             "model"
-          ]
+          ],
+          "nullsNotDistinct": true
         }
       },
       "policies": {},
@@ -2412,32 +2437,32 @@
             },
             {
               "expression": "lower(\"name\")",
-              "asc": true,
               "isExpression": true,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"app\".\"agents\".\"owner_id\" is not null and \"app\".\"agents\".\"deleted_at\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"app\".\"agents\".\"owner_id\" is not null and \"app\".\"agents\".\"deleted_at\" is null",
+          "concurrently": false
         },
         "agents_system_name_idx": {
           "name": "agents_system_name_idx",
           "columns": [
             {
               "expression": "lower(\"name\")",
-              "asc": true,
               "isExpression": true,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"app\".\"agents\".\"owner_id\" is null and \"app\".\"agents\".\"deleted_at\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"app\".\"agents\".\"owner_id\" is null and \"app\".\"agents\".\"deleted_at\" is null",
+          "concurrently": false
         },
         "agents_builtin_key_idx": {
           "name": "agents_builtin_key_idx",
@@ -2450,41 +2475,41 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "agents_owner_id_identity_users_id_fk": {
           "name": "agents_owner_id_identity_users_id_fk",
           "tableFrom": "agents",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "agents_active_version_fk": {
           "name": "agents_active_version_fk",
           "tableFrom": "agents",
-          "tableTo": "agent_versions",
-          "schemaTo": "app",
           "columnsFrom": [
             "id",
             "active_version_id"
           ],
+          "tableTo": "agent_versions",
+          "schemaTo": "app",
           "columnsTo": [
             "agent_id",
             "id"
           ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         }
       },
       "compositePrimaryKeys": {},
@@ -2497,7 +2522,7 @@
         },
         "agents_builtin_key_check": {
           "name": "agents_builtin_key_check",
-          "value": "\"app\".\"agents\".\"builtin_key\" is null or (\"app\".\"agents\".\"owner_id\" is null and \"app\".\"agents\".\"builtin_key\" in ('chat', 'agent', 'deep_agent'))"
+          "value": "\"app\".\"agents\".\"builtin_key\" is null or (\"app\".\"agents\".\"owner_id\" is null and \"app\".\"agents\".\"builtin_key\" in ('chat', 'agent', 'deep_agent', 'trainer'))"
         },
         "agents_closed_at_check": {
           "name": "agents_closed_at_check",
@@ -2545,6 +2570,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "training_id": {
+          "name": "training_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2558,49 +2589,70 @@
         "agent_versions_agent_id_agents_id_fk": {
           "name": "agent_versions_agent_id_agents_id_fk",
           "tableFrom": "agent_versions",
-          "tableTo": "agents",
-          "schemaTo": "app",
           "columnsFrom": [
             "agent_id"
           ],
+          "tableTo": "agents",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "agent_versions_author_id_identity_users_id_fk": {
           "name": "agent_versions_author_id_identity_users_id_fk",
           "tableFrom": "agent_versions",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "author_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
+        },
+        "agent_versions_training_id_trainings_id_fk": {
+          "name": "agent_versions_training_id_trainings_id_fk",
+          "tableFrom": "agent_versions",
+          "columnsFrom": [
+            "training_id"
+          ],
+          "tableTo": "trainings",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "agent_versions_training_id_key": {
+          "name": "agent_versions_training_id_key",
+          "columns": [
+            "training_id"
+          ],
+          "nullsNotDistinct": false
+        },
         "agent_versions_agent_number_key": {
           "name": "agent_versions_agent_number_key",
-          "nullsNotDistinct": false,
           "columns": [
             "agent_id",
             "number"
-          ]
+          ],
+          "nullsNotDistinct": false
         },
         "agent_versions_agent_id_key": {
           "name": "agent_versions_agent_id_key",
-          "nullsNotDistinct": false,
           "columns": [
             "agent_id",
             "id"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -2663,9 +2715,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "agent_shares_user_idx": {
           "name": "agent_shares_user_idx",
@@ -2678,66 +2730,66 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "agent_shares_agent_id_agents_id_fk": {
           "name": "agent_shares_agent_id_agents_id_fk",
           "tableFrom": "agent_shares",
-          "tableTo": "agents",
-          "schemaTo": "app",
           "columnsFrom": [
             "agent_id"
           ],
+          "tableTo": "agents",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "agent_shares_role_id_identity_roles_id_fk": {
           "name": "agent_shares_role_id_identity_roles_id_fk",
           "tableFrom": "agent_shares",
-          "tableTo": "identity_roles",
-          "schemaTo": "app",
           "columnsFrom": [
             "role_id"
           ],
+          "tableTo": "identity_roles",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "agent_shares_user_id_identity_users_id_fk": {
           "name": "agent_shares_user_id_identity_users_id_fk",
           "tableFrom": "agent_shares",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "user_id"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "agent_shares_agent_holder_key": {
           "name": "agent_shares_agent_holder_key",
-          "nullsNotDistinct": true,
           "columns": [
             "agent_id",
             "role_id",
             "user_id",
             "everyone"
-          ]
+          ],
+          "nullsNotDistinct": true
         }
       },
       "policies": {},
@@ -2749,39 +2801,40 @@
       },
       "isRLSEnabled": false
     },
-    "app.agent_knowledge_entities": {
-      "name": "agent_knowledge_entities",
+    "app.memories": {
+      "name": "memories",
       "schema": "app",
       "columns": {
         "id": {
           "name": "id",
-          "type": "integer",
+          "type": "uuid",
           "primaryKey": true,
           "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "agent_knowledge_entities_id_seq",
-            "schema": "app",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
+          "default": "gen_random_uuid()"
         },
-        "record_id": {
-          "name": "record_id",
+        "agent_id": {
+          "name": "agent_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "confirmations": {
-          "name": "confirmations",
-          "type": "integer",
+        "text": {
+          "name": "text",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": 1
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -2790,34 +2843,128 @@
           "notNull": true,
           "default": "now()"
         },
-        "confirmed_at": {
-          "name": "confirmed_at",
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        }
+      },
+      "indexes": {
+        "memories_agent_description_idx": {
+          "name": "memories_agent_description_idx",
+          "columns": [
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "description",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
-        "source_run_id": {
-          "name": "source_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
+        "memories_user_description_idx": {
+          "name": "memories_user_description_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "description",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "memories_agent_id_agents_id_fk": {
+          "name": "memories_agent_id_agents_id_fk",
+          "tableFrom": "memories",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "tableTo": "agents",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
-        "confirmed_by_run_id": {
-          "name": "confirmed_by_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outdated": {
-          "name": "outdated",
-          "type": "boolean",
-          "primaryKey": false,
+        "memories_user_id_identity_users_id_fk": {
+          "name": "memories_user_id_identity_users_id_fk",
+          "tableFrom": "memories",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "memories_owner_check": {
+          "name": "memories_owner_check",
+          "value": "num_nonnulls(\"app\".\"memories\".\"agent_id\", \"app\".\"memories\".\"user_id\") = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.documents": {
+      "name": "documents",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "default": false
+          "identity": {
+            "name": "documents_id_seq",
+            "increment": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "startWith": "1",
+            "cache": "1",
+            "cycle": false,
+            "schema": "app",
+            "type": "always"
+          }
         },
-        "name": {
-          "name": "name",
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -2827,505 +2974,100 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        }
-      },
-      "indexes": {
-        "agent_knowledge_entities_record_idx": {
-          "name": "agent_knowledge_entities_record_idx",
-          "columns": [
-            {
-              "expression": "record_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "agent_knowledge_entities_record_id_agents_id_fk": {
-          "name": "agent_knowledge_entities_record_id_agents_id_fk",
-          "tableFrom": "agent_knowledge_entities",
-          "tableTo": "agents",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "record_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_entities_confirmations_check": {
-          "name": "agent_knowledge_entities_confirmations_check",
-          "value": "\"app\".\"agent_knowledge_entities\".\"confirmations\" >= 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.agent_knowledge_relations": {
-      "name": "agent_knowledge_relations",
-      "schema": "app",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "agent_knowledge_relations_id_seq",
-            "schema": "app",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
         },
-        "record_id": {
-          "name": "record_id",
-          "type": "uuid",
+        "text": {
+          "name": "text",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "confirmations": {
-          "name": "confirmations",
-          "type": "integer",
+        "report": {
+          "name": "report",
+          "type": "boolean",
           "primaryKey": false,
-          "notNull": true,
-          "default": 1
+          "notNull": true
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp with time zone",
+          "type": "timestamp (3) with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "confirmed_at": {
-          "name": "confirmed_at",
-          "type": "timestamp with time zone",
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "source_run_id": {
-          "name": "source_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "confirmed_by_run_id": {
-          "name": "confirmed_by_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outdated": {
-          "name": "outdated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "from_entity_id": {
-          "name": "from_entity_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "to_entity_id": {
-          "name": "to_entity_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "server": {
-          "name": "server",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "tool": {
-          "name": "tool",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "question": {
-          "name": "question",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hint": {
-          "name": "hint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "agent_knowledge_relations_record_idx": {
-          "name": "agent_knowledge_relations_record_idx",
+        "documents_conversation_idx": {
+          "name": "documents_conversation_idx",
           "columns": [
             {
-              "expression": "record_id",
+              "expression": "conversation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
-        "agent_knowledge_relations_from_entity_idx": {
-          "name": "agent_knowledge_relations_from_entity_idx",
+        "documents_updated_by_idx": {
+          "name": "documents_updated_by_idx",
           "columns": [
             {
-              "expression": "from_entity_id",
+              "expression": "updated_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
-        },
-        "agent_knowledge_relations_to_entity_idx": {
-          "name": "agent_knowledge_relations_to_entity_idx",
-          "columns": [
-            {
-              "expression": "to_entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
-        "agent_knowledge_relations_record_id_agents_id_fk": {
-          "name": "agent_knowledge_relations_record_id_agents_id_fk",
-          "tableFrom": "agent_knowledge_relations",
-          "tableTo": "agents",
-          "schemaTo": "app",
+        "documents_conversation_id_conversations_id_fk": {
+          "name": "documents_conversation_id_conversations_id_fk",
+          "tableFrom": "documents",
           "columnsFrom": [
-            "record_id"
+            "conversation_id"
           ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "agent_knowledge_relations_from_entity_fk": {
-          "name": "agent_knowledge_relations_from_entity_fk",
-          "tableFrom": "agent_knowledge_relations",
-          "tableTo": "agent_knowledge_entities",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "from_entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "agent_knowledge_relations_to_entity_fk": {
-          "name": "agent_knowledge_relations_to_entity_fk",
-          "tableFrom": "agent_knowledge_relations",
-          "tableTo": "agent_knowledge_entities",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "to_entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_relations_confirmations_check": {
-          "name": "agent_knowledge_relations_confirmations_check",
-          "value": "\"app\".\"agent_knowledge_relations\".\"confirmations\" >= 1"
-        },
-        "agent_knowledge_relations_kind_check": {
-          "name": "agent_knowledge_relations_kind_check",
-          "value": "\"app\".\"agent_knowledge_relations\".\"kind\" in ('fact', 'lesson', 'searched_nothing')"
-        },
-        "agent_knowledge_relations_shape_check": {
-          "name": "agent_knowledge_relations_shape_check",
-          "value": "(\"app\".\"agent_knowledge_relations\".\"kind\" = 'fact'\n          and \"app\".\"agent_knowledge_relations\".\"from_entity_id\" is not null and \"app\".\"agent_knowledge_relations\".\"to_entity_id\" is not null\n          and \"app\".\"agent_knowledge_relations\".\"label\" is not null and \"app\".\"agent_knowledge_relations\".\"server\" is null and \"app\".\"agent_knowledge_relations\".\"tool\" is null\n          and \"app\".\"agent_knowledge_relations\".\"question\" is null and \"app\".\"agent_knowledge_relations\".\"hint\" is null and \"app\".\"agent_knowledge_relations\".\"outcome\" is null)\n        or (\"app\".\"agent_knowledge_relations\".\"kind\" = 'lesson'\n          and \"app\".\"agent_knowledge_relations\".\"from_entity_id\" is null and \"app\".\"agent_knowledge_relations\".\"to_entity_id\" is null and \"app\".\"agent_knowledge_relations\".\"label\" is null\n          and \"app\".\"agent_knowledge_relations\".\"server\" is not null and \"app\".\"agent_knowledge_relations\".\"tool\" is not null and \"app\".\"agent_knowledge_relations\".\"question\" is not null\n          and \"app\".\"agent_knowledge_relations\".\"hint\" is not null and \"app\".\"agent_knowledge_relations\".\"outcome\" is not null)\n        or (\"app\".\"agent_knowledge_relations\".\"kind\" = 'searched_nothing'\n          and \"app\".\"agent_knowledge_relations\".\"from_entity_id\" is null and \"app\".\"agent_knowledge_relations\".\"to_entity_id\" is null and \"app\".\"agent_knowledge_relations\".\"label\" is null\n          and \"app\".\"agent_knowledge_relations\".\"server\" is not null and \"app\".\"agent_knowledge_relations\".\"tool\" is not null and \"app\".\"agent_knowledge_relations\".\"question\" is not null\n          and \"app\".\"agent_knowledge_relations\".\"hint\" is null and \"app\".\"agent_knowledge_relations\".\"outcome\" is null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.agent_knowledge_runs": {
-      "name": "agent_knowledge_runs",
-      "schema": "app",
-      "columns": {
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "record_id": {
-          "name": "record_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "servers": {
-          "name": "servers",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "extracted_up_to": {
-          "name": "extracted_up_to",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "extract_task_id": {
-          "name": "extract_task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_extract_task_id": {
-          "name": "last_extract_task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "needs_round": {
-          "name": "needs_round",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "last_status": {
-          "name": "last_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_reason": {
-          "name": "last_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_added": {
-          "name": "last_added",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_confirmed": {
-          "name": "last_confirmed",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_outdated": {
-          "name": "last_outdated",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_model": {
-          "name": "last_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_at": {
-          "name": "last_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "agent_knowledge_runs_record_idx": {
-          "name": "agent_knowledge_runs_record_idx",
-          "columns": [
-            {
-              "expression": "record_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "agent_knowledge_runs_extract_task_idx": {
-          "name": "agent_knowledge_runs_extract_task_idx",
-          "columns": [
-            {
-              "expression": "extract_task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"app\".\"agent_knowledge_runs\".\"extract_task_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "agent_knowledge_runs_last_extract_task_idx": {
-          "name": "agent_knowledge_runs_last_extract_task_idx",
-          "columns": [
-            {
-              "expression": "last_extract_task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"app\".\"agent_knowledge_runs\".\"last_extract_task_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "agent_knowledge_runs_run_id_conversations_id_fk": {
-          "name": "agent_knowledge_runs_run_id_conversations_id_fk",
-          "tableFrom": "agent_knowledge_runs",
           "tableTo": "conversations",
           "schemaTo": "app",
-          "columnsFrom": [
-            "run_id"
-          ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_runs_last_status_check": {
-          "name": "agent_knowledge_runs_last_status_check",
-          "value": "\"app\".\"agent_knowledge_runs\".\"last_status\" in ('done', 'skipped', 'failed')"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
-        "agent_knowledge_runs_last_reason_check": {
-          "name": "agent_knowledge_runs_last_reason_check",
-          "value": "\"app\".\"agent_knowledge_runs\".\"last_reason\" in ('stopped', 'owner_disabled', 'quota_exhausted', 'model_not_connected', 'model_not_allowed', 'no_models_allowed', 'model_error', 'invalid_answer', 'interrupted')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.agent_knowledge_questions": {
-      "name": "agent_knowledge_questions",
-      "schema": "app",
-      "columns": {
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "vector": {
-          "name": "vector",
-          "type": "real[]",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "agent_knowledge_questions_task_id_conversations_id_fk": {
-          "name": "agent_knowledge_questions_task_id_conversations_id_fk",
-          "tableFrom": "agent_knowledge_questions",
+        "documents_updated_by_conversations_id_fk": {
+          "name": "documents_updated_by_conversations_id_fk",
+          "tableFrom": "documents",
+          "columnsFrom": [
+            "updated_by"
+          ],
           "tableTo": "conversations",
           "schemaTo": "app",
-          "columnsFrom": [
-            "task_id"
-          ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -3334,217 +3076,174 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.agent_knowledge_embedding": {
-      "name": "agent_knowledge_embedding",
+    "app.trainings": {
+      "name": "trainings",
       "schema": "app",
       "columns": {
-        "record_id": {
-          "name": "record_id",
+        "id": {
+          "name": "id",
           "type": "uuid",
           "primaryKey": true,
           "notNull": true
         },
-        "pass_task_id": {
-          "name": "pass_task_id",
+        "agent_id": {
+          "name": "agent_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "needs_pass": {
-          "name": "needs_pass",
-          "type": "boolean",
+        "base_version_id": {
+          "name": "base_version_id",
+          "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": true
         },
-        "payer_id": {
-          "name": "payer_id",
-          "type": "text",
+        "cap_usd": {
+          "name": "cap_usd",
+          "type": "numeric(18, 9)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "last_reason": {
-          "name": "last_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_model": {
-          "name": "last_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_at": {
-          "name": "last_at",
+        "capped_at": {
+          "name": "capped_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "changes": {
+          "name": "changes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "comparisons": {
+          "name": "comparisons",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "activated_by": {
+          "name": "activated_by",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         }
       },
       "indexes": {
-        "agent_knowledge_embedding_pass_task_idx": {
-          "name": "agent_knowledge_embedding_pass_task_idx",
+        "trainings_agent_idx": {
+          "name": "trainings_agent_idx",
           "columns": [
             {
-              "expression": "pass_task_id",
+              "expression": "agent_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "where": "\"app\".\"agent_knowledge_embedding\".\"pass_task_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "agent_knowledge_embedding_record_id_agents_id_fk": {
-          "name": "agent_knowledge_embedding_record_id_agents_id_fk",
-          "tableFrom": "agent_knowledge_embedding",
-          "tableTo": "agents",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "record_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_embedding_last_reason_check": {
-          "name": "agent_knowledge_embedding_last_reason_check",
-          "value": "\"app\".\"agent_knowledge_embedding\".\"last_reason\" in ('model_not_configured', 'owner_disabled', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'provider_key_rejected', 'provider_unavailable', 'provider_error', 'dimension_mismatch')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "app.agent_knowledge_vectors": {
-      "name": "agent_knowledge_vectors",
-      "schema": "app",
-      "columns": {
-        "record_id": {
-          "name": "record_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
+          "concurrently": false
         },
-        "key": {
-          "name": "key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "key_kind": {
-          "name": "key_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "vector": {
-          "name": "vector",
-          "type": "vector",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "agent_knowledge_vectors_record_id_agents_id_fk": {
-          "name": "agent_knowledge_vectors_record_id_agents_id_fk",
-          "tableFrom": "agent_knowledge_vectors",
-          "tableTo": "agents",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "record_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "agent_knowledge_vectors_record_id_key_pk": {
-          "name": "agent_knowledge_vectors_record_id_key_pk",
+        "trainings_base_version_idx": {
+          "name": "trainings_base_version_idx",
           "columns": [
-            "record_id",
-            "key"
-          ]
+            {
+              "expression": "base_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "trainings_activated_by_idx": {
+          "name": "trainings_activated_by_idx",
+          "columns": [
+            {
+              "expression": "activated_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_vectors_key_kind_check": {
-          "name": "agent_knowledge_vectors_key_kind_check",
-          "value": "\"app\".\"agent_knowledge_vectors\".\"key_kind\" in ('entity', 'relation')"
+      "foreignKeys": {
+        "trainings_id_conversations_id_fk": {
+          "name": "trainings_id_conversations_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "id"
+          ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "trainings_agent_id_agents_id_fk": {
+          "name": "trainings_agent_id_agents_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "tableTo": "agents",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "trainings_base_version_id_agent_versions_id_fk": {
+          "name": "trainings_base_version_id_agent_versions_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "base_version_id"
+          ],
+          "tableTo": "agent_versions",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "trainings_activated_by_identity_users_id_fk": {
+          "name": "trainings_activated_by_identity_users_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "activated_by"
+          ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
-      "isRLSEnabled": false
-    },
-    "app.agent_knowledge_settings": {
-      "name": "agent_knowledge_settings",
-      "schema": "app",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "boolean",
-          "primaryKey": true,
-          "notNull": true,
-          "default": true
-        },
-        "limit_tokens": {
-          "name": "limit_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 8000
-        },
-        "lessons_enabled": {
-          "name": "lessons_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "agent_knowledge_settings_single_row_check": {
-          "name": "agent_knowledge_settings_single_row_check",
-          "value": "\"app\".\"agent_knowledge_settings\".\"id\""
-        },
-        "agent_knowledge_settings_limit_tokens_check": {
-          "name": "agent_knowledge_settings_limit_tokens_check",
-          "value": "\"app\".\"agent_knowledge_settings\".\"limit_tokens\" between 1000 and 32000"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "app.settings": {
@@ -3581,16 +3280,16 @@
         "settings_updated_by_identity_users_id_fk": {
           "name": "settings_updated_by_identity_users_id_fk",
           "tableFrom": "settings",
-          "tableTo": "identity_users",
-          "schemaTo": "app",
           "columnsFrom": [
             "updated_by"
           ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -3599,7 +3298,7 @@
       "checkConstraints": {
         "settings_key_check": {
           "name": "settings_key_check",
-          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults')"
+          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings')"
         }
       },
       "isRLSEnabled": false
@@ -3682,10 +3381,10 @@
   },
   "enums": {},
   "schemas": {},
+  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

@@ -125,6 +125,7 @@ describe('data-model / schema: a child conversation names its parent and the cal
           taskList: false,
           listDelegation: false,
           selfLearning: false,
+          scripts: [],
         }),
       );
       const model = createScriptedModel();

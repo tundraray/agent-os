@@ -5,10 +5,12 @@ import {
   type AgentVersion,
   type AgentTasksView,
   type ConfirmationStatus,
+  type DeepAgentContent,
   DELEGATION_ANSWER_MAX_CHARS,
   DELEGATION_ITEM_MAX_CHARS,
   type DelegationStatus,
   type DelegationView,
+  scriptNameOf,
   ToolCallStateSchema,
   TaskStatusSchema,
   WaitReasonSchema,
@@ -20,9 +22,9 @@ import {
 } from '@agent-os/db';
 import { Inbox, type Task, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
-import { z } from 'zod';
 
 import { type AgentView, toAgentView } from '../agent-view';
+import { reportOf } from '../agent/deliver';
 import { ConfirmationResolutionSchema } from '../agent/tool-step';
 import { AGENTS_LOGGER, RECORD_LIBRARY } from '../agents.tokens';
 import { type DeepAgentRun, readDeepAgentRun } from '../deep/deep-agent-run';
@@ -35,7 +37,8 @@ import {
   Sessions,
   toRootSession,
 } from '../store/sessions';
-import { ToolRegistry } from '../tools/tool-registry';
+import type { ToolDisplay } from '../tools/tool';
+import { ToolRegistry, type ToolTarget } from '../tools/tool-registry';
 import type {
   AgentConfirmation,
   AgentHistoryEntry,
@@ -65,9 +68,6 @@ function shownResult(entry: StoredResult): ShownResult {
   const { childTaskId: _childTaskId, ...content } = entry.content;
   return { ...entry, content };
 }
-
-/** The report of a completed agent task: `{ report }`. */
-const ReportSchema = z.object({ report: z.string() });
 
 /** The status of a delegation (design-task.md, «Запись и маршрут»): the runtime task's, in four. */
 function delegationStatus(status: Task['status']): DelegationStatus {
@@ -111,10 +111,7 @@ function delegationView(
     status,
     answer:
       status === 'completed'
-        ? ReportSchema.parse(task.result).report.slice(
-            0,
-            DELEGATION_ANSWER_MAX_CHARS,
-          )
+        ? reportOf(task.result).slice(0, DELEGATION_ANSWER_MAX_CHARS)
         : null,
     reason: status === 'failed' ? (task.failure?.reason ?? null) : null,
   };
@@ -274,7 +271,7 @@ export class ViewOperations {
           question,
           ...QuestionInputSchema.parse(question.input),
         }));
-        const displays = await this.registry.displays(
+        const displays = await this.withScripts(
           requests.map(({ payload }) => payload),
         );
         return requests.map(
@@ -483,6 +480,51 @@ export class ViewOperations {
     });
   }
 
+  /**
+   * How the given calls read for the employee (`ToolRegistry.displays`), with a saved script's description as
+   * the `toolTitle` and its code as the `scriptCode` of its call (self-learning scripts, «История и веб»): from
+   * the version of the calling agent's session, read once per agent; the history never holds them.
+   */
+  private async withScripts(
+    calls: readonly (ToolTarget & { readonly agentId: string })[],
+  ): Promise<ToolDisplay[]> {
+    const displays = await this.registry.displays(calls);
+    const scripts = new Map<string, Promise<DeepAgentContent['scripts']>>();
+    const scriptsOf = (agentId: string) => {
+      const found = scripts.get(agentId) ?? this.versionScripts(agentId);
+      scripts.set(agentId, found);
+      return found;
+    };
+    return Promise.all(
+      calls.map(async (call, index): Promise<ToolDisplay> => {
+        const display = displays[index];
+        const name = scriptNameOf(call.tool, call.server);
+        if (name === null) return display;
+        const script = (await scriptsOf(call.agentId)).find(
+          (candidate) => candidate.name === name,
+        );
+        return script === undefined
+          ? display
+          : {
+              ...display,
+              toolTitle: script.description,
+              scriptCode: script.code,
+            };
+      }),
+    );
+  }
+
+  /** The scripts of the version the agent's session names; none for a version that is not a deep agent's. */
+  private async versionScripts(
+    agentId: string,
+  ): Promise<DeepAgentContent['scripts']> {
+    const session = await this.sessions.get(agentId);
+    if (session === undefined)
+      throw new Error(`Agent ${agentId} has no session`);
+    const version = await this.library.version(session.versionId);
+    return version.kind === 'deep_agent' ? version.content.scripts : [];
+  }
+
   /** The tool calls of the given answers with their state, by answer and position. */
   private async callsOf(
     agentId: string,
@@ -498,7 +540,9 @@ export class ViewOperations {
       ...answers,
       ...(await this.entries.callRecords(agentId, callIds)),
     ]);
-    const displays = await this.registry.displays(calls);
+    const displays = await this.withScripts(
+      calls.map((call) => ({ ...call, agentId })),
+    );
     for (const [index, call] of calls.entries()) {
       const ofAnswer = byAnswer.get(call.answerSeq) ?? [];
       ofAnswer.push({

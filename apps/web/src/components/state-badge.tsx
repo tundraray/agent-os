@@ -1,6 +1,7 @@
 import {
   Ban,
   Circle,
+  CircleArrowDown,
   CircleCheck,
   CircleMinus,
   Info,
@@ -11,10 +12,10 @@ import { cn } from 'cn';
 
 /**
  * States of the «Состояние» variant (design-system state-badge): `ok` «Хорошо», `action` «Нужно действие»,
- * `closed` «Закрыто», `off` «Выключено», `neutral` «Нейтрально», `info` «Сведения».
+ * `closed` «Закрыто», `off` «Выключено», `neutral` «Нейтрально», `worse` «Хуже», `info` «Сведения».
  */
 export type StateBadgeState =
-  'ok' | 'action' | 'closed' | 'off' | 'neutral' | 'info';
+  'ok' | 'action' | 'closed' | 'off' | 'neutral' | 'worse' | 'info';
 
 const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> =
   {
@@ -23,6 +24,7 @@ const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> =
     closed: { icon: Ban, className: 'text-destructive' },
     off: { icon: CircleMinus, className: 'text-muted-foreground' },
     neutral: { icon: Circle, className: 'text-muted-foreground' },
+    worse: { icon: CircleArrowDown, className: 'text-warning' },
     info: { icon: Info, className: 'text-info' },
   };
 

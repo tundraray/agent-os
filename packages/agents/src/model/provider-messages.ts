@@ -1,3 +1,9 @@
+import {
+  MEMORY_TOOLS,
+  NOTEPAD_TOOLS,
+  TRAINER_TOOLS,
+} from '@agent-os/contracts';
+
 import { foldCalls, requestedName } from '../history/call-state';
 import type { HistoryContent, HistoryEntry } from '../history/history';
 import type {
@@ -28,6 +34,9 @@ export function envelope(source: string, author: string, data: string): string {
 /** The author of what the package itself produced: a built-in tool's result, a compaction summary. */
 const PACKAGE_AUTHOR = 'agents';
 
+/** The author of memory records, notepad documents and the trainer's reads of past work: text a model wrote, not the platform. */
+export const MODEL_AUTHOR = 'agent model';
+
 /** The parent's history the fork continues: its entries through `throughSeq` precede the child's own (KD-7). */
 export interface ForkPrefix {
   readonly throughSeq: number;
@@ -51,7 +60,12 @@ function childReportText(report: HistoryContent<'child_report'>): string {
   const body =
     report.text ??
     (report.message === null ? '(no report)' : `Error: ${report.message}`);
-  return `${facts}\n${body}`;
+  // The model sees the document's title, never its text (design-notepad.md DC-5).
+  const document =
+    report.document === null
+      ? ''
+      : `\nReport document: "${report.document.title}" — the employee sees it in the conversation.`;
+  return `${facts}\n${body}${document}`;
 }
 
 function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {
@@ -70,7 +84,12 @@ function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {
     toolName: requestedName(result),
     output: envelope(
       `tool ${result.tool}`,
-      result.server ?? PACKAGE_AUTHOR,
+      result.server ??
+        ([...MEMORY_TOOLS, ...NOTEPAD_TOOLS, ...TRAINER_TOOLS].some(
+          (tool) => tool === result.tool,
+        )
+          ? MODEL_AUTHOR
+          : PACKAGE_AUTHOR),
       data,
     ),
   };

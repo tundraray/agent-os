@@ -1,6 +1,7 @@
 import {
   CHAT_BUILTIN_KEY,
   nameWinners,
+  TRAINER_BUILTIN_KEY,
   type RecordHeader,
 } from '@agent-os/contracts';
 
@@ -17,11 +18,15 @@ const SYSTEM_MARK = 'system';
 
 /**
  * Whether the main chat offers the record (KD-4): the employee's own always, another's only with
- * «предлагать в главном чате»; the `chat` record itself never. It decides whom the chat lists and which
- * record a message's chip may name; a start by name is not limited by it (data-model KD-5, rule 1).
+ * «предлагать в главном чате»; the `chat` and `trainer` records never. It decides whom the chat lists and
+ * which record a message's chip may name; a start by name is not limited by it (data-model KD-5, rule 1).
  */
 export function inRootLaunchSet(header: RecordHeader): boolean {
-  if (header.builtinKey === CHAT_BUILTIN_KEY) return false;
+  if (
+    header.builtinKey === CHAT_BUILTIN_KEY ||
+    header.builtinKey === TRAINER_BUILTIN_KEY
+  )
+    return false;
   return header.mine || header.offerInChat;
 }
 

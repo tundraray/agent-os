@@ -6,6 +6,7 @@ import {
   type RecordKind,
   type ResolvedRecord,
   type StartRefusedError,
+  TRAINER_BUILTIN_KEY,
 } from '@agent-os/contracts';
 
 import {
@@ -172,7 +173,7 @@ export async function resolveNamedStart(
  * may see under that name, so a call of the chip's name — without case, as the name rule compares — starts
  * that record, read by its id as the owner sees it now. `null` — the name rule decides, exactly as without a
  * chip: the call names another name, or the record is deleted, hidden from the owner, of another kind than
- * the call starts, or the chat.
+ * the call starts, the chat or the trainer.
  */
 async function chosenRecord(
   { ownerId, name, kind, chip }: NamedStartRequest,
@@ -181,7 +182,9 @@ async function chosenRecord(
   if (chip === null || chip.name.toLowerCase() !== name.toLowerCase())
     return null;
   const record = await library.resolve(ownerId, chip.id);
-  return record?.kind === kind && record.builtinKey !== CHAT_BUILTIN_KEY
+  return record?.kind === kind &&
+    record.builtinKey !== CHAT_BUILTIN_KEY &&
+    record.builtinKey !== TRAINER_BUILTIN_KEY
     ? record
     : null;
 }

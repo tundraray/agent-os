@@ -34,6 +34,7 @@ async function run(script: string, limits: RunLimits = LIMITS): Promise<Run> {
   const output: string[] = [];
   const end = await runScript({
     script,
+    input: null,
     limits,
     quickJs,
     bridge: {

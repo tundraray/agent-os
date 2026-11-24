@@ -20,9 +20,19 @@
       "script": "Скрипт"
     }
   },
+  "try_script": {
+    "title": "Пробный запуск скрипта",
+    "args": {
+      "name": "Имя",
+      "class": "Класс запуска",
+      "owner": "Владелец",
+      "input": "Вход",
+      "code": "Код"
+    }
+  },
   "read_tool_result": {
     "title": "Прочитать сохранённый результат",
-    "args": { "callId": "Вызов", "offset": "С строки", "limit": "Строк" }
+    "args": { "callId": "Вызов", "offset": "Со строки", "limit": "Строк" }
   },
   "search_tool_result": {
     "title": "Найти в сохранённом результате",
@@ -71,6 +81,18 @@
       "taskId": "Задача"
     }
   },
+  "remember": {
+    "title": "Запомнить",
+    "args": { "scope": "Область", "description": "Описание", "text": "Текст" }
+  },
+  "read_memory": {
+    "title": "Прочитать из памяти",
+    "args": { "scope": "Область", "description": "Описание" }
+  },
+  "forget": {
+    "title": "Забыть",
+    "args": { "scope": "Область", "description": "Описание" }
+  },
   "list_records": { "title": "Список библиотеки", "args": {} },
   "read_record": { "title": "Чтение записи", "args": { "recordId": "Запись" } },
   "create_record": {
@@ -97,5 +119,28 @@
   "delete_record": {
     "title": "Удаление записи",
     "args": { "recordId": "Запись" }
-  }
+  },
+  "notepad_create": {
+    "title": "Создать документ",
+    "args": {
+      "title": "Заголовок",
+      "description": "Описание",
+      "text": "Текст",
+      "report": "Отчёт"
+    }
+  },
+  "notepad_append": {
+    "title": "Дописать документ",
+    "args": { "document": "Документ", "text": "Текст" }
+  },
+  "notepad_replace": {
+    "title": "Заменить часть документа",
+    "args": { "document": "Документ", "old": "Было", "new": "Стало" }
+  },
+  "notepad_read": {
+    "title": "Прочитать документ",
+    "args": { "document": "Документ", "offset": "Со строки", "limit": "Строк" }
+  },
+  "notepad_list": { "title": "Документы блокнота", "args": {} },
+  "notepad_past": { "title": "Прошлые документы", "args": {} }
 }

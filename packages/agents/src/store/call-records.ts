@@ -1,18 +1,14 @@
 import { CodeCallsRepository, type CallKey } from '@agent-os/db';
 import {
-  RunCodeArgsSchema,
+  isCodeRunCall,
+  TRY_SCRIPT_TOOL,
   type ToolOutcome,
   ToolOutcomeSchema,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 
-import {
-  type CallState,
-  isDelegated,
-  isRunCodeCall,
-  openCalls,
-} from '../history/call-state';
+import { type CallState, isDelegated, openCalls } from '../history/call-state';
 import type {
   AnswerCall,
   HistoryContent,
@@ -31,6 +27,8 @@ export interface CallEnding {
   readonly resultText?: string;
   /** Script output of a successful `run_code` run (DC-14). */
   readonly output?: string;
+  /** The tools a `try_script` run recorded and did not send, in call order (design-training.md). */
+  readonly recorded?: readonly string[];
   /** Agent started by `start_agent`, or the subagent of a single `task` call. */
   readonly childTaskId?: string;
   /** When the call went to its tool; the time of its `tool_sent` record wins. */
@@ -50,20 +48,6 @@ const MAX_RUN_ATTEMPTS = 2;
 
 type ResultEntry = Extract<NewHistoryEntry, { kind: 'tool_result' }>;
 
-const RunClassSchema = RunCodeArgsSchema.pick({ class: true });
-
-/**
- * The outcome of a call from code the run did not close itself (Invariant 4): a `write` run's calls
- * may have reached their server — «unknown»; a `read` run's are «interrupted». Arguments that are not
- * a `run_code` class count as `read`: such a run never started.
- */
-export function interruptedRunOutcome(runArgs: unknown): ToolOutcome {
-  const parsed = RunClassSchema.safeParse(runArgs);
-  return parsed.success && parsed.data.class === 'write'
-    ? ToolOutcomeSchema.enum.unknown
-    : ToolOutcomeSchema.enum.interrupted;
-}
-
 function decisionEntry(
   callId: string,
   decision: CallDecision,
@@ -80,7 +64,7 @@ function decisionEntry(
 
 /**
  * The `tool_result` of a call that ends at `finishedAt`; a `run_code` call also carries its script
- * output (DC-14), other tools have no `output` field.
+ * output (DC-14), other tools have no `output` field; a `try_script` call carries what it recorded.
  */
 function resultEntry(
   call: Pick<CallState, 'callId' | 'tool' | 'server' | 'args' | 'sentAt'>,
@@ -98,7 +82,14 @@ function resultEntry(
       refusalReason: ending.refusalReason ?? null,
       refusalDetail: ending.refusalDetail ?? null,
       text: ending.resultText ?? null,
-      ...(isRunCodeCall(call) ? { output: ending.output ?? null } : {}),
+      ...(isCodeRunCall(call.tool, call.server)
+        ? { output: ending.output ?? null }
+        : {}),
+      ...(call.tool === TRY_SCRIPT_TOOL &&
+      call.server === null &&
+      ending.recorded !== undefined
+        ? { recorded: [...ending.recorded] }
+        : {}),
       startedAt: call.sentAt ?? (ending.startedAt ?? finishedAt).toISOString(),
       finishedAt: finishedAt.toISOString(),
       ...(ending.childTaskId === undefined
@@ -149,8 +140,9 @@ export class CallRecords {
 
   /**
    * Closes the call with its result and returns the appended `tool_result`; `undefined` when the call
-   * is closed already. `decision` is written first unless the call has one. Closing a `run_code` call
-   * also closes its open calls from code, by the run's class (code-execution Invariant 4).
+   * is closed already. `decision` is written first unless the call has one. Closing a code run also
+   * closes its open calls from code: `unknown` when the run has the `tool_sent` intent (only a `write`
+   * run writes one), `interrupted` otherwise (self-learning scripts KD-5).
    */
   async close(
     taskId: string,
@@ -174,10 +166,10 @@ export class CallRecords {
         : [decisionEntry(call.callId, decision)]),
       resultEntry(closing, ending, ending.finishedAt ?? new Date()),
     ]);
-    if (isRunCodeCall(call)) {
+    if (isCodeRunCall(call.tool, call.server)) {
       await this.codeCallRows.closeOpenOfRun(
         { taskId, callId: call.callId },
-        interruptedRunOutcome(closing.args),
+        interruptedEnding(closing).outcome,
       );
     }
     const result = appended.at(-1);
@@ -206,13 +198,26 @@ export class CallRecords {
    * the call goes out (KD-4, Invariant 2). `args` — the arguments the employee edited; they replace the
    * call's. `false` when the call does not await confirmation — then it must not be sent.
    */
-  async markSent(
+  markSent(call: CallKey & { readonly args?: unknown }): Promise<boolean> {
+    return this.appendIntent(call, true);
+  }
+
+  /**
+   * Writes only the `tool_sent` intent of a call of a training tree, which asks nobody (self-learning
+   * design-training.md KD-3, place 1): no decision is written. `false` when the call is sent or closed already.
+   */
+  markIntent(call: CallKey): Promise<boolean> {
+    return this.appendIntent(call, false);
+  }
+
+  private async appendIntent(
     call: CallKey & { readonly args?: unknown },
+    asked: boolean,
   ): Promise<boolean> {
     const records = await this.history.callRecords(call.taskId, [call.callId]);
     const kinds = new Set(records.map((record) => record.kind));
     if (
-      !kinds.has('tool_confirmation') ||
+      (asked && !kinds.has('tool_confirmation')) ||
       kinds.has('tool_sent') ||
       kinds.has('tool_result')
     ) {
@@ -220,7 +225,9 @@ export class CallRecords {
     }
     const edited = call.args === undefined ? {} : { args: call.args };
     await this.history.append(call.taskId, [
-      decisionEntry(call.callId, { approved: true, ...edited }),
+      ...(asked
+        ? [decisionEntry(call.callId, { approved: true, ...edited })]
+        : []),
       {
         kind: 'tool_sent',
         content: {
@@ -235,10 +242,10 @@ export class CallRecords {
 
   /**
    * Records the start of a read run's attempt (KD-7): its number, or `null` when the run already
-   * started twice — then it must not start again. Open calls from code of the earlier attempt get
-   * their outcome by the run's class (Invariant 4).
+   * started twice — then it must not start again. Open calls from code of the earlier attempt are
+   * closed `interrupted`; only a `read` run calls this.
    */
-  async startAttempt(run: CallKey, runArgs: unknown): Promise<number | null> {
+  async startAttempt(run: CallKey): Promise<number | null> {
     const records = await this.history.callRecords(run.taskId, [run.callId]);
     const attempt =
       records.filter((record) => record.kind === 'run_attempt').length + 1;
@@ -246,7 +253,10 @@ export class CallRecords {
     await this.history.append(run.taskId, [
       { kind: 'run_attempt', content: { callId: run.callId, attempt } },
     ]);
-    await this.codeCallRows.closeOpenOfRun(run, interruptedRunOutcome(runArgs));
+    await this.codeCallRows.closeOpenOfRun(
+      run,
+      ToolOutcomeSchema.enum.interrupted,
+    );
     return attempt;
   }
 }

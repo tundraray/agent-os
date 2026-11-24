@@ -8,9 +8,11 @@ import type { RecordDetail, RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
+import { AgentScripts } from '@/components/library/agent-script';
 import { DefinitionView } from '@/components/library/definition-view';
-import { KnowledgeButton } from '@/components/library/editor-header';
+import { MemoryButton } from '@/components/library/editor-header';
 import { RecordLabel } from '@/components/library/record-label';
+import { TrainingBlock } from '@/components/library/training-block';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { Button } from '@/components/ui/button';
@@ -109,12 +111,13 @@ type EmployeeRecordPageProps = { record: RecordDetail };
 
 /**
  * UXRD AL-03: an employee's record in the panel, read only — the record label with its author, the roles it is
- * open to and its definition «На странице»; «Что узнал глубокий агент» (MC-7, a deep agent only) and «Закрыть доступ» in
+ * open to and its definition «На странице»; «Память» (MC-7, a deep agent only) and «Закрыть доступ» in
  * the header. The administrator never edits it.
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */
 export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
   const t = useTranslations('admin.library');
+  const tLibrary = useTranslations('library');
   const locale = useLocale();
   const titles = useAdminTitles();
   const router = useRouter();
@@ -129,7 +132,7 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
         title={builtinName(record, locale)}
         parent={titles.parent('library')}
       >
-        <KnowledgeButton record={record} />
+        <MemoryButton record={record} />
         {author !== null && (
           <Button
             variant="outline"
@@ -157,12 +160,32 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
             })}
           </p>
         </div>
+        {record.kind === 'deep_agent' && (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm leading-5 text-foreground">
+              {tLibrary(
+                record.content.selfLearning
+                  ? 'selfLearning.on'
+                  : 'selfLearning.off',
+              )}
+            </p>
+            {record.builtinKey === null && (
+              <TrainingBlock
+                id={record.id}
+                selfLearning={record.content.selfLearning}
+              />
+            )}
+          </div>
+        )}
         <DefinitionView
           definition={record}
           missingRights={record.missingRights}
           variant="page"
           recordHref={panelRecordHref}
         />
+        {record.kind === 'deep_agent' && (
+          <AgentScripts scripts={record.content.scripts} />
+        )}
       </div>
       {author !== null && (
         <CloseAccessDialog

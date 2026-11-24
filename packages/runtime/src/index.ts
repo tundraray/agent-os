@@ -36,6 +36,6 @@ export {
   TaskEndHooks,
   type TaskEndStatus,
 } from './tasks/task-end-hooks';
-export type { SavepointResult } from './tasks/transaction-retry';
+export { type SavepointResult, withTxRetry } from './tasks/transaction-retry';
 export { RUNTIME_TREE_CHANNEL } from './tasks/tasks';
 export { RuntimeWorkers } from './workers/runtime-workers';

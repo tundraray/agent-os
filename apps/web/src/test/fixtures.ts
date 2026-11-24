@@ -17,14 +17,12 @@ import {
   DeepAgentRunViewSchema,
   GrantSchema,
   HistoryEntrySchema,
-  KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
-  KnowledgeItemSchema,
-  KnowledgeSettingsSchema,
-  KnowledgeViewSchema,
   LIBRARY_RECORD_CONFIRMATION,
   LibraryRecordCardSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  MEMORY_INDEX_TOKENS_DEFAULT,
+  TRAINING_CAP_USD_DEFAULT,
   ModelDefaultsSchema,
   ModelProviderViewSchema,
   PendingMessageSchema,
@@ -35,6 +33,7 @@ import {
   RecordSummarySchema,
   RoleDetailSchema,
   RoleSummarySchema,
+  SelfLearningSettingsSchema,
   SignInSettingsSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
@@ -61,9 +60,6 @@ import {
   type DeepAgentRunView,
   type Grant,
   type HistoryEntry,
-  type KnowledgeItem,
-  type KnowledgeSettings,
-  type KnowledgeView,
   type LibraryRecordCard,
   type McpServerSummary,
   type McpServerView,
@@ -83,6 +79,7 @@ import {
   SessionTaskViewSchema,
   type DelegationView,
   DelegationViewSchema,
+  type SelfLearningSettings,
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
@@ -205,6 +202,7 @@ const ENTRY_CONTENT: { [K in FixtureEntryKind]: EntryContent<K> } = {
     status: 'completed',
     reason: null,
     text: 'Отчёт',
+    document: null,
     toolCalls: 0,
     durationMs: 1000,
   },
@@ -319,6 +317,7 @@ export function conversationView(
     decisions: [],
     agents: [],
     focus: null,
+    training: null,
     ...overrides,
   });
 }
@@ -367,6 +366,7 @@ export function agentPageView(
     pending: [],
     decisions: [],
     children: [],
+    training: null,
     ...rest,
   });
 }
@@ -449,6 +449,8 @@ export function roleSummary(
     name: 'SRE',
     memberCount: 0,
     isAdmin: false,
+    trainOwn: false,
+    trainAny: false,
     builtin: false,
     ...overrides,
   });
@@ -624,15 +626,12 @@ export function modelDefaults(
   });
 }
 
-/** GET /api/admin/knowledge/settings: the defaults, never set. */
-export function knowledgeSettings(
-  overrides: Partial<KnowledgeSettings> = {},
-): KnowledgeSettings {
-  return KnowledgeSettingsSchema.parse({
-    limitTokens: KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
-    lessonsEnabled: true,
+/** GET /api/admin/self-learning/settings: the defaults, never set. */
+export function selfLearningSettings(): SelfLearningSettings {
+  return SelfLearningSettingsSchema.parse({
+    memoryIndexTokens: MEMORY_INDEX_TOKENS_DEFAULT,
+    trainingCapUsd: TRAINING_CAP_USD_DEFAULT,
     updatedAt: null,
-    ...overrides,
   });
 }
 
@@ -645,103 +644,6 @@ export function toolResultSettings(
     previewChars: TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
     readMaxTokens: TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
     updatedAt: null,
-    ...overrides,
-  });
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Knowledge graph fixtures (self-learning): each one passes its `@agent-os/contracts` schema.
-
-type KnowledgeEntity = Extract<KnowledgeItem, { type: 'entity' }>;
-type KnowledgeFact = Extract<KnowledgeItem, { type: 'relation'; kind: 'fact' }>;
-type KnowledgeLesson = Extract<KnowledgeItem, { kind: 'lesson' }>;
-type KnowledgeSearchedNothing = Extract<
-  KnowledgeItem,
-  { kind: 'searched_nothing' }
->;
-
-/** What every record has by default: added once at FIXTURE_TIME, active, no placement mark. */
-const KNOWLEDGE_ITEM = {
-  confirmations: 1,
-  date: FIXTURE_TIME,
-  state: 'active',
-  placement: null,
-} as const;
-
-/** An entity (always a fact): «billing-api», «Сервис списаний». */
-export function knowledgeEntity(
-  overrides: Partial<KnowledgeEntity> & Pick<KnowledgeEntity, 'id'>,
-): KnowledgeItem {
-  return KnowledgeItemSchema.parse({
-    ...KNOWLEDGE_ITEM,
-    name: 'billing-api',
-    description: 'Сервис списаний',
-    ...overrides,
-    type: 'entity',
-    kind: 'fact',
-  });
-}
-
-/** A relation fact «{from} → владеет → {to}» between two entities. */
-export function knowledgeFact(
-  overrides: Partial<KnowledgeFact> & Pick<KnowledgeFact, 'id' | 'from' | 'to'>,
-): KnowledgeItem {
-  return KnowledgeItemSchema.parse({
-    ...KNOWLEDGE_ITEM,
-    label: 'владеет',
-    ...overrides,
-    type: 'relation',
-    kind: 'fact',
-  });
-}
-
-/** A lesson of `logs.search` on «ошибки оплаты». */
-export function knowledgeLesson(
-  overrides: Partial<KnowledgeLesson> & Pick<KnowledgeLesson, 'id'>,
-): KnowledgeItem {
-  return KnowledgeItemSchema.parse({
-    ...KNOWLEDGE_ITEM,
-    server: 'logs',
-    tool: 'search',
-    question: 'ошибки оплаты',
-    hint: 'Искать в логах billing-api',
-    outcome: 'ошибки нашлись',
-    ...overrides,
-    type: 'relation',
-    kind: 'lesson',
-  });
-}
-
-/** «Искал — не нашёл» of `jira.search_issues` on «инциденты оплаты». */
-export function knowledgeSearchedNothing(
-  overrides: Partial<KnowledgeSearchedNothing> &
-    Pick<KnowledgeSearchedNothing, 'id'>,
-): KnowledgeItem {
-  return KnowledgeItemSchema.parse({
-    ...KNOWLEDGE_ITEM,
-    server: 'jira',
-    tool: 'search_issues',
-    question: 'инциденты оплаты',
-    ...overrides,
-    type: 'relation',
-    kind: 'searched_nothing',
-  });
-}
-
-/**
- * GET /api/library/:id/knowledge: self-learning and lessons on, selection by meaning on, no records, zero counts,
- * no round yet. `counts` are the server's own numbers and never follow `items` here.
- */
-export function knowledgeView(
-  overrides: Partial<KnowledgeView> = {},
-): KnowledgeView {
-  return KnowledgeViewSchema.parse({
-    selfLearning: true,
-    lessonsEnabled: true,
-    selection: { state: 'on' },
-    counts: { active: 0, always: 0, beyond: 0, outdated: 0, percent: 0 },
-    items: [],
-    lastExtraction: null,
     ...overrides,
   });
 }

@@ -40,6 +40,7 @@ function record(ownership: RecordOwnership, shared: boolean): ChatRecord {
         taskList: true,
         listDelegation: true,
         selfLearning: false,
+        scripts: [],
       },
     },
   };

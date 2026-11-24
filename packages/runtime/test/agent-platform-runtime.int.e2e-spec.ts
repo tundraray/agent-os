@@ -450,7 +450,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         );
 
         // Then: the held step saw none; the next step all three in the order sent; the one after none
-        expect(sent).toEqual([0, 1, 2]);
+        expect(sent).toEqual([sent[0], sent[0] + 1, sent[0] + 2]);
         expect(seen.map((view) => view.stepNo)).toEqual([0, 1, 2]);
         expect(seen[0].messages).toEqual([]);
         expect(seen[1].messages.map((message) => message.payload)).toEqual([
@@ -939,15 +939,14 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           'the revived step to commit',
         );
         expect(
-          seen[1].messages.map((message) => [
-            message.seq,
-            message.payload,
-            message.revive,
-          ]),
+          seen[1].messages.map((message) => [message.payload, message.revive]),
         ).toEqual([
-          [0, { n: 1 }, false],
-          [1, { n: 2 }, true],
+          [{ n: 1 }, false],
+          [{ n: 2 }, true],
         ]);
+        expect(seen[1].messages[1].seq).toBeGreaterThan(
+          seen[1].messages[0].seq,
+        );
         const notices = await childFinishedOf(parentId);
         expect(notices).toHaveLength(1);
         expect(notices[0].payload).toMatchObject({

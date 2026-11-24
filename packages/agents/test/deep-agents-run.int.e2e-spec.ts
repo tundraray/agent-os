@@ -126,6 +126,7 @@ function deepResearchRecord(): TestDeepAgentRecord {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   });
 }
 
@@ -151,6 +152,7 @@ function limitsRecord(): TestDeepAgentRecord {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   });
 }
 

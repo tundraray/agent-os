@@ -45,7 +45,7 @@ describe('the child reports of a step', () => {
     finished('m2', {
       taskId: DONE,
       status: 'completed',
-      result: { report: 'итог' },
+      result: { report: 'итог', document: null },
       durationMs: 9,
     }),
     finished('m3', {
@@ -89,6 +89,7 @@ describe('the child reports of a step', () => {
             reason: 'model_error',
             message: 'y'.repeat(1_000),
             text: null,
+            document: null,
             toolCalls: 2,
             durationMs: 7,
           },
@@ -102,6 +103,7 @@ describe('the child reports of a step', () => {
             reason: null,
             message: null,
             text: 'итог',
+            document: null,
             toolCalls: 2,
             durationMs: 9,
           },

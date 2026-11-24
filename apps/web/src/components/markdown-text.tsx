@@ -23,6 +23,8 @@ import { cn } from '@/lib/utils';
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
   componentsByLanguage?: MarkdownTextPrimitiveProps['componentsByLanguage'];
+  /** Every image through its fallback, never fetched: model-written documents built from tool outputs. */
+  imagesAsFallback?: boolean;
 };
 
 const shallowEqual = (
@@ -51,16 +53,20 @@ const useShallowStable = <T extends Record<string, unknown> | undefined>(
 const MarkdownTextImpl: FC<MarkdownTextProps> = ({
   components,
   componentsByLanguage,
+  imagesAsFallback = false,
 }) => {
   const stableComponents = useShallowStable(components);
   const stableComponentsByLanguage = useShallowStable(componentsByLanguage);
   const markdownComponents = useMemo(() => {
-    if (!stableComponents) return defaultComponents;
+    const base = imagesAsFallback
+      ? { ...defaultComponents, ...fallbackImages }
+      : defaultComponents;
+    if (!stableComponents) return base;
     return {
-      ...defaultComponents,
+      ...base,
       ...memoizeMarkdownComponents(stableComponents),
     };
-  }, [stableComponents]);
+  }, [stableComponents, imagesAsFallback]);
 
   return (
     <MarkdownTextPrimitive
@@ -136,6 +142,10 @@ const MarkdownImageFallback: FC<MarkdownImageFallbackProps> = ({
     </span>
   );
 };
+
+const fallbackImages = memoizeMarkdownComponents({
+  img: ({ src, alt }) => <MarkdownImageFallback src={src} alt={alt} />,
+});
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (

@@ -1,6 +1,6 @@
 import { errorText, type Logger } from '@agent-os/common';
 import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
-import { SettingsRepository } from '@agent-os/db';
+import { type CallKey, SettingsRepository } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -321,9 +321,44 @@ export class ToolRunner {
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
    * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3).
    */
-  async sendConfirmed(
+  sendConfirmed(
     call: ResolvedCall,
     ctx: ConfirmContext,
+    editedArgs?: unknown,
+    confirmed?: unknown,
+  ): Promise<ConfirmedSend> {
+    return this.sendOnce(
+      call,
+      ctx,
+      (key) => this.callRecords.markSent(key),
+      editedArgs,
+      confirmed,
+    );
+  }
+
+  /**
+   * Sends a call of a training tree that needs a decision without asking anyone (self-learning
+   * design-training.md KD-3, place 1): as `sendConfirmed` with `confirmed` the card's content, but the intent
+   * is written alone, with no decision of the employee.
+   */
+  sendUnasked(
+    call: ResolvedCall,
+    ctx: ConfirmContext,
+    confirmed: unknown,
+  ): Promise<ConfirmedSend> {
+    return this.sendOnce(
+      call,
+      ctx,
+      (key) => this.callRecords.markIntent(key),
+      undefined,
+      confirmed,
+    );
+  }
+
+  private async sendOnce(
+    call: ResolvedCall,
+    ctx: ConfirmContext,
+    mark: (key: CallKey & { readonly args?: unknown }) => Promise<boolean>,
     editedArgs?: unknown,
     confirmed?: unknown,
   ): Promise<ConfirmedSend> {
@@ -351,10 +386,9 @@ export class ToolRunner {
         kind: 'in_commit',
         commit: async (effects) => {
           const startedAt = Date.now();
-          const execution: ToolExecution | NotSent =
-            (await this.callRecords.markSent(key))
-              ? await run(effects)
-              : { kind: 'not_sent', reason: 'not_awaiting' };
+          const execution: ToolExecution | NotSent = (await mark(key))
+            ? await run(effects)
+            : { kind: 'not_sent', reason: 'not_awaiting' };
           logCall(ctx.logger, loggedCall(sent), execution, startedAt);
           return execution;
         },
@@ -362,7 +396,7 @@ export class ToolRunner {
     }
     const startedAt = Date.now();
     // Committed before the request leaves: a step lost from here on finds the intent and never resends.
-    const intent = await ctx.guard(() => this.callRecords.markSent(key));
+    const intent = await ctx.guard(() => mark(key));
     if (intent.outcome === 'fenced' || !intent.value) {
       const notSent: NotSent = {
         kind: 'not_sent',

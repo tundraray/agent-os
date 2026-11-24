@@ -38,10 +38,12 @@ import {
 } from '@/lib/shell-route';
 import { blankAgent } from './agent-fields';
 import { useCopyRecord } from './copy-record';
+import { AgentScripts } from './agent-script';
 import { DeepAgentCard, type DeepAgentRecord } from './deep-agent-card';
 import { DefinitionView } from './definition-view';
 import { RecordEditor, useCreatedHandoff } from './record-editor';
 import { RecordLabel } from './record-label';
+import { TrainingBlock } from './training-block';
 import { useInChat } from './use-in-chat';
 
 /** Rows of the definition skeleton (UXRD RV-01, Loading). */
@@ -262,6 +264,9 @@ function RecordView({ record }: { record: RecordDetail }) {
             </p>
           )}
         </div>
+        {record.kind === 'deep_agent' && record.builtinKey === null && (
+          <TrainingBlock id={record.id} selfLearning={null} />
+        )}
         <DefinitionView
           definition={record}
           missingRights={record.missingRights}
@@ -270,6 +275,9 @@ function RecordView({ record }: { record: RecordDetail }) {
           recordHref={recordPath}
           modelNames={modelNames}
         />
+        {record.kind === 'deep_agent' && (
+          <AgentScripts scripts={record.content.scripts} />
+        )}
       </div>
     </div>
   );

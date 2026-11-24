@@ -11,7 +11,8 @@ import { IdentityModule } from './identity/identity.module';
 import { AccessModule } from './access/access.module';
 import { AccessAdminModule } from './access/access-admin.module';
 import { LibraryApiModule } from './library/library-api.module';
-import { KnowledgeApiModule } from './knowledge/knowledge-api.module';
+import { MemoryApiModule } from './memory/memory-api.module';
+import { TrainingApiModule } from './training/training-api.module';
 
 @Module({
   imports: [
@@ -32,7 +33,8 @@ import { KnowledgeApiModule } from './knowledge/knowledge-api.module';
     AgentsModule,
     AccessAdminModule,
     LibraryApiModule,
-    KnowledgeApiModule,
+    MemoryApiModule,
+    TrainingApiModule,
     ChatModule,
   ],
 })

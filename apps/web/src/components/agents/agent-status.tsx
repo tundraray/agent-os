@@ -5,6 +5,7 @@ import type {
   AgentStatus as AgentStatusValue,
   DelegationStatus,
   SessionTaskStatus,
+  TrainingStatus,
 } from '@agent-os/contracts';
 import { useFormatter, useTranslations } from 'next-intl';
 import {
@@ -56,6 +57,14 @@ const DELEGATION_STATUS_LOOK: Record<DelegationStatus, StatusLook> = {
   completed: STATUS_LOOK.completed,
   failed: STATUS_LOOK.failed,
   cancelled: STATUS_LOOK.stopped,
+};
+
+/** Training statuses (agent-status.md, «Статусы обучения»); MC-11 labels — `agents.trainingStatus.*`. */
+const TRAINING_STATUS_LOOK: Record<TrainingStatus, StatusLook> = {
+  running: STATUS_LOOK.working,
+  done: STATUS_LOOK.completed,
+  stopped: STATUS_LOOK.stopped,
+  failed: STATUS_LOOK.failed,
 };
 
 /** The icon and colour role of a status, for blocks that show the same state (a running or waiting tool call). */
@@ -191,16 +200,54 @@ export function AgentStatus(props: AgentStatusProps) {
   );
 }
 
+/** A training's status in the «Метка» variant: «Остановлено на потолке» and the failure's reason are in its label. */
+export function TrainingStatusLabel({
+  status,
+  capped,
+  reason,
+}: {
+  status: TrainingStatus;
+  capped: boolean;
+  reason: string | null;
+}) {
+  const t = useTranslations('agents.trainingStatus');
+  const label =
+    status === 'failed'
+      ? reason === null
+        ? t('failedNoReason')
+        : t('failed', { reason })
+      : status === 'stopped' && capped
+        ? t('capped')
+        : t(status);
+  return (
+    <StatusView
+      variant="label"
+      look={TRAINING_STATUS_LOOK[status]}
+      label={label}
+      status={status}
+      spinning={status === 'running'}
+    />
+  );
+}
+
 /**
  * A task's status icon (agent-status.md, «Статусы задачи»): decorative, because the task row says its status in
- * words (run-task-list.md, Accessibility); the MC-11 words are `agents.taskStatus.{status}`.
+ * words (run-task-list.md, Accessibility); the MC-11 words are `agents.taskStatus.{status}`. `ended` — the session
+ * no longer runs: a task left «В работе» shows the still «Работа кончилась» (run-task-list.md, States).
  */
-export function TaskStatusGlyph({ status }: { status: SessionTaskStatus }) {
+export function TaskStatusGlyph({
+  status,
+  ended = false,
+}: {
+  status: SessionTaskStatus;
+  ended?: boolean;
+}) {
+  const unfinished = ended && status === 'in_progress';
   return (
     <ToneGlyph
-      look={TASK_STATUS_LOOK[status]}
-      status={status}
-      spinning={status === 'in_progress'}
+      look={unfinished ? STATUS_LOOK.stopped : TASK_STATUS_LOOK[status]}
+      status={unfinished ? 'stopped' : status}
+      spinning={!unfinished && status === 'in_progress'}
     />
   );
 }

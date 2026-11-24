@@ -32,7 +32,8 @@ import {
   toolRefusedEntry,
 } from '../tools/call-check';
 import type { NotSent, ToolExecution } from '../tools/tool-execution';
-import { callTargetOf, loggedArgsOf } from '../tools/tool-registry';
+import type { ConfirmedSend } from '../tools/tool-runner';
+import { callTargetOf, isMcp, loggedArgsOf } from '../tools/tool-registry';
 import { isQuestion } from '../task-tree';
 import type { AgentDeps } from './agent-deps';
 import { agentOwner } from './agent-owner';
@@ -151,6 +152,9 @@ function endingOf(
     ...(typeof execution.output === 'string'
       ? { output: execution.output }
       : {}),
+    ...(execution.recorded === undefined
+      ? {}
+      : { recorded: execution.recorded }),
     ...(execution.childAgentId === undefined
       ? {}
       : { childTaskId: execution.childAgentId }),
@@ -564,9 +568,15 @@ export async function runToolStep(
         continue;
       }
 
-      if (runner.needsConfirmation(resolved)) {
+      // A training tree asks nobody (KD-3, place 1): its MCP call goes the usual way, a changing one ends `recorded`.
+      if (
+        runner.needsConfirmation(resolved) &&
+        !(caller.training && isMcp(resolved.tool))
+      ) {
         const callDecision =
           decision?.callId === call.callId ? decision : undefined;
+        const startedAt = new Date();
+        let send: ConfirmedSend;
         if (callDecision === undefined) {
           if (call.state === awaitingConfirmation) {
             throw new Error(
@@ -584,28 +594,41 @@ export async function runToolStep(
             continue;
           }
           const { request } = card;
-          ctx.logger.info('tool call awaits confirmation', {
-            callId: call.callId,
-            tool: call.tool,
-            server: call.server,
-            args: argsOf(call),
-            outcome: null,
-            reason: 'awaiting_confirmation',
-          });
-          logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
-            calls: closings.length,
-            asked: call.callId,
-          });
-          return {
-            outcome: 'wait',
-            commit: commitOf(deps, ctx, closings, closedChildren, {
-              call,
-              question: { kind: request.kind, payload: request.payload },
-            }),
-          };
-        }
-
-        if (!callDecision.approve) {
+          if (caller.training) {
+            // The card's content is the decision, written by no one; the intent goes alone (KD-3, place 1).
+            ctx.logger.info('confirmation skipped in training tree', {
+              callId: call.callId,
+              tool: call.tool,
+              server: call.server,
+              rootId: caller.rootId,
+            });
+            send = await runner.sendUnasked(
+              resolved,
+              ctx,
+              request.payload.content,
+            );
+          } else {
+            ctx.logger.info('tool call awaits confirmation', {
+              callId: call.callId,
+              tool: call.tool,
+              server: call.server,
+              args: argsOf(call),
+              outcome: null,
+              reason: 'awaiting_confirmation',
+            });
+            logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
+              calls: closings.length,
+              asked: call.callId,
+            });
+            return {
+              outcome: 'wait',
+              commit: commitOf(deps, ctx, closings, closedChildren, {
+                call,
+                question: { kind: request.kind, payload: request.payload },
+              }),
+            };
+          }
+        } else if (!callDecision.approve) {
           ctx.logger.info('tool call rejected by the employee', {
             callId: call.callId,
             tool: call.tool,
@@ -626,15 +649,14 @@ export async function runToolStep(
             ),
           );
           continue;
+        } else {
+          send = await runner.sendConfirmed(
+            resolved,
+            ctx,
+            callDecision.args,
+            callDecision.confirmed,
+          );
         }
-
-        const startedAt = new Date();
-        const send = await runner.sendConfirmed(
-          resolved,
-          ctx,
-          callDecision.args,
-          callDecision.confirmed,
-        );
         if (send.kind === 'not_sent') {
           if (send.reason === 'fenced') return abandon('intent fenced');
           // The call is no longer awaiting: nothing is sent; what is ready is committed.

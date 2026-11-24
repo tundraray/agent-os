@@ -119,6 +119,11 @@ export function AgentHeader() {
   const tAgents = useTranslations('agents');
   const agent = useFeedSelector((state) => selectAgent(state.view), null);
   const loadError = useFeedSelector((state) => state.loadError, null);
+  // A training tree's agent has no control: a replay has no «Стоп», and the server refuses its restart (KD-3).
+  const inTraining = useFeedSelector(
+    (state) => (state.view?.training ?? null) !== null,
+    false,
+  );
   // One command at a time: a second press while the first is in flight does nothing.
   const busy = useRef(false);
 
@@ -135,7 +140,8 @@ export function AgentHeader() {
     focusAfterNewChat();
   }, [agentId]);
 
-  const control = agent === null ? null : CONTROL_BY_STATUS[agent.status];
+  const control =
+    agent === null || inTraining ? null : CONTROL_BY_STATUS[agent.status];
   const record = agent === null ? null : runRecord(agent);
   const live = useLiveRecord(record?.recordId ?? '');
   const hint = control === RESTART ? restartHint(tAgents, record, live) : null;

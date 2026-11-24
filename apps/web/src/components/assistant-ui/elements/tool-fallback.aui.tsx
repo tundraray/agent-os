@@ -13,6 +13,7 @@ import {
   CircleStopIcon,
   CircleXIcon,
   KeyRoundIcon,
+  PencilOffIcon,
   UnplugIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -23,9 +24,14 @@ import {
 import {
   IdSchema,
   LIST_RECORDS_TOOL,
+  MEMORY_TOOLS,
+  NOTEPAD_CREATE_TOOL,
+  NOTEPAD_TOOLS,
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
+  scriptNameOf,
   ToolCallStateSchema,
+  TRY_SCRIPT_TOOL,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   type ChatRecordTool,
@@ -43,7 +49,7 @@ import { useLiveRecord, useRecordNamed } from '@/components/agents/run-card';
 import { ValueRows } from '@/components/agents/value-rows';
 import { ShellLink } from '@/components/shell/shell-link';
 import { refusalText } from '@/lib/access/access-texts';
-import { isRunCode, NO_RUN_VALUE, runCodeView } from '@/lib/agents/run-code';
+import { NO_RUN_VALUE, runCodeView } from '@/lib/agents/run-code';
 import { flatRows, valueRows } from '@/lib/agents/value-rows';
 import {
   isRecordTool,
@@ -70,7 +76,7 @@ import {
   CollapsibleTrigger,
 } from './collapsible-root';
 
-/** The eleven outcomes of tool-call.md: the nine finished ones and two of an open call. */
+/** The outcomes of tool-call.md: the finished ones and two of an open call. */
 type CallOutcome = ToolOutcome | 'running' | 'awaiting_confirmation';
 
 type OutcomeLook = { Icon: LucideIcon; tone: string; showsResult: boolean };
@@ -105,6 +111,11 @@ const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
     tone: 'text-muted-foreground',
     showsResult: false,
   },
+  recorded: {
+    Icon: PencilOffIcon,
+    tone: 'text-muted-foreground',
+    showsResult: false,
+  },
   interrupted: {
     Icon: CircleStopIcon,
     tone: 'text-muted-foreground',
@@ -118,6 +129,27 @@ const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
 };
 
 const ArgLabelsSchema = z.record(z.string(), z.string());
+const RecordedSchema = z.array(z.string()).min(1);
+const MemoryArgsSchema = z.object({ description: z.string() });
+const NotepadCreateArgsSchema = z.object({ title: z.string() });
+/** The first line of a notepad tool's result on one document; `.` stops at its end (design-notepad.md, «Веб»). */
+const NOTEPAD_RESULT_TITLE = /^Document \d+: (.*)/;
+
+/**
+ * The title of a notepad call's document (self-learning MC-13): `notepad_create`'s argument, the others' first
+ * result line; null for the lists and before the result.
+ */
+function notepadTitle(
+  toolName: string,
+  args: unknown,
+  result: unknown,
+): string | null {
+  if (toolName === NOTEPAD_CREATE_TOOL)
+    return NotepadCreateArgsSchema.safeParse(args).data?.title ?? null;
+  return typeof result === 'string'
+    ? (NOTEPAD_RESULT_TITLE.exec(result)?.[1] ?? null)
+    : null;
+}
 
 /** Values outside the built contract, each warned about once per page. */
 const warnedValues = new Set<string>();
@@ -426,7 +458,12 @@ function ToolBlock({
   const look = OUTCOME_LOOK[outcome];
   const outcomeText = tChat(`tool.outcome.${outcome}`);
   const server = textField(artifact, 'server');
-  const toolTitle = server === null ? null : textField(artifact, 'toolTitle');
+  const scriptName = scriptNameOf(toolName, server);
+  const trial = server === null && toolName === TRY_SCRIPT_TOOL;
+  const toolTitle =
+    server !== null || scriptName !== null
+      ? textField(artifact, 'toolTitle')
+      : null;
   const sentLabels = ArgLabelsSchema.safeParse(field(artifact, 'argLabels'));
   const { title: catalogueTitle, args: labels } = toolCallLabels(tools, {
     tool: toolName,
@@ -434,16 +471,37 @@ function ToolBlock({
     toolTitle,
     argLabels: sentLabels.success ? sentLabels.data : undefined,
   });
-  const toolLabel = title ?? catalogueTitle;
-  const runCode = isRunCode(toolName, server)
-    ? runCodeView(args, labels)
-    : null;
+  const toolLabel = title ?? scriptName ?? catalogueTitle;
+  const runCode = runCodeView(
+    {
+      tool: toolName,
+      server,
+      args,
+      scriptCode: textField(artifact, 'scriptCode'),
+    },
+    tools,
+  );
+  const memoryDescription =
+    server === null && MEMORY_TOOLS.some((name) => name === toolName)
+      ? (MemoryArgsSchema.safeParse(args).data?.description ?? null)
+      : null;
+  const documentTitle =
+    server === null && NOTEPAD_TOOLS.some((name) => name === toolName)
+      ? notepadTitle(toolName, args, result)
+      : null;
   /**
-   * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a
-   * titled MCP tool; without a title the server stands in the first line.
+   * The second header line: a code run's description (code-execution UXRD, KD-4) or draft name, a saved
+   * script's «скрипт агента · {описание}» (self-learning KD-4), a memory call's record
+   * description or a notepad call's document title (self-learning MC-13), or «name · server» of a titled MCP
+   * tool; without a title the server stands in the first line.
    */
   const secondLine =
+    (scriptName !== null && toolTitle !== null
+      ? tChat('tool.savedScript', { description: toolTitle })
+      : null) ??
     runCode?.description ??
+    memoryDescription ??
+    documentTitle ??
     (toolTitle !== null && server !== null ? `${toolName} · ${server}` : null);
   const at =
     textField(artifact, 'startedAt') ??
@@ -475,6 +533,9 @@ function ToolBlock({
   /** A successful code run's printed lines under its end (KD-3); absent when the script printed nothing. */
   const output =
     runCode !== null && look.showsResult ? textField(artifact, 'output') : null;
+  /** MC-10: the tools a code run in a training tree recorded and did not send; no line when there were none. */
+  const recorded =
+    RecordedSchema.safeParse(field(artifact, 'recorded')).data ?? null;
 
   return (
     <Collapsible
@@ -501,7 +562,13 @@ function ToolBlock({
           <FadeSlot swapKey={outcome} className={look.tone}>
             <StatusGlyph Icon={look.Icon} spinning={outcome === 'running'} />
           </FadeSlot>
-          <span className="text-foreground min-w-0 truncate" title={toolLabel}>
+          <span
+            className={cn(
+              'text-foreground min-w-0 truncate',
+              scriptName !== null && 'font-mono',
+            )}
+            title={toolLabel}
+          >
             {toolLabel}
           </span>
           {server !== null && secondLine === null ? (
@@ -528,7 +595,10 @@ function ToolBlock({
           <span
             data-slot="tool-fallback-second-line"
             title={secondLine}
-            className="text-muted-foreground block h-4 w-full truncate ps-12 text-xs leading-4"
+            className={cn(
+              'text-muted-foreground block h-4 w-full truncate ps-12 text-xs leading-4',
+              trial && 'font-mono',
+            )}
           >
             {secondLine}
           </span>
@@ -576,6 +646,15 @@ function ToolBlock({
               disclosure={false}
               density="data"
             />
+          ) : null}
+          {recorded !== null ? (
+            <p className="text-muted-foreground flex items-start gap-1.5 text-xs leading-4">
+              <PencilOffIcon aria-hidden className="size-3.5 shrink-0" />
+              <span className="min-w-0 break-words">
+                {tChat('tool.recordedLine')}{' '}
+                <span className="font-mono">{recorded.join(', ')}</span>
+              </span>
+            </p>
           ) : null}
         </div>
       </CollapsibleContent>

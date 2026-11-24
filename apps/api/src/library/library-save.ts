@@ -154,7 +154,11 @@ export class LibrarySave {
     return {
       name: body.name,
       body,
-      previous: previous && { name: previous.name, body: previous.body },
+      previous: previous && {
+        name: previous.name,
+        body: previous.body,
+        builtinKey: previous.builtinKey,
+      },
       takenNames: { own: ownNames, system: systemNames },
       choices,
     };
@@ -182,27 +186,31 @@ export class LibrarySave {
   }
 
   /**
-   * Every refusal is thrown, so the savepoint rolls back the version it may have written: `name_taken`
-   * aborts the transaction, a `stale` one leaves nothing behind (DC-17).
+   * Every refusal is thrown, so the savepoint rolls back the version it may have written: `name_taken`,
+   * `number_taken` and a `stale` activation alike (DC-17).
    */
   private async updateSaved(
     request: SaveRequest,
     previous: LibraryRecord,
   ): Promise<LibraryRecord> {
     const { scope, author, body } = request;
-    const updated = await this.repository.insertVersion({
+    const created = await this.repository.createVersion({
       agentId: previous.id,
-      fromNumber: request.target?.version ?? previous.version,
-      name: body.name,
-      description: body.description,
       content: body.content,
       authorId: author.id,
     });
-    if (updated.outcome === 'name_taken') throw new SaveRefused('name_taken');
-    if (updated.outcome === 'number_taken')
+    if (created.outcome === 'number_taken')
       throw new SaveRefused('version_conflict');
+    const activated = await this.repository.activateVersion({
+      agentId: previous.id,
+      versionId: created.id,
+      expectedNumber: request.target?.version ?? previous.version,
+      name: body.name,
+      description: body.description,
+    });
+    if (activated === 'name_taken') throw new SaveRefused('name_taken');
     const current = await this.readOne(scope, author, previous.id);
-    if (updated.outcome === 'stale')
+    if (activated === 'stale')
       throw new SaveRefused(
         current === undefined ? 'not_found' : 'version_conflict',
       );

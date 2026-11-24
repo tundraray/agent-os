@@ -2,10 +2,10 @@ import { HistoryEventSchema } from '@agent-os/contracts';
 import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepResult } from '@agent-os/runtime';
 
-import { knowledgeBlock } from '../knowledge/knowledge-block';
 import { modelErrorMessage } from '../model/model-client';
 import type { NewHistoryEntry } from '../store/history';
 import type { Session } from '../store/sessions';
+import { memoryBlock } from '../tools/system/memory-block';
 import { taskBlock, tasksOf } from '../tools/system/task-list-block';
 import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
@@ -61,7 +61,11 @@ export async function runCompactionStep(
   deps: AgentDeps,
   agent: Pick<
     BaseAgent,
-    'input' | 'definition' | 'offeredDeclaration' | 'turnsAfterDelivery'
+    | 'input'
+    | 'definition'
+    | 'caller'
+    | 'offeredDeclaration'
+    | 'turnsAfterDelivery'
   >,
   ctx: StepContext,
   session: Session,
@@ -76,13 +80,9 @@ export async function runCompactionStep(
   const delivered = await entriesOf(deps, ctx);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
-  // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache, and
+  // The same system text as the model step's (design-memory.md KD-3): otherwise this call would miss its prompt cache, and
   // the summary would be written without the task list (design-task-list.md KD-2).
-  const knowledge = await knowledgeBlock(deps, {
-    learning: definition.learning,
-    taskId: ctx.taskId,
-    logger: ctx.logger,
-  });
+  const memory = await memoryBlock(deps, agent.caller, ctx.logger);
   const declaration = await agent.offeredDeclaration(ctx);
   const tasks = taskBlock(
     await tasksOf(deps, ctx.taskId, declaration.taskList),
@@ -97,7 +97,7 @@ export async function runCompactionStep(
       taskId: ctx.taskId,
       agentName: definition.name,
       model: session.model,
-      instructions: withStepBlocks(definition.prompt, { knowledge, tasks }),
+      instructions: withStepBlocks(definition.prompt, { memory, tasks }),
       messages: [
         ...providerMessagesOf(view, shown),
         { role: 'user', content: COMPACTION_REQUEST },
@@ -107,6 +107,7 @@ export async function runCompactionStep(
       streamsText: false,
       signal: ctx.signal,
       logger: ctx.logger,
+      training: agent.caller.training,
     }),
   );
   if (result === undefined) return { outcome: 'continue' };

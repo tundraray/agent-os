@@ -38,7 +38,7 @@ import {
 } from './embedding-client';
 
 /** At most this many texts go in one provider request; a longer list goes in batches, one after another (DC-9). */
-export const EMBEDDING_BATCH_SIZE = 100;
+const EMBEDDING_BATCH_SIZE = 100;
 
 export interface EmbedRequest {
   /** Their order is the order of the vectors; an empty list is answered without a provider request. */

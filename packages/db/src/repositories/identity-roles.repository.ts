@@ -10,6 +10,8 @@ export interface RoleSummaryRow {
   id: string;
   name: string;
   isAdmin: boolean;
+  trainOwn: boolean;
+  trainAny: boolean;
   builtin: boolean;
   memberCount: number;
 }
@@ -66,6 +68,8 @@ export class IdentityRolesRepository {
         id: identityRoles.id,
         name: identityRoles.name,
         isAdmin: identityRoles.isAdmin,
+        trainOwn: identityRoles.trainOwn,
+        trainAny: identityRoles.trainAny,
         builtin: identityRoles.builtin,
         memberCount: sql<number>`count(${identityRoleMembers.userId})::int`,
       })
@@ -147,10 +151,12 @@ export class IdentityRolesRepository {
     return row;
   }
 
-  /** Changes the name and/or the admin right of the role. */
+  /** Changes the name and/or the rights of the role. */
   async update(
     roleId: string,
-    change: { name?: string; isAdmin?: boolean },
+    change: Partial<
+      Pick<IdentityRoleRow, 'name' | 'isAdmin' | 'trainOwn' | 'trainAny'>
+    >,
   ): Promise<void> {
     await this.db.client
       .update(identityRoles)

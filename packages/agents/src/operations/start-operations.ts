@@ -22,15 +22,18 @@ import {
 } from '../start/resolve-start';
 import type { RunStart } from '../start/run-definition';
 import { History } from '../store/history';
-import {
-  type AgentTaskInput,
-  type Session,
-  Sessions,
-  type SessionStart,
-} from '../store/sessions';
+import { type Session, Sessions, type SessionStart } from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
+import { inTrainingTree } from '../training/training-tree';
 import type { AgentRef, StartRequest } from './agent-sessions';
-import { agentTask, asAgent, createLogged } from './operation-support';
+import {
+  type AgentCreationDeps,
+  agentNotFound,
+  agentTask,
+  asAgent,
+  createAgent,
+  createLogged,
+} from './operation-support';
 
 /**
  * Where a restart takes its version (data-model design-agents.md, «Старт: версия, имя и модель беседы»): an
@@ -55,15 +58,16 @@ function restartSource(run: RunStart, session: Session): StartSource {
 export class StartOperations {
   private readonly logger: Logger;
   private readonly logged: ReturnType<typeof createLogged>;
+  private readonly creation: AgentCreationDeps;
 
   constructor(
-    @Inject(Db) private readonly db: Db,
+    @Inject(Db) db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
     /** A restart repeats the assignment of the restarted session's `task` entry (KD-6). */
     @Inject(History) private readonly history: Pick<History, 'taskText'>,
     @Inject(TaskControl)
     private readonly tasks: Pick<TaskControl, 'create' | 'get'>,
-    @Inject(LiveTasks) private readonly liveTasks: Pick<LiveTasks, 'adopt'>,
+    @Inject(LiveTasks) liveTasks: Pick<LiveTasks, 'adopt'>,
     /** `resolveStart` asks it for the agent of a start or a restart; a restart reads the restarted version. */
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
@@ -72,12 +76,12 @@ export class StartOperations {
     private readonly providers: Pick<AgentsProviders, 'connection'>,
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
     /** Makes the object of a started agent with its session, in the transaction that creates its task. */
-    @Inject(AgentFactory)
-    private readonly factory: Pick<AgentFactory, 'createIn'>,
+    @Inject(AgentFactory) factory: Pick<AgentFactory, 'createIn'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
+    this.creation = { db, tasks, factory, liveTasks };
   }
 
   start({
@@ -119,6 +123,9 @@ export class StartOperations {
       { agentId, ownerId },
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
+        // A training tree is not resumed (self-learning design-training.md KD-3, place 5).
+        if (await inTrainingTree(this.tasks, task))
+          throw agentNotFound(agentId);
         if (!isFinished(task.status)) {
           throw new AgentsError(
             'NOT_FINISHED',
@@ -233,55 +240,21 @@ export class StartOperations {
     };
   }
 
-  /**
-   * Creates an agent outside a step: its task with an empty input, its session written from the start and its
-   * object commit together, so whoever sees the task sees the session (KD-8); the object goes to the runtime once
-   * the transaction resolved, and the agent's first step runs on it.
-   */
-  private async create(
-    request: {
-      readonly type: string;
-      readonly ownerId: string;
-      readonly parentId?: string;
-      readonly taskId?: string;
-    },
-    placeOf: (taskId: string) => {
-      readonly rootId: string;
-      readonly depth: number;
-    },
-    start: SessionStart,
-  ): Promise<{ agentId: string }> {
-    const { type, ownerId, parentId = null } = request;
-    const input: AgentTaskInput = {};
-    const { agentId, agent } = await this.db.transaction(async () => {
-      const taskId = await this.tasks.create({ ...request, input });
-      const agent = await this.factory.createIn(
-        type,
-        { taskId, ownerId, parentId, ...placeOf(taskId) },
-        input,
-        start,
-      );
-      return { agentId: taskId, agent };
-    });
-    this.liveTasks.adopt(agentId, agent);
-    return { agentId };
-  }
-
   /** Creates a root — a chat: of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`. */
   private createRoot(
     ownerId: string,
     start: SessionStart,
     agentId?: string,
   ): Promise<{ agentId: string }> {
-    return this.create(
-      {
+    return createAgent(this.creation, {
+      task: {
         type: CHAT_TASK_TYPE,
         ownerId,
         ...(agentId === undefined ? {} : { taskId: agentId }),
       },
-      (taskId) => ({ rootId: taskId, depth: 0 }),
+      placeOf: (taskId) => ({ rootId: taskId, depth: 0 }),
       start,
-    );
+    });
   }
 
   /** Creates an agent of its run's type in the place of a finished one under its parent. */
@@ -296,11 +269,11 @@ export class StartOperations {
   ): Promise<{ agentId: string }> {
     const { ownerId, parentId, rootId, depth } = place;
     return asAgent(
-      this.create(
-        { type: childTypeOf(start.run), ownerId, parentId },
-        () => ({ rootId, depth }),
+      createAgent(this.creation, {
+        task: { type: childTypeOf(start.run), ownerId, parentId },
+        placeOf: () => ({ rootId, depth }),
         start,
-      ),
+      }),
     );
   }
 }

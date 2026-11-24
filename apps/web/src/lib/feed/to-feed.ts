@@ -52,6 +52,8 @@ export type FeedView =
       children: readonly AgentNode[];
       /** The record the conversation last touched (KD-6); null while it has touched none. */
       focus: ConversationView['focus'];
+      /** The training this conversation belongs to (self-learning KD-3); null outside a training tree. */
+      training: ConversationView['training'];
     }
   | {
       kind: 'agent';
@@ -60,6 +62,7 @@ export type FeedView =
       pending: readonly PendingMessage[];
       decisions: readonly Confirmation[];
       children: readonly AgentNode[];
+      training: AgentPageView['training'];
     };
 
 /** A deep agent's run: started from a deep agent record and not as one of its subagents. */
@@ -79,6 +82,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
       decisions: page.decisions,
       children: page.agents,
       focus: page.focus,
+      training: page.training,
     };
   }
   return {
@@ -88,6 +92,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
     pending: page.pending,
     decisions: page.decisions,
     children: page.children,
+    training: page.training,
   };
 }
 
@@ -222,11 +227,15 @@ export type ToolCallArtifact = {
   /** The tool's human title and the labels of its arguments; absent when the tool gives none. */
   toolTitle?: AnswerToolCall['toolTitle'];
   argLabels?: AnswerToolCall['argLabels'];
+  /** The code of a saved script, on a call of that script. */
+  scriptCode?: AnswerToolCall['scriptCode'];
   refusalReason: ToolRefusalReason | null;
   /** The refused model of a refusal by model (MC-16); absent or null otherwise. */
   refusalDetail?: ToolResult['refusalDetail'];
   /** What a code run's script printed; null for other tools and for a failed run. */
   output: string | null;
+  /** The tools a `try_script` run recorded and did not send (MC-10); absent for other tools. */
+  recorded?: ToolResult['recorded'];
   /** The record a record tool's call names (MC-23); absent or null for other tools and when the feed does not know it. */
   recordName?: string | null;
   startedAt: string | null;
@@ -316,9 +325,11 @@ function toolCallPart(
     server: call.server,
     toolTitle: call.toolTitle,
     argLabels: call.argLabels,
+    scriptCode: call.scriptCode,
     refusalReason: result?.refusalReason ?? null,
     refusalDetail: result?.refusalDetail ?? null,
     output: result?.output ?? null,
+    recorded: result?.recorded,
     recordName,
     startedAt: result?.startedAt ?? null,
     finishedAt: result?.finishedAt ?? null,

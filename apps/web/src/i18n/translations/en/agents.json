@@ -162,7 +162,16 @@
   "taskStatus": {
     "pending": "Pending",
     "in_progress": "In progress",
-    "completed": "Completed"
+    "completed": "Completed",
+    "unfinished": "Not finished"
+  },
+  "trainingStatus": {
+    "running": "Running",
+    "done": "Done",
+    "stopped": "Stopped manually",
+    "capped": "Stopped at the cap",
+    "failed": "Failed: {reason}",
+    "failedNoReason": "Failed"
   },
   "delegationStatus": {
     "running": "Running",
@@ -194,6 +203,17 @@
     "emptyHint": "The agent's tasks and delegations appear here.",
     "loading": "Loading tasks…",
     "loadError": "Couldn't load tasks",
+    "retry": "Try again"
+  },
+  "documents": {
+    "tab": "Documents · {count}",
+    "listLabel": "Documents",
+    "writing": "Writing",
+    "showAll": "Show in full",
+    "collapse": "Collapse",
+    "openInPanel": "Open in panel",
+    "back": "Back to documents",
+    "loadError": "Couldn't load the document",
     "retry": "Try again"
   }
 }

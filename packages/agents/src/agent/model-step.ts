@@ -1,6 +1,6 @@
 import {
   CHILD_FINISHED_KIND,
-  RUN_CODE_TOOL,
+  isCodeRunCall,
   type SessionTaskStatus,
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
@@ -12,12 +12,12 @@ import {
   type StepResult,
 } from '@agent-os/runtime';
 
-import { knowledgeBlock } from '../knowledge/knowledge-block';
 import { agentTasksOf } from '../task-tree';
 import { modelErrorMessage } from '../model/model-client';
 import type { AgentToolCall, AgentToolDefinition } from '../model/mastra-turn';
 import type { NewHistoryEntry } from '../store/history';
 import type { Session } from '../store/sessions';
+import { memoryBlock } from '../tools/system/memory-block';
 import { taskBlock, tasksOf } from '../tools/system/task-list-block';
 import { callTargetOf } from '../tools/tool-registry';
 import type { AgentDeps } from './agent-deps';
@@ -64,8 +64,8 @@ function answerFields(
   },
 ): Record<string, unknown> {
   const toolsChosen = answer.toolCalls.map((call) => call.toolName);
-  const runCodeCalls = toolsChosen.filter(
-    (name) => name === RUN_CODE_TOOL,
+  const runCodeCalls = toolsChosen.filter((name) =>
+    isCodeRunCall(name, null),
   ).length;
   return {
     toolsShown: tools.length,
@@ -85,11 +85,14 @@ export interface ChildrenInFlight {
   readonly pending: number;
 }
 
-/** What the agent knows of the model's answer without tool calls when it ends its turn. */
+/**
+ * What the agent knows of the model's answer without tool calls when it ends its turn; `continues` — this step
+ * continues the finished agent (its prelude writes `continued`), read only by `DeepAgent`.
+ */
 export type TurnAnswer = Pick<
   EndOfTurnInput,
   'answerFields' | 'openTasks' | 'text' | 'cutOff'
->;
+> & { readonly continues: boolean };
 
 /** How a turn ends, with the children the agent counted for it (the step log names them). */
 export interface TurnEnd {
@@ -131,7 +134,7 @@ export async function childrenInFlight(
  *   Each failure closes the session and resets the turn counter (DC-1).
  * - An answer with calls is written with them: they are open (`requested`) until their results;
  *   `continue`, the tool step runs them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
- *   `complete` with `{ report }`, the session closed and its counter reset. How the turn ends is the agent's
+ *   `complete` with `{ report, document }`, the session closed and its counter reset. How the turn ends is the agent's
  *   (`endOfTurn`), as are the tools it declares (`offeredDeclaration`) and the turn counter after the delivered
  *   messages (`turnsAfterDelivery`).
  * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7).
@@ -142,6 +145,7 @@ export async function runModelStep(
     BaseAgent,
     | 'input'
     | 'definition'
+    | 'caller'
     | 'offeredDeclaration'
     | 'turnsAfterDelivery'
     | 'endOfTurn'
@@ -188,12 +192,8 @@ export async function runModelStep(
     ...(prelude?.entries ?? []),
     ...delivered,
   ]);
-  // The graph is live data read beside the version on every step (KD-6); a failed read fails the step.
-  const knowledge = await knowledgeBlock(deps, {
-    learning: definition.learning,
-    taskId: ctx.taskId,
-    logger: ctx.logger,
-  });
+  // Memory is live data read beside the version on every step (design-memory.md KD-3); a failed read fails the step.
+  const memory = await memoryBlock(deps, agent.caller, ctx.logger);
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
   const declaration = await agent.offeredDeclaration(ctx);
@@ -208,7 +208,7 @@ export async function runModelStep(
       agentName: definition.name,
       model: session.model,
       instructions: withStepBlocks(definition.prompt, {
-        knowledge,
+        memory,
         tasks: taskBlock(tasks),
       }),
       messages: providerMessagesOf(view, shown),
@@ -216,6 +216,7 @@ export async function runModelStep(
       streamsText: true,
       signal: ctx.signal,
       logger: ctx.logger,
+      training: agent.caller.training,
     }),
   );
   if (result === undefined) return { outcome: 'continue' };
@@ -298,6 +299,7 @@ export async function runModelStep(
     openTasks: tasks.filter((task) => OPEN_TASK_STATUSES.includes(task.status)),
     text: result.text,
     cutOff: result.cutOff,
+    continues: prelude?.patch.closed === false,
   });
 
   switch (ending.kind) {
@@ -354,7 +356,7 @@ export async function runModelStep(
       });
       return {
         outcome: 'complete',
-        result: { report: ending.report },
+        result: { report: ending.report, document: ending.document },
         commit: (effects) =>
           writeAnswer(effects, [], { ...callPatch, turns: 0, closed: true }),
       };

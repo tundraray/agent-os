@@ -1,6 +1,6 @@
-import { and, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { Db } from '../db';
-import { runtimeModelCalls } from '../schema';
+import { runtimeModelCalls, runtimeTasks } from '../schema';
 
 export type NewRuntimeModelCallRow = Pick<
   typeof runtimeModelCalls.$inferInsert,
@@ -61,6 +61,33 @@ export class RuntimeModelCallsRepository {
       .from(runtimeModelCalls)
       .where(ownedIn(ownerId, window))
       .groupBy(runtimeModelCalls.model);
+  }
+
+  /** Cost of the calls of every task with this `root_id`; a tree with no call gives zero. */
+  async sumTree(rootId: string): Promise<string> {
+    const [row] = await this.db.client
+      .select({
+        costUsd: sql<string>`coalesce(sum(${runtimeModelCalls.costUsd}), 0)`,
+      })
+      .from(runtimeModelCalls)
+      .innerJoin(
+        runtimeTasks,
+        eq(runtimeTasks.taskId, runtimeModelCalls.taskId),
+      )
+      .where(eq(runtimeTasks.rootId, rootId));
+    return row!.costUsd;
+  }
+
+  /** Cost of the calls of the given tasks; none gives zero. */
+  async sumTasks(taskIds: readonly string[]): Promise<string> {
+    if (taskIds.length === 0) return '0';
+    const [row] = await this.db.client
+      .select({
+        costUsd: sql<string>`coalesce(sum(${runtimeModelCalls.costUsd}), 0)`,
+      })
+      .from(runtimeModelCalls)
+      .where(inArray(runtimeModelCalls.taskId, [...taskIds]));
+    return row!.costUsd;
   }
 }
 

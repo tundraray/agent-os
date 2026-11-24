@@ -9,6 +9,8 @@ export interface ChatStatusInput {
     readonly status: TaskStatus;
     readonly waitReason: WaitReason | null;
   };
+  /** The conversation is a training: its trainer waits on messages while replays run. */
+  readonly training: boolean;
 }
 
 export interface ChatState {
@@ -22,7 +24,11 @@ export interface ChatState {
  * except that the view shows both waiting for messages and working as `working`, which the composer
  * tells apart by the root's task. A root stopped other than by delete is `idle`: a message revives it.
  */
-export function chatStatus({ root, task }: ChatStatusInput): ChatState {
+export function chatStatus({
+  root,
+  task,
+  training,
+}: ChatStatusInput): ChatState {
   switch (root.status) {
     case 'interrupted':
     case 'awaiting_confirmation':
@@ -35,7 +41,9 @@ export function chatStatus({ root, task }: ChatStatusInput): ChatState {
     case 'working':
       return {
         status:
-          task.status === 'waiting' && task.waitReason === 'messages'
+          !training &&
+          task.status === 'waiting' &&
+          task.waitReason === 'messages'
             ? 'idle'
             : 'working',
         failureReason: null,

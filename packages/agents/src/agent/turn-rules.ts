@@ -1,6 +1,6 @@
 import type { FinalSubagentReport } from './delegation';
 import type { HistoryContent } from '../history/history';
-import type { SessionTask } from '@agent-os/db';
+import type { DocumentRow, SessionTask } from '@agent-os/db';
 import { blockLine } from '../tools/system/task-list-block';
 
 export interface EndOfTurnInput {
@@ -39,8 +39,12 @@ export type EndOfTurn =
       readonly openTasks?: readonly number[];
       readonly missingReport?: string;
     }
-  /** The agent is done; `report` is its outcome for the parent. */
-  | { readonly kind: 'complete'; readonly report: string };
+  /** The agent is done; `report` is its outcome for the parent, `document` — a deep agent's report document. */
+  | {
+      readonly kind: 'complete';
+      readonly report: string;
+      readonly document: Pick<DocumentRow, 'id' | 'title'> | null;
+    };
 
 /**
  * The outcome of an answer without tool calls (KD-2, «Конец хода», DC-3, DC-4, Invariant 4;
@@ -65,12 +69,12 @@ export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
     if (input.cutOff) return { kind: 'notice', text: CUT_OFF_NOTICE };
     const fieldsNotice = answerFieldsNotice(input.text, input.answerFields);
     return fieldsNotice === null
-      ? { kind: 'complete', report: input.text }
+      ? { kind: 'complete', report: input.text, document: null }
       : { kind: 'notice', text: fieldsNotice };
   }
   const report = input.finalSubagentReport;
   if (report?.status === 'completed')
-    return { kind: 'complete', report: report.text ?? '' };
+    return { kind: 'complete', report: report.text ?? '', document: null };
   return {
     kind: 'notice',
     text: finishRefusal(input.finalSubagent, report),

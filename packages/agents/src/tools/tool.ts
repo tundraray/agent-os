@@ -1,5 +1,10 @@
 import type { Logger } from '@agent-os/common';
-import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
+import type {
+  DeepAgentContent,
+  ToolOutcome,
+  ToolRefusalReason,
+} from '@agent-os/contracts';
+import type { StoredToolResult } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import type { z } from 'zod';
 
@@ -29,6 +34,8 @@ export interface ToolDeclaration {
   readonly taskList: boolean;
   /** The agent may give the same work for a list of items. */
   readonly listDelegation: boolean;
+  /** The saved scripts the agent owns: the library makes a `script__<name>` tool of each (self-learning scripts KD-4). */
+  readonly scripts: DeepAgentContent['scripts'];
 }
 
 /** How a tool reads for the agent that declares it. */
@@ -65,6 +72,8 @@ export interface ToolCaller {
   readonly agentId: string;
   readonly ownerId: string;
   readonly rootId: string;
+  /** The task that started the caller; `null` for a conversation's root. */
+  readonly parentId: string | null;
   /** The caller is a conversation's chat (`ChatAgent`): it starts records of the employee's live listing. */
   readonly root: boolean;
   /** 0 for a root session. */
@@ -73,6 +82,13 @@ export interface ToolCaller {
   readonly run: RunStart;
   /** The servers the caller declares (`ToolDeclaration.servers`): a `run_code` run checks its calls against their tools. */
   readonly servers: readonly string[];
+  /** The caller's tree is a training (its root is a `trainer` task): nothing is asked, no changing call is sent (KD-3). */
+  readonly training: boolean;
+  /**
+   * The caller's task list is fixed (the trainer's pool): no task is deleted or gets a new dependency, and the
+   * tasks with these numbers are moved by code only; `null` — an ordinary list.
+   */
+  readonly fixedTasks: readonly number[] | null;
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */
@@ -86,6 +102,10 @@ export type ToolRunResult =
       readonly text: string;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one (DC-14). */
       readonly output?: string | null;
+      /** The tools whose calls a code run of a training tree recorded and did not send, in call order. */
+      readonly recorded?: readonly string[];
+      /** The full result the step's commit stores under the call's id; the model got `text` (a wrapper when long). */
+      readonly stored?: StoredToolResult;
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
@@ -154,13 +174,15 @@ export interface ToolConfirmation<Args> {
 }
 
 /**
- * How an MCP tool call reads for the employee: the server's title of the tool and the labels of its
- * arguments by key. Built when a view is read, never stored; a tool or an argument without a title has
- * none. A built-in tool has none: the web takes its labels from its catalogue by the tool's name.
+ * How a tool call reads for the employee: for an MCP tool the server's title of the tool and the labels of
+ * its arguments by key; for a saved script its description and its code. Built when a view is read, never
+ * stored; a tool or an argument without a title has none. Another built-in tool has none: the web takes its
+ * labels from its catalogue by the tool's name.
  */
 export interface ToolDisplay {
   readonly toolTitle?: string;
   readonly argLabels?: Readonly<Record<string, string>>;
+  readonly scriptCode?: string;
 }
 
 interface AgentToolBase<Args> {

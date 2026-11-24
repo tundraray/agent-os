@@ -81,6 +81,8 @@ export const conversations = app.table(
   (t) => [
     /** The owner's runs of an agent through its versions: the first-run mark and the chat listing's counts. */
     index('conversations_owner_version_idx').on(t.ownerId, t.agentVersionId),
+    /** The past tasks of an agent across every owner (self-learning design-training.md, KD-2). */
+    index('conversations_agent_version_idx').on(t.agentVersionId),
     /** The cascade from a parent conversation. */
     index('conversations_parent_idx').on(t.parentId),
     /** The owner's conversations, last changed first; the condition is the repository's `isRoot`. */

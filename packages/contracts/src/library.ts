@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { ModelIdSchema } from './access';
+import {
+  RunCodeArgsSchema,
+  ScriptCodeSchema,
+  ScriptToolArgsSchema,
+} from './agents';
 import { LanguageSchema, type Language } from './identity';
 import { McpServerNameSchema } from './mcp';
 
@@ -31,11 +36,18 @@ export const RECORD_MAX_TURNS_MAX = 200;
  * Keys of the default agents, one per task type (data-model design-agents.md, KD-4): every enabled employee
  * sees them, their audience is fixed and they cannot be deleted.
  */
-export const BuiltinKeySchema = z.enum(['chat', 'agent', 'deep_agent']);
+export const BuiltinKeySchema = z.enum([
+  'chat',
+  'agent',
+  'deep_agent',
+  'trainer',
+]);
 export type BuiltinKey = z.infer<typeof BuiltinKeySchema>;
 
 /** Built-in key of the main-chat agent, the root of every conversation. */
 export const CHAT_BUILTIN_KEY = BuiltinKeySchema.enum.chat;
+/** Built-in key of the trainer agent, the root of every training. */
+export const TRAINER_BUILTIN_KEY = BuiltinKeySchema.enum.trainer;
 /** Key of the built-in role in `BUILTIN_NAMES`: the role has no `builtinKey`, it is known by its name. */
 export const BUILTIN_ROLE_KEY = 'super-admin';
 
@@ -50,6 +62,7 @@ export const BUILTIN_NAMES = {
     ru: 'Глубокий агент',
     en: 'Deep agent',
   },
+  [TRAINER_BUILTIN_KEY]: { ru: 'Тренер', en: 'Trainer' },
   [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
 } as const satisfies Record<string, Record<Language, string>>;
 
@@ -80,8 +93,8 @@ export const LibraryErrorCode = {
   RECORD_VERSION_CONFLICT: 'RECORD_VERSION_CONFLICT',
   RECORD_NAME_TAKEN: 'RECORD_NAME_TAKEN',
   RECORD_REJECTED: 'RECORD_REJECTED',
-  /** 403: the deep agent is visible, but its knowledge graph is not open to the employee. */
-  KNOWLEDGE_FORBIDDEN: 'KNOWLEDGE_FORBIDDEN',
+  /** 403: the deep agent is visible, but its memory is not open to the employee. */
+  MEMORY_FORBIDDEN: 'MEMORY_FORBIDDEN',
 } as const;
 export type LibraryErrorCode =
   (typeof LibraryErrorCode)[keyof typeof LibraryErrorCode];
@@ -150,13 +163,16 @@ export const VersionSchema = z.number().int().positive();
  * A name stays on one line: no line break or other control character, so a name can never add a line
  * of its own to a tool description (custom-agents design-runtime.md, Security Considerations).
  */
-function nameSchema(maxLength: number) {
+function lineSchema(maxLength: number) {
   return z
     .string()
     .trim()
-    .min(1)
     .max(maxLength)
     .regex(/^\P{Cc}*$/u, { message: 'control characters' });
+}
+
+function nameSchema(maxLength: number) {
+  return lineSchema(maxLength).min(1);
 }
 
 function hasNoRepeats(values: readonly string[]): boolean {
@@ -218,6 +234,36 @@ const SubagentSchema = z.object({
 });
 export type Subagent = z.infer<typeof SubagentSchema>;
 
+/** A saved script of a deep agent's version (self-learning design-scripts.md, Contract Definitions). */
+export const ScriptSchema = z.object({
+  name: z
+    .string()
+    .max(48)
+    .regex(/^[A-Za-z][A-Za-z0-9_]*$/),
+  /** When to call the script and what it returns. */
+  description: nameSchema(1000),
+  /** What the script takes as `input`, in words; may be empty. */
+  input: lineSchema(1000),
+  code: ScriptCodeSchema,
+  class: RunCodeArgsSchema.shape.class,
+  /** `null` — the deep agent itself, otherwise the name of one of its subagents. */
+  owner: z.string().nullable(),
+});
+export type Script = z.infer<typeof ScriptSchema>;
+
+/** `try_script` arguments: the draft's fields and the `input` a saved script's call gives. */
+export const TryScriptArgsSchema = ScriptSchema.pick({
+  name: true,
+  code: true,
+  class: true,
+  owner: true,
+}).extend({
+  input: ScriptToolArgsSchema.shape.input.describe(
+    "The script's global `input`, as a saved script's call would give it",
+  ),
+});
+export type TryScriptArgs = z.infer<typeof TryScriptArgsSchema>;
+
 export const DeepAgentContentSchema = z
   .object({
     prompt: PromptSchema,
@@ -233,8 +279,9 @@ export const DeepAgentContentSchema = z
     taskList: taskListSchema(true),
     /** `task` takes an instruction with a list of items, one subagent per item (FR-24); on by default. */
     listDelegation: z.boolean().default(true),
-    /** Runs learn into the deep agent's knowledge graph; only people change it. */
+    /** Runs of the deep agent and its subagents keep a memory; only people change it, never on a default agent. */
     selfLearning: z.boolean().default(false),
+    scripts: z.array(ScriptSchema).max(100).default([]),
   })
   .superRefine((content, ctx) => {
     const names = content.subagents.map((subagent) => subagent.name);
@@ -265,6 +312,25 @@ export const DeepAgentContentSchema = z
         message: 'no such subagent',
       });
     }
+    const scriptNames = new Set<string>();
+    content.scripts.forEach((script, index) => {
+      const name = script.name.toLowerCase();
+      if (scriptNames.has(name)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scripts', index, 'name'],
+          message: 'script names repeat',
+        });
+      }
+      scriptNames.add(name);
+      if (script.owner !== null && !names.includes(script.owner)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scripts', index, 'owner'],
+          message: 'no such subagent',
+        });
+      }
+    });
   });
 export type DeepAgentContent = z.infer<typeof DeepAgentContentSchema>;
 
@@ -503,14 +569,18 @@ function nameRank(record: NameCandidate): number {
  * The agents a name starts (data-model design-agents.md, KD-5) — the one place of the rule for the start, the
  * tool listings and the web: of the records of one kind and one name without case, the viewer's own, else the
  * colleague's that comes first, else the system one. `records` come in the order of the library list, agents
- * of one name earliest created first. The chat is never started by name.
+ * of one name earliest created first. The chat and the trainer are never started by name.
  */
 export function nameWinners<T extends NameCandidate>(
   records: Iterable<T>,
 ): T[] {
   const winners = new Map<string, T>();
   for (const record of records) {
-    if (record.builtinKey === CHAT_BUILTIN_KEY) continue;
+    if (
+      record.builtinKey === CHAT_BUILTIN_KEY ||
+      record.builtinKey === TRAINER_BUILTIN_KEY
+    )
+      continue;
     const key = `${record.kind}:${record.name.toLowerCase()}`;
     const current = winners.get(key);
     if (current === undefined || nameRank(record) < nameRank(current))

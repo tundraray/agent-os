@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  adminKnowledgePath,
+  adminMemoryPath,
   adminLibraryTabPath,
   adminNewPath,
   adminPath,
   adminRecordPath,
   agentPath,
-  knowledgePath,
+  memoryPath,
   parseShellRoute,
   recordPath,
   threadPath,
@@ -112,21 +112,21 @@ describe('lib/shell-route', () => {
     },
     { pathname: '/library/new/deep_agent', expected: libraryList },
     { pathname: '/library/new/other', expected: libraryList },
-    // Self-learning KD-2: a deep agent's knowledge is parsed before a single record id, otherwise it opens the list.
+    // Self-learning ME-01: a deep agent's memory is parsed before a single record id, otherwise it opens the list.
     {
-      pathname: '/library/abc/knowledge',
-      expected: { kind: 'library', page: { kind: 'knowledge', id: 'abc' } },
+      pathname: '/library/abc/memory',
+      expected: { kind: 'library', page: { kind: 'memory', id: 'abc' } },
     },
     {
-      pathname: '/library/a%2Fb/knowledge',
-      expected: { kind: 'library', page: { kind: 'knowledge', id: 'a/b' } },
+      pathname: '/library/a%2Fb/memory',
+      expected: { kind: 'library', page: { kind: 'memory', id: 'a/b' } },
     },
     {
-      pathname: '/library/knowledge',
-      expected: { kind: 'library', page: { kind: 'record', id: 'knowledge' } },
+      pathname: '/library/memory',
+      expected: { kind: 'library', page: { kind: 'record', id: 'memory' } },
     },
-    { pathname: '/library/abc/knowledge/x', expected: libraryList },
-    { pathname: '/library/abc/knowledge/', expected: libraryList },
+    { pathname: '/library/abc/memory/x', expected: libraryList },
+    { pathname: '/library/abc/memory/', expected: libraryList },
     { pathname: '/library/', expected: libraryList },
     { pathname: '/libraryx', expected: { kind: 'chat' } },
   ])(
@@ -220,34 +220,34 @@ describe('lib/shell-route', () => {
       },
     },
     { pathname: '/admin/library/new/other', expected: usersList },
-    // Self-learning KD-2: a deep agent's knowledge is parsed after the tabs and `new/…`, before a single record key.
+    // Self-learning ME-01: a deep agent's memory is parsed after the tabs and `new/…`, before a single record key.
     {
-      pathname: '/admin/library/abc/knowledge',
+      pathname: '/admin/library/abc/memory',
       expected: {
         kind: 'admin',
         section: 'library',
-        page: { kind: 'knowledge', key: 'abc' },
+        page: { kind: 'memory', key: 'abc' },
       },
     },
     {
-      pathname: '/admin/library/a%2Fb/knowledge',
+      pathname: '/admin/library/a%2Fb/memory',
       expected: {
         kind: 'admin',
         section: 'library',
-        page: { kind: 'knowledge', key: 'a/b' },
+        page: { kind: 'memory', key: 'a/b' },
       },
     },
     {
-      pathname: '/admin/library/knowledge',
+      pathname: '/admin/library/memory',
       expected: {
         kind: 'admin',
         section: 'library',
-        page: { kind: 'record', key: 'knowledge' },
+        page: { kind: 'record', key: 'memory' },
       },
     },
-    { pathname: '/admin/library/abc/knowledge/x', expected: usersList },
-    { pathname: '/admin/library/abc/knowledge/', expected: usersList },
-    { pathname: '/admin/users/abc/knowledge', expected: usersList },
+    { pathname: '/admin/library/abc/memory/x', expected: usersList },
+    { pathname: '/admin/library/abc/memory/', expected: usersList },
+    { pathname: '/admin/users/abc/memory', expected: usersList },
   ])(
     'panel library addresses open a tab, a new record or a record: $pathname',
     ({ pathname, expected }) => {
@@ -265,7 +265,7 @@ describe('lib/shell-route', () => {
     expect(parseShellRoute(adminLibraryTabPath('bans'))).toEqual(
       libraryTab('bans'),
     );
-    expect(knowledgePath('a/b')).toBe('/library/a%2Fb/knowledge');
-    expect(adminKnowledgePath('a/b')).toBe('/admin/library/a%2Fb/knowledge');
+    expect(memoryPath('a/b')).toBe('/library/a%2Fb/memory');
+    expect(adminMemoryPath('a/b')).toBe('/admin/library/a%2Fb/memory');
   });
 });

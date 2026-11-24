@@ -335,7 +335,7 @@ describe('a subagent of a closing task call', () => {
       {
         taskId: CHILD,
         status: 'completed',
-        result: { report: 'итог' },
+        result: { report: 'итог', document: null },
         durationMs: 5,
       },
       { status: 'completed', answer: 'итог', line: null },

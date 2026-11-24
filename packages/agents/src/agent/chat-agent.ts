@@ -25,7 +25,7 @@ export interface ChatAgentDeps extends AgentDeps {
  * is created only by `sessions.start` and the restart of a root, with the `chat` task type. Over the shared step it differs in this:
  * it declares itself a root — so it gets the root's tools and always keeps a task list — and lists the employee's
  * records as they are now in the descriptions of its tools, starts a new turn with every message of the
- * employee, never ends by itself — it waits for the next message — and never learns.
+ * employee, never ends by itself — it waits for the next message.
  */
 export class ChatAgent extends BaseAgent {
   constructor(
@@ -36,11 +36,6 @@ export class ChatAgent extends BaseAgent {
   }
 
   protected override get root(): boolean {
-    return true;
-  }
-
-  /** A chat never learns: no question is embedded and its input is not even parsed. */
-  protected override async embedQuestion(): Promise<boolean> {
     return true;
   }
 

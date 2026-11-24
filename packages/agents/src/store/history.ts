@@ -49,22 +49,14 @@ function toEntry(row: MessageRow): HistoryEntry {
   } as HistoryEntry;
 }
 
-/**
- * The promoted columns of an entry: the call it is about, and the end time of a result — a stored
- * result always has one (`messages_finished_at_check`).
- */
+/** The promoted column of an entry: the call it is about. */
 function promoted(entry: NewHistoryEntry) {
-  const finishedAt =
-    entry.kind === 'tool_result' ? entry.content.finishedAt : null;
-  return {
-    callId: 'callId' in entry.content ? entry.content.callId : null,
-    finishedAt: finishedAt === null ? null : new Date(finishedAt),
-  };
+  return { callId: 'callId' in entry.content ? entry.content.callId : null };
 }
 
 /**
  * The history of a session as entries, over the queries of `MessagesRepository`, inside the
- * caller's transaction: an entry is written with its promoted columns and read back checked against
+ * caller's transaction: an entry is written with its promoted column and read back checked against
  * the schema of its kind. Tool calls live here too: a call is an item of its `model_answer`, and what
  * happened to it are later call records. Reads that give no entry — a count, a `seq`, the calls of many
  * sessions — go to the repository directly. No method opens a transaction.

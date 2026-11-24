@@ -10,6 +10,10 @@ export interface AuthUser {
   name: string;
   /** The personal mark or a role with the admin right, as of this request. */
   isAdmin: boolean;
+  /** A role with the right to train own agents, as of this request (KD-8). */
+  trainOwn: boolean;
+  /** A role with the right to train any agent, as of this request (KD-8). */
+  trainAny: boolean;
   /** A local account: it has a password (`CurrentUser.hasPassword`). */
   hasPassword: boolean;
   /** The chosen interface language, or null while there is no choice (`CurrentUser.language`). */

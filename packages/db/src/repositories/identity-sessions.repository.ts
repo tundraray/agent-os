@@ -2,7 +2,7 @@ import type { SettingsKey } from '@agent-os/contracts';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { identitySessions, identityUsers, settings } from '../schema';
-import { IS_ADMIN } from './identity-columns';
+import { IS_ADMIN, TRAIN_ANY, TRAIN_OWN } from './identity-columns';
 
 /** The settings key the session check reads its limits from. */
 const SIGN_IN_SETTINGS: SettingsKey = 'sign_in_settings';
@@ -66,7 +66,7 @@ export class IdentitySessionsRepository {
   }
 
   /**
-   * The session of the token hash with its employee, admin right and the value of the `sign_in_settings` key as
+   * The session of the token hash with its employee, admin and training rights and the value of the `sign_in_settings` key as
    * stored (the caller parses it), in one query.
    */
   async findByTokenHash(tokenHash: string) {
@@ -81,6 +81,8 @@ export class IdentitySessionsRepository {
         name: identityUsers.name,
         status: identityUsers.status,
         isAdmin: IS_ADMIN,
+        trainOwn: TRAIN_OWN,
+        trainAny: TRAIN_ANY,
         hasPassword: sql<boolean>`${identityUsers.passwordHash} is not null`,
         language: identityUsers.language,
         signInSettings: settings.value,

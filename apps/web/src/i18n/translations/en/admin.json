@@ -93,6 +93,15 @@
     "name": "Role name",
     "remove": "Delete",
     "adminRight": "Admin permission",
+    "trainOwn": {
+      "label": "Train own agents",
+      "hint": "Train and activate versions of agents the employee authored."
+    },
+    "trainAny": {
+      "label": "Train any agents",
+      "hint": "The same for system agents and agents open to roles."
+    },
+    "alwaysOn": "Always on.",
     "members": "Employees",
     "noMembers": "The role has no employees",
     "removeTitle": "Delete the “{role}” role?",
@@ -182,9 +191,9 @@
       },
       "embedding": {
         "label": "Embedding model",
-        "hint": "Self-learning uses it to pick knowledge close in meaning to the question. After a change, knowledge takes a while to get ready for picking again.",
-        "notChosen": "Until an embedding model is chosen, picking by meaning in self-learning is off.",
-        "consequence": "Until then, picking by meaning in self-learning is off.",
+        "hint": "Embeddings are computed on it.",
+        "notChosen": "Until an embedding model is chosen, embeddings aren't computed.",
+        "consequence": "Until then, embeddings aren't computed.",
         "nothingToChoose": "The catalog has no working embedding models — add a model with the “Embeddings” purpose below."
       },
       "none": "Not chosen",
@@ -216,7 +225,7 @@
       "loadFailed": "Couldn't load providers",
       "offTitle": "Turn off the “{name}” provider?",
       "offChat": "{model} is the default chat model: while the provider is off, the chat doesn't answer employees.",
-      "offEmbedding": "{model} is the default embedding model: while the provider is off, picking by meaning in self-learning is off.",
+      "offEmbedding": "{model} is the default embedding model: while the provider is off, embeddings aren't computed.",
       "off": "Turn off",
       "cannotRemoveTitle": "Can't delete “{name}”",
       "cannotRemoveBody": "Models of this provider in the catalog: {count}. Remove them from the catalog first.",
@@ -299,7 +308,7 @@
       "removeTitle": "Remove the “{name}” model from the catalog?",
       "removeBody": "All permissions and personal blocks on this model will be deleted. Agents can no longer choose it, and those running on it will fail with “model not connected”.",
       "defaultChat": "This is the default chat model: until you choose another, the chat doesn't answer.",
-      "defaultEmbedding": "This is the default embedding model: until you choose another, picking by meaning in self-learning is off.",
+      "defaultEmbedding": "This is the default embedding model: until you choose another, embeddings aren't computed.",
       "empty": "The catalog is empty",
       "emptyDescription": "Add a model so agents can work.",
       "emptyNoProviders": "Add a provider first, then its models.",
@@ -348,12 +357,12 @@
       "saved": "Step limit saved",
       "loadFailed": "Couldn't load the settings"
     },
-    "knowledge": {
+    "selfLearning": {
       "title": "Deep agent self-learning",
-      "limitTokens": "Room for knowledge in a run, tokens",
-      "limitTokensHint": "How much knowledge each step of a run gets: up to half goes to the records closest in meaning to the question, the rest to the most confirmed ones.",
-      "lessonsEnabled": "Give lessons to runs",
-      "lessonsEnabledHint": "Turn this off if lessons don't shorten the search. Lessons stay in each deep agent's knowledge, and runs get facts and “searched — found nothing” as usual.",
+      "memoryIndexTokens": "Memory index size, tokens",
+      "memoryIndexTokensHint": "How much room the description lines of memory records take in each step of a run; when the records don't fit, the most recently changed ones go first.",
+      "trainingCapUsd": "Spend cap of one training, $",
+      "trainingCapUsdHint": "On reaching the cap, the training stops.",
       "save": "Save",
       "saved": "Self-learning settings saved",
       "loadFailed": "Couldn't load the settings"

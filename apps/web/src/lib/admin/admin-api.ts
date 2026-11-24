@@ -6,7 +6,6 @@ import {
   BannedRecordSchema,
   CatalogModelSchema,
   GrantSchema,
-  KnowledgeSettingsSchema,
   LibrarySettingsSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
@@ -21,6 +20,7 @@ import {
   RoleDetailSchema,
   RoleListSchema,
   RoleSummarySchema,
+  SelfLearningSettingsSchema,
   SignInSettingsSchema,
   ToolResultSettingsSchema,
   type AdminUserDetail,
@@ -36,7 +36,6 @@ import {
   type CreateProviderBody,
   type CreateRoleBody,
   type Grant,
-  type KnowledgeSettings,
   type LibrarySettings,
   type McpServerSummary,
   type McpServerView,
@@ -52,11 +51,11 @@ import {
   type RoleDetail,
   type RoleList,
   type RoleSummary,
+  type SelfLearningSettings,
   type SignInSettings,
   type SystemRecordAudienceBody,
   type ToolResultSettings,
   type UpdateCatalogModelBody,
-  type UpdateKnowledgeSettingsBody,
   type UpdateLibrarySettingsBody,
   type UpdateMcpServerBody,
   type UpdateModelDefaultsBody,
@@ -64,6 +63,7 @@ import {
   type UpdateProviderBody,
   type UpdateRecordBody,
   type UpdateRoleBody,
+  type UpdateSelfLearningSettingsBody,
   type UpdateSignInSettingsBody,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
@@ -415,21 +415,21 @@ const library = {
     }),
 };
 
-/** «Самообучение глубоких агентов» on «Системные»: the knowledge limit and lessons. */
-const knowledge = {
-  settings: (): Promise<KnowledgeSettings> =>
+/** «Самообучение глубоких агентов» on «Системные»: the size of the memory index. */
+const selfLearning = {
+  settings: (): Promise<SelfLearningSettings> =>
     apiRequest({
-      path: apiPath('knowledge', 'settings'),
-      schema: KnowledgeSettingsSchema,
+      path: apiPath('self-learning', 'settings'),
+      schema: SelfLearningSettingsSchema,
     }),
   saveSettings: (
-    body: UpdateKnowledgeSettingsBody,
-  ): Promise<KnowledgeSettings> =>
+    body: UpdateSelfLearningSettingsBody,
+  ): Promise<SelfLearningSettings> =>
     apiRequest({
-      path: apiPath('knowledge', 'settings'),
+      path: apiPath('self-learning', 'settings'),
       method: 'PUT',
       body,
-      schema: KnowledgeSettingsSchema,
+      schema: SelfLearningSettingsSchema,
     }),
 };
 
@@ -462,6 +462,6 @@ export const adminApi = {
   modelProviders,
   modelDefaults,
   library,
-  knowledge,
+  selfLearning,
   toolResults,
 };

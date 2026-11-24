@@ -27,6 +27,7 @@ const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
   AGENT_NOT_FOUND: { status: 404, message: 'Agent not found' },
   RUN_NOT_FOUND: { status: 404, message: 'Run not found' },
   DECISION_NOT_FOUND: { status: 404, message: 'Decision not found' },
+  DOCUMENT_NOT_FOUND: { status: 404, message: 'Document not found' },
   VALIDATION_FAILED: { status: 400, message: 'Validation failed' },
   INVALID_CURSOR: { status: 400, message: 'Invalid cursor' },
   INVALID_ARGUMENTS: { status: 400, message: 'Invalid arguments' },
@@ -122,6 +123,8 @@ export type CommandFields = {
   readonly threadId?: string;
   readonly agentId?: string;
   readonly decisionId?: string;
+  /** The document number of the path, as requested. */
+  readonly documentId?: string;
   /** The record chip of a message. */
   readonly recordId?: string;
 };

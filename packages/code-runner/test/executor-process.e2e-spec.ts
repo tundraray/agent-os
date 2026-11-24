@@ -196,6 +196,7 @@ describe('E2E-2: the executor process is a second barrier and cannot take the AP
     async function probe(attempt: AttemptName): Promise<ProbeOutcome> {
       const outcome = await runner.run({
         script: JSON.stringify({ attempt, targets }),
+        input: null,
         limits: PROBE_LIMITS,
         onRequest: unexpectedRequest,
         logger,
@@ -296,6 +297,7 @@ describe('E2E-2: the executor process is a second barrier and cannot take the AP
     ): Promise<RunOutcome> {
       return host.runner.run({
         script: mode,
+        input: null,
         limits: overrides.limits ?? BROKEN_LIMITS,
         onRequest: unexpectedRequest,
         signal: overrides.signal,

@@ -6,7 +6,7 @@ import { render } from '@/test/render';
 import {
   describeLibraryError,
   describeRefusal,
-  isKnowledgeHidden,
+  isHiddenFromViewer,
   type LibraryErrorContext,
   type LibraryErrorText,
   type RefusalText,
@@ -71,8 +71,8 @@ const libraryError = (
 };
 
 // Catches: the same code in another place reads the same line; the model of a refusal taken from the call's arguments;
-// «Не найдено» on any 403, or an error instead of «Не найдено» on the knowledge 403 (self-learning AC-11.3, DC-2).
-describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-web.md, «Ошибки и их место»; DC-10, DC-11, Flow 2)', () => {
+// «Не найдено» on any 403, or an error instead of «Не найдено» on the memory 403 (self-learning ME-04).
+describe('describeLibraryError, describeRefusal and isHiddenFromViewer (design-web.md, «Ошибки и их место»; DC-10, DC-11, Flow 2)', () => {
   it.each<[string, () => Outcome, Outcome]>([
     // 404 RECORD_NOT_FOUND: the record page gives way to RV-02; a message with a chip names the record unavailable
     [
@@ -509,25 +509,25 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
         }),
       null,
     ],
-    // Knowledge screen «Не найдено» (self-learning design-web.md, «Клиент API»)
+    // Memory screen «Не найдено» (self-learning UXRD ME-04)
     [
-      'knowledge hidden: 404',
-      () => isKnowledgeHidden(refusal(404, 'RECORD_NOT_FOUND')),
+      'memory hidden: 404',
+      () => isHiddenFromViewer(refusal(404, 'RECORD_NOT_FOUND')),
       true,
     ],
     [
-      'knowledge hidden: 403 KNOWLEDGE_FORBIDDEN',
-      () => isKnowledgeHidden(refusal(403, 'KNOWLEDGE_FORBIDDEN')),
+      'memory hidden: 403 MEMORY_FORBIDDEN',
+      () => isHiddenFromViewer(refusal(403, 'MEMORY_FORBIDDEN')),
       true,
     ],
     [
-      'knowledge not hidden: 403 ADMIN_REQUIRED',
-      () => isKnowledgeHidden(refusal(403, 'ADMIN_REQUIRED')),
+      'memory not hidden: 403 ADMIN_REQUIRED',
+      () => isHiddenFromViewer(refusal(403, 'ADMIN_REQUIRED')),
       false,
     ],
     [
-      'knowledge not hidden: 500',
-      () => isKnowledgeHidden(refusal(500, 'INTERNAL')),
+      'memory not hidden: 500',
+      () => isHiddenFromViewer(refusal(500, 'INTERNAL')),
       false,
     ],
   ])('%s', (_, run, expected) => {

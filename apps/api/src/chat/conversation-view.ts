@@ -20,6 +20,7 @@ import {
   type AgentNode,
   type AgentView,
   type Confirmation,
+  type ConversationTraining,
   type DeepAgentRunView,
   type HistoryEntry,
   type PendingMessage,
@@ -27,6 +28,7 @@ import {
   type RecordFocusAction,
   type RunOrigin,
 } from '@agent-os/contracts';
+import type { TrainingRow } from '@agent-os/db';
 import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -57,6 +59,22 @@ function toRunOrigin(origin: RunOrigin): RunOrigin {
         : { id: origin.author.id, name: origin.author.name },
     builtinKey: origin.builtinKey,
     subagent: origin.subagent,
+  };
+}
+
+/**
+ * The `training` field of a view of `agentId` (self-learning design-training.md, «Беседа обучения и беседы
+ * повторов»): the `trainings` row of its tree's root, which exists only when the root is a `trainer` task.
+ */
+export function trainingOf(
+  row: TrainingRow | undefined,
+  agentId: string,
+): ConversationTraining {
+  if (row === undefined) return null;
+  return {
+    agentId: row.agentId,
+    trainingId: row.id,
+    isRoot: row.id === agentId,
   };
 }
 
@@ -167,6 +185,9 @@ export function toConfirmation(
     ...(confirmation.argLabels === undefined
       ? {}
       : { argLabels: confirmation.argLabels }),
+    ...(confirmation.scriptCode === undefined
+      ? {}
+      : { scriptCode: confirmation.scriptCode }),
   };
 }
 
@@ -203,7 +224,10 @@ const RECORD_ID_ACTIONS: Readonly<Record<string, RecordFocusAction>> = {
 };
 
 const RecordIdArgsSchema = z.object({ recordId: IdSchema });
-const DeepAgentArgsSchema = z.object({ deepAgent: IdSchema });
+const DeepAgentArgsSchema = z.object({ deepAgent: z.string() });
+
+/** A deep agent run the root started, as the conversation's agents show it. */
+type StartedRun = Pick<AgentsAgentView, 'origin'>;
 
 type ToolResultEntry = Extract<HistoryEntry, { kind: 'tool_result' }>;
 
@@ -211,12 +235,13 @@ type ToolResultEntry = Extract<HistoryEntry, { kind: 'tool_result' }>;
  * The record of a successful root call and what the call did to it: a record tool names it in its
  * arguments; a create in the card the employee approved (the id `review` chose, KD-3) — the root runs
  * one call at a time, so it is the last approved `create_record` request resolved before the result; a
- * brief start in `deepAgent`, the tool being the one of the root's `agents.brief` requests. `undefined` —
- * the call is not about a record.
+ * brief start — the tool being the one of the root's `agents.brief` requests — in the record of the last
+ * deep agent the root started under the name it gave. `undefined` — the call is not about a record.
  */
 function focusTargetOf(
   result: ToolResultEntry,
   confirmations: readonly Confirmation[],
+  startedRuns: readonly StartedRun[],
 ):
   | { readonly recordId: string; readonly action: RecordFocusAction }
   | undefined {
@@ -249,25 +274,31 @@ function focusTargetOf(
   );
   if (!startsDeepAgent) return undefined;
   const args = DeepAgentArgsSchema.safeParse(callArgs);
-  return args.success
-    ? { recordId: args.data.deepAgent, action: 'started' }
-    : undefined;
+  if (!args.success) return undefined;
+  const run = startedRuns.findLast(
+    ({ origin }) =>
+      origin?.name === args.data.deepAgent && origin.subagent === null,
+  );
+  return run?.origin == null
+    ? undefined
+    : { recordId: run.origin.recordId, action: 'started' };
 }
 
 /**
  * The record in focus of a conversation (deep-agents KD-6): the last successful call of the root about a
  * record — read, created, changed, deleted, or started by a brief — with the time it finished; `null`
  * while the chat has not touched a record. `entries` are the root's whole history, `confirmations` its
- * decision requests.
+ * decision requests, `startedRuns` the root's children in creation order.
  */
 export function focusOf(
   entries: readonly HistoryEntry[],
   confirmations: readonly Confirmation[],
+  startedRuns: readonly StartedRun[],
 ): RecordFocus | null {
   for (const entry of [...entries].reverse()) {
     if (entry.kind !== 'tool_result' || entry.content.outcome !== 'success')
       continue;
-    const target = focusTargetOf(entry, confirmations);
+    const target = focusTargetOf(entry, confirmations, startedRuns);
     if (target !== undefined)
       return { ...target, at: entry.content.finishedAt ?? entry.createdAt };
   }

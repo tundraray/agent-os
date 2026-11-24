@@ -23,8 +23,8 @@
 // - DC-3, DC-4, DC-14: INT-2 A, INT-3 A, INT-3 C and INT-4 of `agent-platform-chat.int.e2e-spec.ts`, INT-4 and INT-5 D of
 //   `packages/runtime/test/agent-platform-runtime.int.e2e-spec.ts`, INT-4 of `packages/agents/test/agent-platform-agents.int.e2e-spec.ts`;
 //   the build adds "the deletion mark is on every task of the tree and the conversation row is unchanged" to INT-3 A.
-// - DC-13: INT-5 row C of `model-providers-core.int.e2e-spec.ts` (a ledger row without an owner is nobody's spend) and INT-11 of
-//   `packages/agents/test/self-learning-core.int.e2e-spec.ts` (the `knowledge.embed` task without an owner).
+// - DC-13, the platform's own work without an owner: INT-5 row C of `model-providers-core.int.e2e-spec.ts` (a ledger row
+//   without an owner is nobody's spend).
 // - Unit level (`provenAt: unit`, table-driven, cases as rows): the bounds and the rule between fields of the sign-in settings
 //   (`sign-in-settings.spec.ts`), the first save of the public address with its losing branch (`identity-settings.spec.ts`), and
 //   the registry's "a stored value that fails its key's schema is a failure, not a default" - one unit case of the registry in

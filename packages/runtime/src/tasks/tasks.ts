@@ -60,11 +60,22 @@ export class Tasks {
     private readonly rows: RuntimeTasksRepository,
   ) {}
 
-  /** Inserts a task in `queued` and signals its tree. An id already taken is `TASK_EXISTS`. */
-  async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow> {
+  /**
+   * Inserts a task in `queued` and signals its tree. An id already taken is `TASK_EXISTS`; an
+   * exclusive key held by an unfinished task of the type is `null`. Neither leaves a failed
+   * statement behind: the open transaction goes on.
+   */
+  insert(
+    task: NewRuntimeTaskRow & { exclusiveKey?: null },
+  ): Promise<RuntimeTaskRow>;
+  insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow | null>;
+  async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow | null> {
     const row = await this.rows.insert(task);
     if (row === undefined) {
-      throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
+      if (task.exclusiveKey == null || (await this.rows.exists(task.taskId))) {
+        throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
+      }
+      return null;
     }
     await this.signal(row.rootId);
     return row;

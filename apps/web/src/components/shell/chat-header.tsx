@@ -13,7 +13,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSidebar } from '@/components/ui/sidebar';
 import {
@@ -22,12 +22,18 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
-import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
+import { useFeedStoreSelector } from '@/lib/feed/feed-context';
+import {
+  parseShellRoute,
+  trainingPath,
+  type ShellRoute,
+} from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
-import { useMainViewState } from './main-view';
+import { useConversationFeed, useMainViewState } from './main-view';
 import { PageHeaderSlot } from './page-header';
+import { ShellLink } from './shell-link';
 import { useShellActions, useShellStatus } from './shell-actions';
 import { WORKSPACE_ID } from './workspace-panel';
 
@@ -52,6 +58,8 @@ export type ChatHeaderViewProps = {
   heading?: ReactNode;
   /** HD-04 «Схема» (deep-agents DA-12): the panel from 1024 px, the drawer below it; agent routes have none (UXRD KD-1). */
   showWorkspaceToggle?: boolean;
+  /** The open conversation's one action before «Схема»: a training's «Результат обучения» (self-learning KD-3). */
+  action?: ReactNode;
 };
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
@@ -67,6 +75,7 @@ export function ChatHeaderView({
   scrolled = false,
   heading,
   showWorkspaceToggle = true,
+  action,
 }: ChatHeaderViewProps) {
   const t = useTranslations('shell');
   const tCommon = useTranslations('common');
@@ -117,6 +126,7 @@ export function ChatHeaderView({
         </Button>
       </WithTooltip>
       {heading ?? <PageTitle title={title} />}
+      {action}
       {showWorkspaceToggle && (
         <Button
           variant="ghost"
@@ -210,10 +220,16 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { newChat } = useShellActions();
   const t = useTranslations('shell.page');
+  const tChat = useTranslations('chat.training');
   const route = parseShellRoute(usePathname());
   const title = useHeaderTitle();
   const scrolled = useThreadScrolled();
   const routeTitle = ROUTE_TITLES[route.kind];
+  const training = useFeedStoreSelector(
+    useConversationFeed(),
+    (state) => state.view?.training ?? null,
+    null,
+  );
 
   return (
     <ChatHeaderView
@@ -223,6 +239,20 @@ export function ChatHeader({
           : { kind: 'text', text: t(routeTitle), pending: false }
       }
       heading={routeHeading(route)}
+      action={
+        route.kind === 'chat' && training?.isRoot === true ? (
+          <ShellLink
+            href={trainingPath(training.agentId, training.trainingId)}
+            className={buttonVariants({
+              variant: 'outline',
+              size: 'sm',
+              className: 'shrink-0 pointer-coarse:h-11',
+            })}
+          >
+            {tChat('result')}
+          </ShellLink>
+        ) : undefined
+      }
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}

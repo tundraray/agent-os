@@ -1,23 +1,17 @@
 import type { Logger } from '@agent-os/common';
+import { AGENT_TASK_TYPES } from '@agent-os/contracts';
 import {
-  AGENT_TASK_TYPE,
-  CHAT_TASK_TYPE,
-  DEEP_AGENT_TASK_TYPE,
-} from '@agent-os/contracts';
-import {
-  CodeCallsRepository,
-  AgentKnowledgeRepository,
-  AgentKnowledgeRunsRepository,
-  AgentKnowledgeVectorsRepository,
-  McpServersRepository,
-  MessagesRepository,
+  AgentsRepository,
   ConversationsRepository,
+  DocumentsRepository,
+  MemoriesRepository,
+  MessagesRepository,
   ConversationTasksRepository,
   ToolResultsRepository,
-  Db,
   SettingsRepository,
+  TrainingsRepository,
 } from '@agent-os/db';
-import { HandlerRegistry, TaskControl, TaskEndHooks } from '@agent-os/runtime';
+import { HandlerRegistry, TaskControl } from '@agent-os/runtime';
 import {
   Inject,
   Injectable,
@@ -33,28 +27,26 @@ import {
   ACCESS_GATE,
   AGENTS_CONFIG,
   AGENTS_LOGGER,
+  MASK_SECRETS,
   RECORD_LIBRARY,
 } from './agents.tokens';
 import type { AgentsConfig } from './config';
 import { createStartDeepAgentTool } from './deep/start-deep-agent';
 import { createTaskTool } from './deep/task-delegation';
-import { AgentsEmbeddings } from './embeddings/embeddings';
-import { createKnowledgeEmbedHandler } from './knowledge/embed.handler';
-import { createKnowledgeExtractHandler } from './knowledge/extract.handler';
-import {
-  createKnowledgeTrigger,
-  KNOWLEDGE_TRIGGER_HOOK,
-} from './knowledge/knowledge-trigger';
-import type { KnowledgeVectorStore } from './knowledge/vector-store';
-import { ModelClient } from './model/model-client';
 import { AgentsProviders } from './providers/provider-registry';
 import type { RecordLibrary } from './start/record-library';
 import { auditStartRefusal, resolveNamedStart } from './start/resolve-start';
 import { History } from './store/history';
 import { AgentTaskInputSchema, Sessions } from './store/sessions';
 import { createSystemTools } from './tools/system/index';
+import { createMemoryTools } from './tools/system/memory-tools';
+import { createNotepadTools } from './tools/system/notepad-tools';
 import { createTaskListTools } from './tools/system/task-list-tools';
+import { RunCodeTool } from './tools/external/run-code';
 import { ToolRegistry } from './tools/tool-registry';
+import { createProposeVersionTool } from './training/propose-version';
+import { createTrainerTools } from './training/trainer-tools';
+import { createTryScriptTool } from './training/try-script';
 
 /**
  * Registers the system tools in the tools library (design-agents.md, «Инструменты»): the library knows none of
@@ -65,7 +57,10 @@ import { ToolRegistry } from './tools/tool-registry';
 export class SystemToolsRegistration implements OnModuleInit {
   constructor(
     @Inject(ToolRegistry)
-    private readonly registry: Pick<ToolRegistry, 'register'>,
+    private readonly registry: Pick<
+      ToolRegistry,
+      'register' | 'declaredMcpTools'
+    >,
     @Inject(Sessions) private readonly sessions: Sessions,
     @Inject(MessagesRepository)
     private readonly messageRows: MessagesRepository,
@@ -76,8 +71,21 @@ export class SystemToolsRegistration implements OnModuleInit {
     private readonly settingsRows: SettingsRepository,
     @Inject(ConversationTasksRepository)
     private readonly sessionTaskRows: ConversationTasksRepository,
+    @Inject(MemoriesRepository)
+    private readonly memoryRows: MemoriesRepository,
+    @Inject(DocumentsRepository)
+    private readonly documentRows: DocumentsRepository,
+    @Inject(TrainingsRepository)
+    private readonly trainingRows: TrainingsRepository,
+    @Inject(AgentsRepository)
+    private readonly agentRows: AgentsRepository,
+    @Inject(ConversationsRepository)
+    private readonly conversationRows: ConversationsRepository,
+    @Inject(RunCodeTool) private readonly runCode: RunCodeTool,
+    @Inject(MASK_SECRETS)
+    private readonly maskSecrets: (text: string) => string,
     @Inject(TaskControl)
-    private readonly tasks: Pick<TaskControl, 'listTree' | 'stop'>,
+    private readonly tasks: Pick<TaskControl, 'get' | 'listTree' | 'stop'>,
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
     @Inject(AgentsProviders)
@@ -105,6 +113,18 @@ export class SystemToolsRegistration implements OnModuleInit {
       }),
       // Declared by an agent that keeps a task list (design-task-list.md KD-2).
       ...createTaskListTools({ sessionTaskRows: this.sessionTaskRows, logger }),
+      // Declared by a deep agent with self-learning on and each of its subagents (design-memory.md KD-4).
+      ...createMemoryTools({
+        memoryRows: this.memoryRows,
+        maskSecrets: this.maskSecrets,
+        logger,
+      }),
+      // Declared by every deep agent and its subagents (design-notepad.md KD-3).
+      ...createNotepadTools({
+        documentRows: this.documentRows,
+        settingsRows: this.settingsRows,
+        logger,
+      }),
       // The deep agent's tools: the root's `start_deep_agent` (deep-agents KD-2) and a deep agent's `task`.
       createStartDeepAgentTool({
         resolveNamedStart: (request) => resolveNamedStart(request, startDeps),
@@ -114,15 +134,40 @@ export class SystemToolsRegistration implements OnModuleInit {
         logger,
       }),
       createTaskTool(),
+      // Declared by the trainer only (design-training.md KD-1).
+      ...createTrainerTools({
+        trainingRows: this.trainingRows,
+        agentRows: this.agentRows,
+        conversationRows: this.conversationRows,
+        memoryRows: this.memoryRows,
+        documentRows: this.documentRows,
+        settingsRows: this.settingsRows,
+        history,
+        tasks: this.tasks,
+        access,
+        registry: this.registry,
+        maskSecrets: this.maskSecrets,
+        logger,
+      }),
+      createProposeVersionTool({
+        trainingRows: this.trainingRows,
+        agentRows: this.agentRows,
+        logger,
+      }),
+      createTryScriptTool({
+        trainingRows: this.trainingRows,
+        agentRows: this.agentRows,
+        runCode: this.runCode,
+        registry: this.registry,
+      }),
     ];
     for (const tool of tools) this.registry.register(tool);
   }
 }
 
 /**
- * Registers the package in the runtime (plan Notes 8): the agents (`ChatAgent`, `Agent`, `DeepAgent`) as the
- * live task types `chat`, `agent` and `deep_agent` — one object per task, made by `AgentFactory` —, the
- * `knowledge.extract` and `knowledge.embed` task handlers and the knowledge trigger as a task end hook.
+ * Registers the package in the runtime (plan Notes 8): the agents (`ChatAgent`, `Agent`, `DeepAgent`, `Trainer`)
+ * as the live task types of `AGENT_TASK_TYPES` — one object per task, made by `AgentFactory`.
  * Once every module has registered its tools it closes the tools library.
  */
 @Injectable()
@@ -131,92 +176,24 @@ export class AgentsRegistration
 {
   constructor(
     @Inject(HandlerRegistry) private readonly handlers: HandlerRegistry,
-    @Inject(TaskEndHooks) private readonly endHooks: TaskEndHooks,
     @Inject(AgentFactory)
     private readonly factory: Pick<AgentFactory, 'restore'>,
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, 'seal' | 'toolNames'>,
-    @Inject(Db) private readonly db: Db,
-    @Inject(Sessions) private readonly sessions: Sessions,
-    @Inject(ConversationsRepository)
-    private readonly sessionRows: ConversationsRepository,
-    @Inject(MessagesRepository)
-    private readonly messageRows: MessagesRepository,
-    @Inject(CodeCallsRepository)
-    private readonly codeCallRows: CodeCallsRepository,
-    @Inject(McpServersRepository)
-    private readonly mcpServerRows: McpServersRepository,
-    @Inject(AgentKnowledgeRepository)
-    private readonly knowledgeRows: AgentKnowledgeRepository,
-    @Inject(AgentKnowledgeRunsRepository)
-    private readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
-    // One store of the knowledge vectors for every reader and writer (self-learning KD-8).
-    @Inject(AgentKnowledgeVectorsRepository)
-    private readonly vectorStore: KnowledgeVectorStore,
-    @Inject(TaskControl) private readonly tasks: TaskControl,
-    @Inject(ModelClient)
-    private readonly modelClient: Pick<ModelClient, 'call'>,
-    @Inject(AgentsEmbeddings)
-    private readonly embeddings: Pick<AgentsEmbeddings, 'embed' | 'model'>,
     @Inject(AGENTS_CONFIG)
     private readonly config: Pick<AgentsConfig, 'allowHttpUrls'>,
     @Inject(AGENTS_LOGGER) private readonly logger: Logger,
   ) {}
 
   onModuleInit(): void {
-    const {
-      sessions,
-      knowledgeRows,
-      knowledgeRunRows,
-      tasks,
-      embeddings,
-      logger,
-    } = this;
-    // The three agent classes the runtime launches, each a live task type: one object per task, from the factory.
-    for (const type of [
-      CHAT_TASK_TYPE,
-      AGENT_TASK_TYPE,
-      DEEP_AGENT_TASK_TYPE,
-    ]) {
+    // The agent classes the runtime launches, each a live task type: one object per task, from the factory.
+    for (const type of AGENT_TASK_TYPES) {
       this.handlers.registerLive({
         type,
         inputSchema: AgentTaskInputSchema,
         restore: (task) => this.factory.restore(task),
       });
     }
-    this.handlers.register(
-      createKnowledgeExtractHandler({
-        db: this.db,
-        sessions,
-        knowledgeRows,
-        knowledgeRunRows,
-        mcpServerRows: this.mcpServerRows,
-        messageRows: this.messageRows,
-        codeCallRows: this.codeCallRows,
-        tasks,
-        modelClient: this.modelClient,
-        embeddings,
-        store: this.vectorStore,
-      }),
-    );
-    this.handlers.register(
-      createKnowledgeEmbedHandler({
-        knowledgeRows,
-        knowledgeRunRows,
-        embeddings,
-        store: this.vectorStore,
-      }),
-    );
-    this.endHooks.register(
-      KNOWLEDGE_TRIGGER_HOOK,
-      createKnowledgeTrigger({
-        db: this.db,
-        tasks,
-        sessionRows: this.sessionRows,
-        knowledgeRunRows,
-        logger,
-      }),
-    );
   }
 
   /**

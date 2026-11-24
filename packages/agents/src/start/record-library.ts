@@ -14,7 +14,7 @@ import type {
  * `apps/api` implements it with `LibraryService`; the tests use `createLibraryDouble`.
  */
 export interface RecordLibrary {
-  /** The agent to start by its id, with its active version: a restart, a message's chip, a record's mark, knowledge. */
+  /** The agent to start by its id, with its active version: a restart, a message's chip, a record's mark, its memory. */
   resolve(viewerId: string, recordId: string): Promise<ResolvedRecord | null>;
   /**
    * The agent of `kind` a call names (KD-5): among the agents of that kind the viewer sees, without the chat,

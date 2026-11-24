@@ -176,7 +176,11 @@ const TEAM_MAX_TURNS = 5;
 
 /** The finishing rule of a deep agent without `finalSubagent` (DC-7). */
 const WRITES_ANSWER_ITSELF =
-  'When the work is done, write the answer yourself as plain text without tool calls.';
+  'When the work is done, end with a short message without tool calls.';
+
+/** The notepad tools a subagent of a deep agent gets. */
+const NOTEPAD_TOOLS_LINE =
+  'notepad_create, notepad_append, notepad_replace, notepad_read, notepad_list';
 
 /** The line of the built-in subagent every deep agent's `task` names (FR-20). */
 const GENERAL_PURPOSE_LINE =
@@ -222,6 +226,7 @@ function teamV1(): DeepAgentContent {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   };
 }
 
@@ -603,6 +608,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           taskList: true,
           listDelegation: true,
           selfLearning: false,
+          scripts: [],
         },
       });
       const forkerRecord = testRecord('forker', {
@@ -751,8 +757,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         expect(library.resolveCalls).toHaveLength(resolvedBefore);
         // Then: the subagent restarted on its own snapshot although its deep agent is gone
         expect(planner.calls.map(lineOf)).toEqual([
-          `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
-          `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
+          `Planner prompt. | ${TEST_MODEL_CHOSEN} | ${NOTEPAD_TOOLS_LINE}, read_tool_result, search_tool_result, run_code`,
+          `Planner prompt. | ${TEST_MODEL_CHOSEN} | ${NOTEPAD_TOOLS_LINE}, read_tool_result, search_tool_result, run_code`,
         ]);
         const plannerRestart = await harness.sessions.get(
           plannerRestartId,
@@ -1097,7 +1103,9 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
         // Then: no "answer through the final subagent" notice; the root receives the deep agent's answer as the run's report
         expect(
           (await historyOf(harness, first.deepAgentId, boris)).filter(
-            (entry) => entry.kind === 'notice',
+            (entry) =>
+              entry.kind === 'notice' &&
+              !entry.content.text.includes('no report document'),
           ),
         ).toEqual([]);
         const firstReports = await waitFor(

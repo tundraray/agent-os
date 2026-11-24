@@ -32,6 +32,7 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
 function deepAgent(
   subagentServers: string[][],
   subagentModel: string,
+  selfLearning = false,
 ): RecordBody {
   return {
     kind: 'deep_agent',
@@ -53,7 +54,8 @@ function deepAgent(
       finalSubagent: null,
       taskList: true,
       listDelegation: true,
-      selfLearning: false,
+      selfLearning,
+      scripts: [],
     },
   };
 }
@@ -119,7 +121,7 @@ describe('save rule: names unique per owner and against system records, only add
       name: 'DC-8: a save that keeps the name is not checked against system records',
       input: save({
         name: 'general-purpose',
-        previous: { name: 'General-purpose', body: agent() },
+        previous: { name: 'General-purpose', body: agent(), builtinKey: null },
         takenNames: { own: [], system: ['general-purpose'] },
       }),
       expected: allowed,
@@ -128,7 +130,7 @@ describe('save rule: names unique per owner and against system records, only add
       name: 'DC-8: a rename to a system record name is refused',
       input: save({
         name: 'general-purpose',
-        previous: { name: 'мой агент', body: agent() },
+        previous: { name: 'мой агент', body: agent(), builtinKey: null },
         takenNames: { own: [], system: ['general-purpose'] },
       }),
       expected: nameTaken('system', 'general-purpose'),
@@ -161,6 +163,7 @@ describe('save rule: names unique per owner and against system records, only add
         previous: {
           name: 'разбор оплат',
           body: agent({ servers: ['sentry', 'jira'] }),
+          builtinKey: null,
         },
       }),
       expected: allowed,
@@ -207,6 +210,7 @@ describe('save rule: names unique per owner and against system records, only add
         previous: {
           name: 'разбор оплат',
           body: agent({ agents: [AGENT_HIDDEN] }),
+          builtinKey: null,
         },
       }),
       expected: allowed,
@@ -216,9 +220,23 @@ describe('save rule: names unique per owner and against system records, only add
       input: save({
         body: deepAgent([['gmail', 'jira'], ['*']], SONNET),
         choices: admin,
-        previous: { name: 'разбор оплат', body: agent() },
+        previous: { name: 'разбор оплат', body: agent(), builtinKey: null },
       }),
       expected: allowed,
+    },
+    {
+      name: 'self-learning AC-01.3: a default deep agent never learns, even by an admin',
+      input: save({
+        name: 'Глубокий агент',
+        body: deepAgent([['sentry']], HAIKU, true),
+        choices: admin,
+        previous: {
+          name: 'Глубокий агент',
+          body: deepAgent([['sentry']], HAIKU),
+          builtinKey: 'deep_agent',
+        },
+      }),
+      expected: refused('builtin', 'selfLearning', []),
     },
     {
       name: 'AC-07.3: an admin takes all servers on a system record',

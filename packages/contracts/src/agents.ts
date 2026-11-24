@@ -12,12 +12,15 @@ import { z } from 'zod';
 export const AGENT_TASK_TYPE = 'agent';
 export const CHAT_TASK_TYPE = 'chat';
 export const DEEP_AGENT_TASK_TYPE = 'deep_agent';
+/** Task type of a training's root: the trainer of one agent (self-learning design-training.md, KD-1). */
+export const TRAINER_TASK_TYPE = 'trainer';
 
 /** Every task type that is an agent: such a task has a session and a snapshot in its input. */
 export const AGENT_TASK_TYPES: readonly string[] = [
   AGENT_TASK_TYPE,
   CHAT_TASK_TYPE,
   DEEP_AGENT_TASK_TYPE,
+  TRAINER_TASK_TYPE,
 ];
 
 /** Decision kind of a tool call that waits for the employee's confirmation. */
@@ -92,6 +95,8 @@ export const ToolOutcomeSchema = z.enum([
   'interrupted',
   'unknown',
   'auth_required',
+  /** A changing call of a training tree, recorded and never sent (self-learning design-training.md KD-3). */
+  'recorded',
 ]);
 export type ToolOutcome = z.infer<typeof ToolOutcomeSchema>;
 
@@ -152,6 +157,8 @@ export type AgentFailureReason = z.infer<typeof AgentFailureReasonSchema>;
 
 /** Built-in tool that runs a model-written script (design-code-execution.md, RunCodeArgs). */
 export const RUN_CODE_TOOL = 'run_code';
+/** The trainer's trial run of a draft script (self-learning design-training.md, trainer tools). */
+export const TRY_SCRIPT_TOOL = 'try_script';
 
 const MAX_SCRIPT_BYTES = 64 * 1024;
 
@@ -169,31 +176,78 @@ function codePointLabel(character: string): string {
   return `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
 }
 
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** The code of a run: of `run_code` and of a saved script alike (self-learning design-scripts.md, KD-1). */
+export const ScriptCodeSchema = z
+  .string()
+  .min(1)
+  .superRefine((script, ctx) => {
+    const bytes = utf8Bytes(script);
+    if (bytes > MAX_SCRIPT_BYTES) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `script is ${bytes} bytes in UTF-8; the limit is ${MAX_SCRIPT_BYTES}`,
+      });
+    }
+    const hidden = HIDDEN_CHARACTER.exec(script);
+    if (hidden) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `script contains the hidden character ${codePointLabel(hidden[0])}; remove it or write it as an escape`,
+      });
+    }
+  });
+
 /** Arguments of `run_code`; a violation is refused as `invalid_arguments`, like any tool's arguments. */
 export const RunCodeArgsSchema = z.object({
   description: z.string().min(1).max(300),
   class: z.enum(['read', 'write']),
-  script: z
-    .string()
-    .min(1)
-    .superRefine((script, ctx) => {
-      const bytes = new TextEncoder().encode(script).length;
-      if (bytes > MAX_SCRIPT_BYTES) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `script is ${bytes} bytes in UTF-8; the limit is ${MAX_SCRIPT_BYTES}`,
-        });
-      }
-      const hidden = HIDDEN_CHARACTER.exec(script);
-      if (hidden) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `script contains the hidden character ${codePointLabel(hidden[0])}; remove it or write it as an escape`,
-        });
-      }
-    }),
+  script: ScriptCodeSchema,
 });
 export type RunCodeArgs = z.infer<typeof RunCodeArgsSchema>;
+
+const SCRIPT_TOOL_PREFIX = 'script__';
+
+/** The tool a saved script is to its owner's model (KD-4). */
+export function scriptToolName(name: string): string {
+  return `${SCRIPT_TOOL_PREFIX}${name}`;
+}
+
+/** The script's name of a call of a saved script, without the prefix; null for any other call. */
+export function scriptNameOf(
+  tool: string,
+  server: string | null,
+): string | null {
+  return server === null && tool.startsWith(SCRIPT_TOOL_PREFIX)
+    ? tool.slice(SCRIPT_TOOL_PREFIX.length)
+    : null;
+}
+
+/** The call runs code: `run_code`, `try_script` or a saved script; an MCP server may name a tool the same. */
+export function isCodeRunCall(tool: string, server: string | null): boolean {
+  return (
+    server === null &&
+    (tool === RUN_CODE_TOOL ||
+      tool === TRY_SCRIPT_TOOL ||
+      scriptNameOf(tool, server) !== null)
+  );
+}
+
+/** Arguments of a saved script's tool: `input` reaches the script as the global `input`. */
+export const ScriptToolArgsSchema = z.object({
+  input: z
+    .unknown()
+    .optional()
+    .refine(
+      (input) =>
+        input === undefined ||
+        utf8Bytes(JSON.stringify(input)) <= MAX_SCRIPT_BYTES,
+      { message: `input is over ${MAX_SCRIPT_BYTES} bytes as JSON` },
+    ),
+});
 
 /** `content` of the confirmation request of a `write` run: the "Can call" list in display order (KD-10). */
 export const RunCodeConfirmationContentSchema = z.object({

@@ -82,10 +82,13 @@ const CALLER: ToolCaller = {
   agentId: 'agent-1',
   ownerId: OWNER,
   rootId: 'agent-1',
+  parentId: null,
   root: true,
   depth: 0,
   run: NO_TOOLS,
   servers: [],
+  training: false,
+  fixedTasks: null,
 };
 
 const MCP_TOOL: McpSessionTool = {
@@ -260,7 +263,7 @@ async function checkRunCode(
     new McpAccountsRepository(DB),
     gateOf([]),
   );
-  registry.useRunCode(RUN_CODE_STUB);
+  registry.useCodeRun(RUN_CODE_STUB, () => RUN_CODE_STUB);
   const sessionTools = await registry.toolsFor(OWNER, {
     servers: [],
     system: [],
@@ -269,6 +272,7 @@ async function checkRunCode(
     deepAgents: null,
     taskList: false,
     listDelegation: false,
+    scripts: [],
   });
   return kindOf(
     checkCall({
@@ -683,6 +687,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
             task: ctx,
             input: HELPER_INPUT,
             run: HELPER_RUN,
+            training: false,
           });
           const result = await agent.toolStep(
             ctx,

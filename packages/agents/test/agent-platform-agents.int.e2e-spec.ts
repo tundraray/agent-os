@@ -881,6 +881,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           taskList: true,
           listDelegation: true,
           selfLearning: false,
+          scripts: [],
         },
       });
       const model = createScriptedModel();
@@ -950,6 +951,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           'notice: You cannot finish: there is no answer of subagent "answer" yet. The deep agent ends only with a completed answer of subagent "answer"; give it a single task with the task tool.',
           'model_answer:  [task]',
           'tool_result: task success',
+          'model_answer: session done []',
+          expect.stringContaining(
+            'notice: You cannot finish yet: this run has no report document',
+          ),
+          'model_answer:  [notepad_create]',
+          'tool_result: notepad_create success',
           'model_answer: session done []',
         ]);
         const children = (await harness.sessions.list(rootId, ownerId)).filter(
@@ -1544,8 +1551,10 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           ownerId,
         });
 
-        // Then: R, C and G are stopped inside the command and the confirmation is no longer pending
-        expect(stoppedIds).toEqual([stoppedId, childId, grandchildId]);
+        // Then: R, C and G are stopped inside the command, with C's confirmation question task, and the confirmation is no longer pending
+        expect(stoppedIds.slice(0, 2)).toEqual([stoppedId, childId]);
+        expect(stoppedIds).toHaveLength(4);
+        expect(stoppedIds).toContain(grandchildId);
         const statuses = await Promise.all(
           [stoppedId, childId, grandchildId].map(
             async (id) => (await harness.sessions.get(id, ownerId)).status,

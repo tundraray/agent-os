@@ -9,6 +9,7 @@ import { app } from './app';
 import { agents } from './agents';
 import { createdAt } from './helpers';
 import { identityUsers } from './identity-users';
+import { trainings } from './trainings';
 
 /**
  * An immutable definition of an agent (data-model design-agents.md, KD-1, KD-2): rows are never updated
@@ -29,6 +30,10 @@ export const agentVersions = app.table(
     authorId: uuid('author_id').references(() => identityUsers.id, {
       onDelete: 'set null',
     }),
+    /** The training that proposed it; unique — a training proposes at most one version (FR-17). */
+    trainingId: uuid('training_id')
+      .unique('agent_versions_training_id_key')
+      .references((): AnyPgColumn => trainings.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },
   (t) => [

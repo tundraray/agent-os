@@ -21,6 +21,7 @@ import type {
   SendRequest,
 } from './agent-sessions';
 import {
+  agentNotFound,
   agentTask,
   asAgent,
   type ConfirmationPayloadSchema,
@@ -29,6 +30,7 @@ import {
   QuestionInputSchema,
 } from './operation-support';
 import { isQuestion } from '../task-tree';
+import { inTrainingTree } from '../training/training-tree';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
@@ -70,6 +72,9 @@ export class ControlOperations {
       { agentId, ownerId, recordId: record?.id ?? null },
       async () => {
         const target = await agentTask(this.tasks, agentId, ownerId);
+        // A training tree is not resumed (self-learning design-training.md KD-3, place 5).
+        if (await inTrainingTree(this.tasks, target))
+          throw agentNotFound(agentId);
         // Notes 5: a message to a stopped agent carries the `resume` mark; the window between this
         // read and the write is a known low risk.
         const parent =

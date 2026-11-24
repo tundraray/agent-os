@@ -137,13 +137,3 @@ export function interruptWait(
     },
   };
 }
-
-/** A step whose guarded write was fenced or whose signal was aborted: nothing is written. */
-export function abandoned(ctx: StepContext, reason: string): StepResult {
-  ctx.logger.info('agent step abandoned without writes', {
-    agentId: ctx.taskId,
-    stepNo: ctx.stepNo,
-    reason,
-  });
-  return { outcome: 'continue' };
-}

@@ -170,21 +170,16 @@ export class Sessions {
    * starter calls it in the transaction that creates the task (KD-8); `ON CONFLICT DO NOTHING` keeps a repeat
    * of that transaction safe. The version, the name, the team member and the model come from the start, the
    * parent and the root from the task; `first_run` is set when the owner had no earlier conversation with the
-   * version's agent. A root session starts with an empty title and its list time. `true` — this call created
-   * the session: the caller (`BaseAgent.createSession`) then runs the agent's `sessionCreated` in the same
-   * transaction.
+   * version's agent. A root session starts with an empty title and its list time.
    */
-  async ensureSession(
-    task: SessionTask,
-    start: SessionStart,
-  ): Promise<boolean> {
+  async ensureSession(task: SessionTask, start: SessionStart): Promise<void> {
     const { taskId, ownerId } = task;
     const { run } = start;
     const root = task.parentId === null;
     const firstRun = root
       ? false
       : !(await this.rows.ranBefore(ownerId, run.version.agentId, taskId));
-    return this.rows.create(
+    await this.rows.create(
       {
         id: taskId,
         parentId: task.parentId,

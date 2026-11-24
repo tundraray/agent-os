@@ -72,6 +72,7 @@ export interface ScriptError {
 export interface StartMessage {
   op: 'start';
   script: string;
+  input: unknown;
   limits: RunLimits;
 }
 

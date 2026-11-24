@@ -36,6 +36,10 @@ export interface FoundSession {
     status: UserStatus;
     /** The personal mark or any role with the admin right. */
     isAdmin: boolean;
+    /** Any role with the right to train own agents (KD-8). */
+    trainOwn: boolean;
+    /** Any role with the right to train any agent (KD-8). */
+    trainAny: boolean;
     /** A local account: it has a password. */
     hasPassword: boolean;
     /** The chosen interface language, or null while there is no choice. */
@@ -87,6 +91,8 @@ export class SessionStore {
       name,
       status,
       isAdmin,
+      trainOwn,
+      trainAny,
       hasPassword,
       language,
       signInSettings,
@@ -104,6 +110,8 @@ export class SessionStore {
         name,
         status: UserStatusSchema.parse(status),
         isAdmin,
+        trainOwn,
+        trainAny,
         hasPassword,
         language: LanguageSchema.nullable().parse(language),
       },

@@ -483,8 +483,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
           awaited: true,
         });
         taskIds.push(taskId);
-        // A subagent's kind adds nothing to a new session, so the store makes it directly, in the commit that
-        // spawns its task (KD-8).
+        // The store makes a subagent's session directly, in the commit that spawns its task (KD-8).
         await sessions.ensureSession(
           {
             taskId,

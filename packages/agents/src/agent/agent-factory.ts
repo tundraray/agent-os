@@ -2,15 +2,28 @@ import {
   AGENT_TASK_TYPE,
   CHAT_TASK_TYPE,
   DEEP_AGENT_TASK_TYPE,
+  TRAINER_TASK_TYPE,
 } from '@agent-os/contracts';
 import type { Logger } from '@agent-os/common';
-import { SettingsRepository } from '@agent-os/db';
+import {
+  AgentsRepository,
+  DocumentsRepository,
+  SettingsRepository,
+  TrainingsRepository,
+} from '@agent-os/db';
 import { type LiveTaskIdentity, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
-import { AGENTS_CONFIG, AGENTS_LOGGER, RECORD_LIBRARY } from '../agents.tokens';
+import type { AccessGate } from '../access-gate';
+import {
+  ACCESS_GATE,
+  AGENTS_CONFIG,
+  AGENTS_LOGGER,
+  RECORD_LIBRARY,
+} from '../agents.tokens';
 import type { AgentsConfig } from '../config';
 import { DeepAgent, type DeepAgentDeps } from '../deep/deep-agent';
+import { AgentsProviders } from '../providers/provider-registry';
 import type { RecordLibrary } from '../start/record-library';
 import type { RunStart } from '../start/run-definition';
 import {
@@ -20,7 +33,11 @@ import {
 } from '../store/sessions';
 import { createStartChild } from '../tools/system/start-child';
 import { readToolResultSettings } from '../tools/tool-result-settings';
-import { ToolRunner } from '../tools/tool-runner';
+import type { StartChild } from '../tools/tool';
+import { type StartChildScope, ToolRunner } from '../tools/tool-runner';
+import { Trainer } from '../training/trainer';
+import type { TrainerDeps } from '../training/trainer-step';
+import { inTrainingTree } from '../training/training-tree';
 import { Agent } from './agent';
 import { AgentDeps } from './agent-deps';
 import type { AgentRun } from './agent-state';
@@ -49,29 +66,59 @@ export class AgentFactory implements OnModuleInit {
   /** What the agents of each class work with, shared by every object of the class. */
   private readonly chat: ChatAgentDeps;
   private readonly deep: DeepAgentDeps;
+  private readonly trainer: TrainerDeps;
+  /** The start of a child agent in a step's commit: a tool call's, and a trainer's replay. */
+  private readonly startChild: (scope: StartChildScope) => StartChild;
 
   constructor(
     @Inject(AgentDeps) private readonly agent: AgentDeps,
-    /** The version of a task the runtime has no object for is read from it by its session's id (`restore`). */
+    /**
+     * The version of a task the runtime has no object for is read from it by its session's id (`restore`); a
+     * trainer starts its replays through it.
+     */
     @Inject(RECORD_LIBRARY)
-    private readonly library: Pick<RecordLibrary, 'version'>,
-    /** The final subagent's answer of a deep agent is read from its task. */
-    @Inject(TaskControl) tasks: Pick<TaskControl, 'get' | 'listTree'>,
+    private readonly library: RecordLibrary,
+    /** The final subagent's answer of a deep agent is read from its task; the root's type marks a training tree. */
+    @Inject(TaskControl)
+    private readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** The settings of large results, read for each `task` ending (tool-result-reading R-5). */
     @Inject(SettingsRepository) settingsRows: Pick<SettingsRepository, 'read'>,
+    /** A deep agent's end of turn looks up its run's report document. */
+    @Inject(DocumentsRepository)
+    documentRows: Pick<DocumentsRepository, 'latestReport' | 'findInRun'>,
     @Inject(ToolRunner)
     private readonly runner: Pick<ToolRunner, 'useStartChild'>,
-    @Inject(AGENTS_CONFIG)
-    private readonly config: Pick<AgentsConfig, 'maxDepth'>,
+    @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'maxDepth'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
+    /** A trainer's training row, the version it proposed, and the start check of its replays. */
+    @Inject(TrainingsRepository)
+    trainingRows: Pick<TrainingsRepository, 'find' | 'writeComparisons'>,
+    @Inject(AgentsRepository)
+    agentRows: Pick<AgentsRepository, 'findTrainingVersion'>,
+    @Inject(ACCESS_GATE) access: AccessGate,
+    @Inject(AgentsProviders) providers: Pick<AgentsProviders, 'connection'>,
   ) {
     this.logger = logger.child({ service: 'agents.factory' });
+    this.startChild = createStartChild({
+      maxDepth: config.maxDepth,
+      childType: childTypeOf,
+      createIn: (type, task, input, start) =>
+        this.createIn(type, task, input, start),
+    });
     // The holder has fields only: a copy with what the class adds is all a class needs.
     this.chat = Object.assign({}, agent, { logger });
     this.deep = Object.assign({}, agent, {
       tasks,
+      documentRows,
       resultSettings: () => readToolResultSettings(settingsRows),
       maxDepth: config.maxDepth,
+    });
+    this.trainer = Object.assign({}, agent, {
+      trainingRows,
+      agentRows,
+      documentRows,
+      start: { library, access, providers },
+      startChild: this.startChild,
     });
   }
 
@@ -80,14 +127,7 @@ export class AgentFactory implements OnModuleInit {
    * factory cannot be one of the runner's own dependencies: it registers the start here instead.
    */
   onModuleInit(): void {
-    this.runner.useStartChild(
-      createStartChild({
-        maxDepth: this.config.maxDepth,
-        childType: childTypeOf,
-        createIn: (type, task, input, start) =>
-          this.createIn(type, task, input, start),
-      }),
-    );
+    this.runner.useStartChild(this.startChild);
   }
 
   /**
@@ -104,10 +144,12 @@ export class AgentFactory implements OnModuleInit {
   ): Promise<BaseAgent> {
     const startedAt = Date.now();
     const { run, ...request } = start;
+    const identity = { ...task, type, input };
     const agent = this.build({
-      task: { ...task, type, input },
+      task: identity,
       input,
       run,
+      training: await inTrainingTree(this.tasks, identity),
     });
     await agent.createSession(request);
     await agent.absorb();
@@ -135,7 +177,12 @@ export class AgentFactory implements OnModuleInit {
       subagent: session.origin.subagent,
       model: session.model,
     };
-    const agent = this.build({ task, input, run });
+    const agent = this.build({
+      task,
+      input,
+      run,
+      training: await inTrainingTree(this.tasks, task),
+    });
     await agent.absorb();
     this.logger.info('agent object restored', {
       ...agent.held(),
@@ -152,6 +199,8 @@ export class AgentFactory implements OnModuleInit {
         return new Agent(this.agent, run);
       case DEEP_AGENT_TASK_TYPE:
         return new DeepAgent(this.deep, run);
+      case TRAINER_TASK_TYPE:
+        return new Trainer(this.trainer, run);
       default:
         throw new Error(
           `Task ${run.task.taskId} of type "${run.task.type}" is not an agent's`,

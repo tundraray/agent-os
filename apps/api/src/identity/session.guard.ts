@@ -101,12 +101,23 @@ export class SessionGuard implements CanActivate {
       );
     }
     await this.sessions.touch(session);
-    const { id, email, name, isAdmin, hasPassword, language } = session.user;
+    const {
+      id,
+      email,
+      name,
+      isAdmin,
+      trainOwn,
+      trainAny,
+      hasPassword,
+      language,
+    } = session.user;
     return {
       id,
       email,
       name,
       isAdmin,
+      trainOwn,
+      trainAny,
       hasPassword,
       language,
       sessionId: session.sessionId,

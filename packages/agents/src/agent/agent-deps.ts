@@ -1,13 +1,10 @@
 import {
-  AgentKnowledgeRepository,
-  AgentKnowledgeRunsRepository,
-  AgentKnowledgeVectorsRepository,
-  McpServersRepository,
+  MemoriesRepository,
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  SettingsRepository,
   ToolResultsRepository,
-  Db,
 } from '@agent-os/db';
 import { Inbox, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -20,8 +17,6 @@ import {
   RECORD_LIBRARY,
 } from '../agents.tokens';
 import type { AgentsConfig } from '../config';
-import { AgentsEmbeddings } from '../embeddings/embeddings';
-import type { KnowledgeVectorStore } from '../knowledge/vector-store';
 import { ModelClient } from '../model/model-client';
 import { CallRecords } from '../store/call-records';
 import type { RecordLibrary } from '../start/record-library';
@@ -37,8 +32,6 @@ export class AgentDeps {
   readonly compactAtTokens: number;
 
   constructor(
-    /** The savepoint of a learning session's question outcome (`ensureQuestionVector`). */
-    @Inject(Db) readonly db: Db,
     /** The session of the agent, made from its task input and read back; `sessionRows` — its other reads and writes. */
     @Inject(Sessions) readonly sessions: Sessions,
     @Inject(ConversationsRepository)
@@ -55,13 +48,9 @@ export class AgentDeps {
     /** The session's task list, read for the task block of every model call. */
     @Inject(ConversationTasksRepository)
     readonly sessionTaskRows: ConversationTasksRepository,
-    /** The graph, its settings, the question row and the registry of a session that learns (self-learning KD-6). */
-    @Inject(AgentKnowledgeRepository)
-    readonly knowledgeRows: AgentKnowledgeRepository,
-    @Inject(AgentKnowledgeRunsRepository)
-    readonly knowledgeRunRows: AgentKnowledgeRunsRepository,
-    @Inject(McpServersRepository)
-    readonly mcpServerRows: McpServersRepository,
+    /** The memory block of every step: the records visible to the run and the size setting (design-memory.md KD-3). */
+    @Inject(MemoriesRepository) readonly memoryRows: MemoriesRepository,
+    @Inject(SettingsRepository) readonly settingsRows: SettingsRepository,
     /**
      * The tools library: the session's tools for the task's owner and the agent's declaration — for the model call
      * and for the check of its calls; `toolOf` keeps the log rule of a tool the session was not offered.
@@ -87,12 +76,6 @@ export class AgentDeps {
     @Inject(TaskControl) readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
     @Inject(Inbox) readonly inbox: Pick<Inbox, 'listPending'>,
-    /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
-    @Inject(AgentKnowledgeVectorsRepository)
-    readonly vectorStore: KnowledgeVectorStore,
-    /** The question vector of a session that learns (self-learning KD-6); the only caller in a run. */
-    @Inject(AgentsEmbeddings)
-    readonly embeddings: Pick<AgentsEmbeddings, 'embed'>,
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'compactAtTokens'>,
   ) {
     this.compactAtTokens = config.compactAtTokens;

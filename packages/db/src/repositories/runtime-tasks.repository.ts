@@ -68,6 +68,7 @@ export type NewRuntimeTaskRow = Pick<
   | 'depth'
   | 'input'
   | 'awaitedStep'
+  | 'exclusiveKey'
 >;
 
 /**
@@ -168,14 +169,17 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * Inserts a task in `queued`. `undefined` when the id is already taken: the insert waits for a
-   * concurrent one of the same id to commit and then writes nothing.
+   * Inserts a task in `queued`. `undefined` when the id is already taken or the exclusive key is
+   * held by an unfinished task of the type: the insert waits for a concurrent one of the same id or
+   * key to commit and then writes nothing, raising no error, so the caller's transaction goes on.
+   * The conflict clause has no target, so any unique index on this table is silent here and reads as
+   * "id or key taken": a future unique index must be handled explicitly.
    */
   async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow | undefined> {
     const [row] = await this.db.client
       .insert(runtimeTasks)
       .values({ ...task, status: queued })
-      .onConflictDoNothing({ target: runtimeTasks.taskId })
+      .onConflictDoNothing()
       .returning();
     return row;
   }

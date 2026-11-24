@@ -38,6 +38,8 @@ export interface SandboxBridge {
 
 export interface RunScriptInput {
   script: string;
+  /** A JSON value the script sees as the global `input`. */
+  input: unknown;
   limits: RunLimits;
   bridge: SandboxBridge;
   /** The loaded QuickJS module; the executor imports it by absolute path, tests by package name. */
@@ -48,9 +50,10 @@ export interface RunScriptInput {
 export type ScriptEnd = DoneMessage | ErrorMessage;
 
 // Evaluated once per context before the script. Captures `JSON.stringify` so the script cannot swap it,
-// and keeps `host` in closures only: the script sees `callTool`, `readResult` and `console`, never `host`.
+// and keeps `host` in closures only: the script sees `callTool`, `readResult`, `console` and `input`, never `host`.
 const SCRIPT_API_SOURCE = `(host) => {
   const stringify = JSON.stringify;
+  globalThis.input = JSON.parse(host.input);
   const format = (value) => {
     if (typeof value === 'string') return value;
     try {
@@ -210,6 +213,9 @@ function createRun({
 
   const installApi = (): void => {
     const host = context.newObject();
+    context
+      .newString(JSON.stringify(input.input ?? null))
+      .consume((text) => context.setProp(host, 'input', text));
     context
       .newFunction('output', (line) => {
         output.add(context.getString(line));

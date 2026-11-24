@@ -1,4 +1,4 @@
-import { type ToolOutcome, ToolOutcomeSchema } from '@agent-os/contracts';
+import { ToolOutcomeSchema } from '@agent-os/contracts';
 import {
   and,
   asc,
@@ -8,20 +8,13 @@ import {
   gt,
   gte,
   inArray,
-  isNotNull,
   lte,
   max,
   notInArray,
-  type SQL,
   sql,
 } from 'drizzle-orm';
 import type { Db } from '../db';
 import { messages } from '../schema';
-import {
-  type FinishedMcpCall,
-  finishedIn,
-  type FinishedWindow,
-} from './finished-window';
 
 /** An entry as a read selects it; the kind and the content are checked by the reader. */
 export interface MessageRow {
@@ -31,10 +24,10 @@ export interface MessageRow {
   readonly createdAt: Date;
 }
 
-/** An entry to append with its promoted columns: the call it is about and the end time of a result. */
+/** An entry to append with its promoted column: the call it is about. */
 export type NewMessageRow = Pick<
   typeof messages.$inferInsert,
-  'conversationId' | 'seq' | 'kind' | 'content' | 'callId' | 'finishedAt'
+  'conversationId' | 'seq' | 'kind' | 'content' | 'callId'
 >;
 
 /** What a read of entries selects. */
@@ -46,11 +39,6 @@ const ENTRY_COLUMNS = {
 };
 
 const isResult = eq(messages.kind, 'tool_result');
-
-/** A text field of a `tool_result`'s content. */
-function resultField(name: string): SQL<string | null> {
-  return sql<string | null>`${messages.content} ->> ${name}`;
-}
 
 /**
  * The result of a single call of the tool that ran: a built-in tool with `description` (not a list) that
@@ -190,54 +178,6 @@ export class MessagesRepository {
     return answer?.seq;
   }
 
-  /**
-   * The direct MCP calls of the tasks with one of the outcomes, finished in the window: their
-   * `tool_result` entries, read through the promoted `finished_at` (`messages_result_idx`), by end
-   * time. Results of one task that ended at the same moment keep the order they were written in, which
-   * is the order of their calls.
-   */
-  async mcpResults<O extends ToolOutcome>(
-    taskIds: readonly string[],
-    outcomes: readonly O[],
-    window: FinishedWindow,
-  ): Promise<(FinishedMcpCall<O> & { readonly text: string })[]> {
-    const server = resultField('server');
-    const outcome = resultField('outcome');
-    const rows = await this.db.client
-      .select({
-        server,
-        tool: resultField('tool'),
-        outcome,
-        args: sql<unknown>`${messages.content} -> 'args'`,
-        text: resultField('text'),
-        finishedAt: messages.finishedAt,
-      })
-      .from(messages)
-      .where(
-        and(
-          inArray(messages.conversationId, [...taskIds]),
-          isResult,
-          isNotNull(server),
-          inArray(outcome, [...outcomes]),
-          finishedIn(messages.finishedAt, window),
-        ),
-      )
-      .orderBy(
-        asc(messages.finishedAt),
-        asc(messages.conversationId),
-        asc(messages.seq),
-      );
-    // The query keeps only rows with a server, one of the outcomes and an end time.
-    return rows.map((row) => ({
-      server: row.server as string,
-      tool: row.tool as string,
-      outcome: row.outcome as O,
-      args: row.args,
-      text: row.text ?? '',
-      finishedAt: row.finishedAt as Date,
-    }));
-  }
-
   /** How many tool calls the agent's answers requested: the count of a child's report. */
   async toolCallCount(taskId: string): Promise<number> {
     const [row] = await this.db.client
@@ -252,6 +192,42 @@ export class MessagesRepository {
         ),
       );
     return row?.calls ?? 0;
+  }
+
+  /** How many calls of the sessions ended (`tool_result`), and how many of them with one of `outcomes`. */
+  async toolResultCounts(
+    taskIds: readonly string[],
+    outcomes: readonly string[],
+  ): Promise<{ calls: number; matching: number }> {
+    if (taskIds.length === 0) return { calls: 0, matching: 0 };
+    const [row] = await this.db.client
+      .select({
+        calls: sql<number>`count(*)::int`,
+        matching: sql<number>`(count(*) filter (where ${inArray(sql`${messages.content} ->> 'outcome'`, [...outcomes])}))::int`,
+      })
+      .from(messages)
+      .where(and(inArray(messages.conversationId, [...taskIds]), isResult));
+    return row ?? { calls: 0, matching: 0 };
+  }
+
+  /** The text of each session's first `task` entry — its assignment. */
+  taskTexts(
+    taskIds: readonly string[],
+  ): Promise<{ conversationId: string; text: string }[]> {
+    if (taskIds.length === 0) return Promise.resolve([]);
+    return this.db.client
+      .selectDistinctOn([messages.conversationId], {
+        conversationId: messages.conversationId,
+        text: sql<string>`${messages.content} ->> 'text'`,
+      })
+      .from(messages)
+      .where(
+        and(
+          inArray(messages.conversationId, [...taskIds]),
+          eq(messages.kind, 'task'),
+        ),
+      )
+      .orderBy(messages.conversationId, asc(messages.seq));
   }
 
   /**

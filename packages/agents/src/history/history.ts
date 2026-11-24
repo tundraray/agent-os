@@ -3,6 +3,7 @@ import {
   HistoryEventSchema,
   ToolOutcomeSchema,
   ChipRecordSchema,
+  DocumentRefSchema,
   ToolRefusalReasonSchema,
   type HistoryEntryKind,
 } from '@agent-os/contracts';
@@ -51,6 +52,8 @@ export const HistoryContentSchemas = {
     message: z.string().nullable(),
     /** The report text; none when the child ended without one. */
     text: z.string().nullable(),
+    /** The report document of a completed deep agent; `null` for any other child. */
+    document: DocumentRefSchema.nullable(),
     toolCalls: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative(),
   }),
@@ -103,6 +106,8 @@ export const HistoryContentSchemas = {
     text: z.string().nullable(),
     /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
     output: z.string().nullable().optional(),
+    /** A `try_script` call: the tools whose calls were recorded and not sent, in call order; absent for other tools. */
+    recorded: z.array(z.string()).optional(),
     startedAt: z.iso.datetime().nullable(),
     finishedAt: z.iso.datetime().nullable(),
     /**

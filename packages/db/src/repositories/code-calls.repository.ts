@@ -1,12 +1,7 @@
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db';
-import { codeCalls, messages } from '../schema';
-import {
-  type FinishedMcpCall,
-  finishedIn,
-  type FinishedWindow,
-} from './finished-window';
+import { codeCalls } from '../schema';
 
 /** One call of an agent: its session and the call id its provider gave. */
 export interface CallKey {
@@ -83,56 +78,6 @@ export class CodeCallsRepository {
       .where(and(byKey(call), isNull(codeCalls.outcome)))
       .returning({ seq: codeCalls.seq });
     return closed.length > 0;
-  }
-
-  /**
-   * The MCP calls scripts of the tasks made, with one of the outcomes, finished in the window, by end
-   * time — of each run's latest attempt only: a re-run script repeats its calls, and an earlier attempt
-   * would give the same call twice. The latest attempt is the number of the run's `run_attempt` records
-   * (a `write` run has none and runs once, as attempt 1).
-   */
-  async mcpCallsOfLatestAttempts<O extends ToolOutcome>(
-    taskIds: readonly string[],
-    outcomes: readonly O[],
-    window: FinishedWindow,
-  ): Promise<FinishedMcpCall<O>[]> {
-    const attempts = sql`(
-      select count(*) from ${messages}
-       where ${messages.conversationId} = ${codeCalls.conversationId}
-         and ${messages.callId} = ${codeCalls.runCallId}
-         and ${messages.kind} = 'run_attempt')`;
-    const rows = await this.db.client
-      .select({
-        server: codeCalls.server,
-        tool: codeCalls.tool,
-        outcome: codeCalls.outcome,
-        args: codeCalls.args,
-        finishedAt: codeCalls.finishedAt,
-      })
-      .from(codeCalls)
-      .where(
-        and(
-          inArray(codeCalls.conversationId, [...taskIds]),
-          eq(codeCalls.attempt, sql`greatest(${attempts}, 1)`),
-          isNotNull(codeCalls.server),
-          inArray(codeCalls.outcome, [...outcomes]),
-          finishedIn(codeCalls.finishedAt, window),
-        ),
-      )
-      .orderBy(
-        asc(codeCalls.finishedAt),
-        asc(codeCalls.conversationId),
-        asc(codeCalls.runCallId),
-        asc(codeCalls.seq),
-      );
-    // The query keeps only rows with a server, one of the outcomes and an end time.
-    return rows.map((row) => ({
-      server: row.server as string,
-      tool: row.tool,
-      outcome: row.outcome as O,
-      args: row.args,
-      finishedAt: row.finishedAt as Date,
-    }));
   }
 
   /** Closes every open row of the run, of any attempt, with the given outcome. */

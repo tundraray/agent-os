@@ -20,10 +20,12 @@ export type ToolExecution =
       readonly failureReason?: McpFailureReason;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one. */
       readonly output?: string | null;
+      /** The tools whose calls a code run of a training tree recorded and did not send, in call order. */
+      readonly recorded?: readonly string[];
       /** The value a script gets for its call from code with `success` or `empty` (code-execution KD-2). */
       readonly fullResult?: { readonly value: unknown };
       /**
-       * The full result of a direct MCP call with `success` or `empty`, secrets masked: the step's commit
+       * The full result of a direct MCP call with `success` or `empty`, or of a trainer's read, secrets masked: the step's commit
        * stores it with the closing, whatever its length (code-execution KD-5, DC-8; tool-result-reading R-4).
        */
       readonly stored?: StoredToolResult;
@@ -139,6 +141,7 @@ export interface McpCalls {
   readonly fromCode: (
     call: McpCall,
     signal: AbortSignal,
+    logger: Logger,
   ) => Promise<ToolExecution | AbortedExecution>;
 }
 
@@ -177,18 +180,35 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
 
   /**
    * Sends an MCP call and turns its answer into an execution with `finish`; the step's signal and a server
-   * gone since the check end it before.
+   * gone since the check end it before. The one place every MCP call goes out from: a changing call of a
+   * training tree is not sent and ends `recorded` (self-learning design-training.md KD-3, place 2).
    */
   async function callMcp(
     call: McpCall,
     signal: AbortSignal,
+    logger: Logger,
     finish: (
       response: McpCallResponse,
     ) => ToolExecution | Promise<ToolExecution>,
   ): Promise<ToolExecution | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
-    const { server, tool } = call.tool.mcp;
+    const { server, tool, readOnly } = call.tool.mcp;
+    if (call.caller.training && !readOnly) {
+      logger.info('mcp call recorded', {
+        taskId: call.caller.agentId,
+        rootId: call.caller.rootId,
+        ownerId: call.caller.ownerId,
+        callId: call.callId,
+        tool,
+        server,
+      });
+      return {
+        kind: 'done',
+        outcome: 'recorded',
+        text: `Action recorded, not executed: ${call.tool.name}`,
+      };
+    }
     try {
       const response = await sendMcp({
         server,
@@ -278,10 +298,12 @@ export function createMcpCalls(options: McpCallOptions): McpCalls {
 
   return {
     direct: (call, signal, logger) =>
-      callMcp(call, signal, (response) =>
+      callMcp(call, signal, logger, (response) =>
         directExecution(call, response, logger),
       ),
-    fromCode: (call, signal) =>
-      callMcp(call, signal, (response) => codeExecution(call, response)),
+    fromCode: (call, signal, logger) =>
+      callMcp(call, signal, logger, (response) =>
+        codeExecution(call, response),
+      ),
   };
 }

@@ -14,7 +14,7 @@ import {
   type TaskUpdateArgs,
 } from './task-list-rules';
 
-const TASK_CREATE_TOOL = 'task_create';
+export const TASK_CREATE_TOOL = 'task_create';
 const TASK_UPDATE_TOOL = 'task_update';
 const TASK_GET_TOOL = 'task_get';
 const TASK_LIST_TOOL = 'task_list';
@@ -128,6 +128,24 @@ const GET_DESCRIPTION =
 const LIST_DESCRIPTION =
   'List your tasks, one line each: number, status, title, blockers and label, without descriptions.';
 
+/**
+ * The rule of a fixed list (self-learning design-training.md, «Пул задач тренера»): its set and order stay, and
+ * its code tasks move by code only. `true` — the call breaks it.
+ */
+function breaksFixedList(
+  call: TaskChangeCall,
+  fixed: readonly number[],
+): boolean {
+  if (call.tool !== 'update') return false;
+  const { args } = call;
+  return (
+    args.status === TASK_DELETED ||
+    (args.addBlockedBy?.length ?? 0) > 0 ||
+    (args.addBlocks?.length ?? 0) > 0 ||
+    fixed.includes(args.taskId)
+  );
+}
+
 /** The fields of `task_update` the log may name. */
 const UPDATE_FIELDS = new Set(Object.keys(TaskUpdateArgsSchema.shape));
 
@@ -195,6 +213,19 @@ export function createTaskListTools(deps: {
     input: { readonly caller: ToolCaller; readonly callId: string },
   ): Promise<ToolRunResult> {
     const ids = idsOf(input.caller, input.callId);
+    const { fixedTasks } = input.caller;
+    if (fixedTasks !== null && breaksFixedList(call, fixedTasks)) {
+      logger.info('task call refused', {
+        ...ids,
+        tool: call.tool,
+        rule: 'fixed_list',
+      });
+      return {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: `Your task list is fixed: no task is deleted or gets new dependencies, and tasks ${fixedTasks.join(', ')} are moved by the platform only.`,
+      };
+    }
     const state = await sessionTaskRows.read(input.caller.agentId);
     const decision = decideTaskChange(state, call);
     if (decision.kind === 'refused') {

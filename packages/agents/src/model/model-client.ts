@@ -32,6 +32,7 @@ import {
   AgentsProviders,
   type ProviderConnection,
 } from '../providers/provider-registry';
+import { TrainingBudget } from '../training/training-budget';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -101,6 +102,8 @@ export interface ModelCallRequest {
   /** The step's signal: a cancel ends the call or the pause with an exception, never with a retry. */
   readonly signal: AbortSignal;
   readonly logger: Logger;
+  /** The caller is in a training tree (`ToolCaller.training`): the training budget is asked first (KD-5). */
+  readonly training: boolean;
 }
 
 /** A one-off text of the model outside any task, such as a conversation title. */
@@ -354,6 +357,9 @@ export class ModelClient {
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
     /** Times the pauses between retries. */
     @Inject(CLOCK) private readonly clock: Clock,
+    /** Asked before every call of a training tree, and only then (self-learning design-training.md KD-5). */
+    @Inject(TrainingBudget)
+    private readonly budget: Pick<TrainingBudget, 'check'>,
     /** Gets every text part of an agent turn; none by default. */
     @Optional()
     @Inject(ON_TEXT_DELTA)
@@ -370,6 +376,15 @@ export class ModelClient {
    * an attempt the provider rejected before any output is not.
    */
   async call(request: ModelCallRequest): Promise<ModelCallResult> {
+    // At the cap the budget has already stopped the tree and cut off the calling step, which leaves without writes.
+    if (request.training && (await this.budget.check(request)) === 'capped') {
+      request.logger.warn('model call refused: training cap reached', {
+        rootId: request.rootId,
+        taskId: request.taskId,
+        model: request.model,
+      });
+      throw new Error(`Training ${request.rootId} reached its spending cap`);
+    }
     const verdict = await this.verdictOf(
       request.ownerId,
       request.model,

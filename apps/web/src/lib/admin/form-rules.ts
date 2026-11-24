@@ -6,9 +6,9 @@ import {
   IDLE_MINUTES_MAX,
   IDLE_MINUTES_MIN,
   isHttpsOrLocalhost,
-  KNOWLEDGE_LIMIT_TOKENS_MAX,
-  KNOWLEDGE_LIMIT_TOKENS_MIN,
   McpServerNameSchema,
+  MEMORY_INDEX_TOKENS_MAX,
+  MEMORY_INDEX_TOKENS_MIN,
   MODEL_PROVIDER_API_KEY_MAX_LENGTH,
   MODEL_PROVIDER_API_KEY_MIN_LENGTH,
   MODEL_PROVIDER_NAME_MAX_LENGTH,
@@ -23,6 +23,8 @@ import {
   TOOL_RESULT_READ_MAX_TOKENS_MIN,
   TOOL_RESULT_STORE_FROM_CHARS_MAX,
   TOOL_RESULT_STORE_FROM_CHARS_MIN,
+  TRAINING_CAP_USD_MAX,
+  TRAINING_CAP_USD_MIN,
   UpdateToolResultSettingsBodySchema,
   type McpServerMode,
   type ModelPurpose,
@@ -52,8 +54,8 @@ export type FieldErrors<Field extends string> = Partial<
 const FIELD_RULE_VALUES = {
   maxTurnsMin: String(RECORD_MAX_TURNS_MIN),
   maxTurnsMax: String(RECORD_MAX_TURNS_MAX),
-  knowledgeMin: String(KNOWLEDGE_LIMIT_TOKENS_MIN),
-  knowledgeMax: String(KNOWLEDGE_LIMIT_TOKENS_MAX),
+  memoryIndexMin: String(MEMORY_INDEX_TOKENS_MIN),
+  memoryIndexMax: String(MEMORY_INDEX_TOKENS_MAX),
   storeFromMin: String(TOOL_RESULT_STORE_FROM_CHARS_MIN),
   storeFromMax: String(TOOL_RESULT_STORE_FROM_CHARS_MAX),
   previewMin: String(TOOL_RESULT_PREVIEW_CHARS_MIN),
@@ -259,21 +261,31 @@ export function librarySettingsRules({
   return valid ? {} : { defaultMaxTurns: 'defaultMaxTurns' };
 }
 
-// ---------- Self-learning settings (self-learning AS-01, MC-8, DC-5) ----------
+// ---------- Self-learning settings (self-learning AS-01, MC-8) ----------
 
-/** «Место для знаний в запуске, токенов»: a whole number within the contract's bounds. */
-export function knowledgeSettingsRules({
-  limitTokens,
-}: {
-  limitTokens: string;
-}): FieldErrors<'limitTokens'> {
-  const tokens = parseDecimal(limitTokens);
-  const valid =
-    tokens !== null &&
-    Number.isInteger(tokens) &&
-    tokens >= KNOWLEDGE_LIMIT_TOKENS_MIN &&
-    tokens <= KNOWLEDGE_LIMIT_TOKENS_MAX;
-  return valid ? {} : { limitTokens: 'knowledgeLimitTokens' };
+export type SelfLearningSettingsValues = {
+  memoryIndexTokens: string;
+  trainingCapUsd: string;
+};
+
+/** «Размер оглавления памяти, токенов» — a whole number, «Потолок расхода одного обучения, $» — a sum, within the contract's bounds. */
+export function selfLearningSettingsRules({
+  memoryIndexTokens,
+  trainingCapUsd,
+}: SelfLearningSettingsValues): FieldErrors<keyof SelfLearningSettingsValues> {
+  const errors: FieldErrors<keyof SelfLearningSettingsValues> = {};
+  const tokens = parseDecimal(memoryIndexTokens);
+  if (
+    tokens === null ||
+    !Number.isInteger(tokens) ||
+    tokens < MEMORY_INDEX_TOKENS_MIN ||
+    tokens > MEMORY_INDEX_TOKENS_MAX
+  )
+    errors.memoryIndexTokens = 'memoryIndexTokens';
+  const cap = parseDecimal(trainingCapUsd);
+  if (cap === null || cap < TRAINING_CAP_USD_MIN || cap > TRAINING_CAP_USD_MAX)
+    errors.trainingCapUsd = 'trainingCapUsd';
+  return errors;
 }
 
 // ---------- Large tool results (tool-result-reading R-5) ----------

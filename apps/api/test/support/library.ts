@@ -95,6 +95,7 @@ export function deepAgentBody(
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   };
   return {
     kind: 'deep_agent',
@@ -218,7 +219,7 @@ export interface BuiltinRecord {
 }
 
 /**
- * The agents of the built-in rows migration (`packages/db/src/migrations/0002_builtin_rows.sql`, data-model
+ * The agents of the built-in rows migration (`packages/db/src/migrations/0001_builtin_rows.sql`, data-model
  * design-agents.md KD-4): the three default agents every employee sees and `deep-research`, shown to everyone.
  */
 export const BUILTIN = {

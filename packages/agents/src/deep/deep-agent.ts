@@ -4,6 +4,7 @@ import {
   ChildFinishedPayloadSchema,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
+import type { DocumentsRepository } from '@agent-os/db';
 import {
   isFinished,
   type StepContext,
@@ -21,6 +22,7 @@ import type {
   FinalAnswer,
   FinalSubagentReport,
 } from '../agent/delegation';
+import type { TurnAnswer, TurnEnd } from '../agent/model-step';
 import type { CallState } from '../history/call-state';
 import type { SessionTool } from '../tools/tool-registry';
 import { TASK_TOOL } from './deep-definition';
@@ -40,7 +42,15 @@ const { refused } = ToolOutcomeSchema.enum;
  * answer is read from its task.
  */
 export type DeepAgentDeps = AgentDeps &
-  DelegationsDeps & { readonly tasks: Pick<TaskControl, 'get'> };
+  DelegationsDeps & {
+    readonly tasks: Pick<TaskControl, 'get'>;
+    readonly documentRows: Pick<DocumentsRepository, 'latestReport'>;
+  };
+
+/** The notice of an answer that ends the run without a report document (self-learning design-notepad.md KD-4). */
+export const REPORT_DOCUMENT_NOTICE =
+  'You cannot finish yet: this run has no report document written since it started or was continued. ' +
+  'Write the full result as a notepad document marked as the report, a large one in parts; then end with a short message that names the document.';
 
 /** The `child_finished` of the step's messages, by child task id. */
 function finishedChildren(ctx: StepContext): Map<string, ChildFinishedPayload> {
@@ -56,21 +66,22 @@ function finishedChildren(ctx: StepContext): Map<string, ChildFinishedPayload> {
 /**
  * The deep agent, the `deep_agent` task type, over the shared step of `BaseAgent` (deep-agents KD-2; design-task.md KD-4, KD-6): it gives
  * work to its subagents with `task`, whose calls of one answer are checked together and wait for their subagents;
- * with a final subagent only that subagent's completed answer ends the run; a run that learns gets its knowledge
- * run with its session and embeds each question of the employee.
+ * with a final subagent only that subagent's completed answer ends the run.
  */
 export class DeepAgent extends BaseAgent {
-  protected override readonly embedsEmployeeMessages = true;
   private readonly delegations: Delegations;
   /** The final subagent's answer is read from its task. */
   private readonly tasks: Pick<TaskControl, 'get'>;
   /** The subagent whose answer ends the run, from the version; `null` — the deep agent's own answer does. */
   private readonly finalSubagent: string | null;
+  /** The run's report document is looked up at the end of each turn. */
+  private readonly documentRows: Pick<DocumentsRepository, 'latestReport'>;
 
   constructor(deps: DeepAgentDeps, run: AgentRun) {
     super(deps, run);
     this.delegations = createDelegations(deps);
     this.tasks = deps.tasks;
+    this.documentRows = deps.documentRows;
     const { version, subagent } = run.run;
     if (version.kind !== 'deep_agent' || subagent !== null) {
       throw new Error(
@@ -78,16 +89,6 @@ export class DeepAgent extends BaseAgent {
       );
     }
     this.finalSubagent = version.content.finalSubagent;
-  }
-
-  /** A run that learns gets its row with its deep agent session, in the same transaction (self-learning KD-2). */
-  protected override async sessionCreated(): Promise<void> {
-    const { learning } = this.definition;
-    if (learning !== null)
-      await this.deps.knowledgeRunRows.insertRun({
-        runId: this.task.taskId,
-        ...learning,
-      });
   }
 
   /**
@@ -185,6 +186,31 @@ export class DeepAgent extends BaseAgent {
                 logger: ctx.logger,
               }),
     };
+  }
+
+  /**
+   * The shared end of turn first; a `complete` then also needs a report document written since the run's last
+   * start or continuation (KD-4), else a notice asks for one. A step that continues the run never has one: its
+   * `continued` event is not written yet. Each notice is a turn, so `maxTurns` still bounds the run.
+   */
+  override async endOfTurn(
+    ctx: StepContext,
+    answer: TurnAnswer,
+  ): Promise<TurnEnd> {
+    const end = await super.endOfTurn(ctx, answer);
+    if (end.ending.kind !== 'complete') return end;
+    const document = answer.continues
+      ? undefined
+      : await this.documentRows.latestReport(ctx.taskId);
+    if (document !== undefined)
+      return { ...end, ending: { ...end.ending, document } };
+    ctx.logger.info('deep agent reminded of the report document', {
+      agentId: ctx.taskId,
+      rootId: ctx.rootId,
+      ownerId: ctx.ownerId,
+      stepNo: ctx.stepNo,
+    });
+    return { ...end, ending: { kind: 'notice', text: REPORT_DOCUMENT_NOTICE } };
   }
 
   /**

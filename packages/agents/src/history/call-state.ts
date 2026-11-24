@@ -1,8 +1,4 @@
-import {
-  RUN_CODE_TOOL,
-  type ToolCallState,
-  ToolCallStateSchema,
-} from '@agent-os/contracts';
+import { type ToolCallState, ToolCallStateSchema } from '@agent-os/contracts';
 
 import { mcpToolName } from '../mcp/mcp-tool';
 import type { HistoryContent, HistoryEntry } from './history';
@@ -58,14 +54,6 @@ export function requestedName(call: {
   readonly server: string | null;
 }): string {
   return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
-}
-
-/** A `run_code` call: the built-in tool, not an MCP tool of the same name. */
-export function isRunCodeCall(call: {
-  readonly tool: string;
-  readonly server: string | null;
-}): boolean {
-  return call.tool === RUN_CODE_TOOL && call.server === null;
 }
 
 interface Folding {

@@ -24,6 +24,7 @@ import {
   type SpendResponse,
   type StopResponse,
 } from '@agent-os/contracts';
+import { TrainingsRepository } from '@agent-os/db';
 import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';
@@ -36,6 +37,7 @@ import {
   toHistoryEntry,
   toDeepAgentRunView,
   toPending,
+  trainingOf,
 } from './conversation-view';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor';
@@ -65,6 +67,8 @@ export class AgentControlService {
     @Inject(Inbox) private readonly inbox: Inbox,
     @Inject(TokenLedger) private readonly ledger: TokenLedger,
     @Inject(AGENT_LIST_PAGE_SIZE) private readonly pageSize: number,
+    @Inject(TrainingsRepository)
+    private readonly trainings: TrainingsRepository,
   ) {}
 
   /**
@@ -113,17 +117,19 @@ export class AgentControlService {
     const view = await this.agent(agentId, ownerId);
     const conversation = await this.views.root(view.rootId, ownerId);
     if (conversation === undefined) throw agentNotFound();
-    const [views, entries, messages, confirmations] = await Promise.all([
-      this.views.list(view.rootId, ownerId),
-      this.views.history({
-        agentId,
-        ownerId,
-        afterSeq,
-        limit: HISTORY_PAGE_SIZE,
-      }),
-      this.inbox.listPending(agentId, ownerId),
-      this.views.confirmations(view.rootId, ownerId),
-    ]);
+    const [views, entries, messages, confirmations, training] =
+      await Promise.all([
+        this.views.list(view.rootId, ownerId),
+        this.views.history({
+          agentId,
+          ownerId,
+          afterSeq,
+          limit: HISTORY_PAGE_SIZE,
+        }),
+        this.inbox.listPending(agentId, ownerId),
+        this.views.confirmations(view.rootId, ownerId),
+        this.trainings.find(view.rootId),
+      ]);
     // design v1.2 (A-2): the parent's description, unless the parent is the conversation's root.
     const parent = views.find(
       (candidate) => candidate.agentId === view.parentId,
@@ -146,6 +152,7 @@ export class AgentControlService {
         .filter((confirmation) => confirmation.agentId === agentId)
         .map((confirmation) => toConfirmation(confirmation, views)),
       children: toAgentTree(views, agentId),
+      training: trainingOf(training, agentId),
     };
   }
 
@@ -210,8 +217,15 @@ export class AgentControlService {
     return { outcome: await this.control.interrupt({ agentId, ownerId }) };
   }
 
+  /** Also a training's root (the trainer): «Стоп» of a training conversation stops it. */
   async stop(agentId: string, ownerId: string): Promise<StopResponse> {
-    await this.agent(agentId, ownerId);
+    if (!isUuid(agentId)) throw agentNotFound();
+    const view = await this.views.get(agentId, ownerId);
+    if (
+      view.parentId === null &&
+      (await this.trainings.find(agentId)) === undefined
+    )
+      throw agentNotFound();
     return { stopped: await this.control.stop({ agentId, ownerId }) };
   }
 

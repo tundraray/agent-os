@@ -163,17 +163,6 @@ function deepAgentUpdate(
   };
 }
 
-/** The default deep agent with its self-learning flag on, turned on by the administrator through the panel. */
-async function defaultDeepAgentLearning(): Promise<RecordDetail> {
-  const research = await panelRecord(BUILTIN.deepAgent.id);
-  if (research.kind === 'deep_agent' && research.content.selfLearning)
-    return research;
-  return putPanelRecord(
-    research.id,
-    deepAgentUpdate(research, { selfLearning: true }),
-  );
-}
-
 /**
  * A new conversation of `session` whose chat answers with `replies`, then {@link DONE}. The script is keyed by the first
  * message, so a later message of the same conversation takes the next reply.
@@ -305,8 +294,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
   it(
     'INT-1 A "rights": the chat of a non-administrator is refused read_only, shared and admin_only before any card, the administrator is refused builtin, and no record, version, flag or audit changes',
     async () => {
-      // Given: A (no admin) and B share role «A»; A is also in «SRE». B's R1 is opened to «A»; A's R2 to «SRE»; S is a system record opened to «A»;
-      // the default deep agent (data-model design-agents.md KD-4) has its self-learning flag on (set by the administrator through the panel).
+      // Given: A (no admin) and B share role «A»; A is also in «SRE». B's R1 is opened to «A»; A's R2 to «SRE»; S is a system record opened to «A».
       const roleA = await newRole('records-int1a');
       const sre = await newRole('records-int1a-sre');
       const a = await newEmployee([roleA, sre]);
@@ -333,7 +321,6 @@ describe('deep-agents / agent-types - the chat is a second door into the library
         everyone: false,
         roleIds: [roleA.id],
       });
-      await defaultDeepAgentLearning();
       const ids = [r1.id, r2.id, system.id, BUILTIN.deepAgent.id];
       const before = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
       const auditBefore = await Promise.all(
@@ -390,13 +377,9 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       expect(reasonsOf(cView, 'delete_record')).toEqual(['builtin']);
       expect(recordCardsOf(cView)).toEqual([]);
 
-      // Then: every record as before - version, content, the default deep agent's flag on - and no audit event after the start
+      // Then: every record as before - version, content - and no audit event after the start
       const after = await Promise.all(ids.map((id) => panelOrOwner(id, a)));
       expect(after.map(stateOf)).toEqual(before.map(stateOf));
-      const research = after[3];
-      expect(
-        research?.kind === 'deep_agent' && research.content.selfLearning,
-      ).toBe(true);
       const auditAfter = await Promise.all(
         ids.map((id) => auditOfRecord(harness.pool, id)),
       );
@@ -588,8 +571,7 @@ describe('deep-agents / agent-types - the chat is a second door into the library
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-06.2, AC-06.6, DC-5, Invariant 3. Design: UC-3 (administrator half), UC-4 (reject and stale halves); KD-3 (`review`, `confirmed`); Flow 1.
   // Catches: (1) a record created or changed before the decision, or after a rejection; (2) a lost update - an old card's approval overwriting an edit made in the library
-  //   after the card was shown; (3) a chat edit by the administrator that does not bump the version, writes no audit event, or is not what the employees read next; (4) the
-  //   stored `selfLearning: true` of the default deep agent lost by the chat edit.
+  //   after the card was shown; (3) a chat edit by the administrator that does not bump the version, writes no audit event, or is not what the employees read next.
   it(
     'INT-2 A "reject": a rejected card saves nothing, the next approved card saves exactly one record with the id that card carried and the flag off',
     async () => {
@@ -673,11 +655,11 @@ describe('deep-agents / agent-types - the chat is a second door into the library
   );
 
   it(
-    'INT-2 B "administrator edit": the administrator\'s approved edit of the default deep agent bumps its version once, keeps its self-learning flag, writes one prompt-free audit event and is what an employee reads next',
+    'INT-2 B "administrator edit": the administrator\'s approved edit of the default deep agent bumps its version once, writes one prompt-free audit event and is what an employee reads next',
     async () => {
       const role = await newRole('records-int2b');
       const b = await newEmployee([role]);
-      const research = await defaultDeepAgentLearning();
+      const research = await panelRecord(BUILTIN.deepAgent.id);
       const prompt = `Новый промпт ресерча ${randomUUID()}`;
       const auditBefore = await auditOfRecord(harness.pool, research.id);
 
@@ -706,13 +688,10 @@ describe('deep-agents / agent-types - the chat is a second door into the library
       });
       await untilAnswered(admin, thread);
 
-      // Then: version N+1, the new prompt, the flag still on
+      // Then: version N+1, the new prompt
       const saved = await panelRecord(research.id);
       expect(saved.version).toBe(research.version + 1);
       expect(saved.kind === 'deep_agent' && saved.content.prompt).toBe(prompt);
-      expect(saved.kind === 'deep_agent' && saved.content.selfLearning).toBe(
-        true,
-      );
 
       // Then: one audit event of the update by the administrator, without the prompt
       const added = (await auditOfRecord(harness.pool, research.id)).slice(

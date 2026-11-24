@@ -218,18 +218,18 @@ export async function callUnlessAborted<T>(
 
 /** The blocks of a step's system text, each `null` when empty (step-prompt-block.md). */
 interface StepBlocks {
-  readonly knowledge: string | null;
+  readonly memory: string | null;
   readonly tasks: string | null;
 }
 
 /**
- * The system text of a step (step-prompt-block.md; self-learning KD-6): the definition's prompt, then each
- * block after an empty line in a fixed order — knowledge, then the tasks — so the start of the text stays the
+ * The system text of a step (step-prompt-block.md; self-learning design-memory.md KD-3): the definition's prompt,
+ * then each block after an empty line in a fixed order — memory, then the tasks — so the start of the text stays the
  * same from step to step. The model step and the compaction step both build their `instructions` here, so a
  * compaction call carries the same text as the model call. No block — the prompt unchanged, byte for byte.
  */
 export function withStepBlocks(prompt: string, blocks: StepBlocks): string {
-  return [prompt, blocks.knowledge, blocks.tasks]
+  return [prompt, blocks.memory, blocks.tasks]
     .filter((part) => part !== null)
     .join('\n\n');
 }

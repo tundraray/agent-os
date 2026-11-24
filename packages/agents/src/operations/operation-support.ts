@@ -1,8 +1,16 @@
 import type { Logger } from '@agent-os/common';
-import { RuntimeError, type Task, type TaskControl } from '@agent-os/runtime';
+import type { Db } from '@agent-os/db';
+import {
+  type LiveTasks,
+  RuntimeError,
+  type Task,
+  type TaskControl,
+} from '@agent-os/runtime';
 import { z } from 'zod';
 
+import type { AgentFactory } from '../agent/agent-factory';
 import { AgentsError } from '../errors';
+import type { AgentTaskInput, SessionStart } from '../store/sessions';
 import { isQuestion } from '../task-tree';
 
 /** The part of a confirmation request (`ToolRunner.confirmationRequest`) the operations read. */
@@ -90,4 +98,70 @@ export function createLogged(logger: Logger) {
       throw error;
     }
   };
+}
+
+/** What `createAgent` works with. */
+export interface AgentCreationDeps {
+  readonly db: Db;
+  readonly tasks: Pick<TaskControl, 'create'>;
+  readonly factory: Pick<AgentFactory, 'createIn'>;
+  readonly liveTasks: Pick<LiveTasks, 'adopt'>;
+}
+
+/** An agent created outside a step: its task, its place in the tree and its start. */
+export interface AgentCreation {
+  readonly task: Omit<
+    Parameters<TaskControl['create']>[0],
+    'input' | 'ownerId'
+  > & {
+    readonly ownerId: string;
+  };
+  readonly placeOf: (taskId: string) => {
+    readonly rootId: string;
+    readonly depth: number;
+  };
+  readonly start: SessionStart;
+  /** What the creator writes in the same transaction, after the agent's session. */
+  readonly after?: (agentId: string) => Promise<void>;
+}
+
+/**
+ * Creates an agent outside a step: its task with an empty input, its session written from the start, its
+ * object and what `after` writes commit together, so whoever sees the task sees the session (KD-8); the object
+ * goes to the runtime once the transaction resolved, and the agent's first step runs on it. With an
+ * `exclusiveKey` another unfinished task holds, nothing is written and the answer is `null`.
+ */
+export function createAgent(
+  deps: AgentCreationDeps,
+  creation: AgentCreation & { readonly task: { exclusiveKey?: undefined } },
+): Promise<{ agentId: string }>;
+export function createAgent(
+  deps: AgentCreationDeps,
+  creation: AgentCreation,
+): Promise<{ agentId: string } | null>;
+export async function createAgent(
+  deps: AgentCreationDeps,
+  { task, placeOf, start, after }: AgentCreation,
+): Promise<{ agentId: string } | null> {
+  const input: AgentTaskInput = {};
+  const created = await deps.db.transaction(async () => {
+    const taskId = await deps.tasks.create({ ...task, input });
+    if (taskId === null) return null;
+    const agent = await deps.factory.createIn(
+      task.type,
+      {
+        taskId,
+        ownerId: task.ownerId,
+        parentId: task.parentId ?? null,
+        ...placeOf(taskId),
+      },
+      input,
+      start,
+    );
+    await after?.(taskId);
+    return { agentId: taskId, agent };
+  });
+  if (created === null) return null;
+  deps.liveTasks.adopt(created.agentId, created.agent);
+  return { agentId: created.agentId };
 }

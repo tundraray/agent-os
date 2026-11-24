@@ -4,6 +4,7 @@ import {
   type ChildFinishedPayload,
   ChildFinishedPayloadSchema,
   ChipRecordSchema,
+  DocumentRefSchema,
 } from '@agent-os/contracts';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -29,8 +30,14 @@ const MessagePayloadSchemas = {
   }),
 } as const;
 
-/** The `complete` result of an agent: `{ report }`. */
-const AgentResultSchema = z.object({ report: z.string() });
+/**
+ * The `complete` result of an agent: its last answer and, for a deep agent, its report document; `null` for
+ * every other agent (self-learning design-notepad.md KD-4).
+ */
+const AgentResultSchema = z.object({
+  report: z.string(),
+  document: DocumentRefSchema.nullable(),
+});
 
 /** The report of a completed agent task, from its result. */
 export function reportOf(result: unknown): string {
@@ -59,6 +66,10 @@ async function childReport(
   notice: ChildFinishedPayload,
   description: string,
 ): Promise<NewHistoryEntry> {
+  const result =
+    notice.status === 'completed'
+      ? AgentResultSchema.parse(notice.result)
+      : null;
   return {
     kind: 'child_report',
     content: {
@@ -70,7 +81,8 @@ async function childReport(
         notice.failure === undefined
           ? null
           : failureTextOf(notice.failure.message),
-      text: notice.status === 'completed' ? reportOf(notice.result) : null,
+      text: result?.report ?? null,
+      document: result?.document ?? null,
       toolCalls: await deps.messageRows.toolCallCount(notice.taskId),
       durationMs: notice.durationMs,
     },
@@ -145,6 +157,23 @@ export async function entriesOf(
     }
   }
   return entries;
+}
+
+/**
+ * Whether the step's messages hold more than an `interrupt`: a question's `child_finished` is no more than it
+ * (the tool step reads the answer), so an interrupt with it still only closes the calls and waits.
+ */
+export async function hasOtherMessages(
+  deps: Pick<AgentDeps, 'tasks'>,
+  ctx: Pick<StepContext, 'taskId' | 'ownerId' | 'messages'>,
+): Promise<boolean> {
+  for (const message of ctx.messages) {
+    if (message.kind === interrupt) continue;
+    if (message.kind !== CHILD_FINISHED_KIND) return true;
+    const { taskId } = ChildFinishedPayloadSchema.parse(message.payload);
+    if (!isQuestion(await deps.tasks.get(taskId, agentOwner(ctx)))) return true;
+  }
+  return false;
 }
 
 /**

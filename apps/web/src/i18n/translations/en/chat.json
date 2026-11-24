@@ -43,6 +43,13 @@
     }
   },
   "sendFailed": "Couldn't send the message. Try again.",
+  "training": {
+    "readOnly": "The training conversation is read-only.",
+    "ended": "The training is over. The outcome is in “Training result”.",
+    "stop": "Stop",
+    "stopFailed": "Couldn't stop the training. Try again.",
+    "result": "Training result"
+  },
   "chipPlaceholder": "{kind, select, agent {Describe the task for “{name}”…} other {Describe what to look into — the chat will prepare a brief for “{name}”…}}",
   "composer": {
     "message": "Message",
@@ -70,6 +77,7 @@
       "auth_required": "sign-in needed",
       "awaiting_confirmation": "awaiting confirmation",
       "rejected": "rejected",
+      "recorded": "recorded, not executed",
       "interrupted": "interrupted",
       "unknown": "outcome unknown"
     },
@@ -77,7 +85,9 @@
     "authRequired": "Connect your {server} account in “<link>My access</link>”",
     "arguments": "Arguments",
     "result": "Result",
-    "scriptOutput": "Script output"
+    "scriptOutput": "Script output",
+    "savedScript": "agent script · {description}",
+    "recordedLine": "Not executed, only recorded:"
   },
   "attachment": {
     "preview": "Preview: {name}",

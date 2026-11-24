@@ -9,18 +9,21 @@ import {
   jsonb,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { createdAt, isOneOf, literal } from './helpers';
 import { identityUsers } from './identity-users';
 
+const { queued, running, waiting } = TaskStatusSchema.enum;
+
 export const runtimeTasks = app.table(
   'runtime_tasks',
   {
     taskId: uuid('task_id').primaryKey(),
     type: text('type').notNull(),
-    /** The employee the tree runs for; null for the platform's own work (`knowledge.embed`), which nobody sees. */
+    /** The employee the tree runs for; null for the platform's own work without an owner, which nobody sees. */
     ownerId: uuid('owner_id').references(() => identityUsers.id, {
       onDelete: 'cascade',
     }),
@@ -70,6 +73,8 @@ export const runtimeTasks = app.table(
      * waits for it (data-model/design-runtime.md, KD-2); null for a background child.
      */
     awaitedStep: integer('awaited_step'),
+    /** An opaque string of the creator: one unfinished task of a type holds it at a time; null — none. */
+    exclusiveKey: text('exclusive_key'),
   },
   (t) => [
     check(
@@ -91,5 +96,11 @@ export const runtimeTasks = app.table(
     index('runtime_tasks_root_idx').on(t.rootId),
     /** Children of a task, and the count of a waiting parent's unfinished awaited children. */
     index('runtime_tasks_parent_idx').on(t.parentId),
+    /** An end status takes the task out of the index: the key is free again without a write. */
+    uniqueIndex('runtime_tasks_exclusive_key_idx')
+      .on(t.type, t.exclusiveKey)
+      .where(
+        sql`${t.exclusiveKey} is not null and ${isOneOf(t.status, [queued, running, waiting])}`,
+      ),
   ],
 );

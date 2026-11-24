@@ -1,7 +1,9 @@
-import type { ScriptedToolCall } from '@agent-os/agents/testing';
+import type { ScriptedModel, ScriptedToolCall } from '@agent-os/agents/testing';
 import {
+  AGENTS_BRIEF_CONFIRMATION,
   LIBRARY_RECORD_CONFIRMATION,
   LibraryRecordCardSchema,
+  type AgentNode,
   type Confirmation,
   type ConversationView,
   type CreateRecordBody,
@@ -10,6 +12,8 @@ import {
   type RecordBody,
   type RecordDetail,
 } from '@agent-os/contracts';
+import { waitFor } from '@agent-os/db/testing';
+import type { ChatApi } from './api';
 
 /**
  * The record tools of the main chat as the tests script and read them (deep-agents design-agent-types.md,
@@ -32,10 +36,14 @@ export function recordToolCall(
   return { tool, args };
 }
 
-/** The content as the chat sends it: the whole record of its kind without `selfLearning`. */
+/** The content as the chat sends it: the whole record of its kind without `selfLearning` and `scripts`. */
 function chatContent(body: RecordBody): Record<string, unknown> {
   if (body.kind === 'agent') return { ...body.content };
-  const { selfLearning: _selfLearning, ...content } = body.content;
+  const {
+    selfLearning: _selfLearning,
+    scripts: _scripts,
+    ...content
+  } = body.content;
   return content;
 }
 
@@ -108,5 +116,99 @@ export function toolResultsOf(
     entry.kind === 'tool_result' && entry.content.tool === tool
       ? [entry.content]
       : [],
+  );
+}
+
+/** Every agent of a conversation's tree, the tree flattened. */
+export function treeOf(nodes: readonly AgentNode[]): AgentNode[] {
+  return nodes.flatMap((node) => [node, ...treeOf(node.children)]);
+}
+
+/** The brief as `start_deep_agent` writes it into the deep agent's first task: the key of its script. */
+export function briefTask(question: string): string {
+  return JSON.stringify({ question, boundaries: '', result: '' });
+}
+
+/**
+ * Runs the deep agent `record` from a new conversation of `api`: its chat, scripted by `chatTask`, calls
+ * `start_deep_agent` with `question` and then answers «Принято.»; the brief is approved. Returns the
+ * conversation and the deep agent once it exists; the deep agent's own script is the test's.
+ */
+export async function startDeepAgentInChat(
+  model: ScriptedModel,
+  api: ChatApi,
+  run: {
+    readonly record: { readonly id: string; readonly name: string };
+    readonly question: string;
+    readonly chatTask: string;
+  },
+): Promise<{ readonly threadId: string; readonly deepAgentId: string }> {
+  model.script(
+    { task: run.chatTask },
+    [
+      {
+        calls: [
+          {
+            tool: 'start_deep_agent',
+            args: {
+              deepAgent: run.record.name,
+              question: run.question,
+              boundaries: '',
+              result: '',
+            },
+          },
+        ],
+      },
+    ],
+    { thereafter: { text: 'Принято.' } },
+  );
+  const { id: threadId } = await api.createThread();
+  await api.send(threadId, run.chatTask);
+  const waiting = await waitFor(
+    () => api.history(threadId),
+    (view) =>
+      view.decisions.some(
+        (decision) =>
+          decision.kind === AGENTS_BRIEF_CONFIRMATION &&
+          decision.status === 'open',
+      ),
+    `the brief of ${run.record.name}`,
+  );
+  const brief = waiting.decisions.find(
+    (decision) => decision.kind === AGENTS_BRIEF_CONFIRMATION,
+  );
+  if (brief === undefined) throw new Error('no brief');
+  await api.decide(brief.decisionId, { approve: true });
+  const running = await waitFor(
+    () => api.history(threadId),
+    (view) =>
+      treeOf(view.agents).some(
+        (agent) => agent.origin?.recordId === run.record.id,
+      ),
+    `the deep agent ${run.record.name}`,
+  );
+  const deepAgent = treeOf(running.agents).find(
+    (agent) =>
+      agent.origin?.recordId === run.record.id &&
+      agent.origin.subagent === null,
+  );
+  if (deepAgent === undefined) throw new Error('no deep agent');
+  return { threadId, deepAgentId: deepAgent.agentId };
+}
+
+/** Waits until the agent of the conversation has `status` and returns the conversation. */
+export function untilAgentStatus(
+  api: ChatApi,
+  threadId: string,
+  agentId: string,
+  status: AgentNode['status'],
+): Promise<ConversationView> {
+  return waitFor(
+    () => api.history(threadId),
+    (view) =>
+      treeOf(view.agents).some(
+        (agent) => agent.agentId === agentId && agent.status === status,
+      ),
+    `agent ${agentId} to be ${status}`,
   );
 }

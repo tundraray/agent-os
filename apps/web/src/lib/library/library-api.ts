@@ -1,21 +1,29 @@
 import { z } from 'zod';
 import {
+  AgentMemoryViewSchema,
   CopyResultSchema,
-  KnowledgeViewSchema,
   LibraryChoicesSchema,
   MyRoleListSchema,
   RecordDetailSchema,
   RecordSummarySchema,
+  TrainingActivatedSchema,
+  TrainingStartedSchema,
+  TrainingStateSchema,
+  TrainingViewSchema,
+  type AgentMemoryView,
   type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
-  type KnowledgeView,
   type Language,
   type LibraryChoices,
   type MyRoleList,
   type RecordAudienceBody,
   type RecordDetail,
   type RecordSummary,
+  type TrainingActivated,
+  type TrainingStarted,
+  type TrainingState,
+  type TrainingView,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
@@ -28,8 +36,6 @@ import { apiRequest } from '@/lib/api/api-request';
 
 const recordRoute = (id: string): string =>
   `/api/library/${encodeURIComponent(id)}`;
-
-const knowledgeRoute = (id: string): string => `${recordRoute(id)}/knowledge`;
 
 const RecordSummaryListSchema = z.array(RecordSummarySchema);
 
@@ -71,19 +77,43 @@ export const libraryApi = {
     }),
   remove: (id: string): Promise<void> =>
     apiRequest({ path: recordRoute(id), method: 'DELETE' }),
-  /** The deep agent's knowledge graph; the library and the panel read the same route (KD-1). */
-  knowledge: (id: string): Promise<KnowledgeView> =>
-    apiRequest({ path: knowledgeRoute(id), schema: KnowledgeViewSchema }),
-  /** A record's id is unique only within its `type`, so each type has its own route (KD-5). */
-  deleteKnowledgeEntity: (id: string, entityId: number): Promise<void> =>
+  /** The deep agent's memory; the library and the panel read the same route (KD-5). */
+  memory: (id: string): Promise<AgentMemoryView> =>
     apiRequest({
-      path: `${knowledgeRoute(id)}/entities/${String(entityId)}`,
+      path: `${recordRoute(id)}/memory`,
+      schema: AgentMemoryViewSchema,
+    }),
+  /** 204 also when the agent has no such record. */
+  deleteMemory: (id: string, memoryId: string): Promise<void> =>
+    apiRequest({
+      path: `${recordRoute(id)}/memory/${encodeURIComponent(memoryId)}`,
       method: 'DELETE',
     }),
-  deleteKnowledgeRelation: (id: string, relationId: number): Promise<void> =>
+  /** What the deep agent's card shows of training; the library and the panel read the same routes. */
+  trainingState: (id: string): Promise<TrainingState> =>
     apiRequest({
-      path: `${knowledgeRoute(id)}/relations/${String(relationId)}`,
-      method: 'DELETE',
+      path: `${recordRoute(id)}/training`,
+      schema: TrainingStateSchema,
+    }),
+  startTraining: (id: string): Promise<TrainingStarted> =>
+    apiRequest({
+      path: `${recordRoute(id)}/training`,
+      method: 'POST',
+      schema: TrainingStartedSchema,
+    }),
+  training: (id: string, trainingId: string): Promise<TrainingView> =>
+    apiRequest({
+      path: `${recordRoute(id)}/training/${encodeURIComponent(trainingId)}`,
+      schema: TrainingViewSchema,
+    }),
+  activateTraining: (
+    id: string,
+    trainingId: string,
+  ): Promise<TrainingActivated> =>
+    apiRequest({
+      path: `${recordRoute(id)}/training/${encodeURIComponent(trainingId)}/activate`,
+      method: 'POST',
+      schema: TrainingActivatedSchema,
     }),
   /** The servers usable to the employee and the model of a new record. */
   choices: (): Promise<LibraryChoices> =>

@@ -4,7 +4,6 @@ import {
   accountRules,
   fieldErrorText,
   hoursToMinutes,
-  knowledgeSettingsRules,
   minutesToHours,
   modelProviderRules,
   modelRules,
@@ -96,7 +95,6 @@ const PROVIDER_NAME =
   'Имя — до 32 знаков: строчные латинские буквы, цифры и дефис, не с дефиса, например local-2';
 const API_KEY = 'Ключ — от 8 до 512 символов';
 const DIMENSIONS = 'Размерность — целое число больше нуля';
-const KNOWLEDGE_LIMIT = 'Нужно целое число от 1000 до 32000';
 const tools = {
   storeFromChars: '50000',
   previewChars: '2000',
@@ -380,37 +378,6 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
       { aboveInputTokens: THRESHOLD },
     ],
     ['threshold «200000»', () => modelRules(withThreshold('200000')), {}],
-    // self-learning DC-5, MC-8: a place for knowledge out of bounds is not sent
-    [
-      'knowledge place «999»',
-      () => knowledgeSettingsRules({ limitTokens: '999' }),
-      { limitTokens: KNOWLEDGE_LIMIT },
-    ],
-    [
-      'knowledge place «32001»',
-      () => knowledgeSettingsRules({ limitTokens: '32001' }),
-      { limitTokens: KNOWLEDGE_LIMIT },
-    ],
-    [
-      'knowledge place «12000,5»',
-      () => knowledgeSettingsRules({ limitTokens: '12000,5' }),
-      { limitTokens: KNOWLEDGE_LIMIT },
-    ],
-    [
-      'an empty knowledge place',
-      () => knowledgeSettingsRules({ limitTokens: '' }),
-      { limitTokens: KNOWLEDGE_LIMIT },
-    ],
-    [
-      'knowledge place «1000»',
-      () => knowledgeSettingsRules({ limitTokens: '1000' }),
-      {},
-    ],
-    [
-      'knowledge place «32000»',
-      () => knowledgeSettingsRules({ limitTokens: '32000' }),
-      {},
-    ],
     // tool-result-reading R-5
     [
       'tool result threshold «999»',

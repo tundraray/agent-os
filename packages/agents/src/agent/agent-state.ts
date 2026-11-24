@@ -16,6 +16,8 @@ export interface AgentRun {
   readonly task: LiveTaskIdentity;
   readonly input: AgentTaskInput;
   readonly run: RunStart;
+  /** The task is in a training tree (`inTrainingTree`), found once when the object is made. */
+  readonly training: boolean;
 }
 
 /** The history the model sees: the fork prefix and the own entries. */

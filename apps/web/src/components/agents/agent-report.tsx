@@ -6,12 +6,18 @@ import { useFormatter, useTranslations } from 'next-intl';
 import { TextMessagePartProvider, useAuiState } from '@assistant-ui/react';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { AgentStatus } from '@/components/agents/agent-status';
+import {
+  ReportDocument,
+  useThreadDocument,
+} from '@/components/agents/notepad-document';
 import { MarkdownText } from '@/components/markdown-text';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { failureReasonText } from '@/lib/agents/format';
 import { formatDuration, formatListTime } from '@/i18n/formats';
+import { useFeedSelector } from '@/lib/feed/feed-context';
+import type { FeedState } from '@/lib/feed/feed-store';
 import type { ReportPartData } from '@/lib/feed/to-feed';
 import { agentPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
@@ -38,6 +44,18 @@ function reasonLine(
   const { text, hint } = failureReasonText(t, data.reason);
   return { text: t('reportReason', { reason: text }), hint };
 }
+
+/** The conversation the report stands in: the open one, or the agent page's own. */
+const selectThread = (state: FeedState): string | null =>
+  state.view?.kind === 'thread'
+    ? state.view.threadId
+    : state.view?.kind === 'agent'
+      ? state.view.agent.threadId
+      : null;
+
+/** The panel with «Документы» is on a conversation only (UXRD KD-1). */
+const selectInChat = (state: FeedState): boolean =>
+  state.view?.kind === 'thread';
 
 /**
  * TH-10 «Копировать» under the report: the last message shows it at rest, earlier ones on hover or focus
@@ -86,6 +104,14 @@ export function AgentReport({ data }: { data: ReportPartData }) {
   const tErrors = useTranslations('errors');
   const tAgents = useTranslations('agents');
   const reason = reasonLine(tErrors, tAgents, data);
+  const { workspace } = useShellServices();
+  const threadId = useFeedSelector(selectThread, null);
+  const inChat = useFeedSelector(selectInChat, false);
+  const reportDocument = data.document;
+  const document = useThreadDocument(threadId, reportDocument?.id ?? null);
+  // A report with a document copies the document's text (agent-report.md, part 7).
+  const copyText =
+    reportDocument === null ? data.text : (document.data?.text ?? null);
   const notice = `${t('toolCallCount', { count: data.toolCalls })} · ${formatDuration(t, data.durationMs)} · ${formatListTime(format, data.createdAt)}`;
 
   return (
@@ -142,8 +168,24 @@ export function AgentReport({ data }: { data: ReportPartData }) {
             </TextMessagePartProvider>
           )}
         </div>
+        {reportDocument !== null && (
+          <ReportDocument
+            title={reportDocument.title}
+            document={document}
+            onOpenInPanel={
+              inChat
+                ? () =>
+                    workspace.show({
+                      tab: 'documents',
+                      document: reportDocument.id,
+                      focusHeading: true,
+                    })
+                : null
+            }
+          />
+        )}
       </article>
-      {data.text !== null && <ReportCopy text={data.text} />}
+      {copyText !== null && <ReportCopy text={copyText} />}
     </div>
   );
 }

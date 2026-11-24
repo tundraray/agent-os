@@ -8,6 +8,7 @@ import {
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
 } from './agents';
+import { DocumentRefSchema } from './notepad';
 import {
   AgentContentSchema,
   DeepAgentContentSchema,
@@ -211,6 +212,8 @@ function entry<K extends string, C extends z.ZodType>(kind: K, content: C) {
 const ToolDisplayShape = {
   toolTitle: z.string().min(1).optional(),
   argLabels: z.record(z.string(), z.string()).optional(),
+  /** The code of a saved script, on a call of that script. */
+  scriptCode: z.string().optional(),
 };
 
 /** A tool call of a model answer; an open call carries its state. */
@@ -255,6 +258,7 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       status: ChildEndSchema,
       reason: z.string().nullable(),
       text: z.string().nullable(),
+      document: DocumentRefSchema.nullable(),
       toolCalls: z.number().int().nonnegative(),
       durationMs: z.number().int().nonnegative(),
     }),
@@ -277,6 +281,8 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       text: z.string().nullable(),
       /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
       output: z.string().nullable().optional(),
+      /** A `try_script` call: the tools whose calls were recorded and not sent, in call order; absent for other tools. */
+      recorded: z.array(z.string()).optional(),
       startedAt: z.iso.datetime().nullable(),
       finishedAt: z.iso.datetime().nullable(),
     }),
@@ -426,6 +432,20 @@ export const RecordFocusSchema = z.object({
 });
 export type RecordFocus = z.infer<typeof RecordFocusSchema>;
 
+/**
+ * The training an agent of a training tree belongs to (self-learning design-training.md, «Беседа обучения и
+ * беседы повторов»): the trained agent, the training — the id of the tree's root — and whether this is the
+ * trainer's own conversation rather than a replay. `null` outside a training tree.
+ */
+export const ConversationTrainingSchema = z
+  .object({
+    agentId: IdSchema,
+    trainingId: IdSchema,
+    isRoot: z.boolean(),
+  })
+  .nullable();
+export type ConversationTraining = z.infer<typeof ConversationTrainingSchema>;
+
 /** GET /threads/:threadId/history. */
 export const ConversationViewSchema = z.object({
   thread: ThreadSummarySchema,
@@ -445,6 +465,7 @@ export const ConversationViewSchema = z.object({
   agents: z.array(AgentNodeSchema),
   /** `null` while the chat has not touched a record. */
   focus: RecordFocusSchema.nullable(),
+  training: ConversationTrainingSchema,
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 
@@ -461,6 +482,7 @@ export const AgentPageViewSchema = z.object({
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   children: z.array(AgentNodeSchema),
+  training: ConversationTrainingSchema,
 });
 export type AgentPageView = z.infer<typeof AgentPageViewSchema>;
 

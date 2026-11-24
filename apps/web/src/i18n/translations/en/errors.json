@@ -2,21 +2,27 @@
   "failed": {
     "save": "Couldn't save: <server>{text}</server>",
     "copy": "Couldn't copy: <server>{text}</server>",
-    "delete": "Couldn't delete: <server>{text}</server>"
+    "delete": "Couldn't delete: <server>{text}</server>",
+    "train": "Couldn't start training: <server>{text}</server>",
+    "activate": "Couldn't activate: <server>{text}</server>"
   },
   "noConnection": {
     "save": "Couldn't save: no connection to the server",
     "copy": "Couldn't copy: no connection to the server",
-    "delete": "Couldn't delete: no connection to the server"
+    "delete": "Couldn't delete: no connection to the server",
+    "train": "Couldn't start training: no connection to the server",
+    "activate": "Couldn't activate: no connection to the server"
   },
   "library": {
+    "noPastTasks": "The agent has no finished tasks to train on yet.",
     "notFound": "This agent or deep agent doesn't exist: it was deleted, closed to you, or the link is wrong.",
     "unavailable": "The {kind, select, agent {agent} other {deep agent}} isn't available: it was deleted or closed to you",
     "conflict": {
       "own": "You already saved changes in another window or in a chat.",
       "admin": "Changes were already saved in another window.",
       "ownFields": "You already saved changes in another window or in a chat. Changed there: {fields}.",
-      "adminFields": "Changes were already saved in another window. Changed there: {fields}."
+      "adminFields": "Changes were already saved in another window. Changed there: {fields}.",
+      "script": "The agent was changed while you were editing. Reload the card and make the edit again."
     },
     "nameTaken": "You already have {kind, select, agent {an agent} other {a deep agent}} “{name}”",
     "systemName": "That's the name of a company agent — choose another name",
@@ -213,7 +219,8 @@
       "absoluteHours": "Enter a whole number from 1 to 720",
       "absoluteBelowIdle": "The total limit can't be shorter than the inactivity limit",
       "defaultMaxTurns": "Enter a whole number from {maxTurnsMin} to {maxTurnsMax}",
-      "knowledgeLimitTokens": "Enter a whole number from {knowledgeMin} to {knowledgeMax}",
+      "memoryIndexTokens": "Enter a whole number from {memoryIndexMin} to {memoryIndexMax}",
+      "trainingCapUsd": "Enter a sum from $0.1 to $100",
       "toolResultStoreFromChars": "Enter a whole number from {storeFromMin} to {storeFromMax}",
       "toolResultPreviewChars": "Enter a whole number from {previewMin} to {previewMax}",
       "toolResultReadMaxTokens": "Enter a whole number from {readMaxMin} to {readMaxMax}",

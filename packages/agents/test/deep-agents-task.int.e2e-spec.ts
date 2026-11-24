@@ -77,6 +77,7 @@ async function delegatingHarness(
       taskList: true,
       listDelegation: true,
       selfLearning: false,
+      scripts: [],
     }),
   );
   const harness = await createAgentsHarness({

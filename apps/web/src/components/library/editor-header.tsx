@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { LoaderCircle, Lock, MoreHorizontalIcon, Users } from 'lucide-react';
 import {
   CHAT_BUILTIN_KEY,
+  TRAINER_BUILTIN_KEY,
   type RecordAudience,
   type RecordDetail,
 } from '@agent-os/contracts';
@@ -24,7 +25,7 @@ import type { Locale } from '@/i18n/pick-locale';
 import { libraryApi } from '@/lib/library/library-api';
 import { shareBlockedReason } from '@/lib/library/library-errors';
 import { canUseInChat } from '@/lib/library/record-rules';
-import { adminKnowledgePath } from '@/lib/shell-route';
+import { adminMemoryPath } from '@/lib/shell-route';
 import { cn } from 'cn';
 import type { EditorMode } from './agent-fields';
 import { DeleteRecordDialog } from './delete-record-dialog';
@@ -97,8 +98,10 @@ export function EditorHeaderActions({
   return (
     <>
       {/* The employee's editor has its entry under the «Самообучение» flag instead. */}
-      {system && <KnowledgeButton record={record} />}
-      {system && record.builtinKey === CHAT_BUILTIN_KEY ? (
+      {system && <MemoryButton record={record} />}
+      {system &&
+      (record.builtinKey === CHAT_BUILTIN_KEY ||
+        record.builtinKey === TRAINER_BUILTIN_KEY) ? (
         <p
           className={cn(CAPTION, 'min-w-0 truncate text-muted-foreground')}
           title={t('editor.header.chatAudience')}
@@ -177,10 +180,10 @@ export function EditorHeaderActions({
 }
 
 /**
- * UXRD MC-7: the panel's entry to the knowledge screen of a deep agent (AL-02, AL-03), whatever its «Самообучение»
+ * UXRD MC-7: the panel's entry to the memory screen of a deep agent (AL-02, AL-03), whatever its «Самообучение»
  * flag; an agent has none. A link styled as a button, so `ShellLink` asks MC-11 over unsaved changes.
  */
-export function KnowledgeButton({
+export function MemoryButton({
   record,
 }: {
   record: Pick<RecordDetail, 'id' | 'kind'>;
@@ -189,14 +192,14 @@ export function KnowledgeButton({
   if (record.kind !== 'deep_agent') return null;
   return (
     <ShellLink
-      href={adminKnowledgePath(record.id)}
+      href={adminMemoryPath(record.id)}
       className={buttonVariants({
         variant: 'outline',
         size: 'sm',
         className: CONTROL_SIZE,
       })}
     >
-      {t('knowledge.entry')}
+      {t('memory.entry')}
     </ShellLink>
   );
 }

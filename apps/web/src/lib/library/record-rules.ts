@@ -1,5 +1,6 @@
 import {
   CHAT_BUILTIN_KEY,
+  TRAINER_BUILTIN_KEY,
   type AgentContent,
   type DeepAgentContent,
   nameWinner,
@@ -27,7 +28,11 @@ export function canUseInChat(
     'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
   >,
 ): boolean {
-  if (record.builtinKey === CHAT_BUILTIN_KEY) return false;
+  if (
+    record.builtinKey === CHAT_BUILTIN_KEY ||
+    record.builtinKey === TRAINER_BUILTIN_KEY
+  )
+    return false;
   if (!record.mine && !record.offerInChat) return false;
   return !record.missingRights.some(
     (right) => right.subagent === null && Boolean(right.model),

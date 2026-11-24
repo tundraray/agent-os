@@ -1,5 +1,9 @@
 import { createLogger } from '@agent-os/common';
-import type { AgentVersion, DeepAgentContent } from '@agent-os/contracts';
+import {
+  type AgentVersion,
+  type DeepAgentContent,
+  NOTEPAD_TOOLS,
+} from '@agent-os/contracts';
 import {
   McpAccountsRepository,
   McpServersRepository,
@@ -67,6 +71,7 @@ const runOf = (run: RunStart): AgentRun => ({
   },
   input: {},
   run,
+  training: false,
 });
 const CHAT: AgentOf = (run) =>
   new ChatAgent(DEPS as unknown as ChatAgentDeps, runOf(run));
@@ -129,6 +134,7 @@ const DEEP_CONTENT: DeepAgentContent = {
   taskList: true,
   listDelegation: true,
   selfLearning: false,
+  scripts: [],
 };
 
 function deepRun(content: DeepAgentContent): RunStart {
@@ -180,13 +186,26 @@ describe('the root alone gets the root tools; the task tools follow the flag, an
       agentRun(false),
       ['start_agent', 'list_agents', 'run_code'],
     ],
-    ['a subagent with the task list off', AGENT, SUBAGENT, ['run_code']],
+    // design-notepad.md KD-3: a subagent writes in its deep agent's notepad, without the past documents.
+    [
+      'a subagent with the task list off',
+      AGENT,
+      SUBAGENT,
+      [
+        'notepad_create',
+        'notepad_append',
+        'notepad_replace',
+        'notepad_read',
+        'notepad_list',
+        'run_code',
+      ],
+    ],
     // deep-agents/design-task.md KD-6: a deep agent gives work only through task.
     [
       'a deep agent with the task list on',
       DEEP,
       DEEP_AGENT,
-      ['task', ...TASK_LIST_TOOLS, 'run_code'],
+      ['task', ...NOTEPAD_TOOLS, ...TASK_LIST_TOOLS, 'run_code'],
     ],
   ])('%s', async (_, agent, run, expected) => {
     const tools = await toolsOf(agent, run);
@@ -203,7 +222,8 @@ function registryOfStubs() {
       tools: async () => ({ kind: 'allowed', allows: () => true }),
     },
   );
-  registry.useRunCode(stubTool('run_code'));
+  const runCode = stubTool('run_code');
+  registry.useCodeRun(runCode, () => runCode);
   [
     ...[
       'start_agent',
@@ -211,6 +231,7 @@ function registryOfStubs() {
       'list_agents',
       'stop_agent',
       ...TASK_LIST_TOOLS,
+      ...NOTEPAD_TOOLS,
     ].map((name) => stubTool(name)),
     stubTool('start_deep_agent', true),
     createTaskTool(),

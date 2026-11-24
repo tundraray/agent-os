@@ -222,6 +222,7 @@ function accessCheckDeepAgent(): Extract<
       taskList: true,
       listDelegation: false,
       selfLearning: false,
+      scripts: [],
     },
   };
 }

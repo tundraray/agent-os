@@ -75,7 +75,7 @@ describe('chat status', () => {
   ])(
     "chat status follows the root's task and view: $name",
     ({ root, task, expected }) => {
-      expect(chatStatus({ root, task })).toEqual(expected);
+      expect(chatStatus({ root, task, training: false })).toEqual(expected);
     },
   );
 });

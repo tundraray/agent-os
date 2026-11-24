@@ -335,10 +335,18 @@ async function conversationsOf(ownerId: string): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
-/** The answer of a tool call with ids and the called name masked: what tells one start from another. */
+/** The answer of a tool call with ids and the called name masked, without the call's own id, arguments and times: what tells one start from another. */
 function masked(result: ToolResult | undefined, name: string): unknown {
+  const answer = result && {
+    tool: result.tool,
+    server: result.server,
+    outcome: result.outcome,
+    refusalReason: result.refusalReason,
+    refusalDetail: result.refusalDetail,
+    text: result.text,
+  };
   return JSON.parse(
-    JSON.stringify(result ?? null)
+    JSON.stringify(answer ?? null)
       .replaceAll(
         /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
         '<id>',

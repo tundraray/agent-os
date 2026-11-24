@@ -32,11 +32,11 @@ import {
 import { LibrarySave } from './library-save';
 import { libraryError } from './library.errors';
 import type {
-  KnowledgeTarget,
+  MemoryTarget,
   LibraryActor,
   ServerFacts,
+  TrainingTarget,
 } from './library.types';
-import { contentParts } from './record-content';
 import { recordHeader, recordSummary, resolvedRecord } from './record-view';
 import { recordBody } from './stored-records';
 
@@ -330,19 +330,15 @@ export class LibraryService {
   }
 
   /**
-   * The access rule of /api/library/:id/knowledge (self-learning KD-7, auth-boundary.md): open to the
-   * deep agent's author and to an admin when the deep agent is in the panel. Built on the two reads that
-   * do not throw, so the panel is asked after a failed visibility: a deep agent neither visible nor in
+   * The access rule of /api/library/:id/memory (self-learning design-memory.md KD-5, auth-boundary.md): open
+   * to the deep agent's author and to an admin when the deep agent is in the panel. Built on the two reads
+   * that do not throw, so the panel is asked after a failed visibility: a deep agent neither visible nor in
    * the admin's panel, missing, or an agent — 404 RECORD_NOT_FOUND; visible but not open — 403
-   * KNOWLEDGE_FORBIDDEN. The servers are those of the lesson tools: the deep agent's own and every
-   * subagent's (deep-agents KD-1). Writes nothing.
+   * MEMORY_FORBIDDEN. Writes nothing.
    */
-  knowledgeTarget(
-    actor: LibraryActor,
-    recordId: string,
-  ): Promise<KnowledgeTarget> {
+  memoryTarget(actor: LibraryActor, recordId: string): Promise<MemoryTarget> {
     return this.records.logged(
-      'knowledge_target',
+      'memory_target',
       { viewerId: actor.id, recordId },
       async () => {
         if (!isUuid(recordId)) throw notFound();
@@ -355,15 +351,47 @@ export class LibraryService {
         if (record === undefined || record.body.kind !== 'deep_agent')
           throw notFound();
         if (record.ownerId !== viewer.id && inPanel === undefined)
-          throw libraryError('KNOWLEDGE_FORBIDDEN');
+          throw libraryError('MEMORY_FORBIDDEN');
         return {
-          recordId: record.id,
+          agentId: record.id,
           selfLearning: record.body.content.selfLearning,
-          servers: [
-            ...new Set(
-              contentParts(record.body).flatMap((part) => part.servers),
-            ),
-          ],
+        };
+      },
+    );
+  }
+
+  /**
+   * The deep agent of /api/library/:id/training (self-learning design-training.md, KD-8): the one the actor sees,
+   * or for a holder of the right to train any agent one in the panel. Missing, deleted, invisible, not a deep
+   * agent, or an employee's agent not in the panel for that holder — 404 RECORD_NOT_FOUND. Whether the actor
+   * may train it is `canTrain`'s. Writes nothing.
+   */
+  trainingTarget(
+    actor: { readonly id: string; readonly trainAny: boolean },
+    recordId: string,
+  ): Promise<TrainingTarget> {
+    return this.records.logged(
+      'training_target',
+      { viewerId: actor.id, recordId },
+      async () => {
+        if (!isUuid(recordId)) throw notFound();
+        const viewer = await this.records.viewerOf(actor.id);
+        const [visible, inPanel] = await Promise.all([
+          this.records.visibleOne(viewer, recordId),
+          actor.trainAny ? this.records.panelOne(recordId) : undefined,
+        ]);
+        const record = visible ?? inPanel;
+        if (record === undefined || record.body.kind !== 'deep_agent')
+          throw notFound();
+        return {
+          agentId: record.id,
+          name: record.name,
+          description: record.description,
+          builtinKey: record.builtinKey,
+          isAuthor: record.ownerId === viewer.id,
+          inPanel: inPanel !== undefined,
+          activeVersion: { id: record.versionId, number: record.version },
+          selfLearning: record.body.content.selfLearning,
         };
       },
     );

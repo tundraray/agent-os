@@ -1,6 +1,6 @@
 # packages/code-runner (`@agent-os/code-runner`)
 
-The code executor behind the `run_code` tool: a separate Node process per script with QuickJS inside, a bridge to the API process, limits and process kill. Only `agents` calls it; it depends only on `common`.
+The code executor behind the `run_code` tool and agent scripts: a separate Node process per script with QuickJS inside, a bridge to the API process, limits and process kill. Only `agents` calls it; it depends only on `common`.
 
 ## Rules here
 

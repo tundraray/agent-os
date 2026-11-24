@@ -42,6 +42,7 @@ export interface SaveInput {
   readonly previous: {
     readonly name: string;
     readonly body: RecordBody;
+    readonly builtinKey: string | null;
   } | null;
   /**
    * Names of other records, this one left out: `own` — the author's (of every kind), `system` — the
@@ -122,6 +123,14 @@ function contentRefusal({
   previous,
   choices,
 }: SaveInput): ContentRefusal | null {
+  // Only a catalogue deep agent learns: a default agent's version also runs temporary agents (self-learning KD-4).
+  if (
+    previous !== null &&
+    previous.builtinKey !== null &&
+    body.kind === 'deep_agent' &&
+    body.content.selfLearning
+  )
+    return { reason: 'builtin', path: 'selfLearning', values: [] };
   const parts = contentParts(body);
   const previousParts = previous ? contentParts(previous.body) : [];
   const keptServers = new Set(previousParts.flatMap((part) => part.servers));

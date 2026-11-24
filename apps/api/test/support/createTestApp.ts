@@ -1,6 +1,7 @@
 import { rmSync } from 'node:fs';
 import { inspect } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
   AGENT_TURN_CLIENT,
@@ -127,8 +128,9 @@ export async function createTestApp(
         .useValue(options.providerEndpoints.google);
     }
     const moduleRef = await builder.compile();
-    app = moduleRef.createNestApplication<INestApplication<App>>();
-    configureApp(app);
+    const nestApp = moduleRef.createNestApplication<NestExpressApplication>();
+    configureApp(nestApp);
+    app = nestApp;
     await app.init();
     await app.listen(0, '127.0.0.1');
   } catch (error) {

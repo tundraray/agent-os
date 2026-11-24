@@ -47,6 +47,7 @@ const deepAgent: RecordBody = {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   },
 };
 

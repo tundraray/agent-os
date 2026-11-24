@@ -77,6 +77,7 @@ export type FeedStore = StoreApi<FeedState> & {
     approve: boolean,
     args?: Record<string, unknown>,
   ) => Promise<void>;
+  /** Stops the agent, or a conversation's root. */
   stop: () => Promise<void>;
   /** Resolves with the new agent the caller opens. */
   restart: () => Promise<RestartResponse>;
@@ -431,7 +432,9 @@ export function createFeedStore({
       await reads.request();
     },
     stop: async () => {
-      const agentId = agentOnly('stop');
+      // A conversation stops its root, whose id is the conversation's (a training's «Стоп», self-learning KD-3).
+      const agentId =
+        source.kind === 'thread' ? source.threadId : source.agentId;
       await command('stop', () => api.stopAgent(agentId));
       await reads.request();
     },

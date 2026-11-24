@@ -9,22 +9,32 @@ import {
   StartOperations,
 } from '@agent-os/agents';
 import {
+  DocumentRefSchema,
   HISTORY_PAGE_SIZE,
   THREAD_PAGE_SIZE,
   type AgentNode,
   type ChipRecord,
   type ConversationView,
+  type Document,
+  type DocumentSummary,
   type InterruptResponse,
   type SendMessageResponse,
+  type ThreadDocumentsView,
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import { Inbox, RuntimeError, TaskControl } from '@agent-os/runtime';
+import { DocumentsRepository, TrainingsRepository } from '@agent-os/db';
+import {
+  Inbox,
+  isFinished,
+  RuntimeError,
+  TaskControl,
+} from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
 import { chatStatus } from './chat-status';
-import { threadNotFound } from './chat.errors';
+import { httpError, threadNotFound } from './chat.errors';
 import {
   focusOf,
   nextAfterSeqOf,
@@ -32,6 +42,7 @@ import {
   toConfirmation,
   toHistoryEntry,
   toPending,
+  trainingOf,
 } from './conversation-view';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
@@ -39,6 +50,25 @@ import { TitleService } from './title.service';
 
 /** The root's description: the first characters of the first message (code points, never half a pair). */
 const ROOT_DESCRIPTION_LENGTH = 80;
+
+type TreeDocumentRow = Awaited<
+  ReturnType<DocumentsRepository['listInTree']>
+>[number];
+
+/** A document row of the conversation's tree as the web reads it (design-notepad.md, «Маршруты беседы»). */
+function toDocumentSummary({
+  conversationId,
+  status,
+  updatedAt,
+  ...row
+}: TreeDocumentRow): DocumentSummary {
+  return {
+    ...row,
+    agentId: conversationId,
+    writing: !isFinished(status),
+    updatedAt: updatedAt.toISOString(),
+  };
+}
 
 /**
  * Conversations over agents (design-chat.md, Flows 1, 2, 6): a conversation is the root session of the
@@ -59,6 +89,10 @@ export class ConversationsService {
     @Inject(TaskControl) private readonly tasks: TaskControl,
     @Inject(Inbox) private readonly inbox: Inbox,
     private readonly library: LibraryService,
+    @Inject(DocumentsRepository)
+    private readonly documentRows: DocumentsRepository,
+    @Inject(TrainingsRepository)
+    private readonly trainings: TrainingsRepository,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
@@ -183,20 +217,28 @@ export class ConversationsService {
     afterSeq: number,
   ): Promise<ConversationView> {
     const thread = toThreadSummary(await this.owned(threadId, ownerId));
-    const [task, views, entries, messages, confirmations, rootHistory] =
-      await Promise.all([
-        this.tasks.get(threadId, ownerId),
-        this.views.list(threadId, ownerId),
-        this.views.history({
-          agentId: threadId,
-          ownerId,
-          afterSeq,
-          limit: HISTORY_PAGE_SIZE,
-        }),
-        this.inbox.listPending(threadId, ownerId),
-        this.views.confirmations(threadId, ownerId),
-        this.wholeHistory(threadId, ownerId),
-      ]);
+    const [
+      task,
+      views,
+      entries,
+      messages,
+      confirmations,
+      rootHistory,
+      training,
+    ] = await Promise.all([
+      this.tasks.get(threadId, ownerId),
+      this.views.list(threadId, ownerId),
+      this.views.history({
+        agentId: threadId,
+        ownerId,
+        afterSeq,
+        limit: HISTORY_PAGE_SIZE,
+      }),
+      this.inbox.listPending(threadId, ownerId),
+      this.views.confirmations(threadId, ownerId),
+      this.wholeHistory(threadId, ownerId),
+      this.trainings.find(threadId),
+    ]);
     const root = views.find((view) => view.agentId === threadId);
     if (root === undefined)
       throw new Error(`Conversation ${threadId} has no view of its root`);
@@ -206,7 +248,7 @@ export class ConversationsService {
     return {
       thread,
       chat: {
-        ...chatStatus({ root, task }),
+        ...chatStatus({ root, task, training: training !== undefined }),
         rootAgentId: threadId,
         model: root.model,
       },
@@ -218,7 +260,9 @@ export class ConversationsService {
       focus: focusOf(
         rootHistory.map(toHistoryEntry),
         decisions.filter((decision) => decision.agentId === threadId),
+        views.filter((view) => view.parentId === threadId),
       ),
+      training: trainingOf(training, threadId),
     };
   }
 
@@ -244,6 +288,37 @@ export class ConversationsService {
   async agentsTree(threadId: string, ownerId: string): Promise<AgentNode[]> {
     await this.owned(threadId, ownerId);
     return toAgentTree(await this.views.list(threadId, ownerId), threadId);
+  }
+
+  /** The documents of every run in the conversation, most recently changed first (KD-7). */
+  async documents(
+    threadId: string,
+    ownerId: string,
+  ): Promise<ThreadDocumentsView> {
+    await this.owned(threadId, ownerId);
+    const rows = await this.documentRows.listInTree(threadId);
+    return { documents: rows.map(toDocumentSummary) };
+  }
+
+  /**
+   * One document of the conversation's runs. The rows are bound to the tree only, so the owner check is
+   * here; a number that is not one, or of a document outside this tree, is `DOCUMENT_NOT_FOUND`.
+   */
+  async document(
+    threadId: string,
+    ownerId: string,
+    documentId: string,
+  ): Promise<Document> {
+    await this.owned(threadId, ownerId);
+    // The round trip rejects forms Number() accepts (" 12", "1e3", "012"), so a bad one never reaches Postgres.
+    const id = Number(documentId);
+    const row =
+      String(id) === documentId &&
+      DocumentRefSchema.shape.id.safeParse(id).success
+        ? await this.documentRows.findInTree(threadId, id)
+        : undefined;
+    if (row === undefined) throw httpError('DOCUMENT_NOT_FOUND');
+    return { ...toDocumentSummary(row), text: row.text };
   }
 
   /**

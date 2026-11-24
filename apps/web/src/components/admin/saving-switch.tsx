@@ -16,6 +16,8 @@ export type SavingSwitchProps = {
   labelOff?: string;
   /** In a table row the column header names the switch, so the label is read but not shown. */
   labelHidden?: boolean;
+  /** A hint under the label, the switch's description. */
+  hint?: string;
   /** The saved position, read from the resource. */
   checked: boolean;
   /** Saves the new position; on success the caller reads the resource again (Invariant 4). */
@@ -42,6 +44,7 @@ export function SavingSwitch({
   label,
   labelOff = label,
   labelHidden = false,
+  hint,
   checked,
   onSave,
   logEvent,
@@ -52,6 +55,7 @@ export function SavingSwitch({
   const tErrors = useTranslations('errors');
   const id = useId();
   const labelId = `${id}-label`;
+  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const [target, setTarget] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
@@ -86,6 +90,12 @@ export function SavingSwitch({
   }
 
   const shown = target ?? checked;
+  const describedBy = [
+    hint === undefined ? null : hintId,
+    error === null ? null : errorId,
+  ]
+    .filter((part) => part !== null)
+    .join(' ');
 
   return (
     <div className="flex flex-col gap-1">
@@ -95,7 +105,7 @@ export function SavingSwitch({
           disabled={saving || disabled}
           aria-label={labelHidden ? label : undefined}
           aria-labelledby={labelHidden ? undefined : labelId}
-          aria-describedby={error !== null ? errorId : undefined}
+          aria-describedby={describedBy === '' ? undefined : describedBy}
           onCheckedChange={(next) => void save(next)}
           className="pointer-coarse:after:-inset-3"
         />
@@ -111,6 +121,11 @@ export function SavingSwitch({
           </span>
         )}
       </label>
+      {hint !== undefined && (
+        <p id={hintId} className={cn(CAPTION, 'text-muted-foreground')}>
+          {hint}
+        </p>
+      )}
       {error !== null && (
         <p
           id={errorId}

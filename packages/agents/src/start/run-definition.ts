@@ -1,5 +1,6 @@
 import {
   type AgentVersion,
+  type DeepAgentContent,
   nameWinners,
   type RecordHeader,
 } from '@agent-os/contracts';
@@ -7,7 +8,6 @@ import {
 import { listingLine } from '../chat-listing';
 import {
   deepAgentDefinition,
-  type LearningRun,
   subagentDefinition,
 } from '../deep/deep-definition';
 
@@ -38,8 +38,9 @@ export interface RunDefinition {
   readonly model: string;
   readonly maxTurns: number;
   /**
-   * System tools the run names: an agent's record tools, a deep agent's `task`. The agent's declaration adds
-   * the task-list tools to them; `run_code` and the root's tools are the tools library's.
+   * System tools the run names: an agent's record tools, a deep agent's `task`, and the memory tools of a
+   * self-learning deep agent and its subagents. The agent's declaration adds the task-list tools to them;
+   * `run_code` and the root's tools are the tools library's.
    */
   readonly tools: readonly string[];
   /** Registry server names, or `*` for every server. */
@@ -58,11 +59,8 @@ export interface RunDefinition {
   readonly taskList: boolean;
   /** `task` takes an instruction with a list of items (deep-agents FR-24): a deep agent's flag, off elsewhere. */
   readonly listDelegation: boolean;
-  /**
-   * The run learns (self-learning design-core.md KD-2): the deep agent and the servers of its lessons; a
-   * subagent of a learning deep agent gets the same. `null` — it does not learn.
-   */
-  readonly learning: LearningRun | null;
+  /** The saved scripts the run owns (self-learning scripts KD-4): a deep agent's or one member's; empty elsewhere. */
+  readonly scripts: DeepAgentContent['scripts'];
 }
 
 /**
@@ -93,7 +91,7 @@ export function runDefinition(run: RunStart): RunDefinition {
     agents: content.agents,
     taskList: content.taskList,
     listDelegation: false,
-    learning: null,
+    scripts: [],
   };
 }
 

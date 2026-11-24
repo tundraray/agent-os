@@ -11,7 +11,6 @@ import type {
 } from '@agent-os/runtime';
 
 import { type CallState, isDelegated } from '../history/call-state';
-import { embedQuestion } from '../knowledge/question-vector';
 import {
   type RunDefinition,
   runDefinition,
@@ -31,6 +30,7 @@ import {
 } from './agent-state';
 import { compactionDue, runCompactionStep } from './compaction-step';
 import { continuationOf } from './continuation';
+import { hasOtherMessages } from './deliver';
 import type {
   CallClosing,
   Delegation,
@@ -44,7 +44,6 @@ import {
   type TurnEnd,
 } from './model-step';
 import {
-  abandoned,
   closesOpen,
   interruptWait,
   preludeOf,
@@ -71,24 +70,18 @@ const { done } = ToolCallStateSchema.enum;
  * sees and its calls. The database stays the source of truth: a step only reads the state, its writes go to the
  * commit, and the state changes in one place, `absorb`, after the commit succeeded. Any other end of a step
  * makes the runtime drop the object and restore a new one. What rights depend on is never kept and is read on
- * every step: the chat listing, the knowledge block, the task list, the session's tools (`registry.toolsFor`,
+ * every step: the chat listing, the memory block, the task list, the session's tools (`registry.toolsFor`,
  * `checkTools`), `access.tools`, the children in flight.
  *
- * The class is abstract and holds what every agent does. Its three subclasses, one task type each: `Agent`
+ * The class is abstract and holds what every agent does. Its four subclasses, one task type each: `Agent`
  * (`agent.ts`) — an agent's record and a deep agent's subagent; `ChatAgent` (`chat-agent.ts`) — a conversation's
- * root; `DeepAgent` (`deep/deep-agent.ts`). The methods below the stages are the points they override; their
- * bodies here are the ordinary agent's: it declares the tools of its version, delegates nothing, ends its turn
- * with its own answer and adds nothing to a new session. What a version hands the model — prompt, tools, flags —
+ * root; `DeepAgent` (`deep/deep-agent.ts`); `Trainer` (`training/trainer.ts`) — a training's root. The methods
+ * below the stages are the points they override; their bodies here are the ordinary agent's: it declares the tools of its version, delegates nothing, ends its turn
+ * with its own answer. What a version hands the model — prompt, tools, flags —
  * is data: `runDefinition`. An agent never picks its tools: it declares them (`declaration`), and the tools
  * library answers with the session's set for the task's owner.
  */
 export abstract class BaseAgent implements LiveTask {
-  /**
-   * A message of the employee delivered to the session is a new question to embed (self-learning KD-6).
-   * Overridden by `DeepAgent`.
-   */
-  protected readonly embedsEmployeeMessages: boolean = false;
-
   /** The task the object is of. */
   readonly task: LiveTaskIdentity;
   /** The task's input, parsed once: the fields a subagent's answer must have. */
@@ -111,31 +104,35 @@ export abstract class BaseAgent implements LiveTask {
 
   constructor(
     protected readonly deps: AgentDeps,
-    { task, input, run }: AgentRun,
+    { task, input, run, training }: AgentRun,
   ) {
     this.run = run;
     const definition = runDefinition(this.run);
-    const taskList = this.root || definition.taskList;
     this.task = task;
     this.input = input;
     this.definition = definition;
+    const taskListTools = this.taskListTools;
     this.caller = {
       agentId: task.taskId,
       ownerId: agentOwner(task),
       rootId: task.rootId,
+      parentId: task.parentId,
       root: this.root,
       depth: task.depth,
       run: this.run,
       servers: definition.servers,
+      training,
+      fixedTasks: this.fixedTasks,
     };
     this.declaration = {
       servers: definition.servers,
-      system: [...definition.tools, ...(taskList ? TASK_LIST_TOOLS : [])],
+      system: [...definition.tools, ...this.kindTools, ...taskListTools],
       root: this.root,
       startable: this.root ? null : definition.startable,
       deepAgents: null,
-      taskList,
+      taskList: taskListTools.length > 0,
       listDelegation: definition.listDelegation,
+      scripts: definition.scripts,
     };
   }
 
@@ -145,11 +142,28 @@ export abstract class BaseAgent implements LiveTask {
   }
 
   /**
+   * The task-list tools the agent declares; none — it keeps no list. A root and a version with a list declare
+   * all four. A getter: the constructor reads it after `definition`. Overridden by `Trainer`.
+   */
+  protected get taskListTools(): readonly string[] {
+    return this.root || this.definition.taskList ? TASK_LIST_TOOLS : [];
+  }
+
+  /** System tools the agent's kind declares beyond its version's: none. A getter: the constructor reads it. Overridden by `Trainer`. */
+  protected get kindTools(): readonly string[] {
+    return [];
+  }
+
+  /** `ToolCaller.fixedTasks`: `null`, an ordinary list. A getter: the constructor reads it. Overridden by `Trainer`. */
+  protected get fixedTasks(): readonly number[] | null {
+    return null;
+  }
+
+  /**
    * One step of the agent.
    *
    * 1. The state is the object's: `createIn` or `restore` took it in before the first step, since every agent
-   *    task has its session from its creation on (KD-8). A session that learns gets its question vector on a
-   *    new question (self-learning KD-6).
+   *    task has its session from its creation on (KD-8).
    * 2. A finished agent continues (`continuationOf`): its stop entries and `continued` go first. An `interrupt`
    *    closes the open calls and writes `interrupted`; with no other message the agent is marked and waits,
    *    with one the step goes on to its work.
@@ -164,14 +178,11 @@ export abstract class BaseAgent implements LiveTask {
     if (state === undefined)
       throw new Error(`Agent ${ctx.taskId} steps before its state is read`);
     const { session, calls } = state;
-    if (!(await this.embedQuestion(ctx, session))) {
-      return abandoned(ctx, 'question write fenced or cancelled');
-    }
 
     const plan: StepPlan = {
       continuation: continuationOf({ session, messages: ctx.messages }),
       interrupted: ctx.messages.some((message) => message.kind === interrupt),
-      otherMessages: ctx.messages.some((message) => message.kind !== interrupt),
+      otherMessages: await hasOtherMessages(this.deps, ctx),
       open: calls.filter((call) => call.state !== done),
     };
     const prelude = preludeOf(this.deps, ctx, session, plan);
@@ -239,40 +250,16 @@ export abstract class BaseAgent implements LiveTask {
 
   /**
    * The one way the session of an agent object is made, in the transaction that creates its task:
-   * `sessions.ensureSession` from the start's request, then `sessionCreated` in the same transaction when this
-   * call created the row. The start's run is the object's.
+   * `sessions.ensureSession` from the start's request. The start's run is the object's.
    */
   async createSession(start: Omit<SessionStart, 'run'>): Promise<void> {
-    const created = await this.deps.sessions.ensureSession(
+    await this.deps.sessions.ensureSession(
       {
         taskId: this.task.taskId,
         ownerId: this.caller.ownerId,
         parentId: this.task.parentId,
       },
       { ...start, run: this.run },
-    );
-    if (created) await this.sessionCreated();
-  }
-
-  /**
-   * Called in the transaction that created the agent's session, once per session. Overridden by `DeepAgent`.
-   */
-  protected async sessionCreated(): Promise<void> {}
-
-  /**
-   * The question vector of a session that learns; `false` — the step was cancelled or its write fenced.
-   * Overridden by `ChatAgent`.
-   */
-  protected embedQuestion(
-    ctx: StepContext,
-    session: Session,
-  ): Promise<boolean> {
-    return embedQuestion(
-      this.deps,
-      ctx,
-      session,
-      this.definition.learning,
-      this.embedsEmployeeMessages,
     );
   }
 
@@ -301,7 +288,7 @@ export abstract class BaseAgent implements LiveTask {
   }
 
   /**
-   * The model step (KD-1): the definition from the version, the turn limit, the prompt with its knowledge and
+   * The model step (KD-1): the definition from the version, the turn limit, the prompt with its memory and
    * task blocks, the session's tools, one model call, the answer entry and the end of the turn (`model-step.ts`).
    */
   modelStep(

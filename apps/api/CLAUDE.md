@@ -1,6 +1,6 @@
 # apps/api (`api`)
 
-The HTTP API on NestJS and the composition point of the backend: `AppModule` wires `DbModule`, `RuntimeModule`, `AgentsModule` and the application's own modules (sign-in, access, library, audit, chat). `apps/web` calls it through `/api/...`; no package imports it.
+The HTTP API on NestJS and the composition point of the backend: `AppModule` wires `DbModule`, `RuntimeModule`, `AgentsModule` and the application's own modules (sign-in, access, library, audit, chat, training). `apps/web` calls it through `/api/...`; no package imports it.
 
 ## Rules here
 

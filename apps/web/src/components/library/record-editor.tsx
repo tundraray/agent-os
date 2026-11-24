@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import {
   ALL_SERVERS,
   CHAT_BUILTIN_KEY,
+  TRAINER_BUILTIN_KEY,
   type RecordDetail,
 } from '@agent-os/contracts';
 import { CAPTION, FormError, FormWarning } from '@/components/admin/admin-form';
@@ -373,7 +374,8 @@ export function RecordEditor({
     system &&
     record !== null &&
     (record.audience.everyone === true ||
-      record.builtinKey === CHAT_BUILTIN_KEY);
+      record.builtinKey === CHAT_BUILTIN_KEY ||
+      record.builtinKey === TRAINER_BUILTIN_KEY);
   const conflictText =
     view.conflict === null || conflictError === null
       ? null

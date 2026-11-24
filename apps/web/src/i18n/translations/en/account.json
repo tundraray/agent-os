@@ -37,6 +37,10 @@
     "exhausted": "Quota used up",
     "loadFailed": "Couldn't load models"
   },
+  "memory": {
+    "title": "My memory",
+    "empty": "Agents haven't remembered anything about you yet"
+  },
   "password": {
     "heading": "Password",
     "current": "Current password",

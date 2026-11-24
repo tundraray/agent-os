@@ -5,13 +5,13 @@
 import type { Logger } from '@agent-os/common';
 import {
   CodeCallsRepository,
-  AgentKnowledgeRepository,
-  AgentKnowledgeRunsRepository,
+  MemoriesRepository,
   McpAccountsRepository,
   McpServersRepository,
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  SettingsRepository,
   ToolResultsRepository,
   type Database,
   Db,
@@ -32,7 +32,6 @@ import type {
 } from './access-gate';
 import type { CallState } from './history/call-state';
 import { ChatAgent } from './agent/chat-agent';
-import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { ModelClient } from './model/model-client';
 import { CallRecords } from './store/call-records';
 import { History } from './store/history';
@@ -215,16 +214,17 @@ function refusedAgent(refusal: Refusal) {
     callRecords: new CallRecords(history, new CodeCallsRepository(db)),
     toolResultRows: new ToolResultsRepository(db),
     sessionTaskRows: new ConversationTasksRepository(db),
-    knowledgeRows: new AgentKnowledgeRepository(db),
-    knowledgeRunRows: new AgentKnowledgeRunsRepository(db),
-    mcpServerRows: new McpServersRepository(db),
+    // The chat has no memory: its block reads neither.
+    memoryRows: new MemoriesRepository(db),
+    settingsRows: new SettingsRepository(db),
   };
   const registry = new ToolRegistry(
-    stores.mcpServerRows,
+    new McpServersRepository(db),
     new McpAccountsRepository(db),
     access,
   );
-  registry.useRunCode({ ...lookup, name: 'run_code' });
+  const runCode = { ...lookup, name: 'run_code' };
+  registry.useCodeRun(runCode, () => runCode);
   [lookup, ...createTaskListTools({ ...stores, logger })].forEach((tool) =>
     registry.register(tool),
   );
@@ -264,24 +264,15 @@ function refusedAgent(refusal: Refusal) {
     createProviderRegistryDouble({ anthropic: 'ready' }),
     audit,
     systemClock,
+    { check: async () => 'allowed' as const },
   );
-  // The agent's version does not learn: the knowledge block never reaches the store.
   const notCalled = async (): Promise<never> => {
-    throw new Error(
-      'the vector store is not called for a session that does not learn',
-    );
+    throw new Error('not called by these specs');
   };
-  const vectorStore: KnowledgeVectorStore = {
-    upsert: notCalled,
-    delete: notCalled,
-    query: notCalled,
-    list: notCalled,
-  };
-  // The specs run a conversation's root: the chat, which delegates no call and never learns.
+  // The specs run a conversation's root: the chat, which delegates no call and has no memory.
   const ctx = stepContext(logger);
   const agent = new ChatAgent(
     {
-      db,
       ...stores,
       registry,
       runner,
@@ -290,13 +281,11 @@ function refusedAgent(refusal: Refusal) {
       modelClient,
       tasks: { get: notCalled, listTree: async () => [] },
       inbox: { listPending: async () => [] },
-      vectorStore,
-      embeddings: { embed: notCalled },
       compactAtTokens: 100_000,
       library: createLibraryDouble(),
       logger,
     },
-    { task: ctx, input: INPUT, run: RUN },
+    { task: ctx, input: INPUT, run: RUN, training: false },
   );
   return {
     ctx,

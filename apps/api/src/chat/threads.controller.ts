@@ -20,11 +20,13 @@ import {
   ThreadListQuerySchema,
   type AgentNode,
   type ConversationView,
+  type Document,
   type HistoryQuery,
   type InterruptResponse,
   type RenameThreadRequest,
   type SendMessageRequest,
   type SendMessageResponse,
+  type ThreadDocumentsView,
   type ThreadListQuery,
   type ThreadListResponse,
   type ThreadSummary,
@@ -36,7 +38,8 @@ import { ConversationsService } from './conversations.service';
 
 /**
  * The conversation routes (design-chat.md, Contract «Беседы»): the former list, create, read, rename
- * and delete, plus the conversation view, its agent tree, send (with a record chip) and interrupt. Every
+ * and delete, plus the conversation view, its agent tree, the documents of its runs, send (with a record
+ * chip) and interrupt. Every
  * command is logged once with its route, ids, outcome and duration; a malformed, missing or foreign
  * `threadId` answers the same 404 `THREAD_NOT_FOUND`. The employee is always the session's (ADR-0012).
  */
@@ -120,6 +123,35 @@ export class ThreadsController {
       fields: { ownerId, threadId },
       work: () => this.conversations.agentsTree(threadId, ownerId),
       outcomeOf: (nodes) => ({ count: nodes.length }),
+    });
+  }
+
+  @Get(':threadId/documents')
+  documents(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<ThreadDocumentsView> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'GET /threads/:threadId/documents',
+      fields: { ownerId, threadId },
+      work: () => this.conversations.documents(threadId, ownerId),
+      outcomeOf: (view) => ({ count: view.documents.length }),
+    });
+  }
+
+  @Get(':threadId/documents/:documentId')
+  document(
+    @Param('threadId') threadId: string,
+    @Param('documentId') documentId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<Document> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'GET /threads/:threadId/documents/:documentId',
+      fields: { ownerId, threadId, documentId },
+      work: () => this.conversations.document(threadId, ownerId, documentId),
+      outcomeOf: (document) => ({ chars: document.chars }),
     });
   }
 

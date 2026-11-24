@@ -93,13 +93,15 @@ export interface Task {
 /** What `tasks.create` takes. */
 export interface CreateTask {
   type: string;
-  /** `null` for the platform's own work (`knowledge.embed`). */
+  /** `null` for the platform's own work without an owner. */
   ownerId: string | null;
   input: unknown;
   /** Creates a child of this task, outside a step; the parent must be the owner's and not finished. */
   parentId?: string;
   /** The id of the new task, a UUID; generated when absent. A taken id is `TASK_EXISTS`. */
   taskId?: string;
+  /** An opaque string of the creator: while an unfinished task of `type` holds it, `create` answers `null`. */
+  exclusiveKey?: string;
 }
 
 interface TaskControlDeps extends TaskEndDeps {
@@ -190,14 +192,21 @@ export class TaskControl {
    * Inside a caller's transaction the caller commits or rolls back the whole of it, the task with
    * it (KD-3, self-learning). The tree's NOTIFY goes out at that commit; the dispatcher's
    * poll is the guarantee anyway.
+   *
+   * With `exclusiveKey`: `null` when an unfinished task of the type holds the key. Only the partial
+   * unique index decides it, so of two concurrent creates exactly one wins; the insert raises no
+   * error, and the caller's transaction goes on with nothing written by this creation.
    */
-  async create(request: CreateTask): Promise<string> {
+  create(request: CreateTask & { exclusiveKey?: undefined }): Promise<string>;
+  create(request: CreateTask): Promise<string | null>;
+  async create(request: CreateTask): Promise<string | null> {
     const { db, logger } = this.deps;
     const startedAt = Date.now();
     const fields = {
       type: request.type,
       ownerId: request.ownerId,
       parentId: request.parentId ?? null,
+      exclusiveKey: request.exclusiveKey ?? null,
     };
     try {
       const input = this.checkInput(request.type, request.input);
@@ -205,6 +214,13 @@ export class TaskControl {
         { db, logger, operation: 'tasks.create', taskId: request.taskId },
         () => this.createIn(request, input),
       );
+      if (task === null) {
+        logger.info('task not created: key taken', {
+          ...fields,
+          durationMs: Date.now() - startedAt,
+        });
+        return null;
+      }
       logger.info('task created', {
         ...fields,
         ...taskLogFields(task),
@@ -473,11 +489,11 @@ export class TaskControl {
     return stoppedTree;
   }
 
-  /** The creation's writes: the task row. */
+  /** The creation's writes: the task row; `null` — the exclusive key is taken. */
   private async createIn(
     request: CreateTask,
     input: unknown,
-  ): Promise<RuntimeTaskRow> {
+  ): Promise<RuntimeTaskRow | null> {
     const { tasks, taskRows } = this.deps;
     const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
@@ -512,14 +528,14 @@ export class TaskControl {
         depth: parent.depth + 1,
       };
     }
-    const row = await tasks.insert({
+    return tasks.insert({
       taskId,
       type: request.type,
       ownerId: request.ownerId,
       input,
+      exclusiveKey: request.exclusiveKey ?? null,
       ...lineage,
     });
-    return row;
   }
 
   /** The interrupt's writes; `undefined` when the task is not active. */

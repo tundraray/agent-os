@@ -6,6 +6,7 @@ import {
   DeepAgentContentSchema,
   ModelProviderKindSchema,
   McpErrorCode,
+  NOTEPAD_CREATE_TOOL,
   nameWinner,
   type McpServerMode,
   type ModelProviderState,
@@ -32,6 +33,7 @@ import {
 } from '@agent-os/mcp-fixture';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
+import { REPORT_DOCUMENT_NOTICE } from './deep/deep-agent';
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
 import type { EmbeddingClient } from './embeddings/embedding-client';
 import { foldCalls } from './history/call-state';
@@ -177,9 +179,10 @@ export function modelError(
   return { kind: 'model_error', statusCode, ...(latch && { latch }) };
 }
 
-/** A reply computed from the call's input: the messages exactly as the provider would get them. */
+/** A reply computed from the call's input: the messages exactly as the provider would get them, and the call itself. */
 export type ReplyFromInput = (
   messages: readonly AgentTurnMessage[],
+  call: RecordedModelCall,
 ) => ScriptedAnswer | ScriptedModelError;
 
 /** What a script answers one call with. */
@@ -190,7 +193,7 @@ export type ScriptedReply =
 export interface RecordedModelCall {
   readonly agentName: string;
   readonly model: string;
-  /** The system text exactly as the provider would get it: the definition's prompt, the knowledge block, the standing rules. */
+  /** The system text exactly as the provider would get it: the definition's prompt, the memory block, the standing rules. */
   readonly instructions: string;
   /** The session's messages exactly as the provider would get them. */
   readonly messages: readonly AgentTurnMessage[];
@@ -354,6 +357,59 @@ export function createScriptedModel(): ScriptedModel {
     throw new Error(`No script answers a call of agent ${call.agentName}`);
   }
 
+  /** Ids of the report document calls the double wrote itself. */
+  const reportCallIds = new Set<string>();
+
+  /**
+   * A deep agent must end with a report document: after its notice the double writes one, then repeats the
+   * answer the notice interrupted, so a script lists only the answer and not the document.
+   */
+  function reportReply(call: AgentTurnCall): AgentTurnGeneration | undefined {
+    const last = call.messages.at(-1);
+    const answer = [...call.messages]
+      .reverse()
+      .find(
+        (message) => message.role === 'assistant' && message.content !== '',
+      );
+    const text = answer?.role === 'assistant' ? answer.content : '';
+    if (
+      last?.role === 'user' &&
+      last.content.includes(REPORT_DOCUMENT_NOTICE)
+    ) {
+      nextCallId += 1;
+      const toolCallId = `call-${nextCallId}`;
+      reportCallIds.add(toolCallId);
+      return {
+        finishReason: 'tool-calls',
+        text: '',
+        toolCalls: [
+          {
+            toolCallId,
+            toolName: NOTEPAD_CREATE_TOOL,
+            args: {
+              title: 'Report',
+              description: 'The result of the run',
+              text,
+              report: true,
+            },
+          },
+        ],
+        usage: DEFAULT_USAGE,
+      };
+    }
+    if (
+      last?.role === 'tool' &&
+      last.results.some((result) => reportCallIds.has(result.toolCallId))
+    )
+      return {
+        finishReason: 'stop',
+        text,
+        toolCalls: [],
+        usage: DEFAULT_USAGE,
+      };
+    return undefined;
+  }
+
   const textCalls: RecordedTextCall[] = [];
   const textWaiters: { count: number; resolve: () => void }[] = [];
   let textReply: ScriptedAnswer | ScriptedModelError | undefined;
@@ -380,6 +436,11 @@ export function createScriptedModel(): ScriptedModel {
   const turnClient: AgentTurnModelClient = {
     async streamTurn(call, options): Promise<AgentTurnGeneration> {
       if (call.purpose === 'complete_text') return answerText(call, options);
+      const report = reportReply(call);
+      if (report !== undefined) {
+        if (report.text !== '') options.onText(report.text);
+        return report;
+      }
       const state = scriptOf(call);
       const recorded: RecordedModelCall = {
         agentName: call.agentName,
@@ -403,7 +464,8 @@ export function createScriptedModel(): ScriptedModel {
           `Script of ${describeKey(state.key)} has no answer for call ${index + 1}`,
         );
       }
-      const answer = typeof reply === 'function' ? reply(call.messages) : reply;
+      const answer =
+        typeof reply === 'function' ? reply(call.messages, recorded) : reply;
       if (isModelError(answer)) {
         await answer.latch?.pass(options.signal);
         throw providerError(`agent ${call.agentName}`, answer.statusCode);

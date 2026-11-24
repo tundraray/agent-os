@@ -21,9 +21,13 @@ import { takenField } from './taken-field';
 import { roleRefs, UsersService } from './users.service';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
-const roleState = (role: Pick<IdentityRoleRow, 'name' | 'isAdmin'>) => ({
+const roleState = (
+  role: Pick<IdentityRoleRow, 'name' | 'isAdmin' | 'trainOwn' | 'trainAny'>,
+) => ({
   name: role.name,
   isAdmin: role.isAdmin,
+  trainOwn: role.trainOwn,
+  trainAny: role.trainAny,
 });
 
 /** A unique violation of the role name (ignoring case) is 409 ROLE_NAME_TAKEN; anything else goes up. */
@@ -34,8 +38,8 @@ function roleNameTaken(error: unknown): never {
 
 /**
  * Roles and their assignment, only by an administrator (FR-06, AC-06.1). The built-in
- * «Супер-администратор» cannot be deleted, renamed or lose the admin right: 409 BUILTIN_ROLE (KD-6,
- * DC-15). Every change writes `admin_change` with before and after.
+ * «Супер-администратор» cannot be deleted, renamed or lose the admin or a training right: 409
+ * BUILTIN_ROLE (KD-6, DC-15; training KD-8). Every change writes `admin_change` with before and after.
  */
 @Injectable()
 export class RolesService {
@@ -83,12 +87,14 @@ export class RolesService {
       id: role.id,
       name: role.name,
       isAdmin: role.isAdmin,
+      trainOwn: role.trainOwn,
+      trainAny: role.trainAny,
       builtin: role.builtin,
       memberCount: 0,
     };
   }
 
-  /** Renames the role and/or gives or takes its admin right. 404 ROLE_NOT_FOUND, 409 ROLE_NAME_TAKEN, BUILTIN_ROLE. */
+  /** Renames the role and/or gives or takes its rights. 404 ROLE_NOT_FOUND, 409 ROLE_NAME_TAKEN, BUILTIN_ROLE. */
   async update(
     actorId: string,
     roleId: string,
@@ -97,11 +103,17 @@ export class RolesService {
     const startedAt = Date.now();
     const role = await this.findOr404(roleId);
     const renamed = body.name !== undefined && body.name !== role.name;
-    if (role.builtin && (renamed || body.isAdmin === false))
+    const rightTaken =
+      body.isAdmin === false ||
+      body.trainOwn === false ||
+      body.trainAny === false;
+    if (role.builtin && (renamed || rightTaken))
       throw this.refuseBuiltin(actorId, role.id, 'update');
     const after = {
       name: body.name ?? role.name,
       isAdmin: body.isAdmin ?? role.isAdmin,
+      trainOwn: body.trainOwn ?? role.trainOwn,
+      trainAny: body.trainAny ?? role.trainAny,
     };
     await this.db
       .transaction(async () => {

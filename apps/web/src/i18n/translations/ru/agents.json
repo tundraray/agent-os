@@ -162,7 +162,16 @@
   "taskStatus": {
     "pending": "Ожидает",
     "in_progress": "В работе",
-    "completed": "Готова"
+    "completed": "Готова",
+    "unfinished": "Не закончена"
+  },
+  "trainingStatus": {
+    "running": "Идёт",
+    "done": "Готово",
+    "stopped": "Остановлено вручную",
+    "capped": "Остановлено на потолке",
+    "failed": "Сбой: {reason}",
+    "failedNoReason": "Сбой"
   },
   "delegationStatus": {
     "running": "В работе",
@@ -194,6 +203,17 @@
     "emptyHint": "Здесь появятся задачи и поручения агента.",
     "loading": "Загружаем задачи…",
     "loadError": "Не удалось загрузить задачи",
+    "retry": "Повторить"
+  },
+  "documents": {
+    "tab": "Документы · {count}",
+    "listLabel": "Документы",
+    "writing": "Пишется",
+    "showAll": "Показать полностью",
+    "collapse": "Свернуть",
+    "openInPanel": "Открыть в панели",
+    "back": "Назад к документам",
+    "loadError": "Не удалось загрузить документ",
     "retry": "Повторить"
   }
 }

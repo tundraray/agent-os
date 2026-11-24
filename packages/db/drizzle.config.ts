@@ -2,7 +2,7 @@ import { defineConfig } from 'drizzle-kit';
 
 /**
  * drizzle-kit configuration for schema `app` (ADR-0003). Only `app` is generated and diffed;
- * `public` holds only the `vector` extension and stays outside. The migration journal lives in `app`.
+ * `public` stays outside. The migration journal lives in `app`.
  */
 export default defineConfig({
   dialect: 'postgresql',

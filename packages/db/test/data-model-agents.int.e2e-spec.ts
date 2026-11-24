@@ -10,7 +10,7 @@
 // Do NOT run it against the development database (packages/db/CLAUDE.md).
 //
 // Already proven elsewhere and NOT repeated here:
-// - DC-28 (the tables are named `agents`, `agent_versions`, `agent_shares`; the knowledge keys point to `agents`): `migrations.e2e-spec.ts`.
+// - DC-28 (the tables are named `agents`, `agent_versions`, `agent_shares`): `migrations.e2e-spec.ts`.
 // - DC-22, the three defaults are visible to an employee without roles, the administrator cannot delete or share one: INT-1 of
 //   `apps/api/test/custom-agents-library.int.e2e-spec.ts` and the unit rows of `audience-rules.spec.ts` / `save-rules.spec.ts`; this file checks only
 //   the rows exist and parse.
@@ -60,7 +60,7 @@ describe('data-model / agents: a freshly migrated database holds the default age
   afterAll(() => scratch.dropAll(), ROW_TIMEOUT_MS);
 
   it(
-    'DC-21: a migrated database holds one agent per key chat / agent / deep_agent and deep-research without a key, each with its active version 1 valid for its kind',
+    'DC-21: a migrated database holds one agent per key chat / agent / deep_agent / trainer and deep-research without a key, each with its active version 1 valid for its kind',
     async () => {
       // Given: an empty database migrated by the initial set; When: every agent is read with its active version and its "everyone" holder
       const agents = await withDatabase(url, async (client) => {
@@ -80,6 +80,7 @@ describe('data-model / agents: a freshly migrated database holds the default age
         ['agent', GENERAL_PURPOSE_ID],
         ['chat', CHAT_ID],
         ['deep_agent', expect.any(String)],
+        ['trainer', expect.any(String)],
         [null, DEEP_RESEARCH_ID],
       ]);
       // Then: every agent is a system agent shown to everyone, not deleted, active in version 1 written by no person
@@ -102,6 +103,7 @@ describe('data-model / agents: a freshly migrated database holds the default age
         }),
       );
       expect(parsed.map((result) => result.error?.issues ?? [])).toEqual([
+        [],
         [],
         [],
         [],

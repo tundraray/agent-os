@@ -52,6 +52,7 @@ const deepAgentVersion: AgentVersion = {
     taskList: true,
     listDelegation: true,
     selfLearning: false,
+    scripts: [],
   },
 };
 

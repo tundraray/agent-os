@@ -8,12 +8,14 @@ import {
   ConversationViewSchema,
   DecisionResponseSchema,
   DeepAgentRunViewSchema,
+  DocumentSchema,
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
   SendMessageResponseSchema,
   SpendResponseSchema,
   StopResponseSchema,
+  ThreadDocumentsViewSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
   type AgentListPage,
@@ -25,6 +27,7 @@ import {
   type DecisionRequest,
   type DecisionResponse,
   type DeepAgentRunView,
+  type Document,
   type InheritedHistory,
   type InterruptResponse,
   type RenameThreadRequest,
@@ -33,6 +36,7 @@ import {
   type SendMessageResponse,
   type SpendResponse,
   type StopResponse,
+  type ThreadDocumentsView,
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
@@ -104,6 +108,25 @@ async function getThreadAgents(threadId: string): Promise<AgentNode[]> {
   return apiRequest({
     path: `${threadRoute(threadId)}/agents`,
     schema: z.array(AgentNodeSchema),
+  });
+}
+
+async function getThreadDocuments(
+  threadId: string,
+): Promise<ThreadDocumentsView> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/documents`,
+    schema: ThreadDocumentsViewSchema,
+  });
+}
+
+async function getThreadDocument(
+  threadId: string,
+  documentId: number,
+): Promise<Document> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/documents/${documentId}`,
+    schema: DocumentSchema,
   });
 }
 
@@ -248,6 +271,8 @@ export const threadsApiClient = {
   deleteThread,
   getConversation,
   getThreadAgents,
+  getThreadDocuments,
+  getThreadDocument,
   sendThreadMessage,
   interruptThread,
   listAgents,

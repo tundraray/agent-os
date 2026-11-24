@@ -121,7 +121,7 @@ function createModelClient(deps: {
   providers: ModelClientArgs[5];
   audit: ModelClientArgs[6];
   clock?: Clock;
-  onTextDelta?: ModelClientArgs[8];
+  onTextDelta?: ModelClientArgs[9];
 }): ModelClient {
   return new ModelClient(
     deps.turnClient,
@@ -132,6 +132,7 @@ function createModelClient(deps: {
     deps.providers,
     deps.audit,
     deps.clock ?? systemClock,
+    { check: async () => 'allowed' as const },
     deps.onTextDelta,
   );
 }
@@ -409,6 +410,7 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
       messages: [{ role: 'user', content: 'Hi' }],
       tools: [],
       streamsText: false,
+      training: false,
       signal: new AbortController().signal,
       logger,
     });

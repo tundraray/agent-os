@@ -18,6 +18,7 @@ import {
 import {
   RunCodeConfirmationContentSchema,
   AGENTS_BRIEF_CONFIRMATION,
+  isCodeRunCall,
   LIBRARY_RECORD_CONFIRMATION,
   type Confirmation,
   type LibraryRecordCard,
@@ -52,7 +53,7 @@ import { useResource } from '@/hooks/use-resource';
 import { BRIEF_PARTS } from '@/lib/agents/format';
 import { builtinName, toolCallLabels } from '@/i18n/builtin-name';
 import { formatListTime, type Formatter } from '@/i18n/formats';
-import { isRunCode, runCodeView } from '@/lib/agents/run-code';
+import { runCodeView } from '@/lib/agents/run-code';
 import { valueRows } from '@/lib/agents/value-rows';
 import { recordCardOf, type RecordSave } from '@/lib/feed/to-feed';
 import { libraryApi } from '@/lib/library/library-api';
@@ -73,7 +74,7 @@ type CanCall = RunCodeConfirmationContent['canCall'];
  * any other request and for content outside the contract — such a run does not start (DC-16).
  */
 function canCallOf(confirmation: Confirmation): CanCall | null {
-  if (!isRunCode(confirmation.tool, confirmation.server)) return null;
+  if (!isCodeRunCall(confirmation.tool, confirmation.server)) return null;
   const content = RunCodeConfirmationContentSchema.safeParse(
     confirmation.content,
   );
@@ -717,10 +718,7 @@ export function DecisionCard({
     toolTitle,
     argLabels: confirmation.argLabels,
   });
-  const runCode =
-    brief === null && isRunCode(tool, server)
-      ? runCodeView(args, argLabels)
-      : null;
+  const runCode = brief === null ? runCodeView(confirmation, tools) : null;
   const canCall = canCallOf(confirmation);
   const recordHeadingText =
     record === null ? null : recordHeading(tAgents, record);

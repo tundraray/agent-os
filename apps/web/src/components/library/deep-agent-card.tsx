@@ -13,14 +13,16 @@ import { focusShellTarget } from '@/lib/focus';
 import { builtinName } from '@/i18n/builtin-name';
 import { libraryApi } from '@/lib/library/library-api';
 import { recordAction } from '@/lib/library/record-action';
-import { knowledgePath, libraryPath, recordPath } from '@/lib/shell-route';
+import { libraryPath, memoryPath, recordPath } from '@/lib/shell-route';
 import type { EditorMode } from './agent-fields';
+import { AgentScripts } from './agent-script';
 import { useCopyRecord } from './copy-record';
 import { DefinitionView } from './definition-view';
 import { EditorHeaderActions } from './editor-header';
 import { banText } from './library-row';
 import { RecordLabel } from './record-label';
 import { SelfLearningField } from './self-learning-field';
+import { TrainingBlock } from './training-block';
 
 export type DeepAgentRecord = Extract<RecordDetail, { kind: 'deep_agent' }>;
 
@@ -35,8 +37,8 @@ export type DeepAgentCardProps = {
 /**
  * DA-13 «Карточка записи» (deep-agents UXRD): a deep agent its viewer may change, read-only — no fields and no
  * «Сохранить»; the chat changes it («Доработать в чате»). The header is the editor's (`EditorHeaderActions`), the
- * definition is `DefinitionView` «На странице», and «Самообучение» saves at once: the whole record by the same
- * `PUT` with the flag flipped and the version shown (deep-agents design-agent-types.md, C3 web). Text written by
+ * definition is `DefinitionView` «На странице», and «Самообучение» and the scripts (self-learning KD-5) save at
+ * once: the whole record by the same `PUT` with the content changed and the version shown (deep-agents design-agent-types.md, C3 web). Text written by
  * other people is rendered as text only.
  */
 export function DeepAgentCard({
@@ -61,7 +63,9 @@ export function DeepAgentCard({
     focusShellTarget('page-title');
   }, [record.id]);
 
-  async function saveSelfLearning(selfLearning: boolean): Promise<void> {
+  async function saveContent(
+    change: Partial<DeepAgentRecord['content']>,
+  ): Promise<void> {
     const { id, name, description, kind, content, version } = record;
     const saved = await recordAction(
       { recordId: id, kind, action: 'save', version },
@@ -70,16 +74,20 @@ export function DeepAgentCard({
           name,
           description,
           kind,
-          content: { ...content, selfLearning },
+          content: { ...content, ...change },
           version,
         }),
     );
-    if (saved.kind !== 'deep_agent')
-      throw new Error(
-        `library: the deep agent ${id} came back as a ${saved.kind}`,
-      );
-    setRecord(saved);
+    show(saved);
     void libraryIndex.refresh();
+  }
+
+  function show(answer: RecordDetail): void {
+    if (answer.kind !== 'deep_agent')
+      throw new Error(
+        `library: the deep agent ${answer.id} came back as a ${answer.kind}`,
+      );
+    setRecord(answer);
   }
 
   return (
@@ -135,18 +143,37 @@ export function DeepAgentCard({
             <FormWarning>{banText(t, format, record.ban.closedAt)}</FormWarning>
           </div>
         )}
-        <SelfLearningField
-          checked={record.content.selfLearning}
-          onSave={saveSelfLearning}
-          // The panel's header has its own entry to the knowledge (`KnowledgeButton`).
-          knowledgeHref={system ? null : knowledgePath(record.id)}
-        />
+        {/* A default agent never learns (self-learning KD-4): no switch. */}
+        {record.builtinKey === null && (
+          <>
+            <SelfLearningField
+              checked={record.content.selfLearning}
+              onSave={(selfLearning) => saveContent({ selfLearning })}
+              // The panel's header has its own entry to the memory (`MemoryButton`).
+              memoryHref={system ? null : memoryPath(record.id)}
+            />
+            <TrainingBlock
+              id={record.id}
+              selfLearning={record.content.selfLearning}
+            />
+          </>
+        )}
         <DefinitionView
           definition={record}
           missingRights={record.missingRights}
           variant="page"
           recordHref={recordPath}
           modelNames={modelNames}
+        />
+        <AgentScripts
+          scripts={record.content.scripts}
+          edit={{
+            subagents: record.content.subagents.map(
+              (subagent) => subagent.name,
+            ),
+            onSave: (scripts) => saveContent({ scripts }),
+            onReread: async () => show(await client.get(record.id)),
+          }}
         />
       </div>
     </div>

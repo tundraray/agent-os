@@ -46,12 +46,15 @@ const RecordIdSchema = z
   .min(1)
   .describe('The id of the record, as list_records names it');
 
-/** The deep agent's content without the self-learning flag: only a person changes it (Invariant 4). */
-const { selfLearning: _selfLearning, ...deepAgentFields } =
-  DeepAgentContentSchema.shape;
+/** The deep agent's content without the self-learning flag and the scripts: only a person changes them (KD-2). */
+const {
+  selfLearning: _selfLearning,
+  scripts: _scripts,
+  ...deepAgentFields
+} = DeepAgentContentSchema.shape;
 
 /**
- * The content a record tool takes: the content schema of the kind without `selfLearning` (KD-4). The
+ * The content a record tool takes: the content schema of the kind without `selfLearning` and `scripts`. The
  * deep agent's own rules — repeated names, `finalSubagent` outside the team — stay the contract's: they
  * are asked of `DeepAgentContentSchema` itself, so the paths and the rules are the contract's.
  */
@@ -89,7 +92,7 @@ const recordShape = {
   content: z
     .record(z.string(), z.unknown())
     .describe(
-      'The whole definition of the record in the form of its kind (see the tool description), without selfLearning',
+      'The whole definition of the record in the form of its kind (see the tool description), without selfLearning and scripts',
     ),
 };
 
@@ -245,6 +248,11 @@ function refusalOf(refusal: ChatRefusal): {
       return {
         reason: 'invalid_arguments',
         text: 'kind: a record never changes its kind',
+      };
+    case 'script_owner':
+      return {
+        reason: 'invalid_arguments',
+        text: `${path}: ${values.join(', ')} is not a subagent; the chat cannot remove or rename a subagent that owns a saved script`,
       };
     case 'name_taken':
       return {

@@ -61,18 +61,22 @@ export * from './agent-versions';
 export * from './agent-shares';
 
 // ---------------------------------------------------------------------------------------------
-// Knowledge of self-learning deep agents (self-learning/design-core.md, Data Model). Owned by the
-// `agents` package (KD-1). The graph, its vectors and the deep agent's vector row reference
-// `agents` with cascade — the one exception to package tables not referencing app tables: a deep agent
-// removed by any path takes its knowledge with it, while the `agents` package never reads the catalogue tables.
+// Memory of self-learning deep agents (self-learning/design-memory.md, KD-1): a record belongs to an agent or
+// an employee and goes with it by cascade.
 // ---------------------------------------------------------------------------------------------
-export * from './agent-knowledge-entities';
-export * from './agent-knowledge-relations';
-export * from './agent-knowledge-runs';
-export * from './agent-knowledge-questions';
-export * from './agent-knowledge-embedding';
-export * from './agent-knowledge-vectors';
-export * from './agent-knowledge-settings';
+export * from './memories';
+
+// ---------------------------------------------------------------------------------------------
+// Notepad of a deep agent run (self-learning/design-notepad.md, KD-1): a document belongs to the run's
+// conversation and goes with it by cascade.
+// ---------------------------------------------------------------------------------------------
+export * from './documents';
+
+// ---------------------------------------------------------------------------------------------
+// Training of a deep agent (self-learning/design-training.md, KD-6): one row per training, its id is the
+// training's conversation; the comparison list lives in the row.
+// ---------------------------------------------------------------------------------------------
+export * from './trainings';
 
 // ---------------------------------------------------------------------------------------------
 // Settings (data-model/design-schema.md, KD-3): one row per key, the value checked by the key's schema

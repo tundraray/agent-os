@@ -1,7 +1,6 @@
 import {
   AGENT_TURN_CLIENT,
   type AgentHistoryEntry,
-  AgentsKnowledge,
   AgentsMcp,
   AgentsProviders,
   type AgentTurnMessage,
@@ -123,22 +122,6 @@ const TEST_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
 const NO_EMBEDDING_MODEL: EmbeddingVerdict = {
   kind: 'refused',
   reason: 'model_not_configured',
-};
-
-/** An embedding model of the harness's provider: 3 dimensions, input 0.25 USD per million tokens. */
-export const TEST_EMBEDDING_MODEL_A: EmbeddingVerdict = {
-  kind: 'allowed',
-  model: `${HARNESS_PROVIDER}/test-embed-a`,
-  inputUsdPerMTok: 0.25,
-  dimensions: 3,
-};
-
-/** A second embedding model: 4 dimensions, so pgvector would fail on a comparison with model A's vectors. */
-export const TEST_EMBEDDING_MODEL_B: EmbeddingVerdict = {
-  kind: 'allowed',
-  model: `${HARNESS_PROVIDER}/test-embed-b`,
-  inputUsdPerMTok: 0.5,
-  dimensions: 4,
 };
 
 /** The fixture sources a harness registers unless told otherwise. */
@@ -340,6 +323,7 @@ async function addDefaultAgents(library: LibraryDouble): Promise<void> {
         taskList: false,
         listDelegation: true,
         selfLearning: false,
+        scripts: [],
       },
     });
   }
@@ -484,7 +468,6 @@ export interface HarnessRuntime {
 export interface HarnessAgents {
   readonly mcp: AgentsMcp;
   readonly providers: AgentsProviders;
-  readonly knowledge: AgentsKnowledge;
 }
 
 /** The agent operations the tests call, over the three operation services. */
@@ -524,7 +507,7 @@ export interface AgentsHarness {
   readonly embeddings: ScriptedEmbeddings;
   /**
    * What the access gate double answers for embeddings, read on every question: {@link NO_EMBEDDING_MODEL}
-   * until the test sets {@link TEST_EMBEDDING_MODEL_A} or {@link TEST_EMBEDDING_MODEL_B}.
+   * until the test sets another verdict.
    */
   embeddingVerdict: EmbeddingVerdict;
   /**
@@ -659,7 +642,6 @@ export async function createAgentsHarness(
   const agents: HarnessAgents = {
     mcp: app.get(AgentsMcp),
     providers,
-    knowledge: app.get(AgentsKnowledge),
   };
   const starts = app.get(StartOperations);
   const control = app.get(ControlOperations);

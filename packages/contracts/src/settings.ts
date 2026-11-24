@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { UpdateModelDefaultsBodySchema } from './access';
 import { UpdateSignInSettingsBodySchema } from './identity';
 import { UpdateLibrarySettingsBodySchema } from './library';
+import { UpdateSelfLearningSettingsBodySchema } from './memory';
 import { UpdateToolResultSettingsBodySchema } from './tool-results';
 
 /**
@@ -13,6 +14,7 @@ export const SettingsKeySchema = z.enum([
   'library_settings',
   'tool_result_settings',
   'model_defaults',
+  'self_learning_settings',
 ]);
 export type SettingsKey = z.infer<typeof SettingsKeySchema>;
 
@@ -22,6 +24,7 @@ export const SETTINGS_VALUE_SCHEMAS = {
   library_settings: UpdateLibrarySettingsBodySchema,
   tool_result_settings: UpdateToolResultSettingsBodySchema,
   model_defaults: UpdateModelDefaultsBodySchema,
+  self_learning_settings: UpdateSelfLearningSettingsBodySchema,
 } satisfies Record<SettingsKey, z.ZodType>;
 
 /** The value of a key as its schema gives it. */

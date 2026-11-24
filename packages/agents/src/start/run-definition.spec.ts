@@ -1,7 +1,8 @@
-import type {
-  AgentVersion,
-  DeepAgentContent,
-  RecordHeader,
+import {
+  type AgentVersion,
+  type DeepAgentContent,
+  NOTEPAD_TOOLS,
+  type RecordHeader,
 } from '@agent-os/contracts';
 
 import {
@@ -20,9 +21,14 @@ import {
 // definition a step hands the model comes from the run's version alone — an agent's prompt, tools, servers and
 // limit; a deep agent's prompt with the platform rules after it, its own servers, the team as «имя (up to N
 // runs): описание», and who writes the answer; a team member taken from the deep agent's version by its name,
-// on its own model or else the deep agent's (KD-3), learning on the servers of the deep agent and its whole team.
+// on its own model or else the deep agent's (KD-3).
 // design-task-list.md KD-2: the task-list flag is the one of the run's own content. An agent's `start_agent`
 // lines are the records of its `agents` its owner sees now.
+
+/** design-notepad.md KD-3: a subagent has every notepad tool but the past documents. */
+const SUBAGENT_NOTEPAD = NOTEPAD_TOOLS.filter(
+  (tool) => tool !== 'notepad_past',
+);
 
 const HAIKU = 'anthropic/claude-haiku-5-5';
 const SONNET = 'anthropic/claude-sonnet-5-5';
@@ -88,7 +94,7 @@ function subagent(
 
 function deepAgent(
   finalSubagent: string | null,
-  { selfLearning = false, taskList = true, listDelegation = true } = {},
+  { taskList = true, listDelegation = true } = {},
 ): RunStart {
   return {
     version: {
@@ -109,7 +115,8 @@ function deepAgent(
         finalSubagent,
         taskList,
         listDelegation,
-        selfLearning,
+        selfLearning: false,
+        scripts: [],
       },
     },
     name: 'Глубокий ресерч',
@@ -160,7 +167,7 @@ describe('runDefinition', () => {
         agents: [VISIBLE_ID, HIDDEN_ID, DEEP_ID],
         taskList: true,
         listDelegation: false,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -168,16 +175,16 @@ describe('runDefinition', () => {
       definition: () => runDefinition(deepAgent('answer')),
       expected: {
         name: 'Глубокий ресерч',
-        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\n${LIST_DELEGATION_RULES}\n\nThe answer is the last message of answer given a single task: after it has finished, end with a short text without tool calls.`,
+        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\n${LIST_DELEGATION_RULES}\n\nThe report document is written by answer, never by you. The answer is the last message of answer given a single task: after it has finished, end with a short text without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['task'],
+        tools: ['task', ...NOTEPAD_TOOLS],
         servers: ['tickets'],
         startable: TEAM_LINES,
         agents: [],
         taskList: true,
         listDelegation: true,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -189,16 +196,16 @@ describe('runDefinition', () => {
         ),
       expected: {
         name: 'Глубокий ресерч',
-        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nWhen the work is done, write the answer yourself as plain text without tool calls.`,
+        prompt: `Start plan first.\n\n${DEEP_AGENT_RULES}\n\nWrite the full result for the employee as a notepad document marked as the report, a large one in parts; keep your last message short and name the document in it.\nWhen the work is done, end with a short message without tool calls.`,
         model: SONNET,
         maxTurns: 30,
-        tools: ['task'],
+        tools: ['task', ...NOTEPAD_TOOLS],
         servers: ['tickets'],
         startable: TEAM_LINES,
         agents: [],
         taskList: false,
         listDelegation: false,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -209,13 +216,13 @@ describe('runDefinition', () => {
         prompt: 'You are gather.',
         model: HAIKU,
         maxTurns: 6,
-        tools: [],
+        tools: SUBAGENT_NOTEPAD,
         servers: ['logs'],
         startable: [],
         agents: [],
         taskList: true,
         listDelegation: false,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -227,13 +234,13 @@ describe('runDefinition', () => {
         prompt: 'You are plan.',
         model: SONNET,
         maxTurns: 6,
-        tools: [],
+        tools: SUBAGENT_NOTEPAD,
         servers: [],
         startable: [],
         agents: [],
         taskList: false,
         listDelegation: false,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -246,13 +253,13 @@ describe('runDefinition', () => {
         prompt: GENERAL_PURPOSE_PROMPT,
         model: SONNET,
         maxTurns: 30,
-        tools: [],
+        tools: SUBAGENT_NOTEPAD,
         servers: ['tickets'],
         startable: [],
         agents: [],
         taskList: false,
         listDelegation: false,
-        learning: null,
+        scripts: [],
       },
     },
     {
@@ -262,16 +269,6 @@ describe('runDefinition', () => {
     },
   ])('$case', ({ definition, expected }) => {
     expect(definition()).toEqual(expected);
-  });
-
-  it('a learning deep agent and its team member learn for the deep agent on the servers of the deep agent and the team', () => {
-    const deep = deepAgent('answer', { selfLearning: true });
-    const learning = { recordId: DEEP_AGENT_ID, servers: ['tickets', 'logs'] };
-
-    expect({
-      deepAgent: runDefinition(deep).learning,
-      member: memberDefinition(deep, 'gather')?.learning,
-    }).toEqual({ deepAgent: learning, member: learning });
   });
 });
 
