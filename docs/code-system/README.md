@@ -58,7 +58,7 @@ flowchart TB
 | Слой | Что держит | Где | NestJS |
 |---|---|---|---|
 | Приложения | HTTP API, вход, права, библиотека записей, аудит, чат; экраны | `apps/api`, `apps/web` | `apps/api` — да; `apps/web` — Next |
-| Агенты | агенты и глубокие агенты, инструменты, MCP, провайдеры моделей, знания | `packages/agents` | да |
+| Агенты | агенты и глубокие агенты, инструменты, MCP, провайдеры моделей, память | `packages/agents` | да |
 | Исполнитель кода | процесс QuickJS на один скрипт | `packages/code-runner` | нет |
 | Runtime | durable-задачи шагами, сообщения, ждущие дети, вопросы человеку, крючки конца задачи, сигнал изменения дерева, журнал токенов | `packages/runtime` | да |
 | Данные | пул, схема `app`, миграции, репозитории всех таблиц | `packages/db` | да |
@@ -85,7 +85,7 @@ flowchart TB
 |---|---|---|
 | `db` | `DbModule`: `Db` — вход в базу с транзакциями, все репозитории и типы строк, функции миграций | все модули бэкенда |
 | `runtime` | `RuntimeModule`: сервисы задач и сообщений, реестр крючков конца задачи, журнала токенов, `LiveTasks` и контракт обработчика шага и живого объекта | `agents`, `apps/api` |
-| `agents` | `AgentsModule`: операции агентов (`StartOperations`, `ControlOperations`, `ViewOperations`), реестр инструментов, сервисы MCP, провайдеров моделей, эмбеддингов, знаний и больших результатов; интерфейсы и токены портов, которые реализует `apps/api` | `apps/api` |
+| `agents` | `AgentsModule`: операции агентов (`StartOperations`, `ControlOperations`, `ViewOperations`), реестр инструментов, сервисы MCP, провайдеров моделей, эмбеддингов и больших результатов; интерфейсы и токены портов, которые реализует `apps/api` | `apps/api` |
 | `code-runner` | `createCodeRunner` и операция `CodeRunner.run` | только `agents` |
 | `common` | логгер, токен `LOGGER`, маска и память секретов | все |
 | `contracts` | zod-схемы и наборы значений | все, включая `apps/web` |
@@ -101,7 +101,7 @@ flowchart TB
 |---|---|
 | [packages/db.md](./packages/db.md) | схема, репозитории, миграции, `DbModule` |
 | [packages/runtime.md](./packages/runtime.md) | задачи и шаги, сообщения, вопросы, сигнал, воркеры, `RuntimeModule` |
-| [packages/agents.md](./packages/agents.md) | классы агентов, шаг агента, инструменты, MCP, провайдеры, знания |
+| [packages/agents.md](./packages/agents.md) | классы агентов, шаг агента, инструменты, MCP, провайдеры, память |
 | [packages/base.md](./packages/base.md) | нижние пакеты без NestJS: `common`, `contracts`, `code-runner` |
 | [packages/api.md](./packages/api.md) | модули `apps/api`: вход, права, библиотека, аудит, чат, связывание пакетов |
 | [packages/web.md](./packages/web.md) | устройство `apps/web`: оболочка, клиент API, сторы, текст |

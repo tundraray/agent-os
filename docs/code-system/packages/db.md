@@ -46,7 +46,7 @@ flowchart LR
 |---|---|
 | `src/schema/` | модель схемы `app`: файл на таблицу, имя файла — имя таблицы (`runtime-tasks.ts`); `index.ts` собирает все таблицы, а саму схему `app` не экспортирует: её создаёт мигратор, и генератор не пишет `CREATE SCHEMA` |
 | `src/repositories/` | репозитории всех таблиц, плоско: файл на таблицу или группу таблиц, имя по префиксу таблицы (`runtime-tasks.repository.ts`); `index.ts` экспортирует классы и список `REPOSITORIES`, который `DbModule` отдаёт целиком |
-| `src/migrations/` | исходный набор миграций: `0000_vector_extension.sql` (custom, расширение `vector`), `0001_schema.sql` (сгенерирована drizzle-kit), `0002_builtin_rows.sql` (custom, встроенные строки) |
+| `src/migrations/` | исходный набор миграций: `0000_schema.sql` (сгенерирована drizzle-kit), `0001_builtin_rows.sql` (custom, встроенные строки) |
 | `src/db.ts` | `Db`: `client`, `transaction`, `savepoint` |
 | `src/database.ts` | пул и клиент Drizzle (`createDatabase`), тип `Database` |
 | `src/db.module.ts`, `src/db.tokens.ts` | `DbModule` и токены `DATABASE_CONNECTION`, `DATABASE` |

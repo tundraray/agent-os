@@ -30,3 +30,4 @@
 ## Used In
 
 - [design-web.md](../../features/i18n/design-web.md) — KD-1, KD-2, KD-3, KD-5, KD-7
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — подписи инструментов блокнота в `tools.json` и тексты документа (Contract Definitions, «Веб»)

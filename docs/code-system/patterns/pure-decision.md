@@ -29,8 +29,9 @@
 - [design-access.md](../../features/enterprise-access/design-access.md) — `effectiveAccess`: права, запреты и квоты сотрудника (KD-2)
 - [design-library.md](../../features/custom-agents/design-library.md) — правила сохранения, аудитории и замены в копии
 - [design-runtime.md](../../features/custom-agents/design-runtime.md) — `gateStart` и список чата `chatListing`
-- [design-core.md](../../features/self-learning/design-core.md) — отбор знаний `selectKnowledge` и проверка операций `checkOperations` (KD-4, KD-6)
+- [design-memory.md](../../features/self-learning/design-memory.md) — отказ `decideSave` флажку самообучения у агента по умолчанию (KD-4)
 - [design-core.md](../../features/agent-harness/design-core.md) — обрезанный ответ в `endOfTurn` и правило повтора одинаковых вызовов (KD-3, KD-5)
 - [design-agent-types.md](../../features/deep-agents/design-agent-types.md) — путь в отказе `decideSave`, запрет запуска глубокого агента в `gateStart` (KD-2, KD-4)
 - [design-task.md](../../features/deep-agents/design-task.md) — проверка вызова `task` и таблица ответов; поля ответа и финальный сабагент из `task` в `endOfTurn`; ветки команды в `gateStart` нет (KD-5, KD-6, KD-7)
 - [design-task-list.md](../../features/deep-agents/design-task-list.md) — правила списка задач сессии и открытые задачи в `endOfTurn` (KD-3, KD-4)
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — правило правки документа: дописать, заменить фрагмент, предел (`notepad-rules.ts`, KD-2, KD-5)

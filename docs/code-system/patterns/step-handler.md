@@ -27,7 +27,6 @@
 - `packages/runtime/src/steps/handler.registry.ts` — `register` и `registerLive`
 - `packages/runtime/src/steps/live-tasks.ts` — `LiveTasks`: хранение, восстановление, прогрев и отпуск объектов
 - `packages/agents/src/agent/base-agent.ts` — общий шаг агента и `absorb`; `agent/agent-factory.ts` — `createIn` и `restore`; `agent/agent.ts`, `agent/chat-agent.ts`, `deep/deep-agent.ts` — три класса
-- `packages/agents/src/knowledge/extract.handler.ts` — обработчик без состояния
 
 ## Not For
 
@@ -41,7 +40,8 @@
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — порт `TaskHandler`, Flow 1–4
 - [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentStepHandler` (классы агентов): шаг модели и шаг инструментов, намерение перед изменяющим вызовом
 - [design-access.md](../../features/enterprise-access/design-access.md) — отказ модели и исчерпанная квота завершают агента итогом «упасть» с причиной (KD-5)
-- [design-core.md](../../features/self-learning/design-core.md) — задача `knowledge.extract`: раунд извлечения, применение операций в коммите шага (KD-4)
+- [design-memory.md](../../features/self-learning/design-memory.md) — запись памяти в коммите шага инструментов вместе с результатом вызова (KD-2)
 - [design-core.md](../../features/agent-harness/design-core.md) — пустая сводка сжатия как итог шага, а не исключение (KD-7)
 - [design-task.md](../../features/deep-agents/design-task.md) — вызов `task` открыт до пробуждения (KD-4)
 - [data-model design-runtime.md](../../features/data-model/design-runtime.md) — ждущие дети и правило пробуждения, вопрос — задача, крючок конца (KD-2, KD-3, KD-5)
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — документ пишется в коммите шага с результатом вызова; `DeepAgent.endOfTurn` требует документ-отчёт (KD-2, KD-4)

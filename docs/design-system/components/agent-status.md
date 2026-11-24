@@ -67,6 +67,19 @@
 
 Тексты меток — deep-agents UXRD, MC-11.
 
+### Статусы обучения
+
+У обучения глубокого агента четыре статуса. Варианты «Метка» и «Иконка» — те же; рядом с меткой экран ставит расход.
+
+| Статус | Иконка | Цвет иконки и метки | Как ведёт себя |
+|---|---|---|---|
+| Идёт | `LoaderCircle`, вращение | `--info` | Вращается, пока обучение идёт, в одной фазе со статусами агентов |
+| Готово | `CircleCheck` | `--success` | Статична |
+| Остановлено | `CircleStop` | `--muted-foreground` | Статична: обучение остановили вручную или на потолке расхода; как именно — в метке |
+| Сбой | `CircleX` | `--destructive` | Статична; причина — после двоеточия |
+
+Тексты меток — self-learning UXRD, MC-11.
+
 ## Content Rules
 
 - Метка — одно-два слова без точки, с заглавной буквы. Метка не усекается.
@@ -88,3 +101,4 @@
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — список агентов, страница агента, лента беседы.
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — «Остановлен» с причиной «квота исчерпана» (QS-01).
 - [docs/features/deep-agents/uxrd.md](../../features/deep-agents/uxrd.md) — статусы задачи и поручения, строки события глубокого агента (DA-05, DA-06, DA-09).
+- [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — статус обучения на карточке и в результате (SL-01, TR-02).

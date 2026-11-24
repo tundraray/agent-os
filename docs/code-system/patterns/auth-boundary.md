@@ -36,3 +36,4 @@
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — подключение аккаунта и возврат из OAuth под сеансом без `@Public()`; реестр под `@AdminOnly()` (KD-6)
 - [design-library.md](../../features/custom-agents/design-library.md) — поиск по видимости, `RECORD_READ_ONLY`, маршруты панели под `@AdminOnly()` (KD-2)
 - [design-agents.md](../../features/data-model/design-agents.md) — видимость с агентами по умолчанию и без удалённых; поиск по имени от имени владельца, невидимое имя отвечает как несуществующее (KD-5, KD-7)
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — документы под маршрутами беседы с проверкой её владельца; чужая беседа отвечает как несуществующая (KD-7)

@@ -88,3 +88,4 @@ flowchart LR
 - [design-task-list.md](../../features/deep-agents/design-task-list.md) — таблица `conversation_tasks` и счётчик сессии в транзакции коммита шага (KD-1, KD-3)
 - [design-schema.md](../../features/data-model/design-schema.md) — SQL задач строит `RuntimeTasksRepository` по закрытому набору значений, `pg_notify` — `RuntimeEventsRepository.notify` (KD-6); запросы бесед соединяются с задачей (KD-2)
 - [design-agents.md](../../features/data-model/design-agents.md) — `AgentsRepository`: версия и указатель в одной точке сохранения (KD-2)
+- [design-notepad.md](../../features/self-learning/design-notepad.md) — `DocumentsRepository`: строки документов в транзакции коммита шага, запись только поверх прочитанного текста (KD-1, Data Model)
