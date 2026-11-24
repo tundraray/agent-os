@@ -522,7 +522,9 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
       expect(done.comparisons).toHaveLength(1);
       expect(done.comparisons[0]).toMatchObject({
         verdict: 'proposed_better',
-        reason: 'The proposed report is clearer.',
+        reason: expect.stringMatching(
+          /^The proposed report is clearer\. \(first answer: (base|proposed) version; second answer: (base|proposed) version\)$/,
+        ),
       });
       expect(trainer.calls).toHaveLength(4);
 

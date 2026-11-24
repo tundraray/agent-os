@@ -17,6 +17,8 @@ const JUDGE_DOCUMENT_MAX_CHARS = 40_000;
 
 const EMPLOYEE_AUTHOR = 'employee';
 
+const REASON_MAX_CHARS = 1000;
+
 const JUDGE_TOOL = {
   name: 'verdict',
   description:
@@ -27,7 +29,12 @@ const JUDGE_TOOL = {
       .describe(
         'first — answer 1 is better, second — answer 2, equal — neither',
       ),
-    reason: z.string().trim().min(1).max(1000).describe('Why, in one sentence'),
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(REASON_MAX_CHARS)
+      .describe('Why, in one sentence'),
   }),
 };
 type JudgeAnswer = z.infer<typeof JUDGE_TOOL.schema>;
@@ -190,11 +197,17 @@ export async function judgePair(
   );
   if (round === undefined) return undefined;
   switch (round.kind) {
-    case 'answer':
+    case 'answer': {
+      // The model may still name the answers by position: say which was which in this pair.
+      const order = proposedFirst
+        ? ' (first answer: proposed version; second answer: base version)'
+        : ' (first answer: base version; second answer: proposed version)';
       return {
         verdict: verdictOf(round.value, proposedFirst),
-        reason: round.value.reason,
+        reason:
+          round.value.reason.slice(0, REASON_MAX_CHARS - order.length) + order,
       };
+    }
     case 'invalid_answer':
       return {
         verdict: 'not_compared',

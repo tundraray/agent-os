@@ -99,10 +99,10 @@ const NO_MEMORY: ToolRunResult = {
   text: 'This run has no memory it may change.',
 };
 
-const TRAINING_WRITE: ToolRunResult = {
+const NO_RECORD: ToolRunResult = {
   kind: 'done',
-  outcome: 'recorded',
-  text: 'Recorded, not saved: this is a training replay.',
+  outcome: 'empty',
+  text: 'There is no such record',
 };
 
 /**
@@ -124,8 +124,8 @@ export function createMemoryTools(deps: {
   const { memoryRows, maskSecrets } = deps;
 
   /**
-   * Runs a call on the caller's memory: refused without memory and in scope user without an employee; a change in a
-   * training tree is recorded, not written.
+   * Runs a call on the caller's memory: refused without memory. In a training tree a change is recorded, not
+   * written, and answered with `trainingText` as a real one would be; scope user there has no record.
    */
   async function onMemory(
     tool: string,
@@ -134,7 +134,7 @@ export function createMemoryTools(deps: {
       readonly callId: string;
       readonly args: RecordArgs;
     },
-    writes: boolean,
+    trainingText: ((description: string) => string) | null,
     run: (owner: MemoryOwner, description: string) => Promise<ToolRunResult>,
   ): Promise<ToolRunResult> {
     const { caller, callId, args } = input;
@@ -147,23 +147,25 @@ export function createMemoryTools(deps: {
       callId,
       ...loggedRecordArgs(args),
     };
-    if (memory !== null && writes && !memory.writes) {
-      logger.info('memory call recorded', fields);
-      return TRAINING_WRITE;
-    }
-    const owner: MemoryOwner | null =
-      memory === null
-        ? null
-        : args.scope === 'agent'
-          ? { agentId: memory.agentId }
-          : memory.userId === null
-            ? null
-            : { userId: memory.userId };
-    if (owner === null) {
+    if (memory === null) {
       logger.info('memory call refused', fields);
       return NO_MEMORY;
     }
-    const result = await run(owner, maskSecrets(args.description));
+    const description = maskSecrets(args.description);
+    if (trainingText !== null && !memory.writes) {
+      logger.info('memory call recorded', fields);
+      return {
+        kind: 'done',
+        outcome: 'recorded',
+        text: trainingText(description),
+      };
+    }
+    const result =
+      args.scope === 'agent'
+        ? await run({ agentId: memory.agentId }, description)
+        : memory.userId === null
+          ? NO_RECORD
+          : await run({ userId: memory.userId }, description);
     logger.info('memory call done', {
       ...fields,
       outcome: result.kind === 'done' ? result.outcome : result.reason,
@@ -181,7 +183,7 @@ export function createMemoryTools(deps: {
       onMemory(
         REMEMBER_TOOL,
         { caller, callId, args },
-        true,
+        (description) => `Saved: ${description}`,
         async (owner, description) => {
           const created = await memoryRows.remember(
             owner,
@@ -207,16 +209,12 @@ export function createMemoryTools(deps: {
       onMemory(
         READ_MEMORY_TOOL,
         { caller, callId, args },
-        false,
+        null,
         async (owner, description) => {
           const row = await memoryRows.read(owner, description);
           // The tool result reaches the model inside the data envelope (`provider-messages.ts`).
           return row === undefined
-            ? {
-                kind: 'done',
-                outcome: 'empty',
-                text: 'There is no such record',
-              }
+            ? NO_RECORD
             : { kind: 'done', outcome: 'success', text: row.text };
         },
       ),
@@ -232,7 +230,7 @@ export function createMemoryTools(deps: {
       onMemory(
         FORGET_TOOL,
         { caller, callId, args },
-        true,
+        (description) => `Deleted: ${description}`,
         async (owner, description) =>
           (await memoryRows.forget(owner, description))
             ? {
@@ -240,11 +238,7 @@ export function createMemoryTools(deps: {
                 outcome: 'success',
                 text: `Deleted: ${description}`,
               }
-            : {
-                kind: 'done',
-                outcome: 'empty',
-                text: 'There is no such record',
-              },
+            : NO_RECORD,
       ),
   };
 
