@@ -37,6 +37,7 @@ const INSTRUCTIONS = [
   "The original task, the report the employee got then and the employee's later messages show what the employee wanted.",
   'Answer 1 and answer 2 are reports of two new runs of the same task. A run that failed shows its failure instead of a report.',
   'Decide which answer serves what the employee wanted better, or that they are equal. Do not prefer an answer for its length.',
+  'In the reason, describe the difference itself: never refer to the answers by number or position.',
   'Call the verdict tool once.',
 ].join('\n');
 

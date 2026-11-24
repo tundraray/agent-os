@@ -99,6 +99,12 @@ const NO_MEMORY: ToolRunResult = {
   text: 'This run has no memory it may change.',
 };
 
+const TRAINING_WRITE: ToolRunResult = {
+  kind: 'done',
+  outcome: 'recorded',
+  text: 'Recorded, not saved: this is a training replay.',
+};
+
 /**
  * The three memory tools (design-memory.md KD-2, Contract «Инструменты модели»). Each runs in the step's commit,
  * so a record is written with the call's `tool_result` and a replayed step writes the same record again (the key
@@ -118,8 +124,8 @@ export function createMemoryTools(deps: {
   const { memoryRows, maskSecrets } = deps;
 
   /**
-   * Runs a call on the caller's memory: refused without memory, without the right to change it when `writes`, and
-   * in scope user without an employee.
+   * Runs a call on the caller's memory: refused without memory and in scope user without an employee; a change in a
+   * training tree is recorded, not written.
    */
   async function onMemory(
     tool: string,
@@ -141,8 +147,12 @@ export function createMemoryTools(deps: {
       callId,
       ...loggedRecordArgs(args),
     };
+    if (memory !== null && writes && !memory.writes) {
+      logger.info('memory call recorded', fields);
+      return TRAINING_WRITE;
+    }
     const owner: MemoryOwner | null =
-      memory === null || (writes && !memory.writes)
+      memory === null
         ? null
         : args.scope === 'agent'
           ? { agentId: memory.agentId }

@@ -27,8 +27,9 @@ const ProposeArgsSchema = z.object({
     ),
   scripts: z
     .array(ScriptSchema)
+    .optional()
     .describe(
-      'The full new list of scripts; repeat the base ones to keep them',
+      'The full new list of scripts; repeat the base ones to keep them, omit to keep the base list',
     ),
   changes: z
     .string()
@@ -91,7 +92,7 @@ export function createProposeVersionTool(deps: {
             args.subagentPrompts.find((entry) => entry.name === subagent.name)
               ?.prompt ?? subagent.prompt,
         })),
-        scripts: args.scripts,
+        scripts: args.scripts ?? content.scripts,
       });
       if (!parsed.success) return refused(z.prettifyError(parsed.error));
       const created = await deps.agentRows.createVersion({
@@ -111,7 +112,7 @@ export function createProposeVersionTool(deps: {
         versionNumber: created.number,
         prompts:
           (args.prompt === undefined ? 0 : 1) + args.subagentPrompts.length,
-        scripts: args.scripts.length,
+        scripts: parsed.data.scripts.length,
         callId,
       });
       return {

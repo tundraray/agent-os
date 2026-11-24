@@ -97,7 +97,7 @@ export type ToolRunResult =
       readonly kind: 'done';
       readonly outcome: Extract<
         ToolOutcome,
-        'success' | 'empty' | 'tool_error'
+        'success' | 'empty' | 'tool_error' | 'recorded'
       >;
       readonly text: string;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one (DC-14). */
