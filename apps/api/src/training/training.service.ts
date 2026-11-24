@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { reportOf, TrainingOperations } from '@agent-os/agents';
+import { reportOf, taskQuestion, TrainingOperations } from '@agent-os/agents';
 import {
   DeepAgentContentSchema,
   TaskStatusSchema,
@@ -414,7 +414,7 @@ export class TrainingService {
     const found = texts.find((text) => text.conversationId === conversationId);
     if (found === undefined)
       throw new Error(`Past task ${conversationId} has no task entry`);
-    return found.text;
+    return taskQuestion(found.text);
   }
 
   private async capUsd(): Promise<number> {

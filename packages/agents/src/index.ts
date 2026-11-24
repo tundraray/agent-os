@@ -12,6 +12,7 @@ export {
   type ToolAccess,
 } from './access-gate';
 export { reportOf } from './agent/deliver';
+export { taskQuestion } from './deep/brief';
 export type { AgentView } from './agent-view';
 export { inRootLaunchSet } from './chat-listing';
 export { type AgentsConfig, parseAgentsConfig } from './config';

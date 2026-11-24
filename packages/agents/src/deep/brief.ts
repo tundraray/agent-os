@@ -29,3 +29,18 @@ export const DeepAgentBriefSchema = z.object({
     ),
 });
 export type DeepAgentBrief = z.infer<typeof DeepAgentBriefSchema>;
+
+/** The brief a task text holds; `null` for a task written as plain text. */
+export function briefOfTask(text: string): DeepAgentBrief | null {
+  try {
+    const parsed = DeepAgentBriefSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A task text as shown in a list: the question of a brief, a plain text as it is. */
+export function taskQuestion(text: string): string {
+  return briefOfTask(text)?.question ?? text;
+}

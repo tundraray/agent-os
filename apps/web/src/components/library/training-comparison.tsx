@@ -57,10 +57,19 @@ export function Comparison({ view }: { view: TrainingView }) {
         columns={[
           { header: '' },
           {
-            header: t('baseVersion', { version: view.baseVersion }),
+            header: t('baseVersion', {
+              version: view.baseVersion,
+              active: String(view.baseVersion === view.activeVersion),
+            }),
             align: 'end',
           },
-          { header: t('proposedVersion', { version }), align: 'end' },
+          {
+            header: t('proposedVersion', {
+              version,
+              active: String(version === view.activeVersion),
+            }),
+            align: 'end',
+          },
         ]}
         state={{
           status: 'ready',

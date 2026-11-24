@@ -34,7 +34,7 @@ import type {
   ToolCaller,
   ToolDeclaration,
 } from '../tools/tool';
-import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
+import { briefOfTask, type DeepAgentBrief } from './brief';
 import {
   type DeepAgentVersion,
   delegationTeam,
@@ -277,16 +277,7 @@ async function briefOf(
   agentId: string,
 ): Promise<DeepAgentBrief | null> {
   const [first] = await history.through(agentId, 1);
-  if (first?.kind !== 'task') return null;
-  try {
-    const parsed = DeepAgentBriefSchema.safeParse(
-      JSON.parse(first.content.text),
-    );
-    return parsed.success ? parsed.data : null;
-  } catch {
-    // A task written as text, not as a brief: the deep agent was started without one.
-    return null;
-  }
+  return first?.kind === 'task' ? briefOfTask(first.content.text) : null;
 }
 
 /** The rule of an answer with fields (KD-7). */

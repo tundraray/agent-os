@@ -18,6 +18,7 @@ import { z } from 'zod';
 
 import type { AccessGate } from '../access-gate';
 import { reportOf } from '../agent/deliver';
+import { taskQuestion } from '../deep/brief';
 import type { History } from '../store/history';
 import { maskValue, pageOf, wrapperText } from '../tools/large-result';
 import type {
@@ -91,7 +92,9 @@ function hidesRecord(call: {
 
 /** The first phrase of a task text, on one line and cut. */
 function firstPhrase(text: string): string {
-  const [first = ''] = text.trim().split(/(?<=[.!?])\s|\n/u);
+  const [first = ''] = taskQuestion(text)
+    .trim()
+    .split(/(?<=[.!?])\s|\n/u);
   return first.slice(0, FIRST_PHRASE_MAX);
 }
 
