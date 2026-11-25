@@ -6,6 +6,8 @@
   "messageQueued": "A message is waiting to be delivered",
   "loadingEarlier": "Loading earlier messages…",
   "chipInComposer": "“{name}” is in the message field — describe the task and send",
+  "testRunInComposer": "“Create and check an agent” is in the message field",
+  "forkOpened": "Opened fork “{title}”",
   "connectionLost": "Connection to the server lost",
   "connectionRestored": "Connection to the server restored",
   "decisionsOpened": "Your decision is needed: {count, plural, one {# request} other {# requests}}",

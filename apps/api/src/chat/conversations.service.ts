@@ -16,25 +16,36 @@ import {
   type ChipRecord,
   type ConversationView,
   type Document,
+  type HistoryEntry,
   type DocumentSummary,
   type InterruptResponse,
   type SendMessageResponse,
   type ThreadDocumentsView,
+  type ThreadForksResponse,
   type ThreadListResponse,
+  type TestRunSummary,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import { DocumentsRepository, TrainingsRepository } from '@agent-os/db';
+import {
+  AgentsRepository,
+  ConversationTasksRepository,
+  DocumentsRepository,
+  RuntimeModelCallsRepository,
+  type TrainingRow,
+  TrainingsRepository,
+} from '@agent-os/db';
 import {
   Inbox,
   isFinished,
   RuntimeError,
+  type Task,
   TaskControl,
 } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
 import { chatStatus } from './chat-status';
-import { httpError, threadNotFound } from './chat.errors';
+import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
   focusOf,
   nextAfterSeqOf,
@@ -44,6 +55,7 @@ import {
   toPending,
   trainingOf,
 } from './conversation-view';
+import { testRunSummary } from './test-run-summary';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { TitleService } from './title.service';
@@ -93,6 +105,12 @@ export class ConversationsService {
     private readonly documentRows: DocumentsRepository,
     @Inject(TrainingsRepository)
     private readonly trainings: TrainingsRepository,
+    @Inject(AgentsRepository)
+    private readonly agents: AgentsRepository,
+    @Inject(ConversationTasksRepository)
+    private readonly sessionTasks: ConversationTasksRepository,
+    @Inject(RuntimeModelCallsRepository)
+    private readonly modelCalls: RuntimeModelCallsRepository,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
@@ -119,7 +137,33 @@ export class ConversationsService {
   /** The id of a new conversation. Nothing is written: the conversation appears with its first message. */
   create(): ThreadSummary {
     const now = new Date().toISOString();
-    return { id: randomUUID(), title: null, createdAt: now, updatedAt: now };
+    return {
+      id: randomUUID(),
+      title: null,
+      createdAt: now,
+      updatedAt: now,
+      forkable: true,
+      forkedFrom: null,
+      forkCount: 0,
+    };
+  }
+
+  /**
+   * Flow 1 of design-fork.md: forks the owner's conversation into a new one waiting for a message. A refusal
+   * by the tree is 409 `FORK_REFUSED` with its reason, a refused start 409 `START_REFUSED`; nothing is created.
+   */
+  async fork(threadId: string, ownerId: string): Promise<ThreadSummary> {
+    await this.owned(threadId, ownerId);
+    const forked = await this.starts.fork({ threadId, ownerId });
+    if (forked.kind === 'refused') throw forkRefused(forked.reason);
+    return this.get(forked.threadId, ownerId);
+  }
+
+  /** The owner's live forks of the conversation, newest first. */
+  async forks(threadId: string, ownerId: string): Promise<ThreadForksResponse> {
+    await this.owned(threadId, ownerId);
+    const forks = await this.views.forks(threadId, ownerId);
+    return { threads: forks.map(toThreadSummary) };
   }
 
   async get(threadId: string, ownerId: string): Promise<ThreadSummary> {
@@ -245,10 +289,20 @@ export class ConversationsService {
     const decisions = confirmations.map((confirmation) =>
       toConfirmation(confirmation, views),
     );
+    const history = rootHistory.map(toHistoryEntry);
+    const run =
+      training?.description == null
+        ? null
+        : await this.runSummary(training, task, history);
     return {
       thread,
       chat: {
-        ...chatStatus({ root, task, training: training !== undefined }),
+        // A test run's conversation is an ordinary one while it takes a message (KD-9).
+        ...chatStatus({
+          root,
+          task,
+          training: training !== undefined && run?.canSend !== true,
+        }),
         rootAgentId: threadId,
         model: root.model,
       },
@@ -258,12 +312,45 @@ export class ConversationsService {
       decisions,
       agents: toAgentTree(views, threadId),
       focus: focusOf(
-        rootHistory.map(toHistoryEntry),
+        history,
         decisions.filter((decision) => decision.agentId === threadId),
         views.filter((view) => view.parentId === threadId),
       ),
-      training: trainingOf(training, threadId),
+      training: trainingOf(
+        training,
+        threadId,
+        training?.agentId != null &&
+          (await this.agents.exists(training.agentId)),
+        run,
+      ),
     };
+  }
+
+  /** The test run's summary (KD-9) from its row, root, pool, versions, spend and the trainer's whole history. */
+  private async runSummary(
+    row: TrainingRow,
+    root: Task,
+    entries: readonly HistoryEntry[],
+  ): Promise<TestRunSummary> {
+    const [pool, proposed, spent, agent, takenAgent] = await Promise.all([
+      this.sessionTasks.list(row.id),
+      this.agents.trainingVersions(row.id),
+      this.modelCalls.sumTree(row.id),
+      row.agentId === null ? undefined : this.agents.findAny(row.agentId),
+      row.takenAgentId === null
+        ? undefined
+        : this.agents.findAny(row.takenAgentId),
+    ]);
+    return testRunSummary({
+      row,
+      root,
+      pool,
+      proposed: proposed.length,
+      spentUsd: Number(spent),
+      agent,
+      takenAgent,
+      entries,
+    });
   }
 
   /** The root's history from its first entry, page by page. */

@@ -28,6 +28,7 @@ import {
   setUnauthorizedHandler,
 } from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
+import { useFeedStoreSelector } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
 import type { FocusTarget } from '@/lib/focus';
 import type { OpenEventSource } from '@/lib/live/live-store';
@@ -127,7 +128,13 @@ function ShellMain({ children }: { children: ReactNode }) {
   const sidebarOpenRef = useRef(sidebarOpen);
   const sidebarFoldedRef = useRef(false);
   const feed = useConversationFeed();
-  const chatTasks = useChatTasks(workspaceAllowed ? feed : null);
+  // A test run's or a training's own conversation: no «Задачи», and the panel never opens by itself (KD-6).
+  const runRoot = useFeedStoreSelector(
+    feed,
+    (state) => state.view?.training?.isRoot === true,
+    false,
+  );
+  const chatTasks = useChatTasks(workspaceAllowed && !runRoot ? feed : null);
 
   // The user expanding the sidebar while the panel is open takes the fold over.
   useEffect(() => {
@@ -174,7 +181,7 @@ function ShellMain({ children }: { children: ReactNode }) {
 
   return (
     <SidebarInset ref={mainRef} className="min-h-0 min-w-0">
-      {workspaceAllowed && feed !== null && (
+      {workspaceAllowed && feed !== null && !runRoot && (
         <SchemaAutoOpen feed={feed} chatTasks={chatTasks} desktop={desktop} />
       )}
       <ResizablePanelGroup
@@ -207,13 +214,18 @@ function ShellMain({ children }: { children: ReactNode }) {
                 : `${workspaceSize}%`
             }
             onClose={closeWorkspace}
+            run={runRoot}
           >
             <SchemaPanel feed={feed} chatTasks={chatTasks} />
           </WorkspacePanel>
         )}
       </ResizablePanelGroup>
       {workspaceAllowed && !desktop && (
-        <WorkspaceDrawer open={workspaceOpen} onClose={() => workspace.close()}>
+        <WorkspaceDrawer
+          open={workspaceOpen}
+          onClose={() => workspace.close()}
+          run={runRoot}
+        >
           <SchemaPanel feed={feed} chatTasks={chatTasks} />
         </WorkspaceDrawer>
       )}

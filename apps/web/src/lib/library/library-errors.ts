@@ -3,13 +3,15 @@ import {
   LibraryErrorCode,
   LibraryRejectReasonSchema,
   ModelUnavailableReasonSchema,
+  ForkRefusalReasonSchema,
   RecordNameTakenReasonSchema,
+  ThreadsErrorCodeSchema,
   TrainingErrorCode,
   type RecordKind,
   type RecordSummary,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { failedText } from '@/i18n/server-text';
+import { failedText, type FailedAction } from '@/i18n/server-text';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { isNotFound } from '@/lib/admin/admin-errors';
 import { formatModel } from '@/lib/agents/format';
@@ -67,7 +69,11 @@ export type LibraryErrorWhere =
   /** Under «Обучить» and «Обучить заново» (self-learning MC-9). */
   | 'train'
   /** In the activation dialog (self-learning MC-12). */
-  | 'activate';
+  | 'activate'
+  /** Under the message field with the action chip (create-and-test MC-3). */
+  | 'test_run'
+  /** On the «Похожий агент» card and under the line instead of the field. */
+  | 'take';
 
 /** What the caller knows about the request that the error alone does not say. */
 export type LibraryErrorContext = {
@@ -121,15 +127,21 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
     case 'script':
     case 'train':
     case 'activate':
+    case 'take':
       return { at: 'form' };
     case 'record_page':
     case 'restart':
       return { at: 'notice' };
     case 'message':
     case 'first_message':
+    case 'test_run':
       return { at: 'composer' };
   }
 }
+
+/** The opening of the fallback «Не удалось …: {причина}» of a place. */
+const failedActionOf = (where: LibraryErrorWhere): FailedAction =>
+  where === 'take' ? 'take' : 'save';
 
 const at = (
   place: LibraryErrorPlace,
@@ -228,7 +240,7 @@ function startRefused(
     error.reason === 'model_not_allowed' ||
     error.reason === 'model_not_connected';
   if (!byModel || model === null)
-    return at(place, failedText(t, 'save', error));
+    return at(place, failedText(t, failedActionOf(context.where), error));
   return at(place, modelNotStarted(t, model, kind, context.own === true), true);
 }
 
@@ -316,6 +328,51 @@ function conflict(
   return at({ at: 'conflict' }, text);
 }
 
+/** MC-18: the reason a conversation cannot be forked now; `null` — another refusal or one without a text. */
+function forkReason(t: ErrorsTranslator, error: unknown): string | null {
+  if (
+    !isApiRequestError(error) ||
+    error.code !== ThreadsErrorCodeSchema.enum.FORK_REFUSED
+  )
+    return null;
+  const reason = ForkRefusalReasonSchema.exclude(['not_a_chat']).safeParse(
+    error.reason,
+  );
+  return reason.success ? t(`fork.reason.${reason.data}`) : null;
+}
+
+/** MC-18: the notice of a refused «Ответвить чат». */
+export function forkRefusalText(t: ErrorsTranslator, error: unknown): string {
+  const reason = forkReason(t, error);
+  return reason === null ? t('fork.failed') : t('fork.refused', { reason });
+}
+
+/** MC-3 of a refused start; `TEST_RUN_RUNNING` carries a link, so the field builds that one itself. */
+function testRunRefused(t: ErrorsTranslator, error: unknown): ReactNode {
+  if (
+    isApiRequestError(error) &&
+    error.code === TrainingErrorCode.TRAINING_FORBIDDEN
+  )
+    return t('library.testRun.forbidden');
+  const reason = forkReason(t, error);
+  return reason === null
+    ? failedText(t, 'test_run', error)
+    : t('library.testRun.forkRefused', { reason });
+}
+
+/** MC-17: a message the test run's conversation does not take now. */
+function notAccepting(
+  t: ErrorsTranslator,
+  error: ApiRequestError,
+  context: LibraryErrorContext,
+): ReactNode {
+  if (error.reason === 'training_running' && context.name !== undefined)
+    return t('library.testRun.trainingRunning', { name: context.name });
+  if (error.reason === 'agent_deleted')
+    return t('library.testRun.agentDeleted');
+  return failedText(t, 'send', error);
+}
+
 /**
  * A refused library request as its place and text. `null` — no text of its own, only in a message's field:
  * it shows the failed send line of chat-shell MC-27 (network, 5xx, a refused first message without a model).
@@ -338,7 +395,7 @@ export function describeLibraryError(
   error: unknown,
   context: LibraryErrorContext,
 ): LibraryErrorText | null {
-  // A training's refusals are read by code and message only: its `START_REFUSED` carries no model (MC-9, MC-12).
+  // A training's refusals are read by code and message only: their `START_REFUSED` carries no model (MC-9, MC-12).
   if (context.where === 'train' || context.where === 'activate') {
     return at(
       { at: 'form' },
@@ -348,18 +405,25 @@ export function describeLibraryError(
         : failedText(t, context.where, error),
     );
   }
+  if (context.where === 'test_run')
+    return at({ at: 'composer' }, testRunRefused(t, error));
   const inMessage =
     context.where === 'message' || context.where === 'first_message';
   if (!isApiRequestError(error) || error.kind === 'network') {
     return inMessage
       ? null
-      : at(placeOf(context.where), failedText(t, 'save', error));
+      : at(
+          placeOf(context.where),
+          failedText(t, failedActionOf(context.where), error),
+        );
   }
 
   switch (error.code) {
     case LibraryErrorCode.RECORD_NOT_FOUND:
       if (context.where === 'record_page' || context.where === 'editor')
         return at({ at: 'screen' }, t('library.notFound'));
+      if (context.where === 'take')
+        return at({ at: 'form' }, t('library.unavailable', { kind: 'agent' }));
       if (inMessage)
         return context.kind === undefined
           ? null
@@ -376,10 +440,17 @@ export function describeLibraryError(
       return rejected(t, error, context);
     case START_REFUSED:
       return startRefused(t, error, context);
+    case TrainingErrorCode.TEST_RUN_NOT_ACCEPTING:
+      if (context.where === 'message')
+        return at({ at: 'composer' }, notAccepting(t, error, context));
+      break;
   }
   return inMessage
     ? null
-    : at(placeOf(context.where), failedText(t, 'save', error));
+    : at(
+        placeOf(context.where),
+        failedText(t, failedActionOf(context.where), error),
+      );
 }
 
 /** What the tool-call block knows about the refused call. */

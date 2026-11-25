@@ -1,4 +1,4 @@
-import type { Verdict } from '@agent-os/contracts';
+import type { TestVerdict, Verdict } from '@agent-os/contracts';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -45,6 +45,7 @@ const INSTRUCTIONS = [
   'Answer 1 and answer 2 are reports of two new runs of the same task. A run that failed shows its failure instead of a report.',
   'Decide which answer serves what the employee wanted better, or that they are equal. Do not prefer an answer for its length.',
   'In the reason, describe the difference itself: never refer to the answers by number or position.',
+  'Write the reason as one sentence of at most 25 words, entirely in the language of the original task, with no word from another language.',
   'Call the verdict tool once.',
 ].join('\n');
 
@@ -144,6 +145,85 @@ function cut(text: string): string {
   return text.length <= JUDGE_DOCUMENT_MAX_CHARS
     ? text
     : `${text.slice(0, JUDGE_DOCUMENT_MAX_CHARS)}\n[Cut: only the first ${JUDGE_DOCUMENT_MAX_CHARS} characters are shown.]`;
+}
+
+const ANSWER_JUDGE_TOOL = {
+  name: 'verdict',
+  description:
+    'Give your verdict on the answer: whether it gives the expected result, and why in one sentence.',
+  schema: z.object({
+    passed: z.boolean().describe('true — the answer gives the expected result'),
+    reason: JUDGE_TOOL.schema.shape.reason,
+  }),
+};
+
+const ANSWER_INSTRUCTIONS = [
+  'You judge one answer an agent gave to a test task.',
+  "The employee's description says what the agent is for; the test names the task and the expected result.",
+  'Decide whether the answer gives the expected result. Do not prefer an answer for its length.',
+  "Write the reason as one sentence of at most 25 words, entirely in the language of the employee's description (or of the test task when the description is empty), with no word from another language.",
+  'Call the verdict tool once.',
+].join('\n');
+
+/** What the judge of one answer sees: the employee's description, the test and the run's answer. */
+export interface TestAnswer {
+  readonly description: string;
+  readonly task: string;
+  readonly expected: string;
+  readonly answer: string;
+}
+
+/**
+ * The judge of one test answer (design-test-run.md, KD-5): one structured answer of the model on the given
+ * request, as `judgePair`. A model error, a refused call or a second invalid answer decide the test `unchecked`.
+ * `undefined` — the step was cut off, nothing is decided.
+ */
+export async function judgeAnswer(
+  modelClient: Pick<ModelClient, 'call'>,
+  ctx: StepContext,
+  request: Omit<ModelCallRequest, 'messages' | 'tools' | 'instructions'>,
+  test: TestAnswer,
+): Promise<{ verdict: TestVerdict; reason: string } | undefined> {
+  const message = [
+    envelope(
+      'description of the agent',
+      EMPLOYEE_AUTHOR,
+      cut(test.description),
+    ),
+    envelope('test task', MODEL_AUTHOR, cut(test.task)),
+    envelope('expected result', MODEL_AUTHOR, cut(test.expected)),
+    envelope('answer', MODEL_AUTHOR, cut(test.answer)),
+  ].join('\n\n');
+  const round = await toolAnswer(
+    modelClient,
+    ctx,
+    { ...request, instructions: ANSWER_INSTRUCTIONS },
+    ANSWER_JUDGE_TOOL,
+    message,
+  );
+  if (round === undefined) return undefined;
+  switch (round.kind) {
+    case 'answer':
+      return {
+        verdict: round.value.passed ? 'passed' : 'failed',
+        reason: round.value.reason,
+      };
+    case 'invalid_answer':
+      return {
+        verdict: 'unchecked',
+        reason: 'The judge gave no valid verdict twice.',
+      };
+    case 'not_started':
+      return {
+        verdict: 'unchecked',
+        reason: `The judge's model call was refused: ${round.verdict.reason}.`,
+      };
+    case 'model_error':
+      return {
+        verdict: 'unchecked',
+        reason: `The judge's model failed: ${round.reason}.`,
+      };
+  }
 }
 
 /** The judge's answer in terms of the versions, by the order the pair was shown in. */

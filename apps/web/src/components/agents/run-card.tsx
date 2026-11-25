@@ -12,6 +12,7 @@ import type {
   RecordSummary,
   RunOrigin,
   DeepAgentRunView,
+  TrainingStatus,
 } from '@agent-os/contracts';
 import {
   ArrowUpRightIcon,
@@ -20,17 +21,25 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useStore } from 'zustand';
-import { AgentStatus } from '@/components/agents/agent-status';
+import {
+  AgentStatus,
+  TrainingStatusLabel,
+} from '@/components/agents/agent-status';
 import { useInChat } from '@/components/library/use-in-chat';
 import { RecordLabel } from '@/components/library/record-label';
 import { useShellServices } from '@/components/shell/shell-actions';
+import { RunButton } from '@/components/shell/workspace-panel';
 import { StateBadge } from '@/components/state-badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { builtinName, builtinRoleName } from '@/i18n/builtin-name';
 import { formatListTime } from '@/i18n/formats';
 import { describeApiError } from '@/lib/api/api-request';
 import { useFeedSelector } from '@/lib/feed/feed-context';
-import { isDeepAgentRun, type RunCardPartData } from '@/lib/feed/to-feed';
+import {
+  isDeepAgentRun,
+  type RunCardPartData,
+  type TestRunCardPartData,
+} from '@/lib/feed/to-feed';
 import {
   changedAfterRun,
   recipientNote,
@@ -124,12 +133,20 @@ export function useCardThread(): SeedTarget {
     : NEW_THREAD_TARGET;
 }
 
-/** Part 8 with «Запустить заново»: the record goes as a chip into this conversation's field; nothing starts before sending. */
+/**
+ * Part 8 with «Запустить заново»: the record goes as a chip into this conversation's field; nothing starts before
+ * sending. A training tree's conversation has neither: a re-run there would be paid outside the run and its cap.
+ */
 function RerunLine({ origin }: { origin: RunOrigin }) {
   const live = useLiveRecord(origin.recordId);
   const inChat = useInChat();
   const thread = useCardThread();
   const t = useTranslations('agents.run');
+  const inTraining = useFeedSelector(
+    (state) => state.view?.training != null,
+    false,
+  );
+  if (inTraining) return null;
   return (
     <ChangedAfterRun origin={origin} live={live}>
       <Button
@@ -446,7 +463,8 @@ function DeepAgentRunCard({
       data-variant="deep-agent"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"
     >
-      <div className="flex h-6 min-w-0 items-center gap-3">
+      {/* Below 640 px the label takes its own line under the status and the time: the name a full line, the chips whole below it. */}
+      <div className="flex min-w-0 items-center justify-between gap-3 max-sm:flex-wrap max-sm:gap-y-1 sm:h-6">
         <AgentStatus
           variant="label"
           status={data.status}
@@ -457,7 +475,7 @@ function DeepAgentRunCard({
           variant="row"
           showVersion
           href={recordPath(origin.recordId)}
-          className="min-w-0 flex-1 flex-nowrap overflow-hidden"
+          className="min-w-0 flex-1 overflow-hidden max-sm:order-last max-sm:basis-full max-sm:*:whitespace-nowrap max-sm:[&>:first-child]:basis-full sm:flex-nowrap"
         />
         {time}
       </div>
@@ -510,3 +528,105 @@ function DeepAgentRunCard({
     </div>
   );
 }
+
+/**
+ * The «Проверка» variant (agent-run-card.md, CT-06, MC-14): the trainer's work on the agent from the conversation's
+ * `training.run`. Only the last card shows the run's status and its step; an earlier one keeps its rounds' result.
+ */
+export function TestRunCard({ data }: { data: TestRunCardPartData }) {
+  const format = useFormatter();
+  const t = useTranslations('chat.testRun.card');
+  const tAgents = useTranslations('agents');
+  const run = useFeedSelector(
+    (state) =>
+      state.view?.kind === 'thread' ? (state.view.training?.run ?? null) : null,
+    null,
+  );
+  if (run === null) return null;
+  const status: TrainingStatus = !data.last
+    ? 'done'
+    : run.phase === 'working'
+      ? 'running'
+      : run.phase === 'ended'
+        ? run.status
+        : 'done';
+  const name = run.agent?.name ?? '';
+  const [fixRound] = data.rounds;
+  const title =
+    data.first || fixRound === undefined
+      ? t('title', { named: run.agent === null ? 'no' : 'yes', name })
+      : t('fixTitle', { fix: fixRound.number - 1, name });
+  const statusWords = tAgents(
+    status === 'failed'
+      ? 'trainingStatus.failedNoReason'
+      : status === 'stopped' && run.capped
+        ? 'trainingStatus.capped'
+        : `trainingStatus.${status}`,
+  );
+  return (
+    <div
+      role="group"
+      aria-label={tAgents('run.label', { name: title, status: statusWords })}
+      data-slot="run-card"
+      data-variant="test-run"
+      className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="shrink-0">
+          <TrainingStatusLabel
+            status={status}
+            capped={run.capped}
+            reason={null}
+          />
+        </span>
+        <span
+          title={title}
+          className="min-w-0 flex-1 truncate text-sm leading-5 font-medium"
+        >
+          {title}
+        </span>
+        <time
+          dateTime={data.createdAt}
+          className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
+        >
+          {formatListTime(format, data.createdAt)}
+        </time>
+      </div>
+      {status === 'running' && run.step !== null && (
+        <p
+          title={run.step}
+          className="text-muted-foreground truncate text-sm leading-5"
+        >
+          {t('now', { task: run.step })}
+        </p>
+      )}
+      {data.rounds.map(
+        (round) =>
+          round.passed !== null &&
+          round.total !== null && (
+            <p key={round.number} className="text-foreground text-sm leading-5">
+              {round.number === 1
+                ? t('firstRound', { passed: round.passed, total: round.total })
+                : t('fixRound', {
+                    fix: round.number - 1,
+                    passed: round.passed,
+                    total: round.total,
+                  })}
+            </p>
+          ),
+      )}
+      {data.first && status !== 'running' && run.agent?.deleted !== true && (
+        <p className="text-foreground text-sm leading-5">
+          {t(run.agent === null ? 'notCreated' : 'inLibrary')}
+        </p>
+      )}
+      <RunButton className={RUN_BUTTON} />
+    </div>
+  );
+}
+
+const RUN_BUTTON = buttonVariants({
+  variant: 'outline',
+  size: 'sm',
+  className: 'mt-1 self-start pointer-coarse:h-11',
+});

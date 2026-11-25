@@ -1,6 +1,12 @@
 import type { Logger } from '@agent-os/common';
 import { CHAT_BUILTIN_KEY, CHAT_TASK_TYPE } from '@agent-os/contracts';
-import { Db } from '@agent-os/db';
+import {
+  ConversationsRepository,
+  ConversationTasksRepository,
+  Db,
+  MessagesRepository,
+  ToolResultsRepository,
+} from '@agent-os/db';
 import { isFinished, LiveTasks, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -25,7 +31,13 @@ import { History } from '../store/history';
 import { type Session, Sessions, type SessionStart } from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
 import { inTrainingTree } from '../training/training-tree';
-import type { AgentRef, StartRequest } from './agent-sessions';
+import type { AgentRef, ForkResult, StartRequest } from './agent-sessions';
+import {
+  copyHistory,
+  type CopyHistoryDeps,
+  forkTitle,
+  readForkRefusal,
+} from './fork-history';
 import {
   type AgentCreationDeps,
   agentNotFound,
@@ -38,11 +50,14 @@ import {
 /**
  * Where a restart takes its version (data-model design-agents.md, «Старт: версия, имя и модель беседы»): an
  * agent or a root starts anew on the active version of the same agent, as the owner sees it now, under the
- * restarted conversation's name; a subagent and a fork restart on the version, name and model of the
- * restarted conversation.
+ * restarted conversation's name; a subagent and a forked child restart on the version, name and model of the
+ * restarted conversation. A forked root starts anew like any root.
  */
 function restartSource(run: RunStart, session: Session): StartSource {
-  if (run.subagent !== null || session.forkedThroughSeq !== null) {
+  if (
+    run.subagent !== null ||
+    (session.parentId !== null && session.forkedThroughSeq !== null)
+  ) {
     return { kind: 'restart', run };
   }
   return {
@@ -53,20 +68,30 @@ function restartSource(run: RunStart, session: Session): StartSource {
   };
 }
 
-/** The operations that make an agent: the start of a conversation's root and the restart of a finished agent. */
+/**
+ * The operations that make an agent: the start of a conversation's root, the restart of a finished agent and
+ * the fork of a conversation.
+ */
 @Injectable()
 export class StartOperations {
   private readonly logger: Logger;
   private readonly logged: ReturnType<typeof createLogged>;
   private readonly creation: AgentCreationDeps;
+  private readonly copying: CopyHistoryDeps;
 
   constructor(
     @Inject(Db) db: Db,
     @Inject(Sessions) private readonly sessions: Sessions,
-    /** A restart repeats the assignment of the restarted session's `task` entry (KD-6). */
-    @Inject(History) private readonly history: Pick<History, 'taskText'>,
+    /** A restart repeats the assignment of the restarted session's `task` entry (KD-6); a fork copies the history. */
+    @Inject(History) private readonly history: History,
     @Inject(TaskControl)
-    private readonly tasks: Pick<TaskControl, 'create' | 'get'>,
+    private readonly tasks: Pick<TaskControl, 'create' | 'get' | 'listTree'>,
+    @Inject(ConversationsRepository)
+    private readonly sessionRows: ConversationsRepository,
+    @Inject(MessagesRepository) messageRows: MessagesRepository,
+    @Inject(ToolResultsRepository) toolResultRows: ToolResultsRepository,
+    @Inject(ConversationTasksRepository)
+    sessionTaskRows: ConversationTasksRepository,
     @Inject(LiveTasks) liveTasks: Pick<LiveTasks, 'adopt'>,
     /** `resolveStart` asks it for the agent of a start or a restart; a restart reads the restarted version. */
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
@@ -82,6 +107,14 @@ export class StartOperations {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
     this.creation = { db, tasks, factory, liveTasks };
+    this.copying = {
+      history,
+      messageRows,
+      toolResultRows,
+      sessionTaskRows,
+      sessionRows,
+      logger: this.logger,
+    };
   }
 
   start({
@@ -176,6 +209,77 @@ export class StartOperations {
         return created;
       },
       (restarted) => ({ restartedAs: restarted.agentId }),
+    );
+  }
+
+  /**
+   * Forks the owner's conversation (create-and-test design-fork.md, Flow 1): the refusal by its tree (KD-4),
+   * then one transaction — a `chat` root on the source root's start, waiting for a message, with the source's
+   * first entry, its history copied and its title (KD-2, KD-3). The model is not called.
+   */
+  fork({
+    threadId,
+    ownerId,
+  }: {
+    readonly threadId: string;
+    readonly ownerId: string;
+  }): Promise<ForkResult> {
+    return this.logged(
+      'fork',
+      { threadId, ownerId },
+      async (): Promise<ForkResult> => {
+        const reason = await readForkRefusal(this.tasks, threadId, ownerId);
+        if (reason !== null) return { kind: 'refused', reason };
+        const session = await this.sessions.get(threadId);
+        const source = await this.sessionRows.root(threadId, ownerId);
+        if (session === undefined || source === undefined)
+          throw new Error(`Conversation ${threadId} has no root session`);
+        const run: RunStart = {
+          version: await this.library.version(session.versionId),
+          name: session.name,
+          subagent: session.origin.subagent,
+          model: session.model,
+        };
+        const started = await this.startRun(
+          ownerId,
+          { kind: 'restart', run },
+          { parentId: null, callerModel: null },
+        );
+        const [first] = await this.history.through(threadId, 1);
+        if (first?.kind !== 'task')
+          throw new Error(`Conversation ${threadId} has no task entry first`);
+        const { agentId } = await createAgent(this.creation, {
+          task: { type: CHAT_TASK_TYPE, ownerId, waiting: true },
+          placeOf: (taskId) => ({ rootId: taskId, depth: 0 }),
+          start: {
+            run: started.run,
+            prompt: first.content.text,
+            description: session.description,
+            ...(first.content.record === null
+              ? {}
+              : { record: first.content.record }),
+          },
+          after: async (forkId) => {
+            await copyHistory(this.copying, {
+              sourceId: threadId,
+              targetId: forkId,
+              forkedFromId: threadId,
+              withTasks: true,
+            });
+            await this.sessionRows.titleRootIfEmpty(
+              forkId,
+              ownerId,
+              forkTitle(source.title ?? ''),
+            );
+          },
+        });
+        started.done(agentId, agentId);
+        return { kind: 'forked', threadId: agentId };
+      },
+      (result) =>
+        result.kind === 'forked'
+          ? { forkId: result.threadId }
+          : { refusal: result.reason },
     );
   }
 

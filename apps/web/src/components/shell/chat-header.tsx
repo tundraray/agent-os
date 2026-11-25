@@ -4,16 +4,24 @@ import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import {
+  GitBranchIcon,
   MenuIcon,
   PanelLeftIcon,
   PanelLeftOpenIcon,
   PanelRightIcon,
   SquarePenIcon,
+  WorkflowIcon,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
 import { Button, buttonVariants } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSidebar } from '@/components/ui/sidebar';
 import {
@@ -22,20 +30,23 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
+import { useResource } from '@/hooks/use-resource';
 import { useFeedStoreSelector } from '@/lib/feed/feed-context';
 import {
   parseShellRoute,
-  trainingPath,
+  recordPath,
+  threadPath,
   type ShellRoute,
 } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
+import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
 import { useConversationFeed, useMainViewState } from './main-view';
 import { PageHeaderSlot } from './page-header';
 import { ShellLink } from './shell-link';
 import { useShellActions, useShellStatus } from './shell-actions';
-import { WORKSPACE_ID } from './workspace-panel';
+import { RunButton, WORKSPACE_ID } from './workspace-panel';
 
 /**
  * HD-03 content: `hidden` on `/`, `loading` until the open thread's metadata is known, `empty` on TH-06 / TH-07
@@ -58,13 +69,23 @@ export type ChatHeaderViewProps = {
   heading?: ReactNode;
   /** HD-04 «Схема» (deep-agents DA-12): the panel from 1024 px, the drawer below it; agent routes have none (UXRD KD-1). */
   showWorkspaceToggle?: boolean;
-  /** The open conversation's one action before «Схема»: a training's «Результат обучения» (self-learning KD-3). */
+  /** The open conversation's actions before «Схема»: a test run's «Открыть агента» and «Ход и итог» (KD-6). */
   action?: ReactNode;
 };
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
 
 const iconButton = cn(pressable, 'shrink-0 [&_svg]:size-4.5');
+
+// Below 640 px the actions are icon buttons, so the title keeps the room (create-and-test, 360 px).
+const ACTION = buttonVariants({
+  variant: 'outline',
+  size: 'sm',
+  className:
+    'shrink-0 pointer-coarse:h-11 max-sm:size-8 max-sm:px-0 max-sm:pointer-coarse:size-11',
+});
+const ACTION_TEXT = 'max-sm:sr-only';
+const ACTION_ICON = 'sm:hidden';
 
 /** HD-01: presentational header; the sidebar state comes from `SidebarProvider`, the rest from props. */
 export function ChatHeaderView({
@@ -162,18 +183,25 @@ export function ChatHeaderView({
   );
 }
 
-/** Header icon button with its name and shortcut in a tooltip below it. */
+/** Header icon button with its name and shortcut in a tooltip below it; `narrowOnly` while it is an icon (below 640 px). */
 function WithTooltip({
   label,
+  narrowOnly = false,
   children,
 }: {
   label: string;
+  narrowOnly?: boolean;
   children: ReactElement;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
-      <TooltipContent side="bottom">{label}</TooltipContent>
+      <TooltipContent
+        side="bottom"
+        className={narrowOnly ? 'sm:hidden' : undefined}
+      >
+        {label}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -220,7 +248,8 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { newChat } = useShellActions();
   const t = useTranslations('shell.page');
-  const tChat = useTranslations('chat.training');
+  const tChat = useTranslations('chat');
+  const tSchema = useTranslations('shell.schema');
   const route = parseShellRoute(usePathname());
   const title = useHeaderTitle();
   const scrolled = useThreadScrolled();
@@ -230,6 +259,13 @@ export function ChatHeader({
     (state) => state.view?.training ?? null,
     null,
   );
+  // A test run's or a training's own conversation: «Ход и итог» in place of «Схема» (KD-6); a training's view needs its agent.
+  const run =
+    route.kind === 'chat' &&
+    training?.isRoot === true &&
+    (training.testRun || training.agentId !== null)
+      ? training
+      : null;
 
   return (
     <ChatHeaderView
@@ -240,26 +276,110 @@ export function ChatHeader({
       }
       heading={routeHeading(route)}
       action={
-        route.kind === 'chat' && training?.isRoot === true ? (
-          <ShellLink
-            href={trainingPath(training.agentId, training.trainingId)}
-            className={buttonVariants({
-              variant: 'outline',
-              size: 'sm',
-              className: 'shrink-0 pointer-coarse:h-11',
-            })}
-          >
-            {tChat('result')}
-          </ShellLink>
-        ) : undefined
+        route.kind === 'chat' && (
+          <>
+            <ForksButton />
+            {run?.testRun === true && run.agentId !== null && (
+              <WithTooltip label={tChat('testRun.openAgent')} narrowOnly>
+                <ShellLink href={recordPath(run.agentId)} className={ACTION}>
+                  <WorkflowIcon aria-hidden className={ACTION_ICON} />
+                  <span className={ACTION_TEXT}>
+                    {tChat('testRun.openAgent')}
+                  </span>
+                </ShellLink>
+              </WithTooltip>
+            )}
+            {/* A test run's button comes with its first card, under the confirmed plan (UXRD CT-03). */}
+            {run !== null &&
+              (!run.testRun ||
+                run.run?.plans.some((plan) => plan.state === 'confirmed')) && (
+                <WithTooltip label={tSchema('runTitle')} narrowOnly>
+                  <RunButton className={ACTION}>
+                    <PanelRightIcon aria-hidden className={ACTION_ICON} />
+                    <span className={ACTION_TEXT}>{tSchema('runTitle')}</span>
+                  </RunButton>
+                </WithTooltip>
+              )}
+          </>
+        )
       }
-      showWorkspaceToggle={route.kind === 'chat'}
+      showWorkspaceToggle={route.kind === 'chat' && run === null}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}
       onNewChat={newChat}
       scrolled={scrolled}
     />
   );
+}
+
+const MENU_LINE = 'text-muted-foreground px-1.5 py-1 text-xs leading-4';
+
+/** FK-04: the source conversation's forks, while it has one (KD-10); the menu reads the list at every open. */
+function ForksButton() {
+  const t = useTranslations('shell.forks');
+  const thread = useFeedStoreSelector(
+    useConversationFeed(),
+    (state) => (state.view?.kind === 'thread' ? state.view.thread : null),
+    null,
+  );
+  if (thread === null || thread.forkCount === 0) return null;
+  const count = thread.forkCount;
+  return (
+    <DropdownMenu>
+      <WithTooltip label={t('tooltip', { count })}>
+        <DropdownMenuTrigger
+          className={buttonVariants({
+            variant: 'ghost',
+            size: 'sm',
+            className:
+              'shrink-0 tabular-nums pointer-coarse:h-11 pointer-coarse:min-w-11',
+          })}
+          aria-label={t('label', { count })}
+        >
+          <GitBranchIcon aria-hidden />
+          {count}
+        </DropdownMenuTrigger>
+      </WithTooltip>
+      <DropdownMenuContent align="end" className="w-auto min-w-56">
+        <ForksList threadId={thread.id} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** MC-20 items, newest first; mounted with the open menu, so each open reads the list again. */
+function ForksList({ threadId }: { threadId: string }) {
+  const t = useTranslations('shell.forks');
+  const tThread = useTranslations('shell.thread');
+  const format = useFormatter();
+  const forks = useResource(
+    () => threadsApiClient.getThreadForks(threadId),
+    threadId,
+    'web-shell forks',
+  );
+  if (forks.status === 'loading')
+    return <p className={MENU_LINE}>{t('loading')}</p>;
+  if (forks.status === 'error')
+    return (
+      <>
+        <p className={MENU_LINE}>{t('loadFailed')}</p>
+        <DropdownMenuItem closeOnClick={false} onClick={forks.reload}>
+          {t('retry')}
+        </DropdownMenuItem>
+      </>
+    );
+  return forks.data?.threads.map((fork) => (
+    <DropdownMenuItem
+      key={fork.id}
+      render={<ShellLink href={threadPath(fork.id)} />}
+      className="flex-col items-start gap-0"
+    >
+      <span>{fork.title ?? tThread('untitled')}</span>
+      <span className="text-muted-foreground text-xs leading-4">
+        {format.dateTime(new Date(fork.createdAt), 'dayTime')}
+      </span>
+    </DropdownMenuItem>
+  ));
 }
 
 function routeHeading(route: ShellRoute): ReactNode {

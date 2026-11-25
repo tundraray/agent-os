@@ -75,7 +75,8 @@ function sharingLabel(shared: boolean): string {
 }
 
 /**
- * The answer of `list_records`: one line per record (id, kind, name, whose, shared or not, description),
+ * The answer of `list_records` and of the test run's `library_overview` (create-and-test design-trainer-dialog.md,
+ * KD-4): one line per record (id, kind, name, whose, shared or not, description),
  * then the servers the employee may use with the tools he has a right to call — a server without such a
  * tool is not named. Past `maxChars` the lines stop and a note says how many were left out.
  */
@@ -84,7 +85,6 @@ export function recordListText(
   servers: readonly UsableServer[],
   maxChars: number = RECORD_LIST_MAX_CHARS,
 ): string {
-  const named = servers.filter((server) => server.tools.length > 0);
   const lines = [
     records.length === 0
       ? 'You see no library records.'
@@ -94,12 +94,20 @@ export function recordListText(
         `- ${record.id} | ${record.kind} | ${record.name} | ${OWNERSHIP_LABELS[record.ownership]} | ${sharingLabel(record.shared)} | ${oneLine(record.description)}`,
     ),
     '',
+    ...serverLines(servers),
+  ];
+  return cutLines(lines, maxChars);
+}
+
+/** The servers the employee may use with the tools he has a right to call; a server without such a tool is not named. */
+function serverLines(servers: readonly UsableServer[]): string[] {
+  const named = servers.filter((server) => server.tools.length > 0);
+  return [
     named.length === 0
       ? 'You may use no MCP server.'
       : 'MCP servers you may use, with the tools you have the right to call (give each subagent only the servers it needs):',
     ...named.map((server) => `- ${server.server}: ${server.tools.join(', ')}`),
   ];
-  return cutLines(lines, maxChars);
 }
 
 /** The lines that fit into `maxChars` with the note of the cut, or all of them. */

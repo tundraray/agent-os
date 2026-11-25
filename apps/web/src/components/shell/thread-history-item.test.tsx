@@ -14,6 +14,8 @@ const entry = (title: string | undefined): ThreadListEntry => ({
   remoteId: 'a',
   title,
   activityAt: 0,
+  forkable: false,
+  forked: false,
 });
 
 function Wrapper({ children }: { children: ReactNode }) {
@@ -35,6 +37,7 @@ function renderItem(title: string | undefined) {
       titlePending={false}
       onRename={onRename}
       onRequestDelete={vi.fn()}
+      onFork={vi.fn()}
     />,
     { wrapper: Wrapper },
   );

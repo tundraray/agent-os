@@ -13,14 +13,33 @@ export const GENERATED_THREAD_TITLE_MAX_LENGTH = 80;
 export const ThreadIdSchema = z.string().min(1).max(255);
 export type ThreadId = z.infer<typeof ThreadIdSchema>;
 
-/** A thread as shown in the sidebar and header. `title: null` = not titled yet ("Новая беседа"). */
+/**
+ * A thread as shown in the sidebar and header. `title: null` = not titled yet ("Новая беседа").
+ * `forkable` — its root is a chat; `forkedFrom` — the source of a fork (`title: null` once deleted or untitled)
+ * and the last inherited entry; `forkCount` — its live forks (create-and-test design-fork.md).
+ */
 export const ThreadSummarySchema = z.object({
   id: ThreadIdSchema,
   title: z.string().min(1).nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  forkable: z.boolean(),
+  forkedFrom: z
+    .object({
+      threadId: ThreadIdSchema,
+      title: z.string().min(1).nullable(),
+      throughSeq: z.number().int(),
+    })
+    .nullable(),
+  forkCount: z.number().int().min(0),
 });
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
+
+/** Response of GET /api/threads/:threadId/forks: the live forks of the thread, newest first. */
+export const ThreadForksResponseSchema = z.object({
+  threads: z.array(ThreadSummarySchema),
+});
+export type ThreadForksResponse = z.infer<typeof ThreadForksResponseSchema>;
 
 /** Query of GET /api/threads. `cursor` is opaque: pass `nextCursor` of the previous page as is. */
 export const ThreadListQuerySchema = z.object({
@@ -54,8 +73,18 @@ export const ThreadsErrorCodeSchema = z.enum([
   'NOT_FINISHED',
   'PARENT_FINISHED',
   'START_REFUSED',
+  'FORK_REFUSED',
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
+
+/** Why a conversation cannot be forked now (create-and-test design-fork.md, KD-4), in the order checked. */
+export const ForkRefusalReasonSchema = z.enum([
+  'not_a_chat',
+  'awaiting_confirmation',
+  'answering',
+  'tasks_running',
+]);
+export type ForkRefusalReason = z.infer<typeof ForkRefusalReasonSchema>;
 
 /**
  * Error body produced by NestJS HttpException. `errorCode` is set by the API;

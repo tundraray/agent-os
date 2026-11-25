@@ -61,14 +61,22 @@ export {
 export type {
   AgentConfirmation,
   AgentHistoryEntry,
+  ForkResult,
 } from './operations/agent-sessions';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';
 export {
+  type TestRunStart,
+  type TestRunTake,
   type TrainingStart,
   type TrainingStartRequest,
   TrainingOperations,
 } from './operations/training-operations';
+export {
+  FIX_TASK,
+  requestedRoundSubject,
+  testRunPoolWrite,
+} from './training/pool';
 export type { RootSession } from './store/sessions';
 export { ViewOperations } from './operations/view-operations';
 export type { DeepAgentRun } from './deep/deep-agent-run';
@@ -88,5 +96,5 @@ export {
 export type { RecordLibrary } from './start/record-library';
 export type { StartResolution } from './start/resolve-start';
 export { WAITING_RULE } from './tools/system/start-agent';
-export type { InCommitAgentTool } from './tools/tool';
+export type { InCommitAgentTool, OutsideAgentTool } from './tools/tool';
 export { ToolRegistry } from './tools/tool-registry';

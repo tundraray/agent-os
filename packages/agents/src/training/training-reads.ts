@@ -3,9 +3,9 @@ import {
   DeepAgentContentSchema,
 } from '@agent-os/contracts';
 import type {
+  AgentTrainingRow,
   AgentsRepository,
   ConversationsRepository,
-  TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
 
@@ -57,29 +57,54 @@ export async function pastTaskIds(
 
 /** A training with its base version. */
 export interface TrainingBase {
-  readonly training: TrainingRow;
+  readonly training: AgentTrainingRow;
   readonly number: number;
   readonly content: DeepAgentContent;
 }
 
-/** The caller's training — the row of its tree's root — with its base version; never from the model's arguments. */
+/** The refusal of a read of the base before a test run created its agent. */
+export interface NoAgentYet {
+  readonly kind: 'refused';
+  readonly reason: 'invalid_arguments';
+  readonly text: string;
+}
+
+/**
+ * The caller's training — the row of its tree's root — with the version the trainer works on: a training's base,
+ * a test run's latest (design-trainer-dialog.md, KD-7); never from the model's arguments. A test run before its
+ * agent is created gets a refusal for the model.
+ */
 export async function trainingBase(
   deps: {
     readonly trainingRows: Pick<TrainingsRepository, 'find'>;
-    readonly agentRows: Pick<AgentsRepository, 'findVersion'>;
+    readonly agentRows: Pick<
+      AgentsRepository,
+      'findVersion' | 'trainingVersions'
+    >;
   },
   caller: Pick<ToolCaller, 'rootId'>,
-): Promise<TrainingBase> {
-  const training = await deps.trainingRows.find(caller.rootId);
-  if (training === undefined)
+): Promise<TrainingBase | NoAgentYet> {
+  const row = await deps.trainingRows.find(caller.rootId);
+  if (row === undefined)
     throw new Error(`Training tree ${caller.rootId} has no training row`);
-  const version = await deps.agentRows.findVersion(training.baseVersionId);
+  const { agentId, baseVersionId } = row;
+  if (agentId === null || baseVersionId === null)
+    return {
+      kind: 'refused',
+      reason: 'invalid_arguments',
+      text: 'The agent is not created yet.',
+    };
+  const latest =
+    row.description === null
+      ? undefined
+      : (await deps.agentRows.trainingVersions(row.id)).at(-1);
+  const version = latest ?? (await deps.agentRows.findVersion(baseVersionId));
   if (version?.kind !== 'deep_agent')
     throw new Error(
-      `Training ${training.id} has no deep agent base version ${training.baseVersionId}`,
+      `Training ${row.id} has no deep agent base version ${baseVersionId}`,
     );
   return {
-    training,
+    training: { ...row, agentId, baseVersionId },
     number: version.number,
     content: DeepAgentContentSchema.parse(version.content),
   };

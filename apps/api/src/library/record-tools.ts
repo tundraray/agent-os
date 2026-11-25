@@ -207,7 +207,7 @@ const RECORD_UNAVAILABLE_TEXT =
  * The reason and the text of a refused chat change (KD-4): the path of the field and the rule, and the
  * values that broke it — names of servers, models and agents, never a prompt or another record's content.
  */
-function refusalOf(refusal: ChatRefusal): {
+export function refusalOf(refusal: ChatRefusal): {
   reason: ToolRefusalReason;
   text: string;
 } {
@@ -314,6 +314,23 @@ export interface RecordToolsOptions {
   readonly logger: Logger;
 }
 
+/** The facts of a record tool's call on behalf of the employee, read outside the transaction. */
+export async function contextOf(
+  options: Pick<RecordToolsOptions, 'library' | 'identity' | 'mcp'>,
+  ownerId: string,
+): Promise<ChatContext> {
+  const { library, identity, mcp } = options;
+  const isAdmin = await identity.isAdmin(ownerId);
+  const [usableServers, registry] = await Promise.all([
+    mcp.usable(ownerId),
+    isAdmin ? mcp.list() : [],
+  ]);
+  return library.chatContext(
+    { id: ownerId, isAdmin },
+    { usableServers, registryServers: registry.map((server) => server.name) },
+  );
+}
+
 /** What a mutating tool's `execute` takes: the action its card must carry. */
 const CARD_ACTION: Record<string, LibraryRecordAction> = {
   [CREATE_RECORD_TOOL]: 'create',
@@ -333,20 +350,8 @@ const CARD_ACTION: Record<string, LibraryRecordAction> = {
  * record, the outcome and the reason; `loggedArgs` name only the record (Security Considerations).
  */
 function createRecordTools(options: RecordToolsOptions) {
-  const { library, identity, mcp } = options;
+  const { library, mcp } = options;
   const logger = options.logger.child({ service: 'library.record_tools' });
-
-  async function contextOf(ownerId: string): Promise<ChatContext> {
-    const isAdmin = await identity.isAdmin(ownerId);
-    const [usableServers, registry] = await Promise.all([
-      mcp.usable(ownerId),
-      isAdmin ? mcp.list() : [],
-    ]);
-    return library.chatContext(
-      { id: ownerId, isAdmin },
-      { usableServers, registryServers: registry.map((server) => server.name) },
-    );
-  }
 
   function logOutcome(
     call: {
@@ -385,7 +390,7 @@ function createRecordTools(options: RecordToolsOptions) {
     change: ChatChange,
     caller: { readonly ownerId: string; readonly agentId: string },
   ): Promise<ToolReview> {
-    const context = await contextOf(caller.ownerId);
+    const context = await contextOf(options, caller.ownerId);
     const reviewed = await library.reviewChatChange(context, change);
     const recordId =
       reviewed.outcome === 'card'
@@ -436,7 +441,7 @@ function createRecordTools(options: RecordToolsOptions) {
         },
         review: (args, caller) => review(tool, changeOf(args), caller),
       },
-      prepare: ({ caller }) => contextOf(caller.ownerId),
+      prepare: ({ caller }) => contextOf(options, caller.ownerId),
       async execute({ caller, callId, prepared, confirmed }) {
         if (prepared === undefined || confirmed === undefined)
           throw new Error(
@@ -478,7 +483,7 @@ function createRecordTools(options: RecordToolsOptions) {
     mode: 'in_commit',
     rootOnly: true,
     async prepare({ caller }) {
-      const context = await contextOf(caller.ownerId);
+      const context = await contextOf(options, caller.ownerId);
       const [records, servers] = await Promise.all([
         library.chatRecords(context),
         mcp.usableTools(caller.ownerId),
@@ -505,7 +510,7 @@ function createRecordTools(options: RecordToolsOptions) {
     rootOnly: true,
     async prepare({ args, caller }) {
       const record = await library.chatRecord(
-        await contextOf(caller.ownerId),
+        await contextOf(options, caller.ownerId),
         args.recordId,
       );
       return record === null ? null : recordText(record);

@@ -13,22 +13,26 @@ const SETTLE_FRAMES = 300;
 export const isFinePointer = (): boolean =>
   window.matchMedia('(pointer: fine)').matches;
 
-/**
- * Focuses after the next paint so the target of the new view exists.
- * 'composer' → [data-shell-focus="composer"] (ComposerPrimitive.Input), 'page-title' → [data-shell-focus="page-title"] (h1, tabIndex -1).
- */
+/** 'composer' → [data-shell-focus="composer"] (ComposerPrimitive.Input), 'page-title' → [data-shell-focus="page-title"] (h1, tabIndex -1). */
+export const shellTargetElement = (target: FocusTarget): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`);
+
+/** Focuses after the next paint so the target of the new view exists. */
 export function focusShellTarget(target: FocusTarget): void {
   let settleFramesLeft = SETTLE_FRAMES;
   const search = (framesLeft: number): void => {
-    const element = document.querySelector<HTMLElement>(
-      `[data-shell-focus="${target}"]`,
-    );
+    const element = shellTargetElement(target);
     if (element !== null) {
       element.focus();
       requestAnimationFrame(() => watch(element));
       return;
     }
     if (framesLeft === 0) {
+      // A conversation that takes no message now (a test run working or over, a training) has no composer.
+      if (target === 'composer') {
+        focusShellTarget('page-title');
+        return;
+      }
       logger.warn('[web-shell] focus target is not rendered', { target });
       return;
     }

@@ -2,9 +2,10 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 /**
  * The panel's tabs; «tasks» shows the conversation's own task list and appears with its first task (deep-agents UXRD
- * DA-12, MC-9), «documents» — its notepad documents, with the first document (self-learning UXRD DC-02).
+ * DA-12, MC-9), «documents» — its notepad documents, with the first document (self-learning UXRD DC-02), «run» —
+ * the course and outcome of a test run or a training in its own conversation, in place of the other two (KD-6).
  */
-export type SchemaTab = 'schema' | 'tasks' | 'documents';
+export type SchemaTab = 'schema' | 'tasks' | 'documents' | 'run';
 
 export type WorkspaceState = {
   /** The employee's intent: the panel beside the feed from 1024 px, the drawer below it. */

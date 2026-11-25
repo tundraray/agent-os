@@ -69,7 +69,10 @@ export type NewRuntimeTaskRow = Pick<
   | 'input'
   | 'awaitedStep'
   | 'exclusiveKey'
->;
+> & {
+  /** The task starts `waiting` for messages instead of `queued`. */
+  readonly waiting?: true;
+};
 
 /**
  * Drizzle queries of `runtime_tasks`. Task rows change only through {@link updateGuarded}, except the deletion mark of
@@ -169,19 +172,24 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * Inserts a task in `queued`. `undefined` when the id is already taken or the exclusive key is
+   * Inserts a task in `queued`, or `waiting` for messages with `waiting`. `undefined` when the id is already taken or the exclusive key is
    * held by an unfinished task of the type: the insert waits for a concurrent one of the same id or
    * key to commit and then writes nothing, raising no error, so the caller's transaction goes on.
    * The conflict clause has no target, so any unique index on this table is silent here and reads as
    * "id or key taken": a future unique index must be handled explicitly.
    */
   async insert(task: NewRuntimeTaskRow): Promise<RuntimeTaskRow | undefined> {
-    const [row] = await this.db.client
+    const { waiting: startsWaiting, ...row } = task;
+    const [inserted] = await this.db.client
       .insert(runtimeTasks)
-      .values({ ...task, status: queued })
+      .values(
+        startsWaiting
+          ? { ...row, status: waiting, waitReason: 'messages' }
+          : { ...row, status: queued },
+      )
       .onConflictDoNothing()
       .returning();
-    return row;
+    return inserted;
   }
 
   /** The task, deleted or not. */

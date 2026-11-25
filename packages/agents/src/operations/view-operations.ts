@@ -405,6 +405,17 @@ export class ViewOperations {
     );
   }
 
+  /** The owner's live forks of the conversation, newest first. */
+  forks(rootId: string, ownerId: string): Promise<RootSession[]> {
+    return this.logged(
+      'forks',
+      { rootId, ownerId },
+      async () =>
+        (await this.sessionRows.forks(rootId, ownerId)).map(toRootSession),
+      (found) => ({ forks: found.length }),
+    );
+  }
+
   /** The owner's tree; `AGENT_NOT_FOUND` for another owner's or no tree. */
   private async tree(rootId: string, ownerId: string): Promise<Task[]> {
     const tasks = await this.tasks.listTree(rootId, ownerId);

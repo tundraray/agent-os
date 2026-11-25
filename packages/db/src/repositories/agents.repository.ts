@@ -34,6 +34,8 @@ export interface AgentVersionRow {
   readonly kind: string;
   readonly number: number;
   readonly content: unknown;
+  /** Set on a version a training or test run proposed. */
+  readonly changes: string | null;
 }
 
 /** A holder row of an agent's audience: exactly one of "everyone", a role and an employee is set. */
@@ -217,6 +219,12 @@ export class AgentsRepository {
     return row;
   }
 
+  /** The agent with its active version, deleted or not: a test run's view reads it (design-test-run.md, KD-6). */
+  async findAny(id: string): Promise<AgentRecordRow | undefined> {
+    const [row] = await this.where(eq(agents.id, id));
+    return row;
+  }
+
   /**
    * A version by its id with its agent's kind, whatever the agent's visibility or deletion mark: a
    * conversation reads the version it started on (KD-6).
@@ -232,21 +240,32 @@ export class AgentsRepository {
     return this.versionWhere(eq(agentVersions.trainingId, trainingId));
   }
 
+  /** The versions a test run proposed, by number ascending (design-trainer-dialog.md, KD-7). */
+  trainingVersions(trainingId: string): Promise<AgentVersionRow[]> {
+    return this.versionsWhere(eq(agentVersions.trainingId, trainingId));
+  }
+
   private async versionWhere(
     condition: SQL,
   ): Promise<AgentVersionRow | undefined> {
-    const [row] = await this.db.client
+    const [row] = await this.versionsWhere(condition);
+    return row;
+  }
+
+  private versionsWhere(condition: SQL): Promise<AgentVersionRow[]> {
+    return this.db.client
       .select({
         id: agentVersions.id,
         agentId: agentVersions.agentId,
         kind: agents.kind,
         number: agentVersions.number,
         content: agentVersions.content,
+        changes: agentVersions.changes,
       })
       .from(agentVersions)
       .innerJoin(agents, eq(agents.id, agentVersions.agentId))
-      .where(condition);
-    return row;
+      .where(condition)
+      .orderBy(asc(agentVersions.number));
   }
 
   /** The agents of the admin panel, in the same order: all of them, one list, or one by id when the panel shows it. */
@@ -362,7 +381,10 @@ export class AgentsRepository {
     version: {
       readonly agentId: string;
       readonly content: unknown;
-    } & ({ readonly authorId: string } | { readonly trainingId: string }),
+    } & (
+      | { readonly authorId: string }
+      | { readonly trainingId: string; readonly changes: string }
+    ),
   ): Promise<
     | {
         readonly outcome: 'created';
@@ -380,7 +402,7 @@ export class AgentsRepository {
           content: version.content,
           ...('authorId' in version
             ? { authorId: version.authorId }
-            : { trainingId: version.trainingId }),
+            : { trainingId: version.trainingId, changes: version.changes }),
         })
         .returning({ id: agentVersions.id, number: agentVersions.number });
       if (row === undefined)

@@ -75,9 +75,9 @@ describe('composerSeed', () => {
     run(seed);
 
     const chips = Object.fromEntries(
-      [...seed.getState().chips].map(([target, record]) => [
+      [...seed.getState().chips].map(([target, chip]) => [
         target,
-        record.name,
+        'name' in chip ? chip.name : chip.action,
       ]),
     );
     expect(chips).toEqual(expected);

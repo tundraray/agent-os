@@ -90,6 +90,9 @@ export const CurrentUserSchema = z.object({
   isAdmin: z.boolean(),
   hasPassword: z.boolean(),
   language: LanguageSchema.nullable(),
+  /** The role's right to train own agents; with `trainingCapUsd`, the cap of one training now (design-test-run.md, KD-6). */
+  trainOwn: z.boolean(),
+  trainingCapUsd: z.number(),
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
 

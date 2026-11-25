@@ -1,4 +1,7 @@
-import type { StartRefusedError } from '@agent-os/contracts';
+import type {
+  StartRefusedError,
+  TestRunClosedReason,
+} from '@agent-os/contracts';
 
 /** Error codes of agents operations (design-agents.md, Error handling; design-runtime.md, Error handling). */
 export type AgentsErrorCode =
@@ -13,7 +16,9 @@ export type AgentsErrorCode =
   /** Edited arguments of a confirmation the tool does not allow, or that fail its schema. */
   | 'INVALID_ARGUMENTS'
   /** The start procedure refused the record: `refusal` names the reason and the model. */
-  | 'START_REFUSED';
+  | 'START_REFUSED'
+  /** A test run's conversation takes no message now: `closedReason` says why (design-trainer-dialog.md, KD-2). */
+  | 'TEST_RUN_NOT_ACCEPTING';
 
 /**
  * Why a start was refused (409 `START_REFUSED`): `model` is the refused model on a model or provider
@@ -33,13 +38,19 @@ export class AgentsError extends Error {
   override readonly name = 'AgentsError';
   /** Set for `START_REFUSED` only. */
   readonly refusal: StartRefusalDetail | null;
+  /** Set for `TEST_RUN_NOT_ACCEPTING` only. */
+  readonly closedReason: TestRunClosedReason | null;
 
   constructor(
     readonly code: AgentsErrorCode,
     message: string,
-    options?: ErrorOptions & { readonly refusal?: StartRefusalDetail },
+    options?: ErrorOptions & {
+      readonly refusal?: StartRefusalDetail;
+      readonly closedReason?: TestRunClosedReason;
+    },
   ) {
     super(message, options);
     this.refusal = options?.refusal ?? null;
+    this.closedReason = options?.closedReason ?? null;
   }
 }

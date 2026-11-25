@@ -55,7 +55,8 @@
     "title": "<prefix>Report · </prefix><link>{description}</link>",
     "label": "Report: {description}",
     "stopped": "{withParent, select, yes {stopped with its parent} other {stopped by you}}",
-    "empty": "No report."
+    "empty": "No report.",
+    "inBranch": "The document stayed in the source conversation"
   },
   "interrupt": "Interrupt",
   "values": {
@@ -163,7 +164,8 @@
     "pending": "Pending",
     "in_progress": "In progress",
     "completed": "Completed",
-    "unfinished": "Not finished"
+    "unfinished": "Not finished",
+    "skipped": "Not needed"
   },
   "trainingStatus": {
     "running": "Running",
@@ -215,5 +217,9 @@
     "back": "Back to documents",
     "loadError": "Couldn't load the document",
     "retry": "Try again"
+  },
+  "fork": {
+    "from": "Forked from “<link>{title}</link>”",
+    "fromDeleted": "Forked from a deleted conversation"
   }
 }

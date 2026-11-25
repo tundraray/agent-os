@@ -44,7 +44,10 @@ export const HistoryEntryKindSchema = z.enum([
 ]);
 export type HistoryEntryKind = z.infer<typeof HistoryEntryKindSchema>;
 
-/** Event recorded in history as an entry of kind `event`; `failed` carries its reason. */
+/**
+ * Event recorded in history as an entry of kind `event`; `failed` carries its reason. `forked` follows the
+ * history a fork copied from its source.
+ */
 export const HistoryEventSchema = z.enum([
   'interrupted',
   'stopped',
@@ -52,6 +55,7 @@ export const HistoryEventSchema = z.enum([
   'continued',
   'failed',
   'compacted',
+  'forked',
 ]);
 export type HistoryEvent = z.infer<typeof HistoryEventSchema>;
 

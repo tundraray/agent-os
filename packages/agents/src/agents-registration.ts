@@ -134,7 +134,7 @@ export class SystemToolsRegistration implements OnModuleInit {
         logger,
       }),
       createTaskTool(),
-      // Declared by the trainer only (design-training.md KD-1).
+      // Declared by the trainer only (design-training.md KD-1); `test_results` by its test-run mode.
       ...createTrainerTools({
         trainingRows: this.trainingRows,
         agentRows: this.agentRows,
@@ -152,6 +152,7 @@ export class SystemToolsRegistration implements OnModuleInit {
       createProposeVersionTool({
         trainingRows: this.trainingRows,
         agentRows: this.agentRows,
+        sessionTaskRows: this.sessionTaskRows,
         logger,
       }),
       createTryScriptTool({

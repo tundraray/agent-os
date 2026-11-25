@@ -63,8 +63,16 @@ export const conversations = app.table(
     subagent: text('subagent'),
     /** The owner had no earlier conversation on a version of the same agent. */
     firstRun: boolean('first_run').notNull().default(false),
-    /** Set on a fork: the parent's history up to this entry precedes this one. */
+    /**
+     * Entries up to this one are inherited: a subagent reads them from its parent, a forked root holds a copy
+     * of its source's.
+     */
     forkedThroughSeq: integer('forked_through_seq'),
+    /** The conversation a forked root was copied from; set only on a root, together with `forked_through_seq`. */
+    forkedFromId: uuid('forked_from_id').references(
+      (): AnyPgColumn => conversations.id,
+      { onDelete: 'set null' },
+    ),
     turns: integer('turns').notNull().default(0),
     interrupted: boolean('interrupted').notNull().default(false),
     /** Set when the agent itself finished (`complete` or `fail`). */
@@ -85,6 +93,8 @@ export const conversations = app.table(
     index('conversations_agent_version_idx').on(t.agentVersionId),
     /** The cascade from a parent conversation. */
     index('conversations_parent_idx').on(t.parentId),
+    /** The forks of a conversation. */
+    index('conversations_forked_from_idx').on(t.forkedFromId),
     /** The owner's conversations, last changed first; the condition is the repository's `isRoot`. */
     index('conversations_owner_page_idx')
       .on(t.ownerId, t.updatedAt.desc(), t.id.desc())
@@ -96,6 +106,10 @@ export const conversations = app.table(
     check(
       'conversations_root_check',
       sql`(${t.title} is not null) = (${t.parentId} is null) and (${t.updatedAt} is not null) = (${t.parentId} is null)`,
+    ),
+    check(
+      'conversations_fork_check',
+      sql`${t.forkedFromId} is null or (${t.parentId} is null and ${t.forkedThroughSeq} is not null)`,
     ),
   ],
 );

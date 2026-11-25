@@ -159,6 +159,14 @@ const IsoDateSchema = z.iso.datetime();
 /** The version of a record. */
 export const VersionSchema = z.number().int().positive();
 
+/** The record chip of a message (custom-agents design-runtime.md, KD-4): shown next to its text. */
+export const ChipRecordSchema = z.object({
+  id: IdSchema,
+  kind: RecordKindSchema,
+  name: z.string().min(1),
+});
+export type ChipRecord = z.infer<typeof ChipRecordSchema>;
+
 /**
  * A name stays on one line: no line break or other control character, so a name can never add a line
  * of its own to a tool description (custom-agents design-runtime.md, Security Considerations).

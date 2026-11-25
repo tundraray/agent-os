@@ -28,6 +28,7 @@ import {
 import type { CookieOptions, Request, Response } from 'express';
 import { AuditLog } from '../audit/audit-log';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { SettingsService } from '../settings/settings.service';
 import type { AuthedRequest } from './auth-user';
 import { LOGIN_REQUEST_TTL_MS } from './oidc-sign-in';
 import { ProvidersService } from './providers.service';
@@ -70,6 +71,7 @@ export class AuthController {
     private readonly sessions: SessionStore,
     private readonly users: UsersService,
     private readonly auditLog: AuditLog,
+    private readonly settings: SettingsService,
     @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'identity.auth' });
@@ -147,13 +149,26 @@ export class AuthController {
 
   /** The employee of the session; the `aos_locale` cookie follows his choice (i18n KD-2). */
   @Get('me')
-  me(
+  async me(
     @Req() req: AuthedRequest,
     @Res({ passthrough: true }) res: Response,
-  ): CurrentUser {
-    const { id, email, name, isAdmin, hasPassword, language } = req.user;
+  ): Promise<CurrentUser> {
+    const { id, email, name, isAdmin, hasPassword, language, trainOwn } =
+      req.user;
+    const { trainingCapUsd } = (
+      await this.settings.read('self_learning_settings')
+    ).value;
     setLocaleCookie(res, language);
-    return { id, email, name, isAdmin, hasPassword, language };
+    return {
+      id,
+      email,
+      name,
+      isAdmin,
+      hasPassword,
+      language,
+      trainOwn,
+      trainingCapUsd,
+    };
   }
 
   /** The viewer's own roles by name (`MyRoleList`), only from `req.user.id` (ADR-0012). */

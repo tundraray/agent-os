@@ -74,7 +74,11 @@ function describeStartDeepAgent(deepAgents: readonly string[]): string {
 }
 
 /** The brief as the deep agent's task: always the three fields, in this order. */
-function briefJson({ question, boundaries, result }: DeepAgentBrief): string {
+export function briefJson({
+  question,
+  boundaries,
+  result,
+}: DeepAgentBrief): string {
   return JSON.stringify({ question, boundaries, result });
 }
 

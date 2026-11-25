@@ -502,7 +502,6 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
       // The result view of the starter
       expect(done).toMatchObject({
         baseVersion: 2,
-        startedByMe: true,
         cappedAt: null,
         recommended: true,
         canActivate: true,
@@ -742,6 +741,16 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
         TrainingStateSchema,
       );
       expect(state.running?.id).toBe(trainingId);
+      // FR-15: the running training stays on the card of everyone who may train the agent
+      const borisState = await expectBody(
+        apiRequest(harness.app, boris, 'get', `/library/${record.id}/training`),
+        200,
+        TrainingStateSchema,
+      );
+      expect(borisState.running).toMatchObject({
+        id: trainingId,
+        startedByMe: false,
+      });
 
       const anyaApi = chatApi(harness.app, anya);
       for (const [path, body] of [
@@ -768,12 +777,12 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
   );
 
   // UC-3: rights and isolation at the routes, and the activation guard (scripts DC-2).
-  // Catches: a training open to an employee without the right; a non-starter who reads the free texts or switches the version on; a
+  // Catches: a training open to an employee without the right; a non-starter who reads the result (UC-8, FR-15) or switches the version on; a
   //   training read through another agent's address; an activation over a base the author has replaced, or one that moves the pointer
   //   anyway; a start with nothing to compare, or one that compares a past task
   //   whose run called a tool the starter has no right to (isolation between users).
   it(
-    "TR-5: canTrain by author and panel rights; a non-starter gets no texts and no activation; another agent's training is 404; a stale base is refused and moves nothing; no past tasks, or only ones calling a tool the starter is denied, is 409",
+    "TR-5: canTrain by author and panel rights; a non-starter gets 404, no last result and no activation; another agent's training is 404; a stale base is refused and moves nothing; no past tasks, or only ones calling a tool the starter is denied, is 409",
     async () => {
       const anya = await employee(ownTrainers);
       const boris = await employee(anyTrainers);
@@ -826,19 +835,26 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
         (await expectError(startTraining(gleb, record.id), 403)).errorCode,
       ).toBe('TRAINING_FORBIDDEN');
 
-      // Boris may train any agent in the panel: he reads the result without its free texts and cannot switch it on
-      const borisView = await trainingView(boris, record.id, trainingId);
-      expect(borisView).toMatchObject({
-        startedByMe: false,
-        canActivate: false,
-        proposal: { version: 3, base: null, proposed: null, changes: null },
-      });
+      // Boris may train any agent in the panel: the result is the starter's alone (FR-15) — not found, not on his card, not his to switch on
       expect(
-        borisView.comparisons.map((element) => [
-          element.reason,
-          element.base?.conversationId,
-        ]),
-      ).toEqual([[null, null]]);
+        (
+          await expectError(
+            apiRequest(
+              harness.app,
+              boris,
+              'get',
+              `/library/${record.id}/training/${trainingId}`,
+            ),
+            404,
+          )
+        ).errorCode,
+      ).toBe('TRAINING_NOT_FOUND');
+      const borisState = await expectBody(
+        apiRequest(harness.app, boris, 'get', `/library/${record.id}/training`),
+        200,
+        TrainingStateSchema,
+      );
+      expect(borisState).toMatchObject({ canTrain: true, lastFinished: null });
       const activatePath = `/library/${record.id}/training/${trainingId}/activate`;
       expect(
         (

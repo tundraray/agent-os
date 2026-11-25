@@ -23,6 +23,8 @@ const entry = (
   remoteId: id,
   title,
   activityAt: 0,
+  forkable: true,
+  forked: false,
   ...overrides,
 });
 
@@ -53,6 +55,7 @@ const renderItem: ThreadHistoryListViewProps['renderItem'] = (
     titlePending={false}
     onRename={vi.fn()}
     onRequestDelete={onRequestDelete}
+    onFork={vi.fn()}
   />
 );
 
@@ -81,6 +84,7 @@ function renderView(
       titlePending={false}
       onRename={vi.fn()}
       onRequestDelete={onRequestDelete}
+      onFork={vi.fn()}
     />
   );
   render(

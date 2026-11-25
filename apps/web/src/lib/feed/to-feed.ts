@@ -21,6 +21,7 @@ import {
   type HistoryEntry,
   type LibraryRecordCard,
   type PendingMessage,
+  type TestRunSummary,
   type ToolCallState,
   type ToolOutcome,
   type ToolRefusalReason,
@@ -44,6 +45,8 @@ export type FeedView =
   | {
       kind: 'thread';
       threadId: string;
+      /** The conversation's summary: the fork's source and boundary (create-and-test KD-9). */
+      thread: ConversationView['thread'];
       chat: ConversationView['chat'];
       entries: readonly HistoryEntry[];
       pending: readonly PendingMessage[];
@@ -76,6 +79,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
     return {
       kind: 'thread',
       threadId: page.thread.id,
+      thread: page.thread,
       chat: page.chat,
       entries: page.entries,
       pending: page.pending,
@@ -160,6 +164,9 @@ export const FEED_PART = {
   report: 'report',
   event: 'event',
   answerRefused: 'answer-refused',
+  offer: 'offer',
+  plan: 'plan',
+  testRunCard: 'test-run-card',
 } as const;
 
 /** The deep agent card also shows the question of the brief that started it (agent-run-card.md, part 4). */
@@ -198,6 +205,32 @@ export type ReportPartData = Extract<
   { kind: 'child_report' }
 >['content'] & {
   createdAt: string;
+  /** Copied into a fork: its agent's conversation and document stay with the source (KD-9). */
+  inherited: boolean;
+};
+
+/** The trainer's «Похожий агент» card (create-and-test KD-4): the state from the summary, the time of the call. */
+export type OfferPartData = {
+  offer: NonNullable<TestRunSummary['offer']>;
+  createdAt: string;
+};
+
+/** The trainer's «План» card: the state from the summary, the plan from the call's arguments. */
+export type PlanPartData = {
+  plan: TestRunSummary['plans'][number];
+  createdAt: string;
+  name: string;
+  description: string;
+  servers: readonly string[];
+  tests: readonly { task: string; expected: string }[];
+};
+
+/** A test run card (KD-5): its rounds, numbered from 1; `last` shows the run's status and step. */
+export type TestRunCardPartData = {
+  createdAt: string;
+  first: boolean;
+  last: boolean;
+  rounds: readonly (TestRunSummary['rounds'][number] & { number: number })[];
 };
 export type EventPartData = Extract<
   HistoryEntry,
@@ -247,8 +280,8 @@ export type ToolCallArtifact = {
  * record chip an employee's message was sent with (KD-5).
  */
 export type FeedMessageMeta =
-  | { kind: 'task'; record: ChipRecord | null }
-  | { kind: 'user'; record: ChipRecord | null }
+  | { kind: 'task'; record: ChipRecord | null; testRun?: true }
+  | { kind: 'user'; record: ChipRecord | null; testRun?: true }
   | {
       kind: 'parent';
       fromConversation: boolean;
@@ -349,7 +382,10 @@ function toolCallPart(
 function isDrawnCall(
   call: AnswerToolCall,
   result: ToolResult | undefined,
+  cardCalls: ReadonlySet<string>,
 ): boolean {
+  // A trainer's offer or plan is its card instead of the call block (KD-4).
+  if (cardCalls.has(call.callId)) return false;
   if (!SHOWN_ELSEWHERE.has(call.tool)) return true;
   return result !== undefined && !HIDDEN_OUTCOMES.has(result.outcome);
 }
@@ -381,13 +417,26 @@ function answerRefusedOf(
   return null;
 }
 
+/** What `entryMessage` needs besides the entry, computed once per feed. */
+type EntryContext = {
+  results: ReadonlyMap<string, ToolResult>;
+  cards: readonly LibraryRecordCard[];
+  /** Calls drawn as the trainer's cards. */
+  cardCalls: ReadonlySet<string>;
+  /** Entries up to this `seq` are a fork's copy; 0 — none. */
+  inheritedThrough: number;
+  /** The test run's description: its message carries the action chip; null — none. */
+  descriptionSeq: number | null;
+};
+
 function entryMessage(
   view: FeedView,
   entry: HistoryEntry,
-  results: ReadonlyMap<string, ToolResult>,
-  cards: readonly LibraryRecordCard[],
+  { results, cards, cardCalls, inheritedThrough, descriptionSeq }: EntryContext,
 ): ThreadMessageLike | null {
   const id = `seq-${entry.seq}`;
+  const testRun =
+    entry.seq === descriptionSeq ? { testRun: true as const } : {};
   const createdAt = new Date(entry.createdAt);
   switch (entry.kind) {
     case 'task': {
@@ -400,7 +449,7 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'task', record }),
+        metadata: meta({ kind: 'task', record, ...testRun }),
       };
     }
     case 'user_message': {
@@ -410,7 +459,7 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'user', record }),
+        metadata: meta({ kind: 'user', record, ...testRun }),
       };
     }
     case 'agent_message': {
@@ -439,7 +488,7 @@ function entryMessage(
         parts.push({ type: 'text', text: entry.content.text });
       for (const call of entry.content.toolCalls) {
         const result = results.get(call.callId);
-        if (isDrawnCall(call, result))
+        if (isDrawnCall(call, result, cardCalls))
           parts.push(toolCallPart(call, result, recordNameOf(call, cards)));
       }
       if (parts.length === 0) return null;
@@ -458,11 +507,14 @@ function entryMessage(
       const data: ReportPartData = {
         ...entry.content,
         createdAt: entry.createdAt,
+        inherited: entry.seq <= inheritedThrough,
       };
       return dataMessage(id, entry.createdAt, FEED_PART.report, data);
     }
     case 'event': {
       const { event, reason } = entry.content;
+      // A copied `forked` marks the source's own fork: only this conversation's boundary is a divider (KD-9).
+      if (event === 'forked' && entry.seq <= inheritedThrough) return null;
       // TH-08: a model failure of the conversation's root, or its model refused by access (MC-11), is the
       // answer's error block; a spent quota and a disabled owner stay event lines (QS-01, MC-14).
       if (
@@ -539,6 +591,119 @@ function briefQuestionOf(
     stringField(brief.resolution.args, 'question') ??
     stringField(brief.content, 'question')
   );
+}
+
+/** An array field of an unknown value; empty when it is not an array. */
+function arrayField(value: unknown, key: string): readonly unknown[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const field: unknown = Reflect.get(value, key);
+  return Array.isArray(field) ? field : [];
+}
+
+/** The plan card's content from the `propose_plan` call's arguments (plan Notes 3.5: read by field, no schema). */
+function planPart(
+  plan: PlanPartData['plan'],
+  call: AnswerToolCall,
+  createdAt: string,
+): PlanPartData {
+  return {
+    plan,
+    createdAt,
+    name: stringField(call.args, 'name') ?? '',
+    description: stringField(call.args, 'description') ?? '',
+    servers: arrayField(call.args, 'servers').filter(
+      (server) => typeof server === 'string',
+    ),
+    tests: arrayField(call.args, 'tests').map((test) => ({
+      task: stringField(test, 'task') ?? '',
+      expected: stringField(test, 'expected') ?? '',
+    })),
+  };
+}
+
+/**
+ * The test run's cards of the calls in one trainer's answer (KD-4, KD-5, Invariant 3): the offer and each plan in
+ * place of the call; the first test run card at the call that started round 1 (`create_agent`) with the rounds not
+ * asked for; a card of its own at the call that started each round asked for after the summary.
+ */
+function runParts(
+  run: TestRunSummary,
+  entry: HistoryEntry,
+): ThreadMessageLike[] {
+  if (entry.kind !== 'model_answer') return [];
+  const rounds = run.rounds.map((round, index) => ({
+    ...round,
+    number: index + 1,
+  }));
+  const asked = rounds.filter((round) => round.requested);
+  const at = entry.createdAt;
+  const card = (
+    id: string,
+    first: boolean,
+    cardRounds: TestRunCardPartData['rounds'],
+    last: boolean,
+  ): ThreadMessageLike =>
+    dataMessage(`test-run-${id}`, at, FEED_PART.testRunCard, {
+      createdAt: at,
+      first,
+      last,
+      rounds: cardRounds,
+    } satisfies TestRunCardPartData);
+  const parts: ThreadMessageLike[] = [];
+  for (const call of entry.content.toolCalls) {
+    if (run.offer?.callId === call.callId) {
+      const data: OfferPartData = { offer: run.offer, createdAt: at };
+      parts.push(
+        dataMessage(`offer-${call.callId}`, at, FEED_PART.offer, data),
+      );
+    }
+    const plan = run.plans.find((p) => p.callId === call.callId);
+    if (plan !== undefined) {
+      parts.push(
+        dataMessage(
+          `plan-${call.callId}`,
+          at,
+          FEED_PART.plan,
+          planPart(plan, call, at),
+        ),
+      );
+    }
+    if (rounds[0]?.startCallId === call.callId) {
+      const first = rounds.filter((round) => !round.requested);
+      parts.push(card('first', true, first, asked.length === 0));
+    }
+    const round = asked.find((r) => r.startCallId === call.callId);
+    if (round !== undefined)
+      parts.push(
+        card(
+          `${round.number}`,
+          false,
+          [round],
+          round === asked[asked.length - 1],
+        ),
+      );
+  }
+  return parts;
+}
+
+/**
+ * The test run's description (KD-4 table): the first `user_message` right after the fork's `forked` event, or the
+ * `task` of a test run without a fork. `empty` — the event is followed by something else: the chip stands alone.
+ */
+function descriptionOf(
+  entries: readonly HistoryEntry[],
+): { seq: number } | { emptyAfter: number } | null {
+  const forked = entries.findLastIndex(
+    (entry) => entry.kind === 'event' && entry.content.event === 'forked',
+  );
+  if (forked === -1) {
+    const task = entries.find((entry) => entry.kind === 'task');
+    return task === undefined ? null : { seq: task.seq };
+  }
+  const next = entries[forked + 1];
+  return next?.kind === 'user_message'
+    ? { seq: next.seq }
+    : { emptyAfter: entries[forked].seq };
 }
 
 /** A finished call of the feed's own agent, in `seq` order: its tool, its result and when the result was written. */
@@ -639,10 +804,17 @@ function draftMessage(draft: string): ThreadMessageLike {
   };
 }
 
+/** Entries that end the trainer's turn: what the person or a parent says next. */
+const OPENS_TURN = new Set<HistoryEntry['kind']>([
+  'task',
+  'user_message',
+  'agent_message',
+]);
+
 /**
  * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `local-*`, `draft`): entries
- * by `seq`; each decision and direct child after the last entry created not later than it (KD-3);
- * optimistic feed entries, then the draft, last.
+ * by `seq`; each decision and direct child after the last entry created not later than it (KD-3); a test run's
+ * cards at the end of the trainer's turn that made their calls; optimistic feed entries, then the draft, last.
  */
 export function toFeed(
   view: FeedView,
@@ -665,9 +837,26 @@ export function toFeed(
         calls.push({ tool, result: entry.content, at: time(entry.createdAt) });
     }
   }
-  const cards = view.decisions.flatMap(
-    (confirmation) => recordCardOf(confirmation) ?? [],
-  );
+  const run = view.kind === 'thread' ? (view.training?.run ?? null) : null;
+  const description = run === null ? null : descriptionOf(entries);
+  const context: EntryContext = {
+    results,
+    cards: view.decisions.flatMap(
+      (confirmation) => recordCardOf(confirmation) ?? [],
+    ),
+    cardCalls: new Set(
+      run === null
+        ? []
+        : [
+            ...(run.offer === null ? [] : [run.offer.callId]),
+            ...run.plans.map((plan) => plan.callId),
+          ],
+    ),
+    inheritedThrough:
+      view.kind === 'thread' ? (view.thread.forkedFrom?.throughSeq ?? 0) : 0,
+    descriptionSeq:
+      description !== null && 'seq' in description ? description.seq : null,
+  };
 
   // Anchor −1 places an item before every entry.
   const anchored = new Map<number, ThreadMessageLike[]>();
@@ -681,11 +870,31 @@ export function toFeed(
   }
 
   const messages: ThreadMessageLike[] = [...(anchored.get(-1) ?? [])];
+  // The trainer's cards wait for the end of its turn: its text, often in a later answer, explains them first.
+  let turnCards: ThreadMessageLike[] = [];
   entries.forEach((entry, index) => {
-    const message = entryMessage(view, entry, results, cards);
+    if (OPENS_TURN.has(entry.kind)) {
+      messages.push(...turnCards);
+      turnCards = [];
+    }
+    const message = entryMessage(view, entry, context);
     if (message !== null) messages.push(message);
+    if (
+      description !== null &&
+      'emptyAfter' in description &&
+      description.emptyAfter === entry.seq
+    )
+      messages.push({
+        id: 'test-run-description',
+        role: 'user',
+        createdAt: new Date(entry.createdAt),
+        content: '',
+        metadata: meta({ kind: 'user', record: null, testRun: true }),
+      });
+    if (run !== null) turnCards.push(...runParts(run, entry));
     messages.push(...(anchored.get(index) ?? []));
   });
+  messages.push(...turnCards);
   for (const entry of optimistic) {
     if (entry.place === 'feed') messages.push(optimisticMessage(entry));
   }

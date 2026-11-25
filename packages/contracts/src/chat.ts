@@ -11,12 +11,15 @@ import {
 import { DocumentRefSchema } from './notepad';
 import {
   AgentContentSchema,
+  ChipRecordSchema,
   DeepAgentContentSchema,
   IdSchema,
   RecordKindSchema,
   VersionSchema,
 } from './library';
+import { SessionTaskStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
+import { TestRunSummarySchema } from './training';
 
 /**
  * The chat API of the agent platform (design-chat.md, Contract Definitions): conversations, agents,
@@ -227,14 +230,6 @@ export const AnswerToolCallSchema = z.object({
 });
 export type AnswerToolCall = z.infer<typeof AnswerToolCallSchema>;
 
-/** The record chip of a message (custom-agents design-runtime.md, KD-4): shown next to its text. */
-export const ChipRecordSchema = z.object({
-  id: IdSchema,
-  kind: RecordKindSchema,
-  name: z.string().min(1),
-});
-export type ChipRecord = z.infer<typeof ChipRecordSchema>;
-
 /**
  * One entry of an agent's history (design-agents.md, HistoryEntry) as the agents' `history` returns it:
  * a `model_answer` carries its tool calls. A `task` carries a chip only at a conversation's root: its
@@ -435,13 +430,17 @@ export type RecordFocus = z.infer<typeof RecordFocusSchema>;
 /**
  * The training an agent of a training tree belongs to (self-learning design-training.md, «Беседа обучения и
  * беседы повторов»): the trained agent, the training — the id of the tree's root — and whether this is the
- * trainer's own conversation rather than a replay. `null` outside a training tree.
+ * trainer's own conversation rather than a replay. `null` outside a training tree. In a test run
+ * (`testRun`) `agentId` is `null` until the agent is created and after it is deleted.
  */
 export const ConversationTrainingSchema = z
   .object({
-    agentId: IdSchema,
+    agentId: IdSchema.nullable(),
     trainingId: IdSchema,
     isRoot: z.boolean(),
+    testRun: z.boolean(),
+    /** The test run's summary in its own conversation's view (create-and-test design-trainer-dialog.md, KD-9); otherwise `null`. */
+    run: TestRunSummarySchema.nullable(),
   })
   .nullable();
 export type ConversationTraining = z.infer<typeof ConversationTrainingSchema>;
@@ -521,17 +520,6 @@ export const DeepAgentRunViewSchema = z.object({
   ),
 });
 export type DeepAgentRunView = z.infer<typeof DeepAgentRunViewSchema>;
-
-/**
- * Status of a task of a session's task list (deep-agents design-task-list.md, Data Model); not the runtime's
- * `TaskStatusSchema`. A deleted task leaves the list, so `deleted` is no stored status.
- */
-export const SessionTaskStatusSchema = z.enum([
-  'pending',
-  'in_progress',
-  'completed',
-]);
-export type SessionTaskStatus = z.infer<typeof SessionTaskStatusSchema>;
 
 /**
  * One task of a session's list (Contract «`GET /api/agents/:agentId/tasks`»): its number in the session counts

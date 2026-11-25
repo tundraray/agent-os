@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useFormatter, useTranslations } from 'next-intl';
 import { CAPTION, FormError } from '@/components/admin/admin-form';
 import { TrainingStatusLabel } from '@/components/agents/agent-status';
+import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
 import { Button } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
@@ -13,7 +14,7 @@ import { describeApiError } from '@/lib/api/api-request';
 import { libraryApi } from '@/lib/library/library-api';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { logger } from '@/lib/logger';
-import { threadPath, trainingPath } from '@/lib/shell-route';
+import { threadPath } from '@/lib/shell-route';
 import { cn } from 'cn';
 
 const LINK =
@@ -68,6 +69,10 @@ export function TrainingBlock({
     'library',
   );
   const { starting, startError, train } = useStartTraining(id, state.reload);
+  const { workspace } = useShellServices();
+  // The training's conversation opens with its tab shown (KD-7); only its starter can open it.
+  const showRun = (): void =>
+    workspace.show({ tab: 'run', focusHeading: false });
 
   if (state.data === undefined || !state.data.canTrain) return null;
   const { running, lastFinished, capUsd } = state.data;
@@ -108,20 +113,15 @@ export function TrainingBlock({
                 />
                 {`· ${t('training.spent', { spent: usd(running.spentUsd), cap: usd(running.capUsd) })}`}
               </p>
-              <ShellLink
-                href={
-                  running.startedByMe
-                    ? threadPath(running.id)
-                    : trainingPath(id, running.id)
-                }
-                className={LINK}
-              >
-                {t(
-                  running.startedByMe
-                    ? 'training.openConversation'
-                    : 'training.watch',
-                )}
-              </ShellLink>
+              {running.startedByMe && (
+                <ShellLink
+                  href={threadPath(running.id)}
+                  onNavigate={showRun}
+                  className={LINK}
+                >
+                  {t('training.openConversation')}
+                </ShellLink>
+              )}
             </>
           )}
           {startError !== null && <FormError>{startError}</FormError>}
@@ -144,7 +144,8 @@ export function TrainingBlock({
                   )}
               </p>
               <ShellLink
-                href={trainingPath(id, lastFinished.id)}
+                href={threadPath(lastFinished.id)}
+                onNavigate={showRun}
                 className={LINK}
               >
                 {t('training.openResult')}

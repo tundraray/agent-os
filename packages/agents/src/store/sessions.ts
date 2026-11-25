@@ -1,4 +1,5 @@
 import {
+  CHAT_TASK_TYPE,
   type ChipRecord,
   RecordKindSchema,
   type RunOrigin,
@@ -37,6 +38,8 @@ export const AnswerFieldSchema = z.strictObject({
  */
 export const AgentTaskInputSchema = z.object({
   answerFields: z.array(AnswerFieldSchema).optional(),
+  /** A trainer task that runs a test run, not a training (design-test-run.md, KD-1). */
+  testRun: z.literal(true).optional(),
 });
 export type AgentTaskInput = z.infer<typeof AgentTaskInputSchema>;
 
@@ -98,6 +101,16 @@ export interface RootSession {
   readonly createdAt: Date;
   /** The last change, in milliseconds: the key of the owner's list. */
   readonly updatedAt: Date;
+  /** The root is a chat, which a fork may copy (create-and-test design-fork.md, KD-4). */
+  readonly forkable: boolean;
+  /** The source of a fork and the last inherited entry; `title` is `null` for a deleted source. */
+  readonly forkedFrom: {
+    readonly threadId: string;
+    readonly title: string | null;
+    readonly throughSeq: number;
+  } | null;
+  /** The live forks of this conversation. */
+  readonly forkCount: number;
 }
 
 /** Reads a root's row as a root session; a row without a title or a list time is not a root's. */
@@ -105,7 +118,23 @@ export function toRootSession(row: RootConversationRow): RootSession {
   if (row.title === null || row.updatedAt === null) {
     throw new Error(`Session ${row.rootId} is not a root session`);
   }
-  return { ...row, title: row.title, updatedAt: row.updatedAt };
+  return {
+    rootId: row.rootId,
+    ownerId: row.ownerId,
+    title: row.title,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    forkable: row.type === CHAT_TASK_TYPE,
+    forkedFrom:
+      row.forkedFromId === null || row.forkedThroughSeq === null
+        ? null
+        : {
+            threadId: row.forkedFromId,
+            title: row.forkedFromTitle,
+            throughSeq: row.forkedThroughSeq,
+          },
+    forkCount: row.forkCount,
+  };
 }
 
 /** The task a session is written for: its owner and parent are copied into the row. */

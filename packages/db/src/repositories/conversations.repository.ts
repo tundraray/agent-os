@@ -69,6 +69,14 @@ export interface RootConversationRow {
   readonly title: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
+  /** The type of the root's task. */
+  readonly type: string;
+  readonly forkedFromId: string | null;
+  readonly forkedThroughSeq: number | null;
+  /** The title of the fork's source; `null` when it was deleted or this is no fork. */
+  readonly forkedFromTitle: string | null;
+  /** The live forks of this conversation. */
+  readonly forkCount: number;
 }
 
 /** The position of a root session in the owner's list: the cursor of the next page. */
@@ -83,6 +91,8 @@ export interface SessionPatch {
   readonly interrupted?: boolean;
   readonly closed?: boolean;
   readonly lastInputTokens?: number | null;
+  readonly forkedFromId?: string;
+  readonly forkedThroughSeq?: number;
 }
 
 /** Seq of the `task` entry: the first own entry of every session. */
@@ -129,12 +139,23 @@ const CONVERSATION_COLUMNS = {
 
 const { completed, failed } = TaskStatusSchema.enum;
 
+/** A fork's source and its task, joined only while the source is not deleted. */
+const source = alias(conversations, 'source');
+const sourceTask = alias(runtimeTasks, 'source_task');
+
 const ROOT_COLUMNS = {
   rootId: conversations.id,
   ownerId: conversations.ownerId,
   title: conversations.title,
   createdAt: conversations.createdAt,
   updatedAt: conversations.updatedAt,
+  type: runtimeTasks.type,
+  forkedFromId: conversations.forkedFromId,
+  forkedThroughSeq: conversations.forkedThroughSeq,
+  forkedFromTitle: source.title,
+  forkCount: sql<number>`(select count(*)::int from ${conversations} fork
+    join ${runtimeTasks} fork_task on fork_task.task_id = fork.id
+    where fork.forked_from_id = ${conversations.id} and fork_task.deleted_at is null)`,
 };
 
 /**
@@ -255,12 +276,24 @@ export class ConversationsRepository {
     rootId: string,
     ownerId: string,
   ): Promise<RootConversationRow | undefined> {
-    const [row] = await this.db.client
-      .select(ROOT_COLUMNS)
-      .from(conversations)
-      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, conversations.id))
-      .where(and(ownedRoot(rootId, ownerId), isLive));
+    const [row] = await this.selectRoots().where(
+      and(ownedRoot(rootId, ownerId), isLive),
+    );
     return row;
+  }
+
+  /** The owner's live forks of the conversation, newest first. */
+  forks(sourceId: string, ownerId: string): Promise<RootConversationRow[]> {
+    return this.selectRoots()
+      .where(
+        and(
+          eq(conversations.forkedFromId, sourceId),
+          eq(conversations.ownerId, ownerId),
+          isRoot,
+          isLive,
+        ),
+      )
+      .orderBy(desc(conversations.createdAt), desc(conversations.id));
   }
 
   /** The owner of a live root session, whoever it is; `undefined` when `rootId` names no live root session. */
@@ -284,10 +317,7 @@ export class ConversationsRepository {
   ): Promise<RootConversationRow[]> {
     const owned = and(eq(conversations.ownerId, ownerId), isRoot, isLive);
     const { after } = page;
-    const query = this.db.client
-      .select(ROOT_COLUMNS)
-      .from(conversations)
-      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, conversations.id))
+    const query = this.selectRoots()
       .where(
         after === undefined
           ? owned
@@ -308,18 +338,18 @@ export class ConversationsRepository {
       .where(ownedLiveRoot(rootId, ownerId));
   }
 
-  /** Sets the owner's title and moves the root session up; `undefined` for a missing or another owner's one. */
+  /** Sets the owner's title and moves the root session up; `false` for a missing or another owner's one. */
   async renameRoot(
     rootId: string,
     ownerId: string,
     title: string,
-  ): Promise<RootConversationRow | undefined> {
-    const [row] = await this.db.client
+  ): Promise<boolean> {
+    const rows = await this.db.client
       .update(conversations)
       .set({ title, updatedAt: NOW_MS })
       .where(ownedLiveRoot(rootId, ownerId))
-      .returning(ROOT_COLUMNS);
-    return row;
+      .returning({ id: conversations.id });
+    return rows.length > 0;
   }
 
   /** Writes a generated title only into an empty one; `true` when it was written. */
@@ -407,6 +437,22 @@ export class ConversationsRepository {
         where code_call.conversation_id = tree.task_id
       ) called on called.server is not null`);
     return result.rows;
+  }
+
+  /** Root rows with their task and, for a fork, its live source. */
+  private selectRoots() {
+    return this.db.client
+      .select(ROOT_COLUMNS)
+      .from(conversations)
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, conversations.id))
+      .leftJoin(
+        sourceTask,
+        and(
+          eq(sourceTask.taskId, conversations.forkedFromId),
+          isNull(sourceTask.deletedAt),
+        ),
+      )
+      .leftJoin(source, eq(source.id, sourceTask.taskId));
   }
 
   /** Conversations meeting the condition, each joined to its version, the version's agent and the agent's owner. */

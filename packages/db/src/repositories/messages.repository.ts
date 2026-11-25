@@ -5,6 +5,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -72,6 +73,34 @@ export class MessagesRepository {
       .from(messages)
       .where(eq(messages.conversationId, taskId));
     return last?.seq ?? 0;
+  }
+
+  /**
+   * Copies the entries `fromSeq` … `throughSeq` of one session into another unchanged — the same numbers,
+   * kinds, content, calls and times; returns how many were copied.
+   */
+  async copy(
+    fromId: string,
+    toId: string,
+    fromSeq: number,
+    throughSeq: number,
+  ): Promise<number> {
+    const copied = await this.db.client.insert(messages).select(
+      this.db.client
+        .select({
+          ...getTableColumns(messages),
+          conversationId: sql<string>`${toId}::uuid`.as('conversation_id'),
+        })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.conversationId, fromId),
+            gte(messages.seq, fromSeq),
+            lte(messages.seq, throughSeq),
+          ),
+        ),
+    );
+    return copied.rowCount ?? 0;
   }
 
   /** Inserts the entries and returns them as read back, in no particular order. */

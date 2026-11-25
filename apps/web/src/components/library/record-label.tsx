@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Bot, Workflow, X } from 'lucide-react';
+import { Bot, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
 import type {
@@ -163,7 +163,6 @@ function RecordChip({
   className?: string;
 }) {
   const t = useTranslations('library');
-  const KindIcon = data.kind === 'agent' ? Bot : Workflow;
   const hint = [
     data.company ? null : data.mine ? t('label.mine') : data.author,
     data.audience,
@@ -171,33 +170,64 @@ function RecordChip({
     .filter(Boolean)
     .join(' · ');
   return (
+    <Chip
+      icon={RECORD_KIND_ICON[data.kind]}
+      name={data.name}
+      title={hint === '' ? data.name : `${data.name} · ${hint}`}
+      onRemove={onRemove}
+      className={className}
+    />
+  );
+}
+
+/** «Чип», and «Чип действия» with the action's icon and name and no hint; sent — without «✕» (record-label.md). */
+export function Chip({
+  icon: Icon,
+  name,
+  title,
+  onRemove,
+  className,
+}: {
+  icon: LucideIcon;
+  name: string;
+  title?: string;
+  onRemove?: () => void;
+  className?: string;
+}) {
+  const t = useTranslations('library');
+  return (
     <span
       role="group"
-      aria-label={data.name}
-      title={hint === '' ? data.name : `${data.name} · ${hint}`}
+      aria-label={name}
+      title={title}
       className={cn(
-        'bg-muted animate-in fade-in-0 inline-flex h-7 max-w-full items-center gap-1.5 rounded-full py-1 pr-1 pl-2.5 duration-150 motion-reduce:animate-none',
+        'bg-muted animate-in fade-in-0 inline-flex h-7 max-w-full items-center gap-1.5 rounded-full py-1 pl-2.5 duration-150 motion-reduce:animate-none',
+        onRemove === undefined ? 'pr-2.5' : 'pr-1',
         className,
       )}
     >
-      <KindIcon
-        aria-hidden
-        className="text-muted-foreground size-3.5 shrink-0"
-      />
+      <Icon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
       <span className="text-foreground min-w-0 truncate text-sm leading-5 font-medium">
-        {data.name}
+        {name}
       </span>
-      <button
-        type="button"
-        aria-label={t('label.remove', { name: data.name })}
-        onClick={onRemove}
-        className="text-muted-foreground hover:bg-accent focus-visible:bg-accent focus-visible:ring-ring inline-flex size-5 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2"
-      >
-        <X aria-hidden className="size-3.5" />
-      </button>
+      {onRemove !== undefined && (
+        <button
+          type="button"
+          aria-label={t('label.remove', { name })}
+          onClick={onRemove}
+          className="text-muted-foreground hover:bg-accent focus-visible:bg-accent focus-visible:ring-ring inline-flex size-5 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2"
+        >
+          <X aria-hidden className="size-3.5" />
+        </button>
+      )}
     </span>
   );
 }
+
+export const RECORD_KIND_ICON: Record<RecordKind, LucideIcon> = {
+  agent: Bot,
+  deep_agent: Workflow,
+};
 
 /** What a screen reader hears after the name, as one phrase (MC-17). */
 function spokenRest(

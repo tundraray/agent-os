@@ -21,6 +21,8 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   conversationWithTurns,
+  fixtureId,
+  recordSummary,
   threadList,
   threadSummary,
 } from '@/test/fixtures';
@@ -384,5 +386,31 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     await waitFor(() => expect(composer()).toHaveValue(TEXT));
     expect(screen.getByText(REFUSAL)).toBeVisible();
     expect(screen.queryByText('Беседа удалена')).toBeNull();
+  });
+
+  // Composer «+»: an agent chosen from the menu becomes the chip of this conversation's composer, without leaving it.
+  // Fails when: the menu does not offer the library's usable records, or the choice does not reach the composer's chip.
+  it('an agent chosen from the composer «+» menu shows as the chip of the new chat', async () => {
+    // Arrange
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+      http.get(`${API}/api/library`, () =>
+        HttpResponse.json([recordSummary({ id: fixtureId(10) })]),
+      ),
+    );
+    const user = userEvent.setup();
+    const { router } = renderWithRuntime({ pathname: '/', pointer: 'fine' });
+
+    // Act
+    await user.click(await screen.findByRole('button', { name: 'Добавить' }));
+    await user.click(
+      await screen.findByRole('menuitem', { name: /Разбор логов/ }),
+    );
+
+    // Assert
+    expect(
+      await screen.findByRole('group', { name: 'Разбор логов' }),
+    ).toBeVisible();
+    expect(router.push).not.toHaveBeenCalled();
   });
 });

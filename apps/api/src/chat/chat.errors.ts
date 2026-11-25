@@ -1,10 +1,15 @@
 import { STATUS_CODES } from 'node:http';
 import { HttpException, InternalServerErrorException } from '@nestjs/common';
 import { AgentsError, type StartRefusalDetail } from '@agent-os/agents';
-import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
+import type {
+  ForkRefusalReason,
+  StartRefusedError,
+  ThreadsErrorCode,
+} from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
 import { apiError } from '../common/api-error';
 import type { RouteCall, RouteStyle } from '../common/logged-route';
+import { trainingError } from '../training/training.errors';
 
 /**
  * The not-found codes a route answers with; a runtime `TASK_NOT_FOUND` and an agents `AGENT_NOT_FOUND`
@@ -34,6 +39,7 @@ const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
   NOT_FINISHED: { status: 409, message: 'Agent is not finished' },
   PARENT_FINISHED: { status: 409, message: 'Parent agent is finished' },
   START_REFUSED: { status: 409, message: 'Start refused' },
+  FORK_REFUSED: { status: 409, message: 'Fork refused' },
 };
 
 /** The HTTP answer of one API error code, body `ApiErrorSchema`. */
@@ -59,6 +65,12 @@ function startRefused(refusal: StartRefusalDetail): HttpException {
     model: refusal.model,
   } satisfies StartRefusedError;
   return new HttpException(body, status);
+}
+
+/** 409 FORK_REFUSED (create-and-test design-fork.md, KD-4): the conversation cannot be forked now, and why. */
+export function forkRefused(reason: ForkRefusalReason): HttpException {
+  const { status, message } = ANSWERS.FORK_REFUSED;
+  return apiError(status, 'FORK_REFUSED', message, reason);
 }
 
 /** 404 THREAD_NOT_FOUND: missing, foreign and deleted threads stay indistinguishable to the client. */
@@ -111,6 +123,13 @@ function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   ) {
     return startRefused(error.refusal);
   }
+  // 409 with the phase's reason (create-and-test design-trainer-dialog.md, «Сообщения»).
+  if (
+    error instanceof AgentsError &&
+    error.code === 'TEST_RUN_NOT_ACCEPTING' &&
+    error.closedReason !== null
+  )
+    return trainingError('TEST_RUN_NOT_ACCEPTING', error.closedReason);
   const code = codeOf(error, notFound);
   return code === undefined
     ? new InternalServerErrorException()

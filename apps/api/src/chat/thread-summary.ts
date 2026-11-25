@@ -11,12 +11,22 @@ export function decodeRowCursor(cursor: string): ThreadCursor {
   return position;
 }
 
-/** A root session as the API shows it: its id is the conversation's, an empty title is `null` («Новая беседа»). */
+/**
+ * A root session as the API shows it: its id is the conversation's, an empty title is `null` («Новая беседа»),
+ * and so is the title of a deleted or untitled fork source.
+ */
 export function toThreadSummary(root: RootSession): ThreadSummary {
+  const { forkedFrom } = root;
   return {
     id: root.rootId,
     title: root.title === '' ? null : root.title,
     createdAt: root.createdAt.toISOString(),
     updatedAt: root.updatedAt.toISOString(),
+    forkable: root.forkable,
+    forkedFrom:
+      forkedFrom === null
+        ? null
+        : { ...forkedFrom, title: forkedFrom.title || null },
+    forkCount: root.forkCount,
   };
 }

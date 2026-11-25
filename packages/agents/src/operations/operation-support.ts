@@ -121,12 +121,14 @@ export interface AgentCreation {
     readonly depth: number;
   };
   readonly start: SessionStart;
-  /** What the creator writes in the same transaction, after the agent's session. */
+  /** The task's input; empty when absent. */
+  readonly input?: AgentTaskInput;
+  /** What the creator writes in the same transaction, after the agent's session; the object reads it in. */
   readonly after?: (agentId: string) => Promise<void>;
 }
 
 /**
- * Creates an agent outside a step: its task with an empty input, its session written from the start, its
+ * Creates an agent outside a step: its task with its input, its session written from the start, its
  * object and what `after` writes commit together, so whoever sees the task sees the session (KD-8); the object
  * goes to the runtime once the transaction resolved, and the agent's first step runs on it. With an
  * `exclusiveKey` another unfinished task holds, nothing is written and the answer is `null`.
@@ -141,9 +143,8 @@ export function createAgent(
 ): Promise<{ agentId: string } | null>;
 export async function createAgent(
   deps: AgentCreationDeps,
-  { task, placeOf, start, after }: AgentCreation,
+  { task, placeOf, start, after, input = {} }: AgentCreation,
 ): Promise<{ agentId: string } | null> {
-  const input: AgentTaskInput = {};
   const created = await deps.db.transaction(async () => {
     const taskId = await deps.tasks.create({ ...task, input });
     if (taskId === null) return null;
@@ -159,6 +160,8 @@ export async function createAgent(
       start,
     );
     await after?.(taskId);
+    // The object read its rows before `after`; what `after` wrote (a fork's copy) reaches it here.
+    await agent.absorb();
     return { agentId: taskId, agent };
   });
   if (created === null) return null;

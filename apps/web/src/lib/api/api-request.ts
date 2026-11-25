@@ -1,5 +1,9 @@
 import { z, type ZodType } from 'zod';
-import { ApiErrorSchema, IdentityErrorCode } from '@agent-os/contracts';
+import {
+  ApiErrorSchema,
+  IdentityErrorCode,
+  TestRunRunningErrorSchema,
+} from '@agent-os/contracts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type ApiRequestErrorKind =
@@ -18,6 +22,8 @@ type ApiRequestErrorInit = {
   bodyMessage?: string;
   /** `model` of the error body when it has one: the refused model of START_REFUSED or MODEL_DEFAULT_INVALID. */
   model?: string | null;
+  /** The running test run of a 409 `TEST_RUN_RUNNING`. */
+  testRun?: { id: string; title: string };
 };
 
 export class ApiRequestError extends Error {
@@ -29,6 +35,7 @@ export class ApiRequestError extends Error {
   readonly code?: string;
   readonly reason?: string;
   readonly model?: string | null;
+  readonly testRun?: { id: string; title: string };
 
   constructor({
     kind,
@@ -39,6 +46,7 @@ export class ApiRequestError extends Error {
     reason,
     bodyMessage,
     model,
+    testRun,
   }: ApiRequestErrorInit) {
     super(
       bodyMessage ??
@@ -52,6 +60,7 @@ export class ApiRequestError extends Error {
     this.code = code;
     this.reason = reason;
     this.model = model;
+    this.testRun = testRun;
   }
 }
 
@@ -184,15 +193,12 @@ export async function apiRequest<T>({
 const ErrorModelSchema = z.object({ model: z.string().nullable() });
 
 /**
- * Code, reason and message of an ApiError body, and its `model` when the body has one; a body that is
- * not JSON or not an ApiError has none.
+ * Code, reason and message of an ApiError body, its `model` and running test run when the body has them;
+ * a body that is not JSON or not an ApiError has none.
  */
-async function errorDetailsOf(response: Response): Promise<{
-  code?: string;
-  reason?: string;
-  bodyMessage?: string;
-  model?: string | null;
-}> {
+async function errorDetailsOf(
+  response: Response,
+): Promise<Omit<ApiRequestErrorInit, 'kind' | 'method' | 'path' | 'status'>> {
   let data: unknown;
   try {
     data = await response.json();
@@ -203,10 +209,19 @@ async function errorDetailsOf(response: Response): Promise<{
   if (!result.success) return {};
   const { errorCode, reason, message } = result.data;
   const model = ErrorModelSchema.safeParse(data);
+  const running = TestRunRunningErrorSchema.safeParse(data);
   return {
     code: errorCode,
     reason,
     bodyMessage: Array.isArray(message) ? message.join('; ') : message,
     ...(model.success ? { model: model.data.model } : {}),
+    ...(running.success
+      ? {
+          testRun: {
+            id: running.data.testRunId,
+            title: running.data.testRunTitle,
+          },
+        }
+      : {}),
   };
 }

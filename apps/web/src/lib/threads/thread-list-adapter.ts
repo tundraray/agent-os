@@ -26,11 +26,17 @@ export type ThreadListAdapterDeps = {
   feeds: { forget: (remoteId: string) => void };
 };
 
+const customOf = (thread: ThreadSummary) => ({
+  forkable: thread.forkable,
+  forked: thread.forkedFrom !== null,
+});
+
 const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
   status: 'regular',
   remoteId: thread.id,
   title: thread.title ?? undefined,
   lastMessageAt: new Date(thread.updatedAt),
+  custom: customOf(thread),
 });
 
 export type ThreadListAdapter = RemoteThreadListAdapter & {
@@ -39,6 +45,8 @@ export type ThreadListAdapter = RemoteThreadListAdapter & {
    * cleanup the employee did not ask for — no toast, a failure is only logged.
    */
   markEmpty: (remoteId: string) => void;
+  /** The `custom` of a thread created in this tab: the library keeps only the remoteId of `initialize()`. */
+  createdCustom: (remoteId: string) => ReturnType<typeof customOf> | undefined;
 };
 
 export function createThreadListAdapter({
@@ -48,9 +56,11 @@ export function createThreadListAdapter({
   feeds,
 }: ThreadListAdapterDeps): ThreadListAdapter {
   const empty = new Set<string>();
+  const created = new Map<string, ReturnType<typeof customOf>>();
 
   return {
     markEmpty: (remoteId) => void empty.add(remoteId),
+    createdCustom: (remoteId) => created.get(remoteId),
     async list(params) {
       const isNextPage = params?.after !== undefined;
       try {
@@ -74,6 +84,7 @@ export function createThreadListAdapter({
       // A thread created in this tab has no stored history to load: mark it ready so the
       // main view never treats it as a route thread still waiting for history.
       status.getState().setHistory(thread.id, 'ready');
+      created.set(thread.id, customOf(thread));
       return { remoteId: thread.id };
     },
     async fetch(threadId) {
