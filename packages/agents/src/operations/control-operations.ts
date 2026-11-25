@@ -100,15 +100,27 @@ export class ControlOperations {
     this.logged = createLogged(this.logger);
   }
 
+  /**
+   * Puts the employee's message in the agent's queue; a schedule's message carries its mark (schedules KD-5).
+   * Inside a transaction the caller opened the message joins it (the queue's `withTxRetry` catches nothing
+   * there), so the caller's other writes and the message commit together (KD-2). `seq` is the message's place
+   * in the queue.
+   */
   send({
     agentId,
     ownerId,
     text,
     record,
-  }: SendRequest): Promise<{ messageId: string }> {
+    schedule,
+  }: SendRequest): Promise<{ messageId: string; seq: number }> {
     return this.logged(
       'send',
-      { agentId, ownerId, recordId: record?.id ?? null },
+      {
+        agentId,
+        ownerId,
+        recordId: record?.id ?? null,
+        scheduleId: schedule?.scheduleId ?? null,
+      },
       async () => {
         const target = await agentTask(this.tasks, agentId, ownerId);
         // A training tree is not resumed (self-learning design-training.md KD-3, place 5), except a test
@@ -135,7 +147,7 @@ export class ControlOperations {
           target.status === stopped
             ? await parentOf(this.tasks, target, ownerId)
             : null;
-        const { messageId } = await asAgent(
+        const { messageId, seq } = await asAgent(
           this.inbox.enqueue({
             recipientId: agentId,
             ownerId,
@@ -143,13 +155,14 @@ export class ControlOperations {
             payload: {
               ...messagePayload(text, target, parent),
               ...(record === undefined ? {} : { record }),
+              ...(schedule === undefined ? {} : { schedule }),
             },
             revive: true,
           }),
         );
-        return { messageId };
+        return { messageId, seq };
       },
-      ({ messageId }) => ({ messageId }),
+      ({ messageId, seq }) => ({ messageId, seq }),
     );
   }
 

@@ -67,13 +67,13 @@ flowchart LR
 | `src/library/` | `LibraryModule`, `LibraryApiModule` | агенты каталога, их версии и аудитория; инструменты записей главного чата |
 | `src/settings/` | `SettingsModule` | таблица `settings`: `SettingsService` — единственный писатель ключей настроек ([keyed-settings.md](../patterns/keyed-settings.md)) |
 | `src/agents/` | `AgentsModule`, `AgentsPortsModule` | `AgentsModule` импортирует модуль пакета `agents` с настройками из окружения и держит контроллеры реестра MCP, провайдеров моделей и больших результатов; `AgentsPortsModule` привязывает порты `AccessGate`, `AccessAudit`, `RecordLibrary` и приёмник частей текста |
-| `src/memory/` | `MemoryApiModule` | память глубоких агентов: экран памяти агента, «Моя память» и ключ `self_learning_settings` |
+| `src/memory/` | `MemoryApiModule` | память глубоких агентов: экран памяти агента, «Моя память», история записи, возврат версии и стирание записи с историей ([design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md)); ключ `self_learning_settings` |
 | `src/training/` | `TrainingApiModule` | маршруты обучения `/api/library/:id/training`: состояние для карточки, старт, результат, активация; одно правило права `canTrain` (`training-rules.ts`) — автор с правом обучать своих или владелец права обучать любых у агента панели |
-| `src/chat/` | `ChatModule` | маршруты `/api/threads`, `/api/agents`, `/api/decisions`, `/api/events`, затраты, заголовок беседы |
-| `src/schedules/` | `SchedulesModule` | маршруты `/api/schedules` и проход расписаний, зарегистрированный фоновым проходом runtime; `ChatModule` зовёт его при удалении беседы |
+| `src/chat/` | `ChatModule` | маршруты `/api/threads`, `/api/agents`, `/api/decisions`, `/api/events`, затраты, заголовок беседы; поиск по беседам `GET /api/search` — `SearchController` и `ConversationSearchService` ([design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md)) |
+| `src/schedules/` | `SchedulesModule` | маршруты `/api/schedules` и проход расписаний, зарегистрированный фоновым проходом runtime; чистые правила сроков, решения срока и статуса запуска; `ChatModule` зовёт его при удалении беседы ([design-schedules.md](../../features/schedules-search-memory/design-schedules.md)) |
 | `src/runtime/` | `ApiRuntimeModule` | настройки runtime из окружения и проверка миграций при старте |
 | `src/logging/` | `LoggingModule` | логгер приложения под токеном `LOGGER`; логгер Nest пишет через него |
-| `src/common/` | — | общее для HTTP: тело ошибки API, проверка тела схемой zod, лог маршрута |
+| `src/common/` | — | общее для HTTP: тело ошибки API, проверка тела схемой zod, лог маршрута, проверка uuid, непрозрачный курсор страниц (`opaque-cursor.ts`) |
 | `src/cli/` | — | команды: миграции, засев доступа и MCP, супер-админ |
 
 Модуль, который реализует порт для `AgentsModule` и при этом зовёт его сервисы из своих маршрутов, делится на два — [port-module-split.md](../patterns/port-module-split.md).

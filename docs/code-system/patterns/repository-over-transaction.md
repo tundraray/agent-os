@@ -90,3 +90,5 @@ flowchart LR
 - [design-agents.md](../../features/data-model/design-agents.md) — `AgentsRepository`: версия и указатель в одной точке сохранения (KD-2)
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — `DocumentsRepository`: строки документов в транзакции коммита шага, запись только поверх прочитанного текста (KD-1, Data Model)
 - [design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md) — `ConversationSearchRepository`: одно чтение по индексам-выражениям, выражение индекса и запроса определено один раз (KD-1, Data Model)
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — `SchedulesRepository`; транзакцию захвата срока держит служба: сдвиг расписания, решение и строка истории (KD-1, KD-2)
+- [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — `MemoriesRepository` с `memory_versions`; служба `MemoryRecords` правит запись в транзакции вызывающего — коммите шага или сервиса памяти (KD-3)

@@ -5,6 +5,16 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false,
+    // The libraries of target ES2023 plus `Temporal`, which Node 26 has built in: the due-time rule of schedules.
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable",
+      "DOM.AsyncIterable",
+      "ScriptHost",
+      "WebWorker.ImportScripts",
+      "ESNext.Temporal"
+    ],
     // Read by the rspack builder of the Nest CLI: the bundle gets its source maps.
     "sourceMap": true
   }

@@ -8,6 +8,7 @@ import { McpServersRepository } from './mcp-servers.repository';
 import { MessagesRepository } from './messages.repository';
 import { ModelProvidersRepository } from './model-providers.repository';
 import { ConversationTasksRepository } from './conversation-tasks.repository';
+import { ConversationSearchRepository } from './conversation-search.repository';
 import { ConversationsRepository } from './conversations.repository';
 import { ToolResultsRepository } from './tool-results.repository';
 import { AuditEventsRepository } from './audit-events.repository';
@@ -19,6 +20,7 @@ import { AgentsRepository } from './agents.repository';
 import { RuntimeInboxRepository } from './runtime-inbox.repository';
 import { RuntimeModelCallsRepository } from './runtime-model-calls.repository';
 import { RuntimeTasksRepository } from './runtime-tasks.repository';
+import { SchedulesRepository } from './schedules.repository';
 import { SettingsRepository } from './settings.repository';
 import { TrainingsRepository } from './trainings.repository';
 
@@ -32,6 +34,7 @@ export * from './mcp-servers.repository';
 export * from './messages.repository';
 export * from './model-providers.repository';
 export * from './conversation-tasks.repository';
+export * from './conversation-search.repository';
 export * from './conversations.repository';
 export * from './tool-results.repository';
 export * from './audit-events.repository';
@@ -43,6 +46,7 @@ export * from './agents.repository';
 export * from './runtime-inbox.repository';
 export * from './runtime-model-calls.repository';
 export * from './runtime-tasks.repository';
+export * from './schedules.repository';
 export * from './settings.repository';
 export * from './trainings.repository';
 
@@ -58,6 +62,7 @@ export const REPOSITORIES = [
   MessagesRepository,
   ModelProvidersRepository,
   ConversationTasksRepository,
+  ConversationSearchRepository,
   ConversationsRepository,
   ToolResultsRepository,
   AuditEventsRepository,
@@ -69,6 +74,7 @@ export const REPOSITORIES = [
   RuntimeInboxRepository,
   RuntimeModelCallsRepository,
   RuntimeTasksRepository,
+  SchedulesRepository,
   SettingsRepository,
   TrainingsRepository,
 ];

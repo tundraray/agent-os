@@ -264,16 +264,39 @@
       "changed": "Changed"
     },
     "delete": "Delete",
+    "history": "History",
+    "deletedBadge": "Deleted",
+    "deletedText": "The agent deleted this record. You can bring it back from its history.",
     "loadFailed": "Couldn't load the memory",
     "empty": {
       "title": "The agent hasn't remembered anything yet",
       "text": "Records appear when the agent decides to remember something."
     },
     "deleteDialog": {
-      "title": "Delete the record?",
-      "body": "“{description}”. Agents won't see it anymore. This can't be undone."
+      "title": "Delete the record with its history?",
+      "body": "{description}. The record and all its versions will be gone, and agents won't see them anymore. This can't be undone."
     },
-    "deleted": "Record deleted"
+    "deleted": "Record deleted",
+    "historyDialog": {
+      "title": "Record history",
+      "kind": {
+        "created": "Created",
+        "changed": "Changed",
+        "deleted": "Deleted",
+        "reverted": "Restored"
+      },
+      "byAgent": "agent",
+      "byYou": "you",
+      "current": "Current",
+      "revert": "Restore this version",
+      "revertLabel": "Restore the version of {at}",
+      "reverted": "Version of {at} restored",
+      "conflict": "The record changed while its history was open. The new version is on top; if you still need the earlier one, restore it again.",
+      "loadFailed": "Couldn't load the history",
+      "retry": "Retry",
+      "revertFailed": "Couldn't restore: <server>{text}</server>",
+      "revertNoConnection": "Couldn't restore: no connection to the server"
+    }
   },
   "training": {
     "openConversation": "Open training conversation",

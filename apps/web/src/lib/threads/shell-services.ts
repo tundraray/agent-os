@@ -32,6 +32,7 @@ import {
   type OpenEventSource,
 } from '@/lib/live/live-store';
 import { logger } from '@/lib/logger';
+import { createSearchStore, type SearchStore } from '@/lib/search/search-store';
 import {
   createWorkspaceStore,
   type WorkspaceStore,
@@ -71,6 +72,8 @@ export type ShellServices = {
   readonly agentList: AgentListStore;
   /** Live data of library records (KD-2); created on first read, so a visit without records reads nothing. */
   readonly libraryIndex: LibraryIndex;
+  /** The conversation search (conversation-search KD-7); created on first read, outlives navigation and the drawer. */
+  readonly search: SearchStore;
   /** Chip and template text carried to a conversation's composer (KD-5). */
   composerSeed: ComposerSeed;
   /** The editor page of a record just created (KD-6). */
@@ -202,6 +205,7 @@ export function createShellServices({
   });
   let agentList: AgentListStore | undefined;
   let libraryIndex: LibraryIndex | undefined;
+  let search: SearchStore | undefined;
 
   return {
     apiClient,
@@ -217,6 +221,10 @@ export function createShellServices({
     get libraryIndex() {
       libraryIndex ??= createLibraryIndex({ read: libraryApi.list, logger });
       return libraryIndex;
+    },
+    get search() {
+      search ??= createSearchStore({ api: apiClient, logger });
+      return search;
     },
     composerSeed: createComposerSeed(),
     createdHandoff: createCreatedHandoff(),

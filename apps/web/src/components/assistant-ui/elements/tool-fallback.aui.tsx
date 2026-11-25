@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { memo, useState, type ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { useFormatter, useMessages, useTranslations } from 'next-intl';
 import {
   BanIcon,
@@ -75,6 +75,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from './collapsible-root';
+import {
+  SEARCH_MARK_CLASS,
+  useCallMarkProps,
+  useOpenOnMark,
+} from './search-target';
 
 /** The outcomes of tool-call.md: the finished ones and two of an open call. */
 type CallOutcome = ToolOutcome | 'running' | 'awaiting_confirmation';
@@ -414,13 +419,21 @@ function parsedResult(result: unknown): unknown {
  * not taken here — DecisionCard does that (KD-5).
  */
 const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+  toolCallId,
   toolName,
   args,
   argsText,
   result,
   artifact,
 }) => {
-  const props = { toolName, args, argsText, result, artifact };
+  const props = {
+    callId: toolCallId,
+    toolName,
+    args,
+    argsText,
+    result,
+    artifact,
+  };
   return isRecordTool(toolName) ? (
     <RecordToolBlock {...props} toolName={toolName} />
   ) : (
@@ -429,6 +442,8 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 };
 
 type ToolBlockProps = {
+  /** The call's id: an opened search match finds the block by it (KD-7). */
+  callId: string;
   toolName: string;
   args: unknown;
   argsText: string;
@@ -439,6 +454,7 @@ type ToolBlockProps = {
 };
 
 function ToolBlock({
+  callId,
   toolName,
   args,
   argsText,
@@ -446,7 +462,9 @@ function ToolBlock({
   artifact,
   title,
 }: ToolBlockProps) {
-  const [open, setOpen] = useState(false);
+  // The block an opened search match points at is expanded and marked (search-result.md, «Цель совпадения»).
+  const [open, setOpen] = useOpenOnMark((mark) => mark.callId === callId);
+  const markProps = useCallMarkProps(callId);
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
   const t = useTranslations('errors');
@@ -541,9 +559,13 @@ function ToolBlock({
     <Collapsible
       data-slot="tool-fallback-root"
       data-outcome={outcome}
+      {...markProps}
       open={open}
       onOpenChange={setOpen}
-      className="border-border my-1 w-full rounded-lg border"
+      className={cn(
+        'border-border my-1 w-full rounded-lg border',
+        SEARCH_MARK_CLASS,
+      )}
     >
       <CollapsibleTrigger
         data-slot="tool-fallback-trigger"

@@ -39,6 +39,7 @@ import { ViewOperations } from './operations/view-operations';
 import { AgentsProviders } from './providers/provider-registry';
 import { CallRecords } from './store/call-records';
 import { History } from './store/history';
+import { MemoryRecords } from './store/memory-records';
 import { Sessions } from './store/sessions';
 import { RunCodeTool } from './tools/external/run-code';
 import { ToolRegistry } from './tools/tool-registry';
@@ -76,6 +77,8 @@ const PUBLIC_SERVICES = [
   AgentsEmbeddings,
   // `completeText`: one call of the default chat model outside any task (the conversation title).
   ModelClient,
+  // The one rule of changing a memory record, for the tools and the memory screens (memory-hygiene KD-3).
+  MemoryRecords,
 ];
 
 /**

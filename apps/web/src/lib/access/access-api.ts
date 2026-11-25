@@ -1,8 +1,11 @@
 import {
+  MemoryHistoryViewSchema,
   MyMemoryViewSchema,
   MyModelsSchema,
+  type MemoryHistoryView,
   type MyMemoryView,
   type MyModels,
+  type RevertMemoryBody,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
 
@@ -29,12 +32,40 @@ function memory(): Promise<MyMemoryView> {
   return apiRequest({ path: '/api/memory', schema: MyMemoryViewSchema });
 }
 
+const memoryRoute = (memoryId: string): string =>
+  `/api/memory/${encodeURIComponent(memoryId)}`;
+
 /** 204 also when the record is gone or is not the employee's. */
 function deleteMemory(memoryId: string): Promise<void> {
+  return apiRequest({ path: memoryRoute(memoryId), method: 'DELETE' });
+}
+
+/** The record's versions, newest (current) first; 404 for a record that is not the employee's. */
+function memoryHistory(memoryId: string): Promise<MemoryHistoryView> {
   return apiRequest({
-    path: `/api/memory/${encodeURIComponent(memoryId)}`,
-    method: 'DELETE',
+    path: `${memoryRoute(memoryId)}/history`,
+    schema: MemoryHistoryViewSchema,
   });
 }
 
-export const accessApi = { models, modelsForFeed, memory, deleteMemory };
+/** 409 `RECORD_VERSION_CONFLICT` when `body.expectedVersion` is no longer the current one. */
+function revertMemory(
+  memoryId: string,
+  body: RevertMemoryBody,
+): Promise<MemoryHistoryView> {
+  return apiRequest({
+    path: `${memoryRoute(memoryId)}/revert`,
+    method: 'POST',
+    body,
+    schema: MemoryHistoryViewSchema,
+  });
+}
+
+export const accessApi = {
+  models,
+  modelsForFeed,
+  memory,
+  deleteMemory,
+  memoryHistory,
+  revertMemory,
+};

@@ -1,6 +1,6 @@
-import { jsonb, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
+import { index, jsonb, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
 import { app } from './app';
-import { createdAt } from './helpers';
+import { createdAt, searchVector } from './helpers';
 import { conversations } from './conversations';
 
 /**
@@ -21,5 +21,9 @@ export const toolResults = app.table(
     text: text('text').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [primaryKey({ columns: [t.conversationId, t.callId] })],
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.callId] }),
+    /** The full results a search finds (conversation-search KD-3). */
+    index('tool_results_text_search_idx').using('gin', searchVector(t.text)),
+  ],
 );

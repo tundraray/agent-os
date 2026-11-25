@@ -30,3 +30,5 @@
 - [design-web.md](../../features/custom-agents/design-web.md) — страницы библиотеки и раздел панели «Агенты»
 - [design-training-web.md](../../features/self-learning/design-training-web.md) — состояние обучения на карточке и экран результата обучения
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — документ в карточке отчёта и вкладка «Документы» панели беседы; перечитываются по `live.onTree`, как список задач (KD-7)
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — страницы расписаний перечитываются по заметке `tree` потока событий
+- [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — диалог истории записи; таблица памяти перечитывается после возврата

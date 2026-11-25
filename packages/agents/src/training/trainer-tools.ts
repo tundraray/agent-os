@@ -64,7 +64,7 @@ export interface TrainerToolsDeps {
     ConversationsRepository,
     'pastTasks' | 'serversCalled' | 'find' | 'findMany'
   >;
-  readonly memoryRows: Pick<MemoriesRepository, 'list'>;
+  readonly memoryRows: Pick<MemoriesRepository, 'listLive'>;
   readonly documentRows: Pick<
     DocumentsRepository,
     'listRun' | 'findInRun' | 'latestReport'
@@ -231,7 +231,10 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
     return { row, task };
   }
 
-  /** The tool calls of one run with their outcomes; a memory call of the employee's scope without its record. */
+  /**
+   * The tool calls of one run with their outcomes; a memory call of the employee's scope without its record, and one
+   * refused by the check without the rejected description and text (its refusal text is fixed and echoes neither).
+   */
   async function callsOf(runId: string) {
     const entries = await history.after(runId, 0);
     return entries.flatMap((entry) => {
@@ -239,11 +242,18 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
       const { tool, server, args, outcome, refusalReason, text } =
         entry.content;
       const hidden = hidesRecord({ tool, server, args });
+      const rejected =
+        refusalReason === 'looks_like_secret' ||
+        refusalReason === 'looks_like_instruction';
       return [
         {
           tool,
           server,
-          args: hidden ? { scope: 'user' } : args,
+          args: hidden
+            ? { scope: 'user' }
+            : rejected
+              ? { scope: 'agent' }
+              : args,
           outcome,
           refusalReason,
           text: hidden ? null : text,
@@ -377,8 +387,11 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
       "Read the trained agent's memory records of scope agent: description, text and when each changed, most recently changed first.",
     argsSchema: NoArgsSchema,
     async run(_args, { training }, { callId }) {
-      // The query by the agent's id holds agent-scope records only: a record of an employee has no agent.
-      const records = await deps.memoryRows.list({ agentId: training.agentId });
+      // The query by the agent's id holds agent-scope records only: a record of an employee has no agent. The
+      // trainer sees only live records (memory-hygiene, Data Model rule 4).
+      const records = await deps.memoryRows.listLive({
+        agentId: training.agentId,
+      });
       if (records.length === 0)
         return {
           kind: 'done',
@@ -389,8 +402,8 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
         callId,
         records.map((record) => ({
           description: record.description,
-          text: record.text,
-          updatedAt: record.updatedAt.toISOString(),
+          text: record.lastText,
+          updatedAt: record.changedAt.toISOString(),
         })),
       );
     },

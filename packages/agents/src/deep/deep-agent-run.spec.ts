@@ -99,6 +99,7 @@ const briefTask: AgentHistoryEntry = {
       result: 'A list of causes',
     }),
     record: null,
+    schedule: null,
   },
 };
 

@@ -1,0 +1,152 @@
+{
+  "dialog": {
+    "createTitle": "New schedule",
+    "editTitle": "Edit schedule",
+    "name": "Name",
+    "optional": "(optional)",
+    "nameHint": "Leave it empty and the start of the instruction becomes the name.",
+    "instruction": "Instruction",
+    "instructionHint": "What the agent should do — just as you would write it in the chat",
+    "agent": "Agent",
+    "chatAgent": "Chat agent",
+    "target": "Where to reply",
+    "newConversation": "A new conversation each time",
+    "newConversationHint": "A separate conversation for every run — for independent reports.",
+    "thisConversation": "In this conversation",
+    "namedConversation": "In the conversation “{title}”",
+    "thisConversationHint": "The agent sees its earlier replies and can compare with last time.",
+    "noConversationYet": "Available after the first message in the conversation.",
+    "conversationDeleted": "The conversation was deleted.",
+    "create": "Create schedule",
+    "save": "Save",
+    "created": "Schedule created. Next run: {at}.",
+    "open": "Open",
+    "saved": "Schedule saved"
+  },
+  "rule": {
+    "label": "When",
+    "kind": {
+      "once": "Once",
+      "daily": "Every day",
+      "weekdays": "On weekdays",
+      "every_hours": "Every N hours"
+    },
+    "at": "at",
+    "date": "Date",
+    "time": "Time",
+    "hours": "Every, hours",
+    "days": "Days of the week",
+    "dayShort": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "dayLong": {
+      "mon": "Monday",
+      "tue": "Tuesday",
+      "wed": "Wednesday",
+      "thu": "Thursday",
+      "fri": "Friday",
+      "sat": "Saturday",
+      "sun": "Sunday"
+    },
+    "next": "Next run: {at}",
+    "noNext": "Next run: —",
+    "zone": "Times in the {zone} time zone (UTC{offset})"
+  },
+  "errors": {
+    "instruction": "Write what the agent should do.",
+    "past": "This time has passed — choose a future one.",
+    "noDays": "Choose at least one day.",
+    "hours": "Enter a whole number of hours from 1 to {max, number}.",
+    "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
+    "save": "Could not save: <server>{text}</server>",
+    "saveOffline": "Could not save: no connection to the server",
+    "action": "Could not do it: <server>{text}</server>",
+    "actionOffline": "Could not do it: no connection to the server"
+  },
+  "list": {
+    "title": "Schedules",
+    "columns": {
+      "schedule": "Schedule",
+      "state": "State",
+      "next": "Next run",
+      "last": "Last run"
+    },
+    "emptyTitle": "No schedules yet",
+    "emptyHint": "Create one in any conversation: “+” → “Schedule”.",
+    "loadFailed": "Couldn't load schedules"
+  },
+  "state": {
+    "active": "Active",
+    "paused": "Paused",
+    "completed": "Done"
+  },
+  "ruleLine": {
+    "once": "Once: {at}",
+    "daily": "Every day at {time}",
+    "workdays": "Weekdays at {time}",
+    "days": "{days} at {time}",
+    "hours": "{count, plural, =1 {Every hour} other {Every # hours}}",
+    "zone": "{zone} (UTC{offset})"
+  },
+  "page": {
+    "edit": "Edit",
+    "pause": "Pause",
+    "resume": "Resume",
+    "runNow": "Run now",
+    "delete": "Delete",
+    "instruction": "Instruction",
+    "agent": "Agent",
+    "when": "When",
+    "next": "Next run",
+    "target": "Reply",
+    "created": "Created",
+    "replyTo": "To the conversation “<link>{title}</link>”",
+    "createdIn": "{day} in the conversation “<link>{title}</link>”",
+    "createdDeleted": "{day}, conversation deleted",
+    "agentUnavailable": "unavailable",
+    "pausedDeleted": "The conversation “{title}” was deleted, so the schedule is paused. To make it work again, choose replies in a new conversation and resume it."
+  },
+  "notices": {
+    "paused": "Paused",
+    "pausedRunning": "Paused. The run in progress will continue — you can stop it in the conversation.",
+    "resumed": "Schedule resumed. Next run — {at}.",
+    "started": "Run started",
+    "openConversation": "Open conversation",
+    "notStarted": "Not started: {reason}",
+    "deleted": "Schedule deleted"
+  },
+  "deleteDialog": {
+    "title": "Delete the schedule?",
+    "body": "{name}. There will be no more runs. Conversations of past runs stay in the list.",
+    "confirm": "Delete"
+  },
+  "history": {
+    "title": "Run history",
+    "columns": {
+      "time": "Time",
+      "outcome": "Outcome",
+      "conversation": "Conversation"
+    },
+    "open": "Open",
+    "openLabel": "Open the conversation of the run at {at}",
+    "skipped": "Skipped",
+    "manual": "manual",
+    "emptyTitle": "No runs yet",
+    "emptyFirst": "The first one — {at}.",
+    "loadFailed": "Couldn't load the history"
+  },
+  "skipReason": {
+    "previous_run_unfinished": "previous run not finished",
+    "conversation_busy": "conversation busy",
+    "agent_unavailable": "no access to the agent",
+    "quota_exhausted": "quota exhausted",
+    "owner_disabled": "account disabled",
+    "server_down": "server was down"
+  }
+}

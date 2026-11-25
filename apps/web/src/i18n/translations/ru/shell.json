@@ -6,7 +6,27 @@
     "panel": "Панель",
     "agents": "Агенты",
     "library": "Библиотека",
+    "schedules": "Расписания",
     "awaiting": "{section}, ждут решения: {count}"
+  },
+  "search": {
+    "label": "Поиск по беседам",
+    "clear": "Очистить поиск",
+    "open": "Поиск по беседам",
+    "results": "Совпадения",
+    "searching": "Ищем…",
+    "found": "Найдены совпадения",
+    "empty": "Ничего не нашлось",
+    "emptyHint": "Поиск смотрит в названия бесед, сообщения, работу агентов и результаты инструментов.",
+    "failed": "Не удалось найти",
+    "retry": "Повторить",
+    "showMore": "Показать ещё",
+    "inMessage": "В сообщении",
+    "inToolResult": "В результате {tool}",
+    "atAgent": "У агента «{name}»",
+    "atAgentToolResult": "У агента «{name}» · в результате {tool}",
+    "matchName": "{title}, {where}, {date}: {snippet}",
+    "titleMatchName": "{title}, {date}"
   },
   "dateGroup": {
     "today": "Сегодня",
@@ -143,10 +163,19 @@
       "title": "Не удалось загрузить",
       "description": "Проверьте подключение и попробуйте ещё раз."
     },
+    "scheduleNotFound": {
+      "title": "Расписание не найдено",
+      "description": "Его удалили, или оно принадлежит другому сотруднику."
+    },
+    "scheduleLoadError": {
+      "title": "Не удалось загрузить расписание",
+      "description": "Проверьте подключение и попробуйте ещё раз."
+    },
     "retry": "Повторить",
     "toAgents": "К списку агентов",
     "toChat": "В чат",
     "toList": "К списку",
-    "toLibrary": "В библиотеку"
+    "toLibrary": "В библиотеку",
+    "toSchedules": "К расписаниям"
   }
 }

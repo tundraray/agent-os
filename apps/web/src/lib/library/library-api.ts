@@ -3,6 +3,7 @@ import {
   AgentMemoryViewSchema,
   CopyResultSchema,
   LibraryChoicesSchema,
+  MemoryHistoryViewSchema,
   MyRoleListSchema,
   RecordDetailSchema,
   RecordSummarySchema,
@@ -20,10 +21,12 @@ import {
   type CreateRecordBody,
   type Language,
   type LibraryChoices,
+  type MemoryHistoryView,
   type MyRoleList,
   type RecordAudienceBody,
   type RecordDetail,
   type RecordSummary,
+  type RevertMemoryBody,
   type StartTestRunBody,
   type TestRunStarted,
   type TestRunTaken,
@@ -99,6 +102,24 @@ export const libraryApi = {
     apiRequest({
       path: `${recordRoute(id)}/memory/${encodeURIComponent(memoryId)}`,
       method: 'DELETE',
+    }),
+  /** The record's versions, newest (current) first. */
+  memoryHistory: (id: string, memoryId: string): Promise<MemoryHistoryView> =>
+    apiRequest({
+      path: `${recordRoute(id)}/memory/${encodeURIComponent(memoryId)}/history`,
+      schema: MemoryHistoryViewSchema,
+    }),
+  /** 409 `RECORD_VERSION_CONFLICT` when `body.expectedVersion` is no longer the current one. */
+  revertMemory: (
+    id: string,
+    memoryId: string,
+    body: RevertMemoryBody,
+  ): Promise<MemoryHistoryView> =>
+    apiRequest({
+      path: `${recordRoute(id)}/memory/${encodeURIComponent(memoryId)}/revert`,
+      method: 'POST',
+      body,
+      schema: MemoryHistoryViewSchema,
     }),
   /** What the deep agent's card shows of training; the library and the panel read the same routes. */
   trainingState: (id: string): Promise<TrainingState> =>

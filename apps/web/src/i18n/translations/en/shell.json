@@ -6,7 +6,27 @@
     "panel": "Admin panel",
     "agents": "Agents",
     "library": "Library",
+    "schedules": "Schedules",
     "awaiting": "{section}, decisions waiting: {count}"
+  },
+  "search": {
+    "label": "Search chats",
+    "clear": "Clear search",
+    "open": "Search chats",
+    "results": "Matches",
+    "searching": "Searching…",
+    "found": "Matches found",
+    "empty": "Nothing found",
+    "emptyHint": "Search looks in chat titles, messages, agents' work and tool results.",
+    "failed": "Couldn't search",
+    "retry": "Retry",
+    "showMore": "Show more",
+    "inMessage": "In a message",
+    "inToolResult": "In the {tool} result",
+    "atAgent": "At agent “{name}”",
+    "atAgentToolResult": "At agent “{name}” · in the {tool} result",
+    "matchName": "{title}, {where}, {date}: {snippet}",
+    "titleMatchName": "{title}, {date}"
   },
   "dateGroup": {
     "today": "Today",
@@ -143,10 +163,19 @@
       "title": "Couldn't load",
       "description": "Check your connection and try again."
     },
+    "scheduleNotFound": {
+      "title": "Schedule not found",
+      "description": "It was deleted, or it belongs to another employee."
+    },
+    "scheduleLoadError": {
+      "title": "Couldn't load the schedule",
+      "description": "Check your connection and try again."
+    },
     "retry": "Retry",
     "toAgents": "Back to agents",
     "toChat": "Go to chat",
     "toList": "Back to list",
-    "toLibrary": "Go to library"
+    "toLibrary": "Go to library",
+    "toSchedules": "Back to schedules"
   }
 }

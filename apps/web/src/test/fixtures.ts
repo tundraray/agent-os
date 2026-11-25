@@ -9,6 +9,8 @@ import {
   AgentPageViewSchema,
   AgentViewSchema,
   ConfirmationSchema,
+  ConversationMatchSchema,
+  ConversationSearchResponseSchema,
   ConversationViewSchema,
   CopyResultSchema,
   CatalogModelSchema,
@@ -55,6 +57,8 @@ import {
   type AgentView,
   type CatalogModel,
   type Confirmation,
+  type ConversationMatch,
+  type ConversationSearchResponse,
   type ConversationView,
   type CopyResult,
   type CurrentUser,
@@ -113,6 +117,38 @@ export function threadList(
   nextCursor: string | null = null,
 ): ThreadListResponse {
   return ThreadListResponseSchema.parse({ threads, nextCursor });
+}
+
+/**
+ * A match of GET /api/search: by default a message match in the employee's own conversation; validated by
+ * ConversationMatchSchema.
+ */
+export function conversationMatch(
+  overrides: Partial<ConversationMatch> & Pick<ConversationMatch, 'threadId'>,
+): ConversationMatch {
+  return ConversationMatchSchema.parse({
+    title: 'Беседа',
+    at: FIXTURE_TIME,
+    place: 'message',
+    agent: null,
+    tool: null,
+    seq: 1,
+    callId: null,
+    titleMarks: [],
+    snippet: {
+      text: 'проверь payment-service',
+      marks: [{ start: 8, end: 23 }],
+    },
+    ...overrides,
+  });
+}
+
+/** Body of GET /api/search; validated by ConversationSearchResponseSchema. */
+export function searchResponse(
+  matches: ConversationMatch[],
+  nextCursor: string | null = null,
+): ConversationSearchResponse {
+  return ConversationSearchResponseSchema.parse({ matches, nextCursor });
 }
 
 /** Body of GET /api/auth/me: an employee with a local password, not an administrator. */
@@ -202,8 +238,8 @@ type EntryContent<K extends FixtureEntryKind> = Extract<
 >['content'];
 
 const ENTRY_CONTENT: { [K in FixtureEntryKind]: EntryContent<K> } = {
-  task: { text: 'Задача', record: null },
-  user_message: { text: 'Сообщение', record: null },
+  task: { text: 'Задача', record: null, schedule: null },
+  user_message: { text: 'Сообщение', record: null, schedule: null },
   agent_message: { text: 'Сообщение агента', agentId: 'a1' },
   child_report: {
     agentId: 'a1',

@@ -11,5 +11,6 @@ export * from './library';
 export * from './memory';
 export * from './notepad';
 export * from './tool-results';
+export * from './schedules';
 export * from './settings';
 export * from './training';

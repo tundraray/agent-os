@@ -5,6 +5,7 @@ import {
   RecordNameSchema,
   ToolOutcomeSchema,
   type SettingsValue,
+  TASK_TOOL,
 } from '@agent-os/contracts';
 import type {
   MessagesRepository,
@@ -39,7 +40,6 @@ import {
   type DeepAgentVersion,
   delegationTeam,
   subagentStart,
-  TASK_TOOL,
 } from './deep-definition';
 import {
   type AcceptedDelegation,

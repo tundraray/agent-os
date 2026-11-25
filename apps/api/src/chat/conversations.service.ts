@@ -44,6 +44,7 @@ import {
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
+import { SchedulesService } from '../schedules/schedules.service';
 import { chatStatus } from './chat-status';
 import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
@@ -58,10 +59,8 @@ import {
 import { testRunSummary } from './test-run-summary';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
+import { rootDescription } from './root-description';
 import { TitleService } from './title.service';
-
-/** The root's description: the first characters of the first message (code points, never half a pair). */
-const ROOT_DESCRIPTION_LENGTH = 80;
 
 type TreeDocumentRow = Awaited<
   ReturnType<DocumentsRepository['listInTree']>
@@ -111,6 +110,7 @@ export class ConversationsService {
     private readonly sessionTasks: ConversationTasksRepository,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: RuntimeModelCallsRepository,
+    private readonly schedules: SchedulesService,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
@@ -243,11 +243,14 @@ export class ConversationsService {
 
   /**
    * Flow 6: the root's tree is stopped and marked deleted together with the root session, in one
-   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`.
+   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`. The
+   * `this_conversation` schedules created in it are then paused (schedules FR-09); a claim checks the same at
+   * its term, in case the process stops between the two transactions.
    */
   async delete(threadId: string, ownerId: string): Promise<void> {
     await this.owned(threadId, ownerId);
     await this.control.deleteRoot(threadId, ownerId);
+    await this.schedules.pauseForDeletedConversation(threadId, ownerId);
   }
 
   /**
@@ -423,9 +426,7 @@ export class ConversationsService {
         agentId: threadId,
         ownerId,
         prompt: text,
-        description: Array.from(text)
-          .slice(0, ROOT_DESCRIPTION_LENGTH)
-          .join(''),
+        description: rootDescription(text),
         ...chip,
       });
       return true;

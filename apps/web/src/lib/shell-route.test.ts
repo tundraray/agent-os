@@ -9,6 +9,8 @@ import {
   memoryPath,
   parseShellRoute,
   recordPath,
+  schedulePath,
+  schedulesPath,
   threadPath,
 } from './shell-route';
 
@@ -135,6 +137,36 @@ describe('lib/shell-route', () => {
       expect(parseShellRoute(pathname)).toEqual(expected);
     },
   );
+
+  // schedules design «Страницы»: the list and one schedule; a schedule address must never open a chat.
+  it.each([
+    { pathname: '/schedules', expected: { kind: 'schedules' } },
+    {
+      pathname: '/schedules/s1',
+      expected: { kind: 'schedule', scheduleId: 's1' },
+    },
+    {
+      pathname: '/schedules/s%2F1',
+      expected: { kind: 'schedule', scheduleId: 's/1' },
+    },
+    { pathname: '/schedules/', expected: { kind: 'schedules' } },
+    { pathname: '/schedules/s1/x', expected: { kind: 'schedules' } },
+    { pathname: '/schedulesx', expected: { kind: 'chat' } },
+  ])(
+    'schedule addresses open the list or one schedule: $pathname',
+    ({ pathname, expected }) => {
+      expect(parseShellRoute(pathname)).toEqual(expected);
+    },
+  );
+
+  it('builds a schedule address that parses back to the same id', () => {
+    expect(schedulePath('a/b')).toBe('/schedules/a%2Fb');
+    expect(parseShellRoute(schedulePath('a/b'))).toEqual({
+      kind: 'schedule',
+      scheduleId: 'a/b',
+    });
+    expect(parseShellRoute(schedulesPath())).toEqual({ kind: 'schedules' });
+  });
 
   const usersList = { kind: 'admin', section: 'users', page: { kind: 'list' } };
   it.each([

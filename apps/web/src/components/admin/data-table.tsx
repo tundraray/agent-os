@@ -337,9 +337,19 @@ export function DataTable({
       {twoLines && (
         <ul aria-label={caption} className="divide-y divide-border md:hidden">
           {state.rows.map((row) => (
-            <li key={row.key} className="flex flex-col gap-0.5 py-2">
+            <li
+              key={row.key}
+              className={cn(
+                'flex flex-col gap-0.5 py-2',
+                row.href !== undefined && 'relative',
+              )}
+            >
               <div className="text-sm leading-5 text-foreground">
-                {row.cells[0]}
+                {row.href === undefined ? (
+                  row.cells[0]
+                ) : (
+                  <RowLink href={row.href}>{row.cells[0]}</RowLink>
+                )}
               </div>
               <div className="text-xs leading-4 text-muted-foreground">
                 {row.cells.slice(1).map((cell, index) => (

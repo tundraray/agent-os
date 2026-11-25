@@ -54,6 +54,59 @@ export const ThreadListResponseSchema = z.object({
 });
 export type ThreadListResponse = z.infer<typeof ThreadListResponseSchema>;
 
+/** Page size of GET /api/search (conversation-search design, «Маршрут»). */
+export const SEARCH_PAGE_SIZE = 20;
+
+/** Query of GET /api/search: `q` is 2–200 characters after trimming; `cursor` is the previous page's `nextCursor`. */
+export const ConversationSearchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(200),
+  cursor: ThreadListQuerySchema.shape.cursor,
+});
+export type ConversationSearchQuery = z.infer<
+  typeof ConversationSearchQuerySchema
+>;
+
+/** A text with the ranges of the found words: `start`/`end` in JS string units, ascending, not overlapping. */
+export const MarkedTextSchema = z.object({
+  text: z.string(),
+  marks: z.array(
+    z.object({ start: z.number().int().min(0), end: z.number().int().min(0) }),
+  ),
+});
+export type MarkedText = z.infer<typeof MarkedTextSchema>;
+
+/** Where a match was found: the conversation title, a message or a tool result. */
+export const MatchPlaceSchema = z.enum(['title', 'message', 'tool_result']);
+export type MatchPlace = z.infer<typeof MatchPlaceSchema>;
+
+/**
+ * One found place. `threadId`/`title` — the employee's conversation (the tree root); `agent` — the
+ * sub-agent it was found at, `null` in the employee's conversation or in the title; `tool` and `callId`
+ * only for `tool_result`, `seq` only for `message`; `titleMarks` only for `title`, `snippet` for the rest.
+ */
+export const ConversationMatchSchema = z.object({
+  threadId: ThreadIdSchema,
+  title: z.string().min(1).nullable(),
+  at: z.iso.datetime(),
+  place: MatchPlaceSchema,
+  agent: z.object({ agentId: z.string().min(1), name: z.string() }).nullable(),
+  tool: z.string().min(1).nullable(),
+  seq: z.number().int().nullable(),
+  callId: z.string().min(1).nullable(),
+  titleMarks: MarkedTextSchema.shape.marks,
+  snippet: MarkedTextSchema.nullable(),
+});
+export type ConversationMatch = z.infer<typeof ConversationMatchSchema>;
+
+/** Response of GET /api/search: newest first, at most SEARCH_PAGE_SIZE matches. */
+export const ConversationSearchResponseSchema = z.object({
+  matches: z.array(ConversationMatchSchema).max(SEARCH_PAGE_SIZE),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type ConversationSearchResponse = z.infer<
+  typeof ConversationSearchResponseSchema
+>;
+
 /** Body of PATCH /api/threads/:threadId. Surrounding whitespace is trimmed before the length check. */
 export const RenameThreadRequestSchema = z.object({
   title: z.string().trim().min(1).max(THREAD_TITLE_MAX_LENGTH),

@@ -32,3 +32,6 @@
 - [design-web.md](../../features/custom-agents/design-web.md) — `libraryApi`, `adminApi.library`, `describeLibraryError`
 - [design-web-image.md](../../features/web-image/design-web-image.md) — KD-2: путь `/api` без адреса, пересылка сервером Next
 - [design-web.md](../../features/i18n/design-web.md) — функции областей берут текст отказа из каталога по коду и причине ([Отказы сервера](../../features/i18n/design-web.md#отказы-сервера))
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — `schedulesApi` и `describeSchedulesError`
+- [design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md) — функция поиска в `threadsApiClient`
+- [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — история и возврат записи памяти в `libraryApi` и `accessApi`

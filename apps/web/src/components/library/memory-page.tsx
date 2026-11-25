@@ -99,6 +99,9 @@ export function MemoryPage({ id, variant }: MemoryPageProps) {
           description: t('memory.empty.text'),
         }}
         remove={(memoryId) => libraryApi.deleteMemory(id, memoryId)}
+        history={(memoryId) => libraryApi.memoryHistory(id, memoryId)}
+        revert={(memoryId, body) => libraryApi.revertMemory(id, memoryId, body)}
+        author="name"
       />
     </>
   );

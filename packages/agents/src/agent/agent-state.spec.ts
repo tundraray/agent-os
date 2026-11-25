@@ -22,7 +22,7 @@ const PARENT_ENTRIES: HistoryEntry[] = [
     seq: 1,
     kind: 'task',
     createdAt: AT,
-    content: { text: 'Parent task', record: null },
+    content: { text: 'Parent task', record: null, schedule: null },
   },
 ];
 
@@ -33,7 +33,7 @@ const ENTRIES: HistoryEntry[] = [
     seq: 1,
     kind: 'task',
     createdAt: AT,
-    content: { text: 'Look it up', record: null },
+    content: { text: 'Look it up', record: null, schedule: null },
   },
   {
     seq: 2,
@@ -77,7 +77,7 @@ const ENTRIES: HistoryEntry[] = [
     seq: 7,
     kind: 'user_message',
     createdAt: AT,
-    content: { text: 'And now?', record: null },
+    content: { text: 'And now?', record: null, schedule: null },
   },
 ];
 

@@ -2,6 +2,7 @@ import type {
   ChipRecord,
   ConfirmationStatus,
   ForkRefusalReason,
+  ScheduleMark,
   ToolCallState,
 } from '@agent-os/contracts';
 import type { RootPosition } from '@agent-os/db';
@@ -26,6 +27,10 @@ export interface StartRequest {
   readonly description: string;
   /** The chip of the conversation's first message: it stays on the root's `task` entry. */
   readonly record?: ChipRecord;
+  /** The schedule that starts the conversation: its mark goes to the root's `task` entry (schedules KD-5). */
+  readonly schedule?: ScheduleMark;
+  /** The conversation's title, written in the transaction that creates the root (schedules KD-6). */
+  readonly title?: string;
 }
 
 /** A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, or why not now. */
@@ -42,6 +47,8 @@ export interface SendRequest extends AgentRef {
   readonly text: string;
   /** The message's chip (KD-4): the model and the history get it with the text. */
   readonly record?: ChipRecord;
+  /** The schedule that sends the message: only the history gets it (schedules KD-5). */
+  readonly schedule?: ScheduleMark;
 }
 
 /** A page of the owner's root sessions: strictly after `after`, at most `limit`; all without either. */

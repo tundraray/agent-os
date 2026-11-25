@@ -19,6 +19,7 @@ import {
   registerFixtureServers,
 } from '@agent-os/agents/testing';
 import { DATABASE_CONNECTION, type DatabaseConnection } from '@agent-os/db';
+import { CLOCK, type Clock } from '@agent-os/runtime';
 import {
   createFixtureFiles,
   type FixtureFaultRule,
@@ -58,6 +59,8 @@ export interface TestAppOptions {
   providerEndpoints?: { google: string };
   /** Keeps every console line the process writes while the app lives in `TestApp.log` (the secrets scan). */
   captureLog?: boolean;
+  /** Replaces the runtime's `CLOCK`, so the schedules' terms come when a test says (schedules Test Strategy). */
+  clock?: Clock;
 }
 
 /** The services of the agents package the tests reach directly. */
@@ -126,6 +129,9 @@ export async function createTestApp(
       builder = builder
         .overrideProvider(GOOGLE_ISSUER_URL)
         .useValue(options.providerEndpoints.google);
+    }
+    if (options.clock !== undefined) {
+      builder = builder.overrideProvider(CLOCK).useValue(options.clock);
     }
     const moduleRef = await builder.compile();
     const nestApp = moduleRef.createNestApplication<NestExpressApplication>();

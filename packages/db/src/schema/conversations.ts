@@ -11,7 +11,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { agentVersions } from './agent-versions';
-import { createdAt } from './helpers';
+import { createdAt, searchVector } from './helpers';
 import { identityUsers } from './identity-users';
 import { runtimeTasks } from './runtime-tasks';
 
@@ -98,6 +98,10 @@ export const conversations = app.table(
     /** The owner's conversations, last changed first; the condition is the repository's `isRoot`. */
     index('conversations_owner_page_idx')
       .on(t.ownerId, t.updatedAt.desc(), t.id.desc())
+      .where(sql`${t.parentId} IS NULL`),
+    /** The titles a search finds (conversation-search KD-3); the condition is the repository's `isRoot`. */
+    index('conversations_title_search_idx')
+      .using('gin', searchVector(t.title))
       .where(sql`${t.parentId} IS NULL`),
     check(
       'conversations_start_call_check',

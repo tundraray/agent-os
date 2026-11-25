@@ -54,7 +54,7 @@ flowchart LR
 | `src/tasks/` | `Tasks` — строки задач и охраняемые переходы статуса; `TaskControl` — команды над задачей (создать, прервать, остановить, удалить дерево, ответить на вопрос); конец задачи с правилом пробуждения, остановкой потомков упавшей и крючками конца; `RunningTaskRegistry` (`running-task.registry.ts`) — шаги, которые идут в этом процессе |
 | `src/steps/` | контракт шага (`TaskHandler`, `LiveTask`, `LiveTaskType`, `StepContext`, `StepResult`, `StepEffects`) в `step-contract.ts`, `HandlerRegistry`, `LiveTasks` — объекты задач в памяти, `Dispatcher`, `StepCommitter` |
 | `src/messaging/` | `Inbox` — очередь сообщений задаче |
-| `src/workers/` | `WorkerLoop` — цикл фонового воркера (`worker-loop.ts`); `RecoverySweeper` (`recovery.sweeper.ts`) — возврат задач в `running`, шага которых нет в `RunningTaskRegistry`; `RuntimeWorkers` (`runtime-workers.ts`) — старт и остановка всех воркеров и зарегистрированных фоновых проходов; реестр фоновых проходов |
+| `src/workers/` | `WorkerLoop` — цикл фонового воркера (`worker-loop.ts`); `RecoverySweeper` (`recovery.sweeper.ts`) — возврат задач в `running`, шага которых нет в `RunningTaskRegistry`; `RuntimeWorkers` (`runtime-workers.ts`) — старт и остановка всех воркеров и зарегистрированных фоновых проходов; `BackgroundPasses` (`background-passes.ts`) — реестр фоновых проходов |
 | `src/ledger/` | `TokenLedger` — журнал токенов и цена вызова модели |
 | `src/` | `RuntimeModule`, токены (`runtime.tokens.ts`), разбор настроек `parseRuntimeConfig`, часы, ошибки |
 

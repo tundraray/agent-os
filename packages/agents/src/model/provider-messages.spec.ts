@@ -15,13 +15,13 @@ const task = (seq: number, text: string): HistoryEntry => ({
   seq,
   kind: 'task',
   createdAt: AT,
-  content: { text, record: null },
+  content: { text, record: null, schedule: null },
 });
 const userMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
   kind: 'user_message',
   createdAt: AT,
-  content: { text, record: null },
+  content: { text, record: null, schedule: null },
 });
 const agentMessage = (seq: number, text: string): HistoryEntry => ({
   seq,

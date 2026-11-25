@@ -60,12 +60,12 @@ flowchart LR
 | Путь | Что там |
 |---|---|
 | `src/app/` | адреса: группа `(chat)`, чья раскладка монтирует оболочку один раз, а страницы под ней пусты ([shell-route.md](../patterns/shell-route.md)); страница входа `login` |
-| `src/components/shell/` | оболочка: `ChatShell`, `MainView`, `AppSidebar`, `ChatHeader` |
-| `src/components/<область>/` | экраны областей: `agents`, `library`, `account`, `admin`, `auth` |
-| `src/components/ui/`, `src/components/assistant-ui/` | базовые компоненты и элементы ленты сообщений |
+| `src/components/shell/` | оболочка: `ChatShell`, `MainView`, `AppSidebar`, `ChatHeader`; поле поиска по беседам и строка совпадения (`conversation-search.tsx`, `search-result.tsx`) |
+| `src/components/<область>/` | экраны областей: `agents`, `library` (в том числе диалог истории записи памяти `memory-history-dialog.tsx`), `account`, `admin`, `auth`, `schedules` — диалог и страницы расписаний |
+| `src/components/ui/`, `src/components/assistant-ui/` | базовые компоненты и элементы ленты сообщений; `search-target.tsx` — атрибуты `data-seq` и `data-call-id`, по которым лента находит и отмечает цель совпадения поиска |
 | `src/hooks/` | общие хуки, в том числе `useResource` и `usePagedResource` |
 | `src/lib/api/` | ядро запроса `apiRequest` |
-| `src/lib/<область>/` | модули областей клиента API и сторы: `threads` (в том числе `ShellServices`), `agents`, `library`, `admin`, `access`, `mcp`, `auth` |
+| `src/lib/<область>/` | модули областей клиента API и сторы: `threads` (в том числе `ShellServices`), `agents`, `library`, `admin`, `access`, `mcp`, `auth`, `schedules`; `search` — стор поиска с совпадениями и целью открытого совпадения |
 | `src/lib/live/` | поток событий и стор живых данных |
 | `src/lib/feed/` | лента одной беседы |
 | `src/lib/shell-route.ts` | вид маршрута по адресу и функции адресов |

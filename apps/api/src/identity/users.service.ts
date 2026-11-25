@@ -26,6 +26,7 @@ import {
 import { z } from 'zod';
 import { AuditLog, PASSWORD_SET } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
+import { decodeCursor, encodeCursor } from '../common/opaque-cursor';
 import { identityError, validationFailed } from './identity.errors';
 import { normalizeIdentifier } from './identity-input';
 import { checkNewPassword, hashPassword, verifyPassword } from './password';
@@ -59,23 +60,15 @@ function toAdminUserSummary(
 const UserCursorSchema = z.strictObject({ n: z.string(), i: z.uuid() });
 
 function encodeUserCursor(user: UserListPosition): string {
-  return Buffer.from(JSON.stringify({ n: user.name, i: user.id })).toString(
-    'base64url',
-  );
+  return encodeCursor({ n: user.name, i: user.id });
 }
 
 /** A cursor of `encodeUserCursor`; anything else is 400 VALIDATION_FAILED with `invalid_cursor`. */
 function decodeUserCursor(cursor: string): UserListPosition {
-  let json: unknown;
-  try {
-    json = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-  } catch {
-    json = undefined;
-  }
-  const parsed = UserCursorSchema.safeParse(json);
-  if (!parsed.success)
-    throw validationFailed(IdentityValidationReason.INVALID_CURSOR);
-  return { name: parsed.data.n, id: parsed.data.i };
+  const { n, i } = decodeCursor(cursor, UserCursorSchema, () =>
+    validationFailed(IdentityValidationReason.INVALID_CURSOR),
+  );
+  return { name: n, id: i };
 }
 
 /** Employees managed by an administrator (FR-33) and the employee's own password (AC-33.3). */

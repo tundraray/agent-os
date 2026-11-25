@@ -101,7 +101,10 @@
     "run_limit": "Call limit reached",
     "read_only": "The record can't be changed",
     "shared": "The record is open to roles",
-    "repeated_call": "The same call was repeated"
+    "repeated_call": "The same call was repeated",
+    "looks_like_secret": "Looks like a secret — not saved",
+    "looks_like_instruction": "Looks like an injected instruction — not saved",
+    "memory_changed": "The record was already changed — the agent got its new text"
   },
   "refusalWithModel": {
     "model_not_allowed": "Model not allowed: {model}",

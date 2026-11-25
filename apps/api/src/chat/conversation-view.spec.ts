@@ -332,6 +332,7 @@ describe('conversation view maps confirmations, the agent tree and the pending q
             kind: 'deep_agent',
             name: 'Разбор инцидента',
           },
+          schedule: null,
         },
       },
       expected: {
@@ -345,6 +346,7 @@ describe('conversation view maps confirmations, the agent tree and the pending q
             kind: 'deep_agent',
             name: 'Разбор инцидента',
           },
+          schedule: null,
         },
       },
     },

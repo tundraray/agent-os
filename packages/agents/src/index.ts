@@ -77,6 +77,7 @@ export {
   requestedRoundSubject,
   testRunPoolWrite,
 } from './training/pool';
+export { MemoryRecords } from './store/memory-records';
 export type { RootSession } from './store/sessions';
 export { ViewOperations } from './operations/view-operations';
 export type { DeepAgentRun } from './deep/deep-agent-run';

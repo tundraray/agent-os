@@ -1,10 +1,12 @@
 import {
   CALL_RECORD_KINDS,
+  type HistoryEntryKind,
   HistoryEntryKindSchema,
   SINGLE_CALL_RECORD_KINDS,
 } from '@agent-os/contracts';
-import { sql } from 'drizzle-orm';
+import { type SQL, sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   check,
   index,
   integer,
@@ -15,8 +17,24 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
-import { createdAt, isOneOf } from './helpers';
+import { createdAt, isOneOf, searchVector } from './helpers';
 import { conversations } from './conversations';
+
+/**
+ * The entries a search reads: the texts the feed shows (conversation-search KD-3). Call records, notices,
+ * events, compactions and child reports are not searched.
+ */
+export const SEARCHED_MESSAGE_KINDS = [
+  'task',
+  'user_message',
+  'agent_message',
+  'model_answer',
+  'tool_result',
+] as const satisfies readonly HistoryEntryKind[];
+
+/** The searched text of an entry: `content ->> 'text'`. */
+export const messageText = (content: AnyPgColumn): SQL =>
+  sql`(${content} ->> 'text')`;
 
 /**
  * History of an agent: append-only, `seq` grows within the session. A tool call is an item of its
@@ -42,6 +60,10 @@ export const messages = app.table(
     uniqueIndex('messages_call_once_idx')
       .on(t.conversationId, t.callId, t.kind)
       .where(isOneOf(t.kind, SINGLE_CALL_RECORD_KINDS)),
+    /** The entries a search finds; the condition is `SEARCHED_MESSAGE_KINDS`, word for word. */
+    index('messages_text_search_idx')
+      .using('gin', searchVector(messageText(t.content)))
+      .where(isOneOf(t.kind, SEARCHED_MESSAGE_KINDS)),
     check(
       'messages_kind_check',
       isOneOf(t.kind, HistoryEntryKindSchema.options),

@@ -38,7 +38,12 @@ export const AGENTS_BRIEF_CONFIRMATION = 'agents.brief';
 /** Decision kind of a record tool's card: create, edit or delete a library record (KD-3). */
 export const LIBRARY_RECORD_CONFIRMATION = 'library.record';
 
-const ChatTextSchema = z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH);
+/** The text of a chat message: also a schedule's instruction, which is sent as one. */
+export const ChatTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(CHAT_MESSAGE_MAX_LENGTH);
 const SeqSchema = z.number().int().nonnegative();
 
 // ---------------------------------------------------------------------------------------------------
@@ -231,18 +236,38 @@ export const AnswerToolCallSchema = z.object({
 export type AnswerToolCall = z.infer<typeof AnswerToolCallSchema>;
 
 /**
+ * The mark of a message a schedule sent (schedules KD-5): the schedule, its name at the time of sending and
+ * whether the run was manual. The model never sees it.
+ */
+export const ScheduleMarkSchema = z.object({
+  scheduleId: z.string().min(1),
+  name: z.string(),
+  manual: z.boolean(),
+});
+export type ScheduleMark = z.infer<typeof ScheduleMarkSchema>;
+
+/**
  * One entry of an agent's history (design-agents.md, HistoryEntry) as the agents' `history` returns it:
  * a `model_answer` carries its tool calls. A `task` carries a chip only at a conversation's root: its
- * first message becomes the root's task.
+ * first message becomes the root's task. `schedule` marks a message a schedule sent; `null` for one typed
+ * by hand.
  */
 export const HistoryEntrySchema = z.discriminatedUnion('kind', [
   entry(
     'task',
-    z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+    z.object({
+      text: z.string(),
+      record: ChipRecordSchema.nullable(),
+      schedule: ScheduleMarkSchema.nullable(),
+    }),
   ),
   entry(
     'user_message',
-    z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+    z.object({
+      text: z.string(),
+      record: ChipRecordSchema.nullable(),
+      schedule: ScheduleMarkSchema.nullable(),
+    }),
   ),
   entry('agent_message', z.object({ text: z.string(), agentId: z.string() })),
   entry(

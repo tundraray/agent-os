@@ -21,6 +21,7 @@ import {
   type HistoryEntry,
   type LibraryRecordCard,
   type PendingMessage,
+  type ScheduleMark,
   type TestRunSummary,
   type ToolCallState,
   type ToolOutcome,
@@ -276,12 +277,22 @@ export type ToolCallArtifact = {
 };
 
 /**
- * `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04), the draft mark and the
- * record chip an employee's message was sent with (KD-5).
+ * `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04), the draft mark, the
+ * record chip an employee's message was sent with (KD-5) and the schedule that sent it (schedules SH-07).
  */
 export type FeedMessageMeta =
-  | { kind: 'task'; record: ChipRecord | null; testRun?: true }
-  | { kind: 'user'; record: ChipRecord | null; testRun?: true }
+  | {
+      kind: 'task';
+      record: ChipRecord | null;
+      schedule: ScheduleMark | null;
+      testRun?: true;
+    }
+  | {
+      kind: 'user';
+      record: ChipRecord | null;
+      schedule: ScheduleMark | null;
+      testRun?: true;
+    }
   | {
       kind: 'parent';
       fromConversation: boolean;
@@ -444,22 +455,23 @@ function entryMessage(
       const atRoot =
         view.kind === 'thread' || view.agent.agentId === view.agent.rootId;
       const record = atRoot ? entry.content.record : null;
+      const schedule = atRoot ? entry.content.schedule : null;
       return {
         id,
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'task', record, ...testRun }),
+        metadata: meta({ kind: 'task', record, schedule, ...testRun }),
       };
     }
     case 'user_message': {
-      const record = entry.content.record;
+      const { record, schedule } = entry.content;
       return {
         id,
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'user', record, ...testRun }),
+        metadata: meta({ kind: 'user', record, schedule, ...testRun }),
       };
     }
     case 'agent_message': {
@@ -786,7 +798,11 @@ function optimisticMessage(entry: OptimisticEntry): ThreadMessageLike {
     role: 'user',
     createdAt: new Date(entry.createdAt),
     content: entry.text,
-    metadata: meta({ kind: 'user', record: entry.record ?? null }),
+    metadata: meta({
+      kind: 'user',
+      record: entry.record ?? null,
+      schedule: null,
+    }),
   };
 }
 
@@ -889,7 +905,12 @@ export function toFeed(
         role: 'user',
         createdAt: new Date(entry.createdAt),
         content: '',
-        metadata: meta({ kind: 'user', record: null, testRun: true }),
+        metadata: meta({
+          kind: 'user',
+          record: null,
+          schedule: null,
+          testRun: true,
+        }),
       });
     if (run !== null) turnCards.push(...runParts(run, entry));
     messages.push(...(anchored.get(index) ?? []));

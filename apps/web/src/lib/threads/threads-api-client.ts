@@ -5,6 +5,7 @@ import {
   AgentPageViewSchema,
   AgentTasksViewSchema,
   AwaitingCountSchema,
+  ConversationSearchResponseSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
   DeepAgentRunViewSchema,
@@ -24,6 +25,7 @@ import {
   type AgentPageView,
   type AgentTasksView,
   type AwaitingCount,
+  type ConversationSearchResponse,
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
@@ -53,6 +55,19 @@ async function listThreads(cursor?: string): Promise<ThreadListResponse> {
   return apiRequest({
     path: `/api/threads${query}`,
     schema: ThreadListResponseSchema,
+  });
+}
+
+/** GET /api/search: one page of matches for `q`; `cursor` is the previous page's `nextCursor`. */
+async function searchConversations(
+  q: string,
+  cursor?: string,
+): Promise<ConversationSearchResponse> {
+  const params = new URLSearchParams({ q });
+  if (cursor !== undefined) params.set('cursor', cursor);
+  return apiRequest({
+    path: `/api/search?${params.toString()}`,
+    schema: ConversationSearchResponseSchema,
   });
 }
 
@@ -283,6 +298,7 @@ async function getSpend(): Promise<SpendResponse> {
 
 export const threadsApiClient = {
   listThreads,
+  searchConversations,
   getThread,
   createThread,
   renameThread,

@@ -7,6 +7,7 @@ import {
   CircleX,
   Info,
   KeyRound,
+  SkipForward,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -14,10 +15,18 @@ import { cn } from 'cn';
 /**
  * States of the «Состояние» variant (design-system state-badge): `ok` «Хорошо», `action` «Нужно действие»,
  * `closed` «Закрыто», `off` «Выключено», `neutral` «Нейтрально», `worse` «Хуже», `info` «Сведения»,
- * `failed` «Не прошло».
+ * `failed` «Не прошло», `skipped` «Пропущено».
  */
 export type StateBadgeState =
-  'ok' | 'action' | 'closed' | 'off' | 'neutral' | 'worse' | 'info' | 'failed';
+  | 'ok'
+  | 'action'
+  | 'closed'
+  | 'off'
+  | 'neutral'
+  | 'worse'
+  | 'info'
+  | 'failed'
+  | 'skipped';
 
 const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> =
   {
@@ -29,6 +38,7 @@ const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> =
     worse: { icon: CircleArrowDown, className: 'text-warning' },
     info: { icon: Info, className: 'text-info' },
     failed: { icon: CircleX, className: 'text-destructive' },
+    skipped: { icon: SkipForward, className: 'text-muted-foreground' },
   };
 
 export type StateBadgeProps = { children: string } & (

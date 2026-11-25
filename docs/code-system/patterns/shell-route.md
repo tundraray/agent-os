@@ -30,3 +30,4 @@
 
 - [design-admin.md](../../features/enterprise-access/design-admin.md) — KD-1, KD-2: вид `admin` и `AdminGate`
 - [design-web.md](../../features/custom-agents/design-web.md) — KD-1: вид `library` и раздел панели `library`
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — виды списка расписаний и одного расписания, адреса `/schedules` и `/schedules/:id`

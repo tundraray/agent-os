@@ -3,6 +3,7 @@ import {
   type ChipRecord,
   RecordKindSchema,
   type RunOrigin,
+  type ScheduleMark,
 } from '@agent-os/contracts';
 import {
   type ConversationRow,
@@ -58,6 +59,8 @@ export interface SessionStart {
   readonly forkedThroughSeq?: number;
   /** At a conversation's root, the chip of its first message. */
   readonly record?: ChipRecord;
+  /** At a conversation's root a schedule started, its mark (schedules KD-5). */
+  readonly schedule?: ScheduleMark;
   /** The parent's tool call that started this child; absent on a root (data-model design-schema.md R3). */
   readonly startCallId?: string;
 }
@@ -223,7 +226,11 @@ export class Sessions {
         forkedThroughSeq: start.forkedThroughSeq ?? null,
       },
       // The chip of a conversation's first message stays on the root's task (plan Notes 9а).
-      { text: start.prompt, record: start.record ?? null },
+      {
+        text: start.prompt,
+        record: start.record ?? null,
+        schedule: start.schedule ?? null,
+      },
     );
   }
 

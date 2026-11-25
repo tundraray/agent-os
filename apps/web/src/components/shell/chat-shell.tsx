@@ -32,7 +32,11 @@ import { useFeedStoreSelector } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
 import type { FocusTarget } from '@/lib/focus';
 import type { OpenEventSource } from '@/lib/live/live-store';
-import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
+import {
+  isPageRoute,
+  parseShellRoute,
+  type ShellRoute,
+} from '@/lib/shell-route';
 import { Announcer } from './announcer';
 import { AppSidebar } from './app-sidebar';
 import { ChatHeader } from './chat-header';
@@ -323,13 +327,12 @@ function RouteFeedProvider({
 }
 
 /**
- * First stop in the Tab order; visible only while focused. The panel and the library have no composer: there it
- * leads to the screen's `h1`.
+ * First stop in the Tab order; visible only while focused. The panel, the library and the schedules have no composer: there
+ * it leads to the screen's `h1`.
  */
 function SkipLink() {
   const t = useTranslations('shell.skipLink');
-  const kind = parseShellRoute(usePathname()).kind;
-  const panel = kind === 'admin' || kind === 'library';
+  const panel = isPageRoute(parseShellRoute(usePathname()));
   const target: FocusTarget = panel ? 'page-title' : 'composer';
   const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     event.preventDefault();

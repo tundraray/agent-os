@@ -309,7 +309,11 @@ export class TrainingOperations {
                 await this.history.append(taskId, [
                   {
                     kind: 'user_message',
-                    content: { text: description, record: null },
+                    content: {
+                      text: description,
+                      record: null,
+                      schedule: null,
+                    },
                   },
                 ]);
             }
