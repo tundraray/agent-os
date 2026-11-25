@@ -30,3 +30,4 @@
 
 - [design-web-shell.md](../../features/chat-shell/design-web-shell.md) — `ShellServices`, статус оболочки и поток событий
 - [design-web.md](../../features/custom-agents/design-web.md) — KD-2, KD-4, KD-5, KD-6: `libraryIndex`, `leaveGuard`, `composerSeed`, `createdHandoff`
+- [design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md) — KD-7: стор поиска держит совпадения и цель открытого совпадения для ленты

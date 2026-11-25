@@ -89,3 +89,4 @@ flowchart LR
 - [design-schema.md](../../features/data-model/design-schema.md) — SQL задач строит `RuntimeTasksRepository` по закрытому набору значений, `pg_notify` — `RuntimeEventsRepository.notify` (KD-6); запросы бесед соединяются с задачей (KD-2)
 - [design-agents.md](../../features/data-model/design-agents.md) — `AgentsRepository`: версия и указатель в одной точке сохранения (KD-2)
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — `DocumentsRepository`: строки документов в транзакции коммита шага, запись только поверх прочитанного текста (KD-1, Data Model)
+- [design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md) — `ConversationSearchRepository`: одно чтение по индексам-выражениям, выражение индекса и запроса определено один раз (KD-1, Data Model)
