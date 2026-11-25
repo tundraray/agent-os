@@ -11,6 +11,7 @@ import { focusShellTarget } from '@/lib/focus';
 import {
   NEW_THREAD_TARGET,
   type SeedTarget,
+  type TEST_RUN_ACTION,
 } from '@/lib/threads/composer-seed';
 import { threadPath } from '@/lib/shell-route';
 
@@ -26,6 +27,8 @@ export function useLeaveThenGo(): (go: () => void) => void {
 export type InChatSeed = {
   /** The record chip the composer shows until the message is sent or «✕». */
   record?: ChipRecord;
+  /** The action chip instead of a record («+» of the composer). */
+  action?: typeof TEST_RUN_ACTION;
   /** A template text the composer takes once («Создать в чате», «Доработать в чате»). */
   text?: string;
 };

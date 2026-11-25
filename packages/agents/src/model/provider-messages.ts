@@ -1,6 +1,7 @@
 import {
   MEMORY_TOOLS,
   NOTEPAD_TOOLS,
+  TEST_RUN_TOOLS,
   TRAINER_TOOLS,
 } from '@agent-os/contracts';
 
@@ -34,7 +35,7 @@ export function envelope(source: string, author: string, data: string): string {
 /** The author of what the package itself produced: a built-in tool's result, a compaction summary. */
 const PACKAGE_AUTHOR = 'agents';
 
-/** The author of memory records, notepad documents and the trainer's reads of past work: text a model wrote, not the platform. */
+/** The author of memory records, notepad documents and the trainer's reads of past work and tests: text a model or an outside system wrote, not the platform. */
 export const MODEL_AUTHOR = 'agent model';
 
 /** The parent's history the fork continues: its entries through `throughSeq` precede the child's own (KD-7). */
@@ -85,9 +86,12 @@ function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {
     output: envelope(
       `tool ${result.tool}`,
       result.server ??
-        ([...MEMORY_TOOLS, ...NOTEPAD_TOOLS, ...TRAINER_TOOLS].some(
-          (tool) => tool === result.tool,
-        )
+        ([
+          ...MEMORY_TOOLS,
+          ...NOTEPAD_TOOLS,
+          ...TRAINER_TOOLS,
+          ...TEST_RUN_TOOLS,
+        ].some((tool) => tool === result.tool)
           ? MODEL_AUTHOR
           : PACKAGE_AUTHOR),
       data,

@@ -16,6 +16,7 @@ import {
   SpendResponseSchema,
   StopResponseSchema,
   ThreadDocumentsViewSchema,
+  ThreadForksResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
   type AgentListPage,
@@ -37,6 +38,7 @@ import {
   type SpendResponse,
   type StopResponse,
   type ThreadDocumentsView,
+  type ThreadForksResponse,
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
@@ -88,6 +90,22 @@ async function renameThread({
 /** 204 on success; 404 surfaces as kind `not_found` and the caller decides what it means. */
 async function deleteThread(threadId: string): Promise<void> {
   await apiRequest({ path: threadRoute(threadId), method: 'DELETE' });
+}
+
+/** 201: the fork; 409 `FORK_REFUSED` carries its `reason`. */
+async function forkThread(threadId: string): Promise<ThreadSummary> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/fork`,
+    method: 'POST',
+    schema: ThreadSummarySchema,
+  });
+}
+
+async function getThreadForks(threadId: string): Promise<ThreadForksResponse> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/forks`,
+    schema: ThreadForksResponseSchema,
+  });
 }
 
 const agentRoute = (agentId: string): string =>
@@ -269,6 +287,8 @@ export const threadsApiClient = {
   createThread,
   renameThread,
   deleteThread,
+  forkThread,
+  getThreadForks,
   getConversation,
   getThreadAgents,
   getThreadDocuments,

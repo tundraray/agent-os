@@ -6,6 +6,10 @@ export type ThreadListEntry = {
   remoteId: string | undefined;
   title: string | undefined;
   activityAt: number;
+  /** The row's menu offers «Ответвить чат» (create-and-test FK-01). */
+  forkable: boolean;
+  /** The conversation is a fork: the row shows the branch icon (FK-02). */
+  forked: boolean;
 };
 
 /** A date group by its key; the list translates the key into the group's heading. */

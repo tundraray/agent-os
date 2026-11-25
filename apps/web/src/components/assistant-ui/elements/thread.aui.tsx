@@ -4,6 +4,15 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from '@/components/assistant-ui/elements/attachment.aui';
+import { ComposerActions } from '@/components/assistant-ui/elements/composer-actions';
+import { TestRunFooter } from '@/components/assistant-ui/elements/test-run-footer';
+import {
+  TEST_RUN_ICON,
+  TestRunNote,
+  TestRunSubmit,
+  useTestRunStart,
+  type TestRunStart,
+} from '@/components/assistant-ui/elements/test-run-start';
 import { File, getFileHref } from '@/components/file';
 import { ThreadFollowupSuggestions } from '@/components/assistant-ui/elements/follow-up-suggestions.aui';
 import { Image as MessageImage } from '@/components/image';
@@ -22,12 +31,16 @@ import {
   ToolGroupTrigger,
 } from '@/components/assistant-ui/elements/tool-group.aui';
 import { AgentReport } from '@/components/agents/agent-report';
-import { DecisionCard } from '@/components/agents/decision-card';
+import {
+  DecisionCard,
+  OfferCard,
+  PlanCard,
+} from '@/components/agents/decision-card';
 import { EventLine, AnswerRefusedLine } from '@/components/agents/event-line';
 import { InterruptButton } from '@/components/agents/interrupt-button';
 import { QueueTray } from '@/components/agents/queue-tray';
-import { RunCard } from '@/components/agents/run-card';
-import { RecordLabel } from '@/components/library/record-label';
+import { RunCard, TestRunCard } from '@/components/agents/run-card';
+import { Chip, RecordLabel } from '@/components/library/record-label';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -41,8 +54,11 @@ import {
   type EventPartData,
   type OptimisticEntry,
   type AnswerRefusedPartData,
+  type OfferPartData,
+  type PlanPartData,
   type ReportPartData,
   type RunCardPartData,
+  type TestRunCardPartData,
 } from '@/lib/feed/to-feed';
 import { useTranslations } from 'next-intl';
 import { replyFailureText } from '@/lib/access/access-texts';
@@ -50,7 +66,11 @@ import { describeLibraryError } from '@/lib/library/library-errors';
 import { focusShellTarget } from '@/lib/focus';
 import { recordPath } from '@/lib/shell-route';
 import type { ChatTranslator, ErrorsTranslator } from '@/i18n/catalog';
-import type { SeedTarget } from '@/lib/threads/composer-seed';
+import {
+  NEW_THREAD_TARGET,
+  type SeedChip,
+  type SeedTarget,
+} from '@/lib/threads/composer-seed';
 import type { SendFailure } from '@/lib/threads/shell-status-store';
 import { cn } from '@/lib/utils';
 import { ChipRecordSchema, type ChipRecord } from '@agent-os/contracts';
@@ -71,6 +91,7 @@ import {
   type ToolCallMessagePartComponent,
   useAui,
   useAuiState,
+  useThreadViewport,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -141,7 +162,6 @@ const reasoningDuration = (timing: ThreadGroupPart['timing']) =>
  * `ToolFallback`. When `TaskGroup` is set, tool calls that carry a nested
  * conversation and have no registered UI render through it instead of the
  * tool group; without it they render like any other tool call.
- * `ComposerExtra` renders at the start of the composer's action row.
  * `DeletedNotice`, when set, marks the thread as deleted elsewhere (E-8): it
  * renders after the feed in place of the tray and the composer.
  * `FeedHeader` renders above the first message of the feed (the agent page's
@@ -160,7 +180,6 @@ export type ThreadComponents = {
   ReasoningGroup?:
     ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
   TaskGroup?: ComponentType<{ group: ThreadGroupPart }> | undefined;
-  ComposerExtra?: ComponentType | undefined;
   DeletedNotice?: ComponentType | undefined;
   FeedHeader?: ComponentType | undefined;
   TaskBrief?: ComponentType | undefined;
@@ -291,6 +310,7 @@ const ThreadRoot: FC<{
     (state) => state.view?.training ?? null,
     null,
   );
+  const t = useTranslations('chat.testRun');
 
   return (
     <ThreadPrimitive.Root
@@ -304,6 +324,9 @@ const ThreadRoot: FC<{
     >
       <ThreadPrimitive.Viewport
         turnAnchor="top"
+        // Off by default with a top anchor: a card appended after the turn (a plan, a decision) is scrolled into view
+        // unless the person has scrolled up; during a run the anchor still holds.
+        autoScroll
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
       >
@@ -363,8 +386,26 @@ const ThreadRoot: FC<{
             {!historyPending && <ThreadFollowupSuggestions />}
             {DeletedNotice ? (
               <DeletedNotice />
+            ) : training?.run != null ? (
+              <TestRunFooter
+                run={training.run}
+                composer={
+                  <>
+                    <FeedTray />
+                    <Composer
+                      sendBlocked={historyPending}
+                      placeholder={t(
+                        training.run.phase === 'result'
+                          ? 'placeholderResult'
+                          : 'placeholderDialog',
+                      )}
+                      chip={null}
+                    />
+                  </>
+                }
+              />
             ) : training !== null ? (
-              <TrainingLine root={training.isRoot} />
+              <TrainingLine root={training.isRoot} testRun={training.testRun} />
             ) : (
               <>
                 <FeedTray />
@@ -486,6 +527,18 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
   );
 };
 
+const OfferPart: DataMessagePartComponent<OfferPartData> = ({ data }) => (
+  <OfferCard data={data} />
+);
+
+const PlanPart: DataMessagePartComponent<PlanPartData> = ({ data }) => (
+  <PlanCard data={data} />
+);
+
+const TestRunCardPart: DataMessagePartComponent<TestRunCardPartData> = ({
+  data,
+}) => <TestRunCard data={data} />;
+
 const ReportPart: DataMessagePartComponent<ReportPartData> = ({ data }) => (
   <AgentReport data={data} />
 );
@@ -507,6 +560,9 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.report]: ReportPart,
       [FEED_PART.event]: EventPart,
       [FEED_PART.answerRefused]: AnswerRefusedPart,
+      [FEED_PART.offer]: OfferPart,
+      [FEED_PART.plan]: PlanPart,
+      [FEED_PART.testRunCard]: TestRunCardPart,
     },
   },
 };
@@ -520,7 +576,7 @@ const FeedPartMessage: FC = () => (
   <MessagePrimitive.Root
     data-slot="aui_feed-part"
     data-feed-block=""
-    className="fade-in animate-in -my-2 duration-150 motion-reduce:animate-none [[data-feed-block]+&]:mt-0"
+    className="fade-in animate-in relative -my-2 duration-150 motion-reduce:animate-none [[data-feed-block]+&]:mt-0"
   >
     <MessagePrimitive.Parts components={FEED_PART_COMPONENTS} />
   </MessagePrimitive.Root>
@@ -765,10 +821,6 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
-// Enter submits the form (requestSubmit); a prevented submit skips the root's own send.
-const preventSubmit = (event: FormEvent<HTMLFormElement>) =>
-  event.preventDefault();
-
 /** Failures whose text went back to the field: a remounted composer does not paste it again. */
 const returnedFailures = new WeakSet<object>();
 
@@ -806,7 +858,7 @@ const useSendFailure = (newThreadFailure: SendFailure | null): ReactNode => {
 };
 
 /** Chips already announced (MC-19): a remounted composer, or the chip following a new conversation, stays quiet. */
-const announcedChips = new WeakSet<ChipRecord>();
+const announcedChips = new WeakSet<SeedChip>();
 
 /**
  * custom-agents KD-5, CH-01: the composer of a conversation takes its target's template text once and
@@ -829,6 +881,9 @@ const SeededComposer: FC<{
     composerSeed,
     (state) => state.chips.get(target) ?? null,
   );
+  const action = chip !== null && 'action' in chip ? chip : null;
+  const record = chip === null || 'action' in chip ? null : chip;
+  const testRun = useTestRunStart(target, action);
   const textWaiting = useStore(composerSeed, (state) =>
     state.texts.has(target),
   );
@@ -842,13 +897,15 @@ const SeededComposer: FC<{
   useEffect(() => {
     if (chip === null || announcedChips.has(chip)) return;
     announcedChips.add(chip);
-    announcer
-      .getState()
-      .announce('announce.chipInComposer', { name: chip.name });
+    const { announce } = announcer.getState();
+    if ('action' in chip) announce('announce.testRunInComposer');
+    else announce('announce.chipInComposer', { name: chip.name });
   }, [announcer, chip]);
 
   const removeChip = (): void => {
     composerSeed.clear(target);
+    // The live region must not keep announcing a chip that is gone.
+    announcer.setState({ message: null });
     focusShellTarget('composer');
   };
 
@@ -856,21 +913,37 @@ const SeededComposer: FC<{
     <Composer
       sendBlocked={sendBlocked}
       placeholder={
-        chip === null
-          ? placeholder
-          : t('chipPlaceholder', { kind: chip.kind, name: chip.name })
+        action !== null
+          ? t(
+              target === NEW_THREAD_TARGET
+                ? 'composer.testRun.placeholderNew'
+                : 'composer.testRun.placeholderThread',
+            )
+          : record === null
+            ? placeholder
+            : t('chipPlaceholder', { kind: record.kind, name: record.name })
       }
       newThreadFailure={newThreadFailure}
+      actions={<ComposerActions target={target} />}
       chip={
-        chip === null ? null : (
+        action !== null ? (
+          <Chip
+            icon={TEST_RUN_ICON}
+            name={t('composer.testRun.name')}
+            onRemove={removeChip}
+            className="self-start"
+          />
+        ) : record === null ? null : (
           <RecordLabel
-            chip={chip}
+            chip={record}
             variant="chip"
             onRemove={removeChip}
             className="self-start"
           />
         )
       }
+      onRemoveChip={chip === null ? undefined : removeChip}
+      testRun={action === null ? null : testRun}
     />
   );
 };
@@ -880,9 +953,13 @@ const FeedTray: FC = () => (useFeed() === null ? null : <FeedQueueTray />);
 
 /**
  * Self-learning TR-01, MC-10: a training's conversation and its replays take no message. The root's line carries
- * «Стоп» while the training works, which stops the root, and says the training is over once it is not.
+ * «Стоп» while the training works, which stops the root, and says the training is over once it is not. A test run's
+ * replay says it is the check's.
  */
-const TrainingLine: FC<{ root: boolean }> = ({ root }) => {
+const TrainingLine: FC<{ root: boolean; testRun: boolean }> = ({
+  root,
+  testRun,
+}) => {
   const t = useTranslations('chat.training');
   const feed = useFeed();
   const working = useFeedSelector((state) => canInterrupt(state.view), false);
@@ -895,7 +972,11 @@ const TrainingLine: FC<{ root: boolean }> = ({ root }) => {
   return (
     <div className="flex flex-col gap-1 px-2">
       <div className="text-muted-foreground flex min-h-9 items-center justify-between gap-2 text-sm leading-5">
-        <p>{root && !working ? t('ended') : t('readOnly')}</p>
+        <p>
+          {root && !working
+            ? t('ended')
+            : t(testRun ? 'testRunReadOnly' : 'readOnly')}
+        </p>
         {root && working && (
           <Button variant="outline" size="sm" onClick={stop}>
             <SquareIcon aria-hidden />
@@ -928,17 +1009,57 @@ const Composer: FC<{
   sendBlocked: boolean;
   placeholder: string;
   chip: ReactNode;
+  /** The start of the action row: «+» where a chip is supported. */
+  actions?: ReactNode;
   newThreadFailure?: SendFailure | null;
-}> = ({ sendBlocked, placeholder, chip, newThreadFailure = null }) => {
+  /** Backspace in the empty field removes the chip (UXRD KD-2); without a chip — none. */
+  onRemoveChip?: () => void;
+  /** The action chip stands: the form starts a test run instead of sending a message. */
+  testRun?: TestRunStart | null;
+}> = ({
+  sendBlocked,
+  placeholder,
+  chip,
+  actions,
+  newThreadFailure = null,
+  onRemoveChip,
+  testRun = null,
+}) => {
+  const aui = useAui();
   const t = useTranslations('chat');
-  const failure = useSendFailure(newThreadFailure);
+  const sendFailure = useSendFailure(newThreadFailure);
+  const scrollToBottom = useThreadViewport((state) => state.scrollToBottom);
+  const failure = testRun === null ? sendFailure : testRun.failure;
   const sendFailed = failure !== null;
   const failureId = useId();
+  const noteId = useId();
+  const describedBy = [sendFailed && failureId, testRun !== null && noteId]
+    .filter(Boolean)
+    .join(' ');
+
+  /**
+   * Every submit of this form comes here: Enter (ComposerPrimitive.Input calls `form.requestSubmit()`) and the
+   * send button alike. assistant-ui's own send runs after this handler only when the submit is not prevented, so
+   * with the action chip the field starts a test run and never posts a message (KD-2, Invariant 2).
+   */
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    if (sendBlocked && testRun === null) {
+      event.preventDefault();
+      return;
+    }
+    // The feed has no library run, so nothing brings a person who scrolled up back down: their own send does, and
+    // from there the viewport follows the answer again.
+    scrollToBottom();
+    if (testRun !== null) {
+      event.preventDefault();
+      testRun.submit(aui.composer.getState().text);
+    }
+  };
 
   return (
     <ComposerPrimitive.Root
       className="aui-composer-root relative flex w-full flex-col"
-      onSubmit={sendBlocked ? preventSubmit : undefined}
+      onSubmit={submit}
     >
       {/* Attachments are hidden (D-04): no dropzone, pasting a file adds nothing. */}
       <div
@@ -954,12 +1075,25 @@ const Composer: FC<{
           autoFocus={false}
           enterKeyHint="send"
           aria-label={t('composer.message')}
-          aria-describedby={sendFailed ? failureId : undefined}
+          aria-describedby={describedBy === '' ? undefined : describedBy}
           name="message"
           addAttachmentOnPaste={false}
           data-shell-focus="composer"
+          disabled={testRun?.pending}
+          onKeyDown={(event) => {
+            if (
+              event.key === 'Backspace' &&
+              onRemoveChip !== undefined &&
+              aui.composer.getState().text === ''
+            )
+              onRemoveChip();
+          }}
         />
-        <ComposerAction sendBlocked={sendBlocked} />
+        <ComposerAction
+          sendBlocked={sendBlocked}
+          actions={actions}
+          testRun={testRun}
+        />
       </div>
       {sendFailed && (
         <p
@@ -970,6 +1104,13 @@ const Composer: FC<{
         >
           {failure}
         </p>
+      )}
+      {testRun !== null && (
+        <TestRunNote
+          id={noteId}
+          target={testRun.target}
+          pending={testRun.pending}
+        />
       )}
     </ComposerPrimitive.Root>
   );
@@ -989,15 +1130,21 @@ const FeedInterrupt: FC = () => {
   return <InterruptButton onInterrupt={() => feed.interrupt()} />;
 };
 
-/** «Отправить» stays available while the agent works (FR-16); stopping the agent is «Прервать». */
-const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
+/**
+ * «Отправить» stays available while the agent works (FR-16); stopping the agent is «Прервать». With the action
+ * chip a submit button «Создать и проверить» stands in its place.
+ */
+const ComposerAction: FC<{
+  sendBlocked: boolean;
+  actions: ReactNode;
+  testRun: TestRunStart | null;
+}> = ({ sendBlocked, actions, testRun }) => {
   const t = useTranslations('chat');
-  const { ComposerExtra } = useContext(ThreadComponentsContext);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="aui-composer-action-start flex items-center gap-1.5">
-        {ComposerExtra && <ComposerExtra />}
+        {actions}
       </div>
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
@@ -1038,22 +1185,26 @@ const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
         </AuiIf>
         <FeedInterrupt />
         <AuiIf condition={(s) => !shouldShowComposerResume(s)}>
-          <ComposerPrimitive.Send
-            disabled={sendBlocked}
-            render={
-              <TooltipIconButton
-                tooltip={t('composer.send')}
-                side="bottom"
-                type="button"
-                variant="default"
-                size="icon"
-                className="aui-composer-send size-7 rounded-full"
-                aria-label={t('composer.send')}
-              />
-            }
-          >
-            <ArrowUpIcon className="aui-composer-send-icon size-4" />
-          </ComposerPrimitive.Send>
+          {testRun !== null ? (
+            <TestRunSubmit target={testRun.target} pending={testRun.pending} />
+          ) : (
+            <ComposerPrimitive.Send
+              disabled={sendBlocked}
+              render={
+                <TooltipIconButton
+                  tooltip={t('composer.send')}
+                  side="bottom"
+                  type="button"
+                  variant="default"
+                  size="icon"
+                  className="aui-composer-send size-7 rounded-full"
+                  aria-label={t('composer.send')}
+                />
+              }
+            >
+              <ArrowUpIcon className="aui-composer-send-icon size-4" />
+            </ComposerPrimitive.Send>
+          )}
         </AuiIf>
         <AuiIf condition={shouldShowComposerResume}>
           <ComposerPrimitive.Resume
@@ -1391,6 +1542,10 @@ const UserMessage: FC = () => {
     (s): unknown => s.message.metadata.custom['record'],
   );
   const record = isChipRecord(sentRecord) ? sentRecord : null;
+  // create-and-test CT-03: the test run's description is sent with the action chip, without «✕».
+  const testRun = useAuiState(
+    (s) => s.message.metadata.custom['testRun'] === true,
+  );
   // AV-03: a deep agent's task reads as its brief.
   const Brief = isTask ? TaskBrief : undefined;
   const t = useTranslations('chat');
@@ -1414,6 +1569,13 @@ const UserMessage: FC = () => {
           variant="under"
           href={recordPath(record.id)}
           className="col-start-2 -mb-1 justify-self-end"
+        />
+      )}
+      {testRun && (
+        <Chip
+          icon={TEST_RUN_ICON}
+          name={t('composer.testRun.name')}
+          className="col-start-2 justify-self-end"
         />
       )}
       <UserMessageAttachments />

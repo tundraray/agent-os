@@ -2,18 +2,32 @@ import type { Logger } from '@agent-os/common';
 import {
   AgentMessageKindSchema,
   type DecisionResponse,
+  SessionTaskStatusSchema,
   TaskStatusSchema,
+  type TestRunClosedReason,
+  testRunPhase,
+  TRAINER_TASK_TYPE,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { ConversationsRepository } from '@agent-os/db';
-import { Inbox, TaskControl } from '@agent-os/runtime';
+import {
+  AgentsRepository,
+  ConversationsRepository,
+  ConversationTasksRepository,
+  RuntimeModelCallsRepository,
+  TrainingsRepository,
+} from '@agent-os/db';
+import { Inbox, type Task, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
 import { AgentsError } from '../errors';
 import { messagePayload } from '../resume';
-import { type RootSession, toRootSession } from '../store/sessions';
+import {
+  agentTaskInputOf,
+  type RootSession,
+  toRootSession,
+} from '../store/sessions';
 import { ToolRegistry } from '../tools/tool-registry';
 import type {
   AgentRef,
@@ -30,10 +44,20 @@ import {
   QuestionInputSchema,
 } from './operation-support';
 import { isQuestion } from '../task-tree';
+import { FIX_TASK } from '../training/pool';
 import { inTrainingTree } from '../training/training-tree';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
+
+/** A test run's trainer: a root `trainer` task with `testRun` in its input. */
+function isTestRunRoot(task: Task): boolean {
+  return (
+    task.type === TRAINER_TASK_TYPE &&
+    task.taskId === task.rootId &&
+    agentTaskInputOf(task.input).testRun === true
+  );
+}
 
 /**
  * The operations that change a live agent or its conversation: a message, an interrupt, a stop, the decision
@@ -56,6 +80,21 @@ export class ControlOperations {
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, 'toolOf'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
+    /** A test run's root takes a message by its phase (design-trainer-dialog.md, KD-2). */
+    @Inject(TrainingsRepository)
+    private readonly trainingRows: Pick<
+      TrainingsRepository,
+      'find' | 'running'
+    >,
+    @Inject(AgentsRepository)
+    private readonly agentRows: Pick<
+      AgentsRepository,
+      'trainingVersions' | 'findAny'
+    >,
+    @Inject(ConversationTasksRepository)
+    private readonly sessionTaskRows: Pick<ConversationTasksRepository, 'list'>,
+    @Inject(RuntimeModelCallsRepository)
+    private readonly modelCalls: Pick<RuntimeModelCallsRepository, 'sumTree'>,
   ) {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
@@ -72,9 +111,24 @@ export class ControlOperations {
       { agentId, ownerId, recordId: record?.id ?? null },
       async () => {
         const target = await agentTask(this.tasks, agentId, ownerId);
-        // A training tree is not resumed (self-learning design-training.md KD-3, place 5).
-        if (await inTrainingTree(this.tasks, target))
-          throw agentNotFound(agentId);
+        // A training tree is not resumed (self-learning design-training.md KD-3, place 5), except a test
+        // run's root in its dialog and result phases (design-trainer-dialog.md, KD-2).
+        if (await inTrainingTree(this.tasks, target)) {
+          if (!isTestRunRoot(target)) throw agentNotFound(agentId);
+          const closedReason = await this.testRunClosed(target);
+          if (closedReason !== null) {
+            this.logger.info('test run message refused', {
+              agentId,
+              ownerId,
+              closedReason,
+            });
+            throw new AgentsError(
+              'TEST_RUN_NOT_ACCEPTING',
+              `Test run ${agentId} takes no message now: ${closedReason}`,
+              { closedReason },
+            );
+          }
+        }
         // Notes 5: a message to a stopped agent carries the `resume` mark; the window between this
         // read and the write is a known low risk.
         const parent =
@@ -97,6 +151,45 @@ export class ControlOperations {
       },
       ({ messageId }) => ({ messageId }),
     );
+  }
+
+  /**
+   * Why a test run's root takes no message now, or `null` (design-trainer-dialog.md, «Фазы и передача хода»):
+   * only the dialog and result phases below the cap take one, and the result only while the agent is not deleted
+   * and no training of it runs.
+   */
+  private async testRunClosed(root: Task): Promise<TestRunClosedReason | null> {
+    const row = await this.trainingRows.find(root.taskId);
+    if (row === undefined)
+      throw new Error(`Test run ${root.taskId} has no training row`);
+    const [proposed, pool, spentUsd] = await Promise.all([
+      this.agentRows.trainingVersions(row.id),
+      this.sessionTaskRows.list(root.taskId),
+      this.modelCalls.sumTree(root.taskId),
+    ]);
+    const state = testRunPhase({
+      rootStatus: root.status,
+      capped: row.cappedAt !== null,
+      agentId: row.agentId,
+      takenAgentId: row.takenAgentId,
+      versions: (row.baseVersionId === null ? 0 : 1) + proposed.length,
+      tests: row.tests,
+      fixTaskInProgress: pool.some(
+        (task) =>
+          task.number === FIX_TASK &&
+          task.status === SessionTaskStatusSchema.enum.in_progress,
+      ),
+    });
+    if (state.phase === 'ended') return state.reason;
+    if (state.phase === 'working' || state.phase === 'taken')
+      return state.phase;
+    if (Number(spentUsd) >= Number(row.capUsd)) return 'capped';
+    if (state.phase === 'dialog' || row.agentId === null) return null;
+    if ((await this.trainingRows.running(row.agentId))?.description === null)
+      return 'training_running';
+    if ((await this.agentRows.findAny(row.agentId))?.deletedAt != null)
+      return 'agent_deleted';
+    return null;
   }
 
   /** Marks the agent «прерван»: it closes its open calls and waits for a message (KD-3). */
@@ -198,7 +291,9 @@ export class ControlOperations {
       'renameRoot',
       { rootId, ownerId },
       async () => {
-        const row = await this.sessionRows.renameRoot(rootId, ownerId, title);
+        if (!(await this.sessionRows.renameRoot(rootId, ownerId, title)))
+          return undefined;
+        const row = await this.sessionRows.root(rootId, ownerId);
         return row === undefined ? undefined : toRootSession(row);
       },
       (renamed) => ({ found: renamed !== undefined }),

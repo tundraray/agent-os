@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, lte, sql } from 'drizzle-orm';
 import type { Db } from '../db';
-import { conversations, toolResults } from '../schema';
+import { conversations, messages, toolResults } from '../schema';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
 export interface StoredToolResult {
@@ -34,6 +34,42 @@ export class ToolResultsRepository {
     await this.db.client
       .insert(toolResults)
       .values({ ...row, conversationId: taskId });
+  }
+
+  /**
+   * Copies into `toId` the results of the calls whose `tool_result` entries of `fromId` go up to `throughSeq`;
+   * returns how many were copied.
+   */
+  async copy(
+    fromId: string,
+    toId: string,
+    throughSeq: number,
+  ): Promise<number> {
+    const closedCalls = this.db.client
+      .select({ callId: messages.callId })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, fromId),
+          eq(messages.kind, 'tool_result'),
+          lte(messages.seq, throughSeq),
+        ),
+      );
+    const copied = await this.db.client.insert(toolResults).select(
+      this.db.client
+        .select({
+          ...getTableColumns(toolResults),
+          conversationId: sql<string>`${toId}::uuid`.as('conversation_id'),
+        })
+        .from(toolResults)
+        .where(
+          and(
+            eq(toolResults.conversationId, fromId),
+            inArray(toolResults.callId, closedCalls),
+          ),
+        ),
+    );
+    return copied.rowCount ?? 0;
   }
 
   /**

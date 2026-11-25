@@ -45,10 +45,51 @@
   "sendFailed": "Couldn't send the message. Try again.",
   "training": {
     "readOnly": "The training conversation is read-only.",
-    "ended": "The training is over. The outcome is in “Training result”.",
+    "testRunReadOnly": "A test run — read-only.",
+    "ended": "The training is over. The outcome is on the “Training” tab.",
     "stop": "Stop",
-    "stopFailed": "Couldn't stop the training. Try again.",
-    "result": "Training result"
+    "stopFailed": "Couldn't stop the training. Try again."
+  },
+  "testRun": {
+    "endedAnnouncement": "The test is over: {status}",
+    "openAgent": "Open agent",
+    "placeholderDialog": "Answer the trainer…",
+    "placeholderResult": "Ask to fix the agent or ask about the test…",
+    "working": "The trainer is working — you can write after the result.",
+    "closed": "The test is over: {status}. You can no longer write here.",
+    "taken": "You chose the agent “{name}”. No new one was created.",
+    "takenLink": "{fork, select, yes {Open the conversation with it} other {Start a conversation with it}}",
+    "stopFailed": "Couldn't stop the test. Try again.",
+    "card": {
+      "title": "{named, select, yes {Test of “{name}”} other {Test of a new agent}}",
+      "fixTitle": "Fix {fix} · “{name}”",
+      "now": "Now: {task}",
+      "firstRound": "First version — {passed} of {total}",
+      "fixRound": "Fix {fix} — {passed} of {total}",
+      "inLibrary": "The agent is already in your library.",
+      "notCreated": "The agent was not created."
+    },
+    "offer": {
+      "title": "There is a similar agent",
+      "take": "Take this agent",
+      "create": "Create a new one",
+      "hint": "You can also answer with a message.",
+      "taken": "This agent taken · {time}",
+      "declined": "Creating a new one · {time}"
+    },
+    "plan": {
+      "title": "Plan · {name}",
+      "what": "What it does",
+      "servers": "Systems",
+      "noServers": "none",
+      "tests": "Tests",
+      "expected": "Expected: {result}",
+      "note": "Only you will see the agent. Tests only read your systems — nothing is written. The whole test costs no more than {cap}.",
+      "confirm": "Create and test",
+      "hint": "Or write what to change — the trainer will send a corrected plan.",
+      "confirmed": "Confirmed · {time}",
+      "replaced": "Replaced by the plan below"
+    }
   },
   "chipPlaceholder": "{kind, select, agent {Describe the task for “{name}”…} other {Describe what to look into — the chat will prepare a brief for “{name}”…}}",
   "composer": {
@@ -57,7 +98,25 @@
     "startDictation": "Start voice input",
     "stopDictation": "Stop dictation",
     "send": "Send",
-    "resume": "Continue generating"
+    "resume": "Continue generating",
+    "add": "Add",
+    "agents": "Agents",
+    "noAgents": "No agents available",
+    "createAgent": "Create an agent in chat",
+    "createAgentHint": "Describe the agent, the chat will build it",
+    "connections": "Connections",
+    "connectionsHint": "Service accounts your agents work with",
+    "testRun": {
+      "name": "Create and check an agent",
+      "hint": "The trainer will build the agent and tests · up to {cap}",
+      "placeholderNew": "Describe what the agent should do. Example tasks will become tests…",
+      "placeholderThread": "Say what agent you need, or send it empty — the trainer will take the task from the conversation…",
+      "noteNew": "No more than {cap} · tests only read your systems",
+      "noteThread": "Starts in a branch of this conversation · no more than {cap}",
+      "starting": "Starting…",
+      "send": "Create and check",
+      "count": "{count} of {max}"
+    }
   },
   "replying": "Assistant is replying…",
   "feedback": {

@@ -27,6 +27,7 @@ import {
   type RecordFocus,
   type RecordFocusAction,
   type RunOrigin,
+  type TestRunSummary,
 } from '@agent-os/contracts';
 import type { TrainingRow } from '@agent-os/db';
 import type { StepMessage } from '@agent-os/runtime';
@@ -64,17 +65,23 @@ function toRunOrigin(origin: RunOrigin): RunOrigin {
 
 /**
  * The `training` field of a view of `agentId` (self-learning design-training.md, «Беседа обучения и беседы
- * повторов»): the `trainings` row of its tree's root, which exists only when the root is a `trainer` task.
+ * повторов»; design-test-run.md, «Беседы прогона»): the `trainings` row of its tree's root, which exists only when
+ * the root is a `trainer` task. `agentLive` — the row's agent exists and is not deleted; otherwise no `agentId`.
+ * `run` — the test run's summary in its own conversation's view, otherwise `null`.
  */
 export function trainingOf(
   row: TrainingRow | undefined,
   agentId: string,
+  agentLive: boolean,
+  run: TestRunSummary | null,
 ): ConversationTraining {
   if (row === undefined) return null;
   return {
-    agentId: row.agentId,
+    agentId: agentLive ? row.agentId : null,
     trainingId: row.id,
     isRoot: row.id === agentId,
+    testRun: row.description !== null,
+    run,
   };
 }
 

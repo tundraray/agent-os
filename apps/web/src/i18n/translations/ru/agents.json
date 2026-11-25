@@ -55,7 +55,8 @@
     "title": "<prefix>Отчёт · </prefix><link>{description}</link>",
     "label": "Отчёт: {description}",
     "stopped": "{withParent, select, yes {остановлен вместе с родителем} other {остановлен вами}}",
-    "empty": "Отчёта нет."
+    "empty": "Отчёта нет.",
+    "inBranch": "Документ остался в исходной беседе"
   },
   "interrupt": "Прервать",
   "values": {
@@ -163,7 +164,8 @@
     "pending": "Ожидает",
     "in_progress": "В работе",
     "completed": "Готова",
-    "unfinished": "Не закончена"
+    "unfinished": "Не закончена",
+    "skipped": "Не потребовалась"
   },
   "trainingStatus": {
     "running": "Идёт",
@@ -215,5 +217,9 @@
     "back": "Назад к документам",
     "loadError": "Не удалось загрузить документ",
     "retry": "Повторить"
+  },
+  "fork": {
+    "from": "Ответвлено от «<link>{title}</link>»",
+    "fromDeleted": "Ответвлено от удалённой беседы"
   }
 }

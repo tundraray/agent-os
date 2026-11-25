@@ -276,15 +276,11 @@
     "deleted": "Record deleted"
   },
   "training": {
-    "title": "Training “{name}”",
-    "startedBy": "Started by {name} · {at} · from version {version}",
     "openConversation": "Open training conversation",
     "spent": "spent {spent} of {cap}",
     "recommended": "Recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
     "notRecommended": "Not recommended: better in {wins, plural, one {# task} other {# tasks}}, worse in {losses}, equal in {equal}.",
     "nothingToImprove": "The trainer found nothing to improve: {explanation}",
-    "nothingToImproveHidden": "The trainer found nothing to improve.",
-    "textsHidden": "Only the person who started the training sees its texts.",
     "activate": "Make active",
     "retrain": "Train again",
     "activeSince": "Active since {at}",
@@ -300,8 +296,6 @@
     "calls": "Tool calls",
     "avgCost": "Average task cost",
     "columns": {
-      "task": "Task",
-      "outcome": "Outcome",
       "errors": "Errors",
       "calls": "Calls",
       "cost": "Cost"
@@ -313,17 +307,52 @@
       "not_compared": "not compared"
     },
     "replay": "Replay on version {version}",
-    "loadFailed": "Couldn't load the result",
+    "loadFailed": "Couldn't load the progress and outcome",
     "retry": "Retry",
     "activateTitle": "Make version {version} active?",
     "activateBody": "New conversations of all employees will run on it; ones already started will finish on version {base}.",
     "activated": "Version {version} is active",
     "train": "Train",
     "willSpend": "Will spend no more than {cap}",
-    "watch": "Watch the training",
     "last": "Last training, {at}:",
     "lastRecommended": "· recommended",
     "lastNotRecommended": "· not recommended",
-    "openResult": "Open the result"
+    "openResult": "Open the result",
+    "tab": "Training",
+    "started": "{at} · from version {version}"
+  },
+  "testRun": {
+    "tab": "Test",
+    "started": "{at} · by the confirmed plan",
+    "progress": "Test progress",
+    "passedOne": "{passed} of {total} {total, plural, one {test} other {tests}} passed.",
+    "passedRounds": "Tests passed: {rounds}.",
+    "roundPassed": "{fix, plural, =0 {first version} other {fix {fix}}} — {passed} of {total}",
+    "inLibrary": "The agent is already in your library — to keep it, you don't need to press anything.",
+    "nothingToFix": "The trainer found nothing to fix: {explanation}",
+    "nothingToFixBare": "The trainer found nothing to fix.",
+    "notCreated": "The agent was not created.",
+    "deleted": "The agent was deleted.",
+    "round": "{fix, plural, =0 {First version} other {Fix {fix}}}",
+    "activateTitle": "Make “Fix {fix}” the active version?",
+    "activateName": "Make active: Fix {fix}",
+    "activateBody": "Your new conversations with the agent will run on it; ones already started will finish on the previous version.",
+    "activated": "Fix {fix} is active",
+    "delete": "Delete agent",
+    "tests": "Tests",
+    "passedRow": "Tests passed",
+    "passedOf": "{passed} of {total}",
+    "verdict": {
+      "passed": "passed",
+      "failed": "failed",
+      "unchecked": "not checked"
+    },
+    "notChecked": "The test run ended earlier.",
+    "run": "Run",
+    "runName": "Run of test {number}, {round}",
+    "changes": "What fix {fix} changes",
+    "agent": "Agent",
+    "showDefinition": "Show definition",
+    "hideDefinition": "Hide definition"
   }
 }

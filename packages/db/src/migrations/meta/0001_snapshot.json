@@ -1,6 +1,6 @@
 {
-  "id": "0f4f0d48-2962-4adb-99e6-c379c441bd77",
-  "prevId": "223b2fd3-10ca-4a32-945f-a74adefff00a",
+  "id": "cb0df0c8-39b9-4d05-a362-abf283048965",
+  "prevId": "714b25db-f56e-48fd-bff8-0568fde36454",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -626,6 +626,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "forked_from_id": {
+          "name": "forked_from_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "turns": {
           "name": "turns",
           "type": "integer",
@@ -710,6 +716,21 @@
           "columns": [
             {
               "expression": "parent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "conversations_forked_from_idx": {
+          "name": "conversations_forked_from_idx",
+          "columns": [
+            {
+              "expression": "forked_from_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -805,6 +826,20 @@
           ],
           "onUpdate": "no action",
           "onDelete": "restrict"
+        },
+        "conversations_forked_from_id_conversations_id_fk": {
+          "name": "conversations_forked_from_id_conversations_id_fk",
+          "tableFrom": "conversations",
+          "columnsFrom": [
+            "forked_from_id"
+          ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -818,6 +853,10 @@
         "conversations_root_check": {
           "name": "conversations_root_check",
           "value": "(\"app\".\"conversations\".\"title\" is not null) = (\"app\".\"conversations\".\"parent_id\" is null) and (\"app\".\"conversations\".\"updated_at\" is not null) = (\"app\".\"conversations\".\"parent_id\" is null)"
+        },
+        "conversations_fork_check": {
+          "name": "conversations_fork_check",
+          "value": "\"app\".\"conversations\".\"forked_from_id\" is null or (\"app\".\"conversations\".\"parent_id\" is null and \"app\".\"conversations\".\"forked_through_seq\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -2576,6 +2615,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "changes": {
+          "name": "changes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2584,7 +2629,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "agent_versions_training_idx": {
+          "name": "agent_versions_training_idx",
+          "columns": [
+            {
+              "expression": "training_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {
         "agent_versions_agent_id_agents_id_fk": {
           "name": "agent_versions_agent_id_agents_id_fk",
@@ -2631,13 +2692,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "agent_versions_training_id_key": {
-          "name": "agent_versions_training_id_key",
-          "columns": [
-            "training_id"
-          ],
-          "nullsNotDistinct": false
-        },
         "agent_versions_agent_number_key": {
           "name": "agent_versions_agent_number_key",
           "columns": [
@@ -3090,13 +3144,13 @@
           "name": "agent_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "base_version_id": {
           "name": "base_version_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "cap_usd": {
           "name": "cap_usd",
@@ -3107,12 +3161,6 @@
         "capped_at": {
           "name": "capped_at",
           "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "changes": {
-          "name": "changes",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3130,6 +3178,43 @@
         },
         "activated_by": {
           "name": "activated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tests": {
+          "name": "tests",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "plan": {
+          "name": "plan",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "offered_agent_id": {
+          "name": "offered_agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "taken_agent_id": {
+          "name": "taken_agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "taken_thread_id": {
+          "name": "taken_thread_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -3171,6 +3256,51 @@
           "columns": [
             {
               "expression": "activated_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "trainings_offered_agent_idx": {
+          "name": "trainings_offered_agent_idx",
+          "columns": [
+            {
+              "expression": "offered_agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "trainings_taken_agent_idx": {
+          "name": "trainings_taken_agent_idx",
+          "columns": [
+            {
+              "expression": "taken_agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "trainings_taken_thread_idx": {
+          "name": "trainings_taken_thread_idx",
+          "columns": [
+            {
+              "expression": "taken_thread_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3238,12 +3368,59 @@
           ],
           "onUpdate": "no action",
           "onDelete": "set null"
+        },
+        "trainings_offered_agent_id_agents_id_fk": {
+          "name": "trainings_offered_agent_id_agents_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "offered_agent_id"
+          ],
+          "tableTo": "agents",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
+        },
+        "trainings_taken_agent_id_agents_id_fk": {
+          "name": "trainings_taken_agent_id_agents_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "taken_agent_id"
+          ],
+          "tableTo": "agents",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
+        },
+        "trainings_taken_thread_id_conversations_id_fk": {
+          "name": "trainings_taken_thread_id_conversations_id_fk",
+          "tableFrom": "trainings",
+          "columnsFrom": [
+            "taken_thread_id"
+          ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "trainings_agent_check": {
+          "name": "trainings_agent_check",
+          "value": "(\"app\".\"trainings\".\"agent_id\" is null) = (\"app\".\"trainings\".\"base_version_id\" is null)"
+        }
+      },
       "isRLSEnabled": false
     },
     "app.settings": {

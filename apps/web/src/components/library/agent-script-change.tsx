@@ -45,7 +45,7 @@ export function ScriptHead({
 
 /**
  * «Изменение» (agent-script.md): a script in a training result, marked new, changed or removed, its code in
- * two columns «Было» and «Стало» as they are.
+ * blocks «Было» and «Стало», one under the other, as they are.
  */
 export function AgentScriptChange({
   before,
@@ -75,7 +75,7 @@ export function AgentScriptChange({
   return (
     <article aria-label={shown.name} className="flex flex-col gap-1 py-3">
       <ScriptHead script={shown} mark={mark} />
-      <div className="flex flex-col gap-2 md:flex-row">
+      <div className="flex flex-col gap-2">
         {column(t('change.before'), before)}
         {column(t('change.after'), after)}
       </div>

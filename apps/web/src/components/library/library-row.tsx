@@ -5,12 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import {
   BookOpen,
-  Bot,
   CircleMinus,
   LoaderCircle,
   MoreHorizontalIcon,
   ShieldOff,
-  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import type { RecordKind, RecordSummary } from '@agent-os/contracts';
@@ -31,7 +29,7 @@ import { canUseInChat } from '@/lib/library/record-rules';
 import { adminRecordPath, recordPath } from '@/lib/shell-route';
 import { useCopyRecord } from './copy-record';
 import { DeleteRecordDialog } from './delete-record-dialog';
-import { RecordLabel } from './record-label';
+import { RECORD_KIND_ICON, RecordLabel } from './record-label';
 import { ShareDialog } from './share-dialog';
 import { useInChat } from './use-in-chat';
 
@@ -117,7 +115,7 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
   const [sharing, setSharing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const errorId = useId();
-  const KindIcon = record.kind === 'agent' ? Bot : Workflow;
+  const KindIcon = RECORD_KIND_ICON[record.kind];
   const format = useFormatter();
   const t = useTranslations('library');
   const locale = useLocale();

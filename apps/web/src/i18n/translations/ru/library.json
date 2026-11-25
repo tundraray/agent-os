@@ -276,15 +276,11 @@
     "deleted": "Запись удалена"
   },
   "training": {
-    "title": "Обучение «{name}»",
-    "startedBy": "Начал(а) {name} · {at} · с версии {version}",
     "openConversation": "Открыть беседу обучения",
     "spent": "потрачено {spent} из {cap}",
     "recommended": "Рекомендована: лучше в {wins, plural, one {# задаче} other {# задачах}}, хуже в {losses}, равны в {equal}.",
     "notRecommended": "Не рекомендована: лучше в {wins, plural, one {# задаче} other {# задачах}}, хуже в {losses}, равны в {equal}.",
     "nothingToImprove": "Тренер не нашёл, что улучшить: {explanation}",
-    "nothingToImproveHidden": "Тренер не нашёл, что улучшить.",
-    "textsHidden": "Тексты результата видит только тот, кто запустил обучение.",
     "activate": "Сделать активной",
     "retrain": "Обучить заново",
     "activeSince": "Активна с {at}",
@@ -300,8 +296,6 @@
     "calls": "Вызовов инструментов",
     "avgCost": "Средняя стоимость задачи",
     "columns": {
-      "task": "Задача",
-      "outcome": "Итог",
       "errors": "Ошибки",
       "calls": "Вызовы",
       "cost": "Стоимость"
@@ -313,17 +307,52 @@
       "not_compared": "не сравнена"
     },
     "replay": "Повтор на версии {version}",
-    "loadFailed": "Не удалось загрузить результат",
+    "loadFailed": "Не удалось загрузить ход и итог",
     "retry": "Повторить",
     "activateTitle": "Сделать версию {version} активной?",
     "activateBody": "Новые беседы всех сотрудников пойдут на ней; начатые доработают на версии {base}.",
     "activated": "Версия {version} активна",
     "train": "Обучить",
     "willSpend": "Потратит не больше {cap}",
-    "watch": "Смотреть ход обучения",
     "last": "Последнее обучение, {at}:",
     "lastRecommended": "· рекомендована",
     "lastNotRecommended": "· не рекомендована",
-    "openResult": "Открыть результат"
+    "openResult": "Открыть результат",
+    "tab": "Обучение",
+    "started": "{at} · с версии {version}"
+  },
+  "testRun": {
+    "tab": "Проверка",
+    "started": "{at} · по подтверждённому плану",
+    "progress": "Ход проверки",
+    "passedOne": "Прошло {passed} из {total} {total, plural, one {теста} other {тестов}}.",
+    "passedRounds": "Прошло тестов: {rounds}.",
+    "roundPassed": "{fix, plural, =0 {первая версия} other {исправление {fix}}} — {passed} из {total}",
+    "inLibrary": "Агент уже в вашей библиотеке — чтобы оставить его, ничего нажимать не нужно.",
+    "nothingToFix": "Тренер не нашёл, что исправить: {explanation}",
+    "nothingToFixBare": "Тренер не нашёл, что исправить.",
+    "notCreated": "Агент не создан.",
+    "deleted": "Агент удалён.",
+    "round": "{fix, plural, =0 {Первая версия} other {Исправление {fix}}}",
+    "activateTitle": "Сделать «Исправление {fix}» активной версией?",
+    "activateName": "Сделать активной: Исправление {fix}",
+    "activateBody": "Ваши новые беседы с агентом пойдут на ней; начатые доработают на прежней версии.",
+    "activated": "Исправление {fix} активно",
+    "delete": "Удалить агента",
+    "tests": "Тесты",
+    "passedRow": "Прошло тестов",
+    "passedOf": "{passed} из {total}",
+    "verdict": {
+      "passed": "прошёл",
+      "failed": "не прошёл",
+      "unchecked": "не проверен"
+    },
+    "notChecked": "Проверка кончилась раньше.",
+    "run": "Запуск",
+    "runName": "Запуск теста {number}, {round}",
+    "changes": "Что меняет исправление {fix}",
+    "agent": "Агент",
+    "showDefinition": "Показать определение",
+    "hideDefinition": "Скрыть определение"
   }
 }

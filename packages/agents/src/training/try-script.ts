@@ -10,7 +10,7 @@ import type { RunCodeTool } from '../tools/external/run-code';
 import type { OutsideAgentTool, ToolCaller } from '../tools/tool';
 import type { ToolRegistry } from '../tools/tool-registry';
 import type { TrainerToolsDeps } from './trainer-tools';
-import { trainingBase } from './training-reads';
+import { type NoAgentYet, trainingBase } from './training-reads';
 
 const DESCRIPTION = [
   'Run a draft script once, as the member that would own it — the trained agent itself (owner null) or one of its',
@@ -30,23 +30,24 @@ export function createTryScriptTool(
     readonly registry: Pick<ToolRegistry, 'declaredMcpTools'>;
   },
 ): OutsideAgentTool<TryScriptArgs> {
-  /** The servers of the script's owner in the base version; `undefined` — no such subagent. */
+  /** The servers of the script's owner in the base version, or the refusal: no agent yet or no such subagent. */
   async function ownerServers(
     caller: ToolCaller,
     owner: string | null,
-  ): Promise<readonly string[] | undefined> {
-    const { content } = await trainingBase(deps, caller);
+  ): Promise<readonly string[] | NoAgentYet> {
+    const base = await trainingBase(deps, caller);
+    if ('kind' in base) return base;
+    const { content } = base;
     if (owner === null) return content.servers;
-    return content.subagents.find((subagent) => subagent.name === owner)
-      ?.servers;
+    return (
+      content.subagents.find((subagent) => subagent.name === owner)
+        ?.servers ?? {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: `The base version has no subagent ${owner}.`,
+      }
+    );
   }
-
-  const noOwner = (owner: string | null) =>
-    ({
-      kind: 'refused',
-      reason: 'invalid_arguments',
-      text: `The base version has no subagent ${owner}.`,
-    }) as const;
 
   return {
     name: TRY_SCRIPT_TOOL,
@@ -61,7 +62,7 @@ export function createTryScriptTool(
       content: () => ({ canCall: [] }),
       async review(args, caller) {
         const servers = await ownerServers(caller, args.owner);
-        if (servers === undefined) return noOwner(args.owner);
+        if ('kind' in servers) return servers;
         const tools = await deps.registry.declaredMcpTools(servers);
         return {
           kind: 'card',
@@ -79,7 +80,7 @@ export function createTryScriptTool(
     async execute(input) {
       const { args, caller } = input;
       const servers = await ownerServers(caller, args.owner);
-      if (servers === undefined) return noOwner(args.owner);
+      if ('kind' in servers) return servers;
       return deps.runCode.run(
         {
           code: args.code,

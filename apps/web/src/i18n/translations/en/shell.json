@@ -34,7 +34,9 @@
     "titleRequired": "Enter a title",
     "renameFailed": "Couldn't rename the chat. Try again.",
     "deleted": "Chat deleted",
-    "deleteFailed": "Couldn't delete the chat. Try again."
+    "deleteFailed": "Couldn't delete the chat. Try again.",
+    "fork": "Fork chat",
+    "forkMark": ", fork"
   },
   "deleteDialog": {
     "title": "Delete chat?",
@@ -64,6 +66,13 @@
     "menuTooltip": "Menu · {shortcut}",
     "sidebarTooltip": "Sidebar · {shortcut}"
   },
+  "forks": {
+    "label": "Forks of this chat: {count}",
+    "tooltip": "Forks · {count}",
+    "loading": "Loading forks…",
+    "loadFailed": "Couldn't load forks",
+    "retry": "Retry"
+  },
   "page": {
     "agents": "Agents",
     "account": "My access"
@@ -86,7 +95,9 @@
     "emptyHint": "Ask the chat to create or show an agent — its diagram appears here.",
     "gone": "{kind, select, agent {Agent} other {Deep agent}} “{name}” was deleted or closed to you",
     "loadError": "Couldn't load the diagram",
-    "retry": "Try again"
+    "retry": "Try again",
+    "runTitle": "Progress and outcome",
+    "runClose": "Close progress and outcome"
   },
   "leaveGuard": {
     "title": "Leave without saving?",

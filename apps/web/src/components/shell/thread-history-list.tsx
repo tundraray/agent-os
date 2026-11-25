@@ -11,11 +11,12 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
 import { RotateCwIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   SidebarGroup,
@@ -24,9 +25,12 @@ import {
 } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
-import { focusAfterNewChat } from '@/lib/focus';
+import { focusAfterNewChat, focusShellTarget } from '@/lib/focus';
 import { logger } from '@/lib/logger';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import { forkRefusalText } from '@/lib/library/library-errors';
+import { threadPath } from '@/lib/shell-route';
+import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import {
   entryActivityAt,
   groupThreadsByDate,
@@ -461,6 +465,9 @@ export function ThreadHistoryList() {
   const aui = useAui();
   const services = useShellServices();
   const pathname = usePathname();
+  const router = useRouter();
+  const tThread = useTranslations('shell.thread');
+  const tErrors = useTranslations('errors');
   // Deleting the open thread: the runtime leaves it, url-sync replaces the route with `/`, then focus follows
   // the «Новый чат» pointer rule (UXRD 7.4).
   const focusOnRoot = useRef(false);
@@ -479,19 +486,29 @@ export function ThreadHistoryList() {
     () =>
       threadItems
         .filter((item) => item.status === 'regular')
-        .map((item): ThreadListEntry => ({
-          id: item.id,
-          remoteId: item.remoteId,
-          title: item.title,
-          activityAt: entryActivityAt(
-            {
-              lastMessageAt: item.lastMessageAt,
-              activityAt: activityAt[item.id],
-            },
-            now,
-          ),
-        })),
-    [threadItems, activityAt, now],
+        .map((item): ThreadListEntry => {
+          // `toRemoteMetadata` puts both flags in `custom`; a thread made in this tab has them from its create.
+          const custom =
+            item.custom ??
+            (item.remoteId === undefined
+              ? undefined
+              : services.listAdapter.createdCustom(item.remoteId));
+          return {
+            id: item.id,
+            remoteId: item.remoteId,
+            title: item.title,
+            activityAt: entryActivityAt(
+              {
+                lastMessageAt: item.lastMessageAt,
+                activityAt: activityAt[item.id],
+              },
+              now,
+            ),
+            forkable: custom?.forkable === true,
+            forked: custom?.forked === true,
+          };
+        }),
+    [threadItems, activityAt, now, services],
   );
   const groups = useMemo(
     () => groupThreadsByDate(entries, now),
@@ -525,6 +542,25 @@ export function ThreadHistoryList() {
     focusOnRoot.current = false;
     focusAfterNewChat();
   }, [pathname]);
+
+  // Flow 3: the fork opens like any conversation by its address, and its row joins the list there (KD-8).
+  const fork = async (entry: ThreadListEntry): Promise<void> => {
+    if (entry.remoteId === undefined) return;
+    try {
+      const thread = await threadsApiClient.forkThread(entry.remoteId);
+      router.push(threadPath(thread.id));
+      focusShellTarget('composer');
+      services.announcer.getState().announce('announce.forkOpened', {
+        title: thread.title ?? tThread('untitled'),
+      });
+    } catch (error) {
+      logger.warn('[web-shell] thread fork refused', {
+        threadId: entry.remoteId,
+        ...describeApiError(error),
+      });
+      toast.error(forkRefusalText(tErrors, error));
+    }
+  };
 
   const state: ThreadHistoryListState =
     isLoading && !listShown
@@ -586,6 +622,7 @@ export function ThreadHistoryList() {
           // A failed PATCH: the list adapter shows the toast, the runtime rolls the title back and logs the rejection.
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}
+          onFork={() => void fork(entry)}
         />
       )}
     />

@@ -58,12 +58,14 @@ describe('thread list adapter', () => {
             remoteId: 'a',
             title: 'Первая',
             lastMessageAt: FIXTURE_DATE,
+            custom: { forkable: true, forked: false },
           },
           {
             status: 'regular',
             remoteId: 'b',
             title: undefined,
             lastMessageAt: FIXTURE_DATE,
+            custom: { forkable: true, forked: false },
           },
         ],
         nextCursor: undefined,
@@ -140,6 +142,11 @@ describe('thread list adapter', () => {
       }));
 
     expect(statusAtResolve).toEqual({ remoteId: 'n1', history: 'ready' });
+    // The row's «⋯» menu reads the flags of the created thread before the list re-reads.
+    expect(adapter.createdCustom('n1')).toEqual({
+      forkable: true,
+      forked: false,
+    });
   });
 
   it('fetch maps the thread to remote metadata', async () => {
@@ -155,6 +162,7 @@ describe('thread list adapter', () => {
       remoteId: 'a',
       title: 'Первая',
       lastMessageAt: FIXTURE_DATE,
+      custom: { forkable: true, forked: false },
     });
   });
 

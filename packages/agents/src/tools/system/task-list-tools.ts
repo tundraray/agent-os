@@ -130,7 +130,8 @@ const LIST_DESCRIPTION =
 
 /**
  * The rule of a fixed list (self-learning design-training.md, «Пул задач тренера»): its set and order stay, and
- * its code tasks move by code only. `true` — the call breaks it.
+ * its code tasks move by code only — a task numbered above all of them too: code added it (create-and-test
+ * design-trainer-dialog.md, KD-7). `true` — the call breaks it.
  */
 function breaksFixedList(
   call: TaskChangeCall,
@@ -142,7 +143,8 @@ function breaksFixedList(
     args.status === TASK_DELETED ||
     (args.addBlockedBy?.length ?? 0) > 0 ||
     (args.addBlocks?.length ?? 0) > 0 ||
-    fixed.includes(args.taskId)
+    fixed.includes(args.taskId) ||
+    args.taskId > Math.max(...fixed)
   );
 }
 

@@ -1,11 +1,11 @@
 'use client';
 
-import { useFormatter, useTranslations } from 'next-intl';
+import { useTranslations } from 'next-intl';
 import type { TrainingView, Verdict } from '@agent-os/contracts';
-import { DataTable } from '@/components/admin/data-table';
 import { ShellLink } from '@/components/shell/shell-link';
 import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import { agentPath } from '@/lib/shell-route';
+import { HEADING, TwoLines, useUsdAmount } from './training-parts';
 
 const VERDICT_STATE: Record<Verdict, StateBadgeState> = {
   proposed_better: 'ok',
@@ -13,8 +13,6 @@ const VERDICT_STATE: Record<Verdict, StateBadgeState> = {
   equal: 'neutral',
   not_compared: 'off',
 };
-
-export const HEADING = 'text-foreground text-base leading-6 font-semibold';
 
 type Replay = TrainingView['comparisons'][number]['base'];
 type Numbers = TrainingView['totals']['base'];
@@ -28,14 +26,16 @@ function ReplayLink({ replay, label }: { replay: Replay; label: string }) {
   );
 }
 
-/** Part 3 «Сравнение на прошлых задачах»: the two versions' numbers, then one row per compared past task. */
+/**
+ * Part 3 «Сравнение на прошлых задачах» (TR-02): the two versions' numbers in «Две строки», then the compared past
+ * tasks as a numbered list — the verdict and the replays, the reason, then the numbers «было → стало».
+ */
 export function Comparison({ view }: { view: TrainingView }) {
   const t = useTranslations('library.training');
-  const format = useFormatter();
+  const usd = useUsdAmount();
   const version = view.proposal.version;
   if (version === null || view.comparisons.length === 0) return null;
 
-  const usd = (value: number) => format.number(value, 'usd');
   const pair = (
     base: Replay,
     proposed: Replay,
@@ -47,111 +47,90 @@ export function Comparison({ view }: { view: TrainingView }) {
   const average = (numbers: Numbers, side: 'base' | 'proposed') =>
     usd(replays(side) === 0 ? 0 : numbers.costUsd / replays(side));
   const { base, proposed } = view.totals;
+  const baseLabel = t('baseVersion', {
+    version: view.baseVersion,
+    active: String(view.baseVersion === view.activeVersion),
+  });
+  const proposedLabel = t('proposedVersion', {
+    version,
+    active: String(version === view.activeVersion),
+  });
+  const row = (key: string, name: string, before: string, after: string) => ({
+    key,
+    name,
+    cells: [`${baseLabel}: ${before}`, `${proposedLabel}: ${after}`],
+  });
 
   return (
     <section className="flex flex-col gap-3">
       <h2 className={HEADING}>{t('comparison')}</h2>
-      <DataTable
+      <TwoLines
         caption={t('comparison')}
-        twoLines
-        columns={[
-          { header: '' },
-          {
-            header: t('baseVersion', {
-              version: view.baseVersion,
-              active: String(view.baseVersion === view.activeVersion),
-            }),
-            align: 'end',
-          },
-          {
-            header: t('proposedVersion', {
-              version,
-              active: String(version === view.activeVersion),
-            }),
-            align: 'end',
-          },
+        rows={[
+          row(
+            'errors',
+            t('errors'),
+            String(base.errors),
+            String(proposed.errors),
+          ),
+          row(
+            'calls',
+            t('calls'),
+            String(base.toolCalls),
+            String(proposed.toolCalls),
+          ),
+          row(
+            'cost',
+            t('avgCost'),
+            average(base, 'base'),
+            average(proposed, 'proposed'),
+          ),
         ]}
-        state={{
-          status: 'ready',
-          rows: [
-            {
-              key: 'errors',
-              name: t('errors'),
-              cells: [t('errors'), base.errors, proposed.errors],
-            },
-            {
-              key: 'calls',
-              name: t('calls'),
-              cells: [t('calls'), base.toolCalls, proposed.toolCalls],
-            },
-            {
-              key: 'cost',
-              name: t('avgCost'),
-              cells: [
-                t('avgCost'),
-                average(base, 'base'),
-                average(proposed, 'proposed'),
-              ],
-            },
-          ],
-        }}
       />
-      <DataTable
-        caption={t('comparison')}
-        twoLines
-        columns={[
-          { header: t('columns.task'), shrinks: true },
-          { header: t('columns.outcome') },
-          { header: t('columns.errors'), align: 'end' },
-          { header: t('columns.calls'), align: 'end' },
-          { header: t('columns.cost'), align: 'end' },
-        ]}
-        state={{
-          status: 'ready',
-          rows: view.comparisons.map((element, index) => ({
-            key: String(index),
-            name: String(index + 1),
-            cells: [
-              <span
-                key="task"
-                className="flex min-w-0 flex-col whitespace-normal"
-              >
-                <span>{`${index + 1}  ${element.task ?? ''}`}</span>
-                {element.reason !== null && (
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {element.reason}
-                  </span>
-                )}
-                <span className="flex flex-wrap gap-x-3 text-xs leading-4">
-                  <ReplayLink
-                    replay={element.base}
-                    label={t('replay', { version: view.baseVersion })}
-                  />
-                  <ReplayLink
-                    replay={element.proposed}
-                    label={t('replay', { version })}
-                  />
-                </span>
-              </span>,
-              <StateBadge
-                key="verdict"
-                state={VERDICT_STATE[element.verdict ?? 'not_compared']}
-              >
-                {t(`verdict.${element.verdict ?? 'not_compared'}`)}
-              </StateBadge>,
-              pair(element.base, element.proposed, (replay) =>
-                String(replay.errors),
-              ),
-              pair(element.base, element.proposed, (replay) =>
-                String(replay.toolCalls),
-              ),
-              pair(element.base, element.proposed, (replay) =>
-                usd(replay.costUsd),
-              ),
-            ],
-          })),
-        }}
-      />
+      <ol
+        aria-label={t('comparison')}
+        className="divide-border flex flex-col divide-y"
+      >
+        {view.comparisons.map((element, index) => (
+          <li key={index} className="flex gap-2 py-2">
+            <span className="text-muted-foreground font-mono text-xs leading-5 tabular-nums">
+              {index + 1}
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <p className="text-foreground text-sm leading-5 break-words">
+                {element.task ?? ''}
+              </p>
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-4">
+                <StateBadge
+                  state={VERDICT_STATE[element.verdict ?? 'not_compared']}
+                >
+                  {t(`verdict.${element.verdict ?? 'not_compared'}`)}
+                </StateBadge>
+                <ReplayLink
+                  replay={element.base}
+                  label={t('replay', { version: view.baseVersion })}
+                />
+                <ReplayLink
+                  replay={element.proposed}
+                  label={t('replay', { version })}
+                />
+              </p>
+              {element.reason !== null && (
+                <p className="text-muted-foreground text-xs leading-4 break-words">
+                  {element.reason}
+                </p>
+              )}
+              <p className="text-muted-foreground text-xs leading-4 tabular-nums">
+                {[
+                  `${t('columns.errors')} ${pair(element.base, element.proposed, (replay) => String(replay.errors))}`,
+                  `${t('columns.calls')} ${pair(element.base, element.proposed, (replay) => String(replay.toolCalls))}`,
+                  `${t('columns.cost')} ${pair(element.base, element.proposed, (replay) => usd(replay.costUsd))}`,
+                ].join(' · ')}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }

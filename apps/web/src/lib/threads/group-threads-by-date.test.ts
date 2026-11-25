@@ -24,6 +24,8 @@ function entry(id: string, activityAt: Date | number): ThreadListEntry {
     title: `Беседа ${id}`,
     activityAt:
       typeof activityAt === 'number' ? activityAt : activityAt.getTime(),
+    forkable: true,
+    forked: false,
   };
 }
 

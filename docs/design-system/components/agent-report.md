@@ -53,6 +53,7 @@
 | Сбой, Остановлен | Статус, уведомление и причина; текст отчёта — если агент его успел сдать, иначе строка об отсутствии отчёта (UI, `--muted-foreground`, agent-platform UXRD, MC-18) | — |
 | Повторный отчёт | Ещё один блок после продолжения с историей | Прежний блок не меняется |
 | После перезагрузки | Как Default, на той же позиции ленты | — |
+| В ветке | Документ (часть 7) — только заголовок и строка UI `--muted-foreground` о том, что документ остался в исходной беседе (create-and-test UXRD, MC-19); «Показать полностью» и «Открыть в панели» нет | Отчёт стоит в унаследованной части ветки, а документ принадлежит исходной беседе |
 | Hover / Focus ссылки | Подчёркивание / кольцо `--ring` | Enter или клик открывает страницу агента |
 
 ## Content Rules
@@ -78,3 +79,4 @@
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — лента беседы и страница агента.
 - [docs/features/deep-agents/uxrd.md](../../features/deep-agents/uxrd.md) — ответ глубокого агента (DA-06).
 - [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — отчёт-документ в ленте и документ в панели (DC-01, DC-02).
+- [docs/features/create-and-test/uxrd.md](../../features/create-and-test/uxrd.md) — документ в унаследованной части ветки (FK-03).

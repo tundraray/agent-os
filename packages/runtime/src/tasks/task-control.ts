@@ -102,6 +102,8 @@ export interface CreateTask {
   taskId?: string;
   /** An opaque string of the creator: while an unfinished task of `type` holds it, `create` answers `null`. */
   exclusiveKey?: string;
+  /** Creates the task `waiting` for messages: the first message wakes it, no step runs before. */
+  waiting?: true;
 }
 
 interface TaskControlDeps extends TaskEndDeps {
@@ -185,7 +187,8 @@ export class TaskControl {
 
   /**
    * Creates a root task (its own root, depth 0) or, with `parentId`, a child of the owner's task
-   * outside a step (same owner and root, one level deeper) in `queued`, signalling its tree. The id
+   * outside a step (same owner and root, one level deeper) in `queued` (with `waiting`, waiting for
+   * messages), signalling its tree. The id
    * is `taskId` when given — `TASK_EXISTS` if a task of any owner has it — or a new one.
    * The parent must not be finished. Returns the `taskId`.
    *
@@ -534,6 +537,7 @@ export class TaskControl {
       ownerId: request.ownerId,
       input,
       exclusiveKey: request.exclusiveKey ?? null,
+      waiting: request.waiting,
       ...lineage,
     });
   }

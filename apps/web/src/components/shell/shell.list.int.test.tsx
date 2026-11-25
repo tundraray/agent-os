@@ -16,11 +16,18 @@
 //   adapters, ShellStatus, components — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/* or @assistant-ui/*.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { SendMessageResponse } from '@agent-os/contracts';
+import type {
+  SendMessageResponse,
+  ThreadForksResponse,
+} from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
+import { toast } from 'sonner';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
+  conversationView,
   conversationWithTurns,
+  fixtureId,
+  historyEntry,
   threadList,
   threadSummary,
 } from '@/test/fixtures';
@@ -28,6 +35,8 @@ import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
 const API = 'http://api.test';
+
+type User = ReturnType<typeof userEvent.setup>;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -174,5 +183,208 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
     ).toBeInTheDocument();
     expect(link).toHaveAttribute('href', '/chat/a');
     expect(screen.queryByText('Не удалось загрузить беседы')).toBeNull();
+  });
+});
+
+// create-and-test / chat-web — Design Doc: docs/features/create-and-test/design-chat-web.md, Test Strategy UC-6, UC-8 (KD-8 – KD-10,
+//   Flow 3); UXRD FK-01 – FK-04, MC-18 – MC-20. Server-side proofs (who may fork, what the fork copies) are apps/api create-and-test-fork.
+describe('create-and-test / chat-web — branches from the list', () => {
+  const SOURCE = fixtureId(91);
+  const FORK = fixtureId(92);
+
+  afterEach(() => {
+    toast.dismiss();
+  });
+
+  const feedDivider = (): HTMLElement => {
+    const divider = document.querySelector<HTMLElement>(
+      '[data-slot="feed-divider"]',
+    );
+    if (divider === null) throw new Error('no feed divider');
+    return divider;
+  };
+
+  const rowMenu = async (user: User, title: string) => {
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    await user.click(
+      await within(history).findByRole('button', {
+        name: `Действия с беседой «${title}»`,
+      }),
+    );
+    return (await screen.findAllByRole('menuitem')).map(
+      (item) => item.textContent,
+    );
+  };
+
+  // UC-6: AC-09.3, AC-11.3, AC-11.5, AC-11.8. Catches: a fork row without its icon, a fork without its divider, a link to a deleted
+  //   source, «Ветки · N» with no fork, an address change on a refusal.
+  it('UC-6: «Ответвить чат» opens the fork with its icon and divider; the source counts its forks; a refusal keeps the address', async () => {
+    const source = (forkCount: number) =>
+      threadSummary({ id: SOURCE, title: 'Разбор Jira', forkCount });
+    const forkedFrom = (title: string | null) => ({
+      threadId: SOURCE,
+      title,
+      throughSeq: 2,
+    });
+    const fork = (title: string | null) =>
+      threadSummary({
+        id: FORK,
+        title: 'Ветка · Разбор Jira',
+        createdAt: '2026-10-28T10:05:00.000Z',
+        forkedFrom: forkedFrom(title),
+      });
+    let forkAnswer: 'refused' | 'created' = 'refused';
+    let sourceTitle: string | null = 'Разбор Jira';
+    let forkCount = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([source(forkCount)])),
+      ),
+      http.get(`${API}/api/threads/${SOURCE}`, () =>
+        HttpResponse.json(source(forkCount)),
+      ),
+      http.get(`${API}/api/threads/${SOURCE}/history`, () =>
+        HttpResponse.json(
+          conversationWithTurns(source(forkCount), ['Разбери Jira', 'Готово']),
+        ),
+      ),
+      http.post(`${API}/api/threads/${SOURCE}/fork`, () =>
+        forkAnswer === 'refused'
+          ? HttpResponse.json(
+              {
+                statusCode: 409,
+                message: 'The conversation cannot be forked now',
+                errorCode: 'FORK_REFUSED',
+                reason: 'answering',
+              },
+              { status: 409 },
+            )
+          : HttpResponse.json(fork(sourceTitle), { status: 201 }),
+      ),
+      http.get(`${API}/api/threads/${FORK}`, () =>
+        HttpResponse.json(fork(sourceTitle)),
+      ),
+      http.get(`${API}/api/threads/${FORK}/history`, () =>
+        HttpResponse.json(
+          conversationView({
+            thread: fork(sourceTitle),
+            entries: [
+              historyEntry({
+                kind: 'task',
+                seq: 1,
+                content: { text: 'Разбери Jira' },
+              }),
+              historyEntry({
+                kind: 'model_answer',
+                seq: 2,
+                content: { text: 'Готово' },
+              }),
+              historyEntry({
+                kind: 'event',
+                seq: 3,
+                content: { event: 'forked', reason: null },
+              }),
+            ],
+          }),
+        ),
+      ),
+      http.get(`${API}/api/threads/${SOURCE}/forks`, () =>
+        HttpResponse.json({
+          threads: [fork(sourceTitle)],
+        } satisfies ThreadForksResponse),
+      ),
+    );
+    const user = userEvent.setup();
+    const view = renderWithRuntime({ pathname: `/chat/${SOURCE}` });
+    await screen.findByText('Готово');
+    expect(
+      screen.queryByRole('button', { name: /Ветки этой беседы/ }),
+    ).toBeNull();
+
+    // Refused: the notice names the reason, the address stays
+    expect(await rowMenu(user, 'Разбор Jira')).toContain('Ответвить чат');
+    await user.click(screen.getByRole('menuitem', { name: 'Ответвить чат' }));
+    expect(
+      await screen.findByText('Ветку сейчас не сделать: агент ещё отвечает.'),
+    ).toBeInTheDocument();
+    expect(view.router.push).not.toHaveBeenCalled();
+
+    // Created: the fork opens with its icon in the list and the divider linking the source
+    forkAnswer = 'created';
+    await rowMenu(user, 'Разбор Jira');
+    await user.click(screen.getByRole('menuitem', { name: 'Ответвить чат' }));
+    await waitFor(() =>
+      expect(view.router.push).toHaveBeenCalledWith(`/chat/${FORK}`),
+    );
+    view.setPathname(`/chat/${FORK}`);
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    expect(
+      await within(history).findByRole('link', {
+        name: 'Ветка · Разбор Jira, ветка',
+      }),
+    ).toHaveAttribute('href', `/chat/${FORK}`);
+    expect(
+      within(history).getByRole('link', { name: 'Разбор Jira' }),
+    ).toBeInTheDocument();
+    const divider = await waitFor(feedDivider);
+    expect(divider).toHaveTextContent('Ответвлено от «Разбор Jira»');
+    expect(
+      within(divider).getByRole('link', { name: 'Разбор Jira' }),
+    ).toHaveAttribute('href', `/chat/${SOURCE}`);
+
+    // The source deleted: the divider says so, without a link
+    sourceTitle = null;
+    await waitFor(() =>
+      expect(view.live.current()?.url).toBe(
+        `${API}/api/events?watch=thread%3A${FORK}`,
+      ),
+    );
+    view.live.emit('ready', {});
+    await waitFor(() =>
+      expect(feedDivider()).toHaveTextContent('Ответвлено от удалённой беседы'),
+    );
+    expect(within(feedDivider()).queryByRole('link')).toBeNull();
+
+    // The source: «Ветки · 1», its menu lists the fork with its time
+    forkCount = 1;
+    view.setPathname(`/chat/${SOURCE}`);
+    await waitFor(() =>
+      expect(view.live.current()?.url).toBe(
+        `${API}/api/events?watch=thread%3A${SOURCE}`,
+      ),
+    );
+    view.live.emit('ready', {});
+    await user.click(
+      await screen.findByRole('button', { name: 'Ветки этой беседы: 1' }),
+    );
+    const item = await screen.findByRole('menuitem', {
+      name: /Ветка · Разбор Jira/,
+    });
+    expect(item).toHaveTextContent('28 окт., 11:05');
+    expect(item).toHaveAttribute('href', `/chat/${FORK}`);
+  });
+
+  // UC-8: AC-11.3. Catches: «Ответвить чат» on a conversation that is not a chat (a test run's or a training's).
+  it('UC-8: a row with forkable false has no «Ответвить чат»', async () => {
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(
+          threadList([
+            threadSummary({
+              id: SOURCE,
+              title: 'Проверка «Разбор заказов»',
+              forkable: false,
+            }),
+          ]),
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/' });
+
+    expect(await rowMenu(user, 'Проверка «Разбор заказов»')).toEqual([
+      'Переименовать',
+      'Удалить',
+    ]);
   });
 });

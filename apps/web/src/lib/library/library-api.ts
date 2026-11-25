@@ -6,10 +6,14 @@ import {
   MyRoleListSchema,
   RecordDetailSchema,
   RecordSummarySchema,
+  TestRunStartedSchema,
+  TestRunTakenSchema,
+  TestRunViewSchema,
   TrainingActivatedSchema,
   TrainingStartedSchema,
   TrainingStateSchema,
   TrainingViewSchema,
+  type ActivateTestRunBody,
   type AgentMemoryView,
   type CopyRecordBody,
   type CopyResult,
@@ -20,6 +24,10 @@ import {
   type RecordAudienceBody,
   type RecordDetail,
   type RecordSummary,
+  type StartTestRunBody,
+  type TestRunStarted,
+  type TestRunTaken,
+  type TestRunView,
   type TrainingActivated,
   type TrainingStarted,
   type TrainingState,
@@ -36,6 +44,9 @@ import { apiRequest } from '@/lib/api/api-request';
 
 const recordRoute = (id: string): string =>
   `/api/library/${encodeURIComponent(id)}`;
+
+const testRunRoute = (id: string): string =>
+  `/api/test-runs/${encodeURIComponent(id)}`;
 
 const RecordSummaryListSchema = z.array(RecordSummarySchema);
 
@@ -113,6 +124,31 @@ export const libraryApi = {
     apiRequest({
       path: `${recordRoute(id)}/training/${encodeURIComponent(trainingId)}/activate`,
       method: 'POST',
+      schema: TrainingActivatedSchema,
+    }),
+  startTestRun: (body: StartTestRunBody): Promise<TestRunStarted> =>
+    apiRequest({
+      path: '/api/test-runs',
+      method: 'POST',
+      body,
+      schema: TestRunStartedSchema,
+    }),
+  testRun: (testRunId: string): Promise<TestRunView> =>
+    apiRequest({ path: testRunRoute(testRunId), schema: TestRunViewSchema }),
+  takeTestRun: (testRunId: string): Promise<TestRunTaken> =>
+    apiRequest({
+      path: `${testRunRoute(testRunId)}/take`,
+      method: 'POST',
+      schema: TestRunTakenSchema,
+    }),
+  activateTestRun: (
+    testRunId: string,
+    version: number,
+  ): Promise<TrainingActivated> =>
+    apiRequest({
+      path: `${testRunRoute(testRunId)}/activate`,
+      method: 'POST',
+      body: { version } satisfies ActivateTestRunBody,
       schema: TrainingActivatedSchema,
     }),
   /** The servers usable to the employee and the model of a new record. */

@@ -190,7 +190,8 @@ export class DocumentsRepository {
 
   /**
    * Conversations whose documents are past for the run (KD-6): same employee, a version of the same agent,
-   * an agent without a built-in key, a tree not deleted, a run started from a chat, not the current run.
+   * an agent without a built-in key, a run started from a chat, not the current run. A deleted chat keeps its
+   * documents past: only the chat is marked, not what was made in it.
    */
   private pastRuns({ runId, ownerId }: { runId: string; ownerId: string }) {
     const runAgent = this.db.client
@@ -213,7 +214,6 @@ export class DocumentsRepository {
           eq(conversations.ownerId, ownerId),
           inArray(agentVersions.agentId, runAgent),
           isNull(agents.builtinKey),
-          isNull(runtimeTasks.deletedAt),
           eq(parentTask.type, CHAT_TASK_TYPE),
           ne(conversations.id, runId),
         ),

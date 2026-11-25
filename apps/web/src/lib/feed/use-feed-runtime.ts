@@ -54,8 +54,11 @@ function chipOf(
   composerSeed: ComposerSeed,
   target: SeedTarget,
 ): ComposerChip | undefined {
-  const record = composerSeed.getState().chips.get(target);
-  return record === undefined ? undefined : { record, composerSeed, target };
+  const chip = composerSeed.getState().chips.get(target);
+  // The action chip never travels with a message: its composer starts a test run instead.
+  return chip === undefined || 'action' in chip
+    ? undefined
+    : { record: chip, composerSeed, target };
 }
 
 const isRecordNotFound = (error: unknown): boolean =>
@@ -209,6 +212,27 @@ export function useThreadFeedRuntime(
     titleRequestedRef.current = true;
     aui.threadListItem.generateTitle();
   }, [aui, hasModelAnswer, titled]);
+
+  // A test run's agent created or renamed: the server has renamed the conversation and the library holds the agent.
+  // `undefined` until the first read, so opening a conversation re-reads nothing.
+  const agentName = useSyncExternalStore(
+    feed === null ? noSubscription : feed.subscribe,
+    () => {
+      const state = feed?.getState();
+      return state?.loaded === true
+        ? (state.view?.training?.run?.agent?.name ?? null)
+        : undefined;
+    },
+    () => undefined,
+  );
+  const seenAgentRef = useRef(agentName);
+  useEffect(() => {
+    const seen = seenAgentRef.current;
+    seenAgentRef.current = agentName;
+    if (seen === undefined || agentName == null || agentName === seen) return;
+    aui.threadListItem.generateTitle();
+    void services.libraryIndex.refresh();
+  }, [aui, agentName, services]);
 
   return useFeedRuntime(feed, send);
 }

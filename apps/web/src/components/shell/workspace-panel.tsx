@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { Drawer } from '@base-ui/react/drawer';
 import { XIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -34,6 +40,8 @@ type WorkspacePanelProps = {
   onClose: () => void;
   /** The panel's content under its heading. */
   children: ReactNode;
+  /** A test run's or a training's conversation: the panel is «Ход и итог» (self-learning UXRD TR-01, MC-10). */
+  run: boolean;
 };
 
 /**
@@ -44,6 +52,7 @@ export function WorkspacePanel({
   defaultSize,
   onClose,
   children,
+  run,
 }: WorkspacePanelProps) {
   const t = useTranslations('shell.schema');
   const panelRef = usePanelRef();
@@ -91,10 +100,10 @@ export function WorkspacePanel({
       >
         <aside
           id={WORKSPACE_ID}
-          aria-label={t('title')}
+          aria-label={t(run ? 'runTitle' : 'title')}
           className="flex h-full min-w-0 flex-col"
         >
-          <WorkspaceHeading onClose={onClose} />
+          <WorkspaceHeading onClose={onClose} run={run} />
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
             {children}
           </div>
@@ -108,6 +117,7 @@ type WorkspaceDrawerProps = {
   open: boolean;
   onClose: () => void;
   children: ReactNode;
+  run: boolean;
 };
 
 /**
@@ -118,6 +128,7 @@ export function WorkspaceDrawer({
   open,
   onClose,
   children,
+  run,
 }: WorkspaceDrawerProps) {
   const t = useTranslations('shell.schema');
   return (
@@ -131,12 +142,12 @@ export function WorkspaceDrawer({
         <Drawer.Viewport className="fixed inset-0 z-50 flex justify-end">
           <Drawer.Popup
             id={WORKSPACE_ID}
-            aria-label={t('title')}
+            aria-label={t(run ? 'runTitle' : 'title')}
             initialFocus={headingElement}
             finalFocus={toggleElement}
             className="bg-background flex h-full w-[400px] max-w-full flex-col border-l shadow-lg outline-none transition-transform duration-200 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full motion-reduce:transition-none max-[480px]:w-full"
           >
-            <WorkspaceHeading onClose={onClose} />
+            <WorkspaceHeading onClose={onClose} run={run} />
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
               {children}
             </div>
@@ -151,7 +162,7 @@ export function WorkspaceDrawer({
 const headingElement = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[data-workspace-heading]');
 
-/** The header button «Схема» (HD-04): where focus returns when the panel or the drawer closes. */
+/** The header button «Схема» (HD-04) or «Ход и итог»: where focus returns when the panel or the drawer closes. */
 export function toggleElement(): HTMLElement | null {
   return document.querySelector<HTMLElement>(
     '[data-shell-focus="workspace-toggle"]',
@@ -159,10 +170,47 @@ export function toggleElement(): HTMLElement | null {
 }
 
 /**
+ * «Ход и итог» (self-learning UXRD TR-01, create-and-test UXRD CT-06) of the header and of every test run card:
+ * opens the panel on the run's tab and leaves focus on the button (KD-6); a press on an open panel closes it, as «Схема».
+ */
+export function RunButton({
+  className,
+  children,
+  ...props
+}: ComponentProps<'button'> & { className: string }) {
+  const t = useTranslations('shell.schema');
+  const { workspace } = useShellServices();
+  const open = useStore(workspace, (state) => state.open);
+  return (
+    <button
+      {...props}
+      type="button"
+      className={className}
+      aria-expanded={open}
+      aria-controls={open ? WORKSPACE_ID : undefined}
+      data-shell-focus="workspace-toggle"
+      onClick={() =>
+        open
+          ? workspace.close()
+          : workspace.show({ tab: 'run', focusHeading: false })
+      }
+    >
+      {children ?? t('runTitle')}
+    </button>
+  );
+}
+
+/**
  * The heading «Схема» and «×». An open by «Показать схему» or the header button puts focus on the heading; an
  * automatic open leaves it in the feed (deep-agents UXRD, Accessibility).
  */
-function WorkspaceHeading({ onClose }: { onClose: () => void }) {
+function WorkspaceHeading({
+  onClose,
+  run,
+}: {
+  onClose: () => void;
+  run: boolean;
+}) {
   const t = useTranslations('shell.schema');
   const { workspace } = useShellServices();
   const focusHeading = useStore(workspace, (state) => state.focusHeading);
@@ -182,10 +230,10 @@ function WorkspaceHeading({ onClose }: { onClose: () => void }) {
         data-workspace-heading=""
         className="truncate text-sm font-medium outline-none"
       >
-        {t('title')}
+        {t(run ? 'runTitle' : 'title')}
       </h2>
       <TooltipIconButton
-        tooltip={t('close')}
+        tooltip={t(run ? 'runClose' : 'close')}
         className="size-8 pointer-coarse:size-11 [&_svg]:size-4.5"
         onClick={onClose}
       >

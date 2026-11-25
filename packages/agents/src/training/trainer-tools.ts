@@ -2,15 +2,17 @@ import type { Logger } from '@agent-os/common';
 import {
   DocumentRefSchema,
   MEMORY_TOOLS,
+  roundJudged,
+  TEST_RUN_TOOLS,
   TRAINER_TOOLS,
 } from '@agent-os/contracts';
 import type {
+  AgentTrainingRow,
   AgentsRepository,
   ConversationsRepository,
   DocumentsRepository,
   MemoriesRepository,
   SettingsRepository,
-  TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
 import type { TaskControl } from '@agent-os/runtime';
@@ -28,6 +30,7 @@ import type {
 } from '../tools/tool';
 import type { ToolRegistry } from '../tools/tool-registry';
 import { readToolResultSettings } from '../tools/tool-result-settings';
+import { reportDocument } from './trainer-step';
 import {
   pastTaskIds,
   reAsksOf,
@@ -42,6 +45,7 @@ const [
   AGENT_MEMORY_TOOL,
   AGENT_DEFINITION_TOOL,
 ] = TRAINER_TOOLS;
+const TEST_RESULTS_TOOL = TEST_RUN_TOOLS[5];
 
 /** The most past tasks the list shows, newest first (design-training.md, «Инструменты тренера»). */
 const PAST_TASKS_MAX = 20;
@@ -52,13 +56,19 @@ const NO_SUCH_TASK = 'There is no such past task.';
 
 export interface TrainerToolsDeps {
   readonly trainingRows: Pick<TrainingsRepository, 'find'>;
-  readonly agentRows: Pick<AgentsRepository, 'findVersion'>;
+  readonly agentRows: Pick<
+    AgentsRepository,
+    'findVersion' | 'trainingVersions'
+  >;
   readonly conversationRows: Pick<
     ConversationsRepository,
     'pastTasks' | 'serversCalled' | 'find' | 'findMany'
   >;
   readonly memoryRows: Pick<MemoriesRepository, 'list'>;
-  readonly documentRows: Pick<DocumentsRepository, 'listRun' | 'findInRun'>;
+  readonly documentRows: Pick<
+    DocumentsRepository,
+    'listRun' | 'findInRun' | 'latestReport'
+  >;
   readonly settingsRows: Pick<SettingsRepository, 'read'>;
   readonly history: Pick<History, 'after' | 'taskText'>;
   readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
@@ -176,6 +186,7 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
       mode: 'outside',
       async execute({ args, caller, callId }) {
         const base = await trainingBase(deps, caller);
+        if ('kind' in base) return base;
         const { training } = base;
         const result = await tool.run(args, base, { caller, callId });
         logger.info('trainer read', {
@@ -199,7 +210,7 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
   /** Whether the conversation is a past task of the training's agent for the training's starter. */
   async function isPastTask(
     caller: ToolCaller,
-    training: TrainingRow,
+    training: AgentTrainingRow,
     conversation: string,
   ): Promise<boolean> {
     const found = await pastTaskIds(
@@ -239,6 +250,23 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
         },
       ];
     });
+  }
+
+  /** A run and the runs under it, each with its name and its tool calls. */
+  async function runsOf(runId: string, rootId: string, ownerId: string) {
+    const tree = await tasks.listTree(rootId, ownerId);
+    const runIds = [runId];
+    for (const candidate of tree) {
+      if (candidate.parentId !== null && runIds.includes(candidate.parentId))
+        runIds.push(candidate.taskId);
+    }
+    const runRows = await conversationRows.findMany(runIds);
+    return Promise.all(
+      runIds.map(async (id) => ({
+        name: runRows.find((run) => run.id === id)?.name ?? null,
+        calls: await callsOf(id),
+      })),
+    );
   }
 
   const pastTasks = readTool({
@@ -281,13 +309,6 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
           text: NO_SUCH_TASK,
         };
       const { row, task } = await pastRun(conversation);
-      const tree = await tasks.listTree(task.rootId, row.ownerId);
-      const runIds = [conversation];
-      for (const candidate of tree) {
-        if (candidate.parentId !== null && runIds.includes(candidate.parentId))
-          runIds.push(candidate.taskId);
-      }
-      const runRows = await conversationRows.findMany(runIds);
       const value = {
         conversation,
         task: await history.taskText(conversation),
@@ -296,12 +317,7 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
           task.status === 'completed'
             ? reportOf(task.result)
             : (task.failure?.message ?? null),
-        runs: await Promise.all(
-          runIds.map(async (runId) => ({
-            name: runRows.find((run) => run.id === runId)?.name ?? null,
-            calls: await callsOf(runId),
-          })),
-        ),
+        runs: await runsOf(conversation, task.rootId, row.ownerId),
         reAsks:
           row.parentId === null
             ? []
@@ -383,7 +399,7 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
   const agentDefinition = readTool({
     name: AGENT_DEFINITION_TOOL,
     description:
-      'Read the base version of the trained agent: its number, its content (prompts, subagents, servers, scripts, flags) and the tools of its servers, with whether each only reads.',
+      'Read the version of the agent you work on — the base version of a training, the latest version of a test run: its number, its content (prompts, subagents, servers, scripts, flags) and the tools of its servers, with whether each only reads.',
     argsSchema: NoArgsSchema,
     async run(_args, { number, content }, { callId }) {
       const servers = [
@@ -405,7 +421,43 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
     },
   });
 
+  const testResults = readTool({
+    name: TEST_RESULTS_TOOL,
+    description:
+      'Read the tests of the last judged round: each task and expected result, the verdict and its reason, and the runs of its test with their tool calls and outcomes (recorded — a changing call that was not sent) and its report.',
+    argsSchema: NoArgsSchema,
+    async run(_args, { training }, { caller, callId }) {
+      let round = Math.max(
+        0,
+        ...training.tests.map((test) => test.rounds.length),
+      );
+      while (round > 0 && !roundJudged(training.tests, round)) round -= 1;
+      const tests = await Promise.all(
+        training.tests.map(async ({ task, expected, rounds }, index) => {
+          const slot = rounds[round - 1];
+          return {
+            number: index + 1,
+            task,
+            expected,
+            verdict: slot?.verdict ?? null,
+            reason: slot?.reason ?? null,
+            runs:
+              slot?.runId == null
+                ? []
+                : await runsOf(slot.runId, caller.rootId, caller.ownerId),
+            report:
+              slot?.runId == null
+                ? null
+                : ((await reportDocument(deps, slot.runId)) ?? null),
+          };
+        }),
+      );
+      return storedAnswer(callId, tests);
+    },
+  });
+
   return [
+    testResults,
     pastTasks,
     readPastTask,
     readPastDocument,

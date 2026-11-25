@@ -7,6 +7,7 @@ import { useStore } from 'zustand';
 import type {
   AgentTasksView,
   Confirmation,
+  ConversationTraining,
   RecordFocus,
   RecordKind,
   ThreadDocumentsView,
@@ -21,6 +22,7 @@ import {
 } from '@/components/agents/session-task-list';
 import { DefinitionView } from '@/components/library/definition-view';
 import { RecordLabel } from '@/components/library/record-label';
+import { RunTab } from '@/components/library/run-tab';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -55,8 +57,9 @@ const selectRoot = (state: FeedState): string | null =>
   state.view?.kind === 'thread' ? state.view.chat.rootAgentId : null;
 const selectThread = (state: FeedState): string | null =>
   state.view?.kind === 'thread' ? state.view.threadId : null;
-const selectTrainingRoot = (state: FeedState): boolean =>
-  state.view?.training?.isRoot === true;
+/** A test run's or a training's own conversation: its run, whose tab replaces «Схема» and «Задачи» (KD-6). */
+const selectRun = (state: FeedState): ConversationTraining =>
+  state.view?.training?.isRoot === true ? state.view.training : null;
 
 /** The conversation's own task list as the panel and its automatic open read it. */
 export type ChatTasks = {
@@ -113,23 +116,24 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
   const threadId = useFeedSelector(selectThread, null);
   const documents = useThreadDocuments(threadId);
   const documentsShown = (documents.data?.documents.length ?? 0) > 0;
-  // A training's root has no «Схема»: its course is the tab «Задачи» (self-learning KD-3).
-  const trainingRoot = useFeedSelector(selectTrainingRoot, false);
-  const tasksShown = chatTasks.tabShown || trainingRoot;
+  const run = useFeedSelector(selectRun, null);
+  const tasksShown = run === null && chatTasks.tabShown;
 
-  if (!tasksShown && !documentsShown) return <FocusSchema focus={focus} />;
+  if (run === null && !tasksShown && !documentsShown)
+    return <FocusSchema focus={focus} />;
   // A tab this conversation does not have reads as its first one.
   const shownTab =
     (tab === 'tasks' && !tasksShown) ||
     (tab === 'documents' && !documentsShown) ||
-    (tab === 'schema' && trainingRoot)
-      ? trainingRoot
-        ? 'tasks'
-        : 'schema'
+    (tab === 'schema' && run !== null) ||
+    (tab === 'run' && run === null)
+      ? run === null
+        ? 'schema'
+        : 'run'
       : tab;
   return (
     <SchemaTabs
-      withSchema={!trainingRoot}
+      run={run}
       tasks={tasksShown ? chatTasks.tasks : null}
       documents={documentsShown ? documents : null}
       threadId={threadId}
@@ -141,7 +145,8 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
 }
 
 type SchemaTabsProps = {
-  withSchema: boolean;
+  /** The run of a test run's or a training's conversation: its tab comes first, and there is no «Схема». */
+  run: ConversationTraining;
   /** null — the conversation has no tab «Задачи». */
   tasks: Resource<AgentTasksView> | null;
   /** null — the conversation has no documents yet, so no tab «Документы». */
@@ -153,11 +158,11 @@ type SchemaTabsProps = {
 };
 
 /**
- * «Схема», «Задачи · {N}» (MC-9) and «Документы · {n}» (self-learning UXRD DC-02): «Задачи» and «Документы» show the
- * conversation's own whatever record is in focus.
+ * «Схема» or «Проверка» / «Обучение», «Задачи · {N}» (MC-9) and «Документы · {n}» (self-learning UXRD DC-02):
+ * «Задачи» and «Документы» show the conversation's own whatever record is in focus.
  */
 function SchemaTabs({
-  withSchema,
+  run,
   tasks,
   documents,
   threadId,
@@ -168,6 +173,7 @@ function SchemaTabs({
   const t = useTranslations('agents.tasks');
   const tDocuments = useTranslations('agents.documents');
   const tSchema = useTranslations('shell.schema');
+  const tLibrary = useTranslations('library');
   return (
     <Tabs
       value={tab}
@@ -175,9 +181,17 @@ function SchemaTabs({
       className="gap-3"
     >
       <TabsList className="w-full">
-        {withSchema && (
+        {run === null ? (
           <TabsTrigger value="schema" className="pointer-coarse:h-11">
             {tSchema('title')}
+          </TabsTrigger>
+        ) : (
+          <TabsTrigger
+            value="run"
+            data-run-tab=""
+            className="pointer-coarse:h-11"
+          >
+            {tLibrary(run.testRun ? 'testRun.tab' : 'training.tab')}
           </TabsTrigger>
         )}
         {tasks !== null && (
@@ -193,9 +207,13 @@ function SchemaTabs({
           </TabsTrigger>
         )}
       </TabsList>
-      {withSchema && (
+      {run === null ? (
         <TabsContent value="schema">
           <FocusSchema focus={focus} />
+        </TabsContent>
+      ) : (
+        <TabsContent value="run">
+          <RunTab run={run} />
         </TabsContent>
       )}
       {tasks !== null && (

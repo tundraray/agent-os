@@ -39,7 +39,11 @@ import {
   FadeSlot,
   StatusGlyph,
 } from '@/components/agents/agent-status';
-import { useCardThread, useRecordNamed } from '@/components/agents/run-card';
+import {
+  useCardThread,
+  useLiveRecord,
+  useRecordNamed,
+} from '@/components/agents/run-card';
 import { ValueRows } from '@/components/agents/value-rows';
 import { DefinitionView } from '@/components/library/definition-view';
 import { RecordLabel } from '@/components/library/record-label';
@@ -50,13 +54,22 @@ import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useResource } from '@/hooks/use-resource';
+import { useStore } from 'zustand';
 import { BRIEF_PARTS } from '@/lib/agents/format';
 import { builtinName, toolCallLabels } from '@/i18n/builtin-name';
 import { formatListTime, type Formatter } from '@/i18n/formats';
 import { runCodeView } from '@/lib/agents/run-code';
 import { valueRows } from '@/lib/agents/value-rows';
-import { recordCardOf, type RecordSave } from '@/lib/feed/to-feed';
+import { describeApiError } from '@/lib/api/api-request';
+import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
+import {
+  recordCardOf,
+  type OfferPartData,
+  type PlanPartData,
+  type RecordSave,
+} from '@/lib/feed/to-feed';
 import { libraryApi } from '@/lib/library/library-api';
+import { describeLibraryError } from '@/lib/library/library-errors';
 import {
   briefTitleName,
   changedFields,
@@ -64,6 +77,7 @@ import {
 } from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
 import { agentPath, recordPath } from '@/lib/shell-route';
+import { NEW_THREAD_TARGET } from '@/lib/threads/composer-seed';
 import { cn } from '@/lib/utils';
 import type { AgentsTranslator, ChatTranslator } from '@/i18n/catalog';
 
@@ -237,6 +251,82 @@ function outcomeOf(
     tone: 'text-muted-foreground',
   };
 }
+
+/** Parts 1–2 while open, the outcome once decided: shared by every variant (decision-card.md, Anatomy). */
+function CardHeader({
+  outcome,
+  createdAt,
+}: {
+  outcome: Outcome | null;
+  createdAt: string;
+}) {
+  const format = useFormatter();
+  if (outcome === null)
+    return (
+      <div className="flex h-5 min-w-0 items-center justify-between gap-3">
+        <AgentStatus
+          variant="label"
+          status="awaiting_confirmation"
+          className="shrink-0"
+        />
+        <time
+          dateTime={createdAt}
+          className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
+        >
+          {formatListTime(format, createdAt)}
+        </time>
+      </div>
+    );
+  return (
+    <p
+      className={cn(
+        'flex min-w-0 gap-1 text-xs leading-4 font-medium tabular-nums',
+        outcome.kind === 'failed' ? 'items-start' : 'h-5 items-center',
+        outcome.tone,
+      )}
+    >
+      <FadeSlot swapKey={outcome.kind} className={outcome.iconTone}>
+        <outcome.Icon aria-hidden className="size-3.5" />
+      </FadeSlot>
+      <span
+        className={cn(
+          'min-w-0 animate-in fade-in-0 duration-(--duration-fast) motion-reduce:animate-none',
+          outcome.kind === 'failed'
+            ? 'break-words whitespace-pre-wrap'
+            : 'truncate',
+        )}
+      >
+        {outcome.text}
+      </span>
+    </p>
+  );
+}
+
+/** Part 9: the line after a failed send of the decision. */
+function ErrorLine({ children }: { children: ReactNode }) {
+  return (
+    <p
+      role="alert"
+      className="text-foreground flex items-start gap-1.5 text-sm leading-5"
+    >
+      <CircleXIcon
+        aria-hidden
+        className="text-destructive mt-0.5 size-4 shrink-0"
+      />
+      {children}
+    </p>
+  );
+}
+
+/** The card's frame: «Ждёт» while open, `--card` once decided (decision-card.md, States). */
+const frameClass = (outcome: Outcome | null): string =>
+  cn(
+    'mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-2 rounded-lg border p-3 outline-none',
+    'focus-visible:ring-ring transition-colors duration-(--duration-fast) focus-visible:ring-2 motion-reduce:transition-none',
+    outcome === null
+      ? 'bg-approval-subtle border-approval-border'
+      : 'bg-card text-card-foreground border-border',
+  );
 
 /** A record card as it reads: the definition after a create or an edit, the saved one before an edit or a delete. */
 type RecordView =
@@ -729,56 +819,12 @@ export function DecisionCard({
           tool: recordHeadingText ?? toolName,
         });
 
-  const header =
-    outcome === null ? (
-      <div className="flex h-5 min-w-0 items-center justify-between gap-3">
-        <AgentStatus
-          variant="label"
-          status="awaiting_confirmation"
-          className="shrink-0"
-        />
-        <time
-          dateTime={confirmation.createdAt}
-          className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
-        >
-          {formatListTime(format, confirmation.createdAt)}
-        </time>
-      </div>
-    ) : (
-      <p
-        className={cn(
-          'flex min-w-0 gap-1 text-xs leading-4 font-medium tabular-nums',
-          outcome.kind === 'failed' ? 'items-start' : 'h-5 items-center',
-          outcome.tone,
-        )}
-      >
-        <FadeSlot swapKey={outcome.kind} className={outcome.iconTone}>
-          <outcome.Icon aria-hidden className="size-3.5" />
-        </FadeSlot>
-        <span
-          className={cn(
-            'min-w-0 animate-in fade-in-0 duration-(--duration-fast) motion-reduce:animate-none',
-            outcome.kind === 'failed'
-              ? 'break-words whitespace-pre-wrap'
-              : 'truncate',
-          )}
-        >
-          {outcome.text}
-        </span>
-      </p>
-    );
+  const header = (
+    <CardHeader outcome={outcome} createdAt={confirmation.createdAt} />
+  );
 
   const errorLine = failed && outcome === null && (
-    <p
-      role="alert"
-      className="text-foreground flex items-start gap-1.5 text-sm leading-5"
-    >
-      <CircleXIcon
-        aria-hidden
-        className="text-destructive mt-0.5 size-4 shrink-0"
-      />
-      {tAgents('decision.sendFailed')}
-    </p>
+    <ErrorLine>{tAgents('decision.sendFailed')}</ErrorLine>
   );
 
   let body: ReactNode;
@@ -1018,13 +1064,7 @@ export function DecisionCard({
       data-slot="decision-card"
       data-decision-id={confirmation.decisionId}
       data-state={outcome?.kind ?? (editing ? 'editing' : 'open')}
-      className={cn(
-        'mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-2 rounded-lg border p-3 outline-none',
-        'focus-visible:ring-ring transition-colors duration-(--duration-fast) focus-visible:ring-2 motion-reduce:transition-none',
-        outcome === null
-          ? 'bg-approval-subtle border-approval-border'
-          : 'bg-card text-card-foreground border-border',
-      )}
+      className={frameClass(outcome)}
     >
       {header}
       {body}
@@ -1043,6 +1083,262 @@ export function DecisionCard({
         >
           {actions}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Flow 2 «Взять этого агента» (the offer card and the line instead of the field): the take route, then the agent's
+ * chip in the field of the conversation it returns — a new chat without one. Rejects with the refusal, logged here.
+ */
+export function useTakeAgent(): () => Promise<void> {
+  const inChat = useInChat();
+  const testRunId = useFeedSelector(
+    (state) => state.view?.training?.trainingId ?? null,
+    null,
+  );
+  return async () => {
+    if (testRunId === null) return;
+    try {
+      const { threadId, record } = await libraryApi.takeTestRun(testRunId);
+      inChat({ record }, threadId ?? NEW_THREAD_TARGET);
+    } catch (error) {
+      logger.warn('chat: test run take refused', {
+        testRunId,
+        failure: describeApiError(error),
+      });
+      throw error;
+    }
+  };
+}
+
+/**
+ * A button of the trainer's cards: its pressed state, and the card's error line when the action fails — the
+ * refusal's own text, or decision-card part 9. The outcome comes with the re-read, never from the button (KD-3).
+ */
+function useCardAction<Which extends string>() {
+  const [pressed, setPressed] = useState<Which | null>(null);
+  const [failure, setFailure] = useState<ReactNode>(null);
+  const run = async (
+    which: Which,
+    action: () => Promise<void>,
+    failureText: (error: unknown) => ReactNode,
+  ): Promise<void> => {
+    if (pressed !== null) return;
+    setPressed(which);
+    setFailure(null);
+    try {
+      await action();
+    } catch (error) {
+      setFailure(failureText(error));
+    } finally {
+      setPressed(null);
+    }
+  };
+  return { pressed, failure, run };
+}
+
+/** The buttons of a trainer's card: a full-width column below 480 px (decision-card.md, Sizes). */
+const TRAINER_ACTIONS_CLASS =
+  'flex flex-wrap items-center gap-2 max-[30rem]:flex-col max-[30rem]:items-stretch';
+const HINT_CLASS = 'text-muted-foreground text-xs leading-4 font-medium';
+
+/** «Похожий агент» (CT-07, MC-15): the agent found by the trainer; «Создать нового» answers as a message would. */
+export function OfferCard({ data }: { data: OfferPartData }) {
+  const t = useTranslations('chat.testRun.offer');
+  const tAgents = useTranslations('agents');
+  const tErrors = useTranslations('errors');
+  const format = useFormatter();
+  const feed = useFeed();
+  const take = useTakeAgent();
+  const action = useCardAction<'take' | 'create'>();
+  const { libraryIndex } = useShellServices();
+  const { offer } = data;
+  const live = useLiveRecord(offer.agentId);
+  const missing = live == null;
+  // The agent passes the chip rule, so it is in the employee's library list once that is read (KD-4).
+  useEffect(() => {
+    if (missing) void libraryIndex.refresh();
+  }, [missing, libraryIndex]);
+
+  const time = formatListTime(format, offer.at ?? data.createdAt);
+  const outcome: Outcome | null =
+    offer.state === 'taken'
+      ? {
+          kind: 'approved',
+          text: t('taken', { time }),
+          Icon: CircleCheckIcon,
+          tone: 'text-success',
+        }
+      : offer.state === 'declined'
+        ? {
+            kind: 'rejected',
+            text: t('declined', { time }),
+            Icon: CircleMinusIcon,
+            tone: 'text-muted-foreground',
+          }
+        : null;
+  const busy = action.pressed !== null;
+  return (
+    <div
+      role="group"
+      aria-label={tAgents('decision.groupAction', { tool: t('title') })}
+      data-slot="decision-card"
+      data-variant="offer"
+      className={frameClass(outcome)}
+    >
+      <CardHeader outcome={outcome} createdAt={data.createdAt} />
+      <h3 className="text-base leading-6 font-semibold">{t('title')}</h3>
+      {live != null && (
+        <RecordLabel summary={live} variant="row" href={recordPath(live.id)} />
+      )}
+      {action.failure !== null && outcome === null && (
+        <ErrorLine>{action.failure}</ErrorLine>
+      )}
+      {offer.state === 'waiting' && (
+        <>
+          <div className={TRAINER_ACTIONS_CLASS}>
+            <DecisionButton
+              label={t('take')}
+              variant="default"
+              pressed={action.pressed === 'take'}
+              busy={busy}
+              onClick={() =>
+                void action.run(
+                  'take',
+                  take,
+                  (error) =>
+                    describeLibraryError(tErrors, error, { where: 'take' })
+                      .text,
+                )
+              }
+            />
+            <DecisionButton
+              label={t('create')}
+              variant="outline"
+              pressed={action.pressed === 'create'}
+              busy={busy}
+              onClick={() =>
+                void action.run(
+                  'create',
+                  async () => feed?.send(t('create'), undefined, QUIET),
+                  () => tAgents('decision.sendFailed'),
+                )
+              }
+            />
+          </div>
+          <p className={HINT_CLASS}>{t('hint')}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A card's button sends an ordinary message; its refusal stays on the card (plan Notes 3.6). */
+const QUIET = { quiet: true };
+
+/** «План» (CT-08, MC-16): the agent the trainer will create and its tests; «Создать и проверить» answers as a message would. */
+export function PlanCard({ data }: { data: PlanPartData }) {
+  const t = useTranslations('chat.testRun.plan');
+  const tAgents = useTranslations('agents');
+  const format = useFormatter();
+  const feed = useFeed();
+  const action = useCardAction<'confirm'>();
+  const { currentUser } = useShellServices();
+  const capUsd = useStore(
+    currentUser,
+    (state) => state.user?.trainingCapUsd ?? null,
+  );
+  const { plan } = data;
+  const outcome: Outcome | null =
+    plan.state === 'confirmed'
+      ? {
+          kind: 'approved',
+          text: t('confirmed', {
+            time: formatListTime(format, plan.at ?? data.createdAt),
+          }),
+          Icon: CircleCheckIcon,
+          tone: 'text-success',
+        }
+      : plan.state === 'replaced'
+        ? {
+            kind: 'rejected',
+            text: t('replaced'),
+            Icon: CircleMinusIcon,
+            tone: 'text-muted-foreground',
+          }
+        : null;
+  const title = t('title', { name: data.name });
+  const rows: [string, ReactNode][] = [
+    [t('what'), data.description],
+    [
+      t('servers'),
+      data.servers.length === 0 ? t('noServers') : data.servers.join(', '),
+    ],
+    [
+      t('tests'),
+      <ol key="tests" className="flex list-decimal flex-col gap-1 ps-5">
+        {data.tests.map((test, index) => (
+          <li key={index}>
+            <p className="whitespace-pre-wrap">{test.task}</p>
+            <p className="text-muted-foreground whitespace-pre-wrap">
+              {t('expected', { result: test.expected })}
+            </p>
+          </li>
+        ))}
+      </ol>,
+    ],
+  ];
+  return (
+    <div
+      role="group"
+      aria-label={tAgents('decision.groupAction', { tool: title })}
+      data-slot="decision-card"
+      data-variant="plan"
+      className={frameClass(outcome)}
+    >
+      <CardHeader outcome={outcome} createdAt={data.createdAt} />
+      <h3 className="text-base leading-6 font-semibold break-words">{title}</h3>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 max-[30rem]:grid-cols-1">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">
+              {label}
+            </dt>
+            <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {capUsd !== null && (
+        <p className={HINT_CLASS}>
+          {t('note', { cap: format.number(capUsd, 'usd') })}
+        </p>
+      )}
+      {action.failure !== null && outcome === null && (
+        <ErrorLine>{action.failure}</ErrorLine>
+      )}
+      {plan.state === 'waiting' && (
+        <>
+          <div className={TRAINER_ACTIONS_CLASS}>
+            <DecisionButton
+              label={t('confirm')}
+              variant="default"
+              pressed={action.pressed === 'confirm'}
+              busy={action.pressed !== null}
+              onClick={() =>
+                void action.run(
+                  'confirm',
+                  async () => feed?.send(t('confirm'), undefined, QUIET),
+                  () => tAgents('decision.sendFailed'),
+                )
+              }
+            />
+          </div>
+          <p className={HINT_CLASS}>{t('hint')}</p>
+        </>
       )}
     </div>
   );

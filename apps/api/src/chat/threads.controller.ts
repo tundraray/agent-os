@@ -27,6 +27,7 @@ import {
   type SendMessageRequest,
   type SendMessageResponse,
   type ThreadDocumentsView,
+  type ThreadForksResponse,
   type ThreadListQuery,
   type ThreadListResponse,
   type ThreadSummary,
@@ -181,6 +182,36 @@ export class ThreadsController {
       route: 'DELETE /threads/:threadId',
       fields: { ownerId, threadId },
       work: () => this.conversations.delete(threadId, ownerId),
+    });
+  }
+
+  /** The request body is not read. */
+  @Post(':threadId/fork')
+  @HttpCode(201)
+  fork(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<ThreadSummary> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'POST /threads/:threadId/fork',
+      fields: { ownerId, threadId },
+      work: () => this.conversations.fork(threadId, ownerId),
+      outcomeOf: (thread) => ({ forkId: thread.id }),
+    });
+  }
+
+  @Get(':threadId/forks')
+  forks(
+    @Param('threadId') threadId: string,
+    @Req() req: AuthedRequest,
+  ): Promise<ThreadForksResponse> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'GET /threads/:threadId/forks',
+      fields: { ownerId, threadId },
+      work: () => this.conversations.forks(threadId, ownerId),
+      outcomeOf: (page) => ({ count: page.threads.length }),
     });
   }
 

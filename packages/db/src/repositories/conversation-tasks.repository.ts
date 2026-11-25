@@ -2,7 +2,7 @@ import {
   type SessionTaskStatus,
   SessionTaskStatusSchema,
 } from '@agent-os/contracts';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { conversations, conversationTasks } from '../schema';
 
@@ -70,6 +70,26 @@ export class ConversationTasksRepository {
       tasks: await this.list(sessionId),
       lastNumber: session.lastNumber,
     };
+  }
+
+  /** Copies the list of `fromId` and its last number into `toId`; returns how many tasks were copied. */
+  async copy(fromId: string, toId: string): Promise<number> {
+    const copied = await this.db.client.insert(conversationTasks).select(
+      this.db.client
+        .select({
+          ...getTableColumns(conversationTasks),
+          conversationId: sql<string>`${toId}::uuid`.as('conversation_id'),
+        })
+        .from(conversationTasks)
+        .where(eq(conversationTasks.conversationId, fromId)),
+    );
+    await this.db.client
+      .update(conversations)
+      .set({
+        lastTaskNumber: sql`(select source.last_task_number from ${conversations} source where source.id = ${fromId})`,
+      })
+      .where(eq(conversations.id, toId));
+    return copied.rowCount ?? 0;
   }
 
   /** Writes a decision: the tasks whole (created or replaced), the deletions and the counter. */

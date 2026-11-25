@@ -63,6 +63,7 @@ CREATE TABLE "app"."conversations" (
 	"subagent" text,
 	"first_run" boolean DEFAULT false NOT NULL,
 	"forked_through_seq" integer,
+	"forked_from_id" uuid,
 	"turns" integer DEFAULT 0 NOT NULL,
 	"interrupted" boolean DEFAULT false NOT NULL,
 	"closed" boolean DEFAULT false NOT NULL,
@@ -70,7 +71,8 @@ CREATE TABLE "app"."conversations" (
 	"last_task_number" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "conversations_start_call_check" CHECK (("app"."conversations"."start_call_id" is not null) = ("app"."conversations"."parent_id" is not null)),
-	CONSTRAINT "conversations_root_check" CHECK (("app"."conversations"."title" is not null) = ("app"."conversations"."parent_id" is null) and ("app"."conversations"."updated_at" is not null) = ("app"."conversations"."parent_id" is null))
+	CONSTRAINT "conversations_root_check" CHECK (("app"."conversations"."title" is not null) = ("app"."conversations"."parent_id" is null) and ("app"."conversations"."updated_at" is not null) = ("app"."conversations"."parent_id" is null)),
+	CONSTRAINT "conversations_fork_check" CHECK ("app"."conversations"."forked_from_id" is null or ("app"."conversations"."parent_id" is null and "app"."conversations"."forked_through_seq" is not null))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."messages" (
@@ -316,8 +318,8 @@ CREATE TABLE "app"."agent_versions" (
 	"content" jsonb NOT NULL,
 	"author_id" uuid,
 	"training_id" uuid,
+	"changes" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "agent_versions_training_id_key" UNIQUE("training_id"),
 	CONSTRAINT "agent_versions_agent_number_key" UNIQUE("agent_id","number"),
 	CONSTRAINT "agent_versions_agent_id_key" UNIQUE("agent_id","id")
 );
@@ -358,14 +360,20 @@ CREATE TABLE "app"."documents" (
 --> statement-breakpoint
 CREATE TABLE "app"."trainings" (
 	"id" uuid PRIMARY KEY NOT NULL,
-	"agent_id" uuid NOT NULL,
-	"base_version_id" uuid NOT NULL,
+	"agent_id" uuid,
+	"base_version_id" uuid,
 	"cap_usd" numeric(18, 9) NOT NULL,
 	"capped_at" timestamp with time zone,
-	"changes" text,
 	"comparisons" jsonb NOT NULL,
 	"activated_at" timestamp with time zone,
-	"activated_by" uuid
+	"activated_by" uuid,
+	"description" text,
+	"tests" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"plan" jsonb,
+	"offered_agent_id" uuid,
+	"taken_agent_id" uuid,
+	"taken_thread_id" uuid,
+	CONSTRAINT "trainings_agent_check" CHECK (("app"."trainings"."agent_id" is null) = ("app"."trainings"."base_version_id" is null))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."settings" (
@@ -399,6 +407,7 @@ ALTER TABLE "app"."conversations" ADD CONSTRAINT "conversations_id_runtime_tasks
 ALTER TABLE "app"."conversations" ADD CONSTRAINT "conversations_parent_id_conversations_id_fk" FOREIGN KEY ("parent_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."conversations" ADD CONSTRAINT "conversations_owner_id_identity_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."conversations" ADD CONSTRAINT "conversations_agent_version_id_agent_versions_id_fk" FOREIGN KEY ("agent_version_id") REFERENCES "app"."agent_versions"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."conversations" ADD CONSTRAINT "conversations_forked_from_id_conversations_id_fk" FOREIGN KEY ("forked_from_id") REFERENCES "app"."conversations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."messages" ADD CONSTRAINT "messages_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."tool_results" ADD CONSTRAINT "tool_results_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."code_calls" ADD CONSTRAINT "code_calls_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -430,6 +439,9 @@ ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_id_conversations_id_fk" 
 ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_agent_id_agents_id_fk" FOREIGN KEY ("agent_id") REFERENCES "app"."agents"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_base_version_id_agent_versions_id_fk" FOREIGN KEY ("base_version_id") REFERENCES "app"."agent_versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_activated_by_identity_users_id_fk" FOREIGN KEY ("activated_by") REFERENCES "app"."identity_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_offered_agent_id_agents_id_fk" FOREIGN KEY ("offered_agent_id") REFERENCES "app"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_taken_agent_id_agents_id_fk" FOREIGN KEY ("taken_agent_id") REFERENCES "app"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."trainings" ADD CONSTRAINT "trainings_taken_thread_id_conversations_id_fk" FOREIGN KEY ("taken_thread_id") REFERENCES "app"."conversations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."settings" ADD CONSTRAINT "settings_updated_by_identity_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "app"."identity_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "runtime_tasks_ready_idx" ON "app"."runtime_tasks" USING btree ("created_at","task_id") WHERE "app"."runtime_tasks"."status" = 'queued';--> statement-breakpoint
 CREATE INDEX "runtime_tasks_root_idx" ON "app"."runtime_tasks" USING btree ("root_id");--> statement-breakpoint
@@ -441,6 +453,7 @@ CREATE INDEX "runtime_model_calls_task_idx" ON "app"."runtime_model_calls" USING
 CREATE INDEX "conversations_owner_version_idx" ON "app"."conversations" USING btree ("owner_id","agent_version_id");--> statement-breakpoint
 CREATE INDEX "conversations_agent_version_idx" ON "app"."conversations" USING btree ("agent_version_id");--> statement-breakpoint
 CREATE INDEX "conversations_parent_idx" ON "app"."conversations" USING btree ("parent_id");--> statement-breakpoint
+CREATE INDEX "conversations_forked_from_idx" ON "app"."conversations" USING btree ("forked_from_id");--> statement-breakpoint
 CREATE INDEX "conversations_owner_page_idx" ON "app"."conversations" USING btree ("owner_id","updated_at" DESC NULLS LAST,"id" DESC NULLS LAST) WHERE "app"."conversations"."parent_id" IS NULL;--> statement-breakpoint
 CREATE INDEX "messages_call_idx" ON "app"."messages" USING btree ("conversation_id","call_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "messages_call_once_idx" ON "app"."messages" USING btree ("conversation_id","call_id","kind") WHERE "app"."messages"."kind" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'tool_result');--> statement-breakpoint
@@ -454,6 +467,7 @@ CREATE INDEX "access_grants_server_idx" ON "app"."access_grants" USING btree ("s
 CREATE UNIQUE INDEX "agents_owner_name_idx" ON "app"."agents" USING btree ("owner_id",lower("name")) WHERE "app"."agents"."owner_id" is not null and "app"."agents"."deleted_at" is null;--> statement-breakpoint
 CREATE UNIQUE INDEX "agents_system_name_idx" ON "app"."agents" USING btree (lower("name")) WHERE "app"."agents"."owner_id" is null and "app"."agents"."deleted_at" is null;--> statement-breakpoint
 CREATE UNIQUE INDEX "agents_builtin_key_idx" ON "app"."agents" USING btree ("builtin_key");--> statement-breakpoint
+CREATE INDEX "agent_versions_training_idx" ON "app"."agent_versions" USING btree ("training_id");--> statement-breakpoint
 CREATE INDEX "agent_shares_role_idx" ON "app"."agent_shares" USING btree ("role_id");--> statement-breakpoint
 CREATE INDEX "agent_shares_user_idx" ON "app"."agent_shares" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "memories_agent_description_idx" ON "app"."memories" USING btree ("agent_id","description");--> statement-breakpoint
@@ -462,4 +476,7 @@ CREATE INDEX "documents_conversation_idx" ON "app"."documents" USING btree ("con
 CREATE INDEX "documents_updated_by_idx" ON "app"."documents" USING btree ("updated_by");--> statement-breakpoint
 CREATE INDEX "trainings_agent_idx" ON "app"."trainings" USING btree ("agent_id");--> statement-breakpoint
 CREATE INDEX "trainings_base_version_idx" ON "app"."trainings" USING btree ("base_version_id");--> statement-breakpoint
-CREATE INDEX "trainings_activated_by_idx" ON "app"."trainings" USING btree ("activated_by");
+CREATE INDEX "trainings_activated_by_idx" ON "app"."trainings" USING btree ("activated_by");--> statement-breakpoint
+CREATE INDEX "trainings_offered_agent_idx" ON "app"."trainings" USING btree ("offered_agent_id");--> statement-breakpoint
+CREATE INDEX "trainings_taken_agent_idx" ON "app"."trainings" USING btree ("taken_agent_id");--> statement-breakpoint
+CREATE INDEX "trainings_taken_thread_idx" ON "app"."trainings" USING btree ("taken_thread_id");

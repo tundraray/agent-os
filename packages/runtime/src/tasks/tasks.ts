@@ -61,7 +61,7 @@ export class Tasks {
   ) {}
 
   /**
-   * Inserts a task in `queued` and signals its tree. An id already taken is `TASK_EXISTS`; an
+   * Inserts a task in `queued` (or `waiting` for messages) and signals its tree. An id already taken is `TASK_EXISTS`; an
    * exclusive key held by an unfinished task of the type is `null`. Neither leaves a failed
    * statement behind: the open transaction goes on.
    */

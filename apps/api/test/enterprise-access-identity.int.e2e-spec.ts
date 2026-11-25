@@ -1005,6 +1005,8 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         isAdmin: false,
         hasPassword: true,
         language: null,
+        trainOwn: false,
+        trainingCapUsd: expect.any(Number),
       });
       expect(me.id.startsWith('system:')).toBe(false);
 
@@ -1561,6 +1563,8 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
               isAdmin: false,
               hasPassword: false,
               language: null,
+              trainOwn: false,
+              trainingCapUsd: expect.any(Number),
             });
             expect(await userDetail(newcomer.id)).toMatchObject({
               login: null,

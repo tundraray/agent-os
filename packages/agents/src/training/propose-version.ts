@@ -1,13 +1,23 @@
 import type { Logger } from '@agent-os/common';
 import {
   DeepAgentContentSchema,
+  roundFailed,
+  roundJudged,
   ScriptSchema,
+  SessionTaskStatusSchema,
   TRAINER_TOOLS,
 } from '@agent-os/contracts';
-import type { AgentsRepository, TrainingsRepository } from '@agent-os/db';
+import type {
+  AgentTrainingRow,
+  AgentVersionRow,
+  AgentsRepository,
+  ConversationTasksRepository,
+  TrainingsRepository,
+} from '@agent-os/db';
 import { z } from 'zod';
 
 import type { InCommitAgentTool, ToolRunResult } from '../tools/tool';
+import { FIX_TASK } from './pool';
 import { trainingBase } from './training-reads';
 
 const PROPOSE_VERSION_TOOL = TRAINER_TOOLS[5];
@@ -42,20 +52,63 @@ const ProposeArgsSchema = z.object({
 });
 type ProposeArgs = z.infer<typeof ProposeArgsSchema>;
 
+const SUMMARY_TASK = 4;
+const { completed, in_progress: inProgress } = SessionTaskStatusSchema.enum;
+
+type ProposeDeps = Parameters<typeof createProposeVersionTool>[0];
+
+/**
+ * Why a test run may not propose a version now (create-and-test design-trainer-dialog.md, Flow 4), or `null`:
+ * the last round judged whole, and either the automatic fix — a failure in round 1, one version, task 3 in
+ * progress — or a request after the summary task is closed; never while a training of the agent runs or after
+ * the agent is deleted.
+ */
+async function testRunRefusal(
+  deps: ProposeDeps,
+  training: AgentTrainingRow,
+  proposed: readonly AgentVersionRow[],
+): Promise<string | null> {
+  const { tests } = training;
+  if (!roundJudged(tests, 1 + proposed.length))
+    return 'Propose a version only after every test of the last round is judged.';
+  const pool = await deps.sessionTaskRows.list(training.id);
+  const status = (number: number) =>
+    pool.find((task) => task.number === number)?.status;
+  const fix =
+    proposed.length === 0 &&
+    roundFailed(tests, 1) &&
+    status(FIX_TASK) === inProgress;
+  if (!fix && status(SUMMARY_TASK) !== completed)
+    return 'Propose a version only to fix the failures of the first round or on a request of the employee after the summary.';
+  if ((await deps.trainingRows.running(training.agentId))?.description === null)
+    return 'A training of this agent is running: no version can be proposed until it ends.';
+  if ((await deps.agentRows.findAny(training.agentId))?.deletedAt != null)
+    return 'The agent was deleted: no version can be proposed.';
+  return null;
+}
+
 /**
  * `propose_version`, the trainer's proposal (design-training.md, KD-1, «Инструменты тренера»): the one new
  * version of the trained agent — the base one with new prompts and scripts — created inactive with its changes.
  */
 export function createProposeVersionTool(deps: {
-  readonly trainingRows: Pick<TrainingsRepository, 'find' | 'setChanges'>;
-  readonly agentRows: Pick<AgentsRepository, 'findVersion' | 'createVersion'>;
+  readonly trainingRows: Pick<TrainingsRepository, 'find' | 'running'>;
+  readonly agentRows: Pick<
+    AgentsRepository,
+    | 'findVersion'
+    | 'findTrainingVersion'
+    | 'trainingVersions'
+    | 'findAny'
+    | 'createVersion'
+  >;
+  readonly sessionTaskRows: Pick<ConversationTasksRepository, 'list'>;
   readonly logger: Logger;
 }): InCommitAgentTool<ProposeArgs> {
   const logger = deps.logger.child({ service: 'agents.trainer-tools' });
   return {
     name: PROPOSE_VERSION_TOOL,
     description:
-      'Propose the one new version of the trained agent: new prompts of the deep agent and its subagents by name and the full new list of scripts; everything else stays as in the base version. The version is created inactive; a person decides whether to switch it on. One proposal per training.',
+      'Propose the one new version of the trained agent: new prompts of the deep agent and its subagents by name and the full new list of scripts; everything else stays as in the base version. The version is created inactive; a person decides whether to switch it on. One proposal per training; in a test run, one per round, built from its latest version.',
     argsSchema: ProposeArgsSchema,
     mode: 'in_commit',
     loggedArgs: (args) => ({
@@ -66,7 +119,9 @@ export function createProposeVersionTool(deps: {
       scripts: Array.isArray(args.scripts) ? args.scripts.length : null,
     }),
     async execute({ args, caller, callId }) {
-      const { training, content } = await trainingBase(deps, caller);
+      const base = await trainingBase(deps, caller);
+      if ('kind' in base) return base;
+      const { training } = base;
       const refused = (text: string): ToolRunResult => {
         logger.info('trainer proposal refused', {
           trainingId: training.id,
@@ -74,9 +129,18 @@ export function createProposeVersionTool(deps: {
         });
         return { kind: 'refused', reason: 'invalid_arguments', text };
       };
-      // The changes are written with the version, so a training with changes has its version already.
-      if (training.changes !== null)
-        return refused('This training has proposed its version already.');
+      // A test run builds each version from its latest one, which `trainingBase` reads (KD-7).
+      const { content } = base;
+      if (training.description === null) {
+        if (
+          (await deps.agentRows.findTrainingVersion(training.id)) !== undefined
+        )
+          return refused('This training has proposed its version already.');
+      } else {
+        const proposed = await deps.agentRows.trainingVersions(training.id);
+        const refusal = await testRunRefusal(deps, training, proposed);
+        if (refusal !== null) return refused(refusal);
+      }
       const unknown = args.subagentPrompts.findIndex(
         (entry) =>
           !content.subagents.some((subagent) => subagent.name === entry.name),
@@ -99,13 +163,13 @@ export function createProposeVersionTool(deps: {
         agentId: training.agentId,
         content: parsed.data,
         trainingId: training.id,
+        changes: args.changes,
       });
       // The failed insert aborted the transaction: the throw rolls the call's savepoint back, the call ends a tool error.
       if (created.outcome === 'number_taken')
         throw new Error(
           'A concurrent save took the version number; propose the version again.',
         );
-      await deps.trainingRows.setChanges(training.id, args.changes);
       logger.info('trainer proposed a version', {
         trainingId: training.id,
         agentId: training.agentId,

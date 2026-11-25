@@ -1,6 +1,7 @@
 import type {
   ChipRecord,
   ConfirmationStatus,
+  ForkRefusalReason,
   ToolCallState,
 } from '@agent-os/contracts';
 import type { RootPosition } from '@agent-os/db';
@@ -26,6 +27,11 @@ export interface StartRequest {
   /** The chip of the conversation's first message: it stays on the root's `task` entry. */
   readonly record?: ChipRecord;
 }
+
+/** A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, or why not now. */
+export type ForkResult =
+  | { readonly kind: 'forked'; readonly threadId: string }
+  | { readonly kind: 'refused'; readonly reason: ForkRefusalReason };
 
 export interface AgentRef {
   readonly agentId: string;

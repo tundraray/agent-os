@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { reportOf, taskQuestion, TrainingOperations } from '@agent-os/agents';
 import {
-  DeepAgentContentSchema,
   TaskStatusSchema,
   type TrainingActivated,
   type TrainingStarted,
@@ -9,7 +8,10 @@ import {
   type TrainingView,
 } from '@agent-os/contracts';
 import {
+  type AgentTrainingRow,
+  type AgentVersionRow,
   AgentsRepository,
+  ConversationsRepository,
   ConversationTasksRepository,
   Db,
   MessagesRepository,
@@ -19,7 +21,7 @@ import {
   type TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
-import { type Task, TaskControl } from '@agent-os/runtime';
+import { TaskControl } from '@agent-os/runtime';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import type { AuthUser } from '../identity/auth-user';
@@ -28,46 +30,9 @@ import { AUDIT_OBJECT_TYPE } from '../library/library-records';
 import { LibraryService } from '../library/library.service';
 import type { TrainingTarget } from '../library/library.types';
 import { SettingsService } from '../settings/settings.service';
+import { runNumbers, sum, versionTexts } from './run-numbers';
 import { canTrain, recommendation, trainingStatus } from './training-rules';
-import { startRefused, trainingError } from './training.errors';
-
-/** The outcomes of a replay's calls that count as its errors (design-training.md, `TrainingView`). */
-const ERROR_OUTCOMES = ['tool_error', 'transport_failure', 'refused'];
-
-type ReplayNumbers = TrainingView['totals']['base'];
-
-/** The replay and every task under it, from the training's tree in creation order. */
-function subtreeOf(tree: readonly Task[], replayId: string): string[] {
-  const ids = new Set([replayId]);
-  for (const task of tree)
-    if (task.parentId !== null && ids.has(task.parentId)) ids.add(task.taskId);
-  return [...ids];
-}
-
-function versionTexts(
-  content: unknown,
-): NonNullable<TrainingView['proposal']['base']> {
-  const { prompt, subagents, scripts } = DeepAgentContentSchema.parse(content);
-  return {
-    prompt,
-    subagents: subagents.map(({ name, prompt }) => ({ name, prompt })),
-    scripts,
-  };
-}
-
-function sum(replays: readonly (ReplayNumbers | null)[]): ReplayNumbers {
-  return replays.reduce<ReplayNumbers>(
-    (total, replay) =>
-      replay === null
-        ? total
-        : {
-            errors: total.errors + replay.errors,
-            toolCalls: total.toolCalls + replay.toolCalls,
-            costUsd: total.costUsd + replay.costUsd,
-          },
-    { errors: 0, toolCalls: 0, costUsd: 0 },
-  );
-}
+import { startRefused, testRunRunning, trainingError } from './training.errors';
 
 /**
  * The training routes (self-learning design-training.md, KD-7, KD-8, Flow 1, Flow 4): every route first finds
@@ -90,6 +55,7 @@ export class TrainingService {
     private readonly sessionTasks: ConversationTasksRepository,
     private readonly messages: MessagesRepository,
     private readonly modelCalls: RuntimeModelCallsRepository,
+    private readonly conversations: ConversationsRepository,
   ) {}
 
   /** GET /api/library/:id/training. 404 RECORD_NOT_FOUND. */
@@ -113,14 +79,24 @@ export class TrainingService {
       selfLearning: target.selfLearning,
       capUsd,
       running:
-        running === undefined ? null : await this.runningOf(running, actor.id),
-      lastFinished: last === undefined ? null : await this.finishedOf(last),
+        running === undefined || running.description !== null
+          ? null
+          : await this.runningOf(running, actor.id),
+      lastFinished:
+        last === undefined ? null : await this.finishedOf(last, actor.id),
     };
   }
 
-  /** POST /api/library/:id/training (Flow 1). 404, 403, 409 SELF_LEARNING_OFF, TRAINING_RUNNING, TRAINING_NO_PAST_TASKS, START_REFUSED. */
+  /** POST /api/library/:id/training (Flow 1). 404, 403, 409 TEST_RUN_RUNNING, SELF_LEARNING_OFF, TRAINING_RUNNING, TRAINING_NO_PAST_TASKS, START_REFUSED. */
   async start(actor: AuthUser, recordId: string): Promise<TrainingStarted> {
     const target = await this.allowedTarget(actor, recordId);
+    // Before the flag: the agent of a running test run has it off (design-test-run.md, DC-6).
+    const testRun = await this.trainings.running(target.agentId);
+    if (testRun?.description != null)
+      throw testRunRunning(
+        testRun.id,
+        (await this.conversations.find(testRun.id))?.title ?? '',
+      );
     // A default agent never learns; its flag is off by the library's rules.
     if (target.builtinKey !== null || !target.selfLearning)
       throw trainingError('SELF_LEARNING_OFF');
@@ -143,7 +119,7 @@ export class TrainingService {
     }
   }
 
-  /** GET /api/library/:id/training/:trainingId. 404, 403, 404 TRAINING_NOT_FOUND. */
+  /** GET /api/library/:id/training/:trainingId, for its starter only (FR-15). 404, 403, 404 TRAINING_NOT_FOUND. */
   async view(
     actor: AuthUser,
     recordId: string,
@@ -151,13 +127,13 @@ export class TrainingService {
   ): Promise<TrainingView> {
     const target = await this.allowedTarget(actor, recordId);
     const { training, ownerId } = await this.trainingOf(target, trainingId);
+    if (ownerId !== actor.id) throw trainingError('TRAINING_NOT_FOUND');
     const tree = await this.tasks.listTree(training.id, ownerId);
     const root = tree.find((task) => task.taskId === training.id);
     if (root === undefined) throw trainingError('TRAINING_NOT_FOUND');
     const status = trainingStatus(root.status);
-    // The free texts come from reads under the starter's rights: only the starter gets them, and never of a deleted past task.
-    const startedByMe = ownerId === actor.id;
-    const livePast = startedByMe ? await this.livePastTasks(training) : [];
+    // A past task's text never comes from a deleted one.
+    const livePast = await this.livePastTasks(training);
     const [base, proposed, pool, startedBy, spent, texts] = await Promise.all([
       this.agents.findVersion(training.baseVersionId),
       this.agents.findTrainingVersion(training.id),
@@ -168,30 +144,24 @@ export class TrainingService {
     ]);
     if (base === undefined)
       throw new Error(`Base version of training ${training.id} is missing`);
-    const replay = async (replayId: string | null) => {
-      if (replayId === null) return null;
-      const ids = subtreeOf(tree, replayId);
-      const [counts, cost] = await Promise.all([
-        this.messages.toolResultCounts(ids, ERROR_OUTCOMES),
-        this.modelCalls.sumTasks(ids),
-      ]);
-      const failed = tree.some(
-        (task) => task.taskId === replayId && task.status === 'failed',
-      );
-      return {
-        conversationId: startedByMe ? replayId : null,
-        errors: counts.matching + (failed ? 1 : 0),
-        toolCalls: counts.calls,
-        costUsd: Number(cost),
-      };
-    };
+    const replay = async (replayId: string | null) =>
+      replayId === null
+        ? null
+        : {
+            conversationId: replayId,
+            ...(await runNumbers(
+              { messages: this.messages, modelCalls: this.modelCalls },
+              tree,
+              replayId,
+            )),
+          };
     const comparisons = await Promise.all(
       training.comparisons.map(async (element) => ({
         task: livePast.includes(element.pastConversationId)
           ? this.textOf(texts, element.pastConversationId)
           : null,
         verdict: element.verdict,
-        reason: startedByMe ? element.reason : null,
+        reason: element.reason,
         base: await replay(element.baseReplayId),
         proposed: await replay(element.proposedReplayId),
       })),
@@ -201,7 +171,6 @@ export class TrainingService {
       startedBy,
       startedAt: root.createdAt.toISOString(),
       baseVersion: base.number,
-      startedByMe,
       status,
       failureReason:
         status === 'failed' ? (root.failure?.reason ?? null) : null,
@@ -215,14 +184,12 @@ export class TrainingService {
       })),
       proposal: {
         version: proposed?.number ?? null,
-        base: startedByMe ? versionTexts(base.content) : null,
+        base: versionTexts(base.content),
         proposed:
-          startedByMe && proposed !== undefined
-            ? versionTexts(proposed.content)
-            : null,
-        changes: startedByMe ? training.changes : null,
+          proposed === undefined ? null : versionTexts(proposed.content),
+        changes: proposed?.changes ?? null,
         explanation:
-          startedByMe && proposed === undefined && root.status === 'completed'
+          proposed === undefined && root.status === 'completed'
             ? reportOf(root.result)
             : null,
       },
@@ -239,7 +206,6 @@ export class TrainingService {
       activatedAt: training.activatedAt?.toISOString() ?? null,
       activeVersion: target.activeVersion.number,
       canActivate:
-        startedByMe &&
         status !== 'running' &&
         proposed !== undefined &&
         training.activatedAt === null &&
@@ -264,6 +230,7 @@ export class TrainingService {
     );
     // Only the starter has read the diff.
     if (ownerId !== actor.id) throw trainingError('TRAINING_FORBIDDEN');
+    // 409 TRAINING_NOT_ACTIVATABLE while it runs, without a version or once activated.
     const [version, base] = await Promise.all([
       this.agents.findTrainingVersion(training.id),
       this.agents.findVersion(training.baseVersionId),
@@ -276,33 +243,60 @@ export class TrainingService {
       throw trainingError('TRAINING_NOT_ACTIVATABLE');
     if (base === undefined)
       throw new Error(`Base version of training ${training.id} is missing`);
+    return this.activateFor(actor, target, {
+      trainingId: training.id,
+      version,
+      expectedNumber: base.number,
+      testRun: false,
+    });
+  }
+
+  /**
+   * The activation of a training's or a test run's version by its starter after the caller's checks (design-training.md,
+   * KD-7; design-trainer-dialog.md, «Маршруты прогона»): one transaction whose first write is the agent's pointer
+   * guarded by the expected active version — `stale` rolls back (409 TRAINING_BASE_CHANGED) —, then the mark —
+   * once for a training, at every activation for a test run — and the audit.
+   */
+  async activateFor(
+    actor: AuthUser,
+    target: TrainingTarget,
+    change: {
+      readonly trainingId: string;
+      readonly version: AgentVersionRow;
+      readonly expectedNumber: number;
+      readonly testRun: boolean;
+    },
+  ): Promise<TrainingActivated> {
+    const { trainingId, version, expectedNumber } = change;
     return this.db.transaction(async () => {
       const outcome = await this.agents.activateVersion({
         agentId: target.agentId,
         versionId: version.id,
-        expectedNumber: base.number,
+        expectedNumber,
         name: target.name,
         description: target.description,
       });
       if (outcome === 'stale') throw trainingError('TRAINING_BASE_CHANGED');
       if (outcome === 'name_taken')
         throw new Error(
-          `Activation of training ${training.id} found the agent's own name taken`,
+          `Activation of training ${trainingId} found the agent's own name taken`,
         );
-      if (!(await this.trainings.activate(training.id, actor.id)))
+      if (change.testRun)
+        await this.trainings.markActivated(trainingId, actor.id);
+      else if (!(await this.trainings.activate(trainingId, actor.id)))
         throw trainingError('TRAINING_NOT_ACTIVATABLE');
       await this.auditLog.record({
         kind: 'training_activate',
         actor: actor.id,
         objectType: AUDIT_OBJECT_TYPE,
         objectId: target.agentId,
-        before: { version: base.number },
-        after: { version: version.number, trainingId: training.id },
+        before: { version: expectedNumber },
+        after: { version: version.number, trainingId },
         outcome: 'ok',
       });
-      const activated = await this.trainings.find(training.id);
+      const activated = await this.trainings.find(trainingId);
       if (activated?.activatedAt == null)
-        throw new Error(`Training ${training.id} lost its activation mark`);
+        throw new Error(`Training ${trainingId} lost its activation mark`);
       return {
         version: version.number,
         activatedAt: activated.activatedAt.toISOString(),
@@ -320,11 +314,18 @@ export class TrainingService {
     return target;
   }
 
-  /** The training of this agent with its root task; another agent's, a missing one or a deleted tree — 404 TRAINING_NOT_FOUND. */
+  /**
+   * The training of this agent with its root task; another agent's, a test run, a missing one or a deleted
+   * tree — 404 TRAINING_NOT_FOUND.
+   */
   private async trainingOf(
     target: TrainingTarget,
     trainingId: string,
-  ): Promise<{ training: TrainingRow; root: RuntimeTaskRow; ownerId: string }> {
+  ): Promise<{
+    training: AgentTrainingRow;
+    root: RuntimeTaskRow;
+    ownerId: string;
+  }> {
     const [training, root] = isUuid(trainingId)
       ? await Promise.all([
           this.trainings.find(trainingId),
@@ -333,13 +334,23 @@ export class TrainingService {
       : [];
     if (
       training === undefined ||
+      training.description !== null ||
+      training.baseVersionId === null ||
       training.agentId !== target.agentId ||
       root === undefined ||
       root.deletedAt !== null ||
       root.ownerId === null
     )
       throw trainingError('TRAINING_NOT_FOUND');
-    return { training, root, ownerId: root.ownerId };
+    return {
+      training: {
+        ...training,
+        agentId: target.agentId,
+        baseVersionId: training.baseVersionId,
+      },
+      root,
+      ownerId: root.ownerId,
+    };
   }
 
   private async runningOf(
@@ -357,13 +368,16 @@ export class TrainingService {
     };
   }
 
+  /** The latest finished training for its starter only (FR-15); `null` for anybody else. */
   private async finishedOf(
     training: TrainingRow,
-  ): Promise<NonNullable<TrainingState['lastFinished']>> {
+    actorId: string,
+  ): Promise<TrainingState['lastFinished']> {
     const [root, version] = await Promise.all([
       this.rootRow(training.id),
       this.agents.findTrainingVersion(training.id),
     ]);
+    if (root.ownerId !== actorId) return null;
     const status = trainingStatus(TaskStatusSchema.parse(root.status));
     if (root.finishedAt === null)
       throw new Error(`Finished training ${training.id} has no end time`);

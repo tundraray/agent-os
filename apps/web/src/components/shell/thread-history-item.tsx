@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
-import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
+import {
+  GitBranchIcon,
+  MoreHorizontalIcon,
+  PencilIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { ShimmerLabel } from '@/components/surfaces';
 import {
@@ -21,7 +26,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { focusShellTarget, isFinePointer } from '@/lib/focus';
+import {
+  focusShellTarget,
+  isFinePointer,
+  shellTargetElement,
+} from '@/lib/focus';
 import { threadPath } from '@/lib/shell-route';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
 import { cn } from '@/lib/utils';
@@ -50,6 +59,8 @@ export type ThreadHistoryItemProps = {
   onRename: (title: string) => void;
   /** «Удалить» in the «⋯» menu: the list opens DLG-01 for this thread. */
   onRequestDelete: () => void;
+  /** «Ответвить чат» in the «⋯» menu (create-and-test FK-01): the list forks the thread and opens the fork. */
+  onFork: () => void;
 };
 
 /**
@@ -64,6 +75,7 @@ export function ThreadHistoryItem({
   titlePending,
   onRename,
   onRequestDelete,
+  onFork,
 }: ThreadHistoryItemProps) {
   const t = useTranslations('shell.thread');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -71,6 +83,7 @@ export function ThreadHistoryItem({
   const labelRef = useRef<HTMLSpanElement>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [forking, setForking] = useState(false);
   const focusLinkAfterEdit = useRef(false);
   const label = entry.title ?? t('untitled');
   const linkProps = { [THREAD_LINK_ATTRIBUTE]: '' };
@@ -151,18 +164,23 @@ export function ThreadHistoryItem({
           )}
           render={<TooltipTrigger delay={TOOLTIP_DELAY_MS} render={target} />}
         >
+          {entry.forked && (
+            <GitBranchIcon aria-hidden className="text-muted-foreground" />
+          )}
           <ShimmerLabel
             ref={labelRef}
+            className="truncate"
             active={entry.title === undefined && titlePending}
           >
             {label}
           </ShimmerLabel>
+          {entry.forked && <span className="sr-only">{t('forkMark')}</span>}
         </SidebarMenuButton>
         <TooltipContent side="right" align="center">
           {label}
         </TooltipContent>
       </Tooltip>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => open && setForking(false)}>
         <DropdownMenuTrigger
           render={
             <SidebarMenuAction
@@ -180,13 +198,29 @@ export function ThreadHistoryItem({
         >
           <MoreHorizontalIcon aria-hidden />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-auto min-w-45">
+        {/* A fork opens in the main area: focus leaves «⋯» for the message field (FK-01). */}
+        <DropdownMenuContent
+          align="end"
+          finalFocus={forking ? () => shellTargetElement('composer') : true}
+          className="w-auto min-w-45"
+        >
           {/* The row swaps to the field at once and takes the menu with it: waiting for the popup's exit
               animation delays the field's focus, and the menu has no focus to return to «⋯». */}
           <DropdownMenuItem onClick={() => setEditing(true)}>
             <PencilIcon aria-hidden />
             {t('rename')}
           </DropdownMenuItem>
+          {entry.forkable && (
+            <DropdownMenuItem
+              onClick={() => {
+                setForking(true);
+                onFork();
+              }}
+            >
+              <GitBranchIcon aria-hidden />
+              {t('fork')}
+            </DropdownMenuItem>
+          )}
           {/* The dialog opens from the click, like the field above: no wait for the menu's exit animation. */}
           <DropdownMenuItem
             variant="destructive"

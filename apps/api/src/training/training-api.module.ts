@@ -4,10 +4,15 @@ import { AuditModule } from '../audit/audit.module';
 import { IdentityModule } from '../identity/identity.module';
 import { LibraryModule } from '../library/library.module';
 import { SettingsModule } from '../settings/settings.module';
+import { TestRunController } from './test-run.controller';
+import { TestRunService } from './test-run.service';
 import { TrainingController } from './training.controller';
 import { TrainingService } from './training.service';
 
-/** The training routes (self-learning design-training.md, KD-8): the agent for the actor comes from `LibraryModule`, the start from `AgentsModule`. */
+/**
+ * The training routes (self-learning design-training.md, KD-8) and the test run's (design-test-run.md, KD-6): the
+ * agent for the actor comes from `LibraryModule`, the starts from `AgentsModule`.
+ */
 @Module({
   imports: [
     LibraryModule,
@@ -16,7 +21,7 @@ import { TrainingService } from './training.service';
     AuditModule,
     AgentsModule,
   ],
-  controllers: [TrainingController],
-  providers: [TrainingService],
+  controllers: [TrainingController, TestRunController],
+  providers: [TrainingService, TestRunService],
 })
 export class TrainingApiModule {}

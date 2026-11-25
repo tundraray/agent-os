@@ -15,8 +15,6 @@ const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
 /** After a record id: a deep agent's memory (self-learning UXRD ME-01). */
 const MEMORY_SUFFIX = '/memory';
-/** After a record id, before a training id: a training's result (self-learning UXRD TR-02). */
-const TRAINING_SEGMENT = '/training/';
 /** After an agent id: the deep agent page's tab «Задачи» (deep-agents UXRD DA-04); «Ход работы» is the page's own address. */
 const TASKS_SUFFIX = '/tasks';
 
@@ -44,13 +42,12 @@ export type AdminPage =
   | { kind: 'record'; key: string }
   | { kind: 'memory'; key: string };
 
-/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent, a deep agent's memory or a training's result. */
+/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent or a deep agent's memory. */
 export type LibraryPage =
   | { kind: 'list' }
   | { kind: 'record'; id: string }
   | { kind: 'new' }
-  | { kind: 'memory'; id: string }
-  | { kind: 'training'; id: string; trainingId: string };
+  | { kind: 'memory'; id: string };
 
 /** The tab of a deep agent's page carried in its address; absent — «Ход работы» (deep-agents UXRD DA-04). */
 export type AgentTab = 'tasks';
@@ -82,10 +79,6 @@ export const recordPath = (id: string): string =>
 /** The only way an employee's memory page path of a deep agent is built. */
 export const memoryPath = (id: string): string =>
   `${recordPath(id)}${MEMORY_SUFFIX}`;
-
-/** The only way a training's result path is built. */
-export const trainingPath = (id: string, trainingId: string): string =>
-  `${recordPath(id)}${TRAINING_SEGMENT}${encodeURIComponent(trainingId)}`;
 
 /** The only way an employee's "new agent" path is built. */
 export const newAgentPath = (): string => NEW_AGENT_PATH;
@@ -173,16 +166,11 @@ function parseAdminPage(pathname: string): {
   return { section: 'users', page: { kind: 'list' } };
 }
 
-/** `/library`, an id after it, the new-agent address, an id's memory or training; any other path under it opens the list. */
+/** `/library`, an id after it, the new-agent address or an id's memory; any other path under it opens the list. */
 function parseLibraryPage(pathname: string): LibraryPage {
   if (pathname === NEW_AGENT_PATH) return { kind: 'new' };
   const memoryId = singleSegment(pathname, LIBRARY_PATH_PREFIX, MEMORY_SUFFIX);
   if (memoryId !== undefined) return { kind: 'memory', id: memoryId };
-  const [head = '', tail = ''] = pathname.split(TRAINING_SEGMENT);
-  const trainingRecordId = singleSegment(head, LIBRARY_PATH_PREFIX);
-  const trainingId = singleSegment(tail, '');
-  if (trainingRecordId !== undefined && trainingId !== undefined)
-    return { kind: 'training', id: trainingRecordId, trainingId };
   const id = singleSegment(pathname, LIBRARY_PATH_PREFIX);
   return id === undefined ? { kind: 'list' } : { kind: 'record', id };
 }

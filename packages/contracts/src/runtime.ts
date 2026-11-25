@@ -57,3 +57,14 @@ export const RuntimeFailureReasonSchema = z.enum([
   'recovery_exhausted',
 ]);
 export type RuntimeFailureReason = z.infer<typeof RuntimeFailureReasonSchema>;
+
+/**
+ * Status of a task of a session's task list (deep-agents design-task-list.md, Data Model); not the runtime's
+ * `TaskStatusSchema`. A deleted task leaves the list, so `deleted` is no stored status.
+ */
+export const SessionTaskStatusSchema = z.enum([
+  'pending',
+  'in_progress',
+  'completed',
+]);
+export type SessionTaskStatus = z.infer<typeof SessionTaskStatusSchema>;

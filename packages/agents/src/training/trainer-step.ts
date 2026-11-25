@@ -5,10 +5,10 @@ import {
 } from '@agent-os/contracts';
 import type {
   AgentsRepository,
+  AgentTrainingRow,
   AgentVersionRow,
   DocumentsRepository,
   SessionTasksWrite,
-  TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
 import {
@@ -41,8 +41,14 @@ import { reAsksOf } from './training-reads';
 
 /** What the trainer works with: an agent's, its training, the documents of runs and the start of its replays. */
 export type TrainerDeps = AgentDeps & {
-  readonly trainingRows: Pick<TrainingsRepository, 'find' | 'writeComparisons'>;
-  readonly agentRows: Pick<AgentsRepository, 'findTrainingVersion'>;
+  readonly trainingRows: Pick<
+    TrainingsRepository,
+    'find' | 'writeComparisons' | 'writeTests'
+  >;
+  readonly agentRows: Pick<
+    AgentsRepository,
+    'findTrainingVersion' | 'trainingVersions' | 'findAny'
+  >;
   readonly documentRows: Pick<
     DocumentsRepository,
     'latestReport' | 'findInRun'
@@ -126,7 +132,7 @@ function withVerdicts(
 }
 
 /** The text of the model's last answer — the one that carries its closing call: its explanation when it proposed no version. */
-function lastAnswerText(view: SessionHistory): string {
+export function lastAnswerText(view: SessionHistory): string {
   const answer = view.entries.findLast(
     (entry) => entry.kind === 'model_answer',
   );
@@ -169,9 +175,13 @@ export async function runTrainerStep(
   view: SessionHistory,
   prelude: StepPrelude | undefined,
 ): Promise<StepResult> {
-  const training = await deps.trainingRows.find(ctx.rootId);
-  if (training === undefined)
+  const row = await deps.trainingRows.find(ctx.rootId);
+  if (row === undefined)
     throw new Error(`Trainer ${ctx.taskId} has no training row`);
+  const { agentId, baseVersionId } = row;
+  if (agentId === null || baseVersionId === null)
+    throw new Error(`Training ${row.id} has no agent`);
+  const training = { ...row, agentId, baseVersionId };
   const delivered = await entriesOf(deps, ctx);
   const close = { turns: 0, closed: true };
 
@@ -313,7 +323,7 @@ export async function runTrainerStep(
 async function replayStarts(
   deps: TrainerDeps,
   ctx: StepContext,
-  training: TrainingRow,
+  training: AgentTrainingRow,
   proposedVersionId: string,
 ): Promise<Map<number, ReplayStart>> {
   const starts = new Map<number, ReplayStart>();
@@ -376,7 +386,7 @@ async function judgeNext(
   deps: TrainerDeps,
   trainer: Pick<BaseAgent, 'caller' | 'definition'>,
   ctx: StepContext,
-  training: TrainingRow,
+  training: AgentTrainingRow,
 ): Promise<{ judged: Judged | undefined; moreReady: boolean } | undefined> {
   let judged: Judged | undefined;
   for (const [index, comparison] of training.comparisons.entries()) {
@@ -432,7 +442,7 @@ async function judgeNext(
 }
 
 /** A run's report document — the newest marked report since its start (design-notepad.md KD-4) — if it has one. */
-async function reportDocument(
+export async function reportDocument(
   deps: Pick<TrainerDeps, 'documentRows'>,
   runId: string,
 ): Promise<string | undefined> {

@@ -108,10 +108,16 @@ export function AgentReport({ data }: { data: ReportPartData }) {
   const threadId = useFeedSelector(selectThread, null);
   const inChat = useFeedSelector(selectInChat, false);
   const reportDocument = data.document;
-  const document = useThreadDocument(threadId, reportDocument?.id ?? null);
+  // An inherited report's document stays with the source conversation: it is not read (state «В ветке»).
+  const document = useThreadDocument(
+    threadId,
+    data.inherited ? null : (reportDocument?.id ?? null),
+  );
   // A report with a document copies the document's text (agent-report.md, part 7).
   const copyText =
-    reportDocument === null ? data.text : (document.data?.text ?? null);
+    reportDocument === null || data.inherited
+      ? data.text
+      : (document.data?.text ?? null);
   const notice = `${t('toolCallCount', { count: data.toolCalls })} · ${formatDuration(t, data.durationMs)} · ${formatListTime(format, data.createdAt)}`;
 
   return (
@@ -129,15 +135,20 @@ export function AgentReport({ data }: { data: ReportPartData }) {
               prefix: (chunks) => (
                 <span className="shrink-0 whitespace-pre">{chunks}</span>
               ),
-              link: (chunks) => (
-                <Link
-                  href={agentPath(data.agentId)}
-                  title={data.description}
-                  className="focus-visible:ring-ring min-w-0 truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
-                >
-                  {chunks}
-                </Link>
-              ),
+              link: (chunks) =>
+                data.inherited ? (
+                  <span title={data.description} className="min-w-0 truncate">
+                    {chunks}
+                  </span>
+                ) : (
+                  <Link
+                    href={agentPath(data.agentId)}
+                    title={data.description}
+                    className="focus-visible:ring-ring min-w-0 truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
+                  >
+                    {chunks}
+                  </Link>
+                ),
             })}
           </h2>
           <AgentStatus
@@ -168,7 +179,20 @@ export function AgentReport({ data }: { data: ReportPartData }) {
             </TextMessagePartProvider>
           )}
         </div>
-        {reportDocument !== null && (
+        {reportDocument !== null && data.inherited && (
+          <section
+            aria-label={reportDocument.title}
+            className="mt-3 flex flex-col gap-1 rounded-md border p-3"
+          >
+            <h3 className="text-base leading-6 font-semibold">
+              {reportDocument.title}
+            </h3>
+            <p className="text-muted-foreground text-sm leading-5">
+              {tAgents('report.inBranch')}
+            </p>
+          </section>
+        )}
+        {reportDocument !== null && !data.inherited && (
           <ReportDocument
             title={reportDocument.title}
             document={document}

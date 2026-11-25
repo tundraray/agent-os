@@ -11,7 +11,15 @@ function ServerText({ children }: { children: ReactNode }) {
 }
 
 /** What the refused request was doing: it opens the phrase («Не удалось сохранить: …»). */
-export type FailedAction = 'save' | 'copy' | 'delete' | 'train' | 'activate';
+export type FailedAction =
+  | 'save'
+  | 'copy'
+  | 'delete'
+  | 'train'
+  | 'activate'
+  | 'test_run'
+  | 'take'
+  | 'send';
 
 /**
  * The shared fallback of a refusal whose code has no message (design-web.md, «Отказы сервера»):

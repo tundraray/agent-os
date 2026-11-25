@@ -24,7 +24,7 @@ import {
   type SpendResponse,
   type StopResponse,
 } from '@agent-os/contracts';
-import { TrainingsRepository } from '@agent-os/db';
+import { AgentsRepository, TrainingsRepository } from '@agent-os/db';
 import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';
@@ -69,6 +69,8 @@ export class AgentControlService {
     @Inject(AGENT_LIST_PAGE_SIZE) private readonly pageSize: number,
     @Inject(TrainingsRepository)
     private readonly trainings: TrainingsRepository,
+    @Inject(AgentsRepository)
+    private readonly agents: AgentsRepository,
   ) {}
 
   /**
@@ -152,7 +154,13 @@ export class AgentControlService {
         .filter((confirmation) => confirmation.agentId === agentId)
         .map((confirmation) => toConfirmation(confirmation, views)),
       children: toAgentTree(views, agentId),
-      training: trainingOf(training, agentId),
+      training: trainingOf(
+        training,
+        agentId,
+        training?.agentId != null &&
+          (await this.agents.exists(training.agentId)),
+        null,
+      ),
     };
   }
 

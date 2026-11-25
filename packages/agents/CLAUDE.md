@@ -9,6 +9,7 @@ The agents of the platform: agent classes and their step, the tools library, sta
 - The tools library knows no system tool by name: system tools are registered into it from outside. `src/tools/` and `src/tools/external/` do not import `agent/`, `deep/` or `operations/`.
 - Services are `@Injectable` classes with an explicit `@Inject(...)` on every constructor parameter (test child processes run under `tsx`, which emits no decorator metadata). Pure rules and tool objects stay plain code.
 - The training-tree mark (`inTrainingTree`, carried in `ToolCaller.training`) is read in exactly five places, each about safety or money: the tools step (no questions to the employee), the one MCP send `callMcp` (a changing call is `recorded`, not sent), `ModelClient.call` (the training budget), the memory rule, and message and restart (refused as for a missing agent). Anything else about the trainer is an overridden method of `Trainer`.
+- The trainer has two modes: a training, and a test run when its task input has `testRun` (`Trainer` and `training/test-run-step.ts`). The test run's `library_overview`, `offer_agent`, `take_agent`, `propose_plan` and `create_agent` are registered by `apps/api`.
 - Registrations (agent classes as task handlers, task end hooks, system tools) happen in `onModuleInit`.
 - Another domain arrives as a port: rights, quotas and library records come through `AccessGate`, `AccessAudit` and `RecordLibrary`, which `apps/api` implements. Never import `apps/api`.
 - Mastra (`@mastra/*`) is imported in this package only.

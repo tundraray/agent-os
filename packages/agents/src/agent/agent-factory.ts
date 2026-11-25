@@ -90,11 +90,17 @@ export class AgentFactory implements OnModuleInit {
     private readonly runner: Pick<ToolRunner, 'useStartChild'>,
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'maxDepth'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
-    /** A trainer's training row, the version it proposed, and the start check of its replays. */
+    /** A trainer's training row, the version it proposed, and the start check of its replays and test runs. */
     @Inject(TrainingsRepository)
-    trainingRows: Pick<TrainingsRepository, 'find' | 'writeComparisons'>,
+    trainingRows: Pick<
+      TrainingsRepository,
+      'find' | 'writeComparisons' | 'writeTests'
+    >,
     @Inject(AgentsRepository)
-    agentRows: Pick<AgentsRepository, 'findTrainingVersion'>,
+    agentRows: Pick<
+      AgentsRepository,
+      'findTrainingVersion' | 'trainingVersions' | 'findAny'
+    >,
     @Inject(ACCESS_GATE) access: AccessGate,
     @Inject(AgentsProviders) providers: Pick<AgentsProviders, 'connection'>,
   ) {

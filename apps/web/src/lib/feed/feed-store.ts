@@ -67,9 +67,14 @@ export type FeedStore = StoreApi<FeedState> & {
   applyDelta: (part: DraftPart) => void;
   /**
    * Rejects when the server did not accept the message. `record` — the composer's chip: the message
-   * carries its id (KD-5, Invariant 4); an agent page has no chip.
+   * carries its id (KD-5, Invariant 4); an agent page has no chip. `quiet` — a card's button sent it: a refusal
+   * stays on the card and never returns the text to the composer (create-and-test KD-4).
    */
-  send: (text: string, record?: ChipRecord) => Promise<void>;
+  send: (
+    text: string,
+    record?: ChipRecord,
+    options?: { quiet: boolean },
+  ) => Promise<void>;
   /** Stops the agent's work; a message is never part of it. Rejects when the server did not take it. */
   interrupt: () => Promise<void>;
   decide: (
@@ -341,7 +346,8 @@ export function createFeedStore({
     text: string,
     call: () => Promise<Accepted>,
     place: OptimisticEntry['place'],
-    record: ChipRecord | null = null,
+    record: ChipRecord | null,
+    quiet: boolean,
   ): Promise<void> {
     const where = firstMessage() ? 'first_message' : 'message';
     set({ sendFailure: null });
@@ -349,13 +355,20 @@ export function createFeedStore({
     try {
       accepted = await call();
     } catch (error) {
-      set({
-        sendFailure: {
-          text,
-          cause: error,
-          context: record === null ? { where } : { where, kind: record.kind },
-        },
-      });
+      // A test run's refusal names the agent being trained (MC-17).
+      const name = get().view?.training?.run?.agent?.name;
+      if (!quiet)
+        set({
+          sendFailure: {
+            text,
+            cause: error,
+            context: {
+              where,
+              ...(record !== null && { kind: record.kind }),
+              ...(name !== undefined && { name }),
+            },
+          },
+        });
       throw error;
     }
     addOptimistic({ text, place, record, ...accepted });
@@ -388,7 +401,7 @@ export function createFeedStore({
       const draft = applyDraftPart(get().draft, part);
       if (draft !== get().draft) set({ draft });
     },
-    send: (text: string, record?: ChipRecord) => {
+    send: (text: string, record?: ChipRecord, options?: { quiet: boolean }) => {
       // Only a conversation's message carries a chip (KD-5).
       const chip = source.kind === 'thread' ? (record ?? null) : null;
       return deliver(
@@ -413,6 +426,7 @@ export function createFeedStore({
         },
         isBusy(get().view) ? 'tray' : 'feed',
         chip,
+        options?.quiet ?? false,
       );
     },
     interrupt: async () => {

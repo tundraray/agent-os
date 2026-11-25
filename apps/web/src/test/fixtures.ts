@@ -35,6 +35,8 @@ import {
   RoleSummarySchema,
   SelfLearningSettingsSchema,
   SignInSettingsSchema,
+  TestRunSummarySchema,
+  TestRunViewSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
   TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
@@ -81,6 +83,8 @@ import {
   DelegationViewSchema,
   type SelfLearningSettings,
   type SignInSettings,
+  type TestRunSummary,
+  type TestRunView,
   type ThreadListResponse,
   type ThreadSummary,
   type ToolResultSettings,
@@ -96,6 +100,9 @@ export function threadSummary(
     title: 'Беседа',
     createdAt: FIXTURE_TIME,
     updatedAt: FIXTURE_TIME,
+    forkable: true,
+    forkedFrom: null,
+    forkCount: 0,
     ...overrides,
   });
 }
@@ -117,6 +124,8 @@ export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
     isAdmin: false,
     hasPassword: true,
     language: null,
+    trainOwn: false,
+    trainingCapUsd: 2,
     ...overrides,
   });
 }
@@ -788,6 +797,64 @@ export function deepAgentRunView(
     steps: [],
     limitRefusals: [],
     ...overrides,
+  });
+}
+
+/** `training.run` of a test run's conversation: the dialog with the trainer, the composer open, nothing created yet. */
+export function testRunSummary(
+  overrides: Partial<TestRunSummary> = {},
+): TestRunSummary {
+  return TestRunSummarySchema.parse({
+    phase: 'dialog',
+    status: 'running',
+    capped: false,
+    canSend: true,
+    closedReason: null,
+    step: null,
+    agent: null,
+    rounds: [],
+    offer: null,
+    plans: [],
+    taken: null,
+    ...overrides,
+  });
+}
+
+/** GET /api/test-runs/:id: a finished run of agent `agent` with no tests or rounds yet, deletable, never activated. */
+export function testRunView(
+  overrides: Partial<TestRunView> &
+    Pick<TestRunView, 'id'> & { agentId: string },
+): TestRunView {
+  const { agentId, ...view } = overrides;
+  return TestRunViewSchema.parse({
+    description: 'Разбирать ошибки заказов',
+    startedAt: FIXTURE_TIME,
+    status: 'done',
+    failureReason: null,
+    cappedAt: null,
+    spentUsd: 0.5,
+    capUsd: 2,
+    pool: [],
+    phase: 'result',
+    canSend: true,
+    plan: null,
+    offered: null,
+    taken: null,
+    agent: {
+      id: agentId,
+      name: 'Разбор заказов',
+      description: 'Разбирает ошибки заказов',
+      deleted: false,
+      content: deepAgentContent(),
+    },
+    tests: [],
+    rounds: [],
+    fixSkipped: null,
+    fixExplanation: null,
+    activatedAt: null,
+    activeVersion: 1,
+    canDelete: true,
+    ...view,
   });
 }
 

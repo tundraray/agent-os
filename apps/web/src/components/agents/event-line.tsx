@@ -10,11 +10,13 @@ import { useFormatter, useTranslations } from 'next-intl';
 import {
   ArchiveIcon,
   FileTextIcon,
+  GitBranchIcon,
   HistoryIcon,
   ListTodoIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { AgentStatus, StatusGlyph } from '@/components/agents/agent-status';
+import { ShellLink } from '@/components/shell/shell-link';
 import { accessApi } from '@/lib/access/access-api';
 import {
   quotaFailureAnnouncement,
@@ -32,10 +34,12 @@ import {
 } from '@/lib/agents/format';
 import { describeApiError } from '@/lib/api/api-request';
 import { formatListTime } from '@/i18n/formats';
+import { useFeedSelector } from '@/lib/feed/feed-context';
 import type { EventPartData, AnswerRefusedPartData } from '@/lib/feed/to-feed';
 import { logger } from '@/lib/logger';
+import { threadPath } from '@/lib/shell-route';
 
-type StatusEvent = Exclude<HistoryEvent, 'continued' | 'compacted'>;
+type StatusEvent = Exclude<HistoryEvent, 'continued' | 'compacted' | 'forked'>;
 
 /** The status an event leaves the agent in: the icon and colour of its line. */
 const EVENT_STATUS: Record<StatusEvent, AgentStatusValue> = {
@@ -62,6 +66,8 @@ export function EventLine({ data }: { data: EventPartData }) {
   const { event, reason, createdAt } = data;
   const t = useTranslations('errors');
   const tAgents = useTranslations('agents');
+
+  if (event === 'forked') return <ForkDivider at={createdAt} />;
 
   if (event === 'continued' || event === 'compacted') {
     return (
@@ -99,6 +105,54 @@ export function EventLine({ data }: { data: EventPartData }) {
       text={tAgents(`event.${event}`)}
       at={createdAt}
     />
+  );
+}
+
+/**
+ * FK-03 (feed-divider.md, MC-19): «Ответвлено от «{название}» · {время}» with the source as a link, or the deleted
+ * source without one; the lines at the sides are decorative and give way when the text wraps.
+ */
+function ForkDivider({ at }: { at: string }) {
+  const t = useTranslations('agents.fork');
+  const format = useFormatter();
+  const source = useFeedSelector(
+    (state) =>
+      state.view?.kind === 'thread' ? state.view.thread.forkedFrom : null,
+    null,
+  );
+  // Below 640 px the text wraps to two lines, and the lines go (feed-divider.md, «Перенос»).
+  const line = 'bg-border h-px min-w-4 flex-1 max-sm:hidden';
+  return (
+    <div
+      data-slot="feed-divider"
+      className="mx-auto flex w-full max-w-(--prose-max-width) items-center gap-3"
+    >
+      <span aria-hidden className={line} />
+      <p className="text-muted-foreground max-w-full text-center text-xs leading-4 font-medium">
+        <GitBranchIcon
+          aria-hidden
+          className="me-1 inline size-3.5 align-[-2px]"
+        />
+        {source?.title == null
+          ? t('fromDeleted')
+          : t.rich('from', {
+              title: source.title,
+              link: (chunks) => (
+                <ShellLink
+                  href={threadPath(source.threadId)}
+                  className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
+                >
+                  {chunks}
+                </ShellLink>
+              ),
+            })}
+        {' · '}
+        <time dateTime={at} className="tabular-nums">
+          {formatListTime(format, at)}
+        </time>
+      </p>
+      <span aria-hidden className={line} />
+    </div>
   );
 }
 
