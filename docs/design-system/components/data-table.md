@@ -74,3 +74,4 @@ anya@corp.example
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — разделы панели администратора, «Мой доступ».
 - [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — память агента и «Моя память» (ME-01, ME-02), цифры версий и задачи в результате обучения (TR-02).
 - [docs/features/model-providers/uxrd.md](../../features/model-providers/uxrd.md) — провайдеры моделей с итогом проверки подключения (MP-02, MP-07), каталог моделей (MP-03).
+- [docs/features/schedules-search-memory/uxrd.md](../../features/schedules-search-memory/uxrd.md) — список расписаний и история запусков (SH-04, SH-06); удалённые агентом записи памяти (MH-01).
