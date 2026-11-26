@@ -194,6 +194,8 @@ export type ScheduleRuleFieldProps = {
   timeZone: string;
   /** Shown after a save attempt; any change of the rule clears it. A preview refused as past shows `past` too. */
   error: RuleError | null;
+  /** While the form saves: a surrounding fieldset does not reach these radios, which are not native inputs. */
+  disabled: boolean;
 };
 
 export function ScheduleRuleField({
@@ -201,6 +203,7 @@ export function ScheduleRuleField({
   onChange,
   timeZone,
   error,
+  disabled,
 }: ScheduleRuleFieldProps) {
   const t = useTranslations('schedules.rule');
   const tErrors = useTranslations('schedules.errors');
@@ -294,6 +297,7 @@ export function ScheduleRuleField({
       </span>
       <RadioGroup
         aria-labelledby={labelId}
+        disabled={disabled}
         value={draft.kind}
         onValueChange={(next) => {
           const kind = KINDS.find((item) => item === next);
@@ -307,7 +311,7 @@ export function ScheduleRuleField({
             value={kind}
             className={cn(
               COMFORT_CONTROL,
-              'inline-flex items-center justify-center rounded-md border border-border px-3 text-sm text-muted-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring data-checked:bg-secondary data-checked:font-medium data-checked:text-foreground',
+              'inline-flex items-center justify-center rounded-md border border-border px-3 text-sm text-muted-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring data-checked:bg-secondary data-checked:font-medium data-checked:text-foreground data-disabled:cursor-not-allowed data-disabled:opacity-50',
             )}
           >
             {t(`kind.${kind}`)}

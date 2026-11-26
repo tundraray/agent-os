@@ -8,6 +8,8 @@ import {
 } from '@agent-os/contracts';
 import type { Db } from '../db';
 import {
+  agents,
+  agentVersions,
   conversations,
   messages,
   messageText,
@@ -54,7 +56,10 @@ export type ConversationSearchRow = {
   readonly conversationId: string;
   /** The conversation of the place has a parent: a sub-agent's. */
   readonly subagent: boolean;
-  /** The run name of the conversation of the place. */
+  /**
+   * The agent of the conversation of the place as the agent screens name it: the team member of a subagent run,
+   * otherwise the name of the library record it started on (`conversations.name` may hold a record id).
+   */
   readonly name: string;
   readonly seq: number | null;
   readonly callId: string | null;
@@ -167,7 +172,8 @@ export class ConversationSearchRepository {
       )
       select page.key, to_char(page.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at,
         page.place, page.root_id as "rootId", ${root.title} as "rootTitle",
-        page.conversation_id as "conversationId", ${place.parentId} is not null as subagent, ${place.name} as name,
+        page.conversation_id as "conversationId", ${place.parentId} is not null as subagent,
+        coalesce(${place.subagent}, ${agents.name}) as name,
         page.seq, page.call_id as "callId", page.tool, fragment.headline,
         coalesce(fragment.found_at <> 1, false) as "continuesBefore",
         coalesce(fragment.found_at = 0 or fragment.found_at + length(fragment.plain) - 1 < length(source.text), false)
@@ -175,6 +181,8 @@ export class ConversationSearchRepository {
       from page
       join ${conversations} ${place} on ${place.id} = page.conversation_id
       join ${conversations} ${root} on ${root.id} = page.root_id
+      join ${agentVersions} on ${agentVersions.id} = ${place.agentVersionId}
+      join ${agents} on ${agents.id} = ${agentVersions.agentId}
       left join ${messages} ${entry}
         on ${entry.conversationId} = page.conversation_id and ${entry.seq} = page.entry_seq
       left join ${toolResults} ${result} on page.entry_seq is null

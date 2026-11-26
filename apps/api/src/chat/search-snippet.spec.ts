@@ -43,8 +43,39 @@ describe('snippetOf', () => {
         before: false,
         after: false,
       },
-      text: `…${'x'.repeat(136)} timeout payment-service`,
+      text: '…timeout payment-service',
       words: ['payment'],
+    },
+    {
+      // The defect seen in the sidebar: a short text came back whole and the two-line clamp hid the word.
+      name: 'a short text returned whole starts a few words before a far word',
+      row: {
+        headline: headline(
+          'Ответь одним коротким предложением: зачем сервису платежей нужен таймаут в 30 [секунд] и что будет без него',
+        ),
+        before: false,
+        after: false,
+      },
+      text: '…нужен таймаут в 30 секунд и что будет без него',
+      words: ['секунд'],
+    },
+    {
+      name: 'a long text is cut at word boundaries on both sides, no space before «…»',
+      row: {
+        headline: headline(
+          `${'слово '.repeat(30)}[секунд] и ещё ${'хвост '.repeat(40)}`,
+        ),
+        before: false,
+        after: false,
+      },
+      text: `…слово слово слово секунд и ещё ${Array(21).fill('хвост').join(' ')}…`,
+      words: ['секунд'],
+    },
+    {
+      name: 'a fragment ending in white space has no space before «…»',
+      row: { headline: headline('в [понятную] '), before: false, after: true },
+      text: 'в понятную…',
+      words: ['понятную'],
     },
     {
       name: 'a found word longer than the limit keeps its visible part marked',

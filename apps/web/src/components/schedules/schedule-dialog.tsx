@@ -333,85 +333,87 @@ function ScheduleForm({
       onSubmit={(event) => void submit(event)}
       className="flex min-h-0 flex-col gap-4"
     >
-      {/* A disabled fieldset disables every native field and button inside while the request runs. */}
-      <fieldset
-        disabled={saving}
-        className="-mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4"
-      >
-        <AdminTextField
-          id={fieldId('name')}
-          density="comfortable"
-          label={t('dialog.name')}
-          optional={t('dialog.optional')}
-          hint={t('dialog.nameHint')}
-          maxLength={SCHEDULE_NAME_MAX_LENGTH}
-          value={values.name}
-          error={undefined}
-          onChange={(name) => set('name', name)}
-        />
-        <AdminTextField
-          id={fieldId('instruction')}
-          density="comfortable"
-          multiline
-          inputClassName="max-h-48 min-h-20"
-          label={t('dialog.instruction')}
-          hint={t('dialog.instructionHint')}
-          maxLength={CHAT_MESSAGE_MAX_LENGTH}
-          value={values.instruction}
-          error={errors.instruction}
-          onChange={(instruction) => set('instruction', instruction)}
-        />
-        <AdminSelectField
-          id={fieldId('agent')}
-          density="comfortable"
-          label={t('dialog.agent')}
-          value={values.agentId}
-          options={[
-            { id: CHAT_AGENT, name: t('dialog.chatAgent'), icon: BotIcon },
-            ...agents.map((agent) => ({
-              ...agent,
-              icon: RECORD_KIND_ICON[agent.kind],
-            })),
-          ].map(({ id: value, name, icon: Icon }) => ({
-            value,
-            label: name,
-            content: (
-              <>
-                <Icon aria-hidden className="text-muted-foreground" />
-                {name}
-              </>
-            ),
-          }))}
-          error={errors.agent}
-          onChange={(agentId) => set('agentId', agentId)}
-        />
-        <ScheduleRuleField
-          draft={values.rule}
-          onChange={(rule) => set('rule', rule)}
-          timeZone={start.timeZone}
-          error={errors.rule ?? null}
-        />
-        <AdminRadioField
-          density="comfortable"
-          label={t('dialog.target')}
-          value={values.target}
-          onChange={(target) => set('target', target)}
-          options={[
-            {
-              value: 'new_conversation',
-              label: t('dialog.newConversation'),
-              hint: t('dialog.newConversationHint'),
-              disabled: false,
-            },
-            {
-              value: 'this_conversation',
-              label: thisConversationLabel,
-              hint: thisConversationHint,
-              disabled: thisConversationClosed,
-            },
-          ]}
-        />
-      </fieldset>
+      {/* The body scrolls in a div: a fieldset as the scroll container does not clip its content in the browser,
+          so the fields slid under the footer. */}
+      <div className="-mx-4 min-h-0 overflow-y-auto px-4">
+        {/* A disabled fieldset disables every native field and button inside while the request runs. */}
+        <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">
+          <AdminTextField
+            id={fieldId('name')}
+            density="comfortable"
+            label={t('dialog.name')}
+            optional={t('dialog.optional')}
+            hint={t('dialog.nameHint')}
+            maxLength={SCHEDULE_NAME_MAX_LENGTH}
+            value={values.name}
+            error={undefined}
+            onChange={(name) => set('name', name)}
+          />
+          <AdminTextField
+            id={fieldId('instruction')}
+            density="comfortable"
+            multiline
+            inputClassName="max-h-48 min-h-20"
+            label={t('dialog.instruction')}
+            hint={t('dialog.instructionHint')}
+            maxLength={CHAT_MESSAGE_MAX_LENGTH}
+            value={values.instruction}
+            error={errors.instruction}
+            onChange={(instruction) => set('instruction', instruction)}
+          />
+          <AdminSelectField
+            id={fieldId('agent')}
+            density="comfortable"
+            label={t('dialog.agent')}
+            value={values.agentId}
+            options={[
+              { id: CHAT_AGENT, name: t('dialog.chatAgent'), icon: BotIcon },
+              ...agents.map((agent) => ({
+                ...agent,
+                icon: RECORD_KIND_ICON[agent.kind],
+              })),
+            ].map(({ id: value, name, icon: Icon }) => ({
+              value,
+              label: name,
+              content: (
+                <>
+                  <Icon aria-hidden className="text-muted-foreground" />
+                  {name}
+                </>
+              ),
+            }))}
+            error={errors.agent}
+            onChange={(agentId) => set('agentId', agentId)}
+          />
+          <ScheduleRuleField
+            draft={values.rule}
+            onChange={(rule) => set('rule', rule)}
+            timeZone={start.timeZone}
+            error={errors.rule ?? null}
+            disabled={saving}
+          />
+          <AdminRadioField
+            density="comfortable"
+            label={t('dialog.target')}
+            value={values.target}
+            onChange={(target) => set('target', target)}
+            options={[
+              {
+                value: 'new_conversation',
+                label: t('dialog.newConversation'),
+                hint: t('dialog.newConversationHint'),
+                disabled: saving,
+              },
+              {
+                value: 'this_conversation',
+                label: thisConversationLabel,
+                hint: thisConversationHint,
+                disabled: saving || thisConversationClosed,
+              },
+            ]}
+          />
+        </fieldset>
+      </div>
       {formError !== null && <FormError>{formError}</FormError>}
       <DialogFooter className="sm:justify-start">
         <Button type="submit" className={COMFORT_CONTROL} disabled={saving}>
