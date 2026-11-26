@@ -218,31 +218,38 @@ export function ScheduleRuleField({
     'rule' in checked ? JSON.stringify({ rule: checked.rule, timeZone }) : '';
   const readKey = useDebouncedValue(requestKey, PREVIEW_DELAY_MS);
   const preview = useResource(
-    () =>
-      readKey === ''
-        ? Promise.resolve(null)
-        : schedulesApi.nextRun(
-            ScheduleNextRunRequestSchema.parse(JSON.parse(readKey)),
-          ),
+    async () => {
+      if (readKey === '') return null;
+      const body = ScheduleNextRunRequestSchema.parse(JSON.parse(readKey));
+      try {
+        return await schedulesApi.nextRun(body);
+      } catch (cause) {
+        // A `once` already past is an expected answer while typing, not a failed read.
+        if (isPastRefusal(body.rule, cause)) return { past: true as const };
+        throw cause;
+      }
+    },
     readKey,
     'schedules',
   );
+  const past =
+    preview.status === 'ready' &&
+    preview.data != null &&
+    'past' in preview.data;
   // While the next read is on its way the last answer stays, so the line does not blink on every keystroke.
   const readyAt =
-    preview.status === 'ready' ? (preview.data?.nextRunAt ?? null) : null;
+    preview.status === 'ready' &&
+    preview.data != null &&
+    'nextRunAt' in preview.data
+      ? preview.data.nextRunAt
+      : null;
   const [shownAt, setShownAt] = useState<string | null>(null);
   if (readyAt !== null && readyAt !== shownAt) setShownAt(readyAt);
   const noPreview =
-    requestKey === '' || preview.status === 'error' || shownAt === null;
+    requestKey === '' || preview.status === 'error' || past || shownAt === null;
   // The preview's refusal of the rule on screen says a `once` has passed before any save.
   const shownError: RuleError | null =
-    error ??
-    ('rule' in checked &&
-    readKey === requestKey &&
-    preview.status === 'error' &&
-    isPastRefusal(checked.rule, preview.error)
-      ? 'past'
-      : null);
+    error ?? (readKey === requestKey && past ? 'past' : null);
   const invalid = (rule: RuleError): boolean => shownError === rule;
   const describedBy = (rule: RuleError): string | undefined =>
     invalid(rule) ? errorId : undefined;

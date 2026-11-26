@@ -114,6 +114,7 @@ export function createSearchStore({
     const number = requestNo;
     searched = q;
     set({ status: 'loading', loadingMore: false, loadMoreFailed: false });
+    const started = performance.now();
     try {
       const page = await api.searchConversations(q);
       if (number !== requestNo) return;
@@ -125,7 +126,10 @@ export function createSearchStore({
     } catch (error) {
       if (number !== requestNo) return;
       // The query text is the employee's own words: never logged (DD §Security).
-      logger.warn('conversation search failed', describeApiError(error));
+      logger.warn('conversation search failed', {
+        durationMs: Math.round(performance.now() - started),
+        ...describeApiError(error),
+      });
       set({ status: 'failed' });
     }
   }
@@ -165,6 +169,7 @@ export function createSearchStore({
     if (status !== 'ready' || nextCursor === null || loadingMore) return;
     const number = requestNo;
     set({ loadingMore: true, loadMoreFailed: false });
+    const started = performance.now();
     try {
       const page = await api.searchConversations(searched, nextCursor);
       if (number !== requestNo) return;
@@ -175,10 +180,10 @@ export function createSearchStore({
       }));
     } catch (error) {
       if (number !== requestNo) return;
-      logger.warn(
-        'conversation search load more failed',
-        describeApiError(error),
-      );
+      logger.warn('conversation search load more failed', {
+        durationMs: Math.round(performance.now() - started),
+        ...describeApiError(error),
+      });
       set({ loadingMore: false, loadMoreFailed: true });
     }
   }

@@ -530,49 +530,58 @@ export class SchedulesService {
     if (expected === null) return;
     const startedAt = Date.now();
     const now = this.clock.now();
-    const input = ruleInput(due);
-    const terms = termsThrough(input, expected, now);
-    const dueAt = terms.at(-1);
-    if (dueAt === undefined) return;
-    const next = nextTermAfter(input, now);
-    const claim = await this.db.transaction(async () => {
+    const result = await this.db.transaction(async () => {
+      // The row as it is now, held for this claim: `due` was read before the transaction, and a change committed
+      // since then must decide the terms, the next term and the run.
+      const held = await this.schedules.hold(due.id);
+      if (
+        held?.state !== 'active' ||
+        held.nextRunAt?.getTime() !== expected.getTime()
+      )
+        return undefined;
+      const input = ruleInput(held);
+      const terms = termsThrough(input, expected, now);
+      const dueAt = terms.at(-1);
+      if (dueAt === undefined) return undefined;
+      const next = nextTermAfter(input, now);
       const claimed = await this.schedules.claimDue(
-        due.id,
+        held.id,
         expected,
         next === null
           ? { nextRunAt: null, state: 'completed' }
           : { nextRunAt: next, state: 'active' },
       );
-      return claimed === undefined
-        ? undefined
-        : this.claimTerm(claimed, {
-            dueAt,
-            manual: false,
-            missed: terms.slice(0, -1),
-          });
+      if (claimed === undefined) return undefined;
+      const claim = await this.claimTerm(claimed, {
+        dueAt,
+        manual: false,
+        missed: terms.slice(0, -1),
+      });
+      return { claimed, claim, dueAt, next, missed: terms.length - 1 };
     });
     const fields = {
       scheduleId: due.id,
       ownerId: due.ownerId,
-      dueAt,
       manual: false,
       expectedDueAt: expected,
-      nextRunAt: next,
     };
-    if (claim === undefined) {
+    if (result === undefined) {
       this.logger.info('schedule term already claimed', {
         ...fields,
         durationMs: Date.now() - startedAt,
       });
       return;
     }
-    this.logClaim(due, claim, {
+    const { claimed, claim, dueAt, next, missed } = result;
+    this.logClaim(claimed, claim, {
       ...fields,
+      dueAt,
+      nextRunAt: next,
       startedAt,
-      missed: terms.length - 1,
+      missed,
     });
     if (claim.kind === 'written' && claim.run.outcome === 'starting')
-      await this.finishStarting(claim.run, due);
+      await this.finishStarting(claim.run, claimed);
   }
 
   /**

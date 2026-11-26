@@ -1,8 +1,11 @@
 import {
   type ScheduleRunStatus,
   type ScheduleSkipReason,
+  SchedulePauseReasonSchema,
+  ScheduleRunOutcomeSchema,
   type ScheduleState,
   ScheduleStateSchema,
+  ScheduleTargetSchema,
 } from '@agent-os/contracts';
 import { and, asc, desc, eq, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
@@ -65,6 +68,7 @@ export type StartingRunRow = {
 };
 
 const { active, paused } = ScheduleStateSchema.enum;
+const { starting, started, skipped } = ScheduleRunOutcomeSchema.enum;
 
 /** Active by the next term, then paused, then completed (design-schedules.md, «Маршруты»). */
 const listOrder = sql`case ${schedules.state} when ${active} then 0 when ${paused} then 1 else 2 end`;
@@ -194,7 +198,7 @@ export class SchedulesRepository {
       .update(schedules)
       .set({
         state: paused,
-        pausedBecause: 'conversation_deleted',
+        pausedBecause: SchedulePauseReasonSchema.enum.conversation_deleted,
         nextRunAt: null,
         updatedAt: sql`now()`,
       })
@@ -202,7 +206,7 @@ export class SchedulesRepository {
         and(
           eq(schedules.conversationId, conversationId),
           eq(schedules.ownerId, ownerId),
-          eq(schedules.target, 'this_conversation'),
+          eq(schedules.target, ScheduleTargetSchema.enum.this_conversation),
           inArray(schedules.state, [active, paused]),
         ),
       )
@@ -223,7 +227,7 @@ export class SchedulesRepository {
       .select({ run: scheduleRuns, schedule: schedules })
       .from(scheduleRuns)
       .innerJoin(schedules, eq(schedules.id, scheduleRuns.scheduleId))
-      .where(eq(scheduleRuns.outcome, 'starting'))
+      .where(eq(scheduleRuns.outcome, starting))
       .orderBy(asc(scheduleRuns.dueAt), asc(scheduleRuns.id));
   }
 
@@ -266,7 +270,7 @@ export class SchedulesRepository {
       .where(
         and(
           eq(scheduleRuns.scheduleId, scheduleId),
-          inArray(scheduleRuns.outcome, ['starting', 'started']),
+          inArray(scheduleRuns.outcome, [starting, started]),
         ),
       )
       .orderBy(desc(scheduleRuns.dueAt), desc(scheduleRuns.id))
@@ -278,8 +282,8 @@ export class SchedulesRepository {
   async markStarted(id: string, conversationId: string): Promise<boolean> {
     const changed = await this.db.client
       .update(scheduleRuns)
-      .set({ outcome: 'started', conversationId })
-      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, 'starting')))
+      .set({ outcome: started, conversationId })
+      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, starting)))
       .returning({ id: scheduleRuns.id });
     return changed.length > 0;
   }
@@ -288,8 +292,8 @@ export class SchedulesRepository {
   async markSkipped(id: string, reason: ScheduleSkipReason): Promise<boolean> {
     const changed = await this.db.client
       .update(scheduleRuns)
-      .set({ outcome: 'skipped', skipReason: reason })
-      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, 'starting')))
+      .set({ outcome: skipped, skipReason: reason })
+      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, starting)))
       .returning({ id: scheduleRuns.id });
     return changed.length > 0;
   }
@@ -305,7 +309,7 @@ export class SchedulesRepository {
       .where(
         and(
           eq(scheduleRuns.id, id),
-          eq(scheduleRuns.outcome, 'started'),
+          eq(scheduleRuns.outcome, started),
           sql`${scheduleRuns.finalStatus} is null`,
         ),
       )

@@ -16,7 +16,7 @@ import {
 import { agents } from './agents';
 import { app } from './app';
 import { conversations } from './conversations';
-import { createdAt, isOneOf } from './helpers';
+import { createdAt, isOneOf, literal } from './helpers';
 import { identityUsers } from './identity-users';
 
 /**
@@ -63,7 +63,7 @@ export const schedules = app.table(
     /** The pass's read of due terms, earliest first. */
     index('schedules_due_idx')
       .on(t.nextRunAt)
-      .where(sql`${t.state} = 'active'`),
+      .where(sql`${t.state} = ${literal(ScheduleStateSchema.enum.active)}`),
     check(
       'schedules_language_check',
       isOneOf(t.language, LanguageSchema.options),
@@ -82,15 +82,15 @@ export const schedules = app.table(
     ),
     check(
       'schedules_next_run_check',
-      sql`(${t.nextRunAt} is not null) = (${t.state} = 'active')`,
+      sql`(${t.nextRunAt} is not null) = (${t.state} = ${literal(ScheduleStateSchema.enum.active)})`,
     ),
     check(
       'schedules_pause_reason_state_check',
-      sql`${t.pausedBecause} is null or ${t.state} = 'paused'`,
+      sql`${t.pausedBecause} is null or ${t.state} = ${literal(ScheduleStateSchema.enum.paused)}`,
     ),
     check(
       'schedules_target_conversation_check',
-      sql`${t.target} <> 'this_conversation' or ${t.conversationId} is not null`,
+      sql`${t.target} <> ${literal(ScheduleTargetSchema.enum.this_conversation)} or ${t.conversationId} is not null`,
     ),
   ],
 );

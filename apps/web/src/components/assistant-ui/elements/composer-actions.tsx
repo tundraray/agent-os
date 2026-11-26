@@ -177,6 +177,7 @@ export function ComposerActions({ target }: { target: SeedTarget }) {
             if (!open) setSchedule(null);
           }}
           onSaved={scheduled}
+          finalFocus={() => shellTargetElement('composer')}
         />
       )}
     </>

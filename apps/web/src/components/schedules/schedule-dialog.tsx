@@ -5,6 +5,7 @@ import {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type FormEvent,
   type ReactNode,
 } from 'react';
@@ -58,6 +59,7 @@ import { builtinName } from '@/i18n/builtin-name';
 import { describeApiError } from '@/lib/api/api-request';
 import { canUseInChat } from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
+import { startTimer } from '@/lib/timer';
 import { schedulePath } from '@/lib/shell-route';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
@@ -87,6 +89,8 @@ export type ScheduleDialogProps = {
   onOpenChange: (open: boolean) => void;
   /** The schedule as the server saved it; the dialog has closed by then. */
   onSaved: (schedule: ScheduleView) => void;
+  /** Where focus goes on close when the dialog opened from a menu item, which unmounts with its menu. */
+  finalFocus?: ComponentProps<typeof DialogContent>['finalFocus'];
 };
 
 export function ScheduleDialog({
@@ -94,11 +98,15 @@ export function ScheduleDialog({
   open,
   onOpenChange,
   onSaved,
+  finalFocus,
 }: ScheduleDialogProps) {
   const t = useTranslations('schedules.dialog');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-140">
+      <DialogContent
+        finalFocus={finalFocus}
+        className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-140"
+      >
         <DialogHeader>
           <DialogTitle className="text-base leading-6 font-semibold">
             {t(mode.kind === 'create' ? 'createTitle' : 'editTitle')}
@@ -260,6 +268,7 @@ function ScheduleForm({
     };
     setErrors({});
     setSaving(true);
+    const durationMs = startTimer();
     try {
       const saved =
         mode.kind === 'create'
@@ -267,15 +276,14 @@ function ScheduleForm({
           : await schedulesApi.update(mode.schedule.id, body);
       logger.info(
         `schedules: ${mode.kind === 'create' ? 'created' : 'saved'}`,
-        {
-          scheduleId: saved.id,
-        },
+        { scheduleId: saved.id, durationMs: durationMs() },
       );
       notifySaved(saved);
       onSaved(saved);
     } catch (cause) {
       logger.warn('schedules: save refused', {
         scheduleId: mode.kind === 'edit' ? mode.schedule.id : null,
+        durationMs: durationMs(),
         ...describeApiError(cause),
       });
       setSaving(false);

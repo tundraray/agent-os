@@ -32,6 +32,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useResource } from '@/hooks/use-resource';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
+import { startTimer } from '@/lib/timer';
 import { cn } from '@/lib/utils';
 
 const REVERT_EVENT = 'memory: record revert';
@@ -161,7 +162,13 @@ function HistoryBody({
   ): Promise<void> {
     const expectedVersion = current.versions[0]?.version;
     if (expectedVersion === undefined) return;
-    const fields = { memoryId, version: source.version, expectedVersion };
+    const durationMs = startTimer();
+    const fields = () => ({
+      memoryId,
+      version: source.version,
+      expectedVersion,
+      durationMs: durationMs(),
+    });
     setReverting(source.version);
     setFailure(null);
     setConflict(false);
@@ -170,7 +177,7 @@ function HistoryBody({
         version: source.version,
         expectedVersion,
       });
-      logger.info(REVERT_EVENT, { ...fields, outcome: 'ok' });
+      logger.info(REVERT_EVENT, { ...fields(), outcome: 'ok' });
       const text = t('reverted', { at: at(source) });
       setReverted({ over: resource.data, view });
       setAppeared(view.versions[0]?.version ?? null);
@@ -181,10 +188,10 @@ function HistoryBody({
     } catch (error) {
       if (isApiRequestError(error)) {
         logger.warn(`${REVERT_EVENT}: refused`, {
-          ...fields,
+          ...fields(),
           ...describeApiError(error),
         });
-      } else logger.error(`${REVERT_EVENT}: failed`, { ...fields, error });
+      } else logger.error(`${REVERT_EVENT}: failed`, { ...fields(), error });
       if (
         isApiRequestError(error) &&
         error.code === LibraryErrorCode.RECORD_VERSION_CONFLICT

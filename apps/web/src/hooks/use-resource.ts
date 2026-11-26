@@ -31,6 +31,8 @@ export type PagedResource<T> = {
   loadMore: () => void;
   loadingMore: boolean;
   loadMoreError: unknown;
+  /** A page after the first is on screen; a `reload` would drop it back to the first page. */
+  loadedMore: boolean;
 };
 
 type Outcome<R> = { ok: true; value: R } | { ok: false; error: unknown };
@@ -148,6 +150,7 @@ type PageState<T> = {
   nextCursor: string | null;
   loadingMore: boolean;
   loadMoreError: unknown;
+  loadedMore: boolean;
   /** A `reload` is running: «Показать ещё» waits, its page would be appended to rows about to be replaced. */
   reloading: boolean;
 };
@@ -157,16 +160,21 @@ const emptyPages = {
   nextCursor: null,
   loadingMore: false,
   loadMoreError: undefined,
+  loadedMore: false,
   reloading: false,
 };
 
-/** `useResource` for a cursor list: the first page on open and on `key` change, later pages by `loadMore`. */
+/**
+ * `useResource` for a cursor list: the first page on open and on `key` change, later pages by `loadMore`.
+ * `label` names the screen's area in the log of a failed read, as in `useResource`.
+ */
 export function usePagedResource<T>(
   loadPage: (cursor: string | null) => Promise<Page<T>>,
   key: string,
+  label = 'admin',
 ): PagedResource<T> {
   const loadPageRef = useLatest(loadPage);
-  const run = useLatestRead();
+  const run = useLatestRead(label);
   const [snapshot, setSnapshot] = useState<Snapshot<PageState<T>>>({
     key,
     status: 'loading',
@@ -238,6 +246,7 @@ export function usePagedResource<T>(
                 items: [...previous.items, ...outcome.value.items],
                 nextCursor: outcome.value.nextCursor,
                 loadingMore: false,
+                loadedMore: true,
               }
             : { ...previous, loadingMore: false, loadMoreError: outcome.error },
         ),
@@ -253,5 +262,6 @@ export function usePagedResource<T>(
     loadMore,
     loadingMore,
     loadMoreError: current.loadMoreError,
+    loadedMore: current.loadedMore,
   };
 }

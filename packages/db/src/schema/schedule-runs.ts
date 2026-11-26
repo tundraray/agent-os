@@ -16,7 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { conversations } from './conversations';
-import { createdAt, isOneOf } from './helpers';
+import { createdAt, isOneOf, literal } from './helpers';
 import { schedules } from './schedules';
 
 /**
@@ -63,7 +63,9 @@ export const scheduleRuns = app.table(
     /** The rows the pass brings to an end first. */
     index('schedule_runs_starting_idx')
       .on(t.id)
-      .where(sql`${t.outcome} = 'starting'`),
+      .where(
+        sql`${t.outcome} = ${literal(ScheduleRunOutcomeSchema.enum.starting)}`,
+      ),
     index('schedule_runs_conversation_idx').on(t.conversationId),
     index('schedule_runs_unfinished_conversation_idx').on(
       t.unfinishedConversationId,
@@ -82,15 +84,15 @@ export const scheduleRuns = app.table(
     ),
     check(
       'schedule_runs_skip_check',
-      sql`(${t.skipReason} is not null) = (${t.outcome} = 'skipped')`,
+      sql`(${t.skipReason} is not null) = (${t.outcome} = ${literal(ScheduleRunOutcomeSchema.enum.skipped)})`,
     ),
     check(
       'schedule_runs_conversation_check',
-      sql`(${t.conversationId} is not null) = (${t.outcome} = 'started')`,
+      sql`(${t.conversationId} is not null) = (${t.outcome} = ${literal(ScheduleRunOutcomeSchema.enum.started)})`,
     ),
     check(
       'schedule_runs_final_status_started_check',
-      sql`${t.finalStatus} is null or ${t.outcome} = 'started'`,
+      sql`${t.finalStatus} is null or ${t.outcome} = ${literal(ScheduleRunOutcomeSchema.enum.started)}`,
     ),
   ],
 );

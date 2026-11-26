@@ -56,7 +56,8 @@ type Action = 'pause' | 'resume' | 'run';
 
 /**
  * The schedule page `/schedules/<id>` (UXRD Screen 3): SH-05 header, actions and settings, SH-06 history. Both are
- * read on open, after every own change and on every `tree` note (design-schedules «Страницы»). Any 404 — a foreign,
+ * read on open, after every own change and on every `tree` note (design-schedules «Страницы»); a `tree` note leaves
+ * the history alone once «Показать ещё» has added a page. Any 404 — a foreign,
  * deleted or missing schedule — is SH-08, which names nothing of the schedule.
  */
 export function ScheduleScreen({ id }: { id: string }) {
@@ -67,14 +68,20 @@ export function ScheduleScreen({ id }: { id: string }) {
         .runs(id, cursor)
         .then((page) => ({ items: page.runs, nextCursor: page.nextCursor })),
     id,
+    'schedules',
   );
   const { reload: reloadSchedule } = schedule;
-  const { reload: reloadRuns } = runs;
+  const { reload: reloadRuns, loadedMore } = runs;
   const reload = useCallback(() => {
     reloadSchedule();
     reloadRuns();
   }, [reloadSchedule, reloadRuns]);
-  useReloadOnAnyTree(reload);
+  // A `tree` note comes often while any conversation runs: it must not drop the pages loaded by «Показать ещё».
+  const reloadOnTree = useCallback(() => {
+    reloadSchedule();
+    if (!loadedMore) reloadRuns();
+  }, [reloadSchedule, reloadRuns, loadedMore]);
+  useReloadOnAnyTree(reloadOnTree);
 
   if (isNotFound(schedule.error))
     return <ThreadNotice variant="schedule-not-found" />;

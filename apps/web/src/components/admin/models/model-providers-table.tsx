@@ -31,6 +31,7 @@ import { providerKindText } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { formatListTime } from '@/i18n/formats';
 import { logger } from '@/lib/logger';
+import { startTimer } from '@/lib/timer';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { ConfirmDialog } from '../confirm-dialog';
@@ -46,12 +47,6 @@ import { ModelProviderDialog } from './model-provider-dialog';
 import type { ModelsTranslator } from '@/i18n/catalog';
 
 const CHECK_EVENT = 'admin: model provider check';
-
-/** Starts a stopwatch; the returned function gives the milliseconds since. */
-const startTimer = (): (() => number) => {
-  const started = performance.now();
-  return () => Math.round(performance.now() - started);
-};
 
 /** A dialog keeps its provider while it closes, so its content does not change during the exit animation. */
 type DialogState = { open: boolean; provider: ModelProviderView | null };
