@@ -216,9 +216,15 @@ export class SchedulesRepository {
   // ---------- History ----------
 
   /** Writes history rows; a second row of a term of a schedule breaks the unique index (rule 1). */
-  async insertRuns(rows: readonly NewScheduleRunRow[]): Promise<void> {
-    if (rows.length === 0) return;
-    await this.db.client.insert(scheduleRuns).values([...rows]);
+  /** The inserted rows as the database wrote them. */
+  async insertRuns(
+    rows: readonly NewScheduleRunRow[],
+  ): Promise<ScheduleRunRow[]> {
+    if (rows.length === 0) return [];
+    return this.db.client
+      .insert(scheduleRuns)
+      .values([...rows])
+      .returning();
   }
 
   /** Every `starting` row with its schedule. */

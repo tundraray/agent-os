@@ -217,6 +217,18 @@ async function runRows(scheduleId: string): Promise<RunRow[]> {
   return rows;
 }
 
+/**
+ * Waits until no history row of the schedules is `starting`: after a restart the app's own background pass runs
+ * beside the test's `pass()`, and the one that claimed a term may still be starting its conversation.
+ */
+async function untilSettled(scheduleIds: readonly string[]): Promise<void> {
+  await waitFor(
+    async () => (await Promise.all(scheduleIds.map(runRows))).flat(),
+    (rows) => rows.every((row) => row.outcome !== 'starting'),
+    'no starting history row',
+  );
+}
+
 async function conversationCount(id: string): Promise<number> {
   const { rows } = await harness.pool.query<{ count: string }>(
     'SELECT count(*) AS count FROM app.conversations WHERE id = $1',
@@ -831,6 +843,7 @@ describe('schedules: due terms, claim, send or start', () => {
       const annaNow = chatApi(harness.app, annaSession);
       const schedulesNow = schedulesOf(annaNow);
       await pass();
+      await untilSettled([hourly.id, once.id, daily.id, fyodorDaily.id]);
 
       expect(
         (await runRows(hourly.id)).map((row) => [
@@ -881,6 +894,7 @@ describe('schedules: due terms, claim, send or start', () => {
         const threadsBefore = (await annaNow.listThreads()).threads.length;
         await Promise.all([pass(), schedulesNow.runNow(raced.id)]);
         await pass();
+        await untilSettled([raced.id]);
         const rows = await runRows(raced.id);
         expect(
           rows

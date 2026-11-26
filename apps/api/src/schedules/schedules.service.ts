@@ -105,49 +105,6 @@ type RunAgent =
       readonly model: string | null;
     };
 
-/** Fields of a history row; the rest are empty. */
-type RunFields = Pick<
-  ScheduleRunRow,
-  'id' | 'scheduleId' | 'dueAt' | 'manual' | 'outcome'
-> &
-  Partial<
-    Pick<
-      ScheduleRunRow,
-      | 'skipReason'
-      | 'conversationId'
-      | 'unfinishedConversationId'
-      | 'messageSeq'
-    >
-  >;
-
-/** A history row as the claim writes it; `createdAt` is the database's (`toInsert`). */
-function runRow(fields: RunFields): ScheduleRunRow {
-  return {
-    skipReason: null,
-    conversationId: null,
-    unfinishedConversationId: null,
-    messageSeq: null,
-    finalStatus: null,
-    createdAt: new Date(),
-    ...fields,
-  };
-}
-
-function toInsert(row: ScheduleRunRow): NewScheduleRunRow {
-  return {
-    id: row.id,
-    scheduleId: row.scheduleId,
-    dueAt: row.dueAt,
-    manual: row.manual,
-    outcome: row.outcome,
-    skipReason: row.skipReason,
-    conversationId: row.conversationId,
-    unfinishedConversationId: row.unfinishedConversationId,
-    messageSeq: row.messageSeq,
-    finalStatus: row.finalStatus,
-  };
-}
-
 /** Resumable and runnable now: not completed and not waiting for an answer in a deleted conversation (DC-6). */
 const runnable = (schedule: ScheduleRow): boolean =>
   schedule.state !== 'completed' && schedule.pausedBecause === null;
@@ -633,9 +590,9 @@ export class SchedulesService {
       dueAt: term.dueAt,
       manual: term.manual,
     };
-    let run: ScheduleRunRow;
+    let run: NewScheduleRunRow;
     if (decision.kind === 'skip') {
-      run = runRow({
+      run = {
         ...base,
         outcome: 'skipped',
         skipReason: decision.reason,
@@ -643,27 +600,28 @@ export class SchedulesService {
           decision.reason === 'previous_run_unfinished' && previous
             ? await this.conversationOfRun(previous.run)
             : null,
-      });
+      };
     } else {
       if (previous !== undefined && previousStatus !== null)
         await this.schedules.setFinalStatus(previous.run.id, previousStatus);
       run =
         conversationId === null
-          ? runRow({ ...base, outcome: 'starting' })
+          ? { ...base, outcome: 'starting' }
           : await this.sendRun(schedule, conversationId, agent, base);
     }
-    const missed = term.missed.map((dueAt) =>
-      runRow({
-        id: randomUUID(),
-        scheduleId: schedule.id,
-        dueAt,
-        manual: false,
-        outcome: 'skipped',
-        skipReason: 'server_down',
-      }),
-    );
-    await this.schedules.insertRuns([...missed, run].map(toInsert));
-    return { kind: 'written', run };
+    const missed = term.missed.map((dueAt): NewScheduleRunRow => ({
+      id: randomUUID(),
+      scheduleId: schedule.id,
+      dueAt,
+      manual: false,
+      outcome: 'skipped',
+      skipReason: 'server_down',
+    }));
+    const inserted = await this.schedules.insertRuns([...missed, run]);
+    const written = inserted.find((row) => row.id === base.id);
+    if (written === undefined)
+      throw new Error(`Schedule run ${base.id} was not inserted`);
+    return { kind: 'written', run: written };
   }
 
   /** A run in the schedule's conversation: its marked message and the conversation moved up (Flow 1). */
@@ -672,7 +630,7 @@ export class SchedulesService {
     conversationId: string,
     agent: RunAgent,
     base: Pick<ScheduleRunRow, 'id' | 'scheduleId' | 'dueAt' | 'manual'>,
-  ): Promise<ScheduleRunRow> {
+  ): Promise<NewScheduleRunRow> {
     const { ownerId } = schedule;
     const { seq } = await this.control.send({
       agentId: conversationId,
@@ -682,12 +640,7 @@ export class SchedulesService {
       schedule: markOf(schedule, base.manual),
     });
     await this.control.touchRoot(conversationId, ownerId);
-    return runRow({
-      ...base,
-      outcome: 'started',
-      conversationId,
-      messageSeq: seq,
-    });
+    return { ...base, outcome: 'started', conversationId, messageSeq: seq };
   }
 
   /**

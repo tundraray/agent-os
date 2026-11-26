@@ -67,6 +67,8 @@ export type ConversationSearchRow = {
 /** Start sel and stop sel of `ts_headline`: control characters, so a `<b>` of the text stays text. */
 const MARKS = 'StartSel=\u0001, StopSel=\u0002';
 const TITLE_OPTIONS = `${MARKS}, HighlightAll=true`;
+/** One fragment: the default cover can start inside a hyphenated word (`provider-adapter` from `adapter`). */
+const TEXT_OPTIONS = `${MARKS}, MaxFragments=1`;
 
 /** Results whose text is a sub-agent's report, found in its own conversation (KD-3). */
 const START_TOOLS = [START_AGENT_TOOL, START_DEEP_AGENT_TOOL, TASK_TOOL];
@@ -188,7 +190,7 @@ export class ConversationSearchRepository {
           select headline, replace(replace(headline, chr(1), ''), chr(2), '') as plain
           from (
             select case when page.n <= ${input.limit} then ts_headline(${SEARCH_CONFIG}, ${searchedText(sql`source.text`)}, ${query},
-              case when page.place = ${literal(title)} then ${TITLE_OPTIONS} else ${MARKS} end) end as headline
+              case when page.place = ${literal(title)} then ${TITLE_OPTIONS} else ${TEXT_OPTIONS} end) end as headline
           ) built
         ) stripped
       ) fragment

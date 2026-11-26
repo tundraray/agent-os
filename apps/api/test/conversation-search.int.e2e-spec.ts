@@ -47,7 +47,8 @@ import {
 
 const TEST_TIMEOUT_MS = 180_000;
 const MODEL = runModel('haiku-search');
-const GENERATED_TITLE = 'Conversation title';
+/** Cyrillic: a title without a Cyrillic letter is dropped for a Russian first message (`normalizeGeneratedTitle`). */
+const GENERATED_TITLE = 'Заголовок беседы';
 const GENERAL_PURPOSE = BUILTIN.generalPurpose;
 
 const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;

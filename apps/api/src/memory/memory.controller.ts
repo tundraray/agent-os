@@ -65,6 +65,7 @@ export class MemoryController {
 
   /** The new `MemoryHistoryView`; 409 RECORD_VERSION_CONFLICT, 400 VALIDATION_FAILED, 404, 403. */
   @Post(':memoryId/revert')
+  @HttpCode(200)
   revert(
     @Param('id') id: string,
     @Param('memoryId') memoryId: string,
@@ -134,6 +135,7 @@ export class MyMemoryController {
 
   /** The new `MemoryHistoryView`; 409 RECORD_VERSION_CONFLICT, 400 VALIDATION_FAILED, 404. */
   @Post(':memoryId/revert')
+  @HttpCode(200)
   revert(
     @Param('memoryId') memoryId: string,
     @Body(new ZodValidationPipe(RevertMemoryBodySchema)) body: RevertMemoryBody,
