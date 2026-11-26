@@ -35,6 +35,7 @@ import { logger } from '@/lib/logger';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
 import { schedulesPath, threadPath } from '@/lib/shell-route';
+import { startTimer } from '@/lib/timer';
 import { ScheduleDialog } from './schedule-dialog';
 import {
   agentName,
@@ -105,6 +106,7 @@ function SchedulePage({
   onChanged: () => void;
 }) {
   const t = useTranslations('schedules');
+  const tErrors = useTranslations('errors');
   const format = useFormatter();
   const router = useRouter();
   const [busy, setBusy] = useState<Action | null>(null);
@@ -132,11 +134,8 @@ function SchedulePage({
   ): Promise<void> {
     if (busy !== null) return;
     setBusy(action);
-    const started = performance.now();
-    const fields = () => ({
-      scheduleId,
-      durationMs: Math.round(performance.now() - started),
-    });
+    const durationMs = startTimer();
+    const fields = () => ({ scheduleId, durationMs: durationMs() });
     try {
       const value = await request();
       logger.info(`schedules: ${action}`, fields());
@@ -146,7 +145,9 @@ function SchedulePage({
         ...fields(),
         ...describeApiError(cause),
       });
-      toast.error(describeSchedulesError(t, cause, { where: 'action' }).text);
+      toast.error(
+        describeSchedulesError(tErrors, cause, { where: 'action' }).text,
+      );
     } finally {
       setBusy(null);
       onChanged();
@@ -205,11 +206,8 @@ function SchedulePage({
     );
 
   async function remove(): Promise<void> {
-    const started = performance.now();
-    const fields = () => ({
-      scheduleId,
-      durationMs: Math.round(performance.now() - started),
-    });
+    const durationMs = startTimer();
+    const fields = () => ({ scheduleId, durationMs: durationMs() });
     try {
       await schedulesApi.remove(scheduleId);
     } catch (cause) {
@@ -289,7 +287,7 @@ function SchedulePage({
         confirmLabel={t('deleteDialog.confirm')}
         onConfirm={remove}
         refusalText={(cause) =>
-          describeSchedulesError(t, cause, { where: 'action' }).text
+          describeSchedulesError(tErrors, cause, { where: 'action' }).text
         }
       />
     </div>

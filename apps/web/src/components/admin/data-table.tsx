@@ -823,7 +823,8 @@ function LoadingTable({
   );
 }
 
-function LoadError({
+/** «Не удалось загрузить …» and «Повторить» in place of content that did not load. */
+export function LoadError({
   message,
   onRetry,
 }: {

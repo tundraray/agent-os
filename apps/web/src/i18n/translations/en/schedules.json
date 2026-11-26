@@ -62,12 +62,7 @@
     "instruction": "Write what the agent should do.",
     "past": "This time has passed — choose a future one.",
     "noDays": "Choose at least one day.",
-    "hours": "Enter a whole number of hours from 1 to {max, number}.",
-    "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
-    "save": "Could not save: <server>{text}</server>",
-    "saveOffline": "Could not save: no connection to the server",
-    "action": "Could not do it: <server>{text}</server>",
-    "actionOffline": "Could not do it: no connection to the server"
+    "hours": "Enter a whole number of hours from 1 to {max, number}."
   },
   "list": {
     "title": "Schedules",

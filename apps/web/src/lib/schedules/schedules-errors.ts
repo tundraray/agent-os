@@ -1,6 +1,7 @@
-import { createElement, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { SchedulesErrorCodeSchema } from '@agent-os/contracts';
-import type { SchedulesTranslator } from '@/i18n/catalog';
+import type { ErrorsTranslator } from '@/i18n/catalog';
+import { failedText } from '@/i18n/server-text';
 import { isApiRequestError } from '@/lib/api/api-request';
 
 /**
@@ -19,35 +20,17 @@ export type SchedulesErrorText =
   | { place: 'agent'; text: string }
   | { place: 'form' | 'notice'; text: ReactNode };
 
-const serverText = (chunks: ReactNode): ReactNode =>
-  createElement('span', { lang: 'en' }, chunks);
-
-/** «Не удалось сохранить: {причина}» or «Не удалось: {причина}», or their «нет связи с сервером». */
-function failed(
-  t: SchedulesTranslator,
-  error: unknown,
-  action: 'save' | 'action',
-): ReactNode {
-  if (isApiRequestError(error) && error.kind === 'network')
-    return t(action === 'save' ? 'errors.saveOffline' : 'errors.actionOffline');
-  const text = error instanceof Error ? error.message : String(error);
-  return t.rich(action === 'save' ? 'errors.save' : 'errors.action', {
-    text,
-    server: serverText,
-  });
-}
-
 /**
  * A refused schedules request as its place and text. In the dialog, 404 `RECORD_NOT_FOUND` is the agent of the
  * chip the employee no longer may use (AC-01.3); every other refusal reads «Не удалось …: {причина}».
  */
 export function describeSchedulesError(
-  t: SchedulesTranslator,
+  t: ErrorsTranslator,
   error: unknown,
   context: SchedulesErrorWhere,
 ): SchedulesErrorText {
   if (context.where === 'action')
-    return { place: 'notice', text: failed(t, error, 'action') };
+    return { place: 'notice', text: failedText(t, 'action', error) };
   if (
     isApiRequestError(error) &&
     error.code === SchedulesErrorCodeSchema.enum.RECORD_NOT_FOUND &&
@@ -55,7 +38,7 @@ export function describeSchedulesError(
   )
     return {
       place: 'agent',
-      text: t('errors.agentUnavailable', { name: context.agentName }),
+      text: t('schedules.agentUnavailable', { name: context.agentName }),
     };
-  return { place: 'form', text: failed(t, error, 'save') };
+  return { place: 'form', text: failedText(t, 'save', error) };
 }

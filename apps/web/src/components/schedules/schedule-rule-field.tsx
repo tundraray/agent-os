@@ -10,7 +10,7 @@ import {
   SchedulesErrorCodeSchema,
   type ScheduleRule,
 } from '@agent-os/contracts';
-import { CAPTION } from '@/components/admin/admin-form';
+import { CAPTION, COMFORT_CONTROL } from '@/components/admin/admin-form';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useResource } from '@/hooks/use-resource';
@@ -41,9 +41,6 @@ export const DAYS = [
 
 /** The preview asks the server once typing has paused (schedule-rule.md, Accessibility). */
 const PREVIEW_DELAY_MS = 400;
-
-/** A comfortable-density control: 36 px, 44 px under a coarse pointer (foundations, Spacing & Density). */
-export const COMFORT_CONTROL = 'h-9 pointer-coarse:h-11';
 
 /**
  * The values of every kind, so switching kinds keeps what was typed (schedule-rule.md, Variants). Times are

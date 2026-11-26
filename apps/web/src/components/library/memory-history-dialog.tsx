@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { LoaderCircleIcon, RotateCwIcon } from 'lucide-react';
+import { LoaderCircleIcon } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
@@ -18,6 +18,7 @@ import {
   type RevertMemoryBody,
 } from '@agent-os/contracts';
 import { FormWarning } from '@/components/admin/admin-form';
+import { LoadError } from '@/components/admin/data-table';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useResource } from '@/hooks/use-resource';
+import { failedText } from '@/i18n/server-text';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { startTimer } from '@/lib/timer';
@@ -121,6 +123,7 @@ function HistoryBody({
   titleRef,
 }: HistoryBodyProps) {
   const t = useTranslations('library.memory.historyDialog');
+  const tErrors = useTranslations('errors');
   const format = useFormatter();
   const resource = useResource(
     () => history(memoryId),
@@ -201,21 +204,14 @@ function HistoryBody({
         focusAfter.current = current;
         resource.reload();
       } else {
-        setFailure({ version: source.version, text: revertFailed(error) });
+        setFailure({
+          version: source.version,
+          text: failedText(tErrors, 'restore', error),
+        });
       }
     } finally {
       setReverting(null);
     }
-  }
-
-  function revertFailed(cause: unknown): ReactNode {
-    if (isApiRequestError(cause) && cause.kind === 'network')
-      return t('revertNoConnection');
-    const text = cause instanceof Error ? cause.message : String(cause);
-    return t.rich('revertFailed', {
-      text,
-      server: (chunks) => <span lang="en">{chunks}</span>,
-    });
   }
 
   return (
@@ -240,21 +236,7 @@ function HistoryBody({
       {conflict && <FormWarning>{t('conflict')}</FormWarning>}
       <div className="-mx-4 min-h-0 overflow-y-auto px-4">
         {resource.status === 'error' ? (
-          <div
-            role="status"
-            className="flex flex-col items-center gap-3 py-6 text-sm leading-5 text-foreground"
-          >
-            <p>{t('loadFailed')}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="pointer-coarse:h-11"
-              onClick={resource.reload}
-            >
-              <RotateCwIcon aria-hidden />
-              {t('retry')}
-            </Button>
-          </div>
+          <LoadError message={t('loadFailed')} onRetry={resource.reload} />
         ) : shown === undefined ? (
           <HistorySkeleton label={t('title')} />
         ) : (

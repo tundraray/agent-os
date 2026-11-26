@@ -292,10 +292,7 @@
       "revertLabel": "Restore the version of {at}",
       "reverted": "Version of {at} restored",
       "conflict": "The record changed while its history was open. The new version is on top; if you still need the earlier one, restore it again.",
-      "loadFailed": "Couldn't load the history",
-      "retry": "Retry",
-      "revertFailed": "Couldn't restore: <server>{text}</server>",
-      "revertNoConnection": "Couldn't restore: no connection to the server"
+      "loadFailed": "Couldn't load the history"
     }
   },
   "training": {

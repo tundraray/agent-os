@@ -7,7 +7,9 @@
     "activate": "Couldn't activate: <server>{text}</server>",
     "test_run": "Couldn't start: <server>{text}</server>",
     "take": "Couldn't take the agent: <server>{text}</server>",
-    "send": "Couldn't send: <server>{text}</server>"
+    "send": "Couldn't send: <server>{text}</server>",
+    "restore": "Couldn't restore: <server>{text}</server>",
+    "action": "Couldn't do it: <server>{text}</server>"
   },
   "noConnection": {
     "save": "Couldn't save: no connection to the server",
@@ -17,7 +19,12 @@
     "activate": "Couldn't activate: no connection to the server",
     "test_run": "Couldn't start: no connection to the server",
     "take": "Couldn't take the agent: no connection to the server",
-    "send": "Couldn't send: no connection to the server"
+    "send": "Couldn't send: no connection to the server",
+    "restore": "Couldn't restore: no connection to the server",
+    "action": "Couldn't do it: no connection to the server"
+  },
+  "schedules": {
+    "agentUnavailable": "The agent “{name}” is not available to you — choose another one."
   },
   "library": {
     "noPastTasks": "The agent has no finished tasks to train on yet.",

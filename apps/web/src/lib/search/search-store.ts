@@ -5,6 +5,7 @@ import { describeApiError } from '@/lib/api/api-request';
 import type { FeedSource } from '@/lib/feed/feed-store';
 import type { logger as appLogger } from '@/lib/logger';
 import type { ThreadsApiClient } from '@/lib/threads/threads-api-client';
+import { startTimer } from '@/lib/timer';
 
 /** Pause after the last keystroke before a search starts (UXRD SR-01). */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -114,7 +115,7 @@ export function createSearchStore({
     const number = requestNo;
     searched = q;
     set({ status: 'loading', loadingMore: false, loadMoreFailed: false });
-    const started = performance.now();
+    const durationMs = startTimer();
     try {
       const page = await api.searchConversations(q);
       if (number !== requestNo) return;
@@ -127,7 +128,7 @@ export function createSearchStore({
       if (number !== requestNo) return;
       // The query text is the employee's own words: never logged (DD §Security).
       logger.warn('conversation search failed', {
-        durationMs: Math.round(performance.now() - started),
+        durationMs: durationMs(),
         ...describeApiError(error),
       });
       set({ status: 'failed' });
@@ -169,7 +170,7 @@ export function createSearchStore({
     if (status !== 'ready' || nextCursor === null || loadingMore) return;
     const number = requestNo;
     set({ loadingMore: true, loadMoreFailed: false });
-    const started = performance.now();
+    const durationMs = startTimer();
     try {
       const page = await api.searchConversations(searched, nextCursor);
       if (number !== requestNo) return;
@@ -181,7 +182,7 @@ export function createSearchStore({
     } catch (error) {
       if (number !== requestNo) return;
       logger.warn('conversation search load more failed', {
-        durationMs: Math.round(performance.now() - started),
+        durationMs: durationMs(),
         ...describeApiError(error),
       });
       set({ loadingMore: false, loadMoreFailed: true });

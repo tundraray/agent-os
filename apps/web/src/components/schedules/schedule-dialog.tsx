@@ -22,10 +22,15 @@ import {
   type ScheduleTarget,
   type ScheduleView,
 } from '@agent-os/contracts';
-import { CAPTION, FormError } from '@/components/admin/admin-form';
+import {
+  AdminRadioField,
+  AdminSelectField,
+  AdminTextField,
+  COMFORT_CONTROL,
+  FormError,
+} from '@/components/admin/admin-form';
 import { RECORD_KIND_ICON } from '@/components/library/record-label';
 import {
-  COMFORT_CONTROL,
   checkRule,
   defaultRuleDraft,
   formatRunTime,
@@ -45,16 +50,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { builtinName } from '@/i18n/builtin-name';
 import { describeApiError } from '@/lib/api/api-request';
 import { canUseInChat } from '@/lib/library/record-rules';
@@ -63,7 +58,6 @@ import { startTimer } from '@/lib/timer';
 import { schedulePath } from '@/lib/shell-route';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
-import { cn } from 'cn';
 
 /**
  * SH-02: the schedule dialog (settings-form «Форма диалога», comfortable density). A new schedule starts from
@@ -192,6 +186,7 @@ function ScheduleForm({
 }) {
   const t = useTranslations('schedules');
   const tCommon = useTranslations('common');
+  const tErrors = useTranslations('errors');
   const locale = useLocale();
   const format = useFormatter();
   const router = useRouter();
@@ -291,7 +286,7 @@ function ScheduleForm({
         showErrors({ rule: 'past' });
         return;
       }
-      const refusal = describeSchedulesError(t, cause, {
+      const refusal = describeSchedulesError(tErrors, cause, {
         where: 'dialog',
         agentName,
       });
@@ -343,66 +338,61 @@ function ScheduleForm({
         disabled={saving}
         className="-mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4"
       >
-        <TextField
+        <AdminTextField
           id={fieldId('name')}
+          density="comfortable"
           label={t('dialog.name')}
           optional={t('dialog.optional')}
           hint={t('dialog.nameHint')}
-        >
-          {(describedBy) => (
-            <Input
-              id={fieldId('name')}
-              autoComplete="off"
-              maxLength={SCHEDULE_NAME_MAX_LENGTH}
-              className={cn(COMFORT_CONTROL, 'text-sm md:text-sm')}
-              value={values.name}
-              aria-describedby={describedBy}
-              onChange={(event) => set('name', event.target.value)}
-            />
-          )}
-        </TextField>
-        <TextField
+          maxLength={SCHEDULE_NAME_MAX_LENGTH}
+          value={values.name}
+          error={undefined}
+          onChange={(name) => set('name', name)}
+        />
+        <AdminTextField
           id={fieldId('instruction')}
+          density="comfortable"
+          multiline
+          inputClassName="max-h-48 min-h-20"
           label={t('dialog.instruction')}
           hint={t('dialog.instructionHint')}
+          maxLength={CHAT_MESSAGE_MAX_LENGTH}
+          value={values.instruction}
           error={errors.instruction}
-        >
-          {(describedBy) => (
-            <Textarea
-              id={fieldId('instruction')}
-              maxLength={CHAT_MESSAGE_MAX_LENGTH}
-              className="max-h-48 min-h-20 text-sm md:text-sm"
-              value={values.instruction}
-              aria-invalid={errors.instruction !== undefined}
-              aria-describedby={describedBy}
-              onChange={(event) => set('instruction', event.target.value)}
-            />
-          )}
-        </TextField>
-        <TextField
+          onChange={(instruction) => set('instruction', instruction)}
+        />
+        <AdminSelectField
           id={fieldId('agent')}
+          density="comfortable"
           label={t('dialog.agent')}
+          value={values.agentId}
+          options={[
+            { id: CHAT_AGENT, name: t('dialog.chatAgent'), icon: BotIcon },
+            ...agents.map((agent) => ({
+              ...agent,
+              icon: RECORD_KIND_ICON[agent.kind],
+            })),
+          ].map(({ id: value, name, icon: Icon }) => ({
+            value,
+            label: name,
+            content: (
+              <>
+                <Icon aria-hidden className="text-muted-foreground" />
+                {name}
+              </>
+            ),
+          }))}
           error={errors.agent}
-        >
-          {(describedBy) => (
-            <AgentSelect
-              id={fieldId('agent')}
-              value={values.agentId}
-              agents={agents}
-              chatAgent={t('dialog.chatAgent')}
-              invalid={errors.agent !== undefined}
-              describedBy={describedBy}
-              onChange={(agentId) => set('agentId', agentId)}
-            />
-          )}
-        </TextField>
+          onChange={(agentId) => set('agentId', agentId)}
+        />
         <ScheduleRuleField
           draft={values.rule}
           onChange={(rule) => set('rule', rule)}
           timeZone={start.timeZone}
           error={errors.rule ?? null}
         />
-        <TargetField
+        <AdminRadioField
+          density="comfortable"
           label={t('dialog.target')}
           value={values.target}
           onChange={(target) => set('target', target)}
@@ -460,164 +450,4 @@ function agentChoices(
   const known =
     started === null || usable.some((agent) => agent.id === started.id);
   return known ? [...usable] : [...usable, started];
-}
-
-/** A labelled field of the form: label, the control, a hint and the field error (settings-form). */
-function TextField({
-  id,
-  label,
-  optional,
-  hint,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  optional?: string;
-  hint?: string;
-  error?: string;
-  children: (describedBy: string | undefined) => ReactNode;
-}) {
-  const hintId = `${id}-hint`;
-  const errorId = `${id}-error`;
-  const describedBy =
-    [hint === undefined ? null : hintId, error === undefined ? null : errorId]
-      .filter((part) => part !== null)
-      .join(' ') || undefined;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
-        {optional !== undefined && (
-          <span className="font-normal text-muted-foreground"> {optional}</span>
-        )}
-      </label>
-      {children(describedBy)}
-      {hint !== undefined && (
-        <p id={hintId} className={cn(CAPTION, 'text-muted-foreground')}>
-          {hint}
-        </p>
-      )}
-      {error !== undefined && (
-        <p id={errorId} className={cn(CAPTION, 'text-destructive')}>
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** «Агент»: «Агент чата» first, then the agents of «+» with their icons (SH-02). */
-function AgentSelect({
-  id,
-  value,
-  agents,
-  chatAgent,
-  invalid,
-  describedBy,
-  onChange,
-}: {
-  id: string;
-  value: string;
-  agents: readonly ChipRecord[];
-  chatAgent: string;
-  invalid: boolean;
-  describedBy: string | undefined;
-  onChange: (agentId: string) => void;
-}) {
-  const options = [
-    { value: CHAT_AGENT, label: chatAgent, icon: BotIcon },
-    ...agents.map((agent) => ({
-      value: agent.id,
-      label: agent.name,
-      icon: RECORD_KIND_ICON[agent.kind],
-    })),
-  ];
-  return (
-    <Select
-      value={value}
-      onValueChange={(next) => {
-        if (typeof next === 'string') onChange(next);
-      }}
-      items={options.map(({ value: item, label }) => ({ value: item, label }))}
-    >
-      <SelectTrigger
-        id={id}
-        className={cn(COMFORT_CONTROL, 'w-full text-sm')}
-        aria-invalid={invalid}
-        aria-describedby={describedBy}
-      >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map(({ value: item, label, icon: Icon }) => (
-          <SelectItem
-            key={item}
-            value={item}
-            className="text-sm pointer-coarse:min-h-11"
-          >
-            <Icon aria-hidden className="text-muted-foreground" />
-            {label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-type TargetOption = {
-  value: ScheduleTarget;
-  label: string;
-  hint: string;
-  disabled: boolean;
-};
-
-/** «Куда писать ответ»: a radio group whose unavailable choice says why under it (MC-2). */
-function TargetField({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: ScheduleTarget;
-  options: readonly TargetOption[];
-  onChange: (target: ScheduleTarget) => void;
-}) {
-  const id = useId();
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span id={id} className="text-sm font-medium text-foreground">
-        {label}
-      </span>
-      <RadioGroup
-        aria-labelledby={id}
-        value={value}
-        onValueChange={(next) => {
-          const chosen = options.find((option) => option.value === next);
-          if (chosen !== undefined) onChange(chosen.value);
-        }}
-        className="gap-2"
-      >
-        {options.map((option) => (
-          <div key={option.value} className="flex flex-col gap-0.5">
-            <label className="flex w-fit items-center gap-2 text-sm text-foreground has-disabled:text-muted-foreground pointer-coarse:min-h-11">
-              <RadioGroupItem
-                value={option.value}
-                disabled={option.disabled}
-                aria-describedby={`${id}-${option.value}`}
-              />
-              {option.label}
-            </label>
-            <p
-              id={`${id}-${option.value}`}
-              className={cn(CAPTION, 'pl-6 text-muted-foreground')}
-            >
-              {option.hint}
-            </p>
-          </div>
-        ))}
-      </RadioGroup>
-    </div>
-  );
 }
