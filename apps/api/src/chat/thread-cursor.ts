@@ -1,11 +1,16 @@
 import { z } from 'zod';
+import {
+  CursorTimeSchema,
+  decodeCursor,
+  encodeCursor,
+} from '../common/opaque-cursor';
 import { httpError } from './chat.errors';
 
 /** Position of the last thread of a page: `updatedAt` in ms and `id`. */
 export type ThreadCursor = { u: number; i: string };
 
 const ThreadCursorSchema = z.strictObject({
-  u: z.number().int(),
+  u: CursorTimeSchema,
   i: z.string().min(1),
 });
 
@@ -41,20 +46,11 @@ const isAfter = (t: ThreadCursor, c: ThreadCursor): boolean =>
 
 /** Opaque cursor: base64url(`JSON.stringify({ u: updatedAt ms, i: id })`). */
 export const encodeThreadCursor = (thread: ListedThread): string =>
-  Buffer.from(JSON.stringify(toPosition(thread))).toString('base64url');
+  encodeCursor(toPosition(thread));
 
 /** Parses a cursor of `encodeThreadCursor`; anything else → 400 `INVALID_CURSOR`. */
-export const decodeThreadCursor = (cursor: string): ThreadCursor => {
-  let json: unknown;
-  try {
-    json = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-  } catch {
-    throw httpError('INVALID_CURSOR');
-  }
-  const parsed = ThreadCursorSchema.safeParse(json);
-  if (!parsed.success) throw httpError('INVALID_CURSOR');
-  return parsed.data;
-};
+export const decodeThreadCursor = (cursor: string): ThreadCursor =>
+  decodeCursor(cursor, ThreadCursorSchema, () => httpError('INVALID_CURSOR'));
 
 /** A copy of `threads` in the canonical list order: `updatedAt` (ms) DESC, then `id` DESC. */
 export const sortThreadsForList = <T extends ListedThread>(threads: T[]): T[] =>

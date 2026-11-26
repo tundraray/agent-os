@@ -388,3 +388,41 @@ describe('create-and-test / chat-web — branches from the list', () => {
     ]);
   });
 });
+
+describe('Shell: a conversation started on the server (schedules-search-memory)', () => {
+  // Catches: a schedule run's new conversation stays out of the sidebar until a navigation — the list re-reads
+  //   page 1 on a `tree` note for an id it does not hold, and not on a note for a listed one.
+  it('a `tree` note for an unlisted conversation re-reads page 1; a note for a listed one does not', async () => {
+    // Arrange
+    let listReads = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () => {
+        listReads += 1;
+        return HttpResponse.json(
+          threadList([
+            ...(listReads > 1
+              ? [threadSummary({ id: 'run', title: 'Пингвинья сводка' })]
+              : []),
+            threadSummary({ id: 'a', title: 'План релиза' }),
+          ]),
+        );
+      }),
+    );
+    const { live } = renderWithRuntime({ pathname: '/', pointer: 'fine' });
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    await within(history).findByRole('link', { name: 'План релиза' });
+
+    // Act 1: a note for the listed conversation
+    live.emit('tree', { threadId: 'a' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listReads).toBe(1);
+    // Act 2: the schedule run's conversation
+    live.emit('tree', { threadId: 'run' });
+
+    // Assert
+    expect(
+      await within(history).findByRole('link', { name: 'Пингвинья сводка' }),
+    ).toHaveAttribute('href', '/chat/run');
+    expect(listReads).toBe(2);
+  });
+});

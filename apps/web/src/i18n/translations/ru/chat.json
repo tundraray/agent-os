@@ -7,7 +7,9 @@
     "fromAgent": "От агента «{sender}»",
     "fromAgentUnnamed": "От агента",
     "report": "Отчёт",
-    "brief": "Задание"
+    "brief": "Задание",
+    "schedule": "По расписанию «<link>{name}</link>»",
+    "scheduleManual": "По расписанию «<link>{name}</link>» · вручную"
   },
   "voice": {
     "header": "Голосовой разговор",
@@ -106,6 +108,8 @@
     "createAgentHint": "Опишите агента — чат соберёт его",
     "connections": "Подключения",
     "connectionsHint": "Аккаунты сервисов, с которыми работают агенты",
+    "schedule": "Запланировать",
+    "scheduleHint": "Агент сам выполнит задачу в заданное время",
     "testRun": {
       "name": "Создать и проверить агента",
       "hint": "Тренер соберёт агента и тесты · до {cap}",

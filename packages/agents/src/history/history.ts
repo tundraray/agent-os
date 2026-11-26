@@ -4,6 +4,7 @@ import {
   ToolOutcomeSchema,
   ChipRecordSchema,
   DocumentRefSchema,
+  ScheduleMarkSchema,
   ToolRefusalReasonSchema,
   type HistoryEntryKind,
 } from '@agent-os/contracts';
@@ -33,12 +34,23 @@ export type AnswerCall = z.infer<typeof AnswerCallSchema>;
  * (`foldCalls`). Nothing is updated in place.
  */
 export const HistoryContentSchemas = {
-  /** The task text; the agent's first own entry. At a conversation's root it keeps its first message's chip. */
-  task: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
-  /** A message of the employee, with the record chip it carries, if any (design-runtime.md KD-4). */
+  /**
+   * The task text; the agent's first own entry. At a conversation's root it keeps its first message's chip and
+   * the mark of the schedule that started it (schedules KD-5).
+   */
+  task: z.object({
+    text: z.string(),
+    record: ChipRecordSchema.nullable(),
+    schedule: ScheduleMarkSchema.nullable(),
+  }),
+  /**
+   * A message of the employee, with the record chip it carries, if any (design-runtime.md KD-4), and the mark
+   * of the schedule that sent it; `null` for one typed by hand.
+   */
   user_message: z.object({
     text: z.string(),
     record: ChipRecordSchema.nullable(),
+    schedule: ScheduleMarkSchema.nullable(),
   }),
   /** A message of the parent agent. */
   agent_message: z.object({ text: z.string(), agentId: z.string() }),

@@ -33,6 +33,7 @@ import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useResource } from '@/hooks/use-resource';
 import { useFeedStoreSelector } from '@/lib/feed/feed-context';
 import {
+  isPageRoute,
   parseShellRoute,
   recordPath,
   threadPath,
@@ -384,8 +385,7 @@ function ForksList({ threadId }: { threadId: string }) {
 
 function routeHeading(route: ShellRoute): ReactNode {
   if (route.kind === 'agent') return <AgentHeader />;
-  if (route.kind === 'admin' || route.kind === 'library')
-    return <PageHeaderSlot />;
+  if (isPageRoute(route)) return <PageHeaderSlot />;
   return undefined;
 }
 

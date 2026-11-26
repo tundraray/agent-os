@@ -1,0 +1,141 @@
+{
+  "dialog": {
+    "createTitle": "New schedule",
+    "editTitle": "Edit schedule",
+    "name": "Name",
+    "optional": "(optional)",
+    "nameHint": "Leave it empty and the start of the instruction becomes the name.",
+    "instruction": "Instruction",
+    "instructionHint": "What the agent should do — just as you would write it in the chat",
+    "agent": "Agent",
+    "chatAgent": "Chat agent",
+    "target": "Where to reply",
+    "newConversation": "A new conversation each time",
+    "newConversationHint": "A separate conversation for every trigger — for independent reports.",
+    "thisConversation": "In this conversation",
+    "namedConversation": "In the conversation “{title}”",
+    "thisConversationHint": "The agent sees its earlier replies and can compare with last time.",
+    "noConversationYet": "Available after the first message in the conversation.",
+    "conversationDeleted": "The conversation was deleted — replies will go to a new conversation.",
+    "create": "Create schedule",
+    "save": "Save",
+    "created": "Schedule created. Next trigger — {at}.",
+    "open": "Open",
+    "saved": "Schedule saved"
+  },
+  "rule": {
+    "label": "When",
+    "kind": {
+      "once": "Once",
+      "daily": "Every day",
+      "weekdays": "On weekdays",
+      "every_hours": "Every N hours"
+    },
+    "at": "at",
+    "date": "Date",
+    "time": "Time",
+    "timePlaceholder": "HH:MM",
+    "hours": "Every, hours",
+    "days": "Days of the week",
+    "dayShort": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "dayLong": {
+      "mon": "Monday",
+      "tue": "Tuesday",
+      "wed": "Wednesday",
+      "thu": "Thursday",
+      "fri": "Friday",
+      "sat": "Saturday",
+      "sun": "Sunday"
+    },
+    "next": "Next trigger: {at}",
+    "noNext": "Next trigger: —",
+    "zone": "Times in the {zone} time zone (UTC{offset})"
+  },
+  "errors": {
+    "instruction": "Write what the agent should do.",
+    "past": "This time has passed — choose a future one.",
+    "noDays": "Choose at least one day.",
+    "time": "Enter the time as HH:MM, from 00:00 to 23:59.",
+    "hours": "Enter a whole number of hours from 1 to {max, number}."
+  },
+  "list": {
+    "title": "Schedules",
+    "columns": {
+      "schedule": "Schedule",
+      "state": "State",
+      "next": "Next trigger",
+      "last": "Last trigger"
+    },
+    "lastLabel": "Last trigger:",
+    "emptyTitle": "No schedules yet",
+    "emptyHint": "Create one in any conversation: “+” → “Schedule”.",
+    "loadFailed": "Couldn't load schedules",
+    "nextLabel": "Next trigger:"
+  },
+  "state": {
+    "active": "Active",
+    "paused": "Paused",
+    "completed": "Done"
+  },
+  "ruleLine": {
+    "once": "Once: {at}",
+    "daily": "Every day at {time}",
+    "workdays": "Weekdays at {time}",
+    "days": "{days} at {time}",
+    "hours": "{count, plural, =1 {Every hour} other {Every # hours}}",
+    "zone": "{zone} (UTC{offset})"
+  },
+  "page": {
+    "edit": "Edit",
+    "pause": "Pause",
+    "resume": "Resume",
+    "runNow": "Run now",
+    "delete": "Delete",
+    "instruction": "Instruction",
+    "agent": "Agent",
+    "when": "When",
+    "next": "Next trigger",
+    "target": "Reply",
+    "created": "Created",
+    "replyTo": "To the conversation “<link>{title}</link>”",
+    "createdIn": "{day} in the conversation “<link>{title}</link>”",
+    "createdDeleted": "{day}, conversation deleted",
+    "agentUnavailable": "unavailable",
+    "pausedDeleted": "The conversation “{title}” was deleted, so the schedule is paused. To make it work again, choose replies in a new conversation and resume it."
+  },
+  "notices": {
+    "paused": "Paused",
+    "resumed": "Schedule resumed. Next trigger — {at}.",
+    "openConversation": "Open conversation",
+    "deleted": "Schedule deleted",
+    "sent": "Instruction sent",
+    "notSent": "Instruction not sent",
+    "conversationGone": "The conversation “{title}” was deleted — there is nowhere to send. Choose replies in a new conversation."
+  },
+  "deleteDialog": {
+    "title": "Delete the schedule?",
+    "body": "The schedule “{name}” will not trigger again. The conversations it wrote to stay in the list.",
+    "confirm": "Delete"
+  },
+  "history": {
+    "title": "Trigger history",
+    "columns": {
+      "time": "Time",
+      "conversation": "Conversation"
+    },
+    "open": "Open",
+    "openLabel": "Open the conversation of the trigger at {at}",
+    "manual": "manual",
+    "emptyTitle": "No triggers yet",
+    "emptyFirst": "The first one — {at}.",
+    "loadFailed": "Couldn't load the history"
+  }
+}

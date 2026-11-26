@@ -1,17 +1,20 @@
 'use client';
 
-import { useRef, type MouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type MouseEvent } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   BotIcon,
+  ClockIcon,
   DiamondIcon,
   HandIcon,
   LibraryBigIcon,
+  SearchIcon,
   SquarePenIcon,
   XIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useStore } from 'zustand';
 import { pressable } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,14 +34,17 @@ import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useAwaitingCount } from '@/lib/agents/awaiting-count';
 import { focusShellTarget } from '@/lib/focus';
+import { isSearchActive } from '@/lib/search/search-store';
 import {
   AGENTS_PATH,
   libraryPath,
   parseShellRoute,
+  schedulesPath,
   type ShellRoute,
 } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
-import { useShellActions } from './shell-actions';
+import { ConversationSearch } from './conversation-search';
+import { useShellActions, useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
 import { THREAD_LINK_ATTRIBUTE } from './thread-history-item';
 import { ThreadHistoryList } from './thread-history-list';
@@ -60,18 +66,27 @@ const focusMenuButton = (): HTMLElement | null =>
  * SB-01: the built-in sidebar (256 px or the 48 px icon strip) at ≥ 768 px and the modal drawer SB-13 below.
  * The thread list mounts inside `nav «История бесед»`; the icon strip shows no list. On a panel address the
  * panel's sections take the place of «Новый чат», «Агенты», «Библиотека» and the list, unless the employee has
- * no right there (AD-02 keeps the ordinary sidebar).
+ * no right there (AD-02 keeps the ordinary sidebar). The search field SR-01 stands above the list; while it holds
+ * a searchable text the matches take the list's place, and the list stays mounted, hidden, with its pages and scroll.
  */
 export function AppSidebar() {
   const t = useTranslations('shell.sidebar');
   const tCommon = useTranslations('common');
+  const tSearch = useTranslations('shell.search');
   const { newChat } = useShellActions();
-  const { isMobile, state, setOpenMobile } = useSidebar();
+  const { isMobile, state, setOpen, setOpenMobile } = useSidebar();
+  const searchActive = useStore(useShellServices().search, isSearchActive);
   const route = parseShellRoute(usePathname());
   const adminRight = useAdminRight();
   const panel = route.kind === 'admin' && adminRight !== 'denied';
   const newChatRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLAnchorElement>(null);
+  const historyRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // MC-14 expanded the strip: the field mounts with the expanded sidebar and takes focus then.
+  const focusSearchOnExpand = useRef(false);
+  // The list's scroll while the matches stand in its place: clearing the field brings it back (SR-01).
+  const listScrollTop = useRef(0);
   // Set when the drawer closes because a thread or SB-03 was picked: that action focuses its own target
   // (HD-03 or the composer, UXRD 7.4), so the drawer must not pull focus back to «Меню» after its exit transition.
   const actionOwnsFocus = useRef(false);
@@ -82,6 +97,25 @@ export function AppSidebar() {
     useMediaQuery('(min-width: 1024px) and (pointer: fine)') &&
     !isMobile &&
     !isStrip;
+
+  useEffect(() => {
+    if (isStrip || !focusSearchOnExpand.current) return;
+    focusSearchOnExpand.current = false;
+    searchInputRef.current?.focus();
+  }, [isStrip]);
+
+  useLayoutEffect(() => {
+    const scroller = historyRef.current?.closest<HTMLElement>(
+      '[data-sidebar="content"]',
+    );
+    if (scroller === null || scroller === undefined) return;
+    if (searchActive) {
+      listScrollTop.current = scroller.scrollTop;
+      scroller.scrollTop = 0;
+    } else {
+      scroller.scrollTop = listScrollTop.current;
+    }
+  }, [searchActive]);
 
   const finalFocus = (): HTMLElement | false | null => {
     if (!actionOwnsFocus.current) return focusMenuButton();
@@ -171,6 +205,21 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SectionNavItems route={route} onMobilePick={onMobilePick} />
+              {isStrip && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip={tSearch('open')}
+                    aria-label={tSearch('open')}
+                    className="h-9"
+                    onClick={() => {
+                      focusSearchOnExpand.current = true;
+                      setOpen(true);
+                    }}
+                  >
+                    <SearchIcon aria-hidden />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </>
           )}
         </SidebarMenu>
@@ -187,11 +236,18 @@ export function AppSidebar() {
         )}
         {!panel && !isStrip && (
           <nav
+            ref={historyRef}
             aria-label={tCommon('chatHistory')}
             className="flex min-h-0 flex-1 flex-col"
             onClick={onHistoryClick}
           >
-            <ThreadHistoryList />
+            <ConversationSearch inputRef={searchInputRef} />
+            <div
+              hidden={searchActive}
+              className={cn(!searchActive && 'flex flex-col')}
+            >
+              <ThreadHistoryList />
+            </div>
           </nav>
         )}
       </SidebarContent>
@@ -230,13 +286,20 @@ function SectionNavItems({
         isActive={route.kind === 'library'}
         onMobilePick={onMobilePick}
       />
+      <SectionNavItem
+        href={schedulesPath()}
+        label={t('schedules')}
+        icon={ClockIcon}
+        isActive={route.kind === 'schedules' || route.kind === 'schedule'}
+        onMobilePick={onMobilePick}
+      />
     </>
   );
 }
 
 type SectionNavItemProps = {
   href: string;
-  /** The item's visible name (agent-platform MC-1, custom-agents MC-1). */
+  /** The item's visible name (agent-platform MC-1, custom-agents MC-1, schedules MC-6). */
   label: string;
   icon: LucideIcon;
   /** Selected on every page of its section, like the active thread (SB-06). */
@@ -247,7 +310,7 @@ type SectionNavItemProps = {
 };
 
 /**
- * A section of the employee's sidebar under SB-03: «Агенты» (NV-01) and «Библиотека» (LB-01).
+ * A section of the employee's sidebar under SB-03: «Агенты» (NV-01), «Библиотека» (LB-01) and «Расписания» (SH-03).
  * With decisions waiting: `Hand` and the number in `--approval` on the right, in the strip a 6 px dot;
  * the number swaps without animation.
  */

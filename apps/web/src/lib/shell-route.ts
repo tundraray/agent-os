@@ -13,6 +13,8 @@ const ADMIN_PATH_PREFIX = `${ADMIN_PATH}/`;
 /** Outside `/admin/servers/…` because a server may be named `new`. */
 const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
+const SCHEDULES_PATH = '/schedules';
+const SCHEDULES_PATH_PREFIX = `${SCHEDULES_PATH}/`;
 /** After a record id: a deep agent's memory (self-learning UXRD ME-01). */
 const MEMORY_SUFFIX = '/memory';
 /** After an agent id: the deep agent page's tab «Задачи» (deep-agents UXRD DA-04); «Ход работы» is the page's own address. */
@@ -59,7 +61,19 @@ export type ShellRoute =
   | { kind: 'agent'; agentId: string; tab?: AgentTab }
   | { kind: 'account' }
   | { kind: 'library'; page: LibraryPage }
+  | { kind: 'schedules' }
+  | { kind: 'schedule'; scheduleId: string }
   | { kind: 'admin'; section: AdminSection; page: AdminPage };
+
+/**
+ * A screen with its own `PageHeader` and no composer: the panel, the library and the schedules. The shell header
+ * gives it the header slot, the skip link leads to its `h1`, and it titles the tab itself.
+ */
+export const isPageRoute = (route: ShellRoute): boolean =>
+  route.kind === 'admin' ||
+  route.kind === 'library' ||
+  route.kind === 'schedules' ||
+  route.kind === 'schedule';
 
 /** The only way a thread path is built: Link href, replaceState, pathname comparison. */
 export const threadPath = (threadId: string): string =>
@@ -82,6 +96,13 @@ export const memoryPath = (id: string): string =>
 
 /** The only way an employee's "new agent" path is built. */
 export const newAgentPath = (): string => NEW_AGENT_PATH;
+
+/** The only way the schedules list path is built (UXRD SH-04). */
+export const schedulesPath = (): string => SCHEDULES_PATH;
+
+/** The only way a schedule page path is built (UXRD SH-05); an unknown or foreign id shows SH-08 there. */
+export const schedulePath = (id: string): string =>
+  `${SCHEDULES_PATH_PREFIX}${encodeURIComponent(id)}`;
 
 /** The only way a panel section list path is built. */
 export const adminPath = (section: AdminSection): string =>
@@ -181,6 +202,16 @@ export function parseShellRoute(pathname: string | null): ShellRoute {
   if (pathname === ACCOUNT_PATH) return { kind: 'account' };
   if (pathname === LIBRARY_PATH || pathname.startsWith(LIBRARY_PATH_PREFIX)) {
     return { kind: 'library', page: parseLibraryPage(pathname) };
+  }
+  // `/schedules`, an id after it; any other path under it opens the list.
+  if (
+    pathname === SCHEDULES_PATH ||
+    pathname.startsWith(SCHEDULES_PATH_PREFIX)
+  ) {
+    const scheduleId = singleSegment(pathname, SCHEDULES_PATH_PREFIX);
+    return scheduleId === undefined
+      ? { kind: 'schedules' }
+      : { kind: 'schedule', scheduleId };
   }
   if (pathname === ADMIN_PATH || pathname.startsWith(ADMIN_PATH_PREFIX)) {
     return { kind: 'admin', ...parseAdminPage(pathname) };

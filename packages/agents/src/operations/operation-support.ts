@@ -129,9 +129,11 @@ export interface AgentCreation {
 
 /**
  * Creates an agent outside a step: its task with its input, its session written from the start, its
- * object and what `after` writes commit together, so whoever sees the task sees the session (KD-8); the object
- * goes to the runtime once the transaction resolved, and the agent's first step runs on it. With an
- * `exclusiveKey` another unfinished task holds, nothing is written and the answer is `null`.
+ * object and what `after` writes commit together, so whoever sees the task sees the session (KD-8). When this
+ * call opened the transaction, the object goes to the runtime once it committed, and the agent's first step runs
+ * on it; inside a caller's transaction the commit is still ahead, so the object is not handed over and the first
+ * step restores it from the database (schedules KD-2). With an `exclusiveKey` another unfinished task holds,
+ * nothing is written and the answer is `null`.
  */
 export function createAgent(
   deps: AgentCreationDeps,
@@ -145,6 +147,7 @@ export async function createAgent(
   deps: AgentCreationDeps,
   { task, placeOf, start, after, input = {} }: AgentCreation,
 ): Promise<{ agentId: string } | null> {
+  const ownTransaction = !deps.db.inTransaction;
   const created = await deps.db.transaction(async () => {
     const taskId = await deps.tasks.create({ ...task, input });
     if (taskId === null) return null;
@@ -165,6 +168,6 @@ export async function createAgent(
     return { agentId: taskId, agent };
   });
   if (created === null) return null;
-  deps.liveTasks.adopt(created.agentId, created.agent);
+  if (ownTransaction) deps.liveTasks.adopt(created.agentId, created.agent);
   return { agentId: created.agentId };
 }

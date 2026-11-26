@@ -19,6 +19,7 @@ import {
   type HistoryEntry,
   type DocumentSummary,
   type InterruptResponse,
+  type ScheduleMark,
   type SendMessageResponse,
   type ThreadDocumentsView,
   type ThreadForksResponse,
@@ -58,10 +59,8 @@ import {
 import { testRunSummary } from './test-run-summary';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
+import { rootDescription } from './root-description';
 import { TitleService } from './title.service';
-
-/** The root's description: the first characters of the first message (code points, never half a pair). */
-const ROOT_DESCRIPTION_LENGTH = 80;
 
 type TreeDocumentRow = Awaited<
   ReturnType<DocumentsRepository['listInTree']>
@@ -191,21 +190,32 @@ export class ConversationsService {
    * taken by its rows: `start` gets `TASK_EXISTS` and `owned()` answers 404, for its owner and anyone
    * else alike. A send to a conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete
    * and the send take turns on the root task's lock.
+   *
+   * A schedule's send (schedules KD-2, KD-6) carries its mark into the message or the root's `task` entry and the
+   * title of a new conversation, and starts no title generation. Inside a caller's transaction every write of the
+   * send joins it, so the caller commits the message or the new root with its own rows.
    */
   async send(
     threadId: string,
     ownerId: string,
     text: string,
     recordId?: string,
+    scheduled?: { readonly schedule: ScheduleMark; readonly title?: string },
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
     const record =
       recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
-    const chip = record === undefined ? {} : { record };
+    const chip = {
+      ...(record === undefined ? {} : { record }),
+      ...(scheduled === undefined ? {} : { schedule: scheduled.schedule }),
+    };
     const existing = await this.views.root(threadId, ownerId);
     const created =
       existing === undefined &&
-      (await this.start(threadId, ownerId, text, chip));
+      (await this.start(threadId, ownerId, text, {
+        ...chip,
+        ...(scheduled?.title === undefined ? {} : { title: scheduled.title }),
+      }));
     let messageId: string | null = null;
     let untitled = true;
     if (!created) {
@@ -221,7 +231,7 @@ export class ConversationsService {
       await this.control.touchRoot(threadId, ownerId);
       untitled = root.title === '';
     }
-    if (untitled)
+    if (untitled && scheduled === undefined)
       this.titles.ensure({
         threadId,
         ownerId,
@@ -416,16 +426,18 @@ export class ConversationsService {
     threadId: string,
     ownerId: string,
     text: string,
-    chip: { readonly record?: ChipRecord },
+    chip: {
+      readonly record?: ChipRecord;
+      readonly schedule?: ScheduleMark;
+      readonly title?: string;
+    },
   ): Promise<boolean> {
     try {
       await this.starts.start({
         agentId: threadId,
         ownerId,
         prompt: text,
-        description: Array.from(text)
-          .slice(0, ROOT_DESCRIPTION_LENGTH)
-          .join(''),
+        description: rootDescription(text),
         ...chip,
       });
       return true;

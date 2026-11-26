@@ -37,6 +37,7 @@ import { AgentsProviders } from './providers/provider-registry';
 import type { RecordLibrary } from './start/record-library';
 import { auditStartRefusal, resolveNamedStart } from './start/resolve-start';
 import { History } from './store/history';
+import { MemoryRecords } from './store/memory-records';
 import { AgentTaskInputSchema, Sessions } from './store/sessions';
 import { createSystemTools } from './tools/system/index';
 import { createMemoryTools } from './tools/system/memory-tools';
@@ -73,6 +74,7 @@ export class SystemToolsRegistration implements OnModuleInit {
     private readonly sessionTaskRows: ConversationTasksRepository,
     @Inject(MemoriesRepository)
     private readonly memoryRows: MemoriesRepository,
+    @Inject(MemoryRecords) private readonly memoryRecords: MemoryRecords,
     @Inject(DocumentsRepository)
     private readonly documentRows: DocumentsRepository,
     @Inject(TrainingsRepository)
@@ -115,7 +117,7 @@ export class SystemToolsRegistration implements OnModuleInit {
       ...createTaskListTools({ sessionTaskRows: this.sessionTaskRows, logger }),
       // Declared by a deep agent with self-learning on and each of its subagents (design-memory.md KD-4).
       ...createMemoryTools({
-        memoryRows: this.memoryRows,
+        records: this.memoryRecords,
         maskSecrets: this.maskSecrets,
         logger,
       }),

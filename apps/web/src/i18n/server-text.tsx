@@ -19,7 +19,10 @@ export type FailedAction =
   | 'activate'
   | 'test_run'
   | 'take'
-  | 'send';
+  | 'send'
+  | 'restore'
+  /** An action that names itself on its button: «Не удалось: …». */
+  | 'action';
 
 /**
  * The shared fallback of a refusal whose code has no message (design-web.md, «Отказы сервера»):

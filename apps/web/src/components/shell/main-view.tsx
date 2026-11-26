@@ -14,6 +14,8 @@ import {
 import { MemoryPage } from '@/components/library/memory-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
+import { ScheduleScreen } from '@/components/schedules/schedule-screen';
+import { SchedulesScreen } from '@/components/schedules/schedules-screen';
 import { FeedProvider } from '@/lib/feed/feed-context';
 import type { FeedStore } from '@/lib/feed/feed-store';
 import { focusShellTarget } from '@/lib/focus';
@@ -88,7 +90,8 @@ const DELETED_THREAD_COMPONENTS: ThreadComponents = {
  * The main area by route: `/agents` — the agent tree (Screen 2); `/agents/<id>` — the agent page (Screen 3)
  * under the shell's `AgentFeedProvider`; `/account` — «Мой доступ»; a conversation — the feed (its skeleton
  * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07;
- * `/admin/…` — the panel behind `AdminGate`; `/library` — the library list; `/library/<id>` — the record page.
+ * `/admin/…` — the panel behind `AdminGate`; `/library` — the library list; `/library/<id>` — the record page;
+ * `/schedules` — the schedules list; `/schedules/<id>` — a schedule's page.
  */
 export function MainView() {
   const route = parseShellRoute(usePathname());
@@ -113,6 +116,10 @@ export function MainView() {
     return <RecordPage key={route.page.id} id={route.page.id} />;
   if (route.kind === 'library' && route.page.kind === 'new')
     return <NewRecordPage />;
+  if (route.kind === 'schedules') return <SchedulesScreen />;
+  // A new key per schedule: the dialogs and the history of one never carry over to the next.
+  if (route.kind === 'schedule')
+    return <ScheduleScreen key={route.scheduleId} id={route.scheduleId} />;
   return <ConversationView />;
 }
 

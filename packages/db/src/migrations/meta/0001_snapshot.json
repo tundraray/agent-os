@@ -1,6 +1,6 @@
 {
-  "id": "cb0df0c8-39b9-4d05-a362-abf283048965",
-  "prevId": "714b25db-f56e-48fd-bff8-0568fde36454",
+  "id": "ce12398b-9deb-4d85-acb8-c7c887425b70",
+  "prevId": "10bf5cb4-1d65-4f96-850c-f8653eaf252e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -768,6 +768,22 @@
           "method": "btree",
           "where": "\"app\".\"conversations\".\"parent_id\" IS NULL",
           "concurrently": false
+        },
+        "conversations_title_search_idx": {
+          "name": "conversations_title_search_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('russian'::regconfig, left(\"title\", 100000))",
+              "isExpression": true,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
+          "where": "\"app\".\"conversations\".\"parent_id\" IS NULL",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -952,6 +968,22 @@
           "method": "btree",
           "where": "\"app\".\"messages\".\"kind\" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'tool_result')",
           "concurrently": false
+        },
+        "messages_text_search_idx": {
+          "name": "messages_text_search_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('russian'::regconfig, left((\"content\" ->> 'text'), 100000))",
+              "isExpression": true,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
+          "where": "\"app\".\"messages\".\"kind\" in ('task', 'user_message', 'agent_message', 'model_answer', 'tool_result')",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -1029,7 +1061,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "tool_results_text_search_idx": {
+          "name": "tool_results_text_search_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('russian'::regconfig, left(\"text\", 100000))",
+              "isExpression": true,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {
         "tool_results_conversation_id_conversations_id_fk": {
           "name": "tool_results_conversation_id_conversations_id_fk",
@@ -1162,7 +1210,7 @@
         },
         "code_calls_refusal_reason_check": {
           "name": "code_calls_refusal_reason_check",
-          "value": "\"app\".\"code_calls\".\"refusal_reason\" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict')"
+          "value": "\"app\".\"code_calls\".\"refusal_reason\" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed')"
         }
       },
       "isRLSEnabled": false
@@ -2884,21 +2932,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "text": {
-          "name": "text",
-          "type": "text",
+        "current_version": {
+          "name": "current_version",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -2977,6 +3018,22 @@
           ],
           "onUpdate": "no action",
           "onDelete": "cascade"
+        },
+        "memories_current_version_fk": {
+          "name": "memories_current_version_fk",
+          "tableFrom": "memories",
+          "columnsFrom": [
+            "id",
+            "current_version"
+          ],
+          "tableTo": "memory_versions",
+          "schemaTo": "app",
+          "columnsTo": [
+            "memory_id",
+            "version"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2986,6 +3043,102 @@
         "memories_owner_check": {
           "name": "memories_owner_check",
           "value": "num_nonnulls(\"app\".\"memories\".\"agent_id\", \"app\".\"memories\".\"user_id\") = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.memory_versions": {
+      "name": "memory_versions",
+      "schema": "app",
+      "columns": {
+        "memory_id": {
+          "name": "memory_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "memory_versions_memory_id_memories_id_fk": {
+          "name": "memory_versions_memory_id_memories_id_fk",
+          "tableFrom": "memory_versions",
+          "columnsFrom": [
+            "memory_id"
+          ],
+          "tableTo": "memories",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "memory_versions_author_id_identity_users_id_fk": {
+          "name": "memory_versions_author_id_identity_users_id_fk",
+          "tableFrom": "memory_versions",
+          "columnsFrom": [
+            "author_id"
+          ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "set null"
+        }
+      },
+      "compositePrimaryKeys": {
+        "memory_versions_memory_id_version_pk": {
+          "name": "memory_versions_memory_id_version_pk",
+          "columns": [
+            "memory_id",
+            "version"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "memory_versions_kind_check": {
+          "name": "memory_versions_kind_check",
+          "value": "\"app\".\"memory_versions\".\"kind\" in ('created', 'changed', 'deleted', 'reverted')"
+        },
+        "memory_versions_text_check": {
+          "name": "memory_versions_text_check",
+          "value": "(\"app\".\"memory_versions\".\"text\" is null) = (\"app\".\"memory_versions\".\"kind\" = 'deleted')"
         }
       },
       "isRLSEnabled": false
@@ -3421,6 +3574,397 @@
           "value": "(\"app\".\"trainings\".\"agent_id\" is null) = (\"app\".\"trainings\".\"base_version_id\" is null)"
         }
       },
+      "isRLSEnabled": false
+    },
+    "app.schedules": {
+      "name": "schedules",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instruction": {
+          "name": "instruction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rule": {
+          "name": "rule",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target": {
+          "name": "target",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "paused_because": {
+          "name": "paused_because",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_run_at": {
+          "name": "next_run_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rule_set_at": {
+          "name": "rule_set_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "schedules_owner_idx": {
+          "name": "schedules_owner_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "schedules_agent_idx": {
+          "name": "schedules_agent_idx",
+          "columns": [
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "schedules_conversation_idx": {
+          "name": "schedules_conversation_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "schedules_due_idx": {
+          "name": "schedules_due_idx",
+          "columns": [
+            {
+              "expression": "next_run_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "where": "\"app\".\"schedules\".\"state\" = 'active'",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "schedules_owner_id_identity_users_id_fk": {
+          "name": "schedules_owner_id_identity_users_id_fk",
+          "tableFrom": "schedules",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "tableTo": "identity_users",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "schedules_agent_id_agents_id_fk": {
+          "name": "schedules_agent_id_agents_id_fk",
+          "tableFrom": "schedules",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "tableTo": "agents",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "schedules_conversation_id_conversations_id_fk": {
+          "name": "schedules_conversation_id_conversations_id_fk",
+          "tableFrom": "schedules",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "schedules_language_check": {
+          "name": "schedules_language_check",
+          "value": "\"app\".\"schedules\".\"language\" in ('en', 'ru')"
+        },
+        "schedules_target_check": {
+          "name": "schedules_target_check",
+          "value": "\"app\".\"schedules\".\"target\" in ('new_conversation', 'this_conversation')"
+        },
+        "schedules_state_check": {
+          "name": "schedules_state_check",
+          "value": "\"app\".\"schedules\".\"state\" in ('active', 'paused', 'completed')"
+        },
+        "schedules_paused_because_check": {
+          "name": "schedules_paused_because_check",
+          "value": "\"app\".\"schedules\".\"paused_because\" in ('conversation_deleted')"
+        },
+        "schedules_next_run_check": {
+          "name": "schedules_next_run_check",
+          "value": "(\"app\".\"schedules\".\"next_run_at\" is not null) = (\"app\".\"schedules\".\"state\" = 'active')"
+        },
+        "schedules_pause_reason_state_check": {
+          "name": "schedules_pause_reason_state_check",
+          "value": "\"app\".\"schedules\".\"paused_because\" is null or \"app\".\"schedules\".\"state\" = 'paused'"
+        },
+        "schedules_target_conversation_check": {
+          "name": "schedules_target_conversation_check",
+          "value": "\"app\".\"schedules\".\"target\" <> 'this_conversation' or \"app\".\"schedules\".\"conversation_id\" is not null"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.schedule_runs": {
+      "name": "schedule_runs",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "schedule_id": {
+          "name": "schedule_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "due_at": {
+          "name": "due_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manual": {
+          "name": "manual",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "schedule_runs_term_idx": {
+          "name": "schedule_runs_term_idx",
+          "columns": [
+            {
+              "expression": "schedule_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "due_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "not \"app\".\"schedule_runs\".\"manual\"",
+          "concurrently": false
+        },
+        "schedule_runs_page_idx": {
+          "name": "schedule_runs_page_idx",
+          "columns": [
+            {
+              "expression": "schedule_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "due_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "schedule_runs_conversation_idx": {
+          "name": "schedule_runs_conversation_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "schedule_runs_schedule_id_schedules_id_fk": {
+          "name": "schedule_runs_schedule_id_schedules_id_fk",
+          "tableFrom": "schedule_runs",
+          "columnsFrom": [
+            "schedule_id"
+          ],
+          "tableTo": "schedules",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "schedule_runs_conversation_id_conversations_id_fk": {
+          "name": "schedule_runs_conversation_id_conversations_id_fk",
+          "tableFrom": "schedule_runs",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "tableTo": "conversations",
+          "schemaTo": "app",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "app.settings": {

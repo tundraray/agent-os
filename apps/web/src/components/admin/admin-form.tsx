@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
@@ -46,6 +47,17 @@ import type { ErrorsTranslator } from '@/i18n/catalog';
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
 export const CONTROL_SIZE = 'h-7 pointer-coarse:h-11';
+
+/** A control of comfortable density (foundations, Spacing & Density): 36 px, 44 px under a coarse pointer. */
+export const COMFORT_CONTROL = 'h-9 pointer-coarse:h-11';
+
+/** foundations, Spacing & Density: the panel is compact, a dialog outside it is comfortable. */
+export type FieldDensity = 'compact' | 'comfortable';
+
+const DENSITY = {
+  compact: { control: CONTROL_SIZE, text: 'text-data md:text-data' },
+  comfortable: { control: COMFORT_CONTROL, text: 'text-sm md:text-sm' },
+} as const;
 
 /** Caption 12 / 16 under a field or a switch (foundations, typography). */
 export const CAPTION = 'text-xs leading-4';
@@ -124,9 +136,14 @@ export type AdminTextFieldProps = {
   suffix?: string;
   /** The input's own width, e.g. `w-24` for a short number. */
   inputClassName?: string;
+  /** «(необязательно)» after the label. */
+  optional?: string;
+  /** A growing text area instead of a single line. */
+  multiline?: boolean;
+  density?: FieldDensity;
 };
 
-/** One single-line field of a panel form: label, 28 px input, hint and field error (settings-form). */
+/** One text field of a form: label, input, hint and field error (settings-form). */
 export function AdminTextField({
   id,
   label,
@@ -140,7 +157,11 @@ export function AdminTextField({
   maxLength,
   suffix,
   inputClassName,
+  optional,
+  multiline = false,
+  density = 'compact',
 }: AdminTextFieldProps) {
+  const { control, text } = DENSITY[density];
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [
@@ -149,22 +170,31 @@ export function AdminTextField({
   ]
     .filter((part) => part !== null)
     .join(' ');
-  const input = (
+  const shared = {
+    id,
+    name: id,
+    maxLength,
+    value,
+    'aria-invalid': error !== undefined,
+    'aria-describedby': describedBy === '' ? undefined : describedBy,
+  };
+  const input = multiline ? (
+    <Textarea
+      {...shared}
+      className={cn(text, inputClassName)}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ) : (
     <Input
-      id={id}
-      name={id}
+      {...shared}
       type={type}
       inputMode={inputMode}
-      maxLength={maxLength}
       autoComplete="off"
       className={cn(
-        CONTROL_SIZE,
-        mono ? 'font-mono text-mono-compact' : 'text-data md:text-data',
+        control,
+        mono ? 'font-mono text-mono-compact' : text,
         inputClassName,
       )}
-      value={value}
-      aria-invalid={error !== undefined}
-      aria-describedby={describedBy === '' ? undefined : describedBy}
       onChange={(event) => onChange(event.target.value)}
     />
   );
@@ -172,16 +202,19 @@ export function AdminTextField({
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel
         htmlFor={id}
-        className="text-data font-medium text-foreground"
+        className={cn(text, 'font-medium text-foreground')}
       >
         {label}
+        {optional !== undefined && (
+          <span className="font-normal text-muted-foreground"> {optional}</span>
+        )}
       </FieldLabel>
       {suffix === undefined ? (
         input
       ) : (
         <div className="flex items-center gap-2">
           {input}
-          <span className="text-data text-muted-foreground">{suffix}</span>
+          <span className={cn(text, 'text-muted-foreground')}>{suffix}</span>
         </div>
       )}
       {hint !== undefined && (
@@ -202,8 +235,9 @@ export function AdminTextField({
 export type AdminRadioOption<Value extends string> = {
   value: Value;
   label: string;
-  /** What the choice means, under its radio. */
+  /** What the choice means, under its radio; an unavailable choice says why. */
   hint?: string;
+  disabled?: boolean;
 };
 
 export type AdminRadioFieldProps<Value extends string> = {
@@ -211,15 +245,18 @@ export type AdminRadioFieldProps<Value extends string> = {
   value: Value;
   options: readonly AdminRadioOption<Value>[];
   onChange: (value: Value) => void;
+  density?: FieldDensity;
 };
 
-/** A one-of-several field of a panel form (settings-form, shadcn `radio-group`): legend, radios, a hint per choice. */
+/** A one-of-several field of a form (settings-form, shadcn `radio-group`): legend, radios, a hint per choice. */
 export function AdminRadioField<Value extends string>({
   label,
   value,
   options,
   onChange,
+  density = 'compact',
 }: AdminRadioFieldProps<Value>) {
+  const { text } = DENSITY[density];
   const id = useId();
   const hintId = (option: AdminRadioOption<Value>): string =>
     `${id}-${option.value}`;
@@ -228,7 +265,7 @@ export function AdminRadioField<Value extends string>({
       <FieldLegend
         id={id}
         variant="label"
-        className="mb-0 text-data font-medium text-foreground"
+        className={cn(text, 'mb-0 font-medium text-foreground')}
       >
         {label}
       </FieldLegend>
@@ -243,9 +280,15 @@ export function AdminRadioField<Value extends string>({
       >
         {options.map((option) => (
           <div key={option.value} className="flex flex-col gap-0.5">
-            <Label className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
+            <Label
+              className={cn(
+                text,
+                'flex w-fit items-center gap-2 font-normal text-foreground has-disabled:text-muted-foreground pointer-coarse:min-h-11',
+              )}
+            >
               <RadioGroupItem
                 value={option.value}
+                disabled={option.disabled}
                 aria-describedby={
                   option.hint === undefined ? undefined : hintId(option)
                 }
@@ -281,7 +324,8 @@ export type AdminSelectFieldProps = {
   label: string;
   /** `null` — nothing chosen; the closed field then shows `emptyText`. */
   value: string | null;
-  emptyText: string;
+  /** Shown while nothing is chosen; a field that always has a choice needs none. */
+  emptyText?: string;
   options: readonly AdminSelectOption[];
   onChange: (value: string) => void;
   error: string | undefined;
@@ -289,9 +333,10 @@ export type AdminSelectFieldProps = {
   /** settings-form «Предупреждение» under the field: the consequence of the choice; it does not block saving. */
   warning?: ReactNode;
   disabled?: boolean;
+  density?: FieldDensity;
 };
 
-/** A drop-down field of a panel form (settings-form, shadcn `select`): label, 28 px trigger, hint, warning, field error. */
+/** A drop-down field of a form (settings-form, shadcn `select`): label, trigger, hint, warning, field error. */
 export function AdminSelectField({
   id,
   label,
@@ -303,7 +348,9 @@ export function AdminSelectField({
   hint,
   warning,
   disabled = false,
+  density = 'compact',
 }: AdminSelectFieldProps) {
+  const { control, text } = DENSITY[density];
   const hintId = `${id}-hint`;
   const warningId = `${id}-warning`;
   const errorId = `${id}-error`;
@@ -318,7 +365,7 @@ export function AdminSelectField({
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel
         htmlFor={id}
-        className="text-data font-medium text-foreground"
+        className={cn(text, 'font-medium text-foreground')}
       >
         {label}
       </FieldLabel>
@@ -335,8 +382,8 @@ export function AdminSelectField({
       >
         <SelectTrigger
           id={id}
-          size="sm"
-          className={cn(CONTROL_SIZE, 'w-full text-data')}
+          size={density === 'compact' ? 'sm' : 'default'}
+          className={cn(control, 'w-full', text)}
           aria-invalid={error !== undefined}
           aria-describedby={describedBy === '' ? undefined : describedBy}
         >
@@ -348,7 +395,7 @@ export function AdminSelectField({
               key={option.value}
               value={option.value}
               disabled={option.disabled === true}
-              className="text-data pointer-coarse:min-h-11"
+              className={cn(text, 'pointer-coarse:min-h-11')}
             >
               {option.content ?? option.label}
             </SelectItem>

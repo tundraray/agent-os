@@ -5,6 +5,7 @@ import {
   ChildFinishedPayloadSchema,
   ChipRecordSchema,
   DocumentRefSchema,
+  ScheduleMarkSchema,
 } from '@agent-os/contracts';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -21,6 +22,8 @@ const MessagePayloadSchemas = {
   user_message: z.object({
     text: z.string(),
     record: ChipRecordSchema.optional(),
+    /** The schedule that sent the message (schedules KD-5). */
+    schedule: ScheduleMarkSchema.optional(),
     resume: ResumeMarkSchema.optional(),
   }),
   agent_message: z.object({
@@ -122,12 +125,11 @@ export async function entriesOf(
   const entries: NewHistoryEntry[] = [];
   for (const message of messages) {
     if (message.kind === userMessage) {
-      const { text, record } = MessagePayloadSchemas.user_message.parse(
-        message.payload,
-      );
+      const { text, record, schedule } =
+        MessagePayloadSchemas.user_message.parse(message.payload);
       entries.push({
         kind: 'user_message',
-        content: { text, record: record ?? null },
+        content: { text, record: record ?? null, schedule: schedule ?? null },
       });
     } else if (message.kind === agentMessage) {
       const { text, fromAgentId } = MessagePayloadSchemas.agent_message.parse(

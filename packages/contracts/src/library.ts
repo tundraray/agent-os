@@ -132,6 +132,8 @@ export type RecordTool = z.infer<typeof RecordToolSchema>;
 /** The names of the two start tools, as the API registers them and the web recognises them in a feed. */
 export const START_AGENT_TOOL = RecordToolSchema.enum.start_agent;
 export const START_DEEP_AGENT_TOOL = 'start_deep_agent';
+/** The tool a deep agent assigns work to its subagents with (deep-agents/design-task.md KD-6). */
+export const TASK_TOOL = 'task';
 /**
  * `agent` of `start_agent` that starts a fork of the caller; no record may take this name (data-model
  * design-agents.md, «Таблицы каталога»).

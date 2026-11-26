@@ -2,6 +2,7 @@ import {
   CHILD_FINISHED_KIND,
   type ChildFinishedPayload,
   ChildFinishedPayloadSchema,
+  TASK_TOOL,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
 import type { DocumentsRepository } from '@agent-os/db';
@@ -25,7 +26,6 @@ import type {
 import type { TurnAnswer, TurnEnd } from '../agent/model-step';
 import type { CallState } from '../history/call-state';
 import type { SessionTool } from '../tools/tool-registry';
-import { TASK_TOOL } from './deep-definition';
 import type { TaskArgs } from './delegation-rules';
 import {
   createDelegations,

@@ -12,6 +12,7 @@ import { AccessModule } from './access/access.module';
 import { AccessAdminModule } from './access/access-admin.module';
 import { LibraryApiModule } from './library/library-api.module';
 import { MemoryApiModule } from './memory/memory-api.module';
+import { SchedulesModule } from './schedules/schedules.module';
 import { TrainingApiModule } from './training/training-api.module';
 
 @Module({
@@ -36,6 +37,7 @@ import { TrainingApiModule } from './training/training-api.module';
     MemoryApiModule,
     TrainingApiModule,
     ChatModule,
+    SchedulesModule,
   ],
 })
 export class AppModule {}

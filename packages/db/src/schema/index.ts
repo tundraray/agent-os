@@ -62,9 +62,11 @@ export * from './agent-shares';
 
 // ---------------------------------------------------------------------------------------------
 // Memory of self-learning deep agents (self-learning/design-memory.md, KD-1): a record belongs to an agent or
-// an employee and goes with it by cascade.
+// an employee and goes with it by cascade. Its texts live in immutable versions, which go with the record by
+// cascade (schedules-search-memory/design-memory-hygiene.md, KD-1).
 // ---------------------------------------------------------------------------------------------
 export * from './memories';
+export * from './memory-versions';
 
 // ---------------------------------------------------------------------------------------------
 // Notepad of a deep agent run (self-learning/design-notepad.md, KD-1): a document belongs to the run's
@@ -77,6 +79,13 @@ export * from './documents';
 // training's conversation; the comparison list lives in the row.
 // ---------------------------------------------------------------------------------------------
 export * from './trainings';
+
+// ---------------------------------------------------------------------------------------------
+// Schedules (schedules-search-memory/design-schedules.md, Data Model): an employee's schedules and the
+// history of their terms, one row per term; both go with the employee and the schedule by cascade.
+// ---------------------------------------------------------------------------------------------
+export * from './schedules';
+export * from './schedule-runs';
 
 // ---------------------------------------------------------------------------------------------
 // Settings (data-model/design-schema.md, KD-3): one row per key, the value checked by the key's schema

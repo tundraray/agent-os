@@ -18,8 +18,8 @@
 
 | Фаза Nest | Что делает модуль |
 |---|---|
-| `onModuleInit` | регистрирует свои обработчики задач, живые типы задач, потребителей событий и инструменты; приложение проверяет, что неприменённых миграций нет |
-| `onApplicationBootstrap` | `RuntimeWorkers` запускает фоновые воркеры и прогрев объектов задач, когда все регистрации уже прошли; затем `agents` закрывает реестр инструментов: хук глобального `RuntimeModule` идёт раньше |
+| `onModuleInit` | регистрирует свои обработчики задач, живые типы задач, потребителей событий, инструменты и фоновые проходы; приложение проверяет, что неприменённых миграций нет |
+| `onApplicationBootstrap` | `RuntimeWorkers` запускает фоновые воркеры, зарегистрированные фоновые проходы и прогрев объектов задач, когда все регистрации уже прошли; затем `agents` закрывает реестр инструментов: хук глобального `RuntimeModule` идёт раньше |
 | `beforeApplicationShutdown` | останавливает воркеры: идущие шаги возвращают задачи в очередь |
 | `onApplicationShutdown` | `DbModule` закрывает пул — последним |
 
@@ -49,3 +49,4 @@
 - [design-chat.md](../../features/agent-platform/design-chat.md) — порядок модулей в `AppModule`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — `parseAgentsConfig` без файла серверов; адрес возврата OAuth — параметр операций подключения, а не настройка
 - [design-access.md](../../features/enterprise-access/design-access.md) — порт `AccessGate` и аудит отказа
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — фоновый проход расписаний, зарегистрированный в runtime (KD-3)

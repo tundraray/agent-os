@@ -24,6 +24,15 @@ import {
   ReasoningText,
   ReasoningTrigger,
 } from '@/components/assistant-ui/elements/reasoning.aui';
+import {
+  SEARCH_MARK_CLASS,
+  SEARCH_MARK_USER_BUBBLE_CLASS,
+  SEARCH_MARK_USER_ROOT_CLASS,
+  SearchMarkProvider,
+  useFeedSearchMark,
+  useMessageMarkProps,
+  useOpenOnMark,
+} from '@/components/assistant-ui/elements/search-target';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback.aui';
 import {
   ToolGroupContent,
@@ -64,7 +73,8 @@ import { useTranslations } from 'next-intl';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { focusShellTarget } from '@/lib/focus';
-import { recordPath } from '@/lib/shell-route';
+import { recordPath, schedulePath } from '@/lib/shell-route';
+import { ShellLink } from '@/components/shell/shell-link';
 import type { ChatTranslator, ErrorsTranslator } from '@/i18n/catalog';
 import {
   NEW_THREAD_TARGET,
@@ -73,7 +83,12 @@ import {
 } from '@/lib/threads/composer-seed';
 import type { SendFailure } from '@/lib/threads/shell-status-store';
 import { cn } from '@/lib/utils';
-import { ChipRecordSchema, type ChipRecord } from '@agent-os/contracts';
+import {
+  ChipRecordSchema,
+  ScheduleMarkSchema,
+  type ChipRecord,
+  type ScheduleMark,
+} from '@agent-os/contracts';
 import { useStore } from 'zustand';
 import {
   ActionBarPrimitive,
@@ -98,6 +113,7 @@ import {
   ArrowUpIcon,
   AudioLinesIcon,
   CheckIcon,
+  ClockIcon,
   CopyIcon,
   MicIcon,
   PhoneIcon,
@@ -129,7 +145,18 @@ const DefaultToolGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({
   group,
   children,
 }) => {
-  const [open, setOpen] = useState(false);
+  // The calls of the group, so a search target among them opens it (KD-7).
+  const callIds = useAuiState((s) =>
+    group.indices
+      .map((index) => {
+        const part = s.message.parts[index];
+        return part?.type === 'tool-call' ? part.toolCallId : '';
+      })
+      .join('\n'),
+  );
+  const [open, setOpen] = useOpenOnMark(
+    (mark) => mark.callId !== null && callIds.split('\n').includes(mark.callId),
+  );
 
   return (
     <ToolGroupRoot
@@ -311,128 +338,138 @@ const ThreadRoot: FC<{
     null,
   );
   const t = useTranslations('chat.testRun');
+  const feedRef = useRef<HTMLDivElement>(null);
+  const mark = useFeedSearchMark(feedRef, historyPending);
 
   return (
-    <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
-      style={{
-        ['--composer-bg' as string]:
-          'color-mix(in oklab, var(--color-muted) 30%, transparent)',
-        ['--composer-radius' as string]: '1rem',
-        ['--composer-padding' as string]: '8px',
-      }}
-    >
-      <ThreadPrimitive.Viewport
-        turnAnchor="top"
-        // Off by default with a top anchor: a card appended after the turn (a plan, a decision) is scrolled into view
-        // unless the person has scrolled up; during a run the anchor still holds.
-        autoScroll
-        data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
+    <SearchMarkProvider value={mark}>
+      <ThreadPrimitive.Root
+        className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
+        style={{
+          ['--composer-bg' as string]:
+            'color-mix(in oklab, var(--color-muted) 30%, transparent)',
+          ['--composer-radius' as string]: '1rem',
+          ['--composer-padding' as string]: '8px',
+        }}
       >
-        <div
-          className={cn(
-            'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
-            isEmpty && 'md:justify-center',
-          )}
+        <ThreadPrimitive.Viewport
+          turnAnchor="top"
+          // Off by default with a top anchor: a card appended after the turn (a plan, a decision) is scrolled into view
+          // unless the person has scrolled up; during a run the anchor still holds.
+          autoScroll
+          data-slot="aui_thread-viewport"
+          className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
         >
-          {Feed ? (
-            <div data-slot="aui_feed-replacement" className="mb-6 px-2">
-              <Feed />
-            </div>
-          ) : historyPending ? (
-            <ThreadHistorySkeleton />
-          ) : (
-            <>
-              <AuiIf condition={isNewChatView}>
-                <Welcome />
-              </AuiIf>
-              <AuiIf condition={isHistoryLoadingView}>
-                <ThreadHistorySkeleton />
-              </AuiIf>
-
-              {FeedHeader && (
-                <div
-                  data-slot="aui_feed-header"
-                  className="mb-6 flex flex-col gap-y-3 px-2"
-                >
-                  <FeedHeader />
-                </div>
-              )}
-
-              <ThreadLoadEarlier />
-
-              <div
-                data-slot="aui_message-group"
-                className="mb-14 flex flex-col gap-y-6 empty:hidden"
-              >
-                <ThreadPrimitive.Messages>
-                  {() => <ThreadMessage />}
-                </ThreadPrimitive.Messages>
-              </div>
-            </>
-          )}
-
-          <ThreadPrimitive.ViewportFooter
+          <div
+            ref={feedRef}
             className={cn(
-              'aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]',
-              // Below 768 px the composer stays at the bottom even in an empty thread (D-10).
-              isEmpty
-                ? 'max-md:sticky max-md:bottom-0 max-md:mt-auto'
-                : 'sticky bottom-0 mt-auto rounded-t-(--composer-radius)',
+              'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
+              isEmpty && 'md:justify-center',
             )}
           >
-            <ThreadScrollToBottom />
-            {!historyPending && <ThreadFollowupSuggestions />}
-            {DeletedNotice ? (
-              <DeletedNotice />
-            ) : training?.run != null ? (
-              <TestRunFooter
-                run={training.run}
-                composer={
-                  <>
-                    <FeedTray />
-                    <Composer
-                      sendBlocked={historyPending}
-                      placeholder={t(
-                        training.run.phase === 'result'
-                          ? 'placeholderResult'
-                          : 'placeholderDialog',
-                      )}
-                      chip={null}
-                    />
-                  </>
-                }
-              />
-            ) : training !== null ? (
-              <TrainingLine root={training.isRoot} testRun={training.testRun} />
+            {Feed ? (
+              <div data-slot="aui_feed-replacement" className="mb-6 px-2">
+                <Feed />
+              </div>
+            ) : historyPending ? (
+              <ThreadHistorySkeleton />
             ) : (
               <>
-                <FeedTray />
-                {seedTarget === undefined ? (
-                  <Composer
-                    sendBlocked={historyPending}
-                    placeholder={placeholder}
-                    chip={null}
-                  />
-                ) : (
-                  <SeededComposer
-                    sendBlocked={historyPending}
-                    placeholder={placeholder}
-                    target={seedTarget}
-                  />
+                <AuiIf condition={isNewChatView}>
+                  <Welcome />
+                </AuiIf>
+                <AuiIf condition={isHistoryLoadingView}>
+                  <ThreadHistorySkeleton />
+                </AuiIf>
+
+                {FeedHeader && (
+                  <div
+                    data-slot="aui_feed-header"
+                    className="mb-6 flex flex-col gap-y-3 px-2"
+                  >
+                    <FeedHeader />
+                  </div>
                 )}
+
+                <ThreadLoadEarlier />
+
+                <div
+                  data-slot="aui_message-group"
+                  className="mb-14 flex flex-col gap-y-6 empty:hidden"
+                >
+                  <ThreadPrimitive.Messages>
+                    {() => <ThreadMessage />}
+                  </ThreadPrimitive.Messages>
+                </div>
               </>
             )}
-            {!historyPending && (
-              <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
-                <ThreadSuggestions />
-              </AuiIf>
-            )}
-          </ThreadPrimitive.ViewportFooter>
-        </div>
-      </ThreadPrimitive.Viewport>
-    </ThreadPrimitive.Root>
+
+            <ThreadPrimitive.ViewportFooter
+              className={cn(
+                'aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]',
+                // Below 768 px the composer stays at the bottom even in an empty thread (D-10).
+                isEmpty
+                  ? 'max-md:sticky max-md:bottom-0 max-md:mt-auto'
+                  : 'sticky bottom-0 mt-auto rounded-t-(--composer-radius)',
+              )}
+            >
+              <ThreadScrollToBottom />
+              {!historyPending && <ThreadFollowupSuggestions />}
+              {DeletedNotice ? (
+                <DeletedNotice />
+              ) : training?.run != null ? (
+                <TestRunFooter
+                  run={training.run}
+                  composer={
+                    <>
+                      <FeedTray />
+                      <Composer
+                        sendBlocked={historyPending}
+                        placeholder={t(
+                          training.run.phase === 'result'
+                            ? 'placeholderResult'
+                            : 'placeholderDialog',
+                        )}
+                        chip={null}
+                      />
+                    </>
+                  }
+                />
+              ) : training !== null ? (
+                <TrainingLine
+                  root={training.isRoot}
+                  testRun={training.testRun}
+                />
+              ) : (
+                <>
+                  <FeedTray />
+                  {seedTarget === undefined ? (
+                    <Composer
+                      sendBlocked={historyPending}
+                      placeholder={placeholder}
+                      chip={null}
+                    />
+                  ) : (
+                    <SeededComposer
+                      sendBlocked={historyPending}
+                      placeholder={placeholder}
+                      target={seedTarget}
+                    />
+                  )}
+                </>
+              )}
+              {!historyPending && (
+                <AuiIf
+                  condition={(s) => isNewChatView(s) && s.composer.isEmpty}
+                >
+                  <ThreadSuggestions />
+                </AuiIf>
+              )}
+            </ThreadPrimitive.ViewportFooter>
+          </div>
+        </ThreadPrimitive.Viewport>
+      </ThreadPrimitive.Root>
+    </SearchMarkProvider>
   );
 };
 
@@ -507,6 +544,38 @@ const SourceCaption: FC<{ text: string; className?: string }> = ({
   </p>
 );
 
+/** SH-07: «По расписанию «{имя}»» with the clock, the name a link to the schedule; «· вручную» for «Запустить сейчас». */
+const ScheduleCaption: FC<{ mark: ScheduleMark; className?: string }> = ({
+  mark,
+  className,
+}) => {
+  const t = useTranslations('chat');
+  return (
+    <p
+      data-slot="aui_message-source"
+      className={cn(
+        'text-muted-foreground flex items-center gap-1 text-xs leading-4 font-medium',
+        className,
+      )}
+    >
+      <ClockIcon aria-hidden className="size-3.5 shrink-0" />
+      <span>
+        {t.rich(mark.manual ? 'caption.scheduleManual' : 'caption.schedule', {
+          name: mark.name,
+          link: (chunks) => (
+            <ShellLink
+              href={schedulePath(mark.scheduleId)}
+              className="hover:text-foreground underline underline-offset-2"
+            >
+              {chunks}
+            </ShellLink>
+          ),
+        })}
+      </span>
+    </p>
+  );
+};
+
 const RunCardPart: DataMessagePartComponent<RunCardPartData> = ({ data }) => (
   <RunCard data={data} />
 );
@@ -572,15 +641,22 @@ const FEED_PART_COMPONENTS = {
  * 16 px above and below. The feed spaces messages 24 px apart, so a block pulls 8 px in on each side;
  * a block right after another drops its top pull, so two blocks also stand 16 px apart.
  */
-const FeedPartMessage: FC = () => (
-  <MessagePrimitive.Root
-    data-slot="aui_feed-part"
-    data-feed-block=""
-    className="fade-in animate-in relative -my-2 duration-150 motion-reduce:animate-none [[data-feed-block]+&]:mt-0"
-  >
-    <MessagePrimitive.Parts components={FEED_PART_COMPONENTS} />
-  </MessagePrimitive.Root>
-);
+const FeedPartMessage: FC = () => {
+  const markProps = useMessageMarkProps();
+  return (
+    <MessagePrimitive.Root
+      data-slot="aui_feed-part"
+      data-feed-block=""
+      {...markProps}
+      className={cn(
+        'fade-in animate-in relative -my-2 duration-150 motion-reduce:animate-none [[data-feed-block]+&]:mt-0',
+        SEARCH_MARK_CLASS,
+      )}
+    >
+      <MessagePrimitive.Parts components={FEED_PART_COMPONENTS} />
+    </MessagePrimitive.Root>
+  );
+};
 
 type VoiceRunPosition = 'single' | 'start' | 'middle' | 'end';
 
@@ -607,14 +683,17 @@ const SpokenMessage: FC = () => {
       s.message.role === 'assistant' && s.message.status?.type === 'running',
   );
   const opensExchange = position === 'start' || position === 'single';
+  const markProps = useMessageMarkProps();
 
   return (
     <MessagePrimitive.Root
       data-slot="aui_spoken-message-root"
       data-role={role}
       data-voice-run={position}
+      {...markProps}
       className={cn(
         'aui-spoken-message bg-muted/40 mx-2 px-3 py-1.5 [contain-intrinsic-size:auto_48px] [content-visibility:auto]',
+        SEARCH_MARK_CLASS,
         position === 'single' && 'rounded-xl py-2',
         position === 'start' && 'rounded-t-xl pt-2',
         position === 'middle' && '-mt-6',
@@ -1285,6 +1364,7 @@ const AssistantMessage: FC = () => {
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
   const isBlank = useAuiState(isBlankReply);
   const caption = useSourceCaption();
+  const markProps = useMessageMarkProps();
 
   const ACTION_BAR_PT = 'pt-1.5';
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
@@ -1294,9 +1374,16 @@ const AssistantMessage: FC = () => {
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
+      {...markProps}
       className={cn(
         'group/message fade-in slide-in-from-bottom-1 animate-in relative duration-150 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]',
-        !isBlank && '-mb-7.5 pb-7.5',
+        // Marked: the band ends 16 px under the action bar, 8 px short of the next message (the feed's 24 px gap), as
+        // it starts 8 px above the text; padding and margin still cancel out, so the layout stays.
+        !isBlank &&
+          '-mb-7.5 pb-7.5 data-search-target:-mb-4 data-search-target:pb-4',
+        SEARCH_MARK_CLASS,
+        // The band reaches 8 px above the text, as the card marks have; the negative margin keeps the layout.
+        'data-search-target:-mt-2 data-search-target:pt-2',
       )}
     >
       {isBlank ? (
@@ -1534,6 +1621,10 @@ function isChipRecord(value: unknown): value is ChipRecord {
   return ChipRecordSchema.safeParse(value).success;
 }
 
+function isScheduleMark(value: unknown): value is ScheduleMark {
+  return ScheduleMarkSchema.safeParse(value).success;
+}
+
 const UserMessage: FC = () => {
   const { TaskBrief } = useContext(ThreadComponentsContext);
   const isTask = useAuiState((s) => feedKindOf(s) === 'task');
@@ -1542,6 +1633,11 @@ const UserMessage: FC = () => {
     (s): unknown => s.message.metadata.custom['record'],
   );
   const record = isChipRecord(sentRecord) ? sentRecord : null;
+  // schedules SH-07: the schedule that sent the message (`FeedMessageMeta.schedule`).
+  const sentBy = useAuiState(
+    (s): unknown => s.message.metadata.custom['schedule'],
+  );
+  const schedule = isScheduleMark(sentBy) ? sentBy : null;
   // create-and-test CT-03: the test run's description is sent with the action chip, without «✕».
   const testRun = useAuiState(
     (s) => s.message.metadata.custom['testRun'] === true,
@@ -1551,17 +1647,29 @@ const UserMessage: FC = () => {
   const t = useTranslations('chat');
   const sourceCaptionText = useSourceCaption();
   const caption = Brief ? t('caption.brief') : sourceCaptionText;
+  const markProps = useMessageMarkProps();
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
-      className="group/message fade-in slide-in-from-bottom-1 animate-in motion-reduce:animate-none grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
+      className={cn(
+        'group/message fade-in slide-in-from-bottom-1 animate-in motion-reduce:animate-none grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2',
+        SEARCH_MARK_USER_ROOT_CLASS,
+      )}
       data-role="user"
+      {...markProps}
     >
-      {caption !== null && (
-        <SourceCaption
-          text={caption}
+      {schedule !== null && Brief === undefined ? (
+        <ScheduleCaption
+          mark={schedule}
           className="col-start-2 -mb-1 justify-self-end"
         />
+      ) : (
+        caption !== null && (
+          <SourceCaption
+            text={caption}
+            className="col-start-2 -mb-1 justify-self-end"
+          />
+        )
       )}
       {record !== null && (
         <RecordLabel
@@ -1581,7 +1689,12 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
+        <div
+          className={cn(
+            'aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden',
+            SEARCH_MARK_USER_BUBBLE_CLASS,
+          )}
+        >
           {Brief ? (
             <Brief />
           ) : (

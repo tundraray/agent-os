@@ -37,3 +37,6 @@
 - [design-library.md](../../features/custom-agents/design-library.md) — поиск по видимости, `RECORD_READ_ONLY`, маршруты панели под `@AdminOnly()` (KD-2)
 - [design-agents.md](../../features/data-model/design-agents.md) — видимость с агентами по умолчанию и без удалённых; поиск по имени от имени владельца, невидимое имя отвечает как несуществующее (KD-5, KD-7)
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — документы под маршрутами беседы с проверкой её владельца; чужая беседа отвечает как несуществующая (KD-7)
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — владелец расписания из `req.user`, чужое расписание отвечает 404 `SCHEDULE_NOT_FOUND`; беседа и агент тела проверяются от имени владельца
+- [design-conversation-search.md](../../features/schedules-search-memory/design-conversation-search.md) — сотрудник поиска только из сеанса; чужое и удалённое отбрасывает сам запрос, курсор несёт только позицию и режим запроса (KD-4)
+- [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — история, возврат и стирание записи проверяют право удаления: `LibraryService.memoryTarget` или сотрудник сеанса (KD-7)

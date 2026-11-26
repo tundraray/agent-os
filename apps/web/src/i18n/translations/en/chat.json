@@ -7,7 +7,9 @@
     "fromAgent": "From agent “{sender}”",
     "fromAgentUnnamed": "From agent",
     "report": "Report",
-    "brief": "Brief"
+    "brief": "Brief",
+    "schedule": "On the schedule “<link>{name}</link>”",
+    "scheduleManual": "On the schedule “<link>{name}</link>” · manual run"
   },
   "voice": {
     "header": "Voice conversation",
@@ -106,6 +108,8 @@
     "createAgentHint": "Describe the agent, the chat will build it",
     "connections": "Connections",
     "connectionsHint": "Service accounts your agents work with",
+    "schedule": "Schedule",
+    "scheduleHint": "The agent does the task by itself at the set time",
     "testRun": {
       "name": "Create and check an agent",
       "hint": "The trainer will build the agent and tests · up to {cap}",

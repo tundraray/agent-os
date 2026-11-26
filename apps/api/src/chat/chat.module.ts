@@ -5,10 +5,12 @@ import { LibraryModule } from '../library/library.module';
 import { AgentControlService } from './agent-control.service';
 import { AgentsController } from './agents.controller';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
+import { ConversationSearchService } from './conversation-search.service';
 import { ConversationsService } from './conversations.service';
 import { DecisionsController } from './decisions.controller';
 import { EventsController } from './events.controller';
 import { LiveHub } from './live-hub';
+import { SearchController } from './search.controller';
 import { SpendController } from './spend.controller';
 import { ThreadsController } from './threads.controller';
 import { TitleService } from './title.service';
@@ -28,10 +30,12 @@ import { TitleService } from './title.service';
     DecisionsController,
     SpendController,
     EventsController,
+    SearchController,
   ],
   providers: [
     TitleService,
     ConversationsService,
+    ConversationSearchService,
     { provide: AGENT_LIST_PAGE_SIZE, useValue: AGENT_PAGE_SIZE },
     AgentControlService,
     LiveHub,

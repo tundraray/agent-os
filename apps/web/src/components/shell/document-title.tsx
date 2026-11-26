@@ -10,7 +10,7 @@ import {
 } from '@/hooks/use-document-title';
 import { useFeedSelector } from '@/lib/feed/feed-context';
 import { selectAgent } from '@/lib/feed/to-feed';
-import { parseShellRoute } from '@/lib/shell-route';
+import { isPageRoute, parseShellRoute } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { useMainViewState } from './main-view';
 
@@ -19,7 +19,7 @@ import { useMainViewState } from './main-view';
  * TH-06 → «Беседа не найдена — Agent OS»; TH-07 → «Agent OS»; the open thread → «{Название} — Agent OS»
  * or «Новая беседа — Agent OS». `/agents` → «Агенты — Agent OS» (MC-4); an agent page → «{название} —
  * Agent OS» (MC-8), «Агент не найден — Agent OS» (MC-15), «Agent OS» on a failed read. `/account` →
- * «Мой доступ — Agent OS» (enterprise-access MC-7). A panel or library address is titled by its own screen
+ * «Мой доступ — Agent OS» (enterprise-access MC-7). A panel, library or schedules address is titled by its own screen
  * (`PageHeader`, `AdminGate`), which knows the record's name (custom-agents MC-1, MC-7, MC-18). While the URL thread or agent is still
  * resolving the previous title stays. Renders nothing; on an agent page it reads the agent's store from
  * `AgentFeedProvider`.
@@ -38,7 +38,7 @@ export function DocumentTitle() {
   const title = ((): string | undefined => {
     if (route.kind === 'agents') return pageTitle(t('page.agents'));
     if (route.kind === 'account') return pageTitle(t('page.account'));
-    if (route.kind === 'admin' || route.kind === 'library') return undefined;
+    if (isPageRoute(route)) return undefined;
     if (route.kind === 'agent') {
       if (agentLoadError === 'not_found')
         return pageTitle(t('notice.agentNotFound.title'));

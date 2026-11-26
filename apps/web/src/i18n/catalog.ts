@@ -9,6 +9,7 @@ import enFormats from './translations/en/formats.json';
 import enLibrary from './translations/en/library.json';
 import enLogin from './translations/en/login.json';
 import enPages from './translations/en/pages.json';
+import enSchedules from './translations/en/schedules.json';
 import enShell from './translations/en/shell.json';
 import enTools from './translations/en/tools.json';
 import ruAccount from './translations/ru/account.json';
@@ -22,6 +23,7 @@ import ruFormats from './translations/ru/formats.json';
 import ruLibrary from './translations/ru/library.json';
 import ruLogin from './translations/ru/login.json';
 import ruPages from './translations/ru/pages.json';
+import ruSchedules from './translations/ru/schedules.json';
 import ruShell from './translations/ru/shell.json';
 import ruTools from './translations/ru/tools.json';
 import type { useTranslations } from 'next-intl';
@@ -43,6 +45,7 @@ const en = {
   library: enLibrary,
   login: enLogin,
   pages: enPages,
+  schedules: enSchedules,
   shell: enShell,
   tools: enTools,
 };
@@ -59,6 +62,9 @@ export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
 export type ErrorsTranslator = ReturnType<typeof useTranslations<'errors'>>;
 export type FormatsTranslator = ReturnType<typeof useTranslations<'formats'>>;
 export type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
+export type SchedulesTranslator = ReturnType<
+  typeof useTranslations<'schedules'>
+>;
 export type ModelsTranslator = ReturnType<
   typeof useTranslations<'admin.models'>
 >;
@@ -91,6 +97,7 @@ const ru: Messages = {
   library: ruLibrary,
   login: ruLogin,
   pages: ruPages,
+  schedules: ruSchedules,
   shell: ruShell,
   tools: ruTools,
 };

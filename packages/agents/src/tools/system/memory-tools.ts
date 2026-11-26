@@ -1,10 +1,12 @@
 import type { Logger } from '@agent-os/common';
-import { MEMORY_TOOLS } from '@agent-os/contracts';
-import type { MemoriesRepository, MemoryOwner } from '@agent-os/db';
+import { MEMORY_TOOLS, MemoryVersionNumberSchema } from '@agent-os/contracts';
+import type { CurrentMemoryRow, MemoryOwner } from '@agent-os/db';
 import { z } from 'zod';
 
 import { descriptionLine } from '../../chat-listing';
+import type { MemoryChange, MemoryRecords } from '../../store/memory-records';
 import type { InCommitAgentTool, ToolCaller, ToolRunResult } from '../tool';
+import { memoryCheckReason } from './memory-check';
 
 const [REMEMBER_TOOL, READ_MEMORY_TOOL, FORGET_TOOL] = MEMORY_TOOLS;
 
@@ -57,30 +59,51 @@ const RecordArgsSchema = z.object({
 });
 type RecordArgs = z.infer<typeof RecordArgsSchema>;
 
+const VersionSchema = MemoryVersionNumberSchema.describe(
+  'The version number of the record you read with read_memory or got from remember',
+);
+
 const RememberArgsSchema = RecordArgsSchema.extend({
   text: z.string().trim().min(1).max(4000).describe('The fact itself'),
+  version: VersionSchema.optional(),
 });
 type RememberArgs = z.infer<typeof RememberArgsSchema>;
 
+const ForgetArgsSchema = RecordArgsSchema.extend({ version: VersionSchema });
+type ForgetArgs = z.infer<typeof ForgetArgsSchema>;
+
 const MEMORY_RULES = `One record holds one fact. Never store secrets. ${SHARED_AGENT_MEMORY}`;
+
+const CHANGED_RULE =
+  'If the call is refused with memory_changed, the record has changed since you read it: decide again from the ' +
+  'current version and text the refusal carries.';
 
 const REMEMBER_DESCRIPTION = [
   'Save a fact to your memory, kept for your later runs. Its description is one line saying what is inside.',
-  'To correct a record, call remember with the same scope and description: its text is replaced.',
+  'To create a record, call remember without a version.',
+  'To correct a record, first read it with read_memory, then call remember with the same scope and description',
+  'and the version you read: its text is replaced.',
+  CHANGED_RULE,
   MEMORY_RULES,
 ].join(' ');
 
 const READ_DESCRIPTION = [
-  'Read the text of a record of your memory index by its scope and description.',
+  'Read the version number and the text of a record of your memory index by its scope and description.',
+  'Pass that version to remember or forget to change the record.',
   'Memory is a hint where to look, not a source of the answer.',
 ].join(' ');
 
 const FORGET_DESCRIPTION = [
-  'Delete a record of your memory by its scope and description. Delete a record as soon as you see it is wrong.',
+  'Delete a record of your memory by its scope, description and the version you read with read_memory.',
+  'Delete a record as soon as you see it is wrong.',
+  CHANGED_RULE,
   MEMORY_RULES,
 ].join(' ');
 
-/** The log fields of a call's arguments, as the model wrote them: the scope and the lengths, never the texts. */
+/**
+ * The log fields of a call's arguments, as the model wrote them: the scope, the lengths and the version, never the
+ * texts.
+ */
 function loggedRecordArgs(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -90,6 +113,7 @@ function loggedRecordArgs(
     scope: ScopeSchema.safeParse(args.scope).data ?? null,
     descriptionLength: lengthOf(args.description),
     textLength: lengthOf(args.text),
+    version: typeof args.version === 'number' ? args.version : null,
   };
 }
 
@@ -105,27 +129,74 @@ const NO_RECORD: ToolRunResult = {
   text: 'There is no such record',
 };
 
+const NO_RECORD_TO_CHANGE: ToolRunResult = {
+  kind: 'done',
+  outcome: 'empty',
+  text: 'There is no such record; to create it, call remember without a version.',
+};
+
+const CHECK_TEXTS = {
+  looks_like_secret:
+    'Not saved: the description or the text looks like a secret. Never store secrets in memory.',
+  looks_like_instruction:
+    'Not saved: the description or the text looks like an instruction to a model. Store facts, not orders.',
+} as const;
+
+/** The refusal of a change from a version the record is no longer on: its current version and text. */
+function changedResult(current: CurrentMemoryRow): ToolRunResult {
+  return {
+    kind: 'refused',
+    reason: 'memory_changed',
+    text:
+      current.text === null
+        ? `Not changed: the record was deleted at version ${current.version}. To create it again, call remember without a version.`
+        : `Not changed: the record is at version ${current.version} now. Decide again from its current text:\n${current.text}`,
+  };
+}
+
+/** The tool result of a change of a record; `missing` is answered with `noRecord`. */
+function changeResult(
+  change: MemoryChange,
+  noRecord: ToolRunResult,
+  writtenText: (version: number) => string,
+): ToolRunResult {
+  switch (change.kind) {
+    case 'written':
+      return {
+        kind: 'done',
+        outcome: 'success',
+        text: writtenText(change.version),
+      };
+    case 'changed':
+      return changedResult(change.current);
+    case 'missing':
+      return noRecord;
+  }
+}
+
 /**
- * The three memory tools (design-memory.md KD-2, Contract «Инструменты модели»). Each runs in the step's commit,
- * so a record is written with the call's `tool_result` and a replayed step writes the same record again (the key
- * is owner and description). Whose memory it is comes from `memoryOf`, never from the arguments. The description
- * and the text are masked before they are written or looked up; the log names the scope and lengths only.
+ * The three memory tools (design-memory.md KD-2; memory-hygiene KD-2, KD-4, Contract «Инструменты модели»). Each
+ * runs in the step's commit, so a change is written with the call's `tool_result`; a replayed step changes from the
+ * same version, since the lost attempt wrote nothing. A change goes by the version the model read, through
+ * `MemoryRecords`. Whose memory it is comes from `memoryOf`, never from the arguments. The description and the text
+ * are masked, then `remember` checks them against the bb patterns before writing; the log names the scope, the
+ * lengths and the version only.
  */
 export function createMemoryTools(deps: {
-  readonly memoryRows: MemoriesRepository;
+  readonly records: MemoryRecords;
   readonly maskSecrets: (text: string) => string;
   readonly logger: Logger;
 }): [
   InCommitAgentTool<RememberArgs>,
   InCommitAgentTool<RecordArgs>,
-  InCommitAgentTool<RecordArgs>,
+  InCommitAgentTool<ForgetArgs>,
 ] {
   const logger = deps.logger.child({ service: 'agents.memory' });
-  const { memoryRows, maskSecrets } = deps;
+  const { records, maskSecrets } = deps;
 
   /**
    * Runs a call on the caller's memory: refused without memory. In a training tree a change is recorded, not
-   * written, and answered with `trainingText` as a real one would be; scope user there has no record.
+   * written or checked, and answered with `trainingText` as a real one would be; scope user there has no record.
    */
   async function onMemory(
     tool: string,
@@ -185,16 +256,24 @@ export function createMemoryTools(deps: {
         { caller, callId, args },
         (description) => `Saved: ${description}`,
         async (owner, description) => {
-          const created = await memoryRows.remember(
-            owner,
-            description,
-            maskSecrets(args.text),
+          const text = maskSecrets(args.text);
+          const unsafe =
+            memoryCheckReason(description) ?? memoryCheckReason(text);
+          if (unsafe !== null)
+            return {
+              kind: 'refused',
+              reason: unsafe,
+              text: CHECK_TEXTS[unsafe],
+            };
+          const change =
+            args.version === undefined
+              ? await records.create(owner, description, text)
+              : await records.change(owner, description, text, args.version);
+          return changeResult(
+            change,
+            NO_RECORD_TO_CHANGE,
+            (version) => `Saved: ${description} (version ${version})`,
           );
-          return {
-            kind: 'done',
-            outcome: 'success',
-            text: `${created ? 'Saved' : 'Updated'}: ${description}`,
-          };
         },
       ),
   };
@@ -211,19 +290,23 @@ export function createMemoryTools(deps: {
         { caller, callId, args },
         null,
         async (owner, description) => {
-          const row = await memoryRows.read(owner, description);
+          const record = await records.read(owner, description);
           // The tool result reaches the model inside the data envelope (`provider-messages.ts`).
-          return row === undefined
+          return record === undefined
             ? NO_RECORD
-            : { kind: 'done', outcome: 'success', text: row.text };
+            : {
+                kind: 'done',
+                outcome: 'success',
+                text: `Version ${record.version}\n${record.text}`,
+              };
         },
       ),
   };
 
-  const forget: InCommitAgentTool<RecordArgs> = {
+  const forget: InCommitAgentTool<ForgetArgs> = {
     name: FORGET_TOOL,
     description: FORGET_DESCRIPTION,
-    argsSchema: RecordArgsSchema,
+    argsSchema: ForgetArgsSchema,
     mode: 'in_commit',
     loggedArgs: loggedRecordArgs,
     execute: ({ args, caller, callId }) =>
@@ -232,13 +315,11 @@ export function createMemoryTools(deps: {
         { caller, callId, args },
         (description) => `Deleted: ${description}`,
         async (owner, description) =>
-          (await memoryRows.forget(owner, description))
-            ? {
-                kind: 'done',
-                outcome: 'success',
-                text: `Deleted: ${description}`,
-              }
-            : NO_RECORD,
+          changeResult(
+            await records.forget(owner, description, args.version),
+            NO_RECORD,
+            () => `Deleted: ${description}`,
+          ),
       ),
   };
 

@@ -26,6 +26,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
 import { focusAfterNewChat, focusShellTarget } from '@/lib/focus';
+import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
 import { logger } from '@/lib/logger';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { forkRefusalText } from '@/lib/library/library-errors';
@@ -142,6 +143,9 @@ const MORE_SKELETON_ROW_WIDTHS = ['68%', '52%', '80%'] as const;
 
 /** SB-10 starts the next page this far before it scrolls into view (UXRD 6.8 Default). */
 const AUTO_LOAD_ROOT_MARGIN = '0px 0px 200px 0px';
+
+/** The shortest gap between two re-reads of page 1 by `tree` notes (design-web.md, KD-2). */
+const TREE_RELOAD_INTERVAL_MS = 1000;
 
 /** The sidebar's scroll container: the observer's root, so the 200 px margin applies to its edge. */
 const SIDEBAR_SCROLL_SELECTOR = '[data-sidebar="content"]';
@@ -536,6 +540,25 @@ export function ThreadHistoryList() {
     return () =>
       document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [aui, onePageLoaded]);
+
+  // A conversation started without this tab's send (a schedule run, another tab) shows itself by a `tree` note
+  // whose id the list does not hold: page 1 is re-read then, on the same terms as coming back to the tab.
+  const isUnlisted = useEffectEvent(
+    (threadId: string) => !entries.some((entry) => entry.remoteId === threadId),
+  );
+  useEffect(() => {
+    if (!onePageLoaded) return;
+    const reads = createCoalescedRunner(() => aui.threads.reload(), {
+      minIntervalMs: TREE_RELOAD_INTERVAL_MS,
+    });
+    const unsubscribe = services.live.onTree((threadId) => {
+      if (isUnlisted(threadId)) void reads.request();
+    });
+    return () => {
+      unsubscribe();
+      reads.cancel();
+    };
+  }, [aui, services, onePageLoaded]);
 
   useEffect(() => {
     if (!focusOnRoot.current || pathname !== '/') return;

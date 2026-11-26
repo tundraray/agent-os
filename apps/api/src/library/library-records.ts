@@ -166,10 +166,9 @@ export class LibraryRecords {
 
   /** Who looks: enabled or not and his roles now, read at every operation (KD-2). */
   async viewerOf(id: string): Promise<LibraryViewer> {
-    const [active, roleIds] = await Promise.all([
-      this.identity.isActive(id),
-      this.identity.rolesOf(id),
-    ]);
+    // One after another: inside a caller's transaction (a schedule's chip) every read shares one client.
+    const active = await this.identity.isActive(id);
+    const roleIds = await this.identity.rolesOf(id);
     return { id, active, roleIds };
   }
 
@@ -270,17 +269,16 @@ export class LibraryRecords {
   private async named(
     stored: readonly StoredRecord[],
   ): Promise<LibraryRecord[]> {
-    const [roles, users] = await Promise.all([
-      this.identity.roleNames(
-        stored.flatMap((record) => record.holders.roleIds),
-      ),
-      this.identity.userNames(
-        stored.flatMap((record) => [
-          ...record.holders.userIds,
-          ...(record.ownerId === null ? [] : [record.ownerId]),
-        ]),
-      ),
-    ]);
+    // One after another, as `viewerOf`: a schedule's chip resolves its record inside the trigger's transaction.
+    const roles = await this.identity.roleNames(
+      stored.flatMap((record) => record.holders.roleIds),
+    );
+    const users = await this.identity.userNames(
+      stored.flatMap((record) => [
+        ...record.holders.userIds,
+        ...(record.ownerId === null ? [] : [record.ownerId]),
+      ]),
+    );
     const roleById = placedById(roles);
     const userById = placedById(users);
     return stored.map((record) => {

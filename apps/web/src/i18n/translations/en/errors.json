@@ -7,7 +7,9 @@
     "activate": "Couldn't activate: <server>{text}</server>",
     "test_run": "Couldn't start: <server>{text}</server>",
     "take": "Couldn't take the agent: <server>{text}</server>",
-    "send": "Couldn't send: <server>{text}</server>"
+    "send": "Couldn't send: <server>{text}</server>",
+    "restore": "Couldn't restore: <server>{text}</server>",
+    "action": "Couldn't do it: <server>{text}</server>"
   },
   "noConnection": {
     "save": "Couldn't save: no connection to the server",
@@ -17,7 +19,13 @@
     "activate": "Couldn't activate: no connection to the server",
     "test_run": "Couldn't start: no connection to the server",
     "take": "Couldn't take the agent: no connection to the server",
-    "send": "Couldn't send: no connection to the server"
+    "send": "Couldn't send: no connection to the server",
+    "restore": "Couldn't restore: no connection to the server",
+    "action": "Couldn't do it: no connection to the server"
+  },
+  "schedules": {
+    "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
+    "conversationDeleted": "The conversation was deleted — replies will go to a new conversation. Save again."
   },
   "library": {
     "noPastTasks": "The agent has no finished tasks to train on yet.",
@@ -101,7 +109,10 @@
     "run_limit": "Call limit reached",
     "read_only": "The record can't be changed",
     "shared": "The record is open to roles",
-    "repeated_call": "The same call was repeated"
+    "repeated_call": "The same call was repeated",
+    "looks_like_secret": "Looks like a secret — not saved",
+    "looks_like_instruction": "Looks like an injected instruction — not saved",
+    "memory_changed": "The record was already changed — the agent got its new text"
   },
   "refusalWithModel": {
     "model_not_allowed": "Model not allowed: {model}",

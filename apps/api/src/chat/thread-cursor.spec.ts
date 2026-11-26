@@ -78,6 +78,10 @@ describe('encodeThreadCursor / decodeThreadCursor', () => {
     { name: 'JSON null', cursor: b64('null') },
     { name: 'u is a string', cursor: b64('{"u":"1","i":"a"}') },
     { name: 'u is fractional', cursor: b64('{"u":1.5,"i":"a"}') },
+    {
+      name: 'u is outside the Date range',
+      cursor: b64('{"u":8640000000000001,"i":"a"}'),
+    },
     { name: 'i is missing', cursor: b64('{"u":1}') },
     { name: 'i is empty', cursor: b64('{"u":1,"i":""}') },
     { name: 'extra field', cursor: b64('{"u":1,"i":"a","x":1}') },

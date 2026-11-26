@@ -1,5 +1,9 @@
 import type { Logger } from '@agent-os/common';
-import { CHAT_BUILTIN_KEY, CHAT_TASK_TYPE } from '@agent-os/contracts';
+import {
+  CHAT_BUILTIN_KEY,
+  CHAT_TASK_TYPE,
+  THREAD_TITLE_MAX_LENGTH,
+} from '@agent-os/contracts';
 import {
   ConversationsRepository,
   ConversationTasksRepository,
@@ -117,16 +121,27 @@ export class StartOperations {
     };
   }
 
+  /**
+   * Starts a conversation's root — a chat. A schedule's start carries its mark, which goes to the root's `task`
+   * entry, and the title, written in the transaction that creates the root (schedules KD-5, KD-6).
+   */
   start({
     agentId,
     ownerId,
     prompt,
     description,
     record,
+    schedule,
+    title,
   }: StartRequest): Promise<{ agentId: string }> {
     return this.logged(
       'start',
-      { agentId: agentId ?? null, ownerId, recordId: record?.id ?? null },
+      {
+        agentId: agentId ?? null,
+        ownerId,
+        recordId: record?.id ?? null,
+        scheduleId: schedule?.scheduleId ?? null,
+      },
       async () => {
         const started = await this.startRun(
           ownerId,
@@ -140,8 +155,22 @@ export class StartOperations {
             prompt,
             description,
             ...(record === undefined ? {} : { record }),
+            ...(schedule === undefined ? {} : { schedule }),
           },
-          agentId,
+          {
+            ...(agentId === undefined ? {} : { agentId }),
+            ...(title === undefined
+              ? {}
+              : {
+                  after: async (rootId: string) => {
+                    await this.sessionRows.titleRootIfEmpty(
+                      rootId,
+                      ownerId,
+                      title.slice(0, THREAD_TITLE_MAX_LENGTH),
+                    );
+                  },
+                }),
+          },
         );
         started.done(created.agentId, created.agentId);
         return created;
@@ -258,6 +287,9 @@ export class StartOperations {
             ...(first.content.record === null
               ? {}
               : { record: first.content.record }),
+            ...(first.content.schedule === null
+              ? {}
+              : { schedule: first.content.schedule }),
           },
           after: async (forkId) => {
             await copyHistory(this.copying, {
@@ -344,12 +376,19 @@ export class StartOperations {
     };
   }
 
-  /** Creates a root — a chat: of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`. */
+  /**
+   * Creates a root — a chat: of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`;
+   * `after` writes in the same transaction.
+   */
   private createRoot(
     ownerId: string,
     start: SessionStart,
-    agentId?: string,
+    options: {
+      readonly agentId?: string;
+      readonly after?: (rootId: string) => Promise<void>;
+    } = {},
   ): Promise<{ agentId: string }> {
+    const { agentId, after } = options;
     return createAgent(this.creation, {
       task: {
         type: CHAT_TASK_TYPE,
@@ -358,6 +397,7 @@ export class StartOperations {
       },
       placeOf: (taskId) => ({ rootId: taskId, depth: 0 }),
       start,
+      ...(after === undefined ? {} : { after }),
     });
   }
 

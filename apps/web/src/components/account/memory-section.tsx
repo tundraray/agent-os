@@ -22,6 +22,9 @@ export function MemorySection() {
         memory={memory}
         empty={{ title: t('empty') }}
         remove={accessApi.deleteMemory}
+        history={accessApi.memoryHistory}
+        revert={accessApi.revertMemory}
+        author="you"
       />
     </section>
   );

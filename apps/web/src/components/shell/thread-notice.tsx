@@ -15,6 +15,7 @@ import {
   adminPath,
   AGENTS_PATH,
   libraryPath,
+  schedulesPath,
   type AdminSection,
 } from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
@@ -40,7 +41,11 @@ export type ThreadNoticeProps =
    */
   | { variant: 'library-not-found' }
   /** RV-01 «Ошибка» (MC-6): a library record page could not be read. */
-  | { variant: 'library-load-error'; onRetry: () => void };
+  | { variant: 'library-load-error'; onRetry: () => void }
+  /** schedules SH-08 (MC-13): a foreign, deleted or missing schedule. */
+  | { variant: 'schedule-not-found' }
+  /** schedules SH-05 «Error» (MC-8): the schedule page could not be read. */
+  | { variant: 'schedule-load-error'; onRetry: () => void };
 
 type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
@@ -55,12 +60,14 @@ const COPY = {
   'record-not-found': 'recordNotFound',
   'library-not-found': 'libraryNotFound',
   'library-load-error': 'libraryLoadError',
+  'schedule-not-found': 'scheduleNotFound',
+  'schedule-load-error': 'scheduleLoadError',
 } as const satisfies Record<ThreadNoticeProps['variant'], string>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
  * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3), the panel with MC-19 and MC-34,
- * a library record page with MC-6 (RV-02 and its load error).
+ * a library record page with MC-6 (RV-02 and its load error), a schedule page with schedules MC-13 and MC-8.
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
 export function ThreadNotice(props: ThreadNoticeProps) {
@@ -124,7 +131,23 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Link>
         </NoticeScreen>
       );
+    case 'schedule-not-found':
+      return (
+        <NoticeScreen
+          variant={props.variant}
+          Icon={SearchXIcon}
+          tab={pageTitle(t('notice.scheduleNotFound.title'))}
+        >
+          <Link
+            href={schedulesPath()}
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
+            {t('notice.toSchedules')}
+          </Link>
+        </NoticeScreen>
+      );
     case 'library-load-error':
+    case 'schedule-load-error':
       return (
         <NoticeScreen variant={props.variant}>
           <Button className="pointer-coarse:h-11" onClick={props.onRetry}>

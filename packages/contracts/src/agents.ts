@@ -134,6 +134,11 @@ export const ToolRefusalReasonSchema = z.enum([
   'all_servers_not_allowed',
   'agent_not_visible',
   'version_conflict',
+  /** A memory write matched a pattern of the memory check (memory-hygiene KD-4, KD-5). */
+  'looks_like_secret',
+  'looks_like_instruction',
+  /** A memory record is already on another version (memory-hygiene KD-2). */
+  'memory_changed',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 

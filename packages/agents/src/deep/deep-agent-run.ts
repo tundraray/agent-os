@@ -1,4 +1,8 @@
-import type { AgentVersion, RunOrigin } from '@agent-os/contracts';
+import {
+  type AgentVersion,
+  type RunOrigin,
+  TASK_TOOL,
+} from '@agent-os/contracts';
 import { z } from 'zod';
 
 import type { AgentView } from '../agent-view';
@@ -6,7 +10,6 @@ import { AgentsError } from '../errors';
 import type { AgentHistoryEntry } from '../operations/agent-sessions';
 import type { ViewOperations } from '../operations/view-operations';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
-import { TASK_TOOL } from './deep-definition';
 
 /** One subagent of the run's team, as its version holds it. */
 export interface DeepAgentTeamMember {

@@ -7,13 +7,11 @@ import {
   NOTEPAD_TOOLS,
   SUBAGENT_MAX_RUNS_MAX,
   type Subagent,
+  TASK_TOOL,
 } from '@agent-os/contracts';
 
 import { descriptionLine } from '../chat-listing';
 import type { RunDefinition, RunStart } from '../start/run-definition';
-
-/** The tool a deep agent assigns work to its subagents with (deep-agents/design-task.md KD-6). */
-export const TASK_TOOL = 'task';
 
 /** A subagent writes in its deep agent's notepad but does not list past documents (KD-3). */
 const SUBAGENT_NOTEPAD_TOOLS = NOTEPAD_TOOLS.filter(
