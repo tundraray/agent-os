@@ -176,16 +176,29 @@ async function conversation(
   return id;
 }
 
-/** A conversation of `count` messages with `word` (the first is its `task`); returns it and the seqs of those entries. */
+/**
+ * A conversation of `count` messages with `word` (the first is its `task`); returns it and the seqs of those entries.
+ * `tag` keeps the texts unique in the suite: the scripted model finds a script by the task text.
+ */
 async function wordy(
   api: ChatApi,
   word: string,
   count: number,
+  tag: string,
 ): Promise<{ threadId: string; seqs: number[] }> {
-  const threadId = await conversation(api, `${word} план 1`, 'Принято 1.');
+  const threadId = await conversation(
+    api,
+    `${word} план 1 ${tag}`,
+    'Принято 1.',
+  );
   let view = await api.history(threadId);
   for (let n = 2; n <= count; n++) {
-    view = await ask(api, threadId, `${word} план ${n}`, `Принято ${n}.`);
+    view = await ask(
+      api,
+      threadId,
+      `${word} план ${n} ${tag}`,
+      `Принято ${n}.`,
+    );
   }
   const seqs = view.entries
     .filter((entry) => entry.kind === 'task' || entry.kind === 'user_message')
@@ -370,7 +383,7 @@ describe('Conversation search: everything is found, once, in order (UC-1); only 
       expect(marked(snippet.text, snippet.marks)).toEqual(['Отчёты']);
 
       // 21 messages: 20 newest, then the last one, no repeats
-      const quarterly = await wordy(api, QUARTERLY, 21);
+      const quarterly = await wordy(api, QUARTERLY, 21, 'альфа');
       const pages = await allFound(api, QUARTERLY);
       expect(pages.map((page) => page.length)).toEqual([20, 1]);
       const matches = pages.flat();
@@ -417,7 +430,7 @@ describe('Conversation search: everything is found, once, in order (UC-1); only 
       expect((await found(anna, SERVICE)).matches).toHaveLength(1);
 
       // Anna: more than a page of the word; Boris: one conversation with it
-      const kept = await wordy(anna, QUARTERLY, 21);
+      const kept = await wordy(anna, QUARTERLY, 21, 'бета');
       const borisThread = await conversation(
         boris,
         `${QUARTERLY} бюджет Бориса`,
