@@ -1,5 +1,5 @@
 {
-  "id": "31b15d41-482c-4dcc-adf9-5d1f622a2bbd",
+  "id": "10bf5cb4-1d65-4f96-850c-f8653eaf252e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -3851,39 +3851,9 @@
           "notNull": true,
           "default": false
         },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "skip_reason": {
-          "name": "skip_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "conversation_id": {
           "name": "conversation_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "unfinished_conversation_id": {
-          "name": "unfinished_conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "message_seq": {
-          "name": "message_seq",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "final_status": {
-          "name": "final_status",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3945,42 +3915,11 @@
           "method": "btree",
           "with": {}
         },
-        "schedule_runs_starting_idx": {
-          "name": "schedule_runs_starting_idx",
-          "columns": [
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"app\".\"schedule_runs\".\"outcome\" = 'starting'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "schedule_runs_conversation_idx": {
           "name": "schedule_runs_conversation_idx",
           "columns": [
             {
               "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "schedule_runs_unfinished_conversation_idx": {
-          "name": "schedule_runs_unfinished_conversation_idx",
-          "columns": [
-            {
-              "expression": "unfinished_conversation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4020,51 +3959,12 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "schedule_runs_unfinished_conversation_id_conversations_id_fk": {
-          "name": "schedule_runs_unfinished_conversation_id_conversations_id_fk",
-          "tableFrom": "schedule_runs",
-          "tableTo": "conversations",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "unfinished_conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "schedule_runs_outcome_check": {
-          "name": "schedule_runs_outcome_check",
-          "value": "\"app\".\"schedule_runs\".\"outcome\" in ('starting', 'started', 'skipped')"
-        },
-        "schedule_runs_skip_reason_check": {
-          "name": "schedule_runs_skip_reason_check",
-          "value": "\"app\".\"schedule_runs\".\"skip_reason\" in ('previous_run_unfinished', 'conversation_busy', 'owner_disabled', 'agent_unavailable', 'quota_exhausted', 'server_down')"
-        },
-        "schedule_runs_final_status_check": {
-          "name": "schedule_runs_final_status_check",
-          "value": "\"app\".\"schedule_runs\".\"final_status\" in ('working', 'awaiting_confirmation', 'completed', 'failed', 'stopped')"
-        },
-        "schedule_runs_skip_check": {
-          "name": "schedule_runs_skip_check",
-          "value": "(\"app\".\"schedule_runs\".\"skip_reason\" is not null) = (\"app\".\"schedule_runs\".\"outcome\" = 'skipped')"
-        },
-        "schedule_runs_conversation_check": {
-          "name": "schedule_runs_conversation_check",
-          "value": "(\"app\".\"schedule_runs\".\"conversation_id\" is not null) = (\"app\".\"schedule_runs\".\"outcome\" = 'started')"
-        },
-        "schedule_runs_final_status_started_check": {
-          "name": "schedule_runs_final_status_started_check",
-          "value": "\"app\".\"schedule_runs\".\"final_status\" is null or \"app\".\"schedule_runs\".\"outcome\" = 'started'"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "app.settings": {

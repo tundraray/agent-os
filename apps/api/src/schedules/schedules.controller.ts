@@ -180,8 +180,6 @@ export class SchedulesController {
       work: () => this.schedules.runNow(id, ownerId),
       outcomeOf: (run) => ({
         runId: run.id,
-        outcome: run.outcome,
-        skipReason: run.skipReason,
         conversationId: run.conversationId,
       }),
     });

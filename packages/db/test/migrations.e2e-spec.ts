@@ -33,9 +33,6 @@ import {
   ModelPurposeSchema,
   ProviderTypeSchema,
   RecordKindSchema,
-  ScheduleRunOutcomeSchema,
-  ScheduleRunStatusSchema,
-  ScheduleSkipReasonSchema,
   ScheduleStateSchema,
   ScheduleTargetSchema,
   SessionTaskStatusSchema,
@@ -265,13 +262,6 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         schedules_language_check: sorted(LanguageSchema.options),
         schedules_target_check: sorted(ScheduleTargetSchema.options),
         schedules_state_check: sorted(ScheduleStateSchema.options),
-        schedule_runs_outcome_check: sorted(ScheduleRunOutcomeSchema.options),
-        schedule_runs_skip_reason_check: sorted(
-          ScheduleSkipReasonSchema.options,
-        ),
-        schedule_runs_final_status_check: sorted(
-          ScheduleRunStatusSchema.options,
-        ),
       });
     });
   });

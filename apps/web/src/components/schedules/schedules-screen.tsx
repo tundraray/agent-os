@@ -19,23 +19,28 @@ import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { schedulePath } from '@/lib/shell-route';
 import {
   agentName,
-  LastRun,
   ruleLine,
   ScheduleStateBadge,
+  useReloadAfterTerm,
   useReloadOnAnyTree,
 } from './schedule-parts';
 import { formatRunTime } from './schedule-rule-field';
 
 /**
  * SH-04 «Расписания»: the employee's schedules in the server's order — active by the next run, then paused, then
- * completed — as link rows, «Две строки» below 768 px. Read on open and again on every `tree` note, so a run's
- * status changes in «Последний запуск» while the page is open.
+ * completed — as link rows, «Две строки» below 768 px. Read on open, on every `tree` note and shortly after the
+ * nearest next term, so a new trigger or a pause the pass made shows while the page is open.
  */
 export function SchedulesScreen() {
   const t = useTranslations('schedules');
   const format = useFormatter();
   const list = useResource(schedulesApi.list, 'schedules', 'schedules');
   useReloadOnAnyTree(list.reload);
+  useReloadAfterTerm(
+    earliestTerm(list.data?.schedules),
+    list.data,
+    list.reload,
+  );
 
   // UXRD «Порядок фокуса»: after the move to the page, and after a schedule was deleted, focus lands on its h1.
   useEffect(() => {
@@ -72,6 +77,20 @@ export function SchedulesScreen() {
   );
 }
 
+/** The nearest next term among the shown schedules; `undefined` when none has one. */
+function earliestTerm(
+  schedules: readonly ScheduleView[] | undefined,
+): string | undefined {
+  const terms = (schedules ?? []).flatMap((schedule) =>
+    schedule.nextRunAt === null ? [] : [schedule.nextRunAt],
+  );
+  return terms.length === 0
+    ? undefined
+    : terms.reduce((earliest, term) =>
+        Date.parse(term) < Date.parse(earliest) ? term : earliest,
+      );
+}
+
 function rowOf(
   schedule: ScheduleView,
   t: SchedulesTranslator,
@@ -82,10 +101,8 @@ function rowOf(
     schedule.timeZone,
     agentName(t, schedule),
   ].join(' · ');
-  const nextAt =
-    schedule.nextRunAt === null
-      ? '—'
-      : formatRunTime(format, schedule.nextRunAt, schedule.timeZone);
+  const at = (time: string | null | undefined): string =>
+    time == null ? '—' : formatRunTime(format, time, schedule.timeZone);
   return {
     key: schedule.id,
     name: schedule.name,
@@ -103,22 +120,22 @@ function rowOf(
         </span>
       </span>,
       <ScheduleStateBadge key="state" state={schedule.state} />,
-      <NextRun key="next" t={t} at={nextAt} />,
-      <LastRun
-        key="last"
-        run={schedule.lastRun}
-        timeZone={schedule.timeZone}
-      />,
+      <Labelled key="next" label={t('list.nextLabel')}>
+        {at(schedule.nextRunAt)}
+      </Labelled>,
+      <Labelled key="last" label={t('list.lastLabel')}>
+        {at(schedule.lastRun?.dueAt)}
+      </Labelled>,
     ],
   };
 }
 
-/** «Следующий запуск»: below 768 px the list has no header, so the time carries its label there. */
-function NextRun({ t, at }: { t: SchedulesTranslator; at: string }) {
+/** Below 768 px the list has no header, so a time carries its column's label there. */
+function Labelled({ label, children }: { label: string; children: string }) {
   return (
-    <>
-      <span className="md:hidden">{t('rule.next', { at })}</span>
-      <span className="max-md:hidden">{at}</span>
-    </>
+    <span className="tabular-nums">
+      <span className="md:hidden">{label} </span>
+      {children}
+    </span>
   );
 }

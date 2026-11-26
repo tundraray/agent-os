@@ -244,18 +244,6 @@ async function startOf(
 }
 
 /**
- * The model by the chain of KD-3: the version's own, else the caller's, else the system model — read only when
- * neither is set. `null` when the chain ends without a model.
- */
-export async function chainModel(
-  versionModel: string | null,
-  callerModel: string | null,
-  access: Pick<AccessGate, 'defaultChatModel'>,
-): Promise<string | null> {
-  return versionModel ?? callerModel ?? (await access.defaultChatModel());
-}
-
-/**
  * The start of an agent the library gave the starter: its active version under its name, and the model by
  * the chain of KD-3. The system model is read only when the version and the caller have none — at a root.
  */
@@ -265,11 +253,10 @@ async function startOfRecord(
   deps: StartDeps,
 ): Promise<StartResolution> {
   if (record === null) return RECORD_UNAVAILABLE;
-  const model = await chainModel(
-    record.content.model,
-    callerModel,
-    deps.access,
-  );
+  const model =
+    record.content.model ??
+    callerModel ??
+    (await deps.access.defaultChatModel());
   if (model === null) return MODEL_NOT_CONFIGURED;
   const identity = {
     id: record.versionId,

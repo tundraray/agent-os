@@ -11,15 +11,15 @@
     "chatAgent": "Chat agent",
     "target": "Where to reply",
     "newConversation": "A new conversation each time",
-    "newConversationHint": "A separate conversation for every run — for independent reports.",
+    "newConversationHint": "A separate conversation for every trigger — for independent reports.",
     "thisConversation": "In this conversation",
     "namedConversation": "In the conversation “{title}”",
     "thisConversationHint": "The agent sees its earlier replies and can compare with last time.",
     "noConversationYet": "Available after the first message in the conversation.",
-    "conversationDeleted": "The conversation was deleted.",
+    "conversationDeleted": "The conversation was deleted — replies will go to a new conversation.",
     "create": "Create schedule",
     "save": "Save",
-    "created": "Schedule created. Next run: {at}.",
+    "created": "Schedule created. Next trigger — {at}.",
     "open": "Open",
     "saved": "Schedule saved"
   },
@@ -55,8 +55,8 @@
       "sat": "Saturday",
       "sun": "Sunday"
     },
-    "next": "Next run: {at}",
-    "noNext": "Next run: —",
+    "next": "Next trigger: {at}",
+    "noNext": "Next trigger: —",
     "zone": "Times in the {zone} time zone (UTC{offset})"
   },
   "errors": {
@@ -71,13 +71,14 @@
     "columns": {
       "schedule": "Schedule",
       "state": "State",
-      "next": "Next run",
-      "last": "Last run"
+      "next": "Next trigger",
+      "last": "Last trigger"
     },
-    "lastLabel": "Last run:",
+    "lastLabel": "Last trigger:",
     "emptyTitle": "No schedules yet",
     "emptyHint": "Create one in any conversation: “+” → “Schedule”.",
-    "loadFailed": "Couldn't load schedules"
+    "loadFailed": "Couldn't load schedules",
+    "nextLabel": "Next trigger:"
   },
   "state": {
     "active": "Active",
@@ -101,7 +102,7 @@
     "instruction": "Instruction",
     "agent": "Agent",
     "when": "When",
-    "next": "Next run",
+    "next": "Next trigger",
     "target": "Reply",
     "created": "Created",
     "replyTo": "To the conversation “<link>{title}</link>”",
@@ -112,39 +113,29 @@
   },
   "notices": {
     "paused": "Paused",
-    "pausedRunning": "Paused. The run in progress will continue — you can stop it in the conversation.",
-    "resumed": "Schedule resumed. Next run — {at}.",
-    "started": "Run started",
+    "resumed": "Schedule resumed. Next trigger — {at}.",
     "openConversation": "Open conversation",
-    "notStarted": "Not started: {reason}",
-    "deleted": "Schedule deleted"
+    "deleted": "Schedule deleted",
+    "sent": "Instruction sent",
+    "notSent": "Instruction not sent",
+    "conversationGone": "The conversation “{title}” was deleted — there is nowhere to send. Choose replies in a new conversation."
   },
   "deleteDialog": {
     "title": "Delete the schedule?",
-    "body": "The schedule “{name}” will not run again. Conversations of past runs stay in the list.",
+    "body": "The schedule “{name}” will not trigger again. The conversations it wrote to stay in the list.",
     "confirm": "Delete"
   },
   "history": {
-    "title": "Run history",
+    "title": "Trigger history",
     "columns": {
       "time": "Time",
-      "outcome": "Outcome",
       "conversation": "Conversation"
     },
     "open": "Open",
-    "openLabel": "Open the conversation of the run at {at}",
-    "skipped": "Skipped",
+    "openLabel": "Open the conversation of the trigger at {at}",
     "manual": "manual",
-    "emptyTitle": "No runs yet",
+    "emptyTitle": "No triggers yet",
     "emptyFirst": "The first one — {at}.",
     "loadFailed": "Couldn't load the history"
-  },
-  "skipReason": {
-    "previous_run_unfinished": "previous run not finished",
-    "conversation_busy": "conversation busy",
-    "agent_unavailable": "no access to the agent",
-    "quota_exhausted": "quota exhausted",
-    "owner_disabled": "account disabled",
-    "server_down": "server was down"
   }
 }

@@ -418,19 +418,8 @@ CREATE TABLE "app"."schedule_runs" (
 	"schedule_id" uuid NOT NULL,
 	"due_at" timestamp with time zone NOT NULL,
 	"manual" boolean DEFAULT false NOT NULL,
-	"outcome" text NOT NULL,
-	"skip_reason" text,
 	"conversation_id" uuid,
-	"unfinished_conversation_id" uuid,
-	"message_seq" bigint,
-	"final_status" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "schedule_runs_outcome_check" CHECK ("app"."schedule_runs"."outcome" in ('starting', 'started', 'skipped')),
-	CONSTRAINT "schedule_runs_skip_reason_check" CHECK ("app"."schedule_runs"."skip_reason" in ('previous_run_unfinished', 'conversation_busy', 'owner_disabled', 'agent_unavailable', 'quota_exhausted', 'server_down')),
-	CONSTRAINT "schedule_runs_final_status_check" CHECK ("app"."schedule_runs"."final_status" in ('working', 'awaiting_confirmation', 'completed', 'failed', 'stopped')),
-	CONSTRAINT "schedule_runs_skip_check" CHECK (("app"."schedule_runs"."skip_reason" is not null) = ("app"."schedule_runs"."outcome" = 'skipped')),
-	CONSTRAINT "schedule_runs_conversation_check" CHECK (("app"."schedule_runs"."conversation_id" is not null) = ("app"."schedule_runs"."outcome" = 'started')),
-	CONSTRAINT "schedule_runs_final_status_started_check" CHECK ("app"."schedule_runs"."final_status" is null or "app"."schedule_runs"."outcome" = 'started')
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "app"."settings" (
@@ -507,7 +496,6 @@ ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_agent_id_agents_id_fk" F
 ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_schedule_id_schedules_id_fk" FOREIGN KEY ("schedule_id") REFERENCES "app"."schedules"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_unfinished_conversation_id_conversations_id_fk" FOREIGN KEY ("unfinished_conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."settings" ADD CONSTRAINT "settings_updated_by_identity_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "app"."identity_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "runtime_tasks_ready_idx" ON "app"."runtime_tasks" USING btree ("created_at","task_id") WHERE "app"."runtime_tasks"."status" = 'queued';--> statement-breakpoint
 CREATE INDEX "runtime_tasks_root_idx" ON "app"."runtime_tasks" USING btree ("root_id");--> statement-breakpoint
@@ -555,6 +543,4 @@ CREATE INDEX "schedules_conversation_idx" ON "app"."schedules" USING btree ("con
 CREATE INDEX "schedules_due_idx" ON "app"."schedules" USING btree ("next_run_at") WHERE "app"."schedules"."state" = 'active';--> statement-breakpoint
 CREATE UNIQUE INDEX "schedule_runs_term_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at") WHERE not "app"."schedule_runs"."manual";--> statement-breakpoint
 CREATE INDEX "schedule_runs_page_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "schedule_runs_starting_idx" ON "app"."schedule_runs" USING btree ("id") WHERE "app"."schedule_runs"."outcome" = 'starting';--> statement-breakpoint
-CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");--> statement-breakpoint
-CREATE INDEX "schedule_runs_unfinished_conversation_idx" ON "app"."schedule_runs" USING btree ("unfinished_conversation_id");
+CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");

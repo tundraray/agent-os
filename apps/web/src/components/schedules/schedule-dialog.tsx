@@ -26,9 +26,11 @@ import {
   AdminRadioField,
   AdminSelectField,
   AdminTextField,
+  CAPTION,
   COMFORT_CONTROL,
   FormError,
 } from '@/components/admin/admin-form';
+import { FieldError } from '@/components/ui/field';
 import { RECORD_KIND_ICON } from '@/components/library/record-label';
 import {
   checkRule,
@@ -133,6 +135,7 @@ type FieldErrors = {
   instruction?: string;
   agent?: string;
   rule?: RuleError;
+  target?: string;
 };
 
 /** Where the dialog stands: the conversation it answers in, the zone it counts in and its first values. */
@@ -169,7 +172,10 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
       instruction: schedule.instruction,
       agentId: schedule.agent?.id ?? CHAT_AGENT,
       rule: ruleDraftOf(schedule.rule, now),
-      target: schedule.target,
+      // A deleted conversation takes no replies, so the dialog opens on the only target that can be saved.
+      target: schedule.conversation?.deleted
+        ? 'new_conversation'
+        : schedule.target,
     },
     conversation: schedule.conversation,
     timeZone: schedule.timeZone,
@@ -200,14 +206,19 @@ function ScheduleForm({
   const [saving, setSaving] = useState(false);
   /** Grows with every set of field errors shown, so focus moves to the first of them again. */
   const [errorsShown, setErrorsShown] = useState(0);
+  /** The reply conversation was deleted while the dialog was open: the server refused it on save. */
+  const [conversationGone, setConversationGone] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const targetRef = useRef<HTMLDivElement>(null);
 
-  // Runs after the commit that enables the fields again, so the field can take focus.
+  // Runs after the commit that enables the fields again, so the field can take focus. The radio group carries no
+  // invalid mark of its own, so its error focuses the chosen radio.
   useEffect(() => {
     if (errorsShown === 0) return;
-    formRef.current
-      ?.querySelector<HTMLElement>('[aria-invalid="true"]')
-      ?.focus();
+    (
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+      targetRef.current?.querySelector<HTMLElement>('[data-checked]')
+    )?.focus();
   }, [errorsShown]);
 
   const agents = agentChoices(
@@ -221,7 +232,9 @@ function ScheduleForm({
   const agentName =
     agents.find((agent) => agent.id === values.agentId)?.name ?? null;
   const conversation = start.conversation;
-  const thisConversationClosed = conversation === null || conversation.deleted;
+  const conversationDeleted =
+    conversationGone || (conversation?.deleted ?? false);
+  const thisConversationClosed = conversation === null || conversationDeleted;
 
   const set = <Key extends keyof Values>(
     key: Key,
@@ -258,7 +271,11 @@ function ScheduleForm({
       rule: checked.rule,
       timeZone: start.timeZone,
       target: values.target,
-      conversationId: conversation?.id ?? null,
+      // A new schedule is refused for a deleted conversation even when it answers elsewhere; an edit keeps its own.
+      conversationId:
+        mode.kind === 'create' && conversationGone
+          ? null
+          : (conversation?.id ?? null),
       language: locale,
     };
     setErrors({});
@@ -291,7 +308,11 @@ function ScheduleForm({
         agentName,
       });
       if (refusal.place === 'agent') showErrors({ agent: refusal.text });
-      else setFormError(refusal.text);
+      else if (refusal.place === 'target') {
+        setConversationGone(true);
+        setValues((current) => ({ ...current, target: 'new_conversation' }));
+        showErrors({ target: refusal.text });
+      } else setFormError(refusal.text);
     }
   }
 
@@ -331,7 +352,7 @@ function ScheduleForm({
   const thisConversationHint =
     conversation === null
       ? t('dialog.noConversationYet')
-      : conversation.deleted
+      : conversationDeleted
         ? t('dialog.conversationDeleted')
         : t('dialog.thisConversationHint');
 
@@ -401,26 +422,29 @@ function ScheduleForm({
             error={errors.rule ?? null}
             disabled={saving}
           />
-          <AdminRadioField
-            density="comfortable"
-            label={t('dialog.target')}
-            value={values.target}
-            onChange={(target) => set('target', target)}
-            options={[
-              {
-                value: 'new_conversation',
-                label: t('dialog.newConversation'),
-                hint: t('dialog.newConversationHint'),
-                disabled: saving,
-              },
-              {
-                value: 'this_conversation',
-                label: thisConversationLabel,
-                hint: thisConversationHint,
-                disabled: saving || thisConversationClosed,
-              },
-            ]}
-          />
+          <div ref={targetRef} className="flex flex-col gap-1.5">
+            <AdminRadioField
+              density="comfortable"
+              label={t('dialog.target')}
+              value={values.target}
+              onChange={(target) => set('target', target)}
+              options={[
+                {
+                  value: 'new_conversation',
+                  label: t('dialog.newConversation'),
+                  hint: t('dialog.newConversationHint'),
+                  disabled: saving,
+                },
+                {
+                  value: 'this_conversation',
+                  label: thisConversationLabel,
+                  hint: thisConversationHint,
+                  disabled: saving || thisConversationClosed,
+                },
+              ]}
+            />
+            <FieldError className={CAPTION}>{errors.target}</FieldError>
+          </div>
         </fieldset>
       </div>
       {formError !== null && <FormError>{formError}</FormError>}

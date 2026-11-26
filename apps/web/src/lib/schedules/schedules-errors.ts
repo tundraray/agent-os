@@ -15,14 +15,18 @@ export type SchedulesErrorWhere =
   /** An action on the schedule's page: pause, resume, run, delete (MC-9). */
   | { where: 'action' };
 
-/** `agent` — at the dialog's «Агент» field; `form` — above the dialog's actions; `notice` — a toast. */
+/**
+ * `agent` — at the dialog's «Агент» field; `target` — at its «Куда писать ответ» field; `form` — above the
+ * dialog's actions; `notice` — a toast.
+ */
 export type SchedulesErrorText =
-  | { place: 'agent'; text: string }
+  | { place: 'agent' | 'target'; text: string }
   | { place: 'form' | 'notice'; text: ReactNode };
 
 /**
  * A refused schedules request as its place and text. In the dialog, 404 `RECORD_NOT_FOUND` is the agent of the
- * chip the employee no longer may use (AC-01.3); every other refusal reads «Не удалось …: {причина}».
+ * chip the employee no longer may use (AC-01.3) and 404 `THREAD_NOT_FOUND` the reply conversation deleted since
+ * the dialog opened; every other refusal reads «Не удалось …: {причина}».
  */
 export function describeSchedulesError(
   t: ErrorsTranslator,
@@ -40,5 +44,10 @@ export function describeSchedulesError(
       place: 'agent',
       text: t('schedules.agentUnavailable', { name: context.agentName }),
     };
+  if (
+    isApiRequestError(error) &&
+    error.code === SchedulesErrorCodeSchema.enum.THREAD_NOT_FOUND
+  )
+    return { place: 'target', text: t('schedules.conversationDeleted') };
   return { place: 'form', text: failedText(t, 'save', error) };
 }

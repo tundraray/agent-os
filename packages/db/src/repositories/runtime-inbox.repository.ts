@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { runtimeInbox, runtimeTasks } from '../schema';
 
@@ -83,23 +83,6 @@ export class RuntimeInboxRepository {
         ),
       )
       .returning({ messageId: runtimeInbox.messageId, seq: runtimeInbox.seq });
-  }
-
-  /**
-   * The `seq` of the last message of this kind to the recipient, delivered or not: rows are never deleted,
-   * `delivered_at` only marks the delivery. `null` when it has none.
-   */
-  async lastSeq(recipientId: string, kind: string): Promise<number | null> {
-    const [row] = await this.db.client
-      .select({ seq: max(runtimeInbox.seq) })
-      .from(runtimeInbox)
-      .where(
-        and(
-          eq(runtimeInbox.recipientId, recipientId),
-          eq(runtimeInbox.kind, kind),
-        ),
-      );
-    return row?.seq ?? null;
   }
 
   /** Whether a message with `revive` waits in the task's inbox. */

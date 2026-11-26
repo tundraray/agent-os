@@ -19,6 +19,7 @@ import {
   type HistoryEntry,
   type DocumentSummary,
   type InterruptResponse,
+  type ScheduleMark,
   type SendMessageResponse,
   type ThreadDocumentsView,
   type ThreadForksResponse,
@@ -44,7 +45,6 @@ import {
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
-import { SchedulesService } from '../schedules/schedules.service';
 import { chatStatus } from './chat-status';
 import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
@@ -110,7 +110,6 @@ export class ConversationsService {
     private readonly sessionTasks: ConversationTasksRepository,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: RuntimeModelCallsRepository,
-    private readonly schedules: SchedulesService,
   ) {}
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
@@ -191,21 +190,32 @@ export class ConversationsService {
    * taken by its rows: `start` gets `TASK_EXISTS` and `owned()` answers 404, for its owner and anyone
    * else alike. A send to a conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete
    * and the send take turns on the root task's lock.
+   *
+   * A schedule's send (schedules KD-2, KD-6) carries its mark into the message or the root's `task` entry and the
+   * title of a new conversation, and starts no title generation. Inside a caller's transaction every write of the
+   * send joins it, so the caller commits the message or the new root with its own rows.
    */
   async send(
     threadId: string,
     ownerId: string,
     text: string,
     recordId?: string,
+    scheduled?: { readonly schedule: ScheduleMark; readonly title?: string },
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
     const record =
       recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
-    const chip = record === undefined ? {} : { record };
+    const chip = {
+      ...(record === undefined ? {} : { record }),
+      ...(scheduled === undefined ? {} : { schedule: scheduled.schedule }),
+    };
     const existing = await this.views.root(threadId, ownerId);
     const created =
       existing === undefined &&
-      (await this.start(threadId, ownerId, text, chip));
+      (await this.start(threadId, ownerId, text, {
+        ...chip,
+        ...(scheduled?.title === undefined ? {} : { title: scheduled.title }),
+      }));
     let messageId: string | null = null;
     let untitled = true;
     if (!created) {
@@ -221,7 +231,7 @@ export class ConversationsService {
       await this.control.touchRoot(threadId, ownerId);
       untitled = root.title === '';
     }
-    if (untitled)
+    if (untitled && scheduled === undefined)
       this.titles.ensure({
         threadId,
         ownerId,
@@ -243,16 +253,11 @@ export class ConversationsService {
 
   /**
    * Flow 6: the root's tree is stopped and marked deleted together with the root session, in one
-   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`. First the
-   * schedule runs in it that are over keep their final status, read while it is alive; the
-   * `this_conversation` schedules created in it are then paused (schedules FR-09); a claim checks the same at
-   * its term, in case the process stops between the two transactions.
+   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`.
    */
   async delete(threadId: string, ownerId: string): Promise<void> {
     await this.owned(threadId, ownerId);
-    await this.schedules.settleRunsIn(threadId, ownerId);
     await this.control.deleteRoot(threadId, ownerId);
-    await this.schedules.pauseForDeletedConversation(threadId, ownerId);
   }
 
   /**
@@ -421,7 +426,11 @@ export class ConversationsService {
     threadId: string,
     ownerId: string,
     text: string,
-    chip: { readonly record?: ChipRecord },
+    chip: {
+      readonly record?: ChipRecord;
+      readonly schedule?: ScheduleMark;
+      readonly title?: string;
+    },
   ): Promise<boolean> {
     try {
       await this.starts.start({

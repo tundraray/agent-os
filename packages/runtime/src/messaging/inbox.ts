@@ -313,14 +313,6 @@ export class Inbox {
     return this.deps.repository.listPending(taskId);
   }
 
-  /**
-   * The place in the queue of the last message of `kind` to the recipient, delivered or not; `null` when it
-   * has none. A schedule run's status reads whether someone wrote after the run's message.
-   */
-  lastSeq(recipientId: string, kind: string): Promise<number | null> {
-    return this.deps.repository.lastSeq(recipientId, kind);
-  }
-
   /** Whether a message with `revive` waits in the task's inbox. */
   hasPendingRevive(taskId: string): Promise<boolean> {
     return this.deps.repository.hasPendingRevive(taskId);

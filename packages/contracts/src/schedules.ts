@@ -31,38 +31,6 @@ export type ScheduleState = z.infer<typeof ScheduleStateSchema>;
 export const SchedulePauseReasonSchema = z.enum(['conversation_deleted']);
 export type SchedulePauseReason = z.infer<typeof SchedulePauseReasonSchema>;
 
-/**
- * Outcome of a history row: `starting` — taken for a new conversation not started yet (its id is the
- * conversation's), `started`, `skipped`. A row changes only from `starting`.
- */
-export const ScheduleRunOutcomeSchema = z.enum([
-  'starting',
-  'started',
-  'skipped',
-]);
-export type ScheduleRunOutcome = z.infer<typeof ScheduleRunOutcomeSchema>;
-
-/** Why a term gave no run, in the order the term checks them (KD-4); `server_down` — a term of the catch-up. */
-export const ScheduleSkipReasonSchema = z.enum([
-  'previous_run_unfinished',
-  'conversation_busy',
-  'owner_disabled',
-  'agent_unavailable',
-  'quota_exhausted',
-  'server_down',
-]);
-export type ScheduleSkipReason = z.infer<typeof ScheduleSkipReasonSchema>;
-
-/** Status of a started run (Data Model «Статус запуска»). */
-export const ScheduleRunStatusSchema = z.enum([
-  'working',
-  'awaiting_confirmation',
-  'completed',
-  'failed',
-  'stopped',
-]);
-export type ScheduleRunStatus = z.infer<typeof ScheduleRunStatusSchema>;
-
 /** Local time of day `HH:MM` in the schedule's time zone. */
 const LocalTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 /** ISO day of the week: 1 — Monday, 7 — Sunday. */
@@ -129,21 +97,13 @@ export type ScheduleNextRunResponse = z.infer<
   typeof ScheduleNextRunResponseSchema
 >;
 
-/** One row of a schedule's history. A `starting` row shows as `started` with the status `working`. */
+/** One trigger of a schedule: a send of its instruction, at its term or by «Run now». */
 export const ScheduleRunViewSchema = z.object({
   id: z.string().min(1),
-  /** The term the run was due at; a manual run's — the moment it was asked for. */
+  /** The term the schedule triggered for; a manual trigger's — the moment it was asked for. */
   dueAt: z.iso.datetime(),
   manual: z.boolean(),
-  outcome: ScheduleRunOutcomeSchema.exclude(['starting']),
-  /** Set on a started run, `null` on a skip. */
-  status: ScheduleRunStatusSchema.nullable(),
-  /** Set on a skip, `null` on a started run. */
-  skipReason: ScheduleSkipReasonSchema.nullable(),
-  /**
-   * The conversation of a started run; on a `previous_run_unfinished` skip — the conversation of that
-   * unfinished run; otherwise, or once that conversation is deleted, `null`.
-   */
+  /** The conversation the instruction went to; `null` when the send was refused or that conversation is deleted. */
   conversationId: z.string().min(1).nullable(),
 });
 export type ScheduleRunView = z.infer<typeof ScheduleRunViewSchema>;

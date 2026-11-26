@@ -195,11 +195,10 @@ export class AccessService implements AccessGate {
   async model(ownerId: string, model: string): Promise<ModelVerdict> {
     const startedAt = Date.now();
     const month = monthOf(this.clock.now());
-    const [active, catalogued, access] = await Promise.all([
-      this.identity.isActive(ownerId),
-      this.findModel(model),
-      this.accessOf(ownerId),
-    ]);
+    // One after another: inside a caller's transaction (a schedule's start) every read shares one client.
+    const active = await this.identity.isActive(ownerId);
+    const catalogued = await this.findModel(model);
+    const access = await this.accessOf(ownerId);
     const modelAccess = access.model(model);
     const quotaUsd = modelAccess.allowed ? modelAccess.quotaUsd : null;
     const spentUsd =

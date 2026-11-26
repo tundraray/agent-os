@@ -8,7 +8,8 @@
 // Mock boundary: network (MSW), next/navigation, the event source of LiveStore. The composer, the menu, the dialog and `schedulesApi` are real.
 //
 // Server-side proofs are not repeated here: schedule rules, rights and runs are apps/api schedules-search-memory-schedules (UC-1 .. UC-6).
-// Not tested: the "Schedules" pages (list, history) and the feed caption "По расписанию «{имя}»" — presentation of data the API test proves.
+// The schedule page is tested only for its re-read after the term (a pause of the pass sends no `tree` note).
+// Not tested: the rest of the "Schedules" pages (list, history) and the feed caption "По расписанию «{имя}»" — presentation of data the API test proves.
 
 import {
   ScheduleBodySchema,
@@ -135,7 +136,9 @@ describe('schedules: the dialog from the message field', () => {
       within(dialog).getByRole('combobox', { name: 'Агент' }),
     ).toHaveTextContent(AGENT_NAME);
     expect(
-      await within(dialog).findByText(/Следующий запуск: 7\sянв\.,\s09:00/),
+      await within(dialog).findByText(
+        /Следующее срабатывание: 7\sянв\.,\s09:00/,
+      ),
     ).toBeInTheDocument();
 
     await user.click(
@@ -161,7 +164,7 @@ describe('schedules: the dialog from the message field', () => {
     // The dialog closed, the field and its chip are empty, the notice names the next run
     expect(
       await screen.findByText(
-        /Расписание создано\. Следующий запуск — 7\sянв\.,\s09:00\./,
+        /Расписание создано\. Следующее срабатывание — 7\sянв\.,\s09:00\./,
       ),
     ).toBeInTheDocument();
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -169,5 +172,64 @@ describe('schedules: the dialog from the message field', () => {
     expect(
       screen.queryByRole('button', { name: `Убрать: ${AGENT_NAME}` }),
     ).toBeNull();
+  });
+});
+
+describe('schedules: the open page after its term', () => {
+  // Risk: the pass pauses a schedule whose conversation is deleted at its term without touching any conversation, so no `tree` note
+  //   comes; the open page must still re-read after the term instead of showing «Активно» until a reload.
+  it('re-reads the schedule a few seconds after its next term and shows the pause the pass made', async () => {
+    vi.useFakeTimers({
+      toFake: ['Date', 'setTimeout', 'clearTimeout'],
+      shouldAdvanceTime: true,
+    });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(new Date('2030-01-07T07:59:00.000Z'));
+    const active = createdSchedule({
+      name: '',
+      instruction: INSTRUCTION,
+      agentId: AGENT_ID,
+      rule: { kind: 'daily', time: '09:00' },
+      timeZone: 'Europe/Berlin',
+      target: 'this_conversation',
+      conversationId: THREAD_ID,
+      language: 'ru',
+    });
+    const paused: ScheduleView = {
+      ...active,
+      conversation: { id: THREAD_ID, title: 'Беседа', deleted: true },
+      state: 'paused',
+      pausedBecause: 'conversation_deleted',
+      nextRunAt: null,
+    };
+    let reads = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+      http.get(`${API}/api/schedules/${SCHEDULE_ID}`, () => {
+        reads += 1;
+        return HttpResponse.json(
+          Date.now() < Date.parse(NEXT_RUN_AT) ? active : paused,
+        );
+      }),
+      http.get(`${API}/api/schedules/${SCHEDULE_ID}/runs`, () =>
+        HttpResponse.json({ runs: [], nextCursor: null }),
+      ),
+    );
+    renderWithRuntime({ pathname: `/schedules/${SCHEDULE_ID}` });
+
+    expect(await screen.findByText('Активно')).toBeInTheDocument();
+    const readsBeforeTerm = reads;
+
+    // The term is a minute away: the re-read comes a few seconds after it, not before
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(reads).toBe(readsBeforeTerm);
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(await screen.findByText('На паузе')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Беседа «Беседа» удалена, поэтому расписание на паузе/),
+    ).toBeInTheDocument();
   });
 });

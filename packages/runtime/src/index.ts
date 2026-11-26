@@ -36,7 +36,11 @@ export {
   TaskEndHooks,
   type TaskEndStatus,
 } from './tasks/task-end-hooks';
-export { type SavepointResult, withTxRetry } from './tasks/transaction-retry';
+export {
+  inSavepoint,
+  type SavepointResult,
+  withTxRetry,
+} from './tasks/transaction-retry';
 export { RUNTIME_TREE_CHANNEL } from './tasks/tasks';
 export {
   type BackgroundPass,

@@ -24,7 +24,8 @@
     "action": "Couldn't do it: no connection to the server"
   },
   "schedules": {
-    "agentUnavailable": "The agent “{name}” is not available to you — choose another one."
+    "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
+    "conversationDeleted": "The conversation was deleted — replies will go to a new conversation. Save again."
   },
   "library": {
     "noPastTasks": "The agent has no finished tasks to train on yet.",

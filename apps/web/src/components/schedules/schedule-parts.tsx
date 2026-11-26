@@ -1,14 +1,12 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
-import { useFormatter, useTranslations } from 'next-intl';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import type {
   ScheduleRule,
-  ScheduleRunView,
   ScheduleState,
   ScheduleView,
 } from '@agent-os/contracts';
-import { AgentStatus } from '@/components/agents/agent-status';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import type { SchedulesTranslator } from '@/i18n/catalog';
@@ -23,7 +21,8 @@ const REREAD_INTERVAL_MS = 1000;
 
 /**
  * design-schedules «Страницы»: while a schedules screen is open it re-reads on every `tree` note of the
- * employee's stream and on every reconnect; a run changes a conversation, and schedules have no event of their own.
+ * employee's stream and on every reconnect: a trigger writes into a conversation, and schedules have no event of their own,
+ * so a new trigger, the next term and the state after it show without a reload.
  */
 export function useReloadOnAnyTree(reload: () => void): void {
   const { live } = useShellServices();
@@ -48,6 +47,37 @@ export function useReloadOnAnyTree(reload: () => void): void {
       runner.cancel();
     };
   }, [live]);
+}
+
+/** How long after a term the screen re-reads: the pass has handled the term by then. */
+const AFTER_TERM_MS = 5000;
+/** How often a screen whose term is already past re-reads until the pass moves it. */
+const OVERDUE_REREAD_MS = 30_000;
+/** The longest delay `setTimeout` keeps; a later term is armed again by a later read or reload. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * Re-reads shortly after the term `nextRunAt` passes: the pass may change a schedule without touching any
+ * conversation (it pauses one whose conversation is deleted, or a send is refused), and then no `tree` note comes.
+ * `read` is the value the term came from: each new read arms the timer again from its own term.
+ */
+export function useReloadAfterTerm(
+  nextRunAt: string | null | undefined,
+  read: unknown,
+  reload: () => void,
+): void {
+  const reloadRef = useRef(reload);
+  useLayoutEffect(() => {
+    reloadRef.current = reload;
+  });
+  useEffect(() => {
+    if (nextRunAt == null) return;
+    const dueIn = Date.parse(nextRunAt) - Date.now();
+    const delay = dueIn > 0 ? dueIn + AFTER_TERM_MS : OVERDUE_REREAD_MS;
+    if (delay > MAX_TIMER_MS) return;
+    const timer = setTimeout(() => reloadRef.current(), delay);
+    return () => clearTimeout(timer);
+  }, [nextRunAt, read]);
 }
 
 /** A wall-clock `HH:MM` as the interface writes a time: «09:00». */
@@ -117,71 +147,5 @@ export function ScheduleStateBadge({ state }: { state: ScheduleState }) {
   const t = useTranslations('schedules');
   return (
     <StateBadge state={STATE_LOOK[state]}>{t(`state.${state}`)}</StateBadge>
-  );
-}
-
-/**
- * A run's outcome: a started run by its agent status (a `starting` row reads as working), a skip by «Пропущен»
- * with its reason. `reason` is where the reason goes — the history links one of them to the unfinished run.
- */
-export function RunOutcome({
-  run,
-  reason,
-}: {
-  run: ScheduleRunView;
-  reason?: (text: string) => ReactNode;
-}) {
-  const t = useTranslations('schedules');
-  if (run.outcome === 'started')
-    return <AgentStatus variant="label" status={run.status ?? 'working'} />;
-  const text =
-    run.skipReason === null ? null : t(`skipReason.${run.skipReason}`);
-  return (
-    <span className="inline-flex flex-wrap items-center gap-x-1">
-      <StateBadge state="skipped">{t('history.skipped')}</StateBadge>
-      {text !== null && (
-        <span className="text-xs leading-4 text-muted-foreground">
-          {'— '}
-          {reason === undefined ? text : reason(text)}
-        </span>
-      )}
-    </span>
-  );
-}
-
-/**
- * SH-04 «Последний запуск»: a started run by its status and, under it, its time in the schedule's zone; a skip
- * by «Пропущен» and, under it, the reason.
- */
-export function LastRun({
-  run,
-  timeZone,
-}: {
-  run: ScheduleRunView | null;
-  timeZone: string;
-}) {
-  const t = useTranslations('schedules');
-  const format = useFormatter();
-  // Below 768 px the list has no header: the run is one labelled line of the row's details, «—» without a run.
-  const label = <span className="md:hidden">{t('list.lastLabel')}</span>;
-  if (run === null)
-    return <span className="inline-flex items-center gap-x-1">{label}—</span>;
-  const started = run.outcome === 'started';
-  return (
-    <span className="inline-flex flex-wrap items-center gap-x-1 md:flex-col md:flex-nowrap md:items-start">
-      {label}
-      {started ? (
-        <AgentStatus variant="label" status={run.status ?? 'working'} />
-      ) : (
-        <StateBadge state="skipped">{t('history.skipped')}</StateBadge>
-      )}
-      <span className="text-xs leading-4 text-muted-foreground tabular-nums">
-        {started
-          ? formatRunTime(format, run.dueAt, timeZone)
-          : run.skipReason === null
-            ? null
-            : t(`skipReason.${run.skipReason}`)}
-      </span>
-    </span>
   );
 }

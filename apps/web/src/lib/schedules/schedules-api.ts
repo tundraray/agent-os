@@ -75,7 +75,7 @@ export const schedulesApi = {
           : `${scheduleRoute(id)}/runs?cursor=${encodeURIComponent(cursor)}`,
       schema: ScheduleRunsPageSchema,
     }),
-  /** «Запустить сейчас»: started or skipped with its reason. */
+  /** «Запустить сейчас»: the manual trigger; `conversationId` is `null` when the chat did not take the message. */
   run: (id: string): Promise<ScheduleRunView> =>
     apiRequest({
       path: `${scheduleRoute(id)}/run`,

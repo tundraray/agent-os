@@ -5,7 +5,11 @@ import { useRouter } from 'next/navigation';
 import { HistoryIcon, LoaderCircle } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import type { ScheduleRunView, ScheduleView } from '@agent-os/contracts';
+import {
+  SchedulesErrorCodeSchema,
+  type ScheduleRunView,
+  type ScheduleView,
+} from '@agent-os/contracts';
 import { FormWarning } from '@/components/admin/admin-form';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
 import {
@@ -29,7 +33,7 @@ import {
 import type { SchedulesTranslator } from '@/i18n/catalog';
 import type { Formatter } from '@/i18n/formats';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { describeApiError } from '@/lib/api/api-request';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { focusShellTarget } from '@/lib/focus';
 import { logger } from '@/lib/logger';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
@@ -40,8 +44,8 @@ import { ScheduleDialog } from './schedule-dialog';
 import {
   agentName,
   ruleLine,
-  RunOutcome,
   ScheduleStateBadge,
+  useReloadAfterTerm,
   useReloadOnAnyTree,
   zoneLine,
 } from './schedule-parts';
@@ -50,15 +54,13 @@ import { formatRunTime } from './schedule-rule-field';
 /** Rows of the settings skeleton (SH-05, Loading). */
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5] as const;
 
-/** A run still going: pausing does not stop it (MC-9). */
-const UNFINISHED = new Set(['working', 'awaiting_confirmation']);
-
 type Action = 'pause' | 'resume' | 'run';
 
 /**
  * The schedule page `/schedules/<id>` (UXRD Screen 3): SH-05 header, actions and settings, SH-06 history. Both are
- * read on open, after every own change and on every `tree` note (design-schedules «Страницы»); a `tree` note leaves
- * the history alone once «Показать ещё» has added a page. Any 404 — a foreign,
+ * read on open, after every own change, on every `tree` note and shortly after the next term, so a trigger of the
+ * pass — or a pause it makes without one — shows while the page is open (design-schedules «Страницы»); a re-read
+ * by note or term leaves the history alone once «Показать ещё» has added a page. Any 404 — a foreign,
  * deleted or missing schedule — is SH-08, which names nothing of the schedule.
  */
 export function ScheduleScreen({ id }: { id: string }) {
@@ -83,6 +85,7 @@ export function ScheduleScreen({ id }: { id: string }) {
     if (!loadedMore) reloadRuns();
   }, [reloadSchedule, reloadRuns, loadedMore]);
   useReloadOnAnyTree(reloadOnTree);
+  useReloadAfterTerm(schedule.data?.nextRunAt, schedule.data, reloadOnTree);
 
   if (isNotFound(schedule.error))
     return <ThreadNotice variant="schedule-not-found" />;
@@ -121,9 +124,12 @@ function SchedulePage({
 
   const tThread = useTranslations('shell.thread');
   const conversationTitle = titleOf(schedule, tThread('untitled'));
+  const replyConversationDeleted =
+    schedule.target === 'this_conversation' &&
+    schedule.conversation?.deleted === true;
   const conversationGone =
-    schedule.pausedBecause === 'conversation_deleted' &&
-    schedule.target === 'this_conversation';
+    replyConversationDeleted &&
+    schedule.pausedBecause === 'conversation_deleted';
   const completed = schedule.state === 'completed';
 
   /** One action at a time; the page reads the schedule and its history again whatever the answer. */
@@ -145,9 +151,22 @@ function SchedulePage({
         ...fields(),
         ...describeApiError(cause),
       });
-      toast.error(
-        describeSchedulesError(tErrors, cause, { where: 'action' }).text,
-      );
+      // MC-9: a `this_conversation` schedule whose conversation is gone has nowhere to send; «Изменить» fixes it.
+      if (
+        isApiRequestError(cause) &&
+        cause.code === SchedulesErrorCodeSchema.enum.SCHEDULE_NOT_RUNNABLE &&
+        replyConversationDeleted
+      )
+        toast.error(
+          t('notices.conversationGone', { title: conversationTitle }),
+          {
+            action: { label: t('page.edit'), onClick: () => setEditing(true) },
+          },
+        );
+      else
+        toast.error(
+          describeSchedulesError(tErrors, cause, { where: 'action' }).text,
+        );
     } finally {
       setBusy(null);
       onChanged();
@@ -158,12 +177,7 @@ function SchedulePage({
     void act(
       'pause',
       () => schedulesApi.pause(scheduleId),
-      (saved) =>
-        toast.success(
-          saved.lastRun?.status != null && UNFINISHED.has(saved.lastRun.status)
-            ? t('notices.pausedRunning')
-            : t('notices.paused'),
-        ),
+      () => toast.success(t('notices.paused')),
     );
   const resume = (): void =>
     void act(
@@ -183,25 +197,17 @@ function SchedulePage({
     void act(
       'run',
       () => schedulesApi.run(scheduleId),
-      (outcome) => {
-        const conversationId = outcome.conversationId;
-        if (outcome.outcome === 'started' && conversationId !== null) {
-          toast.success(t('notices.started'), {
-            action: {
-              label: t('notices.openConversation'),
-              onClick: () => router.push(threadPath(conversationId)),
-            },
-          });
+      ({ conversationId }) => {
+        if (conversationId === null) {
+          toast.warning(t('notices.notSent'));
           return;
         }
-        toast.warning(
-          t('notices.notStarted', {
-            reason:
-              outcome.skipReason === null
-                ? '—'
-                : t(`skipReason.${outcome.skipReason}`),
-          }),
-        );
+        toast.success(t('notices.sent'), {
+          action: {
+            label: t('notices.openConversation'),
+            onClick: () => router.push(threadPath(conversationId)),
+          },
+        });
       },
     );
 
@@ -251,11 +257,9 @@ function SchedulePage({
             {schedule.state === 'paused' ? t('page.resume') : t('page.pause')}
           </ActionButton>
         )}
-        {!completed && (
-          <ActionButton busy={busy} action="run" onClick={run}>
-            {t('page.runNow')}
-          </ActionButton>
-        )}
+        <ActionButton busy={busy} action="run" onClick={run}>
+          {t('page.runNow')}
+        </ActionButton>
         <ActionsMenu
           name={schedule.name}
           actions={[
@@ -423,7 +427,7 @@ function Pair({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** SH-06: the runs, latest term first, 20 at a time; a run's status changes while the page is open, unannounced. */
+/** SH-06: the triggers, latest first, 20 at a time; a new one shows on top while the page is open, unannounced. */
 function History({
   schedule,
   runs,
@@ -436,7 +440,6 @@ function History({
   const headingId = useId();
   const columns: readonly DataTableColumn[] = [
     { header: t('history.columns.time') },
-    { header: t('history.columns.outcome'), shrinks: true },
     { header: t('history.columns.conversation') },
   ];
   const state = resourceTableState(
@@ -497,40 +500,27 @@ function runRow(
   format: Formatter,
 ): DataTableRow {
   const at = formatRunTime(format, run.dueAt, timeZone);
-  const conversationId = run.conversationId;
-  // A skip because the previous run is unfinished links its reason to that run's conversation (UXRD Error Flows).
-  const reason =
-    run.skipReason === 'previous_run_unfinished' && conversationId !== null
-      ? (text: string) => (
-          <ShellLink href={threadPath(conversationId)} className={LINK_CLASS}>
-            {text}
-          </ShellLink>
-        )
-      : undefined;
   return {
     key: run.id,
     name: at,
     cells: [
-      <span key="time" className="tabular-nums">
-        {at}
-      </span>,
-      <span key="outcome" className="inline-flex flex-wrap items-center gap-2">
-        <RunOutcome run={run} reason={reason} />
+      <span key="time" className="inline-flex flex-wrap items-center gap-2">
+        <span className="tabular-nums">{at}</span>
         {run.manual && (
           <StateBadge variant="source">{t('history.manual')}</StateBadge>
         )}
       </span>,
-      run.outcome === 'started' && conversationId !== null ? (
+      run.conversationId === null ? (
+        '—'
+      ) : (
         <ShellLink
           key="conversation"
-          href={threadPath(conversationId)}
+          href={threadPath(run.conversationId)}
           aria-label={t('history.openLabel', { at })}
           className={LINK_CLASS}
         >
           {t('history.open')}
         </ShellLink>
-      ) : (
-        ''
       ),
     ],
   };

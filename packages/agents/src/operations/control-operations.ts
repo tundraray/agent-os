@@ -103,8 +103,7 @@ export class ControlOperations {
   /**
    * Puts the employee's message in the agent's queue; a schedule's message carries its mark (schedules KD-5).
    * Inside a transaction the caller opened the message joins it (the queue's `withTxRetry` catches nothing
-   * there), so the caller's other writes and the message commit together (KD-2). `seq` is the message's place
-   * in the queue.
+   * there), so the caller's other writes and the message commit together (KD-2).
    */
   send({
     agentId,
@@ -112,7 +111,7 @@ export class ControlOperations {
     text,
     record,
     schedule,
-  }: SendRequest): Promise<{ messageId: string; seq: number }> {
+  }: SendRequest): Promise<{ messageId: string }> {
     return this.logged(
       'send',
       {
@@ -147,7 +146,7 @@ export class ControlOperations {
           target.status === stopped
             ? await parentOf(this.tasks, target, ownerId)
             : null;
-        const { messageId, seq } = await asAgent(
+        const { messageId } = await asAgent(
           this.inbox.enqueue({
             recipientId: agentId,
             ownerId,
@@ -160,9 +159,9 @@ export class ControlOperations {
             revive: true,
           }),
         );
-        return { messageId, seq };
+        return { messageId };
       },
-      ({ messageId, seq }) => ({ messageId, seq }),
+      ({ messageId }) => ({ messageId }),
     );
   }
 

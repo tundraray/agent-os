@@ -27,7 +27,6 @@ import { AgentsProviders } from '../providers/provider-registry';
 import type { RecordLibrary } from '../start/record-library';
 import {
   auditStartRefusal,
-  chainModel,
   resolveStart,
   type StartSource,
 } from '../start/resolve-start';
@@ -177,24 +176,6 @@ export class StartOperations {
         return created;
       },
       ({ agentId }) => ({ agentId }),
-    );
-  }
-
-  /**
-   * The model a new chat conversation of the owner would start on (schedules KD-4), by the chain of a root's
-   * start (KD-3): the chat version's model, else the system model — a root has no caller. Nothing is started
-   * and the model's rights are not checked: the caller asks the access gate itself. `null` while neither is
-   * set — the start would be refused `model_not_configured`.
-   */
-  newChatModel(ownerId: string): Promise<string | null> {
-    return this.logged(
-      'newChatModel',
-      { ownerId },
-      async () => {
-        const chat = await this.library.resolveBuiltin(CHAT_BUILTIN_KEY);
-        return chainModel(chat.content.model, null, this.access);
-      },
-      (model) => ({ model }),
     );
   }
 

@@ -2,24 +2,21 @@
 // Design Doc: docs/features/schedules-search-memory/design-schedules.md, Test Strategy UC-1 .. UC-6.
 // PRD: docs/features/schedules-search-memory/prd.md. UXRD: docs/features/schedules-search-memory/uxrd.md.
 //
-// Harness: `createTestApp({ workers: true, mcpServers: ['backoffice'], clock })` as in create-and-test-fork: the scripted model double of
-//   `@agent-os/agents/testing` behind the model, the MCP fixture for the changing call of UC-2. Time is the replaced runtime `CLOCK`, a
-//   clock the test sets; it only moves forward, each case in its own month. The test calls the schedule pass directly
-//   (`SchedulesService.pass`); with workers on the background pass also runs on its own timer, so the cases check the result (rows,
-//   conversations), not which pass claimed a term. A restart is `close()` and a new `createTestApp()` over the same clock and model.
-//   Rows a crashed process would leave (a `starting` row) are written through `SchedulesRepository`. Blocking an employee ends their
-//   sessions, so their rows are read from the database. Run only against a test database (DATABASE_URL): this config migrates it on load.
+// Harness: `createTestApp({ workers: true, mcpServers: ['backoffice'], clock })`: the scripted model double of `@agent-os/agents/testing`
+//   behind the model, the MCP fixture for the changing call of UC-2. Time is the replaced runtime `CLOCK`, a clock the test sets; it only
+//   moves forward, each case in its own month. The test calls the pass directly (`ScheduleTriggersService.pass`); with workers on the
+//   background pass also runs on its own timer, so the cases wait for rows and check the result, not which pass claimed a term. A restart
+//   is `close()` and a new `createTestApp()` over the same clock and model. Blocking an employee ends their sessions, so their rows are read
+//   from the database. The scripted model finds a script by the latest user message, so every message text is unique in this file.
+//   Run only against a test database (DATABASE_URL): this config migrates it on load.
 //
 // Not repeated here (one proof per rule, lower level):
-//   - the due-time rule (four kinds, week, DST zone, skipped terms): ONE table-driven unit test of the pure function in apps/api
-//     (schedule-rule.spec.ts). Wiring is proven here by one case per scenario.
-//   - the run decision order when several skip reasons hold at once: ONE table-driven unit test (schedule-decision.spec.ts); UC-2 and
-//     UC-3 prove its wiring with one reason at a time.
-//   - the run status function: a pure function; UC-1 .. UC-3 reach its statuses through the API, it has no unit test of its own.
+//   - the due-time rule (four kinds, week, DST zone, skipped terms): ONE table-driven unit test of the pure function (schedule-rule.spec.ts).
+//   - the confirmation card itself and the quota failure of a chat: the enterprise-access and deep-agents suites.
 //   - NFR-03 (pass period under a minute) is a constant, not tested; NFR-05 (360 px) is checked in a browser during the screens.
 
 import { randomUUID } from 'node:crypto';
-import { createLatch, type ScriptedToolCall } from '@agent-os/agents/testing';
+import { createLatch } from '@agent-os/agents/testing';
 import {
   type ConversationView,
   type ScheduleBody,
@@ -31,12 +28,11 @@ import {
   ScheduleViewSchema,
   TestRunStartedSchema,
 } from '@agent-os/contracts';
-import { SchedulesRepository } from '@agent-os/db';
 import { waitFor } from '@agent-os/db/testing';
 import { fixtureCallsOf } from '@agent-os/mcp-fixture';
 import { type Clock, systemClock } from '@agent-os/runtime';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SchedulesService } from '../src/schedules/schedules.service';
+import { ScheduleTriggersService } from '../src/schedules/schedule-triggers.service';
 import {
   allowRole,
   grantTo,
@@ -54,7 +50,6 @@ import {
 } from './support/createTestApp';
 import {
   agentBody,
-  BUILTIN,
   createRecord,
   createSystemRecord,
   pointBuiltinsAt,
@@ -135,14 +130,14 @@ async function employee(inRole = true): Promise<Session> {
 
 /** The pass the runtime runs on its timer, called directly. */
 function pass(): Promise<boolean> {
-  return harness.app.get(SchedulesService).pass();
+  return harness.app.get(ScheduleTriggersService).pass();
 }
 
 function body(
   fields: Partial<ScheduleBody> & { rule: ScheduleRule },
 ): ScheduleBody {
   return {
-    instruction: `Instruction ${randomUUID().slice(0, 8)}`,
+    instruction: `Instruction ${randomUUID()}`,
     agentId: null,
     timeZone: 'UTC',
     target: 'new_conversation',
@@ -201,8 +196,6 @@ function schedulesOf(api: ChatApi) {
 /** A history row as the database holds it, earliest term first. */
 interface RunRow {
   readonly id: string;
-  readonly outcome: string;
-  readonly skipReason: string | null;
   readonly conversationId: string | null;
   readonly manual: boolean;
   readonly dueAt: Date;
@@ -210,42 +203,29 @@ interface RunRow {
 
 async function runRows(scheduleId: string): Promise<RunRow[]> {
   const { rows } = await harness.pool.query<RunRow>(
-    `SELECT id, outcome, skip_reason AS "skipReason", conversation_id AS "conversationId", manual, due_at AS "dueAt"
+    `SELECT id, conversation_id AS "conversationId", manual, due_at AS "dueAt"
        FROM app.schedule_runs WHERE schedule_id = $1 ORDER BY due_at, id`,
     [scheduleId],
   );
   return rows;
 }
 
-/**
- * Waits until no history row of the schedules is `starting`: after a restart the app's own background pass runs
- * beside the test's `pass()`, and the one that claimed a term may still be starting its conversation.
- */
-async function untilSettled(scheduleIds: readonly string[]): Promise<void> {
-  await waitFor(
-    async () => (await Promise.all(scheduleIds.map(runRows))).flat(),
-    (rows) => rows.every((row) => row.outcome !== 'starting'),
-    'no starting history row',
+/** Waits until the schedule has `count` history rows: the app's background pass may be the one that claims a term. */
+function untilRuns(scheduleId: string, count: number): Promise<RunRow[]> {
+  return waitFor(
+    () => runRows(scheduleId),
+    (rows) => rows.length >= count,
+    `${count} history rows`,
   );
 }
 
-async function conversationCount(id: string): Promise<number> {
-  const { rows } = await harness.pool.query<{ count: string }>(
-    'SELECT count(*) AS count FROM app.conversations WHERE id = $1',
-    [id],
+/** The schedule's next term as the database holds it: an owner blocked since has no session to read it with. */
+async function nextRunAt(scheduleId: string): Promise<string | null> {
+  const { rows } = await harness.pool.query<{ nextRunAt: Date | null }>(
+    'SELECT next_run_at AS "nextRunAt" FROM app.schedules WHERE id = $1',
+    [scheduleId],
   );
-  return Number(rows[0]?.count ?? 0);
-}
-
-/** Writes the `starting` row a process that died between the claim and the start leaves behind. */
-async function leftStarting(scheduleId: string, dueAt: Date): Promise<string> {
-  const id = randomUUID();
-  await harness.app
-    .get(SchedulesRepository)
-    .insertRuns([
-      { id, scheduleId, dueAt, manual: false, outcome: 'starting' },
-    ]);
-  return id;
+  return rows[0]?.nextRunAt?.toISOString() ?? null;
 }
 
 async function block(session: Session): Promise<void> {
@@ -290,19 +270,16 @@ async function conversation(api: ChatApi, text: string, answer: string) {
   return id;
 }
 
-function startResearch(question: string): ScriptedToolCall {
-  return {
-    tool: 'start_deep_agent',
-    args: {
-      deepAgent: BUILTIN.deepResearch.name,
-      question,
-      boundaries: '',
-      result: '',
-    },
-  };
+/** The `user_message` entries of a conversation as text and schedule mark, in order. */
+function userMessages(view: ConversationView): [string, unknown][] {
+  return view.entries.flatMap((entry): [string, unknown][] =>
+    entry.kind === 'user_message'
+      ? [[entry.content.text, entry.content.schedule]]
+      : [],
+  );
 }
 
-describe('schedules: due terms, claim, send or start', () => {
+describe('schedules: due terms trigger one send of the instruction', () => {
   beforeAll(async () => {
     harness = await createTestApp(appOptions());
     harness.model.completeText({ text: GENERATED_TITLE });
@@ -322,7 +299,7 @@ describe('schedules: due terms, claim, send or start', () => {
     });
   }, TEST_TIMEOUT_MS);
 
-  // The next case's clock passes every term of this one's schedules: they go, the run conversations stay.
+  // The next case's clock passes every term of this one's schedules: they go, the trigger conversations stay.
   afterEach(async () => {
     await harness.pool.query(
       'DELETE FROM app.schedules WHERE owner_id = ANY($1::uuid[])',
@@ -352,9 +329,10 @@ describe('schedules: due terms, claim, send or start', () => {
     }
   }, TEST_TIMEOUT_MS);
 
-  // AC: AC-01.1, AC-03.1, AC-04.1, AC-08.1.
-  // Catches: a term that starts two runs (claim not once-only under two concurrent passes), or a run without the schedule mark / title / history row —
-  //   the main path of the feature broken at any link of claim -> start -> history.
+  // AC: AC-01.1, AC-03.1, AC-03.3, AC-04.1, AC-08.1.
+  // Catches: a term that triggers twice under two concurrent passes, or a trigger without its new conversation, mark, title or history
+  //   row — the main path broken at any link of claim -> send -> row; and a new conversation whose agent never runs (an object handed to
+  //   the runtime before the claim commits, KD-2).
   it(
     'UC-1: a due term starts one new conversation with the schedule mark, even when two passes claim it at once',
     async () => {
@@ -370,7 +348,6 @@ describe('schedules: due terms, claim, send or start', () => {
           rule: { kind: 'weekdays', days: [1, 2, 3, 4, 5], time: '09:00' },
         }),
       );
-
       const [listed] = (await schedules.list()).schedules;
       expect(listed).toMatchObject({
         id: created.id,
@@ -380,16 +357,22 @@ describe('schedules: due terms, claim, send or start', () => {
         lastRun: null,
       });
 
-      // Two passes claim the same due term at once: the conditional claim lets exactly one through
       clock.set(at('2030-03-04T09:00:30Z'));
       await Promise.all([pass(), pass()]);
-      expect(await runRows(created.id)).toHaveLength(1);
+      await untilRuns(created.id, 1);
+      await pass();
 
       const { threads } = await anna.listThreads();
       expect(threads).toHaveLength(1);
       const thread = threads[0]!;
       expect(thread.title).toBe('Morning summary · Mar 4');
-      const view = await untilIdle(anna, thread.id);
+      const view = await waitFor(
+        () => anna.history(thread.id),
+        (seen) =>
+          seen.chat.status === 'idle' &&
+          seen.entries.at(-1)?.kind === 'model_answer',
+        'the answer of the new conversation',
+      );
       expect(view.entries[0]).toMatchObject({
         kind: 'task',
         content: {
@@ -402,23 +385,15 @@ describe('schedules: due terms, claim, send or start', () => {
         },
       });
       expect(view.entries.at(-1)).toMatchObject({
-        kind: 'model_answer',
         content: { text: 'Night summary.' },
       });
 
-      const page = await waitFor(
-        () => schedules.runs(created.id),
-        (runs) => runs.runs[0]?.status === 'completed',
-        'the completed run',
-      );
-      expect(page.runs).toEqual([
+      const { runs } = await schedules.runs(created.id);
+      expect(runs).toEqual([
         {
-          id: thread.id,
+          id: expect.any(String),
           dueAt: '2030-03-04T09:00:00.000Z',
           manual: false,
-          outcome: 'started',
-          status: 'completed',
-          skipReason: null,
           conversationId: thread.id,
         },
       ]);
@@ -429,11 +404,12 @@ describe('schedules: due terms, claim, send or start', () => {
     TEST_TIMEOUT_MS,
   );
 
-  // AC: AC-04.2, AC-05.1, AC-05.2, AC-07.3, AC-07.4.
-  // Catches: a second run starting over a run that waits for an unanswered confirmation, or a run dropped into a busy conversation
-  //   (silent overlap), or a schedule message that looks like the employee's own.
+  // AC: AC-04.2, AC-04.3, AC-07.3.
+  // Catches: a this-conversation term that is dropped while the agent works or waits for a confirmation, or a queued schedule message
+  //   taken as the answer to the confirmation (a changing MCP call sent without the employee's decision), or a schedule message that
+  //   looks like the employee's own.
   it(
-    'UC-2: this-conversation runs queue as marked messages; an unanswered confirmation or a busy conversation skips the next term',
+    'UC-2: this-conversation terms queue marked messages while the agent waits for a confirmation or answers the employee',
     async () => {
       const start = at('2030-04-01T08:00:00Z');
       clock.set(start);
@@ -445,18 +421,20 @@ describe('schedules: due terms, claim, send or start', () => {
         'Sure.',
       );
       const instruction = 'UC-2: check the payment queue';
-      harness.model.script({ task: instruction }, [
-        {
-          calls: [
-            {
-              tool: CREATE_NOTE,
-              args: { orderId: 'ORD-9001', text: 'Queue is stuck' },
-            },
-          ],
-        },
-        { text: 'Note declined.' },
-        { calls: [startResearch('UC-2: why is the queue stuck?')] },
-      ]);
+      harness.model.script(
+        { task: instruction },
+        [
+          {
+            calls: [
+              {
+                tool: CREATE_NOTE,
+                args: { orderId: 'ORD-9001', text: 'Queue is stuck' },
+              },
+            ],
+          },
+        ],
+        { thereafter: { text: 'Queue checked.' } },
+      );
       const schedule = await schedules.create(
         body({
           name: 'Queue check',
@@ -467,35 +445,41 @@ describe('schedules: due terms, claim, send or start', () => {
         }),
       );
 
-      // Term 1: the run's message asks for a changing call, which waits for a decision
+      // Term 1: the message asks for a changing call, which waits for a decision
       clock.set(later(start, HOUR_MS + 1_000));
       await pass();
       const waiting = await untilOpenDecision(anna, threadId);
+
+      // Term 2 while the decision is open: the message is queued, the decision stays open and nothing is sent
+      clock.set(later(start, 2 * HOUR_MS + 1_000));
+      await pass();
+      await untilRuns(schedule.id, 2);
+      const queued = await anna.history(threadId);
+      expect(
+        queued.decisions.filter((decision) => decision.status === 'open'),
+      ).toHaveLength(1);
+      expect(queued.pending).toMatchObject([
+        { source: 'user', text: instruction },
+      ]);
       expect(
         fixtureCallsOf(harness.fixtureLog.callLog, {
           tool: 'create_incident_note',
         }),
       ).toEqual([]);
-      await waitFor(
-        () => schedules.runs(schedule.id),
-        (page) => page.runs[0]?.status === 'awaiting_confirmation',
-        'the run awaiting confirmation',
-      );
 
-      // Term 2: the unanswered decision skips it
-      clock.set(later(start, 2 * HOUR_MS + 1_000));
-      await pass();
-      expect((await schedules.runs(schedule.id)).runs[0]).toMatchObject({
-        outcome: 'skipped',
-        status: null,
-        skipReason: 'previous_run_unfinished',
-        conversationId: threadId,
-      });
-
-      // Anna declines; then she writes herself, and term 3 comes while the chat answers her
+      // Anna declines; the queued message is read after her decision
       const decision = waiting.decisions.find((one) => one.status === 'open')!;
       await anna.decide(decision.decisionId, { approve: false });
-      await untilIdle(anna, threadId);
+      await waitFor(
+        () => anna.history(threadId),
+        (view) =>
+          view.chat.status === 'idle' &&
+          userMessages(view).length === 2 &&
+          view.pending.length === 0,
+        'the queued message read after the decision',
+      );
+
+      // Term 3 while the agent answers Anna's own message
       const own = 'UC-2: and what about refunds?';
       const held = createLatch();
       const ownScript = harness.model.script({ task: own }, [
@@ -505,67 +489,57 @@ describe('schedules: due terms, claim, send or start', () => {
       await ownScript.called(1);
       clock.set(later(start, 3 * HOUR_MS + 1_000));
       await pass();
-      expect((await schedules.runs(schedule.id)).runs[0]).toMatchObject({
-        outcome: 'skipped',
-        skipReason: 'conversation_busy',
-      });
+      await untilRuns(schedule.id, 3);
       held.open();
-      await untilIdle(anna, threadId);
-
-      // Term 4: the run's message starts a deep agent, whose brief waits for a decision
-      clock.set(later(start, 4 * HOUR_MS + 1_000));
-      await pass();
-      const briefed = await untilOpenDecision(anna, threadId);
-      const page = await waitFor(
-        () => schedules.runs(schedule.id),
-        (runs) => runs.runs[0]?.status === 'awaiting_confirmation',
-        'the deep agent run awaiting confirmation',
+      const done = await waitFor(
+        () => anna.history(threadId),
+        (view) =>
+          view.chat.status === 'idle' &&
+          userMessages(view).length === 4 &&
+          view.pending.length === 0,
+        'the third schedule message answered',
       );
-      expect(
-        page.runs.map((run) => [run.outcome, run.status, run.skipReason]),
-      ).toEqual([
-        ['started', 'awaiting_confirmation', null],
-        ['skipped', null, 'conversation_busy'],
-        ['skipped', null, 'previous_run_unfinished'],
-        ['started', 'completed', null],
-      ]);
 
+      expect(
+        (await runRows(schedule.id)).map((row) => row.conversationId),
+      ).toEqual([threadId, threadId, threadId]);
       const mark = {
         scheduleId: schedule.id,
         name: 'Queue check',
         manual: false,
       };
-      const messages = briefed.entries.filter(
-        (entry) => entry.kind === 'user_message',
-      );
-      expect(
-        messages.map((entry) =>
-          entry.kind === 'user_message'
-            ? [entry.content.text, entry.content.schedule]
-            : [],
-        ),
-      ).toEqual([
+      expect(userMessages(done)).toEqual([
+        [instruction, mark],
         [instruction, mark],
         [own, null],
         [instruction, mark],
       ]);
+      expect(done.entries.at(-1)).toMatchObject({
+        kind: 'model_answer',
+        content: { text: 'Queue checked.' },
+      });
+      expect(
+        fixtureCallsOf(harness.fixtureLog.callLog, {
+          tool: 'create_incident_note',
+        }),
+      ).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );
 
-  // AC: AC-07.1, AC-07.2, DC-4, DC-5.
-  // Catches: a run that starts although the rights or the quota were taken away since the schedule was made (a run that fails on its first
-  //   model call), or a row stuck in `starting` after a refused start that retries forever.
+  // AC: AC-07.1, AC-07.2, DC-3.
+  // Catches: a trigger that runs although the chip agent's right or the account was taken away since the schedule was made, or a refusal
+  //   that leaves the term due (the schedule heads the due list and repeats the refusal on every pass); and an exhausted quota that
+  //   silently drops the trigger instead of failing the agent in its conversation.
   it(
-    'UC-3: rights and quota are checked at the term; a refused start leaves a skip row and no conversation',
+    'UC-3: a refused chip or a disabled owner consume the term without a conversation; an exhausted quota fails the agent in one',
     async () => {
       const start = at('2030-05-06T08:00:00Z');
       clock.set(start);
       const hourly: ScheduleRule = { kind: 'every_hours', hours: 1 };
 
-      // The agent of the chip: a system record the administrator shares with the role, then takes away
-      const annaSession = await employee();
-      const anna = chatApi(harness.app, annaSession);
+      // The chip agent: a system record the administrator shares with the role, then takes away
+      const anna = chatApi(harness.app, await employee());
       const record = await createSystemRecord(
         harness.app,
         admin,
@@ -595,8 +569,6 @@ describe('schedules: due terms, claim, send or start', () => {
         },
       );
       const carl = chatApi(harness.app, carlSession);
-      // The conversation gets its title first (a background model call), so nothing of it runs after the count below
-      // and no title call meets the exhausted quota.
       const carlThread = await conversation(
         carl,
         'UC-3: a cheap question',
@@ -609,14 +581,9 @@ describe('schedules: due terms, claim, send or start', () => {
       await carl.send(carlThread, spend);
       await waitFor(
         () => carl.history(carlThread),
-        (view) => {
-          const last = view.entries.at(-1);
-          return (
-            view.chat.status === 'idle' &&
-            last?.kind === 'model_answer' &&
-            last.content.text === 'An expensive answer.'
-          );
-        },
+        (view) =>
+          view.chat.status === 'idle' &&
+          view.entries.at(-1)?.kind === 'model_answer',
         'the expensive answer',
       );
       const withoutQuota = await schedulesOf(carl).create(
@@ -630,50 +597,37 @@ describe('schedules: due terms, claim, send or start', () => {
       );
       await block(dora);
 
-      // Between the claim and the start: a `starting` row left behind, then Egor is blocked
-      const egor = await employee();
-      const refused = await schedulesOf(chatApi(harness.app, egor)).create(
-        body({ rule: { kind: 'daily', time: '23:00' } }),
-      );
-      const startingId = await leftStarting(
-        refused.id,
-        at('2030-05-05T23:00:00Z'),
-      );
-      await block(egor);
-
-      const callsBefore = harness.model.calls.length;
       clock.set(later(start, HOUR_MS + 1_000));
       await pass();
+      for (const schedule of [withAgent, withoutQuota, ofBlocked])
+        await untilRuns(schedule.id, 1);
+      await pass();
 
-      for (const [schedule, reason] of [
-        [withAgent, 'agent_unavailable'],
-        [withoutQuota, 'quota_exhausted'],
-        [ofBlocked, 'owner_disabled'],
-      ] as const)
+      const nextTerm = later(start, 2 * HOUR_MS).toISOString();
+      for (const schedule of [withAgent, ofBlocked]) {
         expect(
-          (await runRows(schedule.id)).map((row) => [
-            row.outcome,
-            row.skipReason,
-            row.conversationId,
-          ]),
-        ).toEqual([['skipped', reason, null]]);
-      expect(await runRows(refused.id)).toMatchObject([
-        { id: startingId, outcome: 'skipped', skipReason: 'owner_disabled' },
-      ]);
-      expect(await conversationCount(startingId)).toBe(0);
+          (await runRows(schedule.id)).map((row) => row.conversationId),
+        ).toEqual([null]);
+        expect(await nextRunAt(schedule.id)).toBe(nextTerm);
+      }
       expect((await anna.listThreads()).threads).toEqual([]);
-      expect(
-        (await carl.listThreads()).threads.map((thread) => thread.id),
-      ).toEqual([carlThread]);
-      expect(harness.model.calls.length).toBe(callsBefore);
+
+      const [quotaRun] = await runRows(withoutQuota.id);
+      expect(await runRows(withoutQuota.id)).toHaveLength(1);
+      expect(await nextRunAt(withoutQuota.id)).toBe(nextTerm);
+      const failed = await waitFor(
+        () => carl.history(quotaRun!.conversationId!),
+        (view) => view.chat.status === 'failed',
+        'the quota failure in the trigger conversation',
+      );
+      expect(failed.chat.failureReason).toBe('quota_exhausted');
     },
     TEST_TIMEOUT_MS,
   );
 
   // AC: AC-01.2, AC-01.3, DC-1.
   // Catches: another employee reading or acting on a schedule (and through it, running an agent under the owner's rights) or binding a
-  //   schedule to a conversation or agent they cannot see; a schedule bound to the owner's own non-chat root (a trainer or test run),
-  //   whose term would fail for ever and starve the shared pass.
+  //   schedule to a conversation or agent they cannot see; a schedule bound to the owner's own non-chat root (a test run).
   it(
     'UC-4: another employee cannot see or act on a schedule, and cannot bind one to a foreign conversation or unavailable agent',
     async () => {
@@ -689,7 +643,6 @@ describe('schedules: due terms, claim, send or start', () => {
         body({ rule: { kind: 'daily', time: '09:00' } }),
       );
       const before = await schedulesOf(anna).get(schedule.id);
-      const runsBefore = await schedulesOf(anna).runs(schedule.id);
 
       expect((await schedulesOf(boris).list()).schedules).toEqual([]);
       const change = body({ rule: { kind: 'daily', time: '10:00' } });
@@ -706,7 +659,7 @@ describe('schedules: due terms, claim, send or start', () => {
           (await expectError(boris.raw(method, path, payload), 404)).errorCode,
         ).toBe('SCHEDULE_NOT_FOUND');
       expect(await schedulesOf(anna).get(schedule.id)).toEqual(before);
-      expect(await schedulesOf(anna).runs(schedule.id)).toEqual(runsBefore);
+      expect(await runRows(schedule.id)).toEqual([]);
 
       expect(
         (
@@ -725,8 +678,7 @@ describe('schedules: due terms, claim, send or start', () => {
         ).errorCode,
       ).toBe('THREAD_NOT_FOUND');
 
-      // Anna's own root that is not a chat (a test run's trainer root) refuses a run's message: a schedule on it is refused at
-      // create, so it never holds the head of the due list
+      // Anna's own root that is not a chat (a test run's trainer root) would refuse a trigger's message
       await apiRequest(harness.app, admin, 'patch', `/admin/roles/${role.id}`, {
         trainOwn: true,
       }).expect(200);
@@ -781,17 +733,16 @@ describe('schedules: due terms, claim, send or start', () => {
     TEST_TIMEOUT_MS,
   );
 
-  // AC: AC-03.2, AC-06.1, AC-06.2, DC-3, NFR-04.
-  // Catches: a lost or doubled run after a restart at any point between claim, start and mark, and a double start under concurrency
-  //   (what the unique index on the term and the `TASK_EXISTS` path guard).
+  // AC: AC-03.2, AC-06.1, AC-06.2, NFR-04.
+  // Catches: a server that was down for several terms triggering once per missed term (or not at all), a `once` schedule triggering
+  //   again after its term, and a pass after the catch-up that triggers a second time.
   it(
-    'UC-5: restart and concurrency give each term one run: catch-up, a `starting` row finished, pass vs "Run now"',
+    'UC-5: after downtime one catch-up trigger for the last missed term, and a `once` schedule triggers once and completes',
     async () => {
       const start = at('2030-06-03T08:00:00Z');
       clock.set(start);
       const annaSession = await employee();
-      const anna = chatApi(harness.app, annaSession);
-      const schedules = schedulesOf(anna);
+      const schedules = schedulesOf(chatApi(harness.app, annaSession));
       const hourly = await schedules.create(
         body({ rule: { kind: 'every_hours', hours: 1 } }),
       );
@@ -803,118 +754,40 @@ describe('schedules: due terms, claim, send or start', () => {
           { text: 'Done.' },
         ]);
 
-      // (b) a `starting` row without its conversation, and one whose conversation the dead process already made — of an owner
-      //     blocked since, so a repeated start would be refused
-      const daily = await schedules.create(
-        body({ rule: { kind: 'daily', time: '23:00' } }),
-      );
-      const withoutConversation = await leftStarting(
-        daily.id,
-        at('2030-06-02T23:00:00Z'),
-      );
-      const fyodorSession = await employee();
-      const fyodor = chatApi(harness.app, fyodorSession);
-      const fyodorDaily = await schedulesOf(fyodor).create(
-        body({ rule: { kind: 'daily', time: '23:00' } }),
-      );
-      const withConversation = randomUUID();
-      const firstMessage = 'UC-5: the run the dead process started';
-      harness.model.script({ task: firstMessage }, [{ text: 'Started.' }]);
-      await fyodor.send(withConversation, firstMessage);
-      await untilIdle(fyodor, withConversation);
-      await harness.app.get(SchedulesRepository).insertRuns([
-        {
-          id: withConversation,
-          scheduleId: fyodorDaily.id,
-          dueAt: at('2030-06-02T23:00:00Z'),
-          manual: false,
-          outcome: 'starting',
-        },
-      ]);
-      await block(fyodorSession);
-      harness.model.script({ task: daily.instruction }, [{ text: 'Done.' }]);
-
-      // (a) the server stands through three hourly terms and the `once` term; the restart boots a new app over the same
-      //     database, clock and model double
+      // The server stands through three hourly terms and the `once` term; the restart boots a new app over the same database,
+      // clock and model double. Its first pass runs at start, beside the test's.
       await harness.close();
       clock.set(later(start, 3 * HOUR_MS + 30 * 60_000));
       harness = await createTestApp(appOptions());
-      // The clients of the closed app reach nothing: Anna's session (a database row) goes on in the new one.
-      const annaNow = chatApi(harness.app, annaSession);
-      const schedulesNow = schedulesOf(annaNow);
+      const schedulesNow = schedulesOf(chatApi(harness.app, annaSession));
       await pass();
-      await untilSettled([hourly.id, once.id, daily.id, fyodorDaily.id]);
+      await untilRuns(hourly.id, 1);
+      await untilRuns(once.id, 1);
+      await pass();
 
       expect(
-        (await runRows(hourly.id)).map((row) => [
-          row.dueAt.toISOString(),
-          row.outcome,
-          row.skipReason,
-        ]),
-      ).toEqual([
-        ['2030-06-03T09:00:00.000Z', 'skipped', 'server_down'],
-        ['2030-06-03T10:00:00.000Z', 'skipped', 'server_down'],
-        ['2030-06-03T11:00:00.000Z', 'started', null],
-      ]);
+        (await runRows(hourly.id)).map((row) => row.dueAt.toISOString()),
+      ).toEqual(['2030-06-03T11:00:00.000Z']);
       expect((await schedulesNow.get(hourly.id)).nextRunAt).toBe(
         '2030-06-03T12:00:00.000Z',
       );
-      expect(await runRows(once.id)).toMatchObject([
-        { outcome: 'started', skipReason: null },
-      ]);
+      expect(
+        (await runRows(once.id)).map((row) => row.dueAt.toISOString()),
+      ).toEqual(['2030-06-03T09:30:00.000Z']);
       expect(await schedulesNow.get(once.id)).toMatchObject({
         state: 'completed',
         nextRunAt: null,
       });
-
-      // (b) one conversation and one started row for each left-behind term
-      for (const id of [withoutConversation, withConversation]) {
-        expect(await conversationCount(id)).toBe(1);
-        const { rows } = await harness.pool.query<{ outcome: string }>(
-          'SELECT outcome FROM app.schedule_runs WHERE id = $1',
-          [id],
-        );
-        expect(rows).toEqual([{ outcome: 'started' }]);
-      }
-      expect(await runRows(daily.id)).toHaveLength(1);
-      expect(await runRows(fyodorDaily.id)).toHaveLength(1);
-
-      // (c) the pass and «Run now» at once: one run starts, the other sees it unfinished. The hourly schedule is paused, so
-      //     its next term makes no conversation of its own; the race's run is held by its model answer, so it stays working.
-      await schedulesNow.pause(hourly.id);
-      const raced = await schedulesNow.create(
-        body({ rule: { kind: 'every_hours', hours: 1 } }),
-      );
-      const held = createLatch();
-      harness.model.script({ task: raced.instruction }, [
-        { latch: held, text: 'Raced.' },
-      ]);
-      try {
-        clock.set(later(clock.now(), HOUR_MS + 1_000));
-        const threadsBefore = (await annaNow.listThreads()).threads.length;
-        await Promise.all([pass(), schedulesNow.runNow(raced.id)]);
-        await pass();
-        await untilSettled([raced.id]);
-        const rows = await runRows(raced.id);
-        expect(
-          rows
-            .map((row) => `${row.outcome} ${row.skipReason ?? ''}`.trim())
-            .sort((a, b) => a.localeCompare(b)),
-        ).toEqual(['skipped previous_run_unfinished', 'started']);
-        expect((await annaNow.listThreads()).threads).toHaveLength(
-          threadsBefore + 1,
-        );
-      } finally {
-        held.open();
-      }
+      for (const schedule of [hourly, once])
+        expect((await runRows(schedule.id))[0]?.conversationId).not.toBeNull();
     },
     TEST_TIMEOUT_MS,
   );
 
-  // AC: AC-02.1, AC-02.2, AC-02.3, AC-09.1, AC-09.2, AC-10.1, AC-11.1, DC-2, DC-6.
-  // Catches: a paused schedule that catches up on resume, an edit that keeps the old term, a schedule that keeps answering into a deleted
-  //   conversation, a finished run that turns «stopped» or still links its conversation once it is deleted, or a delete that takes the run
-  //   conversations with it.
+  // AC: AC-02.1, AC-02.2, AC-02.3, AC-08.2, AC-09.1, AC-09.2, AC-10.1, AC-11.1, DC-2, DC-4.
+  // Catches: a paused schedule that catches up on resume, an edit that keeps the old term, «Run now» that moves the term, a schedule
+  //   that keeps writing into a deleted conversation (or a run now that writes a row there), a history row that still links a deleted
+  //   conversation, or a delete that takes the trigger conversations with it.
   it(
     'UC-6: schedule life: pause and resume, edit, run now, deleted conversation, past time, delete',
     async () => {
@@ -941,14 +814,12 @@ describe('schedules: due terms, claim, send or start', () => {
         conversationId: threadId,
       });
       const elsewhere = await schedules.create(elsewhereBody);
-      harness.model.script({ task: here.instruction }, [{ text: 'Here.' }], {
-        thereafter: { text: 'Here again.' },
+      harness.model.script({ task: here.instruction }, [], {
+        thereafter: { text: 'Here.' },
       });
-      harness.model.script(
-        { task: elsewhere.instruction },
-        [{ text: 'Elsewhere.' }],
-        { thereafter: { text: 'Elsewhere again.' } },
-      );
+      harness.model.script({ task: elsewhere.instruction }, [], {
+        thereafter: { text: 'Elsewhere.' },
+      });
 
       // Paused through three terms: no rows, and the resume starts from the nearest future term
       for (const schedule of [here, elsewhere])
@@ -959,7 +830,7 @@ describe('schedules: due terms, claim, send or start', () => {
       clock.set(at('2030-07-03T11:00:00Z'));
       await pass();
       for (const schedule of [here, elsewhere]) {
-        expect((await schedules.runs(schedule.id)).runs).toEqual([]);
+        expect(await runRows(schedule.id)).toEqual([]);
         expect(await schedules.resume(schedule.id)).toMatchObject({
           state: 'active',
           nextRunAt: '2030-07-04T09:00:00.000Z',
@@ -976,44 +847,77 @@ describe('schedules: due terms, claim, send or start', () => {
       ).toMatchObject({ nextRunAt: '2030-07-04T10:00:00.000Z' });
       clock.set(at('2030-07-04T09:30:00Z'));
       await pass();
-      expect((await schedules.runs(elsewhere.id)).runs).toEqual([]);
-      const hereDone = () =>
-        waitFor(
-          () => schedules.runs(here.id),
-          (page) => page.runs[0]?.status === 'completed',
-          'the this-conversation run completed',
-        );
-      await hereDone();
+      await untilRuns(here.id, 1);
+      expect(await runRows(elsewhere.id)).toEqual([]);
       clock.set(at('2030-07-04T10:00:30Z'));
       await pass();
-      expect((await schedules.runs(elsewhere.id)).runs).toMatchObject([
-        { dueAt: '2030-07-04T10:00:00.000Z', outcome: 'started' },
-      ]);
-
-      // «Run now»: a manual row, the term stays
-      const manual = await schedules.runNow(here.id);
-      expect(manual).toMatchObject({
-        manual: true,
-        outcome: 'started',
-        conversationId: threadId,
+      const [firstElsewhere] = await untilRuns(elsewhere.id, 1);
+      expect(firstElsewhere).toMatchObject({
+        dueAt: at('2030-07-04T10:00:00Z'),
+        manual: false,
       });
-      expect((await schedules.get(here.id)).nextRunAt).toBe(
-        '2030-07-05T09:00:00.000Z',
-      );
-      await hereDone();
+      expect(firstElsewhere!.conversationId).not.toBe(threadId);
 
-      // The conversation is deleted: «this conversation» pauses and refuses to run, «new conversation» goes on
+      // «Run now»: a manual row into the conversation, the state and the term stay
+      const manual = await schedules.runNow(here.id);
+      expect(manual).toMatchObject({ manual: true, conversationId: threadId });
+      expect(await schedules.get(here.id)).toMatchObject({
+        state: 'active',
+        nextRunAt: '2030-07-05T09:00:00.000Z',
+      });
+      await waitFor(
+        () => anna.history(threadId),
+        (view) =>
+          view.chat.status === 'idle' &&
+          userMessages(view).length === 2 &&
+          view.pending.length === 0,
+        'both triggers answered in the conversation',
+      );
+
+      // «Run now» on a paused «new conversation» schedule (AC-11.1): a manual row with its new conversation, still paused, no term
+      await schedules.pause(elsewhere.id);
+      const pausedManual = await schedules.runNow(elsewhere.id);
+      expect(pausedManual).toMatchObject({ manual: true });
+      expect(pausedManual.conversationId).toEqual(expect.any(String));
+      expect(pausedManual.conversationId).not.toBe(threadId);
+      expect(await schedules.get(elsewhere.id)).toMatchObject({
+        state: 'paused',
+        nextRunAt: null,
+      });
+      expect(await runRows(elsewhere.id)).toHaveLength(2);
+      await untilIdle(anna, pausedManual.conversationId!);
+      expect(await schedules.resume(elsewhere.id)).toMatchObject({
+        state: 'active',
+        nextRunAt: '2030-07-05T10:00:00.000Z',
+      });
+
+      // The conversation is deleted: its rows no longer offer it, «Run now» is refused and writes nothing, and the next term
+      // pauses «this conversation» without a row while «new conversation» goes on
       await anna.deleteThread(threadId);
+      expect((await schedules.runs(here.id)).runs).toMatchObject([
+        { manual: true, conversationId: null },
+        { manual: false, conversationId: null },
+      ]);
+      expect(
+        (await expectError(anna.raw('post', `/schedules/${here.id}/run`), 409))
+          .errorCode,
+      ).toBe('SCHEDULE_NOT_RUNNABLE');
+      expect(await runRows(here.id)).toHaveLength(2);
+      clock.set(at('2030-07-05T10:00:30Z'));
+      await pass();
+      await untilRuns(elsewhere.id, 3);
+      await waitFor(
+        () => schedules.get(here.id),
+        (view) => view.state === 'paused',
+        'the schedule paused at its term',
+      );
       expect(await schedules.get(here.id)).toMatchObject({
         state: 'paused',
         pausedBecause: 'conversation_deleted',
+        nextRunAt: null,
         conversation: { id: threadId, deleted: true },
       });
-      // Its runs that were over keep «completed» and no longer offer the deleted conversation
-      expect((await schedules.runs(here.id)).runs).toMatchObject([
-        { manual: true, status: 'completed', conversationId: null },
-        { manual: false, status: 'completed', conversationId: null },
-      ]);
+      expect(await runRows(here.id)).toHaveLength(2);
       for (const action of ['resume', 'run'])
         expect(
           (
@@ -1023,18 +927,6 @@ describe('schedules: due terms, claim, send or start', () => {
             )
           ).errorCode,
         ).toBe('SCHEDULE_NOT_RUNNABLE');
-      await waitFor(
-        () => schedules.runs(elsewhere.id),
-        (page) => page.runs[0]?.status === 'completed',
-        'the first new-conversation run completed',
-      );
-      clock.set(at('2030-07-05T10:00:30Z'));
-      await pass();
-      const elsewhereRuns = (await schedules.runs(elsewhere.id)).runs;
-      expect(elsewhereRuns.map((run) => run.outcome)).toEqual([
-        'started',
-        'started',
-      ]);
 
       // A `once` time in the past is refused
       expect(
@@ -1052,7 +944,8 @@ describe('schedules: due terms, claim, send or start', () => {
         ).errorCode,
       ).toBe('VALIDATION_FAILED');
 
-      // Deleting a schedule takes its history, not its run conversations
+      // Deleting a schedule takes its history, not its trigger conversations
+      const elsewhereRuns = await runRows(elsewhere.id);
       expect(
         (await anna.raw('delete', `/schedules/${elsewhere.id}`)).status,
       ).toBe(204);

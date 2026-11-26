@@ -1,13 +1,5 @@
-import {
-  type ScheduleRunStatus,
-  type ScheduleSkipReason,
-  SchedulePauseReasonSchema,
-  ScheduleRunOutcomeSchema,
-  type ScheduleState,
-  ScheduleStateSchema,
-  ScheduleTargetSchema,
-} from '@agent-os/contracts';
-import { and, asc, desc, eq, inArray, lt, lte, or, sql } from 'drizzle-orm';
+import { ScheduleStateSchema } from '@agent-os/contracts';
+import { and, asc, desc, eq, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import {
   conversations,
@@ -55,23 +47,13 @@ export type OwnedScheduleRow = {
   readonly conversationDeletedAt: Date | null;
 };
 
-/**
- * A history row with the deletion mark of the conversation it points at: a started run's, or the unfinished
- * run's of a `previous_run_unfinished` skip.
- */
+/** A history row with the deletion mark of its conversation. */
 export type ScheduleRunListRow = {
   readonly run: ScheduleRunRow;
   readonly conversationDeletedAt: Date | null;
 };
 
-/** A `starting` row with its schedule. */
-export type StartingRunRow = {
-  readonly run: ScheduleRunRow;
-  readonly schedule: ScheduleRow;
-};
-
 const { active, paused } = ScheduleStateSchema.enum;
-const { starting, started, skipped } = ScheduleRunOutcomeSchema.enum;
 
 /** Active by the next term, then paused, then completed (design-schedules.md, «Маршруты»). */
 const listOrder = sql`case ${schedules.state} when ${active} then 0 when ${paused} then 1 else 2 end`;
@@ -81,8 +63,8 @@ const scheduleConversationTask = sql`${runtimeTasks.taskId} = ${schedules.conver
 
 /**
  * Drizzle queries of `schedules` and `schedule_runs` (schedules-search-memory design-schedules.md, Data Model).
- * The service holds the claim of a term: its first write is `hold` or `claimDue` (rule 5), and a history row
- * changes only from `starting` (rule 3).
+ * The service holds the claim of a term: its first write is `hold` (rule 5); a history row is only inserted
+ * (rule 3).
  */
 export class SchedulesRepository {
   constructor(private readonly db: Db) {}
@@ -144,37 +126,14 @@ export class SchedulesRepository {
   }
 
   /**
-   * Writes the schedule's row without changing it and returns it fresh: the first write of a manual run and of
-   * a claim of a due term, so claims of one schedule go one after the other (rule 5).
+   * Writes the schedule's row without changing it and returns it fresh: the first write of a manual trigger and
+   * of a claim of a due term, so claims of one schedule go one after the other (rule 5).
    */
   async hold(id: string): Promise<ScheduleRow | undefined> {
     const [row] = await this.db.client
       .update(schedules)
       .set({ id: sql`${schedules.id}` })
       .where(eq(schedules.id, id))
-      .returning();
-    return row;
-  }
-
-  /**
-   * Moves an active schedule from the term `expectedDueAt` to `next`, only while it still waits for that term
-   * (KD-1); `undefined` — a claim came first, or the schedule changed.
-   */
-  async claimDue(
-    id: string,
-    expectedDueAt: Date,
-    next: { readonly nextRunAt: Date | null; readonly state: ScheduleState },
-  ): Promise<ScheduleRow | undefined> {
-    const [row] = await this.db.client
-      .update(schedules)
-      .set({ ...next, updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(schedules.id, id),
-          eq(schedules.state, active),
-          eq(schedules.nextRunAt, expectedDueAt),
-        ),
-      )
       .returning();
     return row;
   }
@@ -189,57 +148,17 @@ export class SchedulesRepository {
       .limit(limit);
   }
 
-  /**
-   * Pauses the owner's `this_conversation` schedules created in the conversation, active or paused, with the
-   * reason `conversation_deleted`; returns the ones it changed.
-   */
-  pauseForConversation(
-    conversationId: string,
-    ownerId: string,
-  ): Promise<ScheduleRow[]> {
-    return this.db.client
-      .update(schedules)
-      .set({
-        state: paused,
-        pausedBecause: SchedulePauseReasonSchema.enum.conversation_deleted,
-        nextRunAt: null,
-        updatedAt: sql`now()`,
-      })
-      .where(
-        and(
-          eq(schedules.conversationId, conversationId),
-          eq(schedules.ownerId, ownerId),
-          eq(schedules.target, ScheduleTargetSchema.enum.this_conversation),
-          inArray(schedules.state, [active, paused]),
-        ),
-      )
-      .returning();
-  }
-
   // ---------- History ----------
 
-  /**
-   * Writes history rows and returns them as the database wrote them; a second row of a term of a schedule
-   * breaks the unique index (rule 1).
-   */
-  async insertRuns(
-    rows: readonly NewScheduleRunRow[],
-  ): Promise<ScheduleRunRow[]> {
-    if (rows.length === 0) return [];
-    return this.db.client
+  /** Writes a history row; a second row of a term of a schedule breaks the unique index (rule 1). */
+  async insertRun(row: NewScheduleRunRow): Promise<ScheduleRunRow> {
+    const [inserted] = await this.db.client
       .insert(scheduleRuns)
-      .values([...rows])
+      .values(row)
       .returning();
-  }
-
-  /** Every `starting` row with its schedule. */
-  listStarting(): Promise<StartingRunRow[]> {
-    return this.db.client
-      .select({ run: scheduleRuns, schedule: schedules })
-      .from(scheduleRuns)
-      .innerJoin(schedules, eq(schedules.id, scheduleRuns.scheduleId))
-      .where(eq(scheduleRuns.outcome, starting))
-      .orderBy(asc(scheduleRuns.dueAt), asc(scheduleRuns.id));
+    if (inserted === undefined)
+      throw new Error('schedule_runs insert returned no row');
+    return inserted;
   }
 
   /** A page of the schedule's history after `after`, latest terms first (`due_at` DESC, `id` DESC). */
@@ -273,78 +192,6 @@ export class SchedulesRepository {
     return row;
   }
 
-  /** The schedule's latest run that started or is starting. */
-  async lastStarted(
-    scheduleId: string,
-  ): Promise<ScheduleRunListRow | undefined> {
-    const [row] = await this.runs()
-      .where(
-        and(
-          eq(scheduleRuns.scheduleId, scheduleId),
-          inArray(scheduleRuns.outcome, [starting, started]),
-        ),
-      )
-      .orderBy(desc(scheduleRuns.dueAt), desc(scheduleRuns.id))
-      .limit(1);
-    return row;
-  }
-
-  /** The owner's started runs in the conversation whose final status is not written yet. */
-  unsettledIn(
-    conversationId: string,
-    ownerId: string,
-  ): Promise<ScheduleRunListRow[]> {
-    return this.runs()
-      .innerJoin(schedules, eq(schedules.id, scheduleRuns.scheduleId))
-      .where(
-        and(
-          eq(scheduleRuns.conversationId, conversationId),
-          eq(schedules.ownerId, ownerId),
-          eq(scheduleRuns.outcome, started),
-          sql`${scheduleRuns.finalStatus} is null`,
-        ),
-      );
-  }
-
-  /** `starting` → `started` with its conversation, only from `starting`; false otherwise. */
-  async markStarted(id: string, conversationId: string): Promise<boolean> {
-    const changed = await this.db.client
-      .update(scheduleRuns)
-      .set({ outcome: started, conversationId })
-      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, starting)))
-      .returning({ id: scheduleRuns.id });
-    return changed.length > 0;
-  }
-
-  /** `starting` → `skipped` with its reason, only from `starting`; false otherwise. */
-  async markSkipped(id: string, reason: ScheduleSkipReason): Promise<boolean> {
-    const changed = await this.db.client
-      .update(scheduleRuns)
-      .set({ outcome: skipped, skipReason: reason })
-      .where(and(eq(scheduleRuns.id, id), eq(scheduleRuns.outcome, starting)))
-      .returning({ id: scheduleRuns.id });
-    return changed.length > 0;
-  }
-
-  /** Writes a started run's final status once; false when it is written already. */
-  async setFinalStatus(
-    id: string,
-    status: ScheduleRunStatus,
-  ): Promise<boolean> {
-    const changed = await this.db.client
-      .update(scheduleRuns)
-      .set({ finalStatus: status })
-      .where(
-        and(
-          eq(scheduleRuns.id, id),
-          eq(scheduleRuns.outcome, started),
-          sql`${scheduleRuns.finalStatus} is null`,
-        ),
-      )
-      .returning({ id: scheduleRuns.id });
-    return changed.length > 0;
-  }
-
   private owned() {
     return this.db.client
       .select({
@@ -367,10 +214,7 @@ export class SchedulesRepository {
       .from(scheduleRuns)
       .leftJoin(
         runtimeTasks,
-        eq(
-          runtimeTasks.taskId,
-          sql`coalesce(${scheduleRuns.conversationId}, ${scheduleRuns.unfinishedConversationId})`,
-        ),
+        eq(runtimeTasks.taskId, scheduleRuns.conversationId),
       )
       .$dynamic();
   }
