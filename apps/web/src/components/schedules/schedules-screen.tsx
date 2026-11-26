@@ -82,6 +82,10 @@ function rowOf(
     schedule.timeZone,
     agentName(t, schedule),
   ].join(' · ');
+  const nextAt =
+    schedule.nextRunAt === null
+      ? '—'
+      : formatRunTime(format, schedule.nextRunAt, schedule.timeZone);
   return {
     key: schedule.id,
     name: schedule.name,
@@ -99,9 +103,7 @@ function rowOf(
         </span>
       </span>,
       <ScheduleStateBadge key="state" state={schedule.state} />,
-      schedule.nextRunAt === null
-        ? '—'
-        : formatRunTime(format, schedule.nextRunAt, schedule.timeZone),
+      <NextRun key="next" t={t} at={nextAt} />,
       <LastRun
         key="last"
         run={schedule.lastRun}
@@ -109,4 +111,14 @@ function rowOf(
       />,
     ],
   };
+}
+
+/** «Следующий запуск»: below 768 px the list has no header, so the time carries its label there. */
+function NextRun({ t, at }: { t: SchedulesTranslator; at: string }) {
+  return (
+    <>
+      <span className="md:hidden">{t('rule.next', { at })}</span>
+      <span className="max-md:hidden">{at}</span>
+    </>
+  );
 }

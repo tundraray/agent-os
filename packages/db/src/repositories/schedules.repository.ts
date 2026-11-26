@@ -55,7 +55,10 @@ export type OwnedScheduleRow = {
   readonly conversationDeletedAt: Date | null;
 };
 
-/** A history row with the deletion mark of its run's conversation. */
+/**
+ * A history row with the deletion mark of the conversation it points at: a started run's, or the unfinished
+ * run's of a `previous_run_unfinished` skip.
+ */
 export type ScheduleRunListRow = {
   readonly run: ScheduleRunRow;
   readonly conversationDeletedAt: Date | null;
@@ -141,8 +144,8 @@ export class SchedulesRepository {
   }
 
   /**
-   * Writes the schedule's row without changing it: the first write of a manual run, so claims of one schedule
-   * go one after the other (rule 5).
+   * Writes the schedule's row without changing it and returns it fresh: the first write of a manual run and of
+   * a claim of a due term, so claims of one schedule go one after the other (rule 5).
    */
   async hold(id: string): Promise<ScheduleRow | undefined> {
     const [row] = await this.db.client
@@ -215,8 +218,10 @@ export class SchedulesRepository {
 
   // ---------- History ----------
 
-  /** Writes history rows; a second row of a term of a schedule breaks the unique index (rule 1). */
-  /** The inserted rows as the database wrote them. */
+  /**
+   * Writes history rows and returns them as the database wrote them; a second row of a term of a schedule
+   * breaks the unique index (rule 1).
+   */
   async insertRuns(
     rows: readonly NewScheduleRunRow[],
   ): Promise<ScheduleRunRow[]> {
@@ -284,6 +289,23 @@ export class SchedulesRepository {
     return row;
   }
 
+  /** The owner's started runs in the conversation whose final status is not written yet. */
+  unsettledIn(
+    conversationId: string,
+    ownerId: string,
+  ): Promise<ScheduleRunListRow[]> {
+    return this.runs()
+      .innerJoin(schedules, eq(schedules.id, scheduleRuns.scheduleId))
+      .where(
+        and(
+          eq(scheduleRuns.conversationId, conversationId),
+          eq(schedules.ownerId, ownerId),
+          eq(scheduleRuns.outcome, started),
+          sql`${scheduleRuns.finalStatus} is null`,
+        ),
+      );
+  }
+
   /** `starting` → `started` with its conversation, only from `starting`; false otherwise. */
   async markStarted(id: string, conversationId: string): Promise<boolean> {
     const changed = await this.db.client
@@ -345,7 +367,10 @@ export class SchedulesRepository {
       .from(scheduleRuns)
       .leftJoin(
         runtimeTasks,
-        eq(runtimeTasks.taskId, scheduleRuns.conversationId),
+        eq(
+          runtimeTasks.taskId,
+          sql`coalesce(${scheduleRuns.conversationId}, ${scheduleRuns.unfinishedConversationId})`,
+        ),
       )
       .$dynamic();
   }

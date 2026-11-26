@@ -12,7 +12,7 @@
 //   carries, within the first 100 000 characters. Mock boundary: the model double only. CI runs on a clean database: every case writes
 //   its own rows.
 //
-// Not repeated here: the rules of the query text beyond one boundary row, the cursor codec (`thread-cursor.ts`), the web side (UC-3,
+// Not repeated here: the rules of the query text beyond one boundary row, the cursor codec (`opaque-cursor.ts`), the web side (UC-3,
 //   UC-4), the 1 s budget (UC-5, `test:verify`).
 
 import { randomUUID } from 'node:crypto';
@@ -381,6 +381,16 @@ describe('Conversation search: everything is found, once, in order (UC-1); only 
       const snippet = byForm.matches[0]!.snippet!;
       expect(snippet.text).toBe('Отчёты по выручке');
       expect(marked(snippet.text, snippet.marks)).toEqual(['Отчёты']);
+
+      // A form the stems do not join («платёжка» → `платежк`, «платежей» → `платеж`): the strict query finds nothing,
+      //   the loose one finds the message by `плате`
+      const byShortStem = await found(api, 'платёжка');
+      expect(byShortStem.matches).toHaveLength(1);
+      expect(byShortStem.matches[0]).toMatchObject({
+        threadId: logs.threadId,
+        place: 'message',
+        agent: null,
+      });
 
       // 21 messages: 20 newest, then the last one, no repeats
       const quarterly = await wordy(api, QUARTERLY, 21, 'альфа');

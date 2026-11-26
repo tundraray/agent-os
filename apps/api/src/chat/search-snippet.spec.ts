@@ -78,6 +78,19 @@ describe('snippetOf', () => {
       words: ['понятную'],
     },
     {
+      // The defect seen in the sidebar: «…передам его вам…» where only the closing punctuation was cut.
+      name: 'a cut dropping only punctuation gets no «…» at either edge',
+      row: {
+        headline: headline(
+          `${'.'.repeat(25)} [слово] ${'хвост '.repeat(25)}— !!!`,
+        ),
+        before: false,
+        after: false,
+      },
+      text: `слово ${'хвост '.repeat(25)}—`,
+      words: ['слово'],
+    },
+    {
       name: 'a found word longer than the limit keeps its visible part marked',
       row: {
         headline: headline(`a [${'y'.repeat(300)}] b`),

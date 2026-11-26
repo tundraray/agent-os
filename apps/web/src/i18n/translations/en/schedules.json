@@ -34,6 +34,7 @@
     "at": "at",
     "date": "Date",
     "time": "Time",
+    "timePlaceholder": "HH:MM",
     "hours": "Every, hours",
     "days": "Days of the week",
     "dayShort": {
@@ -62,6 +63,7 @@
     "instruction": "Write what the agent should do.",
     "past": "This time has passed — choose a future one.",
     "noDays": "Choose at least one day.",
+    "time": "Enter the time as HH:MM, from 00:00 to 23:59.",
     "hours": "Enter a whole number of hours from 1 to {max, number}."
   },
   "list": {
@@ -72,6 +74,7 @@
       "next": "Next run",
       "last": "Last run"
     },
+    "lastLabel": "Last run:",
     "emptyTitle": "No schedules yet",
     "emptyHint": "Create one in any conversation: “+” → “Schedule”.",
     "loadFailed": "Couldn't load schedules"
@@ -118,7 +121,7 @@
   },
   "deleteDialog": {
     "title": "Delete the schedule?",
-    "body": "{name}. There will be no more runs. Conversations of past runs stay in the list.",
+    "body": "The schedule “{name}” will not run again. Conversations of past runs stay in the list.",
     "confirm": "Delete"
   },
   "history": {

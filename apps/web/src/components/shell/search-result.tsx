@@ -35,6 +35,40 @@ function MarkedTextView({ text, marks }: MarkedText): ReactNode {
   return parts;
 }
 
+/** A title found this far in would lie past the row's one-line truncation (about 20 characters fit). */
+const TITLE_VISIBLE_START = 16;
+/** How much of the title stays before the found word once the start is cut. */
+const TITLE_LEAD = 8;
+
+/**
+ * The title from a word boundary shortly before its first found range, after «…», when that range starts past
+ * the visible start; otherwise the title as it is. Only a space is a boundary: a hyphenated word stays whole. The
+ * ranges move with the text.
+ */
+export function titleAroundMark({ text, marks }: MarkedText): MarkedText {
+  const first = marks[0];
+  if (first === undefined || first.start <= TITLE_VISIBLE_START)
+    return { text, marks };
+  const lead = first.start - TITLE_LEAD;
+  const space = text.lastIndexOf(' ', lead);
+  // A word that would push the found one out of sight again is left out whole: the title starts at the next word.
+  const next = text.indexOf(' ', lead);
+  const cut =
+    space >= first.start - TITLE_VISIBLE_START
+      ? space + 1
+      : next !== -1 && next < first.start
+        ? next + 1
+        : first.start;
+  const shift = cut - 1;
+  return {
+    text: `…${text.slice(cut)}`,
+    marks: marks.map(({ start, end }) => ({
+      start: start - shift,
+      end: end - shift,
+    })),
+  };
+}
+
 /** «Где найдено» (MC-15); null for a title match, which has no such line. */
 function useWhere(match: ConversationMatch): string | null {
   const t = useTranslations('shell.search');
@@ -110,7 +144,9 @@ export function SearchResult({
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-sm">
             {match.place === 'title' ? (
-              <MarkedTextView text={title} marks={match.titleMarks} />
+              <MarkedTextView
+                {...titleAroundMark({ text: title, marks: match.titleMarks })}
+              />
             ) : (
               title
             )}

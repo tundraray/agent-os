@@ -913,7 +913,8 @@ describe('schedules: due terms, claim, send or start', () => {
 
   // AC: AC-02.1, AC-02.2, AC-02.3, AC-09.1, AC-09.2, AC-10.1, AC-11.1, DC-2, DC-6.
   // Catches: a paused schedule that catches up on resume, an edit that keeps the old term, a schedule that keeps answering into a deleted
-  //   conversation, or a delete that takes the run conversations with it.
+  //   conversation, a finished run that turns «stopped» or still links its conversation once it is deleted, or a delete that takes the run
+  //   conversations with it.
   it(
     'UC-6: schedule life: pause and resume, edit, run now, deleted conversation, past time, delete',
     async () => {
@@ -1008,6 +1009,11 @@ describe('schedules: due terms, claim, send or start', () => {
         pausedBecause: 'conversation_deleted',
         conversation: { id: threadId, deleted: true },
       });
+      // Its runs that were over keep «completed» and no longer offer the deleted conversation
+      expect((await schedules.runs(here.id)).runs).toMatchObject([
+        { manual: true, status: 'completed', conversationId: null },
+        { manual: false, status: 'completed', conversationId: null },
+      ]);
       for (const action of ['resume', 'run'])
         expect(
           (

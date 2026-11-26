@@ -295,10 +295,18 @@ function ScheduleForm({
     }
   }
 
-  /** MC-5: a new schedule names its next run and opens from the notice; an edit says it was saved. */
+  /**
+   * MC-5: a new schedule names its next run and opens from the notice; an edit says it was saved. A new schedule
+   * comes from a conversation's composer, whose send button the bottom-right corner covers: its notice shows on top.
+   */
   function notifySaved(saved: ScheduleView): void {
-    if (mode.kind === 'edit' || saved.nextRunAt === null) {
+    if (mode.kind === 'edit') {
       toast.success(t('dialog.saved'));
+      return;
+    }
+    const position = 'top-center';
+    if (saved.nextRunAt === null) {
+      toast.success(t('dialog.saved'), { position });
       return;
     }
     toast.success(
@@ -306,6 +314,7 @@ function ScheduleForm({
         at: formatRunTime(format, saved.nextRunAt, saved.timeZone),
       }),
       {
+        position,
         action: {
           label: t('dialog.open'),
           onClick: () => router.push(schedulePath(saved.id)),

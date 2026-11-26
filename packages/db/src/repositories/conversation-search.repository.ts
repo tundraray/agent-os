@@ -37,6 +37,11 @@ export interface ConversationSearchInput {
   readonly query: string;
   /** The last place of the previous page; absent for the first page. */
   readonly after?: SearchPosition;
+  /**
+   * A word whose stem has at least 6 letters also matches by its stem without the last two letters
+   * (a fleeting vowel: «зимородка» → `зимородк`, «зимородок» → `зимородок`, both start with `зимород`).
+   */
+  readonly loose: boolean;
   /** Places of the page; one more row is read to tell whether a next page exists. */
   readonly limit: number;
 }
@@ -44,7 +49,8 @@ export interface ConversationSearchInput {
 /**
  * One found place. `at` is ISO with ms; `headline` is the fragment of `ts_headline` with the found words
  * between U+0001 and U+0002 (the whole title for `place: title`), `null` on the extra row past `limit`;
- * `continuesBefore`/`continuesAfter` — the text goes on before or after the fragment.
+ * `continuesBefore`/`continuesAfter` — a letter or digit of the text lies before or after the fragment
+ * (punctuation alone is not a continuation).
  */
 export type ConversationSearchRow = {
   readonly key: string;
@@ -85,6 +91,22 @@ const task = alias(runtimeTasks, 'task');
 const entry = alias(messages, 'entry');
 const record = alias(messages, 'record');
 const result = alias(toolResults, 'result');
+
+/** The shortest stem a loose query also matches by a shorter start. */
+const LOOSE_MIN_LENGTH = 6;
+const LOOSE_CUT = 2;
+
+/** A lexeme as a prefix term of a tsquery, quoted so its text stays text. */
+const prefixTerm = (lexeme: SQL): SQL =>
+  sql`'''' || replace(replace(${lexeme}, '\\', '\\\\'), '''', '''''') || ''':*'`;
+
+/** The term of one word of the query: strict — its stem as a prefix; loose — also its shortened stem. */
+const wordTerm = (loose: boolean): SQL =>
+  loose
+    ? sql`case when length(lexeme) >= ${LOOSE_MIN_LENGTH}
+        then '(' || ${prefixTerm(sql`lexeme`)} || ' | ' || ${prefixTerm(sql`left(lexeme, ${-LOOSE_CUT})`)} || ')'
+        else ${prefixTerm(sql`lexeme`)} end`
+    : prefixTerm(sql`lexeme`);
 
 /** The time of a place in the search order: the cursor keeps ms. */
 const atMs = (column: AnyPgColumn): SQL =>
@@ -128,8 +150,7 @@ export class ConversationSearchRepository {
       : sql``;
     return sql`
       with words as (
-        select string_agg('''' || replace(replace(lexeme, '\\', '\\\\'), '''', '''''') || ''':*', ' & ')::tsquery
-          as query
+        select string_agg(${wordTerm(input.loose)}, ' & ')::tsquery as query
         from unnest(to_tsvector(${SEARCH_CONFIG}, ${input.query}))
       ),
       found as (
@@ -175,8 +196,10 @@ export class ConversationSearchRepository {
         page.conversation_id as "conversationId", ${place.parentId} is not null as subagent,
         coalesce(${place.subagent}, ${agents.name}) as name,
         page.seq, page.call_id as "callId", page.tool, fragment.headline,
-        coalesce(fragment.found_at <> 1, false) as "continuesBefore",
-        coalesce(fragment.found_at = 0 or fragment.found_at + length(fragment.plain) - 1 < length(source.text), false)
+        coalesce(fragment.found_at = 0
+          or left(source.text, fragment.found_at - 1) ~ '[[:alnum:]]', false) as "continuesBefore",
+        coalesce(fragment.found_at = 0
+          or substr(source.text, fragment.found_at + length(fragment.plain)) ~ '[[:alnum:]]', false)
           as "continuesAfter"
       from page
       join ${conversations} ${place} on ${place.id} = page.conversation_id

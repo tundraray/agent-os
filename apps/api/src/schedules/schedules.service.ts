@@ -105,6 +105,13 @@ type RunAgent =
       readonly model: string | null;
     };
 
+/** The statuses a run keeps once its conversation is deleted; any other reads as `stopped` then. */
+const SETTLED_STATUSES: ReadonlySet<ScheduleRunStatus> = new Set([
+  'completed',
+  'failed',
+  'stopped',
+]);
+
 /** Resumable and runnable now: not completed and not waiting for an answer in a deleted conversation (DC-6). */
 const runnable = (schedule: ScheduleRow): boolean =>
   schedule.state !== 'completed' && schedule.pausedBecause === null;
@@ -155,11 +162,16 @@ function decodeRunCursor(cursor: string): { dueAt: Date; id: string } {
   return { dueAt: new Date(d), id: i };
 }
 
-/** The name of a schedule: the employee's, or the start of the instruction on one line. */
+/**
+ * The name of a schedule: the employee's, or the start of the instruction on one line, cut at the last word
+ * boundary within the limit (a hard cut only inside one long word).
+ */
 function nameOf(body: ScheduleBody): string {
   if (body.name !== undefined && body.name !== '') return body.name;
-  const line = body.instruction.replace(/\s+/g, ' ');
-  return Array.from(line).slice(0, SCHEDULE_NAME_MAX_LENGTH).join('').trim();
+  const chars = Array.from(body.instruction.replace(/\s+/g, ' ').trim());
+  if (chars.length <= SCHEDULE_NAME_MAX_LENGTH) return chars.join('');
+  const space = chars.lastIndexOf(' ', SCHEDULE_NAME_MAX_LENGTH);
+  return chars.slice(0, space > 0 ? space : SCHEDULE_NAME_MAX_LENGTH).join('');
 }
 
 const ruleInput = (row: ScheduleRow): RuleInput => ({
@@ -393,6 +405,29 @@ export class SchedulesService {
         ? await this.finishStarting(claim.run, schedule)
         : claim.run;
     return this.toRunView({ run, conversationDeletedAt: null }, ownerId);
+  }
+
+  /**
+   * Before the owner's conversation is deleted: writes the final status of its runs that have none and are over
+   * (`completed`, `failed`, `stopped`), read while the conversation is alive — once it is deleted it reads as
+   * stopped. A run still working or waiting for a decision is stopped by the deletion and keeps no status, so it
+   * reads `stopped` afterwards.
+   */
+  async settleRunsIn(conversationId: string, ownerId: string): Promise<void> {
+    const rows = await this.schedules.unsettledIn(conversationId, ownerId);
+    const settled: { runId: string; status: ScheduleRunStatus }[] = [];
+    for (const row of rows) {
+      const status = await this.statusOf(row, ownerId);
+      if (status === null || !SETTLED_STATUSES.has(status)) continue;
+      if (await this.schedules.setFinalStatus(row.run.id, status))
+        settled.push({ runId: row.run.id, status });
+    }
+    this.logger.info('schedule runs settled: conversation deleted', {
+      conversationId,
+      ownerId,
+      unsettled: rows.length,
+      settled,
+    });
   }
 
   /**
@@ -947,13 +982,17 @@ export class SchedulesService {
     };
   }
 
-  /** One history row with its status (KD-4): a `starting` row shows as started and working. */
+  /**
+   * One history row with its status (KD-4): a `starting` row shows as started and working. A deleted conversation
+   * is not offered: its id is `null`.
+   */
   private async toRunView(
     row: ScheduleRunListRow,
     ownerId: string,
   ): Promise<ScheduleRunView> {
     const { run } = row;
     const skipped = run.outcome === 'skipped';
+    const pointed = skipped ? run.unfinishedConversationId : run.conversationId;
     return {
       id: run.id,
       dueAt: run.dueAt.toISOString(),
@@ -961,9 +1000,7 @@ export class SchedulesService {
       outcome: skipped ? 'skipped' : 'started',
       status: await this.statusOf(row, ownerId),
       skipReason: ScheduleSkipReasonSchema.nullable().parse(run.skipReason),
-      conversationId: skipped
-        ? run.unfinishedConversationId
-        : run.conversationId,
+      conversationId: row.conversationDeletedAt === null ? pointed : null,
     };
   }
 

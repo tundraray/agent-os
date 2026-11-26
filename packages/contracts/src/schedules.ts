@@ -142,7 +142,7 @@ export const ScheduleRunViewSchema = z.object({
   skipReason: ScheduleSkipReasonSchema.nullable(),
   /**
    * The conversation of a started run; on a `previous_run_unfinished` skip — the conversation of that
-   * unfinished run; otherwise `null`.
+   * unfinished run; otherwise, or once that conversation is deleted, `null`.
    */
   conversationId: z.string().min(1).nullable(),
 });

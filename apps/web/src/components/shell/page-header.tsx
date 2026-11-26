@@ -98,7 +98,7 @@ export function PageHeader({
         {badge}
       </div>
       {children !== undefined && (
-        <div className="order-last flex min-w-0 basis-full flex-wrap items-center gap-2 pb-2 md:order-none md:shrink-0 md:basis-auto md:flex-nowrap md:pb-0">
+        <div className="order-last flex min-w-0 basis-full flex-wrap items-center gap-2 pb-2 md:order-none md:shrink-0 md:basis-auto md:flex-nowrap md:ps-2 md:pb-0">
           {children}
         </div>
       )}

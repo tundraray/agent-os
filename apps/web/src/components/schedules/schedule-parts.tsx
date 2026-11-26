@@ -162,10 +162,14 @@ export function LastRun({
 }) {
   const t = useTranslations('schedules');
   const format = useFormatter();
-  if (run === null) return <>—</>;
+  // Below 768 px the list has no header: the run is one labelled line of the row's details, «—» without a run.
+  const label = <span className="md:hidden">{t('list.lastLabel')}</span>;
+  if (run === null)
+    return <span className="inline-flex items-center gap-x-1">{label}—</span>;
   const started = run.outcome === 'started';
   return (
-    <span className="inline-flex flex-col items-start">
+    <span className="inline-flex flex-wrap items-center gap-x-1 md:flex-col md:flex-nowrap md:items-start">
+      {label}
       {started ? (
         <AgentStatus variant="label" status={run.status ?? 'working'} />
       ) : (

@@ -243,12 +243,14 @@ export class ConversationsService {
 
   /**
    * Flow 6: the root's tree is stopped and marked deleted together with the root session, in one
-   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`. The
+   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`. First the
+   * schedule runs in it that are over keep their final status, read while it is alive; the
    * `this_conversation` schedules created in it are then paused (schedules FR-09); a claim checks the same at
    * its term, in case the process stops between the two transactions.
    */
   async delete(threadId: string, ownerId: string): Promise<void> {
     await this.owned(threadId, ownerId);
+    await this.schedules.settleRunsIn(threadId, ownerId);
     await this.control.deleteRoot(threadId, ownerId);
     await this.schedules.pauseForDeletedConversation(threadId, ownerId);
   }

@@ -26,6 +26,8 @@ import {
 } from '@/components/assistant-ui/elements/reasoning.aui';
 import {
   SEARCH_MARK_CLASS,
+  SEARCH_MARK_USER_BUBBLE_CLASS,
+  SEARCH_MARK_USER_ROOT_CLASS,
   SearchMarkProvider,
   useFeedSearchMark,
   useMessageMarkProps,
@@ -337,10 +339,10 @@ const ThreadRoot: FC<{
   );
   const t = useTranslations('chat.testRun');
   const feedRef = useRef<HTMLDivElement>(null);
-  const searchMark = useFeedSearchMark(feedRef, historyPending);
+  const mark = useFeedSearchMark(feedRef, historyPending);
 
   return (
-    <SearchMarkProvider value={searchMark}>
+    <SearchMarkProvider value={mark}>
       <ThreadPrimitive.Root
         className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
         style={{
@@ -1375,8 +1377,13 @@ const AssistantMessage: FC = () => {
       {...markProps}
       className={cn(
         'group/message fade-in slide-in-from-bottom-1 animate-in relative duration-150 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]',
-        !isBlank && '-mb-7.5 pb-7.5',
+        // Marked: the band ends 16 px under the action bar, 8 px short of the next message (the feed's 24 px gap), as
+        // it starts 8 px above the text; padding and margin still cancel out, so the layout stays.
+        !isBlank &&
+          '-mb-7.5 pb-7.5 data-search-target:-mb-4 data-search-target:pb-4',
         SEARCH_MARK_CLASS,
+        // The band reaches 8 px above the text, as the card marks have; the negative margin keeps the layout.
+        'data-search-target:-mt-2 data-search-target:pt-2',
       )}
     >
       {isBlank ? (
@@ -1646,7 +1653,7 @@ const UserMessage: FC = () => {
       data-slot="aui_user-message-root"
       className={cn(
         'group/message fade-in slide-in-from-bottom-1 animate-in motion-reduce:animate-none grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2',
-        SEARCH_MARK_CLASS,
+        SEARCH_MARK_USER_ROOT_CLASS,
       )}
       data-role="user"
       {...markProps}
@@ -1682,7 +1689,12 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
+        <div
+          className={cn(
+            'aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden',
+            SEARCH_MARK_USER_BUBBLE_CLASS,
+          )}
+        >
           {Brief ? (
             <Brief />
           ) : (

@@ -30,11 +30,27 @@ const SearchMarkContext = createContext<SearchMark | null>(null);
 export const SearchMarkProvider = SearchMarkContext.Provider;
 
 /**
- * search-result.md «Цель совпадения»: `--muted` across the element and a 2 px `--ring` bar on the left, static
- * (no transition); the margin keeps the element in the upper third once scrolled to.
+ * The scroll margin keeps the target in the upper third once scrolled to. A message that holds the target does not
+ * play its entry slide: a message with `content-visibility: auto` starts it only once it comes into view, that is
+ * after the scroll, and the scroll lands on the shifted box, which then slides off its place.
  */
-export const SEARCH_MARK_CLASS =
-  'scroll-mt-16 data-search-target:bg-muted data-search-target:shadow-[inset_2px_0_0_0_var(--color-ring)]';
+const SEARCH_MARK_ROOT_CLASS =
+  'scroll-mt-16 data-search-target:animate-none has-[[data-search-target]]:animate-none';
+
+/**
+ * search-result.md «Цель совпадения»: `--muted` across the element and a 2 px `--ring` bar on the left, static
+ * (no transition).
+ */
+export const SEARCH_MARK_CLASS = `${SEARCH_MARK_ROOT_CLASS} data-search-target:bg-muted data-search-target:shadow-[inset_2px_0_0_0_var(--color-ring)]`;
+
+/**
+ * A user's message: its bubble is `--muted` already, so a `--muted` band would swallow it. The bubble takes a 2 px
+ * `--ring` outline inside its edge instead (inside: the root's paint containment clips anything outside); the root
+ * only keeps the scroll margin. Goes on the root (`group/message`) and the bubble.
+ */
+export const SEARCH_MARK_USER_ROOT_CLASS = SEARCH_MARK_ROOT_CLASS;
+export const SEARCH_MARK_USER_BUBBLE_CLASS =
+  'group-data-[search-target]/message:ring-2 group-data-[search-target]/message:ring-ring group-data-[search-target]/message:ring-inset';
 
 /** The attributes that mark an element and let it take focus programmatically (search-result.md, «Открытие»). */
 const markedProps = (marked: boolean) =>
@@ -192,13 +208,28 @@ export function useFeedSearchMark(
       setApplied(null);
       return;
     }
-    // After the viewport's own scroll to the bottom of a freshly loaded history, which waits for the same frame.
-    const frame = requestAnimationFrame(() => {
-      // No `behavior`: the viewport's CSS scrolls smoothly, and at once under reduced motion.
-      element.scrollIntoView({ block: 'start' });
-      element.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
+    const feed = containerRef.current;
+    if (feed === null) return;
+    element.focus({ preventScroll: true });
+    // A freshly drawn history settles under the scroll: messages with `content-visibility: auto` trade their
+    // placeholder height for the real one as they come near the view, and the viewport scrolls itself to the bottom
+    // on growth. So the target is aligned at once and again on every resize of the feed (the first callback comes
+    // with observing, after the viewport's own scroll to the bottom in the same frame) until the employee scrolls,
+    // clicks or types. Instant: a smooth scroll aims at a position the settling layout moves.
+    const align = () =>
+      element.scrollIntoView({ block: 'start', behavior: 'instant' });
+    align();
+    const observer = new ResizeObserver(align);
+    observer.observe(feed);
+    const gestures = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    const stop = () => {
+      observer.disconnect();
+      for (const gesture of gestures)
+        window.removeEventListener(gesture, stop, true);
+    };
+    for (const gesture of gestures)
+      window.addEventListener(gesture, stop, { capture: true, passive: true });
+    return stop;
   }, [applied, containerRef]);
 
   return applied?.mark ?? null;

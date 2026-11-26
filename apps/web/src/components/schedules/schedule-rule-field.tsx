@@ -55,9 +55,21 @@ export type RuleDraft = {
 };
 
 /** Why the rule cannot be saved; the catalogue key of its MC-3 text. */
-export type RuleError = 'past' | 'noDays' | 'hours';
+export type RuleError = 'past' | 'noDays' | 'hours' | 'time';
 
 const pad = (value: number): string => String(value).padStart(2, '0');
+
+/** «9:05», «09:05», «905» or «0905» — the colon is optional, a numeric keypad has none. */
+const TYPED_TIME = /^(\d{1,2}):?(\d{2})$/;
+
+/** A typed time as the API's 24-hour `HH:MM`; null when it is not a time of day. */
+export function parseTime(typed: string): string | null {
+  const match = TYPED_TIME.exec(typed.trim());
+  if (match === null) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours <= 23 && minutes <= 59 ? `${pad(hours)}:${pad(minutes)}` : null;
+}
 
 const localDate = (at: Date): string =>
   `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
@@ -141,14 +153,24 @@ export function checkRule(
   draft: RuleDraft,
 ): { rule: ScheduleRule } | { error: RuleError } {
   switch (draft.kind) {
-    case 'once':
-      return { rule: { kind: 'once', ...draft.once } };
-    case 'daily':
-      return { rule: { kind: 'daily', time: draft.daily.time } };
+    case 'once': {
+      const time = parseTime(draft.once.time);
+      return time === null
+        ? { error: 'time' }
+        : { rule: { kind: 'once', date: draft.once.date, time } };
+    }
+    case 'daily': {
+      const time = parseTime(draft.daily.time);
+      return time === null
+        ? { error: 'time' }
+        : { rule: { kind: 'daily', time } };
+    }
     case 'weekdays': {
-      const { days, time } = draft.weekdays;
-      return days.length === 0
-        ? { error: 'noDays' }
+      const { days } = draft.weekdays;
+      const time = parseTime(draft.weekdays.time);
+      if (days.length === 0) return { error: 'noDays' };
+      return time === null
+        ? { error: 'time' }
         : {
             rule: {
               kind: 'weekdays',
@@ -256,7 +278,7 @@ export function ScheduleRuleField({
 
   const set = (next: Partial<RuleDraft>): void =>
     onChange({ ...draft, ...next });
-  /** An emptied time or date keeps the last value: the rule always has one. */
+  /** An emptied date keeps the last value: the rule always has one. */
   const keep = (value: string, apply: (value: string) => void): void => {
     if (value !== '') apply(value);
   };
@@ -272,6 +294,33 @@ export function ScheduleRuleField({
     });
   };
 
+  /**
+   * A 24-hour `HH:MM` typed as text: a native time field follows the browser's locale (AM/PM), not the
+   * interface's. `checkRule` reads what was typed.
+   */
+  const timeField = (
+    inputId: string,
+    value: string,
+    apply: (time: string) => void,
+    errors: readonly RuleError[],
+  ) => {
+    const failed = errors.find(invalid);
+    return (
+      <Input
+        id={inputId}
+        inputMode="numeric"
+        autoComplete="off"
+        maxLength={5}
+        placeholder={t('timePlaceholder')}
+        className={cn(COMFORT_CONTROL, 'w-20 text-sm tabular-nums md:text-sm')}
+        value={value}
+        aria-invalid={failed !== undefined}
+        aria-describedby={failed === undefined ? undefined : errorId}
+        onChange={(event) => apply(event.target.value)}
+      />
+    );
+  };
+
   const timeInput = (value: string, apply: (time: string) => void) => (
     <span className="flex items-center gap-2">
       <span aria-hidden className="text-sm text-muted-foreground">
@@ -280,13 +329,7 @@ export function ScheduleRuleField({
       <label htmlFor={`${id}-time`} className="sr-only">
         {t('time')}
       </label>
-      <Input
-        id={`${id}-time`}
-        type="time"
-        className={cn(COMFORT_CONTROL, 'w-28 text-sm md:text-sm')}
-        value={value}
-        onChange={(event) => keep(event.target.value, apply)}
-      />
+      {timeField(`${id}-time`, value, apply, ['time'])}
     </span>
   );
 
@@ -350,19 +393,12 @@ export function ScheduleRuleField({
               >
                 {t('time')}
               </label>
-              <Input
-                id={`${id}-once-time`}
-                type="time"
-                className={cn(COMFORT_CONTROL, 'w-28 text-sm md:text-sm')}
-                value={draft.once.time}
-                aria-invalid={invalid('past')}
-                aria-describedby={describedBy('past')}
-                onChange={(event) =>
-                  keep(event.target.value, (time) =>
-                    set({ once: { ...draft.once, time } }),
-                  )
-                }
-              />
+              {timeField(
+                `${id}-once-time`,
+                draft.once.time,
+                (time) => set({ once: { ...draft.once, time } }),
+                ['past', 'time'],
+              )}
             </span>
           </>
         )}
@@ -370,11 +406,12 @@ export function ScheduleRuleField({
           timeInput(draft.daily.time, (time) => set({ daily: { time } }))}
         {draft.kind === 'weekdays' && (
           <>
+            {/* Seven 40 px days do not fit a 360 px dialog: below `sm` they share the row's width. */}
             <div
               role="group"
               aria-label={t('days')}
               aria-describedby={describedBy('noDays')}
-              className="flex flex-wrap gap-1"
+              className="grid w-full grid-cols-7 gap-1 sm:flex sm:w-auto"
             >
               {DAYS.map(([day, key]) => {
                 const pressed = draft.weekdays.days.includes(day);
@@ -390,7 +427,7 @@ export function ScheduleRuleField({
                     onClick={() => toggleDay(day)}
                     className={cn(
                       COMFORT_CONTROL,
-                      'w-10 rounded-md border text-sm outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring',
+                      'w-full rounded-md border text-sm outline-none sm:w-10 hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring',
                       invalid('noDays')
                         ? 'border-destructive'
                         : 'border-border',

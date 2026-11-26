@@ -63,6 +63,8 @@ export type DataTableColumn = {
    * the table inside its block. By default only the first column shrinks.
    */
   shrinks?: boolean;
+  /** A shrinking column that gives way down to 128 px below 640 px, where 160 px leaves no room for its neighbours. */
+  narrow?: boolean;
 };
 
 export type DataTableAction = {
@@ -183,6 +185,10 @@ type Shown = {
 
 /** Not ready: neither a departure from it nor to it is a row leaving. */
 const NO_ROWS: readonly DataTableRow[] = [];
+
+/** A cell with nothing to show: «Две строки» leaves it and its separator out. */
+const isEmptyCell = (cell: ReactNode): boolean =>
+  cell === '' || cell === null || cell === undefined || cell === false;
 
 const prefersReducedMotion = (): boolean =>
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -351,13 +357,27 @@ export function DataTable({
                   <RowLink href={row.href}>{row.cells[0]}</RowLink>
                 )}
               </div>
-              <div className="text-xs leading-4 text-muted-foreground">
-                {row.cells.slice(1).map((cell, index) => (
-                  <span key={columns[index + 1]?.header ?? index}>
-                    {index > 0 && ' · '}
-                    {cell}
-                  </span>
-                ))}
+              {/*
+                Cells centred on one line: a badge with its icon and plain text otherwise sit on different baselines.
+                Each cell brings its « · » in front; the line is shifted left by one separator and clipped across, so
+                neither the first line nor one a wrap starts begins with a separator. Empty cells are left out.
+              */}
+              <div className="overflow-x-clip">
+                <div className="-ml-3 flex flex-wrap items-center gap-y-0.5 text-xs leading-4 text-muted-foreground">
+                  {row.cells.map((cell, index) =>
+                    index === 0 || isEmptyCell(cell) ? null : (
+                      <span
+                        key={columns[index]?.header ?? index}
+                        className="inline-flex items-center"
+                      >
+                        <span aria-hidden className="w-3 shrink-0 text-center">
+                          ·
+                        </span>
+                        {cell}
+                      </span>
+                    ),
+                  )}
+                </div>
               </div>
             </li>
           ))}
@@ -411,6 +431,12 @@ const alignClass = (column: DataTableColumn | undefined): string | undefined =>
 const shrinks = (columns: readonly DataTableColumn[], index: number): boolean =>
   columns[index]?.shrinks ?? index === 0;
 
+/** The `Collapsible` width props of a column's cell. */
+const widthOf = (columns: readonly DataTableColumn[], index: number) => ({
+  shrinks: shrinks(columns, index),
+  narrow: columns[index]?.narrow === true,
+});
+
 function HeaderRow({
   columns,
   withActions,
@@ -448,6 +474,8 @@ type CollapsibleProps = {
   children: ReactNode;
   /** The cell may get narrower than its content, down to 160 px; otherwise it is never narrower than its content. */
   shrinks?: boolean;
+  /** With `shrinks`: down to 128 px below 640 px. */
+  narrow?: boolean;
   className?: string;
 };
 
@@ -459,13 +487,14 @@ type CollapsibleProps = {
 function Collapsible({
   children,
   shrinks = false,
+  narrow = false,
   className,
 }: CollapsibleProps) {
   return (
     <div
       className={cn(
         'grid grid-rows-[1fr] transition-[grid-template-rows,opacity] duration-(--duration-fast) group-data-leaving/row:grid-rows-[0fr] group-data-leaving/row:opacity-0 motion-reduce:transition-none',
-        shrinks ? 'min-w-40' : 'min-w-max',
+        shrinks ? (narrow ? 'min-w-32 sm:min-w-40' : 'min-w-40') : 'min-w-max',
       )}
     >
       <div
@@ -526,7 +555,7 @@ function RowGroup({
             key={columns[index]?.header ?? index}
             className={cn(cellClass, alignClass(columns[index]))}
           >
-            <Collapsible shrinks={shrinks(columns, index)}>
+            <Collapsible {...widthOf(columns, index)}>
               {index === 0 && row.href !== undefined ? (
                 <RowLink href={row.href}>{cell}</RowLink>
               ) : index === 0 && row.text !== undefined ? (
@@ -604,7 +633,7 @@ function RowGroup({
                 index === 0 && 'pl-9',
               )}
             >
-              <Collapsible shrinks={shrinks(columns, index)}>
+              <Collapsible {...widthOf(columns, index)}>
                 {index === 0 && (
                   <span className="sr-only">
                     {t('nestedIn', { parent: row.name })}

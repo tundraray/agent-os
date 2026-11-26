@@ -94,7 +94,11 @@ export function MemoryTable({
       key: record.id,
       name: record.description,
       cells: [
-        <span key="record" className="flex min-w-0 items-center gap-2">
+        // Below 640 px the badge goes under the description, which then keeps the cell's whole width.
+        <span
+          key="record"
+          className="flex min-w-0 items-center gap-x-2 gap-y-0.5 max-sm:flex-wrap"
+        >
           <span
             className={cn(
               'block truncate',
@@ -150,7 +154,8 @@ export function MemoryTable({
       <DataTable
         caption={caption}
         columns={[
-          { header: t('memory.columns.record') },
+          // 160 px leaves a 360 px screen no room for the date and the «⋯» beside the record.
+          { header: t('memory.columns.record'), narrow: true },
           { header: t('memory.columns.changed') },
         ]}
         state={state}

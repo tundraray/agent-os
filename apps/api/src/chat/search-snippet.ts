@@ -53,6 +53,9 @@ const splitsPair = (text: string, index: number): boolean =>
 
 const isSpace = (char: string): boolean => /\s/.test(char);
 
+/** A cut that drops only punctuation and white space gets no «…». */
+const hasWord = (text: string): boolean => /[\p{L}\p{N}]/u.test(text);
+
 /**
  * Where the fragment starts: the first word start at most CONTEXT_BEFORE before the first found word; the
  * found word itself when no word starts there (one long token before it).
@@ -92,14 +95,15 @@ function windowOf(
 
 /**
  * The fragment of a match (contract `MarkedText`): from a few words before the first found word, at most
- * SNIPPET_MAX_LENGTH, cut at word boundaries, on one line, with «…» on an edge past which the text goes on.
+ * SNIPPET_MAX_LENGTH, cut at word boundaries, on one line, with «…» on an edge past which a letter or digit of
+ * the text goes on.
  * A found word crossing a hard cut keeps its visible part.
  */
 export function snippetOf(row: Headline): MarkedText {
   const { text, marks } = parseHeadline(row.headline ?? '');
   const [start, end] = windowOf(text, marks[0] ?? { start: 0, end: 0 });
-  const before = row.continuesBefore || text.slice(0, start).trim() !== '';
-  const after = row.continuesAfter || text.slice(end).trim() !== '';
+  const before = row.continuesBefore || hasWord(text.slice(0, start));
+  const after = row.continuesAfter || hasWord(text.slice(end));
   const prefix = before ? ELLIPSIS : '';
   const shift = prefix.length - start;
   return {
