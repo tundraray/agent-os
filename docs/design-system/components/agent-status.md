@@ -102,4 +102,3 @@
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — «Остановлен» с причиной «квота исчерпана» (QS-01).
 - [docs/features/deep-agents/uxrd.md](../../features/deep-agents/uxrd.md) — статусы задачи и поручения, строки события глубокого агента (DA-05, DA-06, DA-09).
 - [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — статус обучения на карточке и в результате (SL-01, TR-02).
-- [docs/features/schedules-search-memory/uxrd.md](../../features/schedules-search-memory/uxrd.md) — статус запуска по расписанию в списке и в истории расписания (SH-04, SH-06).

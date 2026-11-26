@@ -35,5 +35,5 @@
 - [design-task.md](../../features/deep-agents/design-task.md) — проверка вызова `task` и таблица ответов; поля ответа и финальный сабагент из `task` в `endOfTurn`; ветки команды в `gateStart` нет (KD-5, KD-6, KD-7)
 - [design-task-list.md](../../features/deep-agents/design-task-list.md) — правила списка задач сессии и открытые задачи в `endOfTurn` (KD-3, KD-4)
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — правило правки документа: дописать, заменить фрагмент, предел (`notepad-rules.ts`, KD-2, KD-5)
-- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — правило сроков (`schedule-rule.ts`), решение срока `decideRun` и статус запуска `runStatus` (KD-4, KD-7)
+- [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — правило сроков (`schedule-rule.ts`) (KD-7)
 - [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — проверка записи памяти по шаблонам bb `memoryCheckReason` (KD-4)
