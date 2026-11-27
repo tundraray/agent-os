@@ -188,16 +188,22 @@ export type SetPersonalAdminBody = z.infer<typeof SetPersonalAdminBodySchema>;
 
 // ---------- Admin: roles ----------
 
+/** Kind of a built-in role (access-levels KD-5): at most one role of each kind. */
+export const BuiltinRoleKindSchema = z.enum(['super_admin', 'everyone']);
+export type BuiltinRoleKind = z.infer<typeof BuiltinRoleKindSchema>;
+
 export const RoleSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
-  memberCount: z.number().int().nonnegative(),
+  /** Null for «Все сотрудники»: its membership is implicit (access-levels KD-5). */
+  memberCount: z.number().int().nonnegative().nullable(),
   isAdmin: z.boolean(),
   /** The right to train the employee's own agents (KD-8). */
   trainOwn: z.boolean(),
   /** The right to train any agent of the catalogue or the panel (KD-8). */
   trainAny: z.boolean(),
-  builtin: z.boolean(),
+  /** The kind of a built-in role; null for a role an administrator created. */
+  builtinKind: BuiltinRoleKindSchema.nullable(),
 });
 export type RoleSummary = z.infer<typeof RoleSummarySchema>;
 
@@ -213,8 +219,14 @@ export const RoleDetailSchema = RoleSummarySchema.extend({
 });
 export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 
-/** Body of POST /api/admin/roles. */
-export const CreateRoleBodySchema = z.object({ name: RoleNameSchema });
+/**
+ * Body of POST /api/admin/roles; `copyFrom` — the id of a role whose levels and model grants the new role copies,
+ * without its employees, the admin right or the training rights (access-levels AC-37.8).
+ */
+export const CreateRoleBodySchema = z.object({
+  name: RoleNameSchema,
+  copyFrom: IdSchema.optional(),
+});
 export type CreateRoleBody = z.infer<typeof CreateRoleBodySchema>;
 
 /** Body of PATCH /api/admin/roles/:id: at least one of `name`, `isAdmin`, `trainOwn`, `trainAny`. */

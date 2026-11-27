@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BuiltinKeySchema,
+  BuiltinRoleKindSchema,
   CALL_RECORD_KINDS,
   GrantEffectSchema,
   GrantTargetKindSchema,
@@ -247,6 +248,9 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_users_language_check: sorted(LanguageSchema.options),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
+        identity_roles_builtin_kind_check: sorted(
+          BuiltinRoleKindSchema.options,
+        ),
         mcp_servers_mode_check: sorted(McpServerModeSchema.options),
         model_providers_kind_check: sorted(ModelProviderKindSchema.options),
         models_purpose_check: sorted(ModelPurposeSchema.options),

@@ -114,6 +114,8 @@ export interface RootSession {
   } | null;
   /** The live forks of this conversation. */
   readonly forkCount: number;
+  /** The last entry of the root's history the owner has seen (improvements design-server.md, KD-7). */
+  readonly seenThroughSeq: number;
 }
 
 /** Reads a root's row as a root session; a row without a title or a list time is not a root's. */
@@ -137,6 +139,7 @@ export function toRootSession(row: RootConversationRow): RootSession {
             throughSeq: row.forkedThroughSeq,
           },
     forkCount: row.forkCount,
+    seenThroughSeq: row.seenThroughSeq,
   };
 }
 

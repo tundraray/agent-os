@@ -7,14 +7,12 @@ import {
   ModelProviderErrorCode,
   RoleListSchema,
   type CreateCatalogModelBody,
-  type GrantTargetBody,
   type ModelProviderKind,
   type UpdateModelDefaultsBody,
 } from '@agent-os/contracts';
 import {
   DEFAULT_API,
   readLines,
-  SEED_MCP_SERVERS,
   signIn,
   stepFailed,
   type AdminSession,
@@ -84,15 +82,6 @@ const MODELS: CreateCatalogModelBody[] = [
   },
 ];
 
-/** What the built-in role is allowed: the `seed:mcp` servers and the chat models, without a quota. */
-const TARGETS: GrantTargetBody[] = [
-  ...[...SEED_MCP_SERVERS.shared, SEED_MCP_SERVERS.oauth].map((server) => ({
-    kind: 'server' as const,
-    server,
-  })),
-  ...CHAT_MODELS.map((model) => ({ kind: 'model' as const, model: model.id })),
-];
-
 /**
  * Standard input, three lines: the administrator's password, the Anthropic key, the Google key; an
  * empty key line — the provider without a key. Each key goes to the secret memory before any log.
@@ -135,12 +124,6 @@ function readArguments(): { login: string; api: string } {
   const { login, api } = values;
   if (!login) throw new Error('--login is required');
   return { login, api };
-}
-
-function targetName(target: GrantTargetBody): string {
-  if (target.kind === 'model') return target.model;
-  if (target.kind === 'tool') return `${target.server}/${target.tool}`;
-  return target.server;
 }
 
 /**
@@ -239,56 +222,43 @@ async function builtinRoleId(session: AdminSession): Promise<string> {
   const answer = await session.request('GET', '/api/admin/roles');
   if (answer.status !== 200) throw stepFailed('Reading roles', answer);
   const builtin = RoleListSchema.parse(answer.body).find(
-    (role) => role.builtin,
+    (role) => role.builtinKind === 'super_admin',
   );
   if (builtin === undefined) throw new Error('The built-in role is missing');
   return builtin.id;
 }
 
 /**
- * Allows the target to the role; an existing grant (409) is skipped. Returns false for a server the
- * registry does not know yet, so the run goes on and ends with exit code 1.
+ * Allows the chat model to the role without a quota; an existing grant (409) is skipped. Servers need
+ * no grant: the super-administrator gets every tool (access-levels FR-34).
  */
 async function seedGrant(
   session: AdminSession,
   roleId: string,
-  target: GrantTargetBody,
-): Promise<boolean> {
+  model: string,
+): Promise<void> {
   const answer = await session.request('POST', '/api/admin/grants', {
     roleId,
     effect: 'allow',
-    target,
+    target: { kind: 'model', model },
   });
-  const fields = { roleId, target: targetName(target) };
   if (
-    answer.status === 201 ||
-    answer.error?.errorCode === AccessErrorCode.GRANT_EXISTS
-  ) {
-    logger.info('access grant seeded', {
-      ...fields,
-      outcome: answer.status === 201 ? 'created' : 'skipped: exists',
-    });
-    return true;
-  }
-  if (
-    target.kind === 'server' &&
-    answer.error?.errorCode === AccessErrorCode.GRANT_TARGET_UNKNOWN
-  ) {
-    logger.warn('access grant skipped: run seed:mcp first', {
-      ...fields,
-      outcome: 'server_unknown',
-    });
-    return false;
-  }
-  throw stepFailed(`Granting ${targetName(target)}`, answer);
+    answer.status !== 201 &&
+    answer.error?.errorCode !== AccessErrorCode.GRANT_EXISTS
+  )
+    throw stepFailed(`Granting ${model}`, answer);
+  logger.info('access grant seeded', {
+    roleId,
+    model,
+    outcome: answer.status === 201 ? 'created' : 'skipped: exists',
+  });
 }
 
 /**
  * Entry of `pnpm --filter api seed:access` (model-providers design-core.md, FR-17; development only,
  * run from `dist`): a client of the running API that registers the providers `anthropic` and `google`
  * with the keys from standard input, fills the catalogue with Haiku, Sonnet and the Gemini embedding
- * model, chooses the default models and allows the built-in role the `seed:mcp` servers and the chat
- * models without a quota.
+ * model, chooses the default models and allows the built-in role the chat models without a quota.
  */
 async function main(): Promise<void> {
   const startedAt = Date.now();
@@ -299,18 +269,14 @@ async function main(): Promise<void> {
   for (const model of MODELS) await seedModel(session, model);
   await seedModelDefaults(session);
   const roleId = await builtinRoleId(session);
-  let complete = true;
-  for (const target of TARGETS) {
-    complete = (await seedGrant(session, roleId, target)) && complete;
-  }
-  if (!complete) process.exitCode = 1;
+  for (const model of CHAT_MODELS) await seedGrant(session, roleId, model.id);
   logger.info('seed:access finished', {
     login,
     providers: providers.map(({ name, apiKey }) => ({
       provider: name,
       keySet: apiKey !== '',
     })),
-    outcome: complete ? 'ok' : 'servers missing',
+    outcome: 'ok',
     durationMs: Date.now() - startedAt,
   });
 }

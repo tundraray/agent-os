@@ -1,3 +1,4 @@
+import type { BuiltinRoleKind } from '@agent-os/contracts';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { identityRoleMembers, identityRoles, identityUsers } from '../schema';
@@ -12,7 +13,7 @@ export interface RoleSummaryRow {
   isAdmin: boolean;
   trainOwn: boolean;
   trainAny: boolean;
-  builtin: boolean;
+  builtinKind: BuiltinRoleKind | null;
   memberCount: number;
 }
 
@@ -22,6 +23,7 @@ export interface MemberRoleRow {
   id: string;
   name: string;
   isAdmin: boolean;
+  builtinKind: BuiltinRoleKind | null;
 }
 
 /**
@@ -30,14 +32,16 @@ export interface MemberRoleRow {
 export class IdentityRolesRepository {
   constructor(private readonly db: Db) {}
 
-  /** Id of the built-in «Супер-администратор» role the migration creates (KD-6). */
-  async builtinId(): Promise<string> {
+  /** Id of the built-in role of this kind the migration creates (access-levels KD-5). */
+  async builtinId(kind: BuiltinRoleKind): Promise<string> {
     const [row] = await this.db.client
       .select({ id: identityRoles.id })
       .from(identityRoles)
-      .where(eq(identityRoles.builtin, true));
+      .where(eq(identityRoles.builtinKind, kind));
     if (row === undefined)
-      throw new Error('the built-in role is missing from identity_roles');
+      throw new Error(
+        `the built-in role ${kind} is missing from identity_roles`,
+      );
     return row.id;
   }
 
@@ -70,7 +74,7 @@ export class IdentityRolesRepository {
         isAdmin: identityRoles.isAdmin,
         trainOwn: identityRoles.trainOwn,
         trainAny: identityRoles.trainAny,
-        builtin: identityRoles.builtin,
+        builtinKind: identityRoles.builtinKind,
         memberCount: sql<number>`count(${identityRoleMembers.userId})::int`,
       })
       .from(identityRoles)
@@ -131,6 +135,7 @@ export class IdentityRolesRepository {
         id: identityRoles.id,
         name: identityRoles.name,
         isAdmin: identityRoles.isAdmin,
+        builtinKind: identityRoles.builtinKind,
       })
       .from(identityRoleMembers)
       .innerJoin(

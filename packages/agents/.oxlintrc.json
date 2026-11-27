@@ -4,11 +4,16 @@
     "node": true
   },
   "rules": {
-    // The one package that declares Mastra: the shared list without the Mastra ban.
+    // The one package that declares Mastra: the shared list without the Mastra ban, plus the rule
+    // that its code builds no SQL — every table query lives in the repositories of @agent-os/db.
     "no-restricted-imports": [
       "error",
       {
         "patterns": [
+          {
+            "group": ["drizzle-orm", "drizzle-orm/**"],
+            "message": "No table query outside packages/db: call a repository of @agent-os/db."
+          },
           {
             "group": ["@sentry/*", "@sentry/**"],
             "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
@@ -20,5 +25,28 @@
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      // Tests check rows with raw queries: the same list without the drizzle-orm ban.
+      "files": ["**/*.spec.ts", "test/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@sentry/*", "@sentry/**"],
+                "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
+              },
+              {
+                "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+                "message": "ADR-0004: a package is imported only through its single entry `.` (or `./testing`)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

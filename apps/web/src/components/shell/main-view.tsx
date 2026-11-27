@@ -11,6 +11,11 @@ import {
   Thread,
   type ThreadComponents,
 } from '@/components/assistant-ui/elements/thread.aui';
+import {
+  EditableUserMessage,
+  EditMessageButton,
+  MessageEditProvider,
+} from '@/components/assistant-ui/elements/message-edit';
 import { MemoryPage } from '@/components/library/memory-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
@@ -26,6 +31,7 @@ import {
   type MainView as MainViewKind,
 } from '@/lib/threads/resolve-main-view';
 import { parseShellRoute } from '@/lib/shell-route';
+import { AskAsideButton } from './aside-chat';
 import {
   useShellActions,
   useShellServices,
@@ -79,7 +85,13 @@ export function useConversationFeed(): FeedStore | null {
   );
 }
 
-const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome };
+/** improvements IM-13, IM-05: a conversation's own messages get «Изменить», its answers «Спросить в стороне»; an agent page neither. */
+const THREAD_COMPONENTS: ThreadComponents = {
+  Welcome: ShellWelcome,
+  UserActions: EditMessageButton,
+  AssistantActions: AskAsideButton,
+  UserMessageBody: EditableUserMessage,
+};
 /** E-8: the open thread was deleted elsewhere — the feed stays, the notice takes the composer's place. */
 const DELETED_THREAD_COMPONENTS: ThreadComponents = {
   Welcome: ShellWelcome,
@@ -159,18 +171,20 @@ function ConversationView() {
     case 'switching':
       return (
         <FeedProvider feed={feed}>
-          <Thread
-            components={
-              view.kind === 'thread' && view.deleted
-                ? DELETED_THREAD_COMPONENTS
-                : THREAD_COMPONENTS
-            }
-            historyPending={
-              view.kind === 'switching' ||
-              (routeThreadId !== undefined && bodyLoading)
-            }
-            seedTarget={seedTarget}
-          />
+          <MessageEditProvider>
+            <Thread
+              components={
+                view.kind === 'thread' && view.deleted
+                  ? DELETED_THREAD_COMPONENTS
+                  : THREAD_COMPONENTS
+              }
+              historyPending={
+                view.kind === 'switching' ||
+                (routeThreadId !== undefined && bodyLoading)
+              }
+              seedTarget={seedTarget}
+            />
+          </MessageEditProvider>
         </FeedProvider>
       );
     case 'not-found':

@@ -60,6 +60,24 @@ export const SendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 
+/**
+ * Body of POST /threads/:threadId/fork (improvements design-server.md, KD-6), optional: at most one of `throughSeq` —
+ * the message the fork inherits the history through — and `edit` — the employee's message `seq` replaced by `text`
+ * (with its chip, as a send). Neither forks the whole conversation.
+ */
+export const ForkRequestSchema = z
+  .object({
+    throughSeq: z.number().int().min(1).optional(),
+    edit: SendMessageRequestSchema.extend({
+      seq: z.number().int().min(1),
+    }).optional(),
+  })
+  .refine((body) => body.throughSeq === undefined || body.edit === undefined, {
+    message: 'At most one of throughSeq and edit',
+  })
+  .default({});
+export type ForkRequest = z.infer<typeof ForkRequestSchema>;
+
 /** Query of the history routes: entries with a greater `seq`; 0 by default. */
 export const HistoryQuerySchema = z.object({
   afterSeq: z.coerce.number().int().nonnegative().default(0),
@@ -70,11 +88,20 @@ export type HistoryQuery = z.infer<typeof HistoryQuerySchema>;
 export const AgentListQuerySchema = ThreadListQuerySchema;
 export type AgentListQuery = z.infer<typeof AgentListQuerySchema>;
 
-/** Body of POST /decisions/:decisionId: `args` are the tool's full arguments when edited. */
-export const DecisionRequestSchema = z.object({
-  approve: z.boolean(),
-  args: z.record(z.string(), z.unknown()).optional(),
-});
+/**
+ * Body of POST /decisions/:decisionId: `args` are the tool's full arguments when edited. `allowInConversation`
+ * («allow in this conversation») also allows the card's MCP pair to the conversation; only with `approve: true`.
+ */
+export const DecisionRequestSchema = z
+  .object({
+    approve: z.boolean(),
+    args: z.record(z.string(), z.unknown()).optional(),
+    allowInConversation: z.literal(true).optional(),
+  })
+  .refine((body) => body.approve || body.allowInConversation === undefined, {
+    message: 'allowInConversation needs approve: true',
+    path: ['allowInConversation'],
+  });
 export type DecisionRequest = z.infer<typeof DecisionRequestSchema>;
 
 /** Query of GET /events: `thread:<threadId>` or `agent:<agentId>`; an unknown value is not an error. */
@@ -410,8 +437,17 @@ export const ConfirmationSchema = z.object({
   /** The card content: the tool's confirmation content (for a brief: the deep agent and its three fields). */
   content: z.unknown(),
   status: ConfirmationStatusSchema,
-  /** Set when `resolved`: the decision and the arguments the call ran with. */
-  resolution: z.object({ approve: z.boolean(), args: z.unknown() }).nullable(),
+  /**
+   * Set when `resolved`: the decision and the arguments the call ran with; `allowInConversation` only when the
+   * answer was «allow in this conversation».
+   */
+  resolution: z
+    .object({
+      approve: z.boolean(),
+      args: z.unknown(),
+      allowInConversation: z.literal(true).optional(),
+    })
+    .nullable(),
   createdAt: z.iso.datetime(),
   resolvedAt: z.iso.datetime().nullable(),
   ...ToolDisplayShape,
@@ -490,6 +526,8 @@ export const ConversationViewSchema = z.object({
   /** `null` while the chat has not touched a record. */
   focus: RecordFocusSchema.nullable(),
   training: ConversationTrainingSchema,
+  /** The root's «seen through» mark at the moment of reading: the web puts the unread divider after it. */
+  seenThroughSeq: SeqSchema,
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 

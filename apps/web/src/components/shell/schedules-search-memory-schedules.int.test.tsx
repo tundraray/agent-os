@@ -10,12 +10,15 @@
 // Server-side proofs are not repeated here: schedule rules, rights and runs are apps/api schedules-search-memory-schedules (UC-1 .. UC-6).
 // The schedule page is tested only for its re-read after the term (a pause of the pass sends no `tree` note).
 // Not tested: the rest of the "Schedules" pages (list, history) and the feed caption "По расписанию «{имя}»" — presentation of data the API test proves.
+// improvements design-web.md, Test Strategy UC-1 (the field and the pair «Без вас»: AC-07.1, AC-07.2, FR-07) and UC-5 («Отправить позже»:
+//   AC-10.1); UXRD IM-01, IM-02, IM-08, MC-1, MC-5.
 
 import {
   ScheduleBodySchema,
   ScheduleViewSchema,
   type ScheduleBody,
   type ScheduleNextRunResponse,
+  type ScheduleToolsResponse,
   type ScheduleView,
 } from '@agent-os/contracts';
 import { screen, within } from '@testing-library/react';
@@ -57,7 +60,45 @@ function createdSchedule(body: ScheduleBody): ScheduleView {
     pausedBecause: null,
     nextRunAt: NEXT_RUN_AT,
     lastRun: null,
+    allowedTools: [],
   } satisfies ScheduleView);
+}
+
+/** The owner may create a ticket in Jira; sending mail is no longer theirs, so the server does not list it. */
+const TOOLS = {
+  tools: [
+    {
+      server: 'jira',
+      tool: 'create_issue',
+      toolTitle: 'Создать задачу',
+      description: 'Заводит задачу',
+    },
+  ],
+} satisfies ScheduleToolsResponse;
+const CREATE_ISSUE = { server: 'jira', tool: 'create_issue' };
+const SEND_EMAIL = { server: 'gmail', tool: 'send_email' };
+
+/** The conversation `THREAD_ID` with two turns, its list and the rule preview the dialog asks for. */
+function conversationHandlers() {
+  const thread = threadSummary({ id: THREAD_ID });
+  return [
+    http.get(`${API}/api/threads`, () =>
+      HttpResponse.json(threadList([thread])),
+    ),
+    http.get(`${API}/api/threads/${THREAD_ID}`, () =>
+      HttpResponse.json(thread),
+    ),
+    http.get(`${API}/api/threads/${THREAD_ID}/history`, () =>
+      HttpResponse.json(
+        conversationWithTurns(thread, ['Сводка за вчера', 'Готово']),
+      ),
+    ),
+    http.post(`${API}/api/schedules/next-run`, () =>
+      HttpResponse.json({
+        nextRunAt: NEXT_RUN_AT,
+      } satisfies ScheduleNextRunResponse),
+    ),
+  ];
 }
 
 /** The bodies of every POST /api/schedules the shell made. */
@@ -157,6 +198,7 @@ describe('schedules: the dialog from the message field', () => {
           target: 'new_conversation',
           conversationId: THREAD_ID,
           language: 'ru',
+          allowedTools: [],
         },
       ]),
     );
@@ -196,6 +238,7 @@ describe('schedules: the open page after its term', () => {
       target: 'this_conversation',
       conversationId: THREAD_ID,
       language: 'ru',
+      allowedTools: [],
     });
     const paused: ScheduleView = {
       ...active,
@@ -231,5 +274,208 @@ describe('schedules: the open page after its term', () => {
     expect(
       screen.getByText(/Беседа «Беседа» удалена, поэтому расписание на паузе/),
     ).toBeInTheDocument();
+  });
+});
+
+describe('schedules: «Без вас»', () => {
+  // AC: AC-07.1 "the dialog lists only the owner's changing actions, nothing ticked; the ticked pair is saved".
+  // Catches: the field listing a pair the owner has no right to, or the body losing the ticked pair.
+  it('UC-1 (dialog): only the listed changing action is offered, and the created schedule carries the ticked pair', async () => {
+    server.use(
+      ...conversationHandlers(),
+      http.get(`${API}/api/schedules/tools`, () => HttpResponse.json(TOOLS)),
+      http.post(`${API}/api/schedules`, async ({ request }) =>
+        HttpResponse.json(
+          createdSchedule(ScheduleBodySchema.parse(await request.json())),
+          { status: 201 },
+        ),
+      ),
+    );
+    const creates = recordCreates();
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: `/chat/${THREAD_ID}` });
+
+    const field = await screen.findByRole('textbox', { name: 'Сообщение' });
+    await user.type(field, INSTRUCTION);
+    await user.click(screen.getByRole('button', { name: 'Добавить' }));
+    await user.click(
+      await screen.findByRole('menuitem', { name: /Запланировать/ }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Новое расписание',
+    });
+    const group = await within(dialog).findByRole('group', { name: 'jira' });
+    const box = within(group).getByRole('checkbox', { name: /Создать задачу/ });
+    expect(within(group).getAllByRole('checkbox')).toHaveLength(1);
+    expect(box).not.toBeChecked();
+    expect(within(dialog).queryByRole('group', { name: 'gmail' })).toBeNull();
+
+    await user.click(box);
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Создать расписание' }),
+    );
+
+    await vi.waitFor(() =>
+      expect(creates).toEqual([
+        expect.objectContaining({ allowedTools: [CREATE_ISSUE] }),
+      ]),
+    );
+  });
+
+  // AC: AC-07.2 "the page shows the ticked actions"; FR-07 "a ticked pair the owner lost is neither shown nor saved".
+  // Catches: the edit sending a lost pair back, which the server refuses with a 400 the owner cannot fix.
+  it('UC-1 (page and edit): the page names the pairs, and saving the edit drops the pair the list no longer has', async () => {
+    const saved: ScheduleView = {
+      ...createdSchedule({
+        name: '',
+        instruction: INSTRUCTION,
+        agentId: AGENT_ID,
+        rule: { kind: 'daily', time: '09:00' },
+        timeZone: 'Europe/Berlin',
+        target: 'new_conversation',
+        conversationId: THREAD_ID,
+        language: 'ru',
+        allowedTools: [],
+      }),
+      allowedTools: [CREATE_ISSUE, SEND_EMAIL],
+    };
+    const updates: unknown[] = [];
+    server.use(
+      ...conversationHandlers(),
+      http.get(`${API}/api/library`, () =>
+        HttpResponse.json([recordSummary({ id: AGENT_ID, name: AGENT_NAME })]),
+      ),
+      http.get(`${API}/api/schedules/tools`, () => HttpResponse.json(TOOLS)),
+      http.get(`${API}/api/schedules/${SCHEDULE_ID}`, () =>
+        HttpResponse.json(saved),
+      ),
+      http.get(`${API}/api/schedules/${SCHEDULE_ID}/runs`, () =>
+        HttpResponse.json({ runs: [], nextCursor: null }),
+      ),
+      http.put(`${API}/api/schedules/${SCHEDULE_ID}`, async ({ request }) => {
+        const body = ScheduleBodySchema.parse(await request.json());
+        updates.push(body);
+        return HttpResponse.json({ ...saved, allowedTools: body.allowedTools });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: `/schedules/${SCHEDULE_ID}` });
+
+    // The page: a listed pair by its title, a lost one by its technical name
+    expect(
+      await screen.findByText('Создать задачу · jira'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('send_email · gmail')).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: 'Изменить' })[0]!);
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Изменить расписание',
+    });
+    const group = await within(dialog).findByRole('group', { name: 'jira' });
+    expect(
+      within(group).getByRole('checkbox', { name: /Создать задачу/ }),
+    ).toBeChecked();
+    expect(within(dialog).queryByRole('group', { name: 'gmail' })).toBeNull();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+
+    await vi.waitFor(() =>
+      expect(updates).toEqual([
+        expect.objectContaining({ allowedTools: [CREATE_ISSUE] }),
+      ]),
+    );
+  });
+
+  // FR-07: a save before the list is read could carry a pair the owner lost.
+  // Catches: the dialog saving while its list failed to load.
+  it('the dialog cannot be saved until the list is read; «Повторить» reads it again', async () => {
+    let fail = true;
+    server.use(
+      ...conversationHandlers(),
+      http.get(`${API}/api/schedules/tools`, () =>
+        fail
+          ? HttpResponse.json(
+              { error: { code: 'INTERNAL', message: 'down' } },
+              { status: 500 },
+            )
+          : HttpResponse.json({ tools: [] } satisfies ScheduleToolsResponse),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: `/chat/${THREAD_ID}` });
+
+    const field = await screen.findByRole('textbox', { name: 'Сообщение' });
+    await user.type(field, INSTRUCTION);
+    await user.click(screen.getByRole('button', { name: 'Добавить' }));
+    await user.click(
+      await screen.findByRole('menuitem', { name: /Запланировать/ }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Новое расписание',
+    });
+    expect(
+      await within(dialog).findByText(/Не удалось загрузить действия/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: 'Создать расписание' }),
+    ).toBeDisabled();
+
+    fail = false;
+    await user.click(within(dialog).getByRole('button', { name: 'Повторить' }));
+
+    expect(
+      await within(dialog).findByText(
+        'У вас нет действий, которые меняют данные в системах.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: 'Создать расписание' }),
+    ).toBeEnabled();
+  });
+});
+
+describe('schedules: «Отправить позже»', () => {
+  // AC: AC-10.1 "«Отправить позже» opens the schedule dialog with the field's text, once, in this conversation; nothing is sent".
+  // Catches: the dialog taking the defaults «по будням в новую беседу», or the field's text going out as a message.
+  it('UC-5: opens the dialog MC-5 with the field text, «Один раз» and «В эту беседу», and sends no message', async () => {
+    const sends: string[] = [];
+    const record = ({ request }: { request: Request }) => {
+      if (request.method === 'POST' && request.url.endsWith('/messages'))
+        sends.push(request.url);
+    };
+    server.events.on('request:start', record);
+    onTestFinished(() => {
+      server.events.removeListener('request:start', record);
+    });
+    server.use(...conversationHandlers());
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: `/chat/${THREAD_ID}` });
+
+    const field = await screen.findByRole('textbox', { name: 'Сообщение' });
+    expect(
+      screen.queryByRole('button', { name: 'Отправить позже' }),
+    ).toBeNull();
+    await user.type(field, 'Собери статус');
+    await user.click(
+      await screen.findByRole('button', { name: 'Отправить позже' }),
+    );
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Отправить позже',
+    });
+    expect(
+      within(dialog).getByRole('textbox', { name: 'Инструкция' }),
+    ).toHaveValue('Собери статус');
+    expect(
+      within(dialog).getByRole('radio', { name: 'Один раз' }),
+    ).toBeChecked();
+    expect(
+      within(dialog).getByRole('radio', { name: 'В эту беседу' }),
+    ).toBeChecked();
+    expect(
+      within(dialog).getByRole('button', { name: 'Запланировать' }),
+    ).toBeInTheDocument();
+    expect(field).toHaveValue('Собери статус');
+    expect(sends).toEqual([]);
   });
 });

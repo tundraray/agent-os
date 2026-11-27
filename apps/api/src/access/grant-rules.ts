@@ -1,7 +1,6 @@
 import type {
   CreateGrantBody,
   GrantInvalidReason,
-  GrantTargetBody,
   ModelPurpose,
 } from '@agent-os/contracts';
 
@@ -15,8 +14,7 @@ export type GrantRuleInput = Pick<
   CreateGrantBody,
   'roleId' | 'userId' | 'effect' | 'quotaUsd'
 > & {
-  readonly target: Pick<GrantTargetBody, 'kind'>;
-  /** The catalogue purpose of a model target; `null` for a server or tool target or a model outside the catalogue. */
+  /** The catalogue purpose of the model; `null` for a model outside the catalogue. */
   readonly modelPurpose: ModelPurpose | null;
 };
 
@@ -26,7 +24,7 @@ export type GrantRuleResult =
 
 /**
  * The rules of a grant over the data already read (DC-2, GRANT_INVALID): no grant on an embedding model
- * (model-providers DC-5), a deny only for an employee, a quota only on a model allow, from 0.01 to
+ * (model-providers DC-5), a deny only for an employee, a quota only on an allow, from 0.01 to
  * 1 000 000 in whole cents. An unknown target and duplicates are checked by the service.
  */
 export function grantRules(input: GrantRuleInput): GrantRuleResult {
@@ -38,7 +36,7 @@ export function grantRules(input: GrantRuleInput): GrantRuleResult {
   }
   const quota = input.quotaUsd ?? null;
   if (quota === null) return { kind: 'ok' };
-  if (input.effect !== 'allow' || input.target.kind !== 'model') {
+  if (input.effect !== 'allow') {
     return { kind: 'invalid', reason: 'quota_not_on_model_allow' };
   }
   if (quota < MIN_QUOTA_USD || quota > MAX_QUOTA_USD || !wholeCents(quota)) {

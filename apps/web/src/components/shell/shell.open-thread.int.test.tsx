@@ -289,4 +289,46 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
       within(history).getByRole('link', { name: 'Отчёт' }),
     ).toBeInTheDocument();
   });
+
+  // improvements UC-7, AC-11.2: a conversation with an unread answer opens with «Новые сообщения» before that answer
+  //   (not before the employee's own message in the range), and the shown feed raises its mark to the last entry.
+  // Fails when: the mark is not sent, or the divider stands before the employee's own message or is missing.
+  it('UC-7: an unread answer opens behind «Новые сообщения» and the feed sends PUT seen with the last number', async () => {
+    // Arrange: seq 1 «Вопрос», 2 «Ответ», 3 «Ещё вопрос» (own), 4 «Новый ответ»; seen through 2
+    const thread = threadSummary({ id: 'x', title: 'Отчёт' });
+    const marks: unknown[] = [];
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([thread])),
+      ),
+      http.get(`${API}/api/threads/x`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/x/history`, () =>
+        HttpResponse.json({
+          ...conversationWithTurns(thread, [
+            'Вопрос',
+            'Ответ',
+            'Ещё вопрос',
+            'Новый ответ',
+          ]),
+          seenThroughSeq: 2,
+        }),
+      ),
+      http.put(`${API}/api/threads/x/seen`, async ({ request }) => {
+        marks.push(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderWithRuntime({ pathname: '/chat/x' });
+
+    // Act
+    const divider = await screen.findByText('Новые сообщения');
+
+    // Assert
+    const follows = (text: string) =>
+      divider.compareDocumentPosition(screen.getByText(text)) &
+      Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(follows('Новый ответ')).toBeTruthy();
+    expect(follows('Ещё вопрос')).toBeFalsy();
+    await waitFor(() => expect(marks).toEqual([{ throughSeq: 4 }]));
+  });
 });

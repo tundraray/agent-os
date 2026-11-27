@@ -38,9 +38,9 @@ MCP-инструмент читающий, только если сервер в
 
 Серверы и их списки инструментов лежат в реестре в базе, каждый вызов открывает своё соединение Streamable HTTP с общим токеном сервера или токеном аккаунта сотрудника ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-1–KD-3, KD-5). Права на пару «сервер — инструмент» отвечает порт `AccessGate` и при сборке набора инструментов, и перед каждым вызовом ([design-access.md](../enterprise-access/design-access.md), KD-1, KD-2).
 
-#### KD-6: Обёртка модели — Mastra `Agent` на вызов и политика повторов, без счёта токенов до вызова
+#### KD-6: Обёртка модели — Mastra `Agent` на вызов без повторов и без счёта токенов до вызова
 
-`ModelClient` строит на каждый вызов новый Mastra `Agent` без памяти и хранилища и зовёт `stream` с `maxSteps: 1`; инструменты передаются через `createTool` без `execute`, поэтому Mastra их не исполняет. MCP-схемы входят как JSON Schema: тип `inputSchema` у `createTool` в установленном `@mastra/core` 1.80 принимает `JSONSchema7` (`@mastra/schema-compat` 1.3.17, `dist/schema.types.d.ts`). Обёртка передаёт сигнал отмены и делает два повтора с паузами 1000 и 3000 мс. Сжатие (KD-7) берёт размер из `usage` прошлого вызова. Каждая оплачиваемая попытка — строка журнала токенов runtime.
+`ModelClient` строит на каждый вызов новый Mastra `Agent` без памяти и хранилища и зовёт `stream` с `maxSteps: 1`; инструменты передаются через `createTool` без `execute`, поэтому Mastra их не исполняет. MCP-схемы входят как JSON Schema: тип `inputSchema` у `createTool` в установленном `@mastra/core` 1.80 принимает `JSONSchema7` (`@mastra/schema-compat` 1.3.17, `dist/schema.types.d.ts`). Обёртка передаёт сигнал отмены и не повторяет вызов после сбоя провайдера. Сжатие (KD-7) берёт размер из `usage` прошлого вызова. Каждая оплачиваемая попытка — строка журнала токенов runtime.
 
 Модель, метку кеша и подключение обёртка берёт у адаптера вида провайдера и из реестра провайдеров в базе ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3; [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md)), id модели — `<провайдер>/<модель>` ([ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md)). Перед первой попыткой она спрашивает `AccessGate.model`; цена строки журнала приходит с разрешением ([design-access.md](../enterprise-access/design-access.md), KD-3, KD-4).
 
@@ -88,7 +88,7 @@ Follows the [code system](../../code-system/README.md).
 | `AgentsModule` пакета, `parseAgentsConfig`, `AgentsModule` в `apps/api` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | настройки разбирает пакет, а не `apps/api` |
 | `AgentStepHandler` — классы `ChatAgent`, `Agent` и `DeepAgent` над общим `BaseAgent`, обработчики задач `chat`, `agent` и `deep_agent` | [step-handler.md](../../code-system/patterns/step-handler.md) | new — KD-1 | всё читать заново из базы каждый шаг |
 | Репозитории `agent_sessions`, `agent_messages` и записей вызова | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | вызов — элемент `model_answer`; состояние выводит чистая функция `foldCalls` из записей вызова; запись в транзакции шага |
-| `ModelClient` над Mastra | — | new — KD-6 | `retry-policy.ts`; модель и подключение — адаптеры и реестр провайдеров ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3) |
+| `ModelClient` над Mastra | — | new — KD-6 | разбор ошибки провайдера; модель и подключение — адаптеры и реестр провайдеров ([model-providers/design-core.md](../model-providers/design-core.md), KD-2, KD-3) |
 | Конверт данных `<data>` против инъекций | — | new | `DATA_PREAMBLE` и `envelope` |
 | Встроенные инструменты и реестр инструментов | — | new | — |
 | Изменяющий инструмент фикстуры | — | extended | `packages/mcp-fixture` получает `create_incident_note`; фикстура — HTTP-процесс ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-7) |
@@ -375,7 +375,7 @@ sequenceDiagram
 - Инструмент вне набора, пара «сервер — инструмент» не разрешена сотруднику или аргументы встроенного инструмента не прошли схему → результат с исходом «отказ» и причиной (`tool_not_in_definition`, `no_access`, `invalid_arguments`); сервер не вызывается (AC-03.1, AC-11.3). У сервера с личным OAuth без аккаунта сотрудника вызов получает исход `auth_required` ([design-mcp-connect.md](../enterprise-access/design-mcp-connect.md), KD-5).
 - MCP вернул `isError` → исход «ошибка инструмента»; пустой результат → «пустой результат»; обрыв, таймаут `MCP_CALL_TIMEOUT_MS` или ошибка протокола → «сбой связи»; агент продолжает (AC-11.2).
 - Успешный результат MCP длиннее порога из настроек `agent_tool_result_settings` → модель получает обёртку с размером, `callId` и превью, а весь текст лежит в `agent_tool_results`; дочитать его модель может инструментами `read_tool_result` и `search_tool_result`. Каждый текст MCP, который получает модель, замаскирован.
-- Провайдер ответил ошибкой → два повтора; после них итог `fail` с причиной `model_error` или названной причиной провайдера `provider_*` ([model-providers/design-core.md](../model-providers/design-core.md), KD-2).
+- Провайдер ответил ошибкой → итог `fail` с причиной `model_error` или названной причиной провайдера `provider_*` ([model-providers/design-core.md](../model-providers/design-core.md), KD-2).
 - `AccessGate` отказал в вызове модели (квота, модель не разрешена, сотрудник выключен) → модель не вызывается, итог `fail` с причиной отказа ([design-access.md](../enterprise-access/design-access.md), KD-5).
 - Шаг потерян или отсечён → строка журнала остаётся, ответ модели не записан, и шаг выполняется заново (Flow 2 в `design-runtime.md`).
 

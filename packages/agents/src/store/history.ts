@@ -147,6 +147,24 @@ export class History {
     return message?.content.record ?? null;
   }
 
+  /**
+   * The session's last message: its last `task` or `user_message` entry, whatever was compacted since
+   * (improvements design-server.md KD-1); `undefined` for a session without one.
+   */
+  async lastMessage(
+    taskId: string,
+  ): Promise<
+    Extract<HistoryEntry, { kind: 'task' | 'user_message' }> | undefined
+  > {
+    const row = await this.rows.lastMessage(taskId);
+    if (row === undefined) return undefined;
+    // The query selects only these two kinds.
+    return toEntry(row) as Extract<
+      HistoryEntry,
+      { kind: 'task' | 'user_message' }
+    >;
+  }
+
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */
   async through(taskId: string, throughSeq: number): Promise<HistoryEntry[]> {
     return (await this.rows.through(taskId, throughSeq)).map(toEntry);

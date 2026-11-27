@@ -7,6 +7,7 @@ import {
 } from '@agent-os/contracts';
 import {
   CodeCallsRepository,
+  ConversationsRepository,
   McpAccountsRepository,
   McpServersRepository,
   MessagesRepository,
@@ -19,6 +20,7 @@ import {
   type AccessDeniedEntry,
   type AccessGate,
   type AuditRecord,
+  type GateTool,
   OwnerDisabledError,
 } from '../../access-gate';
 import type { JsonSchemaObject } from '../../model/mastra-turn';
@@ -103,6 +105,10 @@ const MCP_TOOL: McpSessionTool = {
     description: 'Search log lines',
     inputSchema: { type: 'object' },
     readOnly: true,
+    serverReadOnly: true,
+    overridden: false,
+    enabled: true,
+    isNew: false,
     display: {},
   },
 };
@@ -164,14 +170,14 @@ function gateOf(
         ? { kind: 'owner_disabled' }
         : {
             kind: 'allowed',
-            allows: (server, tool) => pairs.includes(`${server}/${tool}`),
+            allows: allowsOf(pairs),
           },
   };
 }
 
 /** The pairs `check` refuses with, as a step gets them from the gate. */
 function allowsOf(pairs: readonly string[]) {
-  return (server: string, tool: string) => pairs.includes(`${server}/${tool}`);
+  return ({ server, tool }: GateTool) => pairs.includes(`${server}/${tool}`);
 }
 
 interface RunnerDoubles {
@@ -186,6 +192,7 @@ function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
     new CallRecords(
       new History(new MessagesRepository(DB)),
       new CodeCallsRepository(DB),
+      new ConversationsRepository(DB),
     ),
     { callTool: NO_SERVER_CALLS },
     { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
@@ -339,6 +346,20 @@ describe('a tool call is refused with its reason or allowed', () => {
       'a pair the gate does not allow, though another tool of its server is allowed',
       () => kindOf(checkCall({ ...MCP_CALL, ownerPairs: ['logs/tail'] })),
       { kind: 'refused', reason: 'no_access' },
+    ],
+    [
+      // access-levels AC-36.1: the switch-off is decided before the rights, so an allowed pair is refused too.
+      'a tool the admin switched off, its pair allowed',
+      () =>
+        kindOf(
+          checkCall({
+            ...MCP_CALL,
+            sessionTools: [
+              { ...MCP_TOOL, mcp: { ...MCP_TOOL.mcp, enabled: false } },
+            ],
+          }),
+        ),
+      { kind: 'refused', reason: 'tool_disabled' },
     ],
     [
       'arguments that fail the schema',

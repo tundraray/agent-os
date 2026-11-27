@@ -34,11 +34,16 @@ import {
   useFeedStoreSelector,
 } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
-import { recordCardOf } from '@/lib/feed/to-feed';
+import { recordCardOf, selectThreadId } from '@/lib/feed/to-feed';
 import { formatListTime } from '@/i18n/formats';
 import { libraryApi } from '@/lib/library/library-api';
-import type { SchemaTab } from '@/lib/shell/workspace-store';
+import {
+  asideOf,
+  type AsideChat,
+  type SchemaTab,
+} from '@/lib/shell/workspace-store';
 import { recordPath } from '@/lib/shell-route';
+import { AsideChatTab } from './aside-chat';
 import { useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
 
@@ -56,7 +61,7 @@ const selectFocus = (state: FeedState): RecordFocus | null =>
 const selectRoot = (state: FeedState): string | null =>
   state.view?.kind === 'thread' ? state.view.chat.rootAgentId : null;
 const selectThread = (state: FeedState): string | null =>
-  state.view?.kind === 'thread' ? state.view.threadId : null;
+  selectThreadId(state.view);
 /** A test run's or a training's own conversation: its run, whose tab replaces «Схема» and «Задачи» (KD-6). */
 const selectRun = (state: FeedState): ConversationTraining =>
   state.view?.training?.isRoot === true ? state.view.training : null;
@@ -118,13 +123,16 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
   const documentsShown = (documents.data?.documents.length ?? 0) > 0;
   const run = useFeedSelector(selectRun, null);
   const tasksShown = run === null && chatTasks.tabShown;
+  // «В стороне» is there only beside the conversation it was asked from (improvements KD-1).
+  const aside = useStore(workspace, (state) => asideOf(state, threadId));
 
-  if (run === null && !tasksShown && !documentsShown)
+  if (run === null && !tasksShown && !documentsShown && aside === null)
     return <FocusSchema focus={focus} />;
   // A tab this conversation does not have reads as its first one.
   const shownTab =
     (tab === 'tasks' && !tasksShown) ||
     (tab === 'documents' && !documentsShown) ||
+    (tab === 'aside' && aside === null) ||
     (tab === 'schema' && run !== null) ||
     (tab === 'run' && run === null)
       ? run === null
@@ -136,6 +144,7 @@ function SchemaPanelContent({ chatTasks }: { chatTasks: ChatTasks }) {
       run={run}
       tasks={tasksShown ? chatTasks.tasks : null}
       documents={documentsShown ? documents : null}
+      aside={aside}
       threadId={threadId}
       tab={shownTab}
       onTab={(next) => workspace.setTab(next)}
@@ -151,6 +160,8 @@ type SchemaTabsProps = {
   tasks: Resource<AgentTasksView> | null;
   /** null — the conversation has no documents yet, so no tab «Документы». */
   documents: Resource<ThreadDocumentsView> | null;
+  /** null — no side chat beside this conversation, so no tab «В стороне». */
+  aside: AsideChat | null;
   threadId: string | null;
   tab: SchemaTab;
   onTab: (tab: SchemaTab) => void;
@@ -159,12 +170,14 @@ type SchemaTabsProps = {
 
 /**
  * «Схема» or «Проверка» / «Обучение», «Задачи · {N}» (MC-9) and «Документы · {n}» (self-learning UXRD DC-02):
- * «Задачи» and «Документы» show the conversation's own whatever record is in focus.
+ * «Задачи» and «Документы» show the conversation's own whatever record is in focus; «В стороне», the last one, its side
+ * chat (improvements UXRD IM-06), whose feed fills the panel's height and scrolls by itself.
  */
 function SchemaTabs({
   run,
   tasks,
   documents,
+  aside,
   threadId,
   tab,
   onTab,
@@ -178,7 +191,7 @@ function SchemaTabs({
     <Tabs
       value={tab}
       onValueChange={(value: SchemaTab) => onTab(value)}
-      className="gap-3"
+      className={tab === 'aside' ? 'h-full gap-3' : 'gap-3'}
     >
       <TabsList className="w-full">
         {run === null ? (
@@ -206,6 +219,11 @@ function SchemaTabs({
             })}
           </TabsTrigger>
         )}
+        {aside !== null && (
+          <TabsTrigger value="aside" className="pointer-coarse:h-11">
+            {tSchema('asideTab')}
+          </TabsTrigger>
+        )}
       </TabsList>
       {run === null ? (
         <TabsContent value="schema">
@@ -224,6 +242,11 @@ function SchemaTabs({
       {documents !== null && (
         <TabsContent value="documents">
           <DocumentsTab threadId={threadId} documents={documents} />
+        </TabsContent>
+      )}
+      {aside !== null && (
+        <TabsContent value="aside" className="min-h-0">
+          <AsideChatTab key={aside.branchId} aside={aside} />
         </TabsContent>
       )}
     </Tabs>

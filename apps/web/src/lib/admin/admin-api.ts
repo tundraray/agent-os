@@ -7,8 +7,10 @@ import {
   CatalogModelSchema,
   GrantSchema,
   LibrarySettingsSchema,
+  McpCallbackUrlSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  McpToolViewSchema,
   ModelDefaultsSchema,
   ModelProviderCheckSchema,
   ModelProviderViewSchema,
@@ -18,11 +20,14 @@ import {
   RecordSummarySchema,
   RefreshMcpToolsResponseSchema,
   RoleDetailSchema,
+  RoleLevelsSchema,
   RoleListSchema,
   RoleSummarySchema,
   SelfLearningSettingsSchema,
+  ServerAccessSchema,
   SignInSettingsSchema,
   ToolResultSettingsSchema,
+  UserLevelsSchema,
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
@@ -37,8 +42,10 @@ import {
   type CreateRoleBody,
   type Grant,
   type LibrarySettings,
+  type McpCallbackUrl,
   type McpServerSummary,
   type McpServerView,
+  type McpToolView,
   type ModelDefaults,
   type ModelProviderCheck,
   type ModelProviderView,
@@ -49,15 +56,21 @@ import {
   type RefreshMcpToolsResponse,
   type RegisterMcpServerBody,
   type RoleDetail,
+  type RoleLevels,
   type RoleList,
   type RoleSummary,
+  type SaveRoleLevelsBody,
+  type SaveServerAccessBody,
+  type SaveUserLevelsBody,
   type SelfLearningSettings,
+  type ServerAccess,
   type SignInSettings,
   type SystemRecordAudienceBody,
   type ToolResultSettings,
   type UpdateCatalogModelBody,
   type UpdateLibrarySettingsBody,
   type UpdateMcpServerBody,
+  type UpdateMcpToolBody,
   type UpdateModelDefaultsBody,
   type UpdateModelProviderBody,
   type UpdateProviderBody,
@@ -66,6 +79,7 @@ import {
   type UpdateSelfLearningSettingsBody,
   type UpdateSignInSettingsBody,
   type UpdateToolResultSettingsBody,
+  type UserLevels,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
 
@@ -145,6 +159,19 @@ const users = {
       method: 'DELETE',
       schema: AdminUserDetailSchema,
     }),
+  levels: (id: string): Promise<UserLevels> =>
+    apiRequest({
+      path: apiPath('users', id, 'levels'),
+      schema: UserLevelsSchema,
+    }),
+  /** Only the changed servers; the answer is the employee's levels after the save. */
+  saveLevels: (id: string, body: SaveUserLevelsBody): Promise<UserLevels> =>
+    apiRequest({
+      path: apiPath('users', id, 'levels'),
+      method: 'PUT',
+      body,
+      schema: UserLevelsSchema,
+    }),
 };
 
 const roles = {
@@ -152,6 +179,7 @@ const roles = {
     apiRequest({ path: apiPath('roles'), schema: RoleListSchema }),
   get: (id: string): Promise<RoleDetail> =>
     apiRequest({ path: apiPath('roles', id), schema: RoleDetailSchema }),
+  /** `copyFrom` copies the sample role's levels and model grants (AC-37.8). */
   create: (body: CreateRoleBody): Promise<RoleSummary> =>
     apiRequest({
       path: apiPath('roles'),
@@ -168,6 +196,19 @@ const roles = {
     }),
   remove: (id: string): Promise<void> =>
     apiRequest({ path: apiPath('roles', id), method: 'DELETE' }),
+  levels: (id: string): Promise<RoleLevels> =>
+    apiRequest({
+      path: apiPath('roles', id, 'levels'),
+      schema: RoleLevelsSchema,
+    }),
+  /** Only the changed servers; the answer is the role's levels after the save. */
+  saveLevels: (id: string, body: SaveRoleLevelsBody): Promise<RoleLevels> =>
+    apiRequest({
+      path: apiPath('roles', id, 'levels'),
+      method: 'PUT',
+      body,
+      schema: RoleLevelsSchema,
+    }),
 };
 
 const grants = {
@@ -268,6 +309,47 @@ const servers = {
     }),
   remove: (name: string): Promise<void> =>
     apiRequest({ path: apiPath('mcp-servers', name), method: 'DELETE' }),
+  access: (name: string): Promise<ServerAccess> =>
+    apiRequest({
+      path: apiPath('mcp-servers', name, 'access'),
+      schema: ServerAccessSchema,
+    }),
+  /** Only the changed roles; the answer is the server's access after the save. */
+  saveAccess: (
+    name: string,
+    body: SaveServerAccessBody,
+  ): Promise<ServerAccess> =>
+    apiRequest({
+      path: apiPath('mcp-servers', name, 'access'),
+      method: 'PUT',
+      body,
+      schema: ServerAccessSchema,
+    }),
+  /** `enabled` and/or the class of one tool; `readOnly: null` returns the class to the server's mark. */
+  updateTool: (
+    name: string,
+    tool: string,
+    body: UpdateMcpToolBody,
+  ): Promise<McpToolView> =>
+    apiRequest({
+      path: apiPath('mcp-servers', name, 'tools', tool),
+      method: 'PATCH',
+      body,
+      schema: McpToolViewSchema,
+    }),
+  /** «Отметить просмотренными»: clears the server's new marks; the answer is the server after it. */
+  markToolsReviewed: (name: string): Promise<McpServerView> =>
+    apiRequest({
+      path: apiPath('mcp-servers', name, 'tools', 'reviewed'),
+      method: 'POST',
+      schema: McpServerViewSchema,
+    }),
+  /** The OAuth return address of a server of this name, registered or not yet (the registration form shows it). */
+  callbackUrl: (name: string): Promise<McpCallbackUrl> =>
+    apiRequest({
+      path: apiPath('mcp-servers', name, 'callback-url'),
+      schema: McpCallbackUrlSchema,
+    }),
   /** The connect route answers 302 to the authorization server, so the tab goes to this address instead of a request. */
   connectUrl: (name: string): string => apiPath('mcp-servers', name, 'connect'),
 };

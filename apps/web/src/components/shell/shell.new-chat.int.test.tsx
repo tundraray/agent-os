@@ -413,4 +413,68 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     ).toBeVisible();
     expect(router.push).not.toHaveBeenCalled();
   });
+
+  // improvements UC-9: AC-13.1 (design-web.md KD-7; UXRD IM-12). Catches: Enter in the open `@` list sending the message
+  //   instead of choosing, a choice that leaves `@раз` in the text, or a chip that does not reach the send.
+  it('UC-9: `@раз` and Enter put the same chip as «+», remove `@раз`, and the send carries the record id', async () => {
+    // Arrange
+    const RECORD = fixtureId(10);
+    const thread = threadSummary({ id: 'a', title: 'Беседа A' });
+    const sendBodies: unknown[] = [];
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([thread])),
+      ),
+      http.get(`${API}/api/threads/a`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/a/history`, () =>
+        HttpResponse.json(conversationWithTurns(thread, ['Привет', 'Готово.'])),
+      ),
+      http.get(`${API}/api/library`, () =>
+        HttpResponse.json([
+          recordSummary({ id: RECORD }),
+          recordSummary({ id: fixtureId(11), name: 'Сводка смены' }),
+        ]),
+      ),
+      http.post(`${API}/api/threads/a/messages`, async ({ request }) => {
+        sendBodies.push(await request.json());
+        return HttpResponse.json(
+          { messageId: null } satisfies SendMessageResponse,
+          {
+            status: 202,
+          },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' });
+    await screen.findByText('Готово.');
+    const field = screen.getByRole('textbox', { name: 'Сообщение' });
+
+    // Act: `@раз` narrows the list to «Разбор логов»; Enter chooses it
+    await user.type(field, 'Собери статус @раз');
+    const list = await screen.findByRole('listbox', { name: 'Агенты' });
+    expect(
+      within(list)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual([expect.stringMatching(/^Разбор логов/)]);
+    expect(field).toHaveAttribute('role', 'combobox');
+    await user.keyboard('{Enter}');
+
+    // Assert: the chip of «+», `@раз` removed, nothing sent yet
+    expect(
+      await screen.findByRole('group', { name: 'Разбор логов' }),
+    ).toBeVisible();
+    expect(field).toHaveValue('Собери статус ');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(sendBodies).toEqual([]);
+
+    // Act + Assert: the send carries this record
+    await user.type(field, 'по логам{Enter}');
+    await waitFor(() =>
+      expect(sendBodies).toEqual([
+        { text: 'Собери статус по логам', recordId: RECORD },
+      ]),
+    );
+  });
 });

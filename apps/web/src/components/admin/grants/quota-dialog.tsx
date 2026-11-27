@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { quotaRules, quotaUsdOf } from '@/lib/admin/form-rules';
-import { grantTargetText } from '@/lib/admin/grants';
 import type { Formatter } from '@/i18n/formats';
 import { AdminForm, AdminTextField } from '../admin-form';
 
@@ -45,9 +44,7 @@ export function QuotaDialog({
         <DialogHeader>
           <DialogTitle>{t('changeQuota')}</DialogTitle>
           {grant !== null && (
-            <DialogDescription>
-              {grantTargetText(grant.target)}
-            </DialogDescription>
+            <DialogDescription>{grant.target.modelName}</DialogDescription>
           )}
         </DialogHeader>
         {grant !== null && (

@@ -8,6 +8,8 @@
   "chipInComposer": "“{name}” is in the message field — describe the task and send",
   "testRunInComposer": "“Create and check an agent” is in the message field",
   "forkOpened": "Opened fork “{title}”",
+  "asideOpened": "Side chat opened on the right",
+  "sentToMain": "Sent to the main chat",
   "connectionLost": "Connection to the server lost",
   "connectionRestored": "Connection to the server restored",
   "decisionsOpened": "Your decision is needed: {count, plural, one {# request} other {# requests}}",

@@ -33,10 +33,34 @@ export interface StartRequest {
   readonly title?: string;
 }
 
-/** A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, or why not now. */
+/**
+ * Where a fork ends (improvements design-server.md, KD-6): through the message `throughSeq`, or before the employee's
+ * message `seq`, which the fork gets as `text` with its chip and answers.
+ */
+export type ForkBoundary =
+  | { readonly kind: 'through'; readonly throughSeq: number }
+  | {
+      readonly kind: 'edit';
+      readonly seq: number;
+      readonly text: string;
+      readonly record?: ChipRecord;
+    };
+
+/** A fork of the owner's conversation; the whole one without a boundary. */
+export interface ForkRequest {
+  readonly threadId: string;
+  readonly ownerId: string;
+  readonly boundary?: ForkBoundary;
+}
+
+/**
+ * A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, why not now, or
+ * `not_a_message` — the boundary names no entry it may end at, and nothing is made.
+ */
 export type ForkResult =
   | { readonly kind: 'forked'; readonly threadId: string }
-  | { readonly kind: 'refused'; readonly reason: ForkRefusalReason };
+  | { readonly kind: 'refused'; readonly reason: ForkRefusalReason }
+  | { readonly kind: 'not_a_message' };
 
 export interface AgentRef {
   readonly agentId: string;
@@ -71,6 +95,8 @@ export interface ResolveConfirmationRequest {
   readonly approve: boolean;
   /** The employee's edit of the arguments; only a tool that allows it accepts one. */
   readonly args?: unknown;
+  /** The third answer «allow in this conversation»: only with `approve` and only on a changing MCP tool's card. */
+  readonly allowInConversation?: true;
 }
 
 /** One tool call of a model answer as `history` shows it; an open call carries its state. */
@@ -126,6 +152,8 @@ export interface AgentConfirmation extends ToolDisplay {
   readonly resolution: {
     readonly approve: boolean;
     readonly args: unknown;
+    /** Only when the answer was «allow in this conversation». */
+    readonly allowInConversation?: true;
   } | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;

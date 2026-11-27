@@ -18,9 +18,11 @@ import {
 import {
   RunCodeConfirmationContentSchema,
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_TOOL_CONFIRMATION,
   isCodeRunCall,
   LIBRARY_RECORD_CONFIRMATION,
   type Confirmation,
+  type DecisionRequest,
   type LibraryRecordCard,
   type RunCodeConfirmationContent,
 } from '@agent-os/contracts';
@@ -251,6 +253,46 @@ function outcomeOf(
     tone: 'text-muted-foreground',
   };
 }
+
+/**
+ * MC-4: the outcome of «Разрешить в этой беседе», from the re-read decision; null for any other outcome, which
+ * `outcomeOf` gives.
+ */
+function allowedOutcomeOf({
+  t,
+  format,
+  confirmation,
+  toolName,
+}: {
+  t: AgentsTranslator;
+  format: Formatter;
+  confirmation: Confirmation;
+  toolName: string;
+}): Outcome | null {
+  if (
+    confirmation.status !== 'resolved' ||
+    confirmation.resolution?.allowInConversation !== true
+  )
+    return null;
+  const time = formatListTime(
+    format,
+    confirmation.resolvedAt ?? confirmation.createdAt,
+  );
+  return {
+    kind: 'approved',
+    text: t('decision.allowedInConversation', { tool: toolName, time }),
+    Icon: CircleCheckIcon,
+    tone: 'text-success',
+  };
+}
+
+/**
+ * The third answer stands only on an MCP tool's action card — the server takes it on no other (KD-6): a code
+ * run and an agent's script come without a server, a brief and a record card are other kinds.
+ */
+const allowsInConversation = (confirmation: Confirmation): boolean =>
+  confirmation.kind === AGENTS_TOOL_CONFIRMATION &&
+  confirmation.server !== null;
 
 /** Parts 1–2 while open, the outcome once decided: shared by every variant (decision-card.md, Anatomy). */
 function CardHeader({
@@ -585,7 +627,14 @@ function useBriefEdit() {
   };
 }
 
-type Pressed = 'approve' | 'reject' | 'launch' | 'launchEdited';
+type Pressed = 'approve' | 'allow' | 'reject' | 'launch' | 'launchEdited';
+
+const APPROVE: DecisionRequest = { approve: true };
+const REJECT: DecisionRequest = { approve: false };
+const ALLOW_IN_CONVERSATION: DecisionRequest = {
+  approve: true,
+  allowInConversation: true,
+};
 
 /** A row button: in «Отправка» the pressed one shows the spinner in place of its label, at the same width. */
 function DecisionButton({
@@ -693,7 +742,7 @@ export type DecisionCardProps = {
   /** How the call of an approved record card ended; null before its result and for any other request. */
   saved: RecordSave | null;
   /** Sends the decision and re-reads; rejects when the server did not take it. */
-  onDecide: (approve: boolean, args?: Record<string, unknown>) => Promise<void>;
+  onDecide: (decision: DecisionRequest) => Promise<void>;
 };
 
 /**
@@ -715,9 +764,20 @@ export function DecisionCard({
   const tAgents = useTranslations('agents');
   const tChat = useTranslations('chat');
   const { tools } = useMessages();
+  const { tool, server, args } = confirmation;
+  const toolTitle = server === null ? undefined : confirmation.toolTitle;
+  const { title: toolName, args: argLabels } = toolCallLabels(tools, {
+    tool,
+    server,
+    toolTitle,
+    argLabels: confirmation.argLabels,
+  });
+  const thirdAnswer =
+    brief === null && record === null && allowsInConversation(confirmation);
   const outcome =
     record === null
-      ? outcomeOf(tAgents, confirmation, brief !== null, format)
+      ? (allowedOutcomeOf({ t: tAgents, format, confirmation, toolName }) ??
+        outcomeOf(tAgents, confirmation, brief !== null, format))
       : recordOutcomeOf(
           { t: tAgents, tChat, format },
           confirmation,
@@ -755,15 +815,14 @@ export function DecisionCard({
 
   async function decide(
     which: Pressed,
-    approve: boolean,
-    args?: Record<string, unknown>,
+    decision: DecisionRequest,
   ): Promise<void> {
     if (busy) return;
     setPressed(which);
     setFailed(false);
     decidedHere.current = true;
     try {
-      await onDecide(approve, args);
+      await onDecide(decision);
     } catch {
       // The store has logged the failure. The card shows the error line and keeps the pressed button for
       // a retry; an edited brief stays in «Правка» with the typed values (400 `INVALID_ARGUMENTS` included).
@@ -774,10 +833,13 @@ export function DecisionCard({
     }
   }
 
-  const briefArgs = (text: BriefText): Record<string, unknown> | undefined =>
+  const launchDecision = (text: BriefText): DecisionRequest =>
     brief === null
-      ? undefined
-      : { deepAgent: brief.deepAgent, ...pickText(text) };
+      ? APPROVE
+      : {
+          approve: true,
+          args: { deepAgent: brief.deepAgent, ...pickText(text) },
+        };
 
   const startEdit = (): void => {
     if (brief === null) return;
@@ -792,7 +854,7 @@ export function DecisionCard({
   };
   const launchEdited = (): void => {
     if (busy || edit.draft === null || edit.rejectEmpty()) return;
-    void decide('launchEdited', true, briefArgs(edit.draft));
+    void decide('launchEdited', launchDecision(edit.draft));
   };
   const onEditKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || busy) return;
@@ -800,14 +862,6 @@ export function DecisionCard({
     cancelEdit();
   };
 
-  const { tool, server, args } = confirmation;
-  const toolTitle = server === null ? undefined : confirmation.toolTitle;
-  const { title: toolName, args: argLabels } = toolCallLabels(tools, {
-    tool,
-    server,
-    toolTitle,
-    argLabels: confirmation.argLabels,
-  });
   const runCode = brief === null ? runCodeView(confirmation, tools) : null;
   const canCall = canCallOf(confirmation);
   const recordHeadingText =
@@ -855,14 +909,14 @@ export function DecisionCard({
             variant={record.action === 'delete' ? 'destructive' : 'default'}
             pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide('approve', true)}
+            onClick={() => void decide('approve', APPROVE)}
           />
           <DecisionButton
             label={tAgents('decision.reject')}
             variant="outline"
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
@@ -926,6 +980,7 @@ export function DecisionCard({
       </>
     );
     if (outcome === null) {
+      // IM-04: with the third answer «Отклонить» steps down to `ghost`, «Подтвердить» stays the default.
       actions = (
         <>
           <DecisionButton
@@ -933,14 +988,23 @@ export function DecisionCard({
             variant="default"
             pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide('approve', true)}
+            onClick={() => void decide('approve', APPROVE)}
           />
+          {thirdAnswer && (
+            <DecisionButton
+              label={tAgents('decision.allowInConversation')}
+              variant="outline"
+              pressed={pressed === 'allow'}
+              busy={busy}
+              onClick={() => void decide('allow', ALLOW_IN_CONVERSATION)}
+            />
+          )}
           <DecisionButton
             label={tAgents('decision.reject')}
-            variant="outline"
+            variant={thirdAnswer ? 'ghost' : 'outline'}
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
@@ -1031,7 +1095,7 @@ export function DecisionCard({
             variant="default"
             pressed={pressed === 'launch'}
             busy={busy}
-            onClick={() => void decide('launch', true, briefArgs(brief.text))}
+            onClick={() => void decide('launch', launchDecision(brief.text))}
           />
           <DecisionButton
             label={tAgents('decision.edit')}
@@ -1048,7 +1112,7 @@ export function DecisionCard({
             variant="ghost"
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
@@ -1077,8 +1141,10 @@ export function DecisionCard({
         <div
           className={cn(
             'flex flex-wrap items-center gap-2',
-            // A record's buttons stand in a full-width column below 480 px (decision-card.md, Sizes).
-            record !== null && 'max-[30rem]:flex-col max-[30rem]:items-stretch',
+            // A record's buttons, and the three answers, stand in a full-width column below 480 px
+            // (decision-card.md, Sizes; UXRD Responsive «Карточка IM-04»).
+            (record !== null || thirdAnswer) &&
+              'max-[30rem]:flex-col max-[30rem]:items-stretch',
           )}
         >
           {actions}

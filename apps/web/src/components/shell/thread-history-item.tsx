@@ -8,6 +8,8 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { ConversationState } from '@agent-os/contracts';
+import { ConversationStateGlyph } from '@/components/agents/agent-status';
 import { ShimmerLabel } from '@/components/surfaces';
 import {
   DropdownMenu,
@@ -51,6 +53,8 @@ const TOOLTIP_DELAY_MS = 500;
 
 export type ThreadHistoryItemProps = {
   entry: ThreadListEntry;
+  /** The state mark the row shows (IM-09): the list hides «новый ответ» and «сбой» of a conversation on screen. */
+  state: ConversationState | null;
   /** The thread open in the main area: background, weight and `aria-current="page"`. */
   isActive: boolean;
   /** The title is still awaited (reply running or title poll pending): «Новая беседа» shimmers. */
@@ -71,6 +75,7 @@ export type ThreadHistoryItemProps = {
  */
 export function ThreadHistoryItem({
   entry,
+  state,
   isActive,
   titlePending,
   onRename,
@@ -169,12 +174,22 @@ export function ThreadHistoryItem({
           )}
           <ShimmerLabel
             ref={labelRef}
-            className="truncate"
+            // Fills the row so the state mark sits at its end, just before «⋯» (IM-09).
+            className="min-w-0 flex-1 truncate"
             active={entry.title === undefined && titlePending}
           >
             {label}
           </ShimmerLabel>
           {entry.forked && <span className="sr-only">{t('forkMark')}</span>}
+          {state !== null && (
+            <>
+              <span className="sr-only">{t(`stateMark.${state}`)}</span>
+              <ConversationStateGlyph
+                state={state}
+                label={t(`state.${state}`)}
+              />
+            </>
+          )}
         </SidebarMenuButton>
         <TooltipContent side="right" align="center">
           {label}

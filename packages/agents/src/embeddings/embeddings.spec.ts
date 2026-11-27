@@ -1,5 +1,5 @@
 // design-core.md KD-6, Flow 2, Contract `Agents.embeddings.embed`: AC-07.1 and DC-8 (vectors in the texts' order,
-// each of unit length), AC-07.2 (no model chosen — no request, no ledger row), AC-07.3 (503 after the retries —
+// each of unit length), AC-07.2 (no model chosen — no request, no ledger row), AC-07.3 (503 after one request —
 // `provider_unavailable`, the provider's body in the log, no ledger row), AC-07.4 (a vector of another length —
 // `dimension_mismatch`, the batch's ledger row written), AC-06.3 (the model the gate names now is the one called),
 // AC-07.5 (no employee — the `platform` owner), DC-9 (101 texts — two batches and two rows; an empty list — no
@@ -46,10 +46,9 @@ interface Row {
   readonly outcome: string;
   /** Unit-length vectors computed by hand, when the row checks them. */
   readonly vectors?: readonly (readonly number[])[];
-  /** Texts per provider request, in order (each retry is a request). */
+  /** Texts per provider request, in order. */
   readonly requests: readonly number[];
   readonly calledModel?: string;
-  readonly pauses: readonly number[];
   /** Owner, model and input tokens of each ledger row. */
   readonly ledger: readonly string[];
   readonly log?: {
@@ -88,7 +87,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         ],
         requests: [2],
         calledModel: 'gemini/small-embedding',
-        pauses: [],
         ledger: ['owner-1 gemini/small-embedding 20'],
       },
     ],
@@ -100,12 +98,11 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         texts: ['a'],
         outcome: 'unavailable model_not_configured',
         requests: [],
-        pauses: [],
         ledger: [],
       },
     ],
     [
-      '503 on all three attempts: retried at 1 s and 3 s, provider_unavailable, the body in the log (AC-07.3)',
+      '503: one request, no pauses, provider_unavailable, the body in the log (AC-07.3, improvements AC-02.1)',
       {
         verdict: SMALL,
         ownerId: 'owner-1',
@@ -114,8 +111,7 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
           seam.failure = { statusCode: 503, body: BODY_503 };
         },
         outcome: 'unavailable provider_unavailable',
-        requests: [1, 1, 1],
-        pauses: [1000, 3000],
+        requests: [1],
         ledger: [],
         log: {
           message: 'embedding call failed',
@@ -139,7 +135,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         },
         outcome: 'unavailable dimension_mismatch',
         requests: [1],
-        pauses: [],
         ledger: ['owner-1 gemini/small-embedding 10'],
       },
     ],
@@ -152,7 +147,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         outcome: 'vectors 1',
         requests: [1],
         calledModel: 'gemini/embedding-v2',
-        pauses: [],
         ledger: ['null gemini/embedding-v2 10'],
       },
     ],
@@ -164,7 +158,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         texts: MANY_TEXTS,
         outcome: 'vectors 101',
         requests: [100, 1],
-        pauses: [],
         ledger: [
           'owner-1 gemini/small-embedding 1000',
           'owner-1 gemini/small-embedding 10',
@@ -179,7 +172,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         texts: [],
         outcome: 'vectors 0',
         requests: [],
-        pauses: [],
         ledger: [],
       },
     ],
@@ -195,7 +187,6 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
         },
         outcome: 'vectors 2',
         requests: [2],
-        pauses: [],
         ledger: ['owner-1 gemini/small-embedding 3'],
         log: {
           message: 'embedding batch recorded with estimated usage',
@@ -206,16 +197,12 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
   ])('%s', async (_, row) => {
     const seam = createScriptedEmbeddings();
     row.seam?.(seam);
-    const pauses: number[] = [];
     const ledgerRows: ModelCallRecord[] = [];
     const logger = loggerDouble();
     const clock: Clock = {
       now: () => new Date(0),
-      random: () => 0,
-      setTimer: (ms, callback) => {
-        pauses.push(ms);
-        queueMicrotask(callback);
-        return () => {};
+      setTimer: () => {
+        throw new Error('AgentsEmbeddings sets no timer');
       },
     };
     const embeddings = new AgentsEmbeddings(
@@ -261,13 +248,12 @@ describe('Agents.embeddings.embed answers vectors or a reason, with a ledger row
       );
     }
     expect(seam.calls.map((call) => call.texts.length)).toEqual(row.requests);
-    // The batches go in the texts' order; a retry sends its batch again.
+    // The batches go in the texts' order.
     const sent = new Set(seam.calls.flatMap((call) => call.texts));
     expect([...sent]).toEqual(row.requests.length === 0 ? [] : row.texts);
     if (row.calledModel !== undefined) {
       expect(seam.calls.map((call) => call.model)).toEqual([row.calledModel]);
     }
-    expect(pauses).toEqual(row.pauses);
     expect(
       ledgerRows.map(
         (call) => `${call.ownerId} ${call.model} ${call.usage.inputTokens}`,

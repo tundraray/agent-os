@@ -1,5 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { inRootLaunchSet, ViewOperations } from '@agent-os/agents';
+import {
+  inRootLaunchSet,
+  ToolRegistry,
+  ViewOperations,
+} from '@agent-os/agents';
 import {
   type ChipRecord,
   RecordKindSchema,
@@ -13,10 +17,12 @@ import {
   ScheduleRuleSchema,
   type ScheduleRunView,
   type ScheduleRunsPage,
+  type ScheduleToolsResponse,
   SchedulePauseReasonSchema,
   ScheduleStateSchema,
   ScheduleTargetSchema,
   type ScheduleView,
+  type ToolPair,
 } from '@agent-os/contracts';
 import {
   AgentsRepository,
@@ -43,6 +49,10 @@ import {
   ScheduleTriggersService,
 } from './schedule-triggers.service';
 import { invalidSchedule, schedulesError } from './schedules.errors';
+
+/** Plain code-point order: the same for every locale. */
+const compareText = (a: string, b: string): number =>
+  a < b ? -1 : a > b ? 1 : 0;
 
 /** Resumable: not completed and not waiting for an answer in a deleted conversation (DC-4). */
 const resumable = (schedule: ScheduleRow): boolean =>
@@ -93,6 +103,31 @@ function nameOf(body: ScheduleBody): string {
 const ruleKey = (rule: unknown): string =>
   JSON.stringify(ScheduleRuleSchema.parse(rule));
 
+/** Every server the owner may use and no system tool: the MCP tools of the owner's rights (`toolsFor`). */
+const ALL_SERVERS: Parameters<ToolRegistry['toolsFor']>[1] = {
+  servers: ['*'],
+  system: [],
+  root: false,
+  startable: null,
+  deepAgents: null,
+  taskList: false,
+  listDelegation: false,
+  scripts: [],
+};
+
+const pairKey = ({ server, tool }: ToolPair): string =>
+  JSON.stringify([server, tool]);
+
+/** The pairs in their first order, each once (Contract Definitions «POST /api/schedules»). */
+function distinctPairs(pairs: readonly ToolPair[]): ToolPair[] {
+  const seen = new Map<string, ToolPair>();
+  for (const { server, tool } of pairs) {
+    const key = pairKey({ server, tool });
+    if (!seen.has(key)) seen.set(key, { server, tool });
+  }
+  return [...seen.values()];
+}
+
 /**
  * An employee's schedules (design-schedules.md, C3 «маршруты расписаний», Flow 2): the routes. The owner is the
  * session's; another employee's schedule answers as a missing one, and so does an id that is not a UUID. The agent
@@ -108,6 +143,7 @@ export class SchedulesService {
     @Inject(AgentsRepository) private readonly agents: AgentsRepository,
     private readonly library: LibraryService,
     @Inject(ViewOperations) private readonly views: ViewOperations,
+    @Inject(ToolRegistry) private readonly registry: ToolRegistry,
     private readonly triggers: ScheduleTriggersService,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
@@ -129,6 +165,10 @@ export class SchedulesService {
     else if (body.target === 'this_conversation')
       throw schedulesError('THREAD_NOT_FOUND');
     await this.checkAgent(ownerId, body.agentId);
+    const allowedTools = await this.checkAllowedTools(
+      ownerId,
+      body.allowedTools,
+    );
     const id = await this.db.transaction(async () => {
       const nextRunAt = this.firstTerm(body, now);
       const row = await this.schedules.insert({
@@ -145,10 +185,32 @@ export class SchedulesService {
         pausedBecause: null,
         nextRunAt,
         ruleSetAt: now,
+        allowedTools,
       });
       return row.id;
     });
     return this.get(id, ownerId);
+  }
+
+  /**
+   * GET /api/schedules/tools: the changing MCP tools the owner has the right to, by server, then by tool name;
+   * read-only tools are not offered (improvements design-server.md, Contract Definitions).
+   */
+  async tools(ownerId: string): Promise<ScheduleToolsResponse> {
+    const tools = (await this.changingMcpTools(ownerId))
+      .map(({ server, tool, description, display }) => ({
+        server,
+        tool,
+        ...(display.toolTitle === undefined
+          ? {}
+          : { toolTitle: display.toolTitle }),
+        description,
+      }))
+      .sort(
+        (a, b) =>
+          compareText(a.server, b.server) || compareText(a.tool, b.tool),
+      );
+    return { tools };
   }
 
   /** The nearest term from now of a rule; nothing is written. */
@@ -185,6 +247,10 @@ export class SchedulesService {
       await this.liveConversation(body.conversationId, ownerId);
     }
     await this.checkAgent(ownerId, body.agentId);
+    const allowedTools = await this.checkAllowedTools(
+      ownerId,
+      body.allowedTools,
+    );
     const ruleChanged =
       ruleKey(schedule.rule) !== ruleKey(body.rule) ||
       schedule.timeZone !== body.timeZone;
@@ -203,6 +269,7 @@ export class SchedulesService {
         pausedBecause: null,
         nextRunAt: paused ? null : this.firstTerm({ ...body, ruleSetAt }, now),
         ruleSetAt,
+        allowedTools,
       }),
     );
     return this.get(id, ownerId);
@@ -299,6 +366,35 @@ export class SchedulesService {
     change: ScheduleChange,
   ): Promise<void> {
     await this.db.transaction(() => this.schedules.update(id, ownerId, change));
+  }
+
+  /** The owner's changing MCP tools: the tool set of every server by his rights, without read-only tools. */
+  private async changingMcpTools(ownerId: string) {
+    const tools = await this.registry.toolsFor(ownerId, ALL_SERVERS);
+    return tools.flatMap((tool) =>
+      'mcp' in tool && !tool.mcp.readOnly ? [tool.mcp] : [],
+    );
+  }
+
+  /**
+   * The schedule's pairs, each once; a pair that is not one of the owner's changing MCP tools is 400
+   * `VALIDATION_FAILED`, and nothing is written (FR-03, NFR-02).
+   */
+  private async checkAllowedTools(
+    ownerId: string,
+    pairs: readonly ToolPair[],
+  ): Promise<ToolPair[]> {
+    const distinct = distinctPairs(pairs);
+    if (distinct.length === 0) return distinct;
+    const allowed = new Set(
+      (await this.changingMcpTools(ownerId)).map(pairKey),
+    );
+    const foreign = distinct.find((pair) => !allowed.has(pairKey(pair)));
+    if (foreign !== undefined)
+      throw invalidSchedule(
+        `allowedTools: ${foreign.server}/${foreign.tool} is not a changing tool you may use`,
+      );
+    return distinct;
   }
 
   /** 400 `VALIDATION_FAILED` for a rule a schedule may not have (DC-2). */
@@ -400,6 +496,7 @@ export class SchedulesService {
       ),
       nextRunAt: schedule.nextRunAt?.toISOString() ?? null,
       lastRun: lastRun === undefined ? null : toRunView(lastRun),
+      allowedTools: schedule.allowedTools,
     };
   }
 }

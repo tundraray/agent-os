@@ -57,7 +57,7 @@ import type {
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
  * `@agent-os/agents/testing`): an `AgentTurnModelClient` behind `AGENT_TURN_CLIENT`, so it stands
- * INSIDE `ModelClient`, below its ledger write — the token ledger, the retries, the text parts with
+ * INSIDE `ModelClient`, below its ledger write — the token ledger, the text parts with
  * their offsets and the provider messages are the package's own. A script is a list of replies of one
  * agent; every call is recorded with the messages exactly as the provider would get them, which is the
  * assertion surface for "the next model call sees X". An answer may carry its text in parts, which
@@ -74,7 +74,7 @@ export const DEFAULT_USAGE: CallUsage = {
   cacheWriteTokens: 0,
 };
 
-/** The status of a scripted provider error unless named: retryable, so `ModelClient` retries it. */
+/** The status of a scripted provider error unless named: an overloaded provider, `provider_unavailable`. */
 const DEFAULT_ERROR_STATUS = 503;
 
 /**
@@ -161,9 +161,8 @@ export interface ScriptedAnswer {
 
 /**
  * A provider error instead of an answer: the double rejects the call as the provider client does
- * (`AI_APICallError` with `statusCode`). Each retry of `ModelClient` is a call of its own, so a script
- * whose every call fails (`thereafter: modelError()`) makes the session's model call end in
- * `model_error` after the retries (1000 and 3000 ms: about 4 s per failing agent).
+ * (`AI_APICallError` with `statusCode`), and the session's model call ends in `model_error` after that one
+ * request.
  */
 export interface ScriptedModelError {
   readonly kind: 'model_error';
@@ -234,7 +233,7 @@ export interface RecordedTextCall {
   readonly prompt: string;
 }
 
-/** The `completeText` calls the text script answered, in order (each retry is a call of its own). */
+/** The `completeText` calls the text script answered, in order. */
 export interface TextScript {
   readonly calls: readonly RecordedTextCall[];
   /** Resolves once `count` calls have started. */
@@ -254,7 +253,7 @@ export interface ScriptedModel {
   ): Script;
   /**
    * Sets the reply to every `completeText` call: an answer (its latch holds the call), or a provider
-   * error on every attempt. Without it a `completeText` call fails as a defect of the test.
+   * error. Without it a `completeText` call fails as a defect of the test.
    */
   completeText(reply: ScriptedAnswer | ScriptedModelError): TextScript;
 }
@@ -540,11 +539,11 @@ export interface RecordedEmbeddingCall {
 
 /**
  * The embeddings seam double (ADR-0004), behind `EMBEDDING_CLIENT`: it stands below the service,
- * so the batches, retries, ledger rows and checks are the package's own. The switches are read on every call.
+ * so the batches, ledger rows and checks are the package's own. The switches are read on every call.
  */
 export interface ScriptedEmbeddings {
   readonly client: EmbeddingClient;
-  /** Every request in order of arrival; each retry is a request of its own. */
+  /** Every request in order of arrival. */
   readonly calls: readonly RecordedEmbeddingCall[];
   /** The provider reports no token count. */
   withoutTokenCount: boolean;
@@ -683,7 +682,10 @@ export function createAccessGateDouble(
     async tools(ownerId) {
       if (disabled(ownerId)) return { kind: 'owner_disabled' };
       const servers = serversOf(ownerId);
-      return { kind: 'allowed', allows: (server) => servers.has(server) };
+      return {
+        kind: 'allowed',
+        allows: ({ server }) => servers.has(server),
+      };
     },
     async model(ownerId, model) {
       if (disabled(ownerId))

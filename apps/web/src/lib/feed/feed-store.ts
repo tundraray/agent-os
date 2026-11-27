@@ -77,11 +77,8 @@ export type FeedStore = StoreApi<FeedState> & {
   ) => Promise<void>;
   /** Stops the agent's work; a message is never part of it. Rejects when the server did not take it. */
   interrupt: () => Promise<void>;
-  decide: (
-    decisionId: string,
-    approve: boolean,
-    args?: Record<string, unknown>,
-  ) => Promise<void>;
+  /** `allowInConversation` — «Разрешить в этой беседе» on an MCP tool's card (KD-6). */
+  decide: (decisionId: string, decision: DecisionRequest) => Promise<void>;
   /** Stops the agent, or a conversation's root. */
   stop: () => Promise<void>;
   /** Resolves with the new agent the caller opens. */
@@ -433,14 +430,8 @@ export function createFeedStore({
       await command('interrupt', interruptCall);
       await reads.request();
     },
-    decide: async (
-      decisionId: string,
-      approve: boolean,
-      args?: Record<string, unknown>,
-    ) => {
-      const body: DecisionRequest =
-        args === undefined ? { approve } : { approve, args };
-      await command('decide', () => api.decide(decisionId, body), {
+    decide: async (decisionId: string, decision: DecisionRequest) => {
+      await command('decide', () => api.decide(decisionId, decision), {
         decisionId,
       });
       await reads.request();

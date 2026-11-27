@@ -8,6 +8,8 @@
   "chipInComposer": "«{name}» в поле сообщения — опишите задачу и отправьте",
   "testRunInComposer": "«Создать и проверить агента» в поле сообщения",
   "forkOpened": "Открыта ветка «{title}»",
+  "asideOpened": "Боковой чат открыт справа",
+  "sentToMain": "Отправлено в основной чат",
   "connectionLost": "Связь с сервером потеряна",
   "connectionRestored": "Связь с сервером восстановлена",
   "decisionsOpened": "Нужно ваше решение: {count, plural, one {# запрос} few {# запроса} many {# запросов} other {# запроса}}",

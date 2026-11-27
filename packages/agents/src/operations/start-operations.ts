@@ -1,5 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import {
+  AgentMessageKindSchema,
   CHAT_BUILTIN_KEY,
   CHAT_TASK_TYPE,
   THREAD_TITLE_MAX_LENGTH,
@@ -11,7 +12,7 @@ import {
   MessagesRepository,
   ToolResultsRepository,
 } from '@agent-os/db';
-import { isFinished, LiveTasks, TaskControl } from '@agent-os/runtime';
+import { Inbox, isFinished, LiveTasks, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { AccessAudit, AccessGate } from '../access-gate';
@@ -35,11 +36,18 @@ import { History } from '../store/history';
 import { type Session, Sessions, type SessionStart } from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
 import { inTrainingTree } from '../training/training-tree';
-import type { AgentRef, ForkResult, StartRequest } from './agent-sessions';
+import type {
+  AgentRef,
+  ForkBoundary,
+  ForkRequest,
+  ForkResult,
+  StartRequest,
+} from './agent-sessions';
 import {
   copyHistory,
   type CopyHistoryDeps,
   forkTitle,
+  inheritedThrough,
   readForkRefusal,
 } from './fork-history';
 import {
@@ -72,6 +80,17 @@ function restartSource(run: RunStart, session: Session): StartSource {
   };
 }
 
+/** A fork's boundary for its log record: never the edited text. */
+function boundaryFields(boundary: ForkBoundary | undefined) {
+  if (boundary === undefined) return null;
+  if (boundary.kind === 'through') return boundary;
+  return {
+    kind: boundary.kind,
+    seq: boundary.seq,
+    recordId: boundary.record?.id ?? null,
+  };
+}
+
 /**
  * The operations that make an agent: the start of a conversation's root, the restart of a finished agent and
  * the fork of a conversation.
@@ -97,6 +116,8 @@ export class StartOperations {
     @Inject(ConversationTasksRepository)
     sessionTaskRows: ConversationTasksRepository,
     @Inject(LiveTasks) liveTasks: Pick<LiveTasks, 'adopt'>,
+    /** A fork by an edit gets the edited message in the transaction that creates it (improvements Flow 3). */
+    @Inject(Inbox) private readonly inbox: Pick<Inbox, 'enqueue'>,
     /** `resolveStart` asks it for the agent of a start or a restart; a restart reads the restarted version. */
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
@@ -242,22 +263,24 @@ export class StartOperations {
   }
 
   /**
-   * Forks the owner's conversation (create-and-test design-fork.md, Flow 1): the refusal by its tree (KD-4),
-   * then one transaction — a `chat` root on the source root's start, waiting for a message, with the source's
-   * first entry, its history copied and its title (KD-2, KD-3). The model is not called.
+   * Forks the owner's conversation (create-and-test design-fork.md, Flow 1; improvements design-server.md, Flow 3):
+   * a boundary that names no message it may end at, then the refusal by its tree (KD-4), then one transaction — a
+   * `chat` root on the source root's start with the source's first entry, its history copied through the boundary
+   * and its title (KD-2, KD-3). The whole fork and the aside wait for a message, and the model is not called; a fork
+   * by an edit gets the edited message in the same transaction and answers it. An edit of the first message copies
+   * nothing: the edited text is the fork's `task` entry.
    */
-  fork({
-    threadId,
-    ownerId,
-  }: {
-    readonly threadId: string;
-    readonly ownerId: string;
-  }): Promise<ForkResult> {
+  fork({ threadId, ownerId, boundary }: ForkRequest): Promise<ForkResult> {
     return this.logged(
       'fork',
-      { threadId, ownerId },
+      { threadId, ownerId, boundary: boundaryFields(boundary) },
       async (): Promise<ForkResult> => {
         const reason = await readForkRefusal(this.tasks, threadId, ownerId);
+        const throughSeq =
+          boundary === undefined
+            ? undefined
+            : await this.inheritedThrough(threadId, boundary);
+        if (throughSeq === null) return { kind: 'not_a_message' };
         if (reason !== null) return { kind: 'refused', reason };
         const session = await this.sessions.get(threadId);
         const source = await this.sessionRows.root(threadId, ownerId);
@@ -277,32 +300,64 @@ export class StartOperations {
         const [first] = await this.history.through(threadId, 1);
         if (first?.kind !== 'task')
           throw new Error(`Conversation ${threadId} has no task entry first`);
+        const edit = boundary?.kind === 'edit' ? boundary : undefined;
+        // An edit of the first message: the edited text is the fork's first entry, and the fork answers it.
+        const firstEdited = edit !== undefined && throughSeq === 0;
+        const firstEntry = firstEdited
+          ? { text: edit.text, record: edit.record ?? null, schedule: null }
+          : first.content;
         const { agentId } = await createAgent(this.creation, {
-          task: { type: CHAT_TASK_TYPE, ownerId, waiting: true },
+          task: {
+            type: CHAT_TASK_TYPE,
+            ownerId,
+            ...(firstEdited ? {} : { waiting: true }),
+          },
           placeOf: (taskId) => ({ rootId: taskId, depth: 0 }),
           start: {
             run: started.run,
-            prompt: first.content.text,
+            prompt: firstEntry.text,
             description: session.description,
-            ...(first.content.record === null
+            ...(firstEntry.record === null
               ? {}
-              : { record: first.content.record }),
-            ...(first.content.schedule === null
+              : { record: firstEntry.record }),
+            ...(firstEntry.schedule === null
               ? {}
-              : { schedule: first.content.schedule }),
+              : { schedule: firstEntry.schedule }),
           },
           after: async (forkId) => {
-            await copyHistory(this.copying, {
-              sourceId: threadId,
-              targetId: forkId,
-              forkedFromId: threadId,
-              withTasks: true,
-            });
+            if (firstEdited) {
+              await this.sessionRows.update(forkId, {
+                forkedFromId: threadId,
+                forkedThroughSeq: 0,
+                // Read through its `task` entry, seq 1: its last entry now (Data Model).
+                seenThroughSeq: 1,
+              });
+            } else {
+              await copyHistory(this.copying, {
+                sourceId: threadId,
+                targetId: forkId,
+                forkedFromId: threadId,
+                ...(throughSeq === undefined ? {} : { throughSeq }),
+                // A fork through a message leaves out the task list and the input size of the source's end (KD-6).
+                withTasks: boundary === undefined,
+              });
+            }
             await this.sessionRows.titleRootIfEmpty(
               forkId,
               ownerId,
               forkTitle(source.title ?? ''),
             );
+            if (edit !== undefined && !firstEdited)
+              await this.inbox.enqueue({
+                recipientId: forkId,
+                ownerId,
+                kind: AgentMessageKindSchema.enum.user_message,
+                payload: {
+                  text: edit.text,
+                  ...(edit.record === undefined ? {} : { record: edit.record }),
+                },
+                revive: true,
+              });
           },
         });
         started.done(agentId, agentId);
@@ -311,8 +366,20 @@ export class StartOperations {
       (result) =>
         result.kind === 'forked'
           ? { forkId: result.threadId }
-          : { refusal: result.reason },
+          : {
+              refusal: result.kind === 'refused' ? result.reason : result.kind,
+            },
     );
+  }
+
+  /** The last entry the fork inherits by its boundary, read from the source root's history; `null` when it names no message. */
+  private async inheritedThrough(
+    threadId: string,
+    boundary: ForkBoundary,
+  ): Promise<number | null> {
+    const seq = boundary.kind === 'edit' ? boundary.seq : boundary.throughSeq;
+    const entry = (await this.history.through(threadId, seq)).at(-1);
+    return inheritedThrough(entry?.seq === seq ? entry : undefined, boundary);
   }
 
   /** The model of the parent's conversation, the second link of the chain (KD-3); `null` for a root. */

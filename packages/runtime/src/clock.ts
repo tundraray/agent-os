@@ -2,14 +2,11 @@
 export type CancelTimer = () => void;
 
 /**
- * Port of time, randomness and timers of the runtime (the `CLOCK` provider), replaceable so that
- * deadlines, backoff with jitter and polling are deterministic in tests (design-runtime.md,
- * Test Boundaries).
+ * Port of time and timers of the runtime (the `CLOCK` provider), replaceable so that deadlines and
+ * polling are deterministic in tests (design-runtime.md, Test Boundaries).
  */
 export interface Clock {
   now(): Date;
-  /** Uniform random number in `[0, 1)`: the source of backoff jitter. */
-  random(): number;
   /** Runs `callback` once after `ms`. */
   setTimer(ms: number, callback: () => void): CancelTimer;
 }
@@ -17,7 +14,6 @@ export interface Clock {
 /** The real clock of the process. */
 export const systemClock: Clock = {
   now: () => new Date(),
-  random: () => Math.random(),
   setTimer: (ms, callback) => {
     const timer = setTimeout(callback, ms);
     return () => clearTimeout(timer);

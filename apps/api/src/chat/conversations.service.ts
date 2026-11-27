@@ -18,6 +18,7 @@ import {
   type Document,
   type HistoryEntry,
   type DocumentSummary,
+  type ForkRequest,
   type InterruptResponse,
   type ScheduleMark,
   type SendMessageResponse,
@@ -29,6 +30,7 @@ import {
 } from '@agent-os/contracts';
 import {
   AgentsRepository,
+  ConversationsRepository,
   ConversationTasksRepository,
   DocumentsRepository,
   RuntimeModelCallsRepository,
@@ -38,6 +40,7 @@ import {
 import {
   Inbox,
   isFinished,
+  QUESTION_TASK_TYPE,
   RuntimeError,
   type Task,
   TaskControl,
@@ -45,7 +48,7 @@ import {
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
-import { chatStatus } from './chat-status';
+import { chatStatus, conversationState } from './chat-status';
 import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
   focusOf,
@@ -110,9 +113,14 @@ export class ConversationsService {
     private readonly sessionTasks: ConversationTasksRepository,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: RuntimeModelCallsRepository,
+    @Inject(ConversationsRepository)
+    private readonly conversations: ConversationsRepository,
   ) {}
 
-  /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
+  /**
+   * A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`), each with its state
+   * (improvements design-server.md, Flow 4): the facts of the whole page are read in one query.
+   */
   async list(ownerId: string, cursor?: string): Promise<ThreadListResponse> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
     const roots = await this.views.roots({
@@ -124,8 +132,22 @@ export class ConversationsService {
     });
     const page = roots.slice(0, THREAD_PAGE_SIZE);
     const last = page.at(-1);
+    const facts = new Map(
+      (
+        await this.conversations.stateFacts(
+          page.map((root) => root.rootId),
+          QUESTION_TASK_TYPE,
+        )
+      ).map((row) => [row.rootId, row]),
+    );
     return {
-      threads: page.map(toThreadSummary),
+      threads: page.map((root) => {
+        const rootFacts = facts.get(root.rootId);
+        return {
+          ...toThreadSummary(root),
+          state: rootFacts === undefined ? null : conversationState(rootFacts),
+        };
+      }),
       nextCursor:
         roots.length > THREAD_PAGE_SIZE && last
           ? encodeThreadCursor({ updatedAt: last.updatedAt, id: last.rootId })
@@ -148,12 +170,40 @@ export class ConversationsService {
   }
 
   /**
-   * Flow 1 of design-fork.md: forks the owner's conversation into a new one waiting for a message. A refusal
-   * by the tree is 409 `FORK_REFUSED` with its reason, a refused start 409 `START_REFUSED`; nothing is created.
+   * Flow 1 of design-fork.md and Flow 3 of improvements design-server.md: forks the owner's conversation — whole or
+   * through the message `throughSeq` into a new one waiting for a message, or before the message `edit.seq` with the
+   * edited text, which the fork answers. The edit's chip is checked first, as a send's. A boundary on no message it
+   * may end at is 400 `VALIDATION_FAILED`, a refusal by the tree 409 `FORK_REFUSED` with its reason, a refused start
+   * 409 `START_REFUSED`; nothing is created.
    */
-  async fork(threadId: string, ownerId: string): Promise<ThreadSummary> {
+  async fork(
+    threadId: string,
+    ownerId: string,
+    { throughSeq, edit }: ForkRequest,
+  ): Promise<ThreadSummary> {
     await this.owned(threadId, ownerId);
-    const forked = await this.starts.fork({ threadId, ownerId });
+    const record =
+      edit?.recordId === undefined
+        ? undefined
+        : await this.chipOf(ownerId, edit.recordId);
+    const forked = await this.starts.fork({
+      threadId,
+      ownerId,
+      ...(edit !== undefined
+        ? {
+            boundary: {
+              kind: 'edit',
+              seq: edit.seq,
+              text: edit.text,
+              ...(record === undefined ? {} : { record }),
+            },
+          }
+        : {}),
+      ...(throughSeq !== undefined
+        ? { boundary: { kind: 'through', throughSeq } }
+        : {}),
+    });
+    if (forked.kind === 'not_a_message') throw httpError('VALIDATION_FAILED');
     if (forked.kind === 'refused') throw forkRefused(forked.reason);
     return this.get(forked.threadId, ownerId);
   }
@@ -240,6 +290,21 @@ export class ConversationsService {
     return { messageId };
   }
 
+  /**
+   * Flow 4 of improvements design-server.md: raises the owner's «seen through» mark of the conversation, never down and
+   * never past its last entry. A malformed, missing or foreign id is `THREAD_NOT_FOUND`.
+   */
+  async markSeen(
+    threadId: string,
+    ownerId: string,
+    throughSeq: number,
+  ): Promise<void> {
+    const marked =
+      isUuid(threadId) &&
+      (await this.conversations.markSeen(threadId, ownerId, throughSeq));
+    if (!marked) throw threadNotFound();
+  }
+
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */
   async interrupt(
     threadId: string,
@@ -270,7 +335,8 @@ export class ConversationsService {
     ownerId: string,
     afterSeq: number,
   ): Promise<ConversationView> {
-    const thread = toThreadSummary(await this.owned(threadId, ownerId));
+    const owned = await this.owned(threadId, ownerId);
+    const thread = toThreadSummary(owned);
     const [
       task,
       views,
@@ -333,6 +399,7 @@ export class ConversationsService {
           (await this.agents.exists(training.agentId)),
         run,
       ),
+      seenThroughSeq: owned.seenThroughSeq,
     };
   }
 

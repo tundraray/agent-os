@@ -21,6 +21,7 @@ import {
   type ScheduleBody,
   type ScheduleTarget,
   type ScheduleView,
+  type ToolPair,
 } from '@agent-os/contracts';
 import {
   AdminRadioField,
@@ -33,10 +34,16 @@ import {
 import { FieldError } from '@/components/ui/field';
 import { RECORD_KIND_ICON } from '@/components/library/record-label';
 import {
+  AllowedToolsField,
+  listedPairs,
+  useScheduleTools,
+} from '@/components/schedules/allowed-tools';
+import {
   checkRule,
   defaultRuleDraft,
   formatRunTime,
   isPastRefusal,
+  laterRuleDraft,
   ruleDraftOf,
   ScheduleRuleField,
   type RuleDraft,
@@ -64,7 +71,8 @@ import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
 /**
  * SH-02: the schedule dialog (settings-form «Форма диалога», comfortable density). A new schedule starts from
  * the message field — its text, its agent chip and its conversation (UXRD KD-1); an edit starts from the saved
- * schedule. The body mounts with the open dialog, so every open starts from those values.
+ * schedule. The body mounts with the open dialog, so every open starts from those values. «Отправить позже» is the
+ * create mode's `later` preset (improvements KD-6): «один раз» at the next whole hour, in this conversation.
  */
 
 export type ScheduleDialogMode =
@@ -76,6 +84,8 @@ export type ScheduleDialogMode =
       agent: ChipRecord | null;
       /** The open conversation; `null` in a new chat without messages. */
       conversationId: string | null;
+      /** «Отправить позже» (IM-08): its title and button, «один раз» at the next whole hour, «В эту беседу». */
+      later: boolean;
     }
   | { kind: 'edit'; schedule: ScheduleView };
 
@@ -105,7 +115,13 @@ export function ScheduleDialog({
       >
         <DialogHeader>
           <DialogTitle className="text-base leading-6 font-semibold">
-            {t(mode.kind === 'create' ? 'createTitle' : 'editTitle')}
+            {t(
+              mode.kind === 'edit'
+                ? 'editTitle'
+                : mode.later
+                  ? 'laterTitle'
+                  : 'createTitle',
+            )}
           </DialogTitle>
         </DialogHeader>
         <ScheduleForm
@@ -129,6 +145,8 @@ type Values = {
   agentId: string;
   rule: RuleDraft;
   target: ScheduleTarget;
+  /** «Без вас» as ticked; the body sends only the pairs of the read list. */
+  allowedTools: readonly ToolPair[];
 };
 
 type FieldErrors = {
@@ -154,8 +172,13 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
         name: '',
         instruction: mode.text,
         agentId: mode.agent?.id ?? CHAT_AGENT,
-        rule: defaultRuleDraft(now),
-        target: 'new_conversation',
+        rule: mode.later ? laterRuleDraft(now) : defaultRuleDraft(now),
+        target:
+          mode.later && mode.conversationId !== null
+            ? 'this_conversation'
+            : 'new_conversation',
+        // IM-01: nothing is ticked by default.
+        allowedTools: [],
       },
       conversation:
         mode.conversationId === null
@@ -176,6 +199,7 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
       target: schedule.conversation?.deleted
         ? 'new_conversation'
         : schedule.target,
+      allowedTools: schedule.allowedTools,
     },
     conversation: schedule.conversation,
     timeZone: schedule.timeZone,
@@ -199,6 +223,7 @@ function ScheduleForm({
   const id = useId();
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
+  const tools = useScheduleTools();
   const [start] = useState(() => startOf(mode, new Date()));
   const [values, setValues] = useState(start.values);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -252,7 +277,8 @@ function ScheduleForm({
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (saving) return;
+    // FR-07: a pair the owner lost would be refused with a 400 they cannot fix, so nothing saves before the list.
+    if (saving || tools.data === undefined) return;
     setFormError(null);
     const checked = checkRule(values.rule);
     const instruction = values.instruction.trim();
@@ -277,6 +303,7 @@ function ScheduleForm({
           ? null
           : (conversation?.id ?? null),
       language: locale,
+      allowedTools: listedPairs(values.allowedTools, tools.data.tools),
     };
     setErrors({});
     setSaving(true);
@@ -445,11 +472,21 @@ function ScheduleForm({
             />
             <FieldError className={CAPTION}>{errors.target}</FieldError>
           </div>
+          <AllowedToolsField
+            tools={tools}
+            chosen={values.allowedTools}
+            disabled={saving}
+            onChange={(allowedTools) => set('allowedTools', allowedTools)}
+          />
         </fieldset>
       </div>
       {formError !== null && <FormError>{formError}</FormError>}
       <DialogFooter className="sm:justify-start">
-        <Button type="submit" className={COMFORT_CONTROL} disabled={saving}>
+        <Button
+          type="submit"
+          className={COMFORT_CONTROL}
+          disabled={saving || tools.data === undefined}
+        >
           {saving && (
             <LoaderCircle
               className="animate-spin motion-reduce:animate-none"
@@ -458,7 +495,13 @@ function ScheduleForm({
           )}
           {saving
             ? tCommon('saving')
-            : t(mode.kind === 'create' ? 'dialog.create' : 'dialog.save')}
+            : t(
+                mode.kind === 'edit'
+                  ? 'dialog.save'
+                  : mode.later
+                    ? 'dialog.schedule'
+                    : 'dialog.create',
+              )}
         </Button>
         <DialogClose
           render={

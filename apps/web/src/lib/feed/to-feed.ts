@@ -58,6 +58,8 @@ export type FeedView =
       focus: ConversationView['focus'];
       /** The training this conversation belongs to (self-learning KD-3); null outside a training tree. */
       training: ConversationView['training'];
+      /** The root's «seen through» mark at the latest read (improvements KD-4). */
+      seenThroughSeq: number;
     }
   | {
       kind: 'agent';
@@ -88,6 +90,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
       children: page.agents,
       focus: page.focus,
       training: page.training,
+      seenThroughSeq: page.seenThroughSeq,
     };
   }
   return {
@@ -279,6 +282,8 @@ export type ToolCallArtifact = {
 /**
  * `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04), the draft mark, the
  * record chip an employee's message was sent with (KD-5) and the schedule that sent it (schedules SH-07).
+ * `toolFree` marks an answer without tool calls, the only boundary `throughSeq` takes (improvements KD-3); the
+ * fork boundary itself is the message's `seq`, read from its id by `feedSeqOf`.
  */
 export type FeedMessageMeta =
   | {
@@ -298,7 +303,7 @@ export type FeedMessageMeta =
       fromConversation: boolean;
       senderDescription: string | null;
     }
-  | { kind: 'answer'; report: boolean }
+  | { kind: 'answer'; report: boolean; toolFree: boolean }
   | { kind: 'draft' }
   | { kind: 'part' };
 
@@ -461,7 +466,12 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'task', record, schedule, ...testRun }),
+        metadata: meta({
+          kind: 'task',
+          record,
+          schedule,
+          ...testRun,
+        }),
       };
     }
     case 'user_message': {
@@ -471,7 +481,12 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'user', record, schedule, ...testRun }),
+        metadata: meta({
+          kind: 'user',
+          record,
+          schedule,
+          ...testRun,
+        }),
       };
     }
     case 'agent_message': {
@@ -504,15 +519,15 @@ function entryMessage(
           parts.push(toolCallPart(call, result, recordNameOf(call, cards)));
       }
       if (parts.length === 0) return null;
+      const toolFree = entry.content.toolCalls.length === 0;
       // AV-04: on an agent page the answer that ends a turn without calls is the agent's report.
-      const report =
-        view.kind === 'agent' && entry.content.toolCalls.length === 0;
+      const report = view.kind === 'agent' && toolFree;
       return {
         id,
         role: 'assistant',
         createdAt,
         content: parts,
-        metadata: meta({ kind: 'answer', report }),
+        metadata: meta({ kind: 'answer', report, toolFree }),
       };
     }
     case 'child_report': {
@@ -541,7 +556,12 @@ function entryMessage(
           createdAt,
           content: [],
           status: { type: 'incomplete', reason: 'error', error },
-          metadata: meta({ kind: 'answer', report: false }),
+          // The failure is an event, not a model answer: no fork boundary.
+          metadata: meta({
+            kind: 'answer',
+            report: false,
+            toolFree: false,
+          }),
         };
       }
       const model = view.kind === 'thread' ? view.chat.model : view.agent.model;
@@ -942,6 +962,10 @@ export function drawsPending(
 export const selectAgent = (view: FeedView | null) =>
   view?.kind === 'agent' ? view.agent : null;
 
+/** The conversation of a conversation's view; null for an agent page and before the first read. */
+export const selectThreadId = (view: FeedView | null): string | null =>
+  view?.kind === 'thread' ? view.threadId : null;
+
 /** The status the controls follow: a conversation's `chat.status`, an agent's own; null before the first read. */
 const statusOf = (view: FeedView | null): ChatStatus | AgentStatus | null =>
   view === null
@@ -961,6 +985,118 @@ const awaitsDecision = (view: FeedView | null): boolean =>
 /** The agent works or waits for a decision: a new message goes to the tray (KD-4). */
 export const isBusy = (view: FeedView | null): boolean =>
   canInterrupt(view) || awaitsDecision(view);
+
+const isActive = (status: ChatStatus | AgentStatus): boolean =>
+  status === 'working' || status === 'awaiting_confirmation';
+
+const treeActive = (nodes: readonly AgentNode[]): boolean =>
+  nodes.some((node) => isActive(node.status) || treeActive(node.children));
+
+/**
+ * The branch buttons (improvements KD-3): a conversation that is a chat, whose root and every agent of its tree
+ * neither works nor waits for a decision — the facts the server refuses a fork by. False for an agent page.
+ */
+export const canFork = (view: FeedView | null): boolean =>
+  view?.kind === 'thread' &&
+  view.thread.forkable &&
+  !isActive(view.chat.status) &&
+  !treeActive(view.children);
+
+/** An employee's own message sent from the composer: a task or a message of theirs that no schedule sent. */
+export function isComposerMessage(
+  custom: Record<string, unknown> | undefined,
+): boolean {
+  const kind = custom?.['kind'];
+  return (kind === 'task' || kind === 'user') && custom?.['schedule'] == null;
+}
+
+/** The unread range a conversation fixes when it opens (improvements KD-4): the entries after `afterSeq` through `throughSeq`. */
+export type UnreadRange = { afterSeq: number; throughSeq: number };
+
+const SEQ_ID = /^seq-(\d+)$/;
+
+/**
+ * The `seq` of the history entry a feed message draws (its id `seq-N`); null for any other message.
+ * `useExternalStoreRuntime` with `convertMessage` converts the feed one message at a time and never joins adjacent
+ * answers, so every drawn entry keeps its own id.
+ */
+export function feedSeqOf(messageId: string): number | null {
+  const match = SEQ_ID.exec(messageId);
+  return match === null ? null : Number(match[1]);
+}
+
+/** A feed message as the divider rule reads it: from `toFeed`, or as assistant-ui holds it. */
+type FeedMessageRef = {
+  readonly id?: string | undefined;
+  readonly metadata?:
+    { readonly custom?: Record<string, unknown> | undefined } | undefined;
+};
+
+/**
+ * The `seq` of the message the «Новое» divider stands before (improvements KD-4, UXRD IM-10): the first message of the
+ * range the employee did not send from the composer — a schedule's message counts; null when there is none.
+ */
+export function newDividerSeq(
+  messages: readonly FeedMessageRef[],
+  range: UnreadRange | null,
+): number | null {
+  if (range === null) return null;
+  for (const message of messages) {
+    const seq = message.id === undefined ? null : feedSeqOf(message.id);
+    if (seq === null || seq <= range.afterSeq || seq > range.throughSeq)
+      continue;
+    if (!isComposerMessage(message.metadata?.custom)) return seq;
+  }
+  return null;
+}
+
+/** An agent of the strip «Агенты беседы» (improvements UXRD IM-11). */
+export type StripAgent = {
+  agentId: string;
+  name: string;
+  builtinKey: string | null;
+  status: 'working' | 'awaiting_confirmation';
+  /** The open decision of the agent or of an agent under it: the card a waiting agent leads to; null — its run card. */
+  decisionId: string | null;
+};
+
+const subtreeIds = (node: AgentNode): string[] => [
+  node.agentId,
+  ...node.children.flatMap(subtreeIds),
+];
+
+const subtreeWaits = (node: AgentNode): boolean =>
+  node.status === 'awaiting_confirmation' || node.children.some(subtreeWaits);
+
+/**
+ * The strip «Агенты беседы» (improvements IM-11, AC-12.1, AC-12.2): the root's direct children that work or wait, the
+ * waiting first. An agent whose subagent waits — a deep agent's step — stands as waiting and leads to that decision.
+ * Empty for an agent page and before the first read.
+ */
+export function stripAgents(view: FeedView | null): StripAgent[] {
+  if (view?.kind !== 'thread') return [];
+  const agents = view.children
+    .filter((node) => isActive(node.status))
+    .map((node): StripAgent => {
+      const ids = new Set(subtreeIds(node));
+      const open = view.decisions.find(
+        (d) => d.status === 'open' && ids.has(d.agentId),
+      );
+      return {
+        agentId: node.agentId,
+        name: node.name,
+        builtinKey: node.origin?.builtinKey ?? null,
+        status: subtreeWaits(node) ? 'awaiting_confirmation' : 'working',
+        decisionId: open?.decisionId ?? null,
+      };
+    });
+  // Array.prototype.sort is stable: each group keeps the API's order.
+  return agents.sort(
+    (a, b) =>
+      Number(b.status === 'awaiting_confirmation') -
+      Number(a.status === 'awaiting_confirmation'),
+  );
+}
 
 export type TrayEntry = {
   /** `messageId` of a queued message or `local-*` of an optimistic one. */

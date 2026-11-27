@@ -505,7 +505,9 @@ function HolderSearch({
 
   const candidates = useMemo((): Holder[] => {
     const needle = query.trim().toLocaleLowerCase(locale);
+    // «Все сотрудники» is not a holder: the dialog's own «everyone» reach shares with all (the API refuses it).
     const matchingRoles = roles
+      .filter((role) => role.builtinKind !== 'everyone')
       .map((role): Holder => ({
         kind: 'role',
         id: role.id,

@@ -297,6 +297,9 @@ export class ViewOperations {
                   : {
                       approve: resolved.approve,
                       args: resolved.args ?? payload.args,
+                      ...(resolved.allowInConversation === true
+                        ? { allowInConversation: true as const }
+                        : {}),
                     },
               createdAt: question.createdAt,
               resolvedAt: status === 'resolved' ? question.finishedAt : null,

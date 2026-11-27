@@ -93,6 +93,17 @@ export function defaultRuleDraft(now: Date): RuleDraft {
   };
 }
 
+/** «Отправить позже» (improvements IM-08): «один раз» at the next whole hour from now, the other kinds at their defaults. */
+export function laterRuleDraft(now: Date): RuleDraft {
+  const next = new Date(now);
+  next.setHours(next.getHours() + 1, 0, 0, 0);
+  return {
+    ...defaultRuleDraft(now),
+    kind: 'once',
+    once: { date: localDate(next), time: `${pad(next.getHours())}:00` },
+  };
+}
+
 /** A saved rule in its kind's place, the other kinds at their defaults. */
 export function ruleDraftOf(rule: ScheduleRule, now: Date): RuleDraft {
   const draft = { ...defaultRuleDraft(now), kind: rule.kind };

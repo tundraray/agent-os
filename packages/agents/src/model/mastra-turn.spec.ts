@@ -145,7 +145,7 @@ function streamedAnswer(withToolCall = true): Response {
   });
 }
 
-/** The provider is overloaded: the status a retryable provider error carries. */
+/** The provider is overloaded: a provider error with a status. */
 function overloaded(): Response {
   return Response.json(
     {
@@ -246,7 +246,7 @@ describe('createMastraTurnClient streams a turn (KD-3)', () => {
     });
   });
 
-  it('rejects with the provider error, so ModelClient can retry it', async () => {
+  it('rejects with the provider error', async () => {
     const run = runTurn([SEARCH_LOGS], overloaded);
 
     await expect(run.result).rejects.toMatchObject({

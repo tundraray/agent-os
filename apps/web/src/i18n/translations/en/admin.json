@@ -22,6 +22,7 @@
   },
   "secret": {
     "set": "Set",
+    "notSet": "Not set",
     "replace": "Replace",
     "replaceLabel": "Replace: {label}",
     "cancelReplace": "Cancel replacement",
@@ -68,7 +69,8 @@
       "resetPassword": "Reset password",
       "assignRole": "Assign role",
       "removeRole": "Remove role",
-      "noRoles": "No roles",
+      "everyone": "every employee has it",
+      "noOtherRoles": "No other roles",
       "adminPersonal": "yes: personally",
       "adminByRole": "{count, plural, one {yes: role {roles}} other {yes: roles {roles}}}",
       "adminNone": "no",
@@ -78,6 +80,20 @@
       "grantBody": "The employee will be able to manage accounts, roles, permissions, sign-in methods, MCP servers and models.",
       "grantConfirm": "Give permission",
       "loadFailed": "Couldn't load the employee"
+    },
+    "tabs": {
+      "tools": "Tools",
+      "models": "Models",
+      "rights": "Permissions",
+      "roles": "Roles"
+    },
+    "tools": {
+      "caption": "Access of {name} to MCP servers",
+      "noServers": "No servers yet",
+      "noServersBefore": "Register a server in ",
+      "noServersLink": "“MCP servers”",
+      "loadFailed": "Couldn't load the employee's access",
+      "superAdmin": "{name} is a super administrator: every tool of the enabled servers is available, except the ones turned off for everyone. Personal levels don't apply while the employee holds this role."
     }
   },
   "roles": {
@@ -102,45 +118,66 @@
       "hint": "The same for system agents and agents open to roles."
     },
     "alwaysOn": "Always on.",
-    "members": "Employees",
     "noMembers": "The role has no employees",
     "removeTitle": "Delete the “{role}” role?",
-    "removeBody": "The role's employees lose its permissions at once.",
+    "removeBody": "The role's employees lose its access and permissions at once.",
     "removed": "Role deleted",
     "grantAdminTitle": "Give the “{role}” role the admin permission?",
     "grantAdminBody": "{members, plural, =0 {The role has no employees now; anyone added to it will become an admin.} other {Every employee of the role will become an admin: {members}.}}",
     "grantAdmin": "Give permission",
     "listLoadFailed": "Couldn't load roles",
-    "loadFailed": "Couldn't load the role"
+    "loadFailed": "Couldn't load the role",
+    "search": "Find a role",
+    "noMatches": "No roles found",
+    "everyoneCount": "all",
+    "newRole": "New role",
+    "copy": "Create a copy",
+    "copyFrom": "Copy from role",
+    "optional": "(optional)",
+    "noCopy": "Don't copy",
+    "copyHint": "The copy gets the levels of access to servers and the model permissions with quotas. It doesn't get the employees, the admin permission or the training permissions.",
+    "copyName": "{role} (copy)",
+    "created": "Role “{role}” created",
+    "tabs": {
+      "tools": "Tools",
+      "models": "Models",
+      "rights": "Permissions",
+      "members": "Members"
+    },
+    "everyoneRights": "The “All employees” role has none of these permissions and cannot have them: every employee holds it.",
+    "everyoneMembers": "Every enabled employee is in this role by itself. It is not assigned or removed.",
+    "tools": {
+      "description": "The level is how many of a server’s tools the role gets. “Read only” and “All” also give the tools that appear on the server later; “Selected” gives only the checked ones.",
+      "caption": "Access of the {role} role to MCP servers",
+      "noServers": "No servers yet",
+      "noServersBefore": "Register a server in ",
+      "noServersLink": "“MCP servers”",
+      "noServersAfter": ", and it will appear here.",
+      "loadFailed": "Couldn't load the role's access",
+      "superAdmin": "This role has every tool of every enabled MCP server, except the ones turned off for everyone. Levels are not set for it.",
+      "everyoneWarning": "The levels of this role apply to every employee, including one who signs in for the first time."
+    },
+    "createSubmit": "Create"
   },
   "grants": {
-    "roleTitle": "Permissions",
-    "userTitle": "Personal permissions and blocks",
-    "addAllow": "Add permission",
-    "addDeny": "Add block",
+    "title": "Models",
+    "addAllow": "Allow a model",
+    "addDeny": "Deny a model",
     "allow": "Permission",
     "deny": "Block",
-    "target": "Target",
     "kind": "Type",
     "quotaColumn": "Quota",
     "noQuota": "no quota",
     "notApplicable": "—",
-    "orphan": "Not in registry",
     "changeQuota": "Change quota",
     "remove": "Remove",
     "loadFailed": "Couldn't load permissions",
-    "emptyRole": "No permissions",
-    "emptyUser": "No permissions or blocks",
+    "emptyRole": "The role isn't allowed any model",
+    "emptyUser": "No personal model permissions",
     "dialog": {
-      "what": "What",
-      "kindServer": "Whole server",
-      "kindTool": "Server tool",
-      "server": "Server",
-      "tool": "Tool",
       "model": "Model",
-      "submit": "Add",
-      "readOnly": "reads",
-      "changes": "changes",
+      "allow": "Allow",
+      "deny": "Deny",
       "held": "already given"
     },
     "quota": {
@@ -391,6 +428,11 @@
       "awaiting_admin_account": "Waiting for the admin account"
     },
     "sharedToken": "Access token",
+    "oauthClientId": "Client ID",
+    "oauthClientSecret": "Client Secret",
+    "oauthClientHint": "Needed only when the server doesn't let clients register themselves — GitHub, for example. Create an app on the server's side and paste its data here.",
+    "oauthRedirectUri": "Redirect URI — set it in the app",
+    "optional": "(optional)",
     "checking": "Checking the server…",
     "registration": {
       "title": "Registration",
@@ -408,22 +450,16 @@
       "connect": "Connect my account",
       "readOnlyHint": "To change the address or mode, delete the server and register it again.",
       "save": "Save",
-      "tool": "Tool",
-      "description": "Description",
-      "action": "Action",
-      "reads": "reads",
-      "changes": "changes",
       "remove": "Delete",
       "removeTitle": "Delete the “{server}” server?",
       "removeBody": "Agents lose its tools at once. This can't be undone. Employees' connected accounts on this server will be deleted.",
-      "tools": "Tools",
-      "noTools": "No tools yet",
       "loadFailed": "Couldn't load the server",
       "removed": "Server deleted",
       "connectReturn": {
         "connect_failed": "Couldn't connect your account: the sign-in was canceled or not finished. Try again.",
         "tools_failed": "Account connected, but the tool list couldn't be fetched. Click “Refresh list”."
-      }
+      },
+      "disabledHint": "The server is off. Tool settings and access can be set in advance — they take effect once the server is turned on."
     },
     "toolResults": {
       "title": "Large tool results",
@@ -436,6 +472,79 @@
       "save": "Save",
       "saved": "Result settings saved",
       "loadFailed": "Couldn't load the settings"
+    },
+    "tabs": {
+      "tools": "Tools",
+      "access": "Access"
+    },
+    "tools": {
+      "description": "A tool that is off reaches no agent, not even a super administrator’s. Role rights to it are kept and act again once it is turned on.",
+      "listName": "Tools of {server}",
+      "search": "Find a tool",
+      "group": {
+        "changes": "Change · {m}",
+        "reads": "Read · {m}",
+        "disabled": "off: {k}"
+      },
+      "isNew": "new",
+      "more": "More",
+      "less": "Less",
+      "available": "Available",
+      "availableName": "Available: {title}",
+      "className": "Class: {title}",
+      "class": {
+        "reads": "Reads",
+        "changes": "Changes"
+      },
+      "overridden": "corrected",
+      "serverMark": {
+        "reads": "server: reads",
+        "changes": "server: changes",
+        "none": "server: no mark"
+      },
+      "revert": "Reset to the server’s mark",
+      "revertName": "Reset to the server’s mark: {title}",
+      "movedTo": {
+        "reads": "Now in the “Read” group",
+        "changes": "Now in the “Change” group"
+      },
+      "newWarning": "New tools: {count}. Until you review them they count as changing: roles with the “Read only” level do not get them, and their calls ask for confirmation.",
+      "markReviewed": "Mark as reviewed",
+      "newClass": "new — counts as changing",
+      "showNew": "Show new",
+      "showAll": "Show all",
+      "confirm": {
+        "title": "Make “{tool}” a reading tool?",
+        "body": "Its calls will go without the employee’s confirmation, and roles with the “Read only” level get it from the agent’s next step.",
+        "action": "Make reading"
+      },
+      "announce": {
+        "disabled": "{tool}: off for everyone",
+        "enabled": "{tool}: on",
+        "reads": "{tool}: reads",
+        "changes": "{tool}: changes"
+      },
+      "empty": "No tools yet",
+      "awaitingHint": "The list appears once you connect your {server} account: the server gives its tools only to a signed-in user. You can give roles access already now on the “Access” tab.",
+      "noToolsHint": "The server gave no tools. When they appear, click “Refresh list”.",
+      "noMatches": "No tools match this search",
+      "resetSearch": "Reset search"
+    },
+    "access": {
+      "description": "Roles with access to {server}. Employees’ personal access is on their pages.",
+      "caption": "Roles with access to {server}",
+      "search": "Find a role",
+      "superAdmin": "All · levels are not set",
+      "everyone": "every employee",
+      "members": "employees: {count}",
+      "pickTools": "Choose tools",
+      "grant": "Give roles access",
+      "add": "Add ({count})",
+      "allGranted": "Every role has access",
+      "none": "No other role has access",
+      "noneHint": "Click “Give roles access” to give the server to several roles at once.",
+      "noMatches": "No roles match this search",
+      "loadFailed": "Couldn’t load the access"
     }
   },
   "signIn": {
@@ -478,6 +587,124 @@
       "save": "Save",
       "saved": "Sign-in settings saved",
       "loadFailed": "Couldn't load sign-in settings"
+    }
+  },
+  "levels": {
+    "role": {
+      "none": {
+        "label": "None",
+        "hint": "No tools"
+      },
+      "read": {
+        "label": "Read only",
+        "hint": "All read tools, and new read tools too"
+      },
+      "all": {
+        "label": "All",
+        "hint": "All tools, and new ones too"
+      },
+      "pick": {
+        "label": "Selected",
+        "hint": "Only the checked ones; new ones aren't given"
+      }
+    },
+    "personal": {
+      "none": {
+        "label": "None",
+        "hint": "Nothing personally: roles give access"
+      },
+      "read": {
+        "label": "Read only",
+        "hint": "Personally all read tools, and new read tools too"
+      },
+      "all": {
+        "label": "All",
+        "hint": "Personally all tools, and new ones too"
+      },
+      "pick": {
+        "label": "Selected",
+        "hint": "Personally allow or deny single tools"
+      },
+      "denied": {
+        "label": "Denied",
+        "hint": "No tools, whatever the roles give"
+      }
+    },
+    "pickUnavailable": "The server hasn't given its tool list yet",
+    "accessName": {
+      "server": "Access: {server}",
+      "role": "Access of role {role}",
+      "personal": "Personal access: {server}"
+    },
+    "total": "{n} of {total}",
+    "nothing": "—",
+    "tools": "Tools",
+    "toolsOf": "Tools {server}",
+    "searchTool": "Find a tool",
+    "noTools": "No tools match this search",
+    "resetSearch": "Reset search",
+    "group": {
+      "changes": "Change",
+      "reads": "Read",
+      "picked": "checked {k} of {m}",
+      "toggleChanges": "Change: {server}",
+      "toggleReads": "Read: {server}",
+      "allChanges": "All changing tools {server}",
+      "allReads": "All read tools {server}",
+      "available": "available {k} of {m}"
+    },
+    "toolName": "{title} ({name})",
+    "isNew": "new",
+    "disabled": "off for everyone",
+    "orphan": "Not on the server",
+    "coverage": {
+      "available": "available",
+      "none": "no",
+      "denied": "denied personally"
+    },
+    "from": {
+      "role": "{role} — {level}",
+      "personal": "personally",
+      "superAdmin": "Super administrator"
+    },
+    "choice": {
+      "unset": "—",
+      "allow": "Allowed",
+      "deny": "Denied"
+    },
+    "choiceName": "Personal: {title}",
+    "bar": {
+      "region": "Saving",
+      "none": "No changes",
+      "servers": "Servers changed: {count}",
+      "roles": "Roles changed: {count}",
+      "short": "Changed: {count}",
+      "discard": "Discard",
+      "save": "Save",
+      "announce": "Changes: {count}"
+    },
+    "saveFailed": "Couldn't save: {reason}. No change was applied — they stayed on the screen.",
+    "saveFailedReason": {
+      "network": "no connection to the server",
+      "other": "try again"
+    },
+    "tabChanged": "has unsaved changes",
+    "searchServer": "Find a server",
+    "filter": {
+      "label": "Which servers to show",
+      "all": "All",
+      "granted": "With access"
+    },
+    "shown": "Showing {n} of {total}",
+    "noMatches": "No servers match this search",
+    "resetFilter": "Reset the filter",
+    "column": {
+      "server": "Server",
+      "role": "Role",
+      "access": "Access",
+      "total": "Total",
+      "personal": "Personal",
+      "from": "From"
     }
   }
 }

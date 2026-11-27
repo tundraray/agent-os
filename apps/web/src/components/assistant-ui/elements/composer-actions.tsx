@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import {
   ClockIcon,
@@ -9,7 +9,8 @@ import {
   WandSparklesIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { useAui } from '@assistant-ui/react';
+import { useAui, useAuiState } from '@assistant-ui/react';
+import type { ChipRecord } from '@agent-os/contracts';
 import { useStore } from 'zustand';
 import { TEST_RUN_ICON } from '@/components/assistant-ui/elements/test-run-start';
 import { RECORD_KIND_ICON } from '@/components/library/record-label';
@@ -46,41 +47,16 @@ import {
  * «Запланировать» opens the schedule dialog with the field's text and record chip (schedules SH-01, KD-1).
  */
 export function ComposerActions({ target }: { target: SeedTarget }) {
+  const schedule = useComposerSchedule(target);
   const t = useTranslations('chat.composer');
   const tLibrary = useTranslations('library');
-  const locale = useLocale();
   const format = useFormatter();
-  const aui = useAui();
-  const { libraryIndex, composerSeed, currentUser } = useShellServices();
-  const records = useStore(libraryIndex, (state) => state.records);
+  const { composerSeed, currentUser } = useShellServices();
   const user = useStore(currentUser, (state) => state.user);
-  const usable = [...(records?.values() ?? [])].filter(canUseInChat);
+  const agents = useChatAgents();
   // A chosen item sends focus to the message field when the menu closes; any other close returns it to «+».
   const [chose, setChose] = useState(false);
-  // The dialog is open while `schedule` is set; the menu then leaves focus to the dialog.
-  const [schedule, setSchedule] = useState<ScheduleDialogMode | null>(null);
   const put = (seed: InChatSeed) => composerSeed.put(target, seed);
-
-  const openSchedule = (): void => {
-    const chip = composerSeed.getState().chips.get(target);
-    setSchedule({
-      kind: 'create',
-      text: aui.composer.getState().text,
-      agent: chip !== undefined && 'id' in chip ? chip : null,
-      conversationId: target === NEW_THREAD_TARGET ? null : target,
-    });
-  };
-
-  /** KD-1: the instruction now lives in the schedule, so the field and its chip are emptied. */
-  const scheduled = (): void => {
-    const chip =
-      schedule?.kind === 'create' && schedule.agent !== null
-        ? schedule.agent
-        : undefined;
-    if (chip !== undefined) composerSeed.clear(target, chip);
-    aui.composer.setText('');
-    focusShellTarget('composer');
-  };
 
   return (
     <>
@@ -107,7 +83,8 @@ export function ComposerActions({ target }: { target: SeedTarget }) {
         <DropdownMenuContent
           align="start"
           finalFocus={
-            schedule !== null
+            // The dialog is open: the menu leaves focus to it.
+            schedule.opened
               ? false
               : chose
                 ? () => shellTargetElement('composer')
@@ -117,25 +94,18 @@ export function ComposerActions({ target }: { target: SeedTarget }) {
         >
           <DropdownMenuGroup>
             <DropdownMenuLabel>{t('agents')}</DropdownMenuLabel>
-            {usable.length === 0 ? (
+            {agents.length === 0 ? (
               <DropdownMenuItem disabled>{t('noAgents')}</DropdownMenuItem>
             ) : (
-              usable.map((record) => {
-                const name = builtinName(record, locale);
-                return (
-                  <ActionRow
-                    key={record.id}
-                    icon={RECORD_KIND_ICON[record.kind]}
-                    name={name}
-                    hint={record.description}
-                    onClick={() =>
-                      put({
-                        record: { id: record.id, kind: record.kind, name },
-                      })
-                    }
-                  />
-                );
-              })
+              agents.map((agent) => (
+                <ActionRow
+                  key={agent.chip.id}
+                  icon={agent.icon}
+                  name={agent.chip.name}
+                  hint={agent.hint}
+                  onClick={() => put({ record: agent.chip })}
+                />
+              ))
             )}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
@@ -159,7 +129,7 @@ export function ComposerActions({ target }: { target: SeedTarget }) {
             icon={ClockIcon}
             name={t('schedule')}
             hint={t('scheduleHint')}
-            onClick={openSchedule}
+            onClick={() => schedule.open(false)}
           />
           <ActionRow
             icon={PlugIcon}
@@ -169,19 +139,114 @@ export function ComposerActions({ target }: { target: SeedTarget }) {
           />
         </DropdownMenuContent>
       </DropdownMenu>
-      {schedule !== null && (
-        <ScheduleDialog
-          mode={schedule}
-          open
-          onOpenChange={(open) => {
-            if (!open) setSchedule(null);
-          }}
-          onSaved={scheduled}
-          finalFocus={() => shellTargetElement('composer')}
-        />
-      )}
+      {schedule.dialog}
     </>
   );
+}
+
+/**
+ * improvements IM-08: «Отправить позже» left of «Отправить» opens the schedule dialog preset to «later». It stands
+ * in a conversation that has messages, while the field holds text and no action chip.
+ */
+export function SendLater({ target }: { target: SeedTarget }) {
+  const t = useTranslations('chat.composer');
+  const { composerSeed } = useShellServices();
+  const schedule = useComposerSchedule(target);
+  const typed = useAuiState((state) => state.composer.text.trim() !== '');
+  const actionChip = useStore(composerSeed, (state) => {
+    const chip = state.chips.get(target);
+    return chip !== undefined && 'action' in chip;
+  });
+  const shown = target !== NEW_THREAD_TARGET && typed && !actionChip;
+  return (
+    <>
+      {shown && (
+        <TooltipIconButton
+          tooltip={t('sendLater')}
+          side="bottom"
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground size-8 rounded-full max-[480px]:size-11"
+          aria-label={t('sendLater')}
+          onClick={() => schedule.open(true)}
+        >
+          <ClockIcon className="size-4" />
+        </TooltipIconButton>
+      )}
+      {schedule.dialog}
+    </>
+  );
+}
+
+/**
+ * The schedule dialog opened from a conversation's composer, shared by «Запланировать» of «+» and «Отправить
+ * позже»: it starts from the field's text and record chip, and a saved schedule empties both (schedules KD-1).
+ */
+function useComposerSchedule(target: SeedTarget): {
+  open: (later: boolean) => void;
+  opened: boolean;
+  dialog: ReactNode;
+} {
+  const aui = useAui();
+  const { composerSeed } = useShellServices();
+  // The dialog is open while `mode` is set.
+  const [mode, setMode] = useState<ScheduleDialogMode | null>(null);
+
+  const open = (later: boolean): void => {
+    const chip = composerSeed.getState().chips.get(target);
+    setMode({
+      kind: 'create',
+      text: aui.composer.getState().text,
+      agent: chip !== undefined && 'id' in chip ? chip : null,
+      conversationId: target === NEW_THREAD_TARGET ? null : target,
+      later,
+    });
+  };
+
+  /** KD-1: the instruction now lives in the schedule, so the field and its chip are emptied. */
+  const scheduled = (): void => {
+    const chip =
+      mode?.kind === 'create' && mode.agent !== null ? mode.agent : undefined;
+    if (chip !== undefined) composerSeed.clear(target, chip);
+    aui.composer.setText('');
+    focusShellTarget('composer');
+  };
+
+  return {
+    open,
+    opened: mode !== null,
+    dialog: mode !== null && (
+      <ScheduleDialog
+        mode={mode}
+        open
+        onOpenChange={(next) => {
+          if (!next) setMode(null);
+        }}
+        onSaved={scheduled}
+        finalFocus={() => shellTargetElement('composer')}
+      />
+    ),
+  };
+}
+
+/** A library record usable in chat, as a row of «Агенты» in «+» and in the `@` list (improvements KD-7). */
+export type ChatAgent = { chip: ChipRecord; icon: LucideIcon; hint: string };
+
+/** The rows of «Агенты»: the library's records usable in chat, with the name in the interface's language. */
+export function useChatAgents(): ChatAgent[] {
+  const locale = useLocale();
+  const { libraryIndex } = useShellServices();
+  const records = useStore(libraryIndex, (state) => state.records);
+  return [...(records?.values() ?? [])].filter(canUseInChat).map((record) => ({
+    chip: {
+      id: record.id,
+      kind: record.kind,
+      name: builtinName(record, locale),
+    },
+    icon: RECORD_KIND_ICON[record.kind],
+    hint: record.description,
+  }));
 }
 
 type ActionRowProps = Pick<

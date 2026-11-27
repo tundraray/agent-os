@@ -1,3 +1,4 @@
+import type { ToolPair } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -5,6 +6,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   text,
   timestamp,
   uuid,
@@ -84,6 +86,13 @@ export const conversations = app.table(
      * goes back, so a deleted task's number is not given again.
      */
     lastTaskNumber: integer('last_task_number').notNull().default(0),
+    /** Set on a root: the MCP tools the owner allowed this conversation to call without a card. */
+    grantedTools: jsonb('granted_tools')
+      .$type<ToolPair[]>()
+      .notNull()
+      .default([]),
+    /** Set on a root: the seq of the last entry of its history the owner has seen. */
+    seenThroughSeq: integer('seen_through_seq').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [

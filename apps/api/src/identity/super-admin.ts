@@ -60,7 +60,7 @@ export async function seedSuperAdmin(
         await users.setPasswordAndEnable(found.id, passwordHash);
         await sessions.deleteOfUser(found.id);
       }
-      await roles.addMember(await roles.builtinId(), user.id);
+      await roles.addMember(await roles.builtinId('super_admin'), user.id);
       await auditLog.record({
         kind: 'admin_change',
         actor: SYSTEM_ACTOR,

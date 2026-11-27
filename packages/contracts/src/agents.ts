@@ -108,6 +108,8 @@ export type ToolOutcome = z.infer<typeof ToolOutcomeSchema>;
 export const ToolRefusalReasonSchema = z.enum([
   'tool_not_in_definition',
   'no_access',
+  /** The administrator turned the tool off on its server (access-levels KD-2). */
+  'tool_disabled',
   'not_allowed',
   'depth_limit',
   'model_not_connected',
@@ -139,8 +141,17 @@ export const ToolRefusalReasonSchema = z.enum([
   'looks_like_instruction',
   /** A memory record is already on another version (memory-hygiene KD-2). */
   'memory_changed',
+  /** A changing call in a scheduled run that nobody is there to confirm (improvements design-server.md). */
+  'unattended',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
+
+/** An MCP tool by its server and name: the pair rights and audit already know a tool by. */
+export const ToolPairSchema = z.object({
+  server: z.string().min(1),
+  tool: z.string().min(1),
+});
+export type ToolPair = z.infer<typeof ToolPairSchema>;
 
 /**
  * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal

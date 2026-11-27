@@ -62,7 +62,6 @@ export function settableClock(start: Date): SettableClock {
   let current = start;
   return {
     now: () => current,
-    random: () => systemClock.random(),
     setTimer: (...args) => systemClock.setTimer(...args),
     set: (now) => {
       current = now;

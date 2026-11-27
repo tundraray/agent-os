@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ToolPairSchema } from './agents';
 import { ChatTextSchema } from './chat';
 import { LanguageSchema } from './identity';
 import { ChipRecordSchema } from './library';
@@ -77,6 +78,11 @@ export const ScheduleBodySchema = z.object({
   conversationId: z.string().min(1).nullable(),
   /** The interface language: the day in a new conversation's title (KD-6). */
   language: LanguageSchema,
+  /**
+   * The changing MCP tools a run calls without a card (improvements design-server.md); may be empty. Each pair
+   * must be one of GET /api/schedules/tools; a repeated pair is kept once.
+   */
+  allowedTools: z.array(ToolPairSchema),
 });
 export type ScheduleBody = z.infer<typeof ScheduleBodySchema>;
 
@@ -138,8 +144,24 @@ export const ScheduleViewSchema = z.object({
   /** `null` while paused and once completed. */
   nextRunAt: z.iso.datetime().nullable(),
   lastRun: ScheduleRunViewSchema.nullable(),
+  /** The pairs saved on the schedule, even one the owner lost the right to (such a call is refused by rights). */
+  allowedTools: z.array(ToolPairSchema),
 });
 export type ScheduleView = z.infer<typeof ScheduleViewSchema>;
+
+/** One changing MCP tool the owner has the right to: a candidate for a schedule's `allowedTools`. */
+export const ScheduleToolSchema = ToolPairSchema.extend({
+  /** The title from the tool's description, when it has one. */
+  toolTitle: z.string().min(1).optional(),
+  description: z.string(),
+});
+export type ScheduleTool = z.infer<typeof ScheduleToolSchema>;
+
+/** Response of GET /api/schedules/tools: by server, then by tool name. */
+export const ScheduleToolsResponseSchema = z.object({
+  tools: z.array(ScheduleToolSchema),
+});
+export type ScheduleToolsResponse = z.infer<typeof ScheduleToolsResponseSchema>;
 
 /** Response of GET /api/schedules: active by the next term, then paused, then completed. */
 export const ScheduleListResponseSchema = z.object({

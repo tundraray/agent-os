@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import type {
   AgentStatus as AgentStatusValue,
+  ConversationState,
   DelegationStatus,
   SessionTaskStatus,
   TrainingStatus,
@@ -64,6 +65,19 @@ const TRAINING_STATUS_LOOK: Record<TrainingStatus, StatusLook> = {
   running: STATUS_LOOK.working,
   done: STATUS_LOOK.completed,
   stopped: STATUS_LOOK.stopped,
+  failed: STATUS_LOOK.failed,
+};
+
+/**
+ * Conversation states of the thread list (agent-status.md, «Состояния беседы»); «Новый ответ» is an 8 px dot, not an
+ * icon. Nothing here spins: the list stays open for hours.
+ */
+const CONVERSATION_STATE_LOOK: Record<
+  Exclude<ConversationState, 'new_answer'>,
+  StatusLook
+> = {
+  working: { Icon: CircleDashedIcon, tone: 'text-info' },
+  waiting_for_you: STATUS_LOOK.awaiting_confirmation,
   failed: STATUS_LOOK.failed,
 };
 
@@ -277,6 +291,48 @@ export function DelegationStatusGlyph({
       status={status}
       spinning={status === 'running'}
     />
+  );
+}
+
+/**
+ * A conversation's state in the thread list row (agent-status.md, «Состояния беседы»): static, in the 16 px slot,
+ * decorative — the row's link says the state in hidden text — with `label` as the delayed hover hint. A change
+ * cross-fades in 150 ms; reduced motion swaps at once.
+ */
+export function ConversationStateGlyph({
+  state,
+  label,
+}: {
+  state: ConversationState;
+  /** The MC-10 label of the state. */
+  label: string;
+}) {
+  const look = state === 'new_answer' ? null : CONVERSATION_STATE_LOOK[state];
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={ICON_HINT_DELAY_MS}
+        render={
+          <span
+            aria-hidden
+            data-conversation-state={state}
+            className="inline-flex h-5 shrink-0 items-center"
+          />
+        }
+      >
+        <FadeSlot
+          swapKey={state}
+          className={cn(look?.tone ?? 'text-foreground', toneTransition)}
+        >
+          {look === null ? (
+            <span className="size-2 rounded-full bg-current" />
+          ) : (
+            <look.Icon aria-hidden className="size-3.5" />
+          )}
+        </FadeSlot>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

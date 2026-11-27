@@ -9,14 +9,18 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
+  threadSummary,
   DEEP_AGENT_NAME,
   deepAgentOrigin,
 } from '@/test/fixtures';
 
 import {
   applyDraftPart,
+  canFork,
   draftAfterRead,
   feedViewOf,
+  newDividerSeq,
+  stripAgents,
   toFeed,
   trayEntries,
   type DraftPart,
@@ -129,8 +133,17 @@ const sentLocally: OptimisticEntry = {
 };
 
 describe('toFeed', () => {
-  // KD-3, KD-4, Invariants 2 and 3 (the rule): order and content of the feed and the tray.
-  it.each([
+  // KD-3, KD-4, Invariants 2 and 3 (the rule): order and content of the feed and the tray. `toolFree` — the answers
+  // «Спросить в стороне» may cut after (improvements KD-3), checked where the row names them.
+  it.each<{
+    name: string;
+    view: ReturnType<typeof conversationView>;
+    draft: string | null;
+    optimistic: OptimisticEntry[];
+    feed: string[];
+    tray: string[];
+    toolFree?: string[];
+  }>([
     {
       name: 'a chat request sits right under the answer with its call',
       view: conversationView({
@@ -157,6 +170,23 @@ describe('toFeed', () => {
         'seq-4',
       ],
       tray: [],
+    },
+    {
+      // improvements KD-3, AC-09.1: a fork the server refuses must not be offered after an answer with calls.
+      name: 'only an answer without tool calls is tool-free',
+      view: conversationView({
+        entries: [
+          task,
+          answer(2, [['c1', 'create_ticket']]),
+          result(3, 'c1', 'create_ticket', 'success'),
+          answer(4),
+        ],
+      }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-2 tool:create_ticket#c1', 'seq-4'],
+      tray: [],
+      toolFree: ['seq-4'],
     },
     {
       name: 'a background agent request sits where it arrived',
@@ -307,10 +337,19 @@ describe('toFeed', () => {
     },
   ])(
     'toFeed places entries by seq and decisions and run cards after the last entry created not later than them: $name',
-    ({ view, draft, optimistic, feed, tray }) => {
+    ({ view, draft, optimistic, feed, tray, toolFree }) => {
       const feedView = feedViewOf(view);
+      const messages = toFeed(feedView, draft, optimistic);
 
-      expect(summary(toFeed(feedView, draft, optimistic))).toEqual(feed);
+      expect(summary(messages)).toEqual(feed);
+      if (toolFree !== undefined)
+        expect(
+          messages
+            .filter(
+              (message) => message.metadata?.custom?.['toolFree'] === true,
+            )
+            .map((message) => message.id),
+        ).toEqual(toolFree);
       expect(
         trayEntries(feedView, optimistic).entries.map((entry) => entry.id),
       ).toEqual(tray);
@@ -469,5 +508,184 @@ describe('toFeed', () => {
     });
 
     expect(summary(toFeed(view, draft, []))).toEqual(['seq-1', 'seq-2']);
+  });
+});
+
+describe('canFork', () => {
+  const chat = (status: 'idle' | 'working' | 'awaiting_confirmation') => ({
+    status,
+    failureReason: null,
+    rootAgentId: 'root',
+    model: 'claude-haiku-4-5',
+  });
+
+  // improvements KD-3, AC-14.2, AC-09.3: the branch buttons hide exactly when the server would refuse the fork.
+  it.each([
+    { name: 'an idle chat', view: conversationView(), expected: true },
+    {
+      name: 'the root works',
+      view: conversationView({ chat: chat('working') }),
+      expected: false,
+    },
+    {
+      name: 'the root waits for a decision',
+      view: conversationView({ chat: chat('awaiting_confirmation') }),
+      expected: false,
+    },
+    {
+      name: 'a subagent deeper in the tree works',
+      view: conversationView({
+        agents: [
+          agentNode({
+            agentId: 'a1',
+            status: 'completed',
+            children: [
+              agentNode({ agentId: 'a2', parentId: 'a1', status: 'working' }),
+            ],
+          }),
+        ],
+      }),
+      expected: false,
+    },
+    {
+      name: 'an agent of the tree waits for a decision',
+      view: conversationView({
+        agents: [agentNode({ agentId: 'a1', status: 'awaiting_confirmation' })],
+      }),
+      expected: false,
+    },
+    {
+      name: 'every agent of the tree has finished',
+      view: conversationView({
+        agents: [
+          agentNode({ agentId: 'a1', status: 'completed' }),
+          agentNode({ agentId: 'a2', status: 'failed' }),
+        ],
+      }),
+      expected: true,
+    },
+    {
+      name: 'a conversation that is not a chat',
+      view: conversationView({
+        thread: threadSummary({ id: 't1', forkable: false }),
+      }),
+      expected: false,
+    },
+  ])('$name → $expected', ({ view, expected }) => {
+    expect(canFork(feedViewOf(view))).toBe(expected);
+  });
+});
+
+describe('stripAgents', () => {
+  const strip = (view: Parameters<typeof conversationView>[0]) =>
+    stripAgents(feedViewOf(conversationView(view))).map(
+      (agent) => `${agent.agentId}:${agent.status}:${agent.decisionId}`,
+    );
+
+  // improvements AC-12.1, AC-12.2, IM-11: who stands in the strip, as what, in which order, and which card it leads to.
+  it.each([
+    {
+      name: 'a working and a waiting agent, the waiting first',
+      view: {
+        agents: [
+          agentNode({ agentId: 'a1', status: 'working' }),
+          agentNode({ agentId: 'a2', status: 'awaiting_confirmation' }),
+          agentNode({ agentId: 'a3', status: 'completed' }),
+        ],
+        decisions: [confirmation({ decisionId: 'd2', agentId: 'a2' })],
+      },
+      expected: ['a2:awaiting_confirmation:d2', 'a1:working:null'],
+    },
+    {
+      name: 'a deep agent whose subagent waits stands as waiting, on the subagent decision',
+      view: {
+        agents: [
+          agentNode({
+            agentId: 'deep',
+            status: 'working',
+            origin: deepAgentOrigin(),
+            children: [
+              agentNode({
+                agentId: 'sub',
+                parentId: 'deep',
+                status: 'awaiting_confirmation',
+              }),
+            ],
+          }),
+        ],
+        decisions: [
+          confirmation({
+            decisionId: 'd-old',
+            agentId: 'sub',
+            status: 'resolved',
+          }),
+          confirmation({ decisionId: 'd-sub', agentId: 'sub' }),
+        ],
+      },
+      expected: ['deep:awaiting_confirmation:d-sub'],
+    },
+    {
+      name: 'every agent has finished',
+      view: {
+        agents: [
+          agentNode({ agentId: 'a1', status: 'completed' }),
+          agentNode({ agentId: 'a2', status: 'failed' }),
+        ],
+      },
+      expected: [],
+    },
+  ])('$name', ({ view, expected }) => {
+    expect(strip(view)).toEqual(expected);
+  });
+});
+
+describe('newDividerSeq', () => {
+  const schedule = { scheduleId: 's1', name: 'Сводка', manual: false };
+  const ownMessage = (seq: number) =>
+    historyEntry({ kind: 'user_message', seq });
+  const dividerOf = (
+    entries: HistoryEntry[],
+    range: { afterSeq: number; throughSeq: number },
+  ) =>
+    newDividerSeq(
+      toFeed(feedViewOf(conversationView({ entries })), null, []),
+      range,
+    );
+
+  // improvements KD-4, AC-11.2, FR-11: the divider stands before the first unread message the employee did not write.
+  it.each([
+    {
+      name: 'before the first unread answer',
+      entries: [task, answer(2), ownMessage(3), answer(4)],
+      range: { afterSeq: 2, throughSeq: 4 },
+      expected: 4,
+    },
+    {
+      name: "before a schedule's message in a schedule's conversation",
+      entries: [
+        historyEntry({
+          kind: 'task',
+          seq: 1,
+          content: { text: 'Сводка', record: null, schedule },
+        }),
+        answer(2),
+      ],
+      range: { afterSeq: 0, throughSeq: 2 },
+      expected: 1,
+    },
+    {
+      name: "none in the employee's new conversation",
+      entries: [task],
+      range: { afterSeq: 0, throughSeq: 1 },
+      expected: null,
+    },
+    {
+      name: 'none for an answer that came after opening',
+      entries: [task, answer(2)],
+      range: { afterSeq: 0, throughSeq: 1 },
+      expected: null,
+    },
+  ])('$name', ({ entries, range, expected }) => {
+    expect(dividerOf(entries, range)).toBe(expected);
   });
 });

@@ -24,6 +24,7 @@ import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
+  agentNode,
   conversationView,
   conversationWithTurns,
   fixtureId,
@@ -387,42 +388,271 @@ describe('create-and-test / chat-web — branches from the list', () => {
       'Удалить',
     ]);
   });
+
+  // improvements UC-10: AC-14.1, AC-14.2, FR-14 (design-web.md KD-2, KD-3, Flow 2; UXRD IM-13). Catches: an edit sent without
+  //   its chip or number, a refusal that loses the text, «Изменить» on a busy conversation or on a schedule's message.
+  it('UC-10: «Изменить» forks with the edited text and the chip and enters the branch; a refusal keeps the text', async () => {
+    const RECORD = fixtureId(93);
+    const thread = threadSummary({ id: SOURCE, title: 'Оплаты' });
+    const entries = [
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: {
+          text: 'Почему с 14:00 падают оплаты?',
+          record: { id: RECORD, kind: 'agent', name: 'Разбор логов' },
+        },
+      }),
+      historyEntry({
+        kind: 'model_answer',
+        seq: 2,
+        content: { text: 'Смотрю' },
+      }),
+      historyEntry({
+        kind: 'user_message',
+        seq: 3,
+        content: {
+          text: 'Сводка по оплатам',
+          schedule: { scheduleId: 's1', name: 'Утро', manual: false },
+        },
+      }),
+      historyEntry({
+        kind: 'model_answer',
+        seq: 4,
+        content: { text: 'Сводка' },
+      }),
+    ];
+    let busy = true;
+    let forkAnswer: 'refused' | 'created' = 'refused';
+    const forkBodies: unknown[] = [];
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([thread])),
+      ),
+      http.get(`${API}/api/threads/${SOURCE}`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/${SOURCE}/history`, () =>
+        HttpResponse.json(
+          conversationView({
+            thread,
+            entries,
+            // A subagent still works: the server would refuse the fork (KD-3).
+            agents: busy
+              ? [agentNode({ agentId: 'a1', status: 'working' })]
+              : [],
+          }),
+        ),
+      ),
+      http.post(`${API}/api/threads/${SOURCE}/fork`, async ({ request }) => {
+        forkBodies.push(await request.json());
+        return forkAnswer === 'refused'
+          ? HttpResponse.json(
+              {
+                statusCode: 409,
+                message: 'The conversation cannot be forked now',
+                errorCode: 'FORK_REFUSED',
+                reason: 'answering',
+              },
+              { status: 409 },
+            )
+          : HttpResponse.json(
+              threadSummary({ id: FORK, title: 'Ветка · Оплаты' }),
+              { status: 201 },
+            );
+      }),
+    );
+    const user = userEvent.setup();
+    const view = renderWithRuntime({ pathname: `/chat/${SOURCE}` });
+    await screen.findByText('Почему с 14:00 падают оплаты?');
+    expect(screen.queryByRole('button', { name: 'Изменить' })).toBeNull();
+
+    // The subagent finished: the re-read shows «Изменить» on the employee's own message only
+    busy = false;
+    await waitFor(() =>
+      expect(view.live.current()?.url).toBe(
+        `${API}/api/events?watch=thread%3A${SOURCE}`,
+      ),
+    );
+    view.live.emit('ready', {});
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: 'Изменить' })).toHaveLength(
+        1,
+      ),
+    );
+    const scheduled = screen
+      .getByText('Сводка по оплатам')
+      .closest<HTMLElement>('[data-role="user"]');
+    if (scheduled === null) throw new Error('no schedule message');
+    expect(
+      within(scheduled).queryByRole('button', { name: 'Изменить' }),
+    ).toBeNull();
+
+    // Refused: the notice, the field keeps the corrected text, the address stays
+    await user.click(screen.getByRole('button', { name: 'Изменить' }));
+    const field = screen.getByRole('textbox', { name: 'Изменить' });
+    expect(field).toHaveValue('Почему с 14:00 падают оплаты?');
+    expect(field).toHaveFocus();
+    await user.type(field, ' На стейдже{Enter}');
+    expect(
+      await screen.findByText('Ветку сейчас не сделать: агент ещё отвечает.'),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue('Почему с 14:00 падают оплаты? На стейдже');
+    expect(view.router.push).not.toHaveBeenCalled();
+
+    // Created: the body carries the number, the text and the chip; the branch opens by its address
+    forkAnswer = 'created';
+    const editor = field.closest<HTMLElement>(
+      '[data-slot="aui_user-message-edit"]',
+    );
+    if (editor === null) throw new Error('no edit field');
+    await user.click(within(editor).getByRole('button', { name: 'Отправить' }));
+    await waitFor(() =>
+      expect(view.router.push).toHaveBeenCalledWith(`/chat/${FORK}`),
+    );
+    expect(forkBodies).toEqual([
+      {
+        edit: {
+          seq: 1,
+          text: 'Почему с 14:00 падают оплаты? На стейдже',
+          recordId: RECORD,
+        },
+      },
+      {
+        edit: {
+          seq: 1,
+          text: 'Почему с 14:00 падают оплаты? На стейдже',
+          recordId: RECORD,
+        },
+      },
+    ]);
+    // The source conversation is unchanged: its message is back in place of the field
+    expect(
+      screen.getByText('Почему с 14:00 падают оплаты?'),
+    ).toBeInTheDocument();
+  });
 });
 
-describe('Shell: a conversation started on the server (schedules-search-memory)', () => {
-  // Catches: a schedule run's new conversation stays out of the sidebar until a navigation — the list re-reads
-  //   page 1 on a `tree` note for an id it does not hold, and not on a note for a listed one.
-  it('a `tree` note for an unlisted conversation re-reads page 1; a note for a listed one does not', async () => {
-    // Arrange
+// improvements UC-6: AC-11.1 (design-web.md KD-5; UXRD IM-09, MC-10). Catches: a state that never reaches its row, a list
+//   that does not re-read on a `tree` note for a listed conversation, «новый ответ» lit on the open conversation or on
+//   the side chat's branch.
+describe('improvements / web — conversation states in the list', () => {
+  const SOURCE = fixtureId(94);
+  const BRANCH = fixtureId(95);
+  const WORKING = fixtureId(96);
+  const DESKTOP = { '(min-width: 1024px)': true, '(min-width: 768px)': true };
+
+  it('UC-6: rows say their state in hidden text; a `tree` note re-reads page 1; the open conversation and the side chat show no «новый ответ»', async () => {
+    const thread = threadSummary({ id: SOURCE, title: 'Разбор инцидента' });
+    const branch = threadSummary({ id: BRANCH, title: 'Ветка · Разбор' });
+    const entries = [
+      historyEntry({
+        kind: 'task',
+        seq: 1,
+        content: { text: 'Что упало ночью?' },
+      }),
+      historyEntry({
+        kind: 'model_answer',
+        seq: 2,
+        content: { text: 'Сборщик логов' },
+      }),
+    ];
     let listReads = 0;
+    let workingDone = false;
+    let branchCreated = false;
     server.use(
       http.get(`${API}/api/threads`, () => {
         listReads += 1;
         return HttpResponse.json(
           threadList([
-            ...(listReads > 1
-              ? [threadSummary({ id: 'run', title: 'Пингвинья сводка' })]
+            ...(branchCreated
+              ? [{ ...branch, state: 'new_answer' as const }]
               : []),
-            threadSummary({ id: 'a', title: 'План релиза' }),
+            { ...thread, state: 'new_answer' },
+            {
+              ...threadSummary({ id: WORKING, title: 'Сборка' }),
+              state: workingDone ? null : 'working',
+            },
+            {
+              ...threadSummary({ id: fixtureId(97), title: 'Доступы' }),
+              state: 'waiting_for_you',
+            },
+            {
+              ...threadSummary({ id: fixtureId(98), title: 'Отчёт' }),
+              state: 'new_answer',
+            },
+            {
+              ...threadSummary({ id: fixtureId(99), title: 'Импорт' }),
+              state: 'failed',
+            },
+            threadSummary({ id: fixtureId(100), title: 'Заметки' }),
           ]),
         );
       }),
+      http.get(`${API}/api/threads/${SOURCE}`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/${SOURCE}/history`, () =>
+        HttpResponse.json(conversationView({ thread, entries })),
+      ),
+      http.get(`${API}/api/threads/${BRANCH}/history`, () =>
+        HttpResponse.json(conversationView({ thread: branch, entries })),
+      ),
+      http.post(`${API}/api/threads/${SOURCE}/fork`, () => {
+        branchCreated = true;
+        return HttpResponse.json(branch, { status: 201 });
+      }),
     );
-    const { live } = renderWithRuntime({ pathname: '/', pointer: 'fine' });
+    const user = userEvent.setup();
+    const view = renderWithRuntime({
+      pathname: `/chat/${SOURCE}`,
+      media: DESKTOP,
+    });
     const history = screen.getByRole('navigation', { name: 'История бесед' });
-    await within(history).findByRole('link', { name: 'План релиза' });
+    const link = (name: string) => within(history).findByRole('link', { name });
 
-    // Act 1: a note for the listed conversation
-    live.emit('tree', { threadId: 'a' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(listReads).toBe(1);
-    // Act 2: the schedule run's conversation
-    live.emit('tree', { threadId: 'run' });
+    // Each state by its hidden text; the read one and the open one carry none
+    expect(await link('Сборка, работает')).toBeInTheDocument();
+    expect(await link('Доступы, ждёт вас')).toBeInTheDocument();
+    expect(await link('Отчёт, новый ответ')).toBeInTheDocument();
+    expect(await link('Импорт, сбой')).toBeInTheDocument();
+    expect(await link('Заметки')).toBeInTheDocument();
+    expect(await link('Разбор инцидента')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
 
-    // Assert
+    // A `tree` note for a listed conversation re-reads page 1
+    await screen.findByText('Сборщик логов');
+    await waitFor(() =>
+      expect(view.live.current()?.url).toBe(
+        `${API}/api/events?watch=thread%3A${SOURCE}`,
+      ),
+    );
+    const readsBefore = listReads;
+    workingDone = true;
+    view.live.emit('tree', { threadId: WORKING });
+    expect(await link('Сборка')).toBeInTheDocument();
+    expect(listReads).toBeGreaterThan(readsBefore);
+
+    // The side chat's branch joins the list without «новый ответ» (the name matches exactly)
+    await user.click(
+      await screen.findByRole('button', { name: 'Спросить в стороне' }),
+    );
+    // The open panel folds the sidebar (jsdom has no width); closing it brings the list back.
+    const panel = await screen.findByRole('complementary', {
+      name: 'В стороне',
+    });
+    await user.click(
+      within(panel).getByRole('button', { name: 'Закрыть боковой чат' }),
+    );
+    const listAgain = await screen.findByRole('navigation', {
+      name: 'История бесед',
+    });
+    // Page 1 was read for the note less than a second ago: this read waits out the interval.
     expect(
-      await within(history).findByRole('link', { name: 'Пингвинья сводка' }),
-    ).toHaveAttribute('href', '/chat/run');
-    expect(listReads).toBe(2);
+      await within(listAgain).findByRole(
+        'link',
+        { name: 'Ветка · Разбор' },
+        { timeout: 3000 },
+      ),
+    ).toHaveAttribute('href', `/chat/${BRANCH}`);
   });
 });

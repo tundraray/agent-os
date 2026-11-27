@@ -2,7 +2,7 @@
 // Design Doc: docs/features/deep-agents/design-agent-types.md (v1.3), Test Strategy UC-10 (the diagram panel, the task list and the record
 //   card in the library), §KD-6 and §C3 web (the panel, the tab «Задачи», the «Запись» card); UXRD: docs/features/deep-agents/uxrd.md
 //   DA-04, DA-05, DA-11, DA-12, DA-13, MC-9–MC-14, MC-24, MC-25; design-task-list.md KD-5 (the tab «Задачи» shows the conversation's list).
-// Budget Used: WEB-1 and WEB-2 of the part (work plan phases 9 and 8).
+// Budget Used: WEB-1 and WEB-2 of the part (work plan phases 9 and 8); improvements design-web.md UC-8 (the strip «Агенты беседы»).
 // Test Type: Integration.
 //
 // Harness (src/test/, same as agent-platform-web.int.test.tsx and self-learning-web.int.test.tsx): `renderWithRuntime({ pathname })`
@@ -32,6 +32,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentNode,
   agentPageView,
+  confirmation,
   conversationView,
   deepAgentContent,
   deepAgentOrigin,
@@ -468,6 +469,105 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     expect(
       within(panel).getByText('В работе · Пишу сводку'),
     ).toBeInTheDocument();
+  });
+
+  // AC: improvements AC-12.1 "Полоса агентов: работающий и ждущий, выбор ведёт к карточке" (UXRD IM-11, MC-12; design-web.md, UC-8)
+  // Behavior: Аня's conversation started «Разбор логов», which works, and the deep agent «Разбор ошибок оплаты», whose subagent waits
+  //   for her decision -> the strip «Агенты беседы» shows both, the deep agent first as waiting -> she chooses it -> focus lands on the
+  //   subagent's decision card.
+  // Catches: a deep agent shown as working while its subagent waits (and so a strip that leads nowhere useful), and a choice whose focus
+  //   never reaches the card - the rule's rows in to-feed.test.ts do not see the anchors and the focus in the real feed.
+  // @category: core-functionality
+  // @dependency: Thread, FeedTray, AgentsStrip, stripAgents, RunCard, DecisionCard, FeedStore, MSW, next/navigation mock
+  // @complexity: low
+  it('UC-8: the strip shows the waiting deep agent first and choosing it moves focus to its subagent decision card', async () => {
+    // Arrange: a working agent and a deep agent with a waiting subagent and its open decision
+    const thread = threadSummary({ id: 'a', title: 'Ошибки оплаты' });
+    const view: ConversationView = conversationView({
+      thread,
+      chat: {
+        status: 'working',
+        failureReason: null,
+        rootAgentId: 'root',
+        model: 'claude-haiku-4-5',
+      },
+      entries: [
+        historyEntry({
+          kind: 'task',
+          seq: 1,
+          content: { text: 'Почему падают оплаты?' },
+        }),
+      ],
+      agents: [
+        agentNode({
+          agentId: 'logs',
+          name: 'Разбор логов',
+          status: 'working',
+          createdAt: fixtureTime(1),
+        }),
+        agentNode({
+          agentId: DEEP_RUN_ID,
+          name: DEEP_AGENT_NAME,
+          origin: deepOrigin(),
+          status: 'working',
+          createdAt: fixtureTime(1.5),
+          children: [
+            agentNode({
+              agentId: 'sub',
+              parentId: DEEP_RUN_ID,
+              status: 'awaiting_confirmation',
+              createdAt: fixtureTime(2),
+            }),
+          ],
+        }),
+      ],
+      decisions: [
+        confirmation({
+          decisionId: 'd-sub',
+          agentId: 'sub',
+          createdAt: fixtureTime(2.5),
+        }),
+      ],
+    });
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([thread])),
+      ),
+      http.get(`${API}/api/threads/a`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/a/history`, () => HttpResponse.json(view)),
+      http.get(`${API}/api/agents/${DEEP_RUN_ID}/run`, () =>
+        HttpResponse.json(deepAgentRunView({ origin: deepOrigin() })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/chat/a' });
+
+    // Act 1: the strip stands above the composer
+    const strip = await screen.findByRole('region', { name: 'Агенты беседы' });
+
+    // Assert 1 (AC-12.1, MC-12): both agents with their status, the waiting deep agent first
+    expect(within(strip).getByText('Агенты · 2')).toBeInTheDocument();
+    expect(
+      within(strip)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual([
+      `${DEEP_AGENT_NAME}, Ждёт подтверждения`,
+      'Разбор логов, Работает',
+    ]);
+
+    // Act 2: choose the deep agent
+    await user.click(
+      within(strip).getByRole('button', {
+        name: `${DEEP_AGENT_NAME}, Ждёт подтверждения`,
+      }),
+    );
+
+    // Assert 2 (AC-12.1, IM-11): focus is on the subagent's decision card
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-decision-id="d-sub"]'),
+    );
+    expect(document.activeElement).not.toBeNull();
   });
 
   // AC: AC-04.1 "Сотрудник видит план глубокого агента на его странице" (вид); AC-23.3 "Сотрудник видит поручения глубокого агента"

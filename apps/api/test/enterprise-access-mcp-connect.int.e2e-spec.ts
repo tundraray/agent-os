@@ -530,6 +530,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         status: 'enabled',
         toolCount: 3,
         sharedTokenSet: true,
+        oauthClientId: null,
+        oauthClientSecretSet: false,
         tools: LOGS_TOOLS,
       });
       expect(

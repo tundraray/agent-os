@@ -69,6 +69,8 @@ CREATE TABLE "app"."conversations" (
 	"closed" boolean DEFAULT false NOT NULL,
 	"last_input_tokens" integer,
 	"last_task_number" integer DEFAULT 0 NOT NULL,
+	"granted_tools" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"seen_through_seq" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "conversations_start_call_check" CHECK (("app"."conversations"."start_call_id" is not null) = ("app"."conversations"."parent_id" is not null)),
 	CONSTRAINT "conversations_root_check" CHECK (("app"."conversations"."title" is not null) = ("app"."conversations"."parent_id" is null) and ("app"."conversations"."updated_at" is not null) = ("app"."conversations"."parent_id" is null)),
@@ -109,7 +111,7 @@ CREATE TABLE "app"."code_calls" (
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "code_calls_conversation_id_run_call_id_attempt_seq_pk" PRIMARY KEY("conversation_id","run_call_id","attempt","seq"),
 	CONSTRAINT "code_calls_outcome_check" CHECK ("app"."code_calls"."outcome" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required', 'recorded')),
-	CONSTRAINT "code_calls_refusal_reason_check" CHECK ("app"."code_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed'))
+	CONSTRAINT "code_calls_refusal_reason_check" CHECK ("app"."code_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'tool_disabled', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed', 'unattended'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."conversation_tasks" (
@@ -133,6 +135,8 @@ CREATE TABLE "app"."mcp_servers" (
 	"mode" text NOT NULL,
 	"enabled" boolean DEFAULT false NOT NULL,
 	"tools" jsonb,
+	"tool_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"new_tools" text[] DEFAULT '{}'::text[] NOT NULL,
 	"shared_token" text,
 	"oauth_server" jsonb,
 	"oauth_client_id" text,
@@ -186,8 +190,9 @@ CREATE TABLE "app"."identity_roles" (
 	"is_admin" boolean DEFAULT false NOT NULL,
 	"train_own" boolean DEFAULT false NOT NULL,
 	"train_any" boolean DEFAULT false NOT NULL,
-	"builtin" boolean DEFAULT false NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"builtin_kind" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "identity_roles_builtin_kind_check" CHECK ("app"."identity_roles"."builtin_kind" in ('super_admin', 'everyone'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."identity_role_members" (
@@ -279,9 +284,10 @@ CREATE TABLE "app"."access_grants" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "access_grants_holder_target_key" UNIQUE NULLS NOT DISTINCT("role_id","user_id","effect","target_kind","server","tool","model"),
 	CONSTRAINT "access_grants_effect_check" CHECK ("app"."access_grants"."effect" in ('allow', 'deny')),
-	CONSTRAINT "access_grants_target_kind_check" CHECK ("app"."access_grants"."target_kind" in ('server', 'tool', 'model')),
+	CONSTRAINT "access_grants_target_kind_check" CHECK ("app"."access_grants"."target_kind" in ('server', 'server_read', 'tool', 'model')),
 	CONSTRAINT "access_grants_holder_check" CHECK (num_nonnulls("app"."access_grants"."role_id", "app"."access_grants"."user_id") = 1),
-	CONSTRAINT "access_grants_target_check" CHECK (("app"."access_grants"."target_kind" = 'server'
+	CONSTRAINT "access_grants_target_check" CHECK ((("app"."access_grants"."target_kind" = 'server'
+            or "app"."access_grants"."target_kind" = 'server_read')
           and "app"."access_grants"."server" is not null and "app"."access_grants"."tool" is null and "app"."access_grants"."model" is null)
         or ("app"."access_grants"."target_kind" = 'tool'
           and "app"."access_grants"."server" is not null and "app"."access_grants"."tool" is not null and "app"."access_grants"."model" is null)
@@ -398,6 +404,7 @@ CREATE TABLE "app"."schedules" (
 	"language" text NOT NULL,
 	"target" text NOT NULL,
 	"conversation_id" uuid,
+	"allowed_tools" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"state" text NOT NULL,
 	"paused_because" text,
 	"next_run_at" timestamp with time zone,
@@ -517,6 +524,7 @@ CREATE INDEX "tool_results_text_search_idx" ON "app"."tool_results" USING gin (t
 CREATE UNIQUE INDEX "identity_users_email_idx" ON "app"."identity_users" USING btree ("email");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_users_login_idx" ON "app"."identity_users" USING btree ("login");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_roles_name_idx" ON "app"."identity_roles" USING btree (lower("name"));--> statement-breakpoint
+CREATE UNIQUE INDEX "identity_roles_builtin_kind_idx" ON "app"."identity_roles" USING btree ("builtin_kind") WHERE "app"."identity_roles"."builtin_kind" is not null;--> statement-breakpoint
 CREATE INDEX "identity_role_members_user_idx" ON "app"."identity_role_members" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "identity_sessions_user_idx" ON "app"."identity_sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "access_grants_user_idx" ON "app"."access_grants" USING btree ("user_id");--> statement-breakpoint

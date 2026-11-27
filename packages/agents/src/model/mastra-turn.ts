@@ -225,12 +225,12 @@ async function readTextParts(
  * The production turn client: a new request agent per turn — a plain Mastra `Agent` without a `Mastra`
  * instance, memory or storage — and `Agent.stream` with `maxSteps: 1`, so one stream is one request and
  * its tool calls come back as data (ADR-0001, KD-3, KD-6). `errorProcessorDefaults: false` drops
- * Mastra's default error processors, which retry a provider error on their own, so only `ModelClient`
- * retries. `noopLogger` silences Mastra's console line on a provider error, which carries the request
+ * Mastra's default error processors, which retry a provider error on their own, so a provider error ends
+ * the call after one request (improvements KD-5). `noopLogger` silences Mastra's console line on a provider error, which carries the request
  * body with the prompt. Each part of `textStream` goes to `onText`; the text, tool calls and usage come
  * from the output's promises. A provider error ends `textStream` without an exception: Mastra keeps it
  * as the output's `error` (what `generate` throws after reading the whole stream), so it is thrown here
- * and `ModelClient` retries it. A cancel ends the stream the same quiet way, with the finish reason
+ * and `ModelClient` reads its reason. A cancel ends the stream the same quiet way, with the finish reason
  * `aborted` and no usage, so it is thrown too. The model and the cache mark come from the adapter of the
  * connection's kind, built per call from the connection's address and key (KD-1, KD-3); the client reads
  * no settings. When the adapter gives a mark, the system block carries it, so the tools and instructions

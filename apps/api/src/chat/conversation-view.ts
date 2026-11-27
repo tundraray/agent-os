@@ -183,6 +183,9 @@ export function toConfirmation(
         : {
             approve: confirmation.resolution.approve,
             args: confirmation.resolution.args,
+            ...(confirmation.resolution.allowInConversation === true
+              ? { allowInConversation: true }
+              : {}),
           },
     createdAt: iso(confirmation.createdAt),
     resolvedAt: isoOrNull(confirmation.resolvedAt),

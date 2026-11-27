@@ -17,6 +17,16 @@ const ChildEndSchema = AgentStatusSchema.extract([
   'stopped',
 ]);
 
+/**
+ * The permission a call went by without a card, or with the third answer of one (improvements design-server.md,
+ * Data Model): a schedule's, with its id, or the conversation's.
+ */
+export const ToolGrantSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('schedule'), scheduleId: z.string().min(1) }),
+  z.object({ kind: z.literal('conversation') }),
+]);
+export type ToolGrant = z.infer<typeof ToolGrantSchema>;
+
 /** One tool call of a model answer: its place in `toolCalls` is its position in the answer. */
 const AnswerCallSchema = z.object({
   callId: z.string(),
@@ -79,11 +89,15 @@ export const HistoryContentSchemas = {
    * and ends the step with `wait`; `questionId` — the question's task.
    */
   tool_confirmation: z.object({ callId: z.string(), questionId: z.string() }),
-  /** The employee's decision, written by the step that consumed it; `args` — the edited arguments, if any. */
+  /**
+   * The employee's decision, written by the step that consumed it; `args` — the edited arguments, if any; `grant` —
+   * whose permission sent the call (improvements design-server.md KD-3), absent when the employee decided alone.
+   */
   tool_decision: z.object({
     callId: z.string(),
     approved: z.boolean(),
     args: z.unknown().optional(),
+    grant: ToolGrantSchema.optional(),
   }),
   /**
    * The intent of a confirmed call, committed before the call goes out (KD-4, Invariant 2): a call with

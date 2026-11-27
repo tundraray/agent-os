@@ -15,7 +15,11 @@ import { alias } from 'drizzle-orm/pg-core';
 import {
   CHAT_TASK_TYPE,
   DEEP_AGENT_TASK_TYPE,
+  HistoryEntryKindSchema,
+  HistoryEventSchema,
   TaskStatusSchema,
+  WaitReasonSchema,
+  type ToolPair,
 } from '@agent-os/contracts';
 import type { Db } from '../db';
 import {
@@ -77,6 +81,24 @@ export interface RootConversationRow {
   readonly forkedFromTitle: string | null;
   /** The live forks of this conversation. */
   readonly forkCount: number;
+  /** The last entry of the root's history the owner has seen. */
+  readonly seenThroughSeq: number;
+}
+
+/**
+ * The facts of a root's tree its list state is read from (improvements design-server.md, «How the conversation
+ * state works»): an unfinished question in the tree, the root neither finished nor waiting for a message, an
+ * unfinished agent task under it, the seq of the root's last answer without calls and last `failed` event (`null`
+ * — none) and its «seen through» mark.
+ */
+export interface ConversationStateFactsRow {
+  readonly rootId: string;
+  readonly questionOpen: boolean;
+  readonly rootAnswering: boolean;
+  readonly agentsWorking: boolean;
+  readonly lastAnswerSeq: number | null;
+  readonly lastFailureSeq: number | null;
+  readonly seenThroughSeq: number;
 }
 
 /** The position of a root session in the owner's list: the cursor of the next page. */
@@ -93,6 +115,7 @@ export interface SessionPatch {
   readonly lastInputTokens?: number | null;
   readonly forkedFromId?: string;
   readonly forkedThroughSeq?: number;
+  readonly seenThroughSeq?: number;
 }
 
 /** Seq of the `task` entry: the first own entry of every session. */
@@ -137,7 +160,7 @@ const CONVERSATION_COLUMNS = {
   builtinKey: agents.builtinKey,
 };
 
-const { completed, failed } = TaskStatusSchema.enum;
+const { completed, failed, queued, running, waiting } = TaskStatusSchema.enum;
 
 /** A fork's source and its task, joined only while the source is not deleted. */
 const source = alias(conversations, 'source');
@@ -156,7 +179,13 @@ const ROOT_COLUMNS = {
   forkCount: sql<number>`(select count(*)::int from ${conversations} fork
     join ${runtimeTasks} fork_task on fork_task.task_id = fork.id
     where fork.forked_from_id = ${conversations.id} and fork_task.deleted_at is null)`,
+  seenThroughSeq: conversations.seenThroughSeq,
 };
+
+const UNFINISHED = sql`(${sql.join(
+  [queued, running, waiting].map((status) => sql`${status}`),
+  sql`, `,
+)})`;
 
 /**
  * Drizzle queries of `conversations`: one row per agent, keyed by its runtime task. No method opens a transaction.
@@ -328,6 +357,86 @@ export class ConversationsRepository {
       )
       .orderBy(desc(conversations.updatedAt), desc(conversations.id));
     return page.limit === undefined ? query : query.limit(page.limit);
+  }
+
+  /** The pairs allowed to the root's conversation (`granted_tools`); empty for a missing root. */
+  async grantedTools(rootId: string): Promise<ToolPair[]> {
+    const [row] = await this.db.client
+      .select({ grantedTools: conversations.grantedTools })
+      .from(conversations)
+      .where(and(eq(conversations.id, rootId), isRoot));
+    return row?.grantedTools ?? [];
+  }
+
+  /** Adds the pair to the root's `granted_tools` in one `UPDATE`; a pair already there is not added again. */
+  async grantTool(rootId: string, pair: ToolPair): Promise<void> {
+    const added = JSON.stringify([{ server: pair.server, tool: pair.tool }]);
+    await this.db.client
+      .update(conversations)
+      .set({
+        grantedTools: sql`${conversations.grantedTools} || ${added}::jsonb`,
+      })
+      .where(
+        and(
+          eq(conversations.id, rootId),
+          isRoot,
+          sql`not (${conversations.grantedTools} @> ${added}::jsonb)`,
+        ),
+      );
+  }
+
+  /**
+   * {@link ConversationStateFactsRow} of the given roots in one query; `questionType` is the task type of a question
+   * to a human. Each fact reads the tree by `runtime_tasks_root_idx` and the history backwards by its key.
+   */
+  async stateFacts(
+    rootIds: readonly string[],
+    questionType: string,
+  ): Promise<ConversationStateFactsRow[]> {
+    if (rootIds.length === 0) return [];
+    const lastSeq = (kind: string, condition: SQL) =>
+      sql<
+        number | null
+      >`(select entry.seq from ${messages} entry where entry.conversation_id = ${conversations.id} and entry.kind = ${kind} and ${condition} order by entry.seq desc limit 1)`;
+    return this.db.client
+      .select({
+        rootId: conversations.id,
+        questionOpen: sql<boolean>`exists (select 1 from ${runtimeTasks} question where question.root_id = ${conversations.id} and question.type = ${questionType} and question.status in ${UNFINISHED})`,
+        rootAnswering: sql<boolean>`(${runtimeTasks.status} in ${UNFINISHED} and ${runtimeTasks.waitReason} is distinct from ${WaitReasonSchema.enum.messages})`,
+        agentsWorking: sql<boolean>`exists (select 1 from ${runtimeTasks} agent where agent.root_id = ${conversations.id} and agent.task_id <> ${conversations.id} and agent.type <> ${questionType} and agent.status in ${UNFINISHED})`,
+        lastAnswerSeq: lastSeq(
+          HistoryEntryKindSchema.enum.model_answer,
+          sql`jsonb_array_length(entry.content -> 'toolCalls') = 0`,
+        ),
+        lastFailureSeq: lastSeq(
+          HistoryEntryKindSchema.enum.event,
+          sql`entry.content ->> 'event' = ${HistoryEventSchema.enum.failed}`,
+        ),
+        seenThroughSeq: conversations.seenThroughSeq,
+      })
+      .from(conversations)
+      .innerJoin(runtimeTasks, eq(runtimeTasks.taskId, conversations.id))
+      .where(and(inArray(conversations.id, [...rootIds]), isRoot));
+  }
+
+  /**
+   * Raises the owner's live root's «seen through» mark to `throughSeq`, cut to the root's last entry; the mark never
+   * goes down. `false` for a missing or another owner's root.
+   */
+  async markSeen(
+    rootId: string,
+    ownerId: string,
+    throughSeq: number,
+  ): Promise<boolean> {
+    const lastEntry = sql`(select coalesce(max(entry.seq), 0) from ${messages} entry where entry.conversation_id = ${conversations.id})`;
+    const rows = await this.db.client
+      .update(conversations)
+      .set({
+        seenThroughSeq: sql`greatest(${conversations.seenThroughSeq}, least(${throughSeq}::int, ${lastEntry}))`,
+      })
+      .where(ownedLiveRoot(rootId, ownerId))
+      .returning({ id: conversations.id });
+    return rows.length > 0;
   }
 
   /** `updated_at = now()`: the owner's root session moves to the top of the list. */

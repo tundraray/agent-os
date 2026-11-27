@@ -16,6 +16,7 @@ const entry = (title: string | undefined): ThreadListEntry => ({
   activityAt: 0,
   forkable: false,
   forked: false,
+  state: null,
 });
 
 function Wrapper({ children }: { children: ReactNode }) {
@@ -33,6 +34,7 @@ function renderItem(title: string | undefined) {
   render(
     <ThreadHistoryItem
       entry={entry(title)}
+      state={null}
       isActive={false}
       titlePending={false}
       onRename={onRename}

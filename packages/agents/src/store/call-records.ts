@@ -1,9 +1,14 @@
-import { CodeCallsRepository, type CallKey } from '@agent-os/db';
+import {
+  CodeCallsRepository,
+  ConversationsRepository,
+  type CallKey,
+} from '@agent-os/db';
 import {
   isCodeRunCall,
   TRY_SCRIPT_TOOL,
   type ToolOutcome,
   ToolOutcomeSchema,
+  type ToolPair,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
@@ -13,6 +18,7 @@ import type {
   AnswerCall,
   HistoryContent,
   HistoryEntry,
+  ToolGrant,
 } from '../history/history';
 import { History, type NewHistoryEntry } from './history';
 
@@ -41,6 +47,27 @@ export interface CallDecision {
   readonly approved: boolean;
   /** The arguments the employee edited. */
   readonly args?: unknown;
+  /** Whose permission sent the call (improvements design-server.md KD-3). */
+  readonly grant?: ToolGrant;
+}
+
+/**
+ * The permission a call is sent by, as its intent writes it: a schedule's, or the conversation's with the root
+ * and the pair the intent adds to the conversation's permission (improvements design-server.md KD-2, Flow 2).
+ */
+export type SendGrant =
+  | Extract<ToolGrant, { kind: 'schedule' }>
+  | {
+      readonly kind: 'conversation';
+      readonly rootId: string;
+      readonly pair: ToolPair;
+    };
+
+/** The grant of a `tool_decision` record: what a send grant says about whose permission it was. */
+function recordedGrant(grant: SendGrant): ToolGrant {
+  return grant.kind === 'schedule'
+    ? { kind: 'schedule', scheduleId: grant.scheduleId }
+    : { kind: 'conversation' };
 }
 
 /** A `run_code` read run starts at most twice: once, and once more after a lost step (KD-7, Invariant 5). */
@@ -58,6 +85,7 @@ function decisionEntry(
       callId,
       approved: decision.approved,
       ...(decision.args === undefined ? {} : { args: decision.args }),
+      ...(decision.grant === undefined ? {} : { grant: decision.grant }),
     },
   };
 }
@@ -100,12 +128,22 @@ function resultEntry(
 }
 
 /**
+ * What the model reads for a call that may have reached its server but whose answer never came: a step lost
+ * after the intent, an interrupt, a stop, a fork's copy (improvements design-server.md FR-01).
+ */
+export const ANSWER_LOST_TEXT =
+  'The run stopped while this call was in flight, so its answer was lost. Nobody rejected the call. ' +
+  'The action may have been carried out. Do not repeat it before checking whether it was.';
+
+/**
  * Closing on an interrupt or a stop (KD-3, Flow 7): «interrupted», but a call with the `tool_sent`
- * intent may have reached its server — «unknown».
+ * intent may have reached its server — «unknown» with the text of the lost answer.
  */
 function interruptedEnding(call: Pick<CallState, 'sentAt'>): CallEnding {
   const { unknown, interrupted } = ToolOutcomeSchema.enum;
-  return { outcome: call.sentAt === null ? interrupted : unknown };
+  return call.sentAt === null
+    ? { outcome: interrupted }
+    : { outcome: unknown, resultText: ANSWER_LOST_TEXT };
 }
 
 /**
@@ -136,6 +174,8 @@ export class CallRecords {
     @Inject(History) private readonly history: History,
     @Inject(CodeCallsRepository)
     private readonly codeCallRows: CodeCallsRepository,
+    @Inject(ConversationsRepository)
+    private readonly conversationRows: ConversationsRepository,
   ) {}
 
   /**
@@ -196,23 +236,31 @@ export class CallRecords {
   /**
    * Writes the employee's approval and the `tool_sent` intent of a call that awaits confirmation, before
    * the call goes out (KD-4, Invariant 2). `args` — the arguments the employee edited; they replace the
-   * call's. `false` when the call does not await confirmation — then it must not be sent.
+   * call's. `false` when the call does not await confirmation — then it must not be sent. With `grant` — the third
+   * answer «allow in this conversation» — the decision carries it and the pair joins the conversation's permission
+   * in the same write (improvements design-server.md Flow 2).
    */
-  markSent(call: CallKey & { readonly args?: unknown }): Promise<boolean> {
-    return this.appendIntent(call, true);
+  markSent(
+    call: CallKey & { readonly args?: unknown },
+    grant?: SendGrant,
+  ): Promise<boolean> {
+    return this.appendIntent(call, true, grant);
   }
 
   /**
-   * Writes only the `tool_sent` intent of a call of a training tree, which asks nobody (self-learning
-   * design-training.md KD-3, place 1): no decision is written. `false` when the call is sent or closed already.
+   * Writes the `tool_sent` intent of a call sent without asking anyone. A training tree's goes alone, with no
+   * decision (self-learning design-training.md KD-3, place 1); one sent by a permission gets the decision
+   * «confirmed» with its `grant` before it (improvements design-server.md KD-3). `false` when the call is sent
+   * or closed already.
    */
-  markIntent(call: CallKey): Promise<boolean> {
-    return this.appendIntent(call, false);
+  markIntent(call: CallKey, grant?: SendGrant): Promise<boolean> {
+    return this.appendIntent(call, false, grant);
   }
 
   private async appendIntent(
     call: CallKey & { readonly args?: unknown },
     asked: boolean,
+    grant: SendGrant | undefined,
   ): Promise<boolean> {
     const records = await this.history.callRecords(call.taskId, [call.callId]);
     const kinds = new Set(records.map((record) => record.kind));
@@ -224,9 +272,16 @@ export class CallRecords {
       return false;
     }
     const edited = call.args === undefined ? {} : { args: call.args };
+    const granted = grant === undefined ? {} : { grant: recordedGrant(grant) };
     await this.history.append(call.taskId, [
-      ...(asked
-        ? [decisionEntry(call.callId, { approved: true, ...edited })]
+      ...(asked || grant !== undefined
+        ? [
+            decisionEntry(call.callId, {
+              approved: true,
+              ...edited,
+              ...granted,
+            }),
+          ]
         : []),
       {
         kind: 'tool_sent',
@@ -237,6 +292,8 @@ export class CallRecords {
         },
       },
     ]);
+    if (grant?.kind === 'conversation')
+      await this.conversationRows.grantTool(grant.rootId, grant.pair);
     return true;
   }
 

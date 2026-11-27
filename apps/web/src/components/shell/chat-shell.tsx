@@ -30,7 +30,9 @@ import {
 import { redirectToLogin } from '@/lib/auth/session-redirect';
 import { useFeedStoreSelector } from '@/lib/feed/feed-context';
 import type { FeedState, FeedStore } from '@/lib/feed/feed-store';
+import { selectThreadId } from '@/lib/feed/to-feed';
 import type { FocusTarget } from '@/lib/focus';
+import { asideOf, asideOnScreen } from '@/lib/shell/workspace-store';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import {
   isPageRoute,
@@ -39,6 +41,7 @@ import {
 } from '@/lib/shell-route';
 import { Announcer } from './announcer';
 import { AppSidebar } from './app-sidebar';
+import { asideReturnElement } from './aside-chat';
 import { ChatHeader } from './chat-header';
 import { ChatRuntimeProvider } from './chat-runtime-provider';
 import { ConnectionBar } from './connection-bar';
@@ -139,6 +142,14 @@ function ShellMain({ children }: { children: ReactNode }) {
     false,
   );
   const chatTasks = useChatTasks(workspaceAllowed && !runRoot ? feed : null);
+  const threadId = useFeedStoreSelector(
+    feed,
+    (state) => selectThreadId(state.view),
+    null,
+  );
+  const asideShown = useStore(workspace, (state) =>
+    asideOnScreen(state, threadId),
+  );
 
   // The user expanding the sidebar while the panel is open takes the fold over.
   useEffect(() => {
@@ -164,9 +175,19 @@ function ShellMain({ children }: { children: ReactNode }) {
     }
   }, [workspaceVisible, setSidebarOpen]);
 
+  // Closed on the side chat, focus goes back to where it was asked (improvements UXRD Accessibility).
+  const returnFocusElement = (): HTMLElement | null => {
+    const state = workspace.getState();
+    const aside = asideOf(state, threadId);
+    return state.tab === 'aside' && aside !== null
+      ? asideReturnElement(aside)
+      : toggleElement();
+  };
+
   const closeWorkspace = (): void => {
+    const target = returnFocusElement();
     workspace.close();
-    toggleElement()?.focus();
+    target?.focus();
   };
 
   const toggleWorkspace = (): void => {
@@ -219,6 +240,7 @@ function ShellMain({ children }: { children: ReactNode }) {
             }
             onClose={closeWorkspace}
             run={runRoot}
+            aside={asideShown}
           >
             <SchemaPanel feed={feed} chatTasks={chatTasks} />
           </WorkspacePanel>
@@ -228,7 +250,9 @@ function ShellMain({ children }: { children: ReactNode }) {
         <WorkspaceDrawer
           open={workspaceOpen}
           onClose={() => workspace.close()}
+          returnFocus={returnFocusElement}
           run={runRoot}
+          aside={asideShown}
         >
           <SchemaPanel feed={feed} chatTasks={chatTasks} />
         </WorkspaceDrawer>
@@ -248,7 +272,7 @@ type SchemaAutoOpenProps = {
  * deep-agents UXRD KD-7, DA-12: from 1024 px the panel opens by itself — on «Схема» when the conversation's focus
  * moves to a new event that created or changed a record, on «Задачи» when the conversation gets its first task.
  * What the conversation already had when it was opened is not an event, and after «×» the panel waits for the
- * next one. Focus stays in the feed; below 1024 px nothing opens and no tab is switched, so the drawer never covers
+ * next one. An open side chat keeps the panel on «В стороне» (improvements KD-1). Focus stays in the feed; below 1024 px nothing opens and no tab is switched, so the drawer never covers
  * the conversation.
  */
 function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
@@ -263,6 +287,7 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
     let seen: string | null | undefined;
     const check = ({ view }: FeedState): void => {
       if (view?.kind !== 'thread') return;
+      const onAside = asideOnScreen(workspace.getState(), view.threadId);
       const focus = view.focus;
       const key =
         focus === null ? null : `${focus.recordId}|${focus.action}|${focus.at}`;
@@ -274,7 +299,8 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
       if (
         focus !== null &&
         OPENING_ACTIONS.has(focus.action) &&
-        desktopRef.current
+        desktopRef.current &&
+        !onAside
       ) {
         workspace.show({ tab: 'schema', focusHeading: false });
       }
@@ -285,6 +311,11 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
 
   // The tab «Задачи» as the last read of this root showed it; the first read only records it.
   const { rootAgentId, tasks, tabShown } = chatTasks;
+  const threadId = useFeedStoreSelector(
+    feed,
+    (state) => selectThreadId(state.view),
+    null,
+  );
   const read = tasks.status === 'ready' && rootAgentId !== null;
   const seenTab = useRef<{ rootAgentId: string; tabShown: boolean } | null>(
     null,
@@ -297,11 +328,12 @@ function SchemaAutoOpen({ feed, chatTasks, desktop }: SchemaAutoOpenProps) {
       before?.rootAgentId === rootAgentId &&
       !before.tabShown &&
       tabShown &&
-      desktopRef.current
+      desktopRef.current &&
+      !asideOnScreen(workspace.getState(), threadId)
     ) {
       workspace.show({ tab: 'tasks', focusHeading: false });
     }
-  }, [read, rootAgentId, tabShown, workspace]);
+  }, [read, rootAgentId, tabShown, workspace, threadId]);
 
   return null;
 }

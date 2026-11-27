@@ -885,7 +885,7 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
   //   his agent is on Gemini 2.5 Flash -> author opens the editor, expands «Дополнительно» -> «Модель» lists Gemini first, not selectable, with
   //   provider `google` and «провайдер выключен», then Claude Haiku 4.5 with `anthropic`; the banner MC-12 with «Заменить на Claude Haiku 4.5»
   //   -> author edits the instruction, presses «Сохранить» -> the PUT keeps `google/gemini-2.5-flash` and the save succeeds -> administrator
-  //   opens «Добавить право» on the role «SRE», «Модель» -> only chat models of working providers are offered, while the catalogue also holds
+  //   opens «Разрешить модель» on the role «SRE», «Модель» -> only chat models of working providers are offered, while the catalogue also holds
   //   a chat model of the disabled `google` and an embedding model of the working `local`.
   //   `GET /api/access/models` holds chat models only by its contract, so the web's own purpose filter is proven in the grant dialog.
   // Verification items:
@@ -1162,21 +1162,18 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
         HttpResponse.json(providers),
       ),
     );
-    const view = renderWithRuntime({ pathname: `/admin/roles/${SRE}` });
+    const view = renderWithRuntime({ pathname: `/admin/roles/${SRE}/models` });
     expect(
       await screen.findByRole('heading', { level: 1, name: 'SRE' }),
     ).toBeInTheDocument();
 
-    // Act (AC-14.2): «Добавить право» -> «Модель» -> open «Модель»
+    // Act (AC-14.2): «Разрешить модель» -> open «Модель»
     await user.click(
-      await screen.findByRole('button', { name: 'Добавить право' }),
+      await screen.findByRole('button', { name: 'Разрешить модель' }),
     );
     const grantDialog = await screen.findByRole('dialog', {
-      name: 'Добавить право',
+      name: 'Разрешить модель',
     });
-    await user.click(
-      within(grantDialog).getByRole('radio', { name: 'Модель' }),
-    );
     await user.click(
       within(grantDialog).getByRole('combobox', { name: 'Модель' }),
     );

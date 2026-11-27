@@ -1,4 +1,4 @@
-import { McpServerModeSchema } from '@agent-os/contracts';
+import { McpServerModeSchema, type McpToolSettings } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import { boolean, check, jsonb, text, timestamp } from 'drizzle-orm/pg-core';
 import { app } from './app';
@@ -14,6 +14,16 @@ export const mcpServers = app.table(
     enabled: boolean('enabled').notNull().default(false),
     /** Tools as the tool set is built from them without network; null until first listed. */
     tools: jsonb('tools'),
+    /** Administrator's settings by tool name: optional `enabled: false` and `readOnly` (access-levels KD-2). */
+    toolSettings: jsonb('tool_settings')
+      .$type<McpToolSettings>()
+      .notNull()
+      .default({}),
+    /** Tool names refreshes added since the administrator last marked them reviewed; empty after registration. */
+    newTools: text('new_tools')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** Set exactly for mode `shared`. */
     sharedToken: text('shared_token'),
     /** Authorization server metadata found at registration (issuer and endpoints). */

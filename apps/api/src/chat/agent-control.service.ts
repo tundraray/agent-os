@@ -246,7 +246,11 @@ export class AgentControlService {
     return this.starts.restart({ agentId, ownerId });
   }
 
-  /** Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged. */
+  /**
+   * Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged.
+   * «Allow in this conversation» on a card that is not a changing MCP tool's is 400, and the card stays open
+   * (improvements design-server.md Flow 2).
+   */
   async decide(
     decisionId: string,
     ownerId: string,
@@ -258,7 +262,11 @@ export class AgentControlService {
       ownerId,
       approve: decision.approve,
       ...(decision.args === undefined ? {} : { args: decision.args }),
+      ...(decision.allowInConversation === true
+        ? { allowInConversation: true }
+        : {}),
     });
+    if (outcome === 'not_mcp_card') throw httpError('VALIDATION_FAILED');
     return { outcome };
   }
 

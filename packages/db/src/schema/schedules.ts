@@ -3,6 +3,7 @@ import {
   SchedulePauseReasonSchema,
   ScheduleStateSchema,
   ScheduleTargetSchema,
+  type ToolPair,
 } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import {
@@ -45,6 +46,11 @@ export const schedules = app.table(
     target: text('target').notNull(),
     /** Null — created in a new chat without messages. */
     conversationId: uuid('conversation_id').references(() => conversations.id),
+    /** The changing MCP tools a run of the schedule calls without a confirmation card. */
+    allowedTools: jsonb('allowed_tools')
+      .$type<ToolPair[]>()
+      .notNull()
+      .default([]),
     state: text('state').notNull(),
     pausedBecause: text('paused_because'),
     /** The next term; null while paused and once completed (rule 4). */

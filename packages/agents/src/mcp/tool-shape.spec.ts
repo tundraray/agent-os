@@ -24,7 +24,8 @@ function stored(outputSchema?: Record<string, unknown>): unknown {
 }
 
 function descriptionOf(item: unknown): string {
-  const [tool] = storedMcpTools([item]) ?? [];
+  const [tool] =
+    storedMcpTools({ tools: [item], toolSettings: {}, newTools: [] }) ?? [];
   if (tool === undefined) throw new Error('the stored list is empty');
   return mcpToolDescription(tool);
 }

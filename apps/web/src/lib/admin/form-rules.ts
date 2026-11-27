@@ -363,27 +363,18 @@ export function quotaRules({ quota }: { quota: string }): FieldErrors<'quota'> {
 }
 
 export type GrantValues = {
-  kind: 'server' | 'tool' | 'model';
-  server: string;
-  tool: string;
   model: string;
-  /** Only a model allow has the quota field. */
+  /** Only an allow has the quota field. */
   quota: string | null;
 };
 
 export function grantRules({
-  kind,
-  server,
-  tool,
   model,
   quota,
-}: GrantValues): FieldErrors<'server' | 'tool' | 'model' | 'quota'> {
-  const errors: FieldErrors<'server' | 'tool' | 'model' | 'quota'> = {};
-  if (kind !== 'model' && server === '') errors.server = 'serverRequired';
-  if (kind === 'tool' && tool === '') errors.tool = 'toolRequired';
-  if (kind === 'model' && model === '') errors.model = 'modelRequired';
-  if (kind === 'model' && quota !== null)
-    Object.assign(errors, quotaRules({ quota }));
+}: GrantValues): FieldErrors<'model' | 'quota'> {
+  const errors: FieldErrors<'model' | 'quota'> = {};
+  if (model === '') errors.model = 'modelRequired';
+  if (quota !== null) Object.assign(errors, quotaRules({ quota }));
   return errors;
 }
 
@@ -394,20 +385,33 @@ export type ServerValues = {
   url: string;
   mode: McpServerMode;
   sharedToken: string;
+  /** A ready OAuth client of the `oauth` mode; both empty when the server registers clients itself. */
+  oauthClientId: string;
+  oauthClientSecret: string;
 };
+
+type ServerField = 'name' | 'url' | 'sharedToken' | 'oauthClientId';
 
 export function serverRules({
   name,
   url,
   mode,
   sharedToken,
-}: ServerValues): FieldErrors<'name' | 'url' | 'sharedToken'> {
-  const errors: FieldErrors<'name' | 'url' | 'sharedToken'> = {};
+  oauthClientId,
+  oauthClientSecret,
+}: ServerValues): FieldErrors<ServerField> {
+  const errors: FieldErrors<ServerField> = {};
   if (name === '' || !McpServerNameSchema.safeParse(name).success)
     errors.name = 'serverNameRule';
   if (!isSecureUrl(url)) errors.url = 'serverUrl';
   if (mode === 'shared')
     Object.assign(errors, sharedTokenRules({ sharedToken }));
+  if (
+    mode === 'oauth' &&
+    oauthClientSecret !== '' &&
+    oauthClientId.trim() === ''
+  )
+    errors.oauthClientId = 'oauthClientId';
   return errors;
 }
 

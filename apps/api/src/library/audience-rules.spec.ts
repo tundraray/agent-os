@@ -8,6 +8,7 @@ import {
 const SRE = '00000000-0000-4000-8000-0000000000a1';
 const FINANCE = '00000000-0000-4000-8000-0000000000a2';
 const GHOST_ROLE = '00000000-0000-4000-8000-0000000000a3';
+const EVERYONE = '00000000-0000-4000-8000-0000000000a4';
 const BORIS = '00000000-0000-4000-8000-0000000000b1';
 const GHOST_USER = '00000000-0000-4000-8000-0000000000b2';
 
@@ -32,6 +33,7 @@ function systemAudience(
     userIds: [BORIS],
     existingRoleIds: [SRE],
     existingUserIds: [BORIS],
+    everyoneRoleId: EVERYONE,
     ...fields,
   };
 }
@@ -122,6 +124,17 @@ describe('audience rule: an owner opens a record only to their own roles and not
       question: {
         kind: 'system',
         input: systemAudience({ roleIds: [SRE, GHOST_ROLE] }),
+      },
+      expected: refused('holder_not_found'),
+    },
+    {
+      name: '«Все сотрудники» as a role holder reaches nobody',
+      question: {
+        kind: 'system',
+        input: systemAudience({
+          roleIds: [EVERYONE],
+          existingRoleIds: [EVERYONE],
+        }),
       },
       expected: refused('holder_not_found'),
     },

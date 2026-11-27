@@ -123,8 +123,10 @@ function createGate(): Gate {
   return { open, wait };
 }
 
-describe('Message action bar — only «Копировать», always reachable (AC-08.6; D-13, TH-10)', () => {
-  it('every message has «Копировать» without hovering; edit, reload, more, export and the branch picker are gone', async () => {
+// improvements IM-13: «Изменить» and the branch buttons come only from the conversation's overrides (main-view.tsx);
+//   a thread without them — the agent page — keeps «Копировать» alone.
+describe('Message action bar — without overrides only «Копировать», always reachable (AC-08.6; D-13, TH-10)', () => {
+  it('without action overrides (the agent page) every message has only «Копировать»; edit, reload, more, export and the branch picker are gone', async () => {
     const user = userEvent.setup();
     const { container } = renderThread(TWO_EXCHANGES);
 

@@ -27,6 +27,9 @@ export type ThreadNoticeProps =
       onRetry?: () => void;
       onNewChat: () => void;
     }
+  /** The side chat's tab (improvements IM-06): the reason alone, and «Повторить» for a failed read. */
+  | { variant: 'aside-not-found' }
+  | { variant: 'aside-load-error'; onRetry: () => void }
   /** MC-15: the agent page of a foreign, deleted or missing agent. */
   | { variant: 'agent-not-found' }
   /** MC-16: the agent page could not be read. */
@@ -54,6 +57,8 @@ const COPY = {
   'not-found': 'notFound',
   'load-error': 'loadError',
   deleted: 'deleted',
+  'aside-not-found': 'notFound',
+  'aside-load-error': 'loadError',
   'agent-not-found': 'agentNotFound',
   'agent-load-error': 'agentLoadError',
   'no-access': 'noAccess',
@@ -86,6 +91,9 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Link>
         </NoticeScreen>
       );
+    case 'aside-not-found':
+      return <NoticeScreen variant={props.variant}>{null}</NoticeScreen>;
+    case 'aside-load-error':
     case 'agent-load-error':
       return (
         <NoticeScreen variant={props.variant}>

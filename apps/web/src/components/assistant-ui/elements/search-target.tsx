@@ -14,7 +14,7 @@ import { useStore } from 'zustand';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { useFeedSelector } from '@/lib/feed/feed-context';
 import type { FeedSource } from '@/lib/feed/feed-store';
-import type { FeedView } from '@/lib/feed/to-feed';
+import { feedSeqOf, type FeedView } from '@/lib/feed/to-feed';
 import { logger } from '@/lib/logger';
 import { matchKey, type SearchTarget } from '@/lib/search/search-store';
 
@@ -29,13 +29,15 @@ const SearchMarkContext = createContext<SearchMark | null>(null);
 /** Hands the feed's mark to its messages and tool-call blocks; null — nothing is marked. */
 export const SearchMarkProvider = SearchMarkContext.Provider;
 
+/** The scroll margin that keeps an element `alignInUpperThird` scrolls to in the feed's upper third. */
+export const UPPER_THIRD_CLASS = 'scroll-mt-16';
+
 /**
- * The scroll margin keeps the target in the upper third once scrolled to. A message that holds the target does not
- * play its entry slide: a message with `content-visibility: auto` starts it only once it comes into view, that is
- * after the scroll, and the scroll lands on the shifted box, which then slides off its place.
+ * A message that holds the target does not play its entry slide: a message with `content-visibility: auto` starts it
+ * only once it comes into view, that is after the scroll, and the scroll lands on the shifted box, which then slides
+ * off its place.
  */
-const SEARCH_MARK_ROOT_CLASS =
-  'scroll-mt-16 data-search-target:animate-none has-[[data-search-target]]:animate-none';
+const SEARCH_MARK_ROOT_CLASS = `${UPPER_THIRD_CLASS} data-search-target:animate-none has-[[data-search-target]]:animate-none`;
 
 /**
  * search-result.md «Цель совпадения»: `--muted` across the element and a 2 px `--ring` bar on the left, static
@@ -56,17 +58,8 @@ export const SEARCH_MARK_USER_BUBBLE_CLASS =
 const markedProps = (marked: boolean) =>
   marked ? { 'data-search-target': '', tabIndex: -1 } : {};
 
-const SEQ_ID = /^seq-(\d+)$/;
-
-/**
- * The `seq` of the feed entry a message draws (its id `seq-N`, lib/feed/to-feed.ts); null for any other message.
- * `useExternalStoreRuntime` with `convertMessage` converts the feed one message at a time and never joins
- * adjacent answers, so every drawn entry has its own message.
- */
-const seqOf = (s: AssistantState): number | null => {
-  const match = SEQ_ID.exec(s.message.id);
-  return match === null ? null : Number(match[1]);
-};
+/** The `seq` of the feed entry a message draws; null for any other message. */
+const seqOf = (s: AssistantState): number | null => feedSeqOf(s.message.id);
 
 /** The root props of a feed message: `data-seq` the feed finds it by, and the mark when it is the target. */
 export function useMessageMarkProps() {
@@ -211,26 +204,36 @@ export function useFeedSearchMark(
     const feed = containerRef.current;
     if (feed === null) return;
     element.focus({ preventScroll: true });
-    // A freshly drawn history settles under the scroll: messages with `content-visibility: auto` trade their
-    // placeholder height for the real one as they come near the view, and the viewport scrolls itself to the bottom
-    // on growth. So the target is aligned at once and again on every resize of the feed (the first callback comes
-    // with observing, after the viewport's own scroll to the bottom in the same frame) until the employee scrolls,
-    // clicks or types. Instant: a smooth scroll aims at a position the settling layout moves.
-    const align = () =>
-      element.scrollIntoView({ block: 'start', behavior: 'instant' });
-    align();
-    const observer = new ResizeObserver(align);
-    observer.observe(feed);
-    const gestures = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
-    const stop = () => {
-      observer.disconnect();
-      for (const gesture of gestures)
-        window.removeEventListener(gesture, stop, true);
-    };
-    for (const gesture of gestures)
-      window.addEventListener(gesture, stop, { capture: true, passive: true });
-    return stop;
+    return alignInUpperThird(element, feed);
   }, [applied, containerRef]);
 
   return applied?.mark ?? null;
+}
+
+/**
+ * Keeps `element` in the feed's upper third (its scroll margin) until the employee scrolls, clicks or types; returns
+ * the stop. A freshly drawn history settles under the scroll: messages with `content-visibility: auto` trade their
+ * placeholder height for the real one as they come near the view, and the viewport scrolls itself to the bottom on
+ * growth. So the element is aligned at once and again on every resize of the feed (the first callback comes with
+ * observing, after the viewport's own scroll to the bottom in the same frame). Instant: a smooth scroll aims at a
+ * position the settling layout moves. Used by a search target and by the «Новое» divider (improvements Flow 3).
+ */
+export function alignInUpperThird(
+  element: HTMLElement,
+  feed: HTMLElement,
+): () => void {
+  const align = () =>
+    element.scrollIntoView({ block: 'start', behavior: 'instant' });
+  align();
+  const observer = new ResizeObserver(align);
+  observer.observe(feed);
+  const gestures = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+  const stop = () => {
+    observer.disconnect();
+    for (const gesture of gestures)
+      window.removeEventListener(gesture, stop, true);
+  };
+  for (const gesture of gestures)
+    window.addEventListener(gesture, stop, { capture: true, passive: true });
+  return stop;
 }

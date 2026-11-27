@@ -19,7 +19,7 @@ import type { AgentsConfig } from '../config';
 import { failureTextOf } from '../failure-text';
 import { McpAccounts } from '../mcp/mcp-accounts';
 import { McpClient } from '../mcp/mcp-client';
-import { CallRecords } from '../store/call-records';
+import { CallRecords, type SendGrant } from '../store/call-records';
 import type { Session } from '../store/sessions';
 import {
   admit,
@@ -319,37 +319,42 @@ export class ToolRunner {
    * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
-   * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3).
+   * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3). `grant` — the
+   * conversation's, for the third answer «allow in this conversation»: the intent adds the call's pair to the
+   * conversation's permission (improvements design-server.md Flow 2).
    */
   sendConfirmed(
     call: ResolvedCall,
     ctx: ConfirmContext,
     editedArgs?: unknown,
     confirmed?: unknown,
+    grant?: SendGrant,
   ): Promise<ConfirmedSend> {
     return this.sendOnce(
       call,
       ctx,
-      (key) => this.callRecords.markSent(key),
+      (key) => this.callRecords.markSent(key, grant),
       editedArgs,
       confirmed,
     );
   }
 
   /**
-   * Sends a call of a training tree that needs a decision without asking anyone (self-learning
-   * design-training.md KD-3, place 1): as `sendConfirmed` with `confirmed` the card's content, but the intent
-   * is written alone, with no decision of the employee.
+   * Sends a call that needs a decision without asking anyone, as `sendConfirmed` with `confirmed` the card's
+   * content: a training tree's, whose intent is written alone (self-learning design-training.md KD-3, place 1),
+   * or one a permission allows (`grant`), whose intent comes with the decision «confirmed» carrying it
+   * (improvements design-server.md KD-3, KD-4).
    */
   sendUnasked(
     call: ResolvedCall,
     ctx: ConfirmContext,
     confirmed: unknown,
+    grant?: SendGrant,
   ): Promise<ConfirmedSend> {
     return this.sendOnce(
       call,
       ctx,
-      (key) => this.callRecords.markIntent(key),
+      (key) => this.callRecords.markIntent(key, grant),
       undefined,
       confirmed,
     );

@@ -58,31 +58,40 @@ export type CallCheck =
       readonly text?: string;
     };
 
-/** Whether the owner may call this tool of this server: the answer of `AccessGate.tools` for him. */
+/** Whether the owner may call this tool, asked with its effective class: the answer of `AccessGate.tools` for him. */
 export type PairAllowed = Extract<
   ToolAccess,
   { readonly kind: 'allowed' }
 >['allows'];
 
-/** A call refused because the gate does not allow its server–tool pair. */
+/** A call refused because the gate does not allow its tool. */
 export interface NoAccess {
   readonly kind: 'refused';
   readonly reason: 'no_access';
 }
 
-/** The `access_denied` record of a tool call refused `no_access` (KD-6): one per refusal. */
+/** Refusals of a tool call written as `access_denied`: no right, or the admin switched the tool off. */
+export type AccessRefusal = 'no_access' | 'tool_disabled';
+
+export function isAccessRefusal(
+  reason: ToolRefusalReason,
+): reason is AccessRefusal {
+  return reason === 'no_access' || reason === 'tool_disabled';
+}
+
+/** The `access_denied` record of a tool call refused `no_access` or `tool_disabled` (KD-6): one per refusal. */
 export function toolDeniedEntry(
   ownerId: string,
-  server: string,
-  tool: string,
+  target: { readonly server: string; readonly tool: string },
+  reason: AccessRefusal,
 ): AccessDeniedEntry {
   return {
     kind: 'access_denied',
     actor: ownerId,
     objectType: 'tool',
-    objectId: `${server}/${tool}`,
+    objectId: `${target.server}/${target.tool}`,
     outcome: 'rejected',
-    reason: 'no_access',
+    reason,
   };
 }
 
@@ -255,7 +264,11 @@ export function checkCall(
   );
   if (tool === undefined)
     return { kind: 'refused', reason: 'tool_not_in_definition' };
-  if (isMcp(tool) && !allows(tool.mcp.server, tool.mcp.tool)) {
+  // Before the rights: a switched-off tool is refused alike for everyone, the super-administrator included (KD-2).
+  if (isMcp(tool) && !tool.mcp.enabled) {
+    return { kind: 'refused', reason: 'tool_disabled' };
+  }
+  if (isMcp(tool) && !allows(tool.mcp)) {
     return { kind: 'refused', reason: 'no_access' };
   }
   const schema = isMcp(tool) ? MCP_ARGS_SCHEMA : tool.inputSchema;
@@ -300,23 +313,23 @@ export async function pairsOf(
   throw new OwnerDisabledError(caller.ownerId);
 }
 
-/** The one audit record of a `no_access` the runner decided, and its log line. */
-export async function refuseNoAccess(
+/** The one audit record of a `no_access` or `tool_disabled` the runner decided, and its log line. */
+export async function auditAccessRefusal(
   audit: AccessAudit,
   call: { readonly callId: string; readonly caller: ToolCaller },
   target: { readonly server: string; readonly tool: string },
+  reason: AccessRefusal,
   logger: Logger,
-): Promise<NoAccess> {
-  logger.warn('access gate refused a tool pair', {
+): Promise<void> {
+  logger.warn('tool call refused before the send', {
     ownerId: call.caller.ownerId,
     agentId: call.caller.agentId,
     callId: call.callId,
     server: target.server,
     tool: target.tool,
-    reason: 'no_access',
+    reason,
   });
-  await audit(toolDeniedEntry(call.caller.ownerId, target.server, target.tool));
-  return { kind: 'refused', reason: 'no_access' };
+  await audit(toolDeniedEntry(call.caller.ownerId, target, reason));
 }
 
 /**
@@ -332,7 +345,7 @@ export async function admit(
   logger: Logger,
 ): Promise<NoAccess | undefined> {
   const allows = await pairsOf(access, call.callId, call.caller, logger);
-  if (!isMcp(call.tool) || allows(call.tool.mcp.server, call.tool.mcp.tool))
-    return undefined;
-  return refuseNoAccess(audit, call, call.tool.mcp, logger);
+  if (!isMcp(call.tool) || allows(call.tool.mcp)) return undefined;
+  await auditAccessRefusal(audit, call, call.tool.mcp, 'no_access', logger);
+  return { kind: 'refused', reason: 'no_access' };
 }

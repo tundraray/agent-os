@@ -47,9 +47,27 @@ export const ThreadListQuerySchema = z.object({
 });
 export type ThreadListQuery = z.infer<typeof ThreadListQuerySchema>;
 
-/** Response of GET /api/threads: newest `updatedAt` first, at most THREAD_PAGE_SIZE items. */
+/**
+ * What a conversation of the list is doing (improvements design-server.md, «ConversationState»): a question
+ * open in its tree, the root or an agent under it working, or the last answer / failure after the seen mark.
+ */
+export const ConversationStateSchema = z.enum([
+  'waiting_for_you',
+  'working',
+  'new_answer',
+  'failed',
+]);
+export type ConversationState = z.infer<typeof ConversationStateSchema>;
+
+/** Response of GET /api/threads: newest `updatedAt` first, at most THREAD_PAGE_SIZE items; `state: null` — read and idle. */
 export const ThreadListResponseSchema = z.object({
-  threads: z.array(ThreadSummarySchema).max(THREAD_PAGE_SIZE),
+  threads: z
+    .array(
+      ThreadSummarySchema.extend({
+        state: ConversationStateSchema.nullable(),
+      }),
+    )
+    .max(THREAD_PAGE_SIZE),
   nextCursor: z.string().min(1).nullable(),
 });
 export type ThreadListResponse = z.infer<typeof ThreadListResponseSchema>;
@@ -112,6 +130,15 @@ export const RenameThreadRequestSchema = z.object({
   title: z.string().trim().min(1).max(THREAD_TITLE_MAX_LENGTH),
 });
 export type RenameThreadRequest = z.infer<typeof RenameThreadRequestSchema>;
+
+/**
+ * Body of PUT /api/threads/:threadId/seen: the last history entry of the root the web has shown. The mark
+ * never goes down, and a number past the last entry becomes the last entry.
+ */
+export const MarkSeenRequestSchema = z.object({
+  throughSeq: z.number().int().min(0),
+});
+export type MarkSeenRequest = z.infer<typeof MarkSeenRequestSchema>;
 
 /** Machine-readable error codes of the threads API. */
 export const ThreadsErrorCodeSchema = z.enum([

@@ -25,6 +25,7 @@ const entry = (
   activityAt: 0,
   forkable: true,
   forked: false,
+  state: null,
   ...overrides,
 });
 
@@ -51,6 +52,7 @@ const renderItem: ThreadHistoryListViewProps['renderItem'] = (
   <ThreadHistoryItem
     key={item.id}
     entry={item}
+    state={null}
     isActive={false}
     titlePending={false}
     onRename={vi.fn()}
@@ -80,6 +82,7 @@ function renderView(
     <ThreadHistoryItem
       key={item.id}
       entry={item}
+      state={null}
       isActive={item.id === props.activeThreadId}
       titlePending={false}
       onRename={vi.fn()}

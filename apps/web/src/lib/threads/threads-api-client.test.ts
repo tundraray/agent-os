@@ -124,6 +124,7 @@ describe('threadsApiClient: successful responses', () => {
           forkable: true,
           forkedFrom: null,
           forkCount: 0,
+          state: null,
         },
       ],
       nextCursor: null,

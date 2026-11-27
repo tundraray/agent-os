@@ -4,7 +4,14 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from '@/components/assistant-ui/elements/attachment.aui';
-import { ComposerActions } from '@/components/assistant-ui/elements/composer-actions';
+import {
+  useAgentMention,
+  type AgentMention,
+} from '@/components/assistant-ui/elements/agent-mention';
+import {
+  ComposerActions,
+  SendLater,
+} from '@/components/assistant-ui/elements/composer-actions';
 import { TestRunFooter } from '@/components/assistant-ui/elements/test-run-footer';
 import {
   TEST_RUN_ICON,
@@ -25,13 +32,16 @@ import {
   ReasoningTrigger,
 } from '@/components/assistant-ui/elements/reasoning.aui';
 import {
+  alignInUpperThird,
   SEARCH_MARK_CLASS,
   SEARCH_MARK_USER_BUBBLE_CLASS,
   SEARCH_MARK_USER_ROOT_CLASS,
   SearchMarkProvider,
+  UPPER_THIRD_CLASS,
   useFeedSearchMark,
   useMessageMarkProps,
   useOpenOnMark,
+  type SearchMark,
 } from '@/components/assistant-ui/elements/search-target';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback.aui';
 import {
@@ -45,8 +55,13 @@ import {
   OfferCard,
   PlanCard,
 } from '@/components/agents/decision-card';
-import { EventLine, AnswerRefusedLine } from '@/components/agents/event-line';
+import {
+  EventLine,
+  AnswerRefusedLine,
+  NewDivider,
+} from '@/components/agents/event-line';
 import { InterruptButton } from '@/components/agents/interrupt-button';
+import { AgentsStrip } from '@/components/agents/agents-strip';
 import { QueueTray } from '@/components/agents/queue-tray';
 import { RunCard, TestRunCard } from '@/components/agents/run-card';
 import { Chip, RecordLabel } from '@/components/library/record-label';
@@ -55,10 +70,15 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
+import { useSeenMark } from '@/lib/feed/use-seen-mark';
 import {
   canInterrupt,
   FEED_PART,
+  feedSeqOf,
+  newDividerSeq,
+  stripAgents,
   trayEntries,
+  type UnreadRange,
   type DecisionPartData,
   type EventPartData,
   type OptimisticEntry,
@@ -72,7 +92,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { describeLibraryError } from '@/lib/library/library-errors';
-import { focusShellTarget } from '@/lib/focus';
+import { focusShellTarget, type FocusTarget } from '@/lib/focus';
 import { recordPath, schedulePath } from '@/lib/shell-route';
 import { ShellLink } from '@/components/shell/shell-link';
 import type { ChatTranslator, ErrorsTranslator } from '@/i18n/catalog';
@@ -137,6 +157,7 @@ import {
   type FormEvent,
   type PropsWithChildren,
   type ReactNode,
+  type RefObject,
 } from 'react';
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
@@ -197,8 +218,14 @@ const reasoningDuration = (timing: ThreadGroupPart['timing']) =>
  * `Feed`, when set, takes the place of the whole feed — header, earlier entries
  * and messages — while the tray and the composer stay (a deep agent's tab
  * «Задачи», deep-agents DA-04).
+ * `UserActions` adds buttons before «Копировать» in the action bar of a user message, `AssistantActions` — after it
+ * in the action bar of an answer; `UserMessageBody` wraps a user message's bubble and its action bar and may put something in
+ * their place (the conversation's «Изменить», improvements IM-13). Without them a message has only «Копировать».
  */
 export type ThreadComponents = {
+  UserActions?: ComponentType | undefined;
+  AssistantActions?: ComponentType | undefined;
+  UserMessageBody?: ComponentType<{ children: ReactNode }> | undefined;
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
@@ -254,7 +281,16 @@ export type ThreadProps = {
    * The composer takes the target's template text once and shows its chip; without it — no seed.
    */
   seedTarget?: SeedTarget | undefined;
+  /**
+   * Without `seedTarget`: the `composerSeed` target whose template text the composer takes once — no «+» and no chip
+   * (the side chat's quote, improvements UXRD IM-05).
+   */
+  textTarget?: SeedTarget | undefined;
+  /** The composer's focus target: 'composer' by default, the side chat's own field beside the main one. */
+  focusTarget?: ComposerFocusTarget | undefined;
 };
+
+type ComposerFocusTarget = Extract<FocusTarget, 'composer' | 'aside-composer'>;
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
@@ -305,6 +341,8 @@ export const Thread: FC<ThreadProps> = ({
   historyPending = false,
   composerPlaceholder,
   seedTarget,
+  textTarget,
+  focusTarget = 'composer',
 }) => {
   const t = useTranslations('chat');
   const isNewChat = useAuiState(isNewChatView);
@@ -316,6 +354,8 @@ export const Thread: FC<ThreadProps> = ({
         historyPending={historyPending}
         placeholder={composerPlaceholder ?? t('placeholder')}
         seedTarget={seedTarget}
+        textTarget={textTarget}
+        focusTarget={focusTarget}
       />
     </ThreadComponentsContext.Provider>
   );
@@ -326,7 +366,16 @@ const ThreadRoot: FC<{
   historyPending: boolean;
   placeholder: string;
   seedTarget: SeedTarget | undefined;
-}> = ({ isEmpty, historyPending, placeholder, seedTarget }) => {
+  textTarget: SeedTarget | undefined;
+  focusTarget: ComposerFocusTarget;
+}> = ({
+  isEmpty,
+  historyPending,
+  placeholder,
+  seedTarget,
+  textTarget,
+  focusTarget,
+}) => {
   const {
     Welcome = ThreadWelcome,
     DeletedNotice,
@@ -340,138 +389,189 @@ const ThreadRoot: FC<{
   const t = useTranslations('chat.testRun');
   const feedRef = useRef<HTMLDivElement>(null);
   const mark = useFeedSearchMark(feedRef, historyPending);
+  const { apiClient } = useShellServices();
+  const unread = useSeenMark(useFeed(), apiClient);
+  const dividerSeq = useAuiState((s) =>
+    newDividerSeq(s.thread.messages, unread),
+  );
+  useOpenOnNewDivider({ feedRef, unread, dividerSeq, mark, historyPending });
 
   return (
     <SearchMarkProvider value={mark}>
-      <ThreadPrimitive.Root
-        className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
-        style={{
-          ['--composer-bg' as string]:
-            'color-mix(in oklab, var(--color-muted) 30%, transparent)',
-          ['--composer-radius' as string]: '1rem',
-          ['--composer-padding' as string]: '8px',
-        }}
-      >
-        <ThreadPrimitive.Viewport
-          turnAnchor="top"
-          // Off by default with a top anchor: a card appended after the turn (a plan, a decision) is scrolled into view
-          // unless the person has scrolled up; during a run the anchor still holds.
-          autoScroll
-          data-slot="aui_thread-viewport"
-          className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
+      <NewDividerContext.Provider value={dividerSeq}>
+        <ThreadPrimitive.Root
+          className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
+          style={{
+            ['--composer-bg' as string]:
+              'color-mix(in oklab, var(--color-muted) 30%, transparent)',
+            ['--composer-radius' as string]: '1rem',
+            ['--composer-padding' as string]: '8px',
+          }}
         >
-          <div
-            ref={feedRef}
-            className={cn(
-              'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
-              isEmpty && 'md:justify-center',
-            )}
+          <ThreadPrimitive.Viewport
+            turnAnchor="top"
+            // Off by default with a top anchor: a card appended after the turn (a plan, a decision) is scrolled into view
+            // unless the person has scrolled up; during a run the anchor still holds.
+            autoScroll
+            data-slot="aui_thread-viewport"
+            className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
           >
-            {Feed ? (
-              <div data-slot="aui_feed-replacement" className="mb-6 px-2">
-                <Feed />
-              </div>
-            ) : historyPending ? (
-              <ThreadHistorySkeleton />
-            ) : (
-              <>
-                <AuiIf condition={isNewChatView}>
-                  <Welcome />
-                </AuiIf>
-                <AuiIf condition={isHistoryLoadingView}>
-                  <ThreadHistorySkeleton />
-                </AuiIf>
-
-                {FeedHeader && (
-                  <div
-                    data-slot="aui_feed-header"
-                    className="mb-6 flex flex-col gap-y-3 px-2"
-                  >
-                    <FeedHeader />
-                  </div>
-                )}
-
-                <ThreadLoadEarlier />
-
-                <div
-                  data-slot="aui_message-group"
-                  className="mb-14 flex flex-col gap-y-6 empty:hidden"
-                >
-                  <ThreadPrimitive.Messages>
-                    {() => <ThreadMessage />}
-                  </ThreadPrimitive.Messages>
-                </div>
-              </>
-            )}
-
-            <ThreadPrimitive.ViewportFooter
+            <div
+              ref={feedRef}
               className={cn(
-                'aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]',
-                // Below 768 px the composer stays at the bottom even in an empty thread (D-10).
-                isEmpty
-                  ? 'max-md:sticky max-md:bottom-0 max-md:mt-auto'
-                  : 'sticky bottom-0 mt-auto rounded-t-(--composer-radius)',
+                'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
+                isEmpty && 'md:justify-center',
               )}
             >
-              <ThreadScrollToBottom />
-              {!historyPending && <ThreadFollowupSuggestions />}
-              {DeletedNotice ? (
-                <DeletedNotice />
-              ) : training?.run != null ? (
-                <TestRunFooter
-                  run={training.run}
-                  composer={
-                    <>
-                      <FeedTray />
-                      <Composer
-                        sendBlocked={historyPending}
-                        placeholder={t(
-                          training.run.phase === 'result'
-                            ? 'placeholderResult'
-                            : 'placeholderDialog',
-                        )}
-                        chip={null}
-                      />
-                    </>
-                  }
-                />
-              ) : training !== null ? (
-                <TrainingLine
-                  root={training.isRoot}
-                  testRun={training.testRun}
-                />
+              {Feed ? (
+                <div data-slot="aui_feed-replacement" className="mb-6 px-2">
+                  <Feed />
+                </div>
+              ) : historyPending ? (
+                <ThreadHistorySkeleton />
               ) : (
                 <>
-                  <FeedTray />
-                  {seedTarget === undefined ? (
-                    <Composer
-                      sendBlocked={historyPending}
-                      placeholder={placeholder}
-                      chip={null}
-                    />
-                  ) : (
-                    <SeededComposer
-                      sendBlocked={historyPending}
-                      placeholder={placeholder}
-                      target={seedTarget}
-                    />
+                  <AuiIf condition={isNewChatView}>
+                    <Welcome />
+                  </AuiIf>
+                  <AuiIf condition={isHistoryLoadingView}>
+                    <ThreadHistorySkeleton />
+                  </AuiIf>
+
+                  {FeedHeader && (
+                    <div
+                      data-slot="aui_feed-header"
+                      className="mb-6 flex flex-col gap-y-3 px-2"
+                    >
+                      <FeedHeader />
+                    </div>
                   )}
+
+                  <ThreadLoadEarlier />
+
+                  <div
+                    data-slot="aui_message-group"
+                    className="mb-14 flex flex-col gap-y-6 empty:hidden"
+                  >
+                    <ThreadPrimitive.Messages>
+                      {() => <ThreadMessage />}
+                    </ThreadPrimitive.Messages>
+                  </div>
                 </>
               )}
-              {!historyPending && (
-                <AuiIf
-                  condition={(s) => isNewChatView(s) && s.composer.isEmpty}
-                >
-                  <ThreadSuggestions />
-                </AuiIf>
-              )}
-            </ThreadPrimitive.ViewportFooter>
-          </div>
-        </ThreadPrimitive.Viewport>
-      </ThreadPrimitive.Root>
+
+              <ThreadPrimitive.ViewportFooter
+                className={cn(
+                  'aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]',
+                  // Below 768 px the composer stays at the bottom even in an empty thread (D-10).
+                  isEmpty
+                    ? 'max-md:sticky max-md:bottom-0 max-md:mt-auto'
+                    : 'sticky bottom-0 mt-auto rounded-t-(--composer-radius)',
+                )}
+              >
+                <ThreadScrollToBottom />
+                {!historyPending && <ThreadFollowupSuggestions />}
+                {DeletedNotice ? (
+                  <DeletedNotice />
+                ) : training?.run != null ? (
+                  <TestRunFooter
+                    run={training.run}
+                    composer={
+                      <>
+                        <FeedTray />
+                        <Composer
+                          sendBlocked={historyPending}
+                          placeholder={t(
+                            training.run.phase === 'result'
+                              ? 'placeholderResult'
+                              : 'placeholderDialog',
+                          )}
+                          chip={null}
+                        />
+                      </>
+                    }
+                  />
+                ) : training !== null ? (
+                  <TrainingLine
+                    root={training.isRoot}
+                    testRun={training.testRun}
+                  />
+                ) : (
+                  <>
+                    <FeedTray />
+                    {seedTarget === undefined ? (
+                      <Composer
+                        sendBlocked={historyPending}
+                        placeholder={placeholder}
+                        chip={null}
+                        textTarget={textTarget}
+                        focusTarget={focusTarget}
+                      />
+                    ) : (
+                      <SeededComposer
+                        sendBlocked={historyPending}
+                        placeholder={placeholder}
+                        target={seedTarget}
+                      />
+                    )}
+                  </>
+                )}
+                {!historyPending && (
+                  <AuiIf
+                    condition={(s) => isNewChatView(s) && s.composer.isEmpty}
+                  >
+                    <ThreadSuggestions />
+                  </AuiIf>
+                )}
+              </ThreadPrimitive.ViewportFooter>
+            </div>
+          </ThreadPrimitive.Viewport>
+        </ThreadPrimitive.Root>
+      </NewDividerContext.Provider>
     </SearchMarkProvider>
   );
 };
+
+/** The `seq` of the message the «Новое» divider stands before; null — no divider. */
+const NewDividerContext = createContext<number | null>(null);
+
+const NEW_DIVIDER_SELECTOR = '[data-slot="feed-divider"][data-variant="new"]';
+
+/**
+ * improvements Flow 3: a conversation with unread messages opens on the «Новое» divider in the upper third, once per
+ * opening, with the search target's alignment. A search target wins: its mark stops this alignment and keeps it off.
+ */
+function useOpenOnNewDivider({
+  feedRef,
+  unread,
+  dividerSeq,
+  mark,
+  historyPending,
+}: {
+  feedRef: RefObject<HTMLDivElement | null>;
+  unread: UnreadRange | null;
+  dividerSeq: number | null;
+  mark: SearchMark | null;
+  historyPending: boolean;
+}): void {
+  const alignedFor = useRef<UnreadRange | null>(null);
+  useEffect(() => {
+    if (
+      unread === null ||
+      dividerSeq === null ||
+      mark !== null ||
+      historyPending ||
+      alignedFor.current === unread
+    )
+      return;
+    const feed = feedRef.current;
+    const divider =
+      feed?.querySelector<HTMLElement>(NEW_DIVIDER_SELECTOR) ?? null;
+    if (feed === null || divider === null) return;
+    alignedFor.current = unread;
+    return alignInUpperThird(divider, feed);
+  }, [feedRef, unread, dividerSeq, mark, historyPending]);
+}
 
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
@@ -479,11 +579,27 @@ const ThreadMessage: FC = () => {
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === 'voice');
   const isFeedPart = useAuiState((s) => feedKindOf(s) === 'part');
+  const dividerSeq = useContext(NewDividerContext);
+  const afterDivider = useAuiState(
+    (s) => dividerSeq !== null && feedSeqOf(s.message.id) === dividerSeq,
+  );
 
-  if (isSpoken) return <SpokenMessage />;
-  if (isFeedPart) return <FeedPartMessage />;
-  if (role === 'user') return <UserMessage />;
-  return <AssistantMessageComponent />;
+  const message = isSpoken ? (
+    <SpokenMessage />
+  ) : isFeedPart ? (
+    <FeedPartMessage />
+  ) : role === 'user' ? (
+    <UserMessage />
+  ) : (
+    <AssistantMessageComponent />
+  );
+  if (!afterDivider) return message;
+  return (
+    <>
+      <NewDivider className={UPPER_THIRD_CLASS} />
+      {message}
+    </>
+  );
 };
 
 /** `FeedMessageMeta.kind` of a feed message (lib/feed/to-feed.ts); undefined for any other runtime. */
@@ -589,8 +705,8 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
       confirmation={data.confirmation}
       byChat={data.byChat}
       saved={data.saved}
-      onDecide={(approve, args) =>
-        feed.decide(data.confirmation.decisionId, approve, args)
+      onDecide={(decision) =>
+        feed.decide(data.confirmation.decisionId, decision)
       }
     />
   );
@@ -949,7 +1065,6 @@ const SeededComposer: FC<{
   placeholder: string;
   target: SeedTarget;
 }> = ({ sendBlocked, placeholder, target }) => {
-  const aui = useAui();
   const t = useTranslations('chat');
   const { composerSeed, announcer, status } = useShellServices();
   const newThreadFailure = useStore(
@@ -963,16 +1078,7 @@ const SeededComposer: FC<{
   const action = chip !== null && 'action' in chip ? chip : null;
   const record = chip === null || 'action' in chip ? null : chip;
   const testRun = useTestRunStart(target, action);
-  const textWaiting = useStore(composerSeed, (state) =>
-    state.texts.has(target),
-  );
-
-  useEffect(() => {
-    if (!textWaiting) return;
-    const text = composerSeed.takeText(target);
-    if (text !== null) aui.composer.setText(text);
-  }, [aui, composerSeed, target, textWaiting]);
-
+  const mention = useAgentMention(target);
   useEffect(() => {
     if (chip === null || announcedChips.has(chip)) return;
     announcedChips.add(chip);
@@ -1003,7 +1109,10 @@ const SeededComposer: FC<{
             : t('chipPlaceholder', { kind: record.kind, name: record.name })
       }
       newThreadFailure={newThreadFailure}
+      textTarget={target}
       actions={<ComposerActions target={target} />}
+      sendLater={<SendLater target={target} />}
+      mention={mention}
       chip={
         action !== null ? (
           <Chip
@@ -1027,8 +1136,39 @@ const SeededComposer: FC<{
   );
 };
 
-/** CV-04: the queue tray of the screen's feed above the composer; nothing without a feed. */
-const FeedTray: FC = () => (useFeed() === null ? null : <FeedQueueTray />);
+/** The composer takes its target's template text once, when it appears (custom-agents KD-5). */
+function useSeedText(target: SeedTarget | undefined): void {
+  const aui = useAui();
+  const { composerSeed } = useShellServices();
+  const textWaiting = useStore(
+    composerSeed,
+    (state) => target !== undefined && state.texts.has(target),
+  );
+  useEffect(() => {
+    if (!textWaiting || target === undefined) return;
+    const text = composerSeed.takeText(target);
+    if (text !== null) aui.composer.setText(text);
+  }, [aui, composerSeed, target, textWaiting]);
+}
+
+/**
+ * CV-04: the queue tray of the screen's feed above the composer, and above it a conversation's strip «Агенты беседы»
+ * (improvements IM-11), 8 px apart; nothing without a feed.
+ */
+const FeedTray: FC = () =>
+  useFeed() === null ? null : (
+    <div className="flex flex-col gap-2 empty:hidden">
+      <FeedAgentsStrip />
+      <FeedQueueTray />
+    </div>
+  );
+
+/** An agent page's view gives no agents: the strip is the conversation's only. */
+const FeedAgentsStrip: FC = () => {
+  const view = useFeedSelector((state) => state.view, null);
+  const agents = useMemo(() => stripAgents(view), [view]);
+  return <AgentsStrip agents={agents} />;
+};
 
 /**
  * Self-learning TR-01, MC-10: a training's conversation and its replays take no message. The root's line carries
@@ -1090,22 +1230,34 @@ const Composer: FC<{
   chip: ReactNode;
   /** The start of the action row: «+» where a chip is supported. */
   actions?: ReactNode;
+  /** «Отправить позже» left of «Отправить» (improvements IM-08): where «+» is. */
+  sendLater?: ReactNode;
+  /** The `@` list of agents (improvements IM-12): where «+» is; elsewhere `@` is a plain character. */
+  mention?: AgentMention;
   newThreadFailure?: SendFailure | null;
   /** Backspace in the empty field removes the chip (UXRD KD-2); without a chip — none. */
   onRemoveChip?: () => void;
   /** The action chip stands: the form starts a test run instead of sending a message. */
   testRun?: TestRunStart | null;
+  /** The `composerSeed` target whose template text the field takes once. */
+  textTarget?: SeedTarget | undefined;
+  focusTarget?: ComposerFocusTarget;
 }> = ({
   sendBlocked,
   placeholder,
   chip,
   actions,
+  sendLater,
+  mention,
   newThreadFailure = null,
   onRemoveChip,
   testRun = null,
+  textTarget,
+  focusTarget = 'composer',
 }) => {
   const aui = useAui();
   const t = useTranslations('chat');
+  useSeedText(textTarget);
   const sendFailure = useSendFailure(newThreadFailure);
   const scrollToBottom = useThreadViewport((state) => state.scrollToBottom);
   const failure = testRun === null ? sendFailure : testRun.failure;
@@ -1140,6 +1292,7 @@ const Composer: FC<{
       className="aui-composer-root relative flex w-full flex-col"
       onSubmit={submit}
     >
+      {mention?.list}
       {/* Attachments are hidden (D-04): no dropzone, pasting a file adds nothing. */}
       <div
         data-slot="aui_composer-shell"
@@ -1157,9 +1310,12 @@ const Composer: FC<{
           aria-describedby={describedBy === '' ? undefined : describedBy}
           name="message"
           addAttachmentOnPaste={false}
-          data-shell-focus="composer"
+          data-shell-focus={focusTarget}
           disabled={testRun?.pending}
+          {...mention?.fieldProps}
           onKeyDown={(event) => {
+            // A key of the open `@` list is not the field's: Enter chooses instead of sending.
+            if (mention?.onKeyDown(event) === true) return;
             if (
               event.key === 'Backspace' &&
               onRemoveChip !== undefined &&
@@ -1171,6 +1327,7 @@ const Composer: FC<{
         <ComposerAction
           sendBlocked={sendBlocked}
           actions={actions}
+          sendLater={sendLater}
           testRun={testRun}
         />
       </div>
@@ -1216,8 +1373,9 @@ const FeedInterrupt: FC = () => {
 const ComposerAction: FC<{
   sendBlocked: boolean;
   actions: ReactNode;
+  sendLater: ReactNode;
   testRun: TestRunStart | null;
-}> = ({ sendBlocked, actions, testRun }) => {
+}> = ({ sendBlocked, actions, sendLater, testRun }) => {
   const t = useTranslations('chat');
 
   return (
@@ -1263,6 +1421,7 @@ const ComposerAction: FC<{
           </AuiIf>
         </AuiIf>
         <FeedInterrupt />
+        {testRun === null && sendLater}
         <AuiIf condition={(s) => !shouldShowComposerResume(s)}>
           {testRun !== null ? (
             <TestRunSubmit target={testRun.target} pending={testRun.pending} />
@@ -1553,6 +1712,7 @@ const CopiedStatus: FC = () => {
 
 const AssistantActionBar: FC = () => {
   const t = useTranslations('chat');
+  const { AssistantActions } = useContext(ThreadComponentsContext);
   const visibility = useActionBarVisibility();
   return (
     <AuiIf condition={(s) => !isGeneratingReply(s)}>
@@ -1563,6 +1723,7 @@ const AssistantActionBar: FC = () => {
         )}
       >
         <MessageCopy />
+        {AssistantActions !== undefined && <AssistantActions />}
         <AuiIf condition={(s) => s.thread.capabilities.feedback}>
           <ActionBarPrimitive.FeedbackPositive
             render={
@@ -1626,7 +1787,9 @@ function isScheduleMark(value: unknown): value is ScheduleMark {
 }
 
 const UserMessage: FC = () => {
-  const { TaskBrief } = useContext(ThreadComponentsContext);
+  const { TaskBrief, UserMessageBody = PlainUserMessageBody } = useContext(
+    ThreadComponentsContext,
+  );
   const isTask = useAuiState((s) => feedKindOf(s) === 'task');
   // custom-agents KD-5: the record chip the message was sent with (`FeedMessageMeta.record`).
   const sentRecord = useAuiState(
@@ -1688,38 +1851,45 @@ const UserMessage: FC = () => {
       )}
       <UserMessageAttachments />
 
-      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div
-          className={cn(
-            'aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden',
-            SEARCH_MARK_USER_BUBBLE_CLASS,
-          )}
-        >
-          {Brief ? (
-            <Brief />
-          ) : (
-            <MessagePrimitive.Parts
-              components={{ File: UserFilePart, Image: UserImagePart }}
-            />
-          )}
+      <UserMessageBody>
+        <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
+          <div
+            className={cn(
+              'aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden',
+              SEARCH_MARK_USER_BUBBLE_CLASS,
+            )}
+          >
+            {Brief ? (
+              <Brief />
+            ) : (
+              <MessagePrimitive.Parts
+                components={{ File: UserFilePart, Image: UserImagePart }}
+              />
+            )}
+          </div>
+          <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
+            <UserActionBar />
+          </div>
         </div>
-        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
-          <UserActionBar />
-        </div>
-      </div>
+      </UserMessageBody>
     </MessagePrimitive.Root>
   );
 };
 
+const PlainUserMessageBody: FC<{ children: ReactNode }> = ({ children }) =>
+  children;
+
 const UserActionBar: FC = () => {
+  const { UserActions } = useContext(ThreadComponentsContext);
   const visibility = useActionBarVisibility();
   return (
     <ActionBarPrimitive.Root
       className={cn(
-        'aui-user-action-bar-root text-muted-foreground flex flex-col items-end',
+        'aui-user-action-bar-root text-muted-foreground flex items-center gap-1',
         visibility,
       )}
     >
+      {UserActions !== undefined && <UserActions />}
       <MessageCopy className="aui-user-action-copy" />
     </ActionBarPrimitive.Root>
   );

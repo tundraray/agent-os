@@ -56,6 +56,10 @@ import { cn } from '@/lib/utils';
 const LINK_CLASS =
   'text-primary focus-visible:ring-ring inline-flex shrink-0 items-center gap-1 rounded-sm text-sm leading-5 outline-none hover:underline focus-visible:ring-2 pointer-coarse:h-11';
 
+/** A run card is a focus target of the strip «Агенты беседы» (`data-agent-id`, `tabIndex` −1), ringed like a decision card. */
+const FOCUS_TARGET_CLASS =
+  'focus-visible:ring-ring outline-none focus-visible:ring-2';
+
 /**
  * The library record a run goes by (RN-01–RN-03): its origin when the run is the record itself — an
  * agent or a deep agent. A subagent's run and a conversation's root have none of their own.
@@ -382,9 +386,14 @@ export function RunCard({ data }: RunCardProps) {
           name: data.description,
           status: statusLabel,
         })}
+        tabIndex={-1}
         data-slot="run-card"
         data-variant="agent"
-        className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border px-3 py-2"
+        data-agent-id={data.agentId}
+        className={cn(
+          'bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border px-3 py-2',
+          FOCUS_TARGET_CLASS,
+        )}
       >
         <div className="flex min-w-0 items-center gap-3">
           <AgentStatus
@@ -459,9 +468,14 @@ function DeepAgentRunCard({
         name: origin.name,
         status: t(`status.${data.status}`),
       })}
+      tabIndex={-1}
       data-slot="run-card"
       data-variant="deep-agent"
-      className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"
+      data-agent-id={data.agentId}
+      className={cn(
+        'bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3',
+        FOCUS_TARGET_CLASS,
+      )}
     >
       {/* Below 640 px the label takes its own line under the status and the time: the name a full line, the chips whole below it. */}
       <div className="flex min-w-0 items-center justify-between gap-3 max-sm:flex-wrap max-sm:gap-y-1 sm:h-6">

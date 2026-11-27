@@ -8,10 +8,11 @@ import {
 
 import type { AccessAudit, AccessGate } from '../access-gate';
 import {
+  auditAccessRefusal,
   checkCall,
+  isAccessRefusal,
   type McpCall,
   pairsOf,
-  refuseNoAccess,
   reportCheck,
 } from './call-check';
 import type { ToolCaller } from './tool';
@@ -177,11 +178,12 @@ export function createCodeCall(options: {
       { ownerId: scope.caller.ownerId, logger: scope.logger, audit },
     );
     if (checked.kind === 'refused') {
-      if (checked.reason === 'no_access' && target.server !== null) {
-        await refuseNoAccess(
+      if (isAccessRefusal(checked.reason) && target.server !== null) {
+        await auditAccessRefusal(
           audit,
           scope,
           { server: target.server, tool: target.tool },
+          checked.reason,
           scope.logger,
         );
       }

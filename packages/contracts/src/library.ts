@@ -5,7 +5,11 @@ import {
   ScriptCodeSchema,
   ScriptToolArgsSchema,
 } from './agents';
-import { LanguageSchema, type Language } from './identity';
+import {
+  BuiltinRoleKindSchema,
+  LanguageSchema,
+  type Language,
+} from './identity';
 import { McpServerNameSchema } from './mcp';
 
 /**
@@ -48,8 +52,10 @@ export type BuiltinKey = z.infer<typeof BuiltinKeySchema>;
 export const CHAT_BUILTIN_KEY = BuiltinKeySchema.enum.chat;
 /** Built-in key of the trainer agent, the root of every training. */
 export const TRAINER_BUILTIN_KEY = BuiltinKeySchema.enum.trainer;
-/** Key of the built-in role in `BUILTIN_NAMES`: the role has no `builtinKey`, it is known by its name. */
-export const BUILTIN_ROLE_KEY = 'super-admin';
+/** Key of «Супер-администратор» in `BUILTIN_NAMES`: a role has no `builtinKey`, it is known by its name. */
+export const BUILTIN_ROLE_KEY = BuiltinRoleKindSchema.enum.super_admin;
+/** Key of «Все сотрудники» in `BUILTIN_NAMES` (access-levels KD-5). */
+export const EVERYONE_ROLE_KEY = BuiltinRoleKindSchema.enum.everyone;
 
 /**
  * Names of the built-in records by `builtinKey` and of the built-in role, in each interface language
@@ -64,6 +70,7 @@ export const BUILTIN_NAMES = {
   },
   [TRAINER_BUILTIN_KEY]: { ru: 'Тренер', en: 'Trainer' },
   [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
+  [EVERYONE_ROLE_KEY]: { ru: 'Все сотрудники', en: 'All employees' },
 } as const satisfies Record<string, Record<Language, string>>;
 
 const isBuiltinNameKey = (key: string): key is keyof typeof BUILTIN_NAMES =>
@@ -72,7 +79,7 @@ const isBuiltinNameKey = (key: string): key is keyof typeof BUILTIN_NAMES =>
 /**
  * The name of a library record, or of a role, in `language` (KD-6): a built-in one still under its seeded
  * name (`ru`) is named in `language`; any other name, an administrator's among them, stays as it is. A role
- * has no `builtinKey` and passes `BUILTIN_ROLE_KEY`: it is known by its name alone.
+ * has no `builtinKey` and passes its kind's key (`BUILTIN_ROLE_KEY`, `EVERYONE_ROLE_KEY`).
  */
 export function builtinNameIn(
   named: { builtinKey: string | null; name: string },

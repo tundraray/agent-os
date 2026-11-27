@@ -1,6 +1,7 @@
 'use client';
 
-import { useId, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { LoaderCircleIcon, ShieldIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -14,6 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
@@ -21,16 +23,37 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { builtinRoleName } from '@/i18n/builtin-name';
 import type { Locale } from '@/i18n/pick-locale';
 import { logger } from '@/lib/logger';
+import {
+  adminRecordPath,
+  adminRecordTabPath,
+  type AdminRecordTab,
+} from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
-import { CAPTION, CONTROL_SIZE, describeRefusal } from '../admin-form';
+import {
+  CAPTION,
+  CONTROL_SIZE,
+  describeRefusal,
+  RECORD_TABS,
+} from '../admin-form';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
+import { ChangedDot } from '../levels/level-select';
 import { ResetPasswordDialog } from './reset-password-dialog';
 import { isLocalAccount, UserStatusBadge } from './user-list';
+import { UserToolsTab, useUserLevels } from './user-tools-tab';
 
 const PERSONAL_ADMIN_LOG_EVENT = 'admin: user personal admin';
+
+/** «Инструменты» lives at the employee's own address; the others after it (access-levels C3 web «Адреса»). */
+type UserTab = 'tools' | AdminRecordTab<'users'>;
+const USER_TABS: readonly UserTab[] = ['tools', 'models', 'rights', 'roles'];
+
+const tabHref = (id: string, tab: UserTab): string =>
+  tab === 'tools'
+    ? adminRecordPath('users', id)
+    : adminRecordTabPath('users', id, tab);
 
 type PageTranslator = ReturnType<typeof useTranslations<'admin.users.page'>>;
 
@@ -55,23 +78,24 @@ type ActionPlace = 'status' | 'assign' | 'admin' | `role:${string}`;
 
 type Failure = { place: ActionPlace; text: ReactNode };
 
-type UserPageProps = { id: string };
+type UserPageProps = { id: string; tab?: UserTab };
 
 /**
- * UXRD AD-04: one employee — roles, personal rights and denials, the admin right, blocking and, for a local
- * account, «Сбросить пароль». Every change ends with a new read of the employee (Invariant 4); a missing
- * employee is «Запись не найдена» (AD-15).
+ * UXRD AD-04: one employee — the header with blocking and, for a local account, «Сбросить пароль», and the tabs
+ * «Инструменты», «Модели», «Права», «Роли» (KD-12). The levels draft lives here, not in its tab, so switching tabs
+ * keeps unsaved changes. Every change ends with a new read of the employee (Invariant 4); a missing employee is
+ * «Запись не найдена» (AD-15).
  */
-export function UserPage({ id }: UserPageProps) {
+export function UserPage({ id, tab = 'tools' }: UserPageProps) {
   const titles = useAdminTitles();
   const t = useTranslations('admin.users.page');
   const tAdmin = useTranslations('admin');
+  const tLevels = useTranslations('admin.levels');
   const tErrors = useTranslations('errors');
   const locale = useLocale();
-  const rolesHeadingId = useId();
-  const adminHeadingId = useId();
   const user = useResource(() => adminApi.users.get(id), `user:${id}`);
   const roles = useResource(adminApi.roles.list, 'roles');
+  const levels = useUserLevels(id);
   const [gone, setGone] = useState(false);
   const [pending, setPending] = useState<ActionPlace | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -149,8 +173,13 @@ export function UserPage({ id }: UserPageProps) {
   const detail = user.data;
   const active = detail.status === 'active';
   const personalAdmin = detail.adminRight.personal;
+  // «Все сотрудники» is every employee's role: shown first, never offered, never removed (AC-38.2).
+  const everyone = roles.data?.find((role) => role.builtinKind === 'everyone');
+  const ownRoles = detail.roles.filter((role) => role.id !== everyone?.id);
   const held = new Set(detail.roles.map((role) => role.id));
-  const assignable = (roles.data ?? []).filter((role) => !held.has(role.id));
+  const assignable = (roles.data ?? []).filter(
+    (role) => !held.has(role.id) && role.builtinKind !== 'everyone',
+  );
   const errorAt = (place: ActionPlace): ReactNode =>
     failure?.place === place ? failure.text : undefined;
   const busy = pending !== null;
@@ -181,6 +210,26 @@ export function UserPage({ id }: UserPageProps) {
       error: errorAt(place),
     };
   };
+
+  const everyoneRow = (role: { id: string; name: string }): DataTableRow => {
+    const name = builtinRoleName(role.name, locale);
+    return {
+      key: role.id,
+      name,
+      cells: [
+        <span key="name" className="flex min-w-0 flex-col">
+          <span className="truncate" title={name}>
+            {name}
+          </span>
+          <span className={cn(CAPTION, 'text-muted-foreground')}>
+            {t('everyone')}
+          </span>
+        </span>,
+      ],
+    };
+  };
+
+  const toolsChanged = levels.draft.changedCount > 0;
 
   return (
     <>
@@ -226,102 +275,131 @@ export function UserPage({ id }: UserPageProps) {
         </ActionButton>
       </PageHeader>
 
-      <div className="flex max-w-240 flex-col gap-8">
-        {errorAt('status') !== undefined && (
+      {errorAt('status') !== undefined && (
+        <div className="mb-4">
           <ActionError>{errorAt('status')}</ActionError>
-        )}
-
-        <section
-          aria-labelledby={rolesHeadingId}
-          className="flex flex-col gap-3"
-        >
-          <h2 id={rolesHeadingId} className="text-base leading-6 font-semibold">
-            {tAdmin('users.roles')}
-          </h2>
-          <DataTable
-            caption={tAdmin('users.roles')}
-            columns={[{ header: tAdmin('roles.role') }]}
-            state={{
-              status: 'ready',
-              rows: detail.roles.map(roleRow),
-              empty: { Icon: ShieldIcon, title: t('noRoles') },
-            }}
-          />
-          <div className="flex flex-col items-start gap-1.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                disabled={
-                  busy || roles.status !== 'ready' || assignable.length === 0
-                }
-                render={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={CONTROL_SIZE}
-                  />
-                }
-              >
-                {pending === 'assign' && <Spinner />}
-                {t('assignRole')}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-auto min-w-40">
-                {assignable.map((role) => (
-                  <DropdownMenuItem
-                    key={role.id}
-                    className="pointer-coarse:min-h-11"
-                    onClick={() =>
-                      void act('assign', 'admin: user role assign', () =>
-                        adminApi.users.assignRole(id, role.id),
-                      )
+        </div>
+      )}
+      <Tabs value={tab} className="gap-4">
+        <TabsList variant="line" className={RECORD_TABS.list}>
+          {USER_TABS.map((value) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              nativeButton={false}
+              className={RECORD_TABS.tab}
+              // Same page: a plain link, so the leave guard does not ask (access-level-editor, «Уход с изменениями»).
+              render={<Link href={tabHref(id, value)} />}
+            >
+              {tAdmin(`users.tabs.${value}`)}
+              {value === 'tools' && toolsChanged && (
+                <>
+                  <ChangedDot />
+                  <span className="sr-only"> {tLevels('tabChanged')}</span>
+                </>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={tab}>
+          {tab === 'tools' && (
+            <UserToolsTab userName={detail.name} levels={levels} />
+          )}
+          {tab === 'models' && <GrantsSection holder={{ kind: 'user', id }} />}
+          {tab === 'roles' && (
+            <div className="flex max-w-240 flex-col gap-3">
+              <DataTable
+                caption={tAdmin('users.roles')}
+                columns={[{ header: tAdmin('roles.role') }]}
+                state={{
+                  status: 'ready',
+                  rows: [
+                    ...(everyone === undefined ? [] : [everyoneRow(everyone)]),
+                    ...ownRoles.map(roleRow),
+                  ],
+                  empty: { Icon: ShieldIcon, title: t('noOtherRoles') },
+                }}
+              />
+              {everyone !== undefined && ownRoles.length === 0 && (
+                <p className={cn(CAPTION, 'text-muted-foreground')}>
+                  {t('noOtherRoles')}
+                </p>
+              )}
+              <div className="flex flex-col items-start gap-1.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    disabled={
+                      busy ||
+                      roles.status !== 'ready' ||
+                      assignable.length === 0
+                    }
+                    render={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className={CONTROL_SIZE}
+                      />
                     }
                   >
-                    {builtinRoleName(role.name, locale)}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {errorAt('assign') !== undefined && (
-              <ActionError>{errorAt('assign')}</ActionError>
-            )}
-          </div>
-        </section>
-
-        <GrantsSection holder={{ kind: 'user', id }} />
-
-        <section
-          aria-labelledby={adminHeadingId}
-          className="flex flex-col gap-1.5"
-        >
-          <div className="flex items-center gap-3">
-            <h2
-              id={adminHeadingId}
-              className="text-base leading-6 font-semibold"
-            >
-              {tAdmin('roles.adminRight')}
-            </h2>
-            <span className="text-data">
-              {adminRightText(detail.adminRight, { t, locale })}
-            </span>
-            <ActionButton
-              disabled={busy}
-              pending={pending === 'admin'}
-              onClick={
-                personalAdmin
-                  ? () =>
-                      void act('admin', PERSONAL_ADMIN_LOG_EVENT, () =>
-                        adminApi.users.setPersonalAdmin(id, false),
-                      )
-                  : () => setGranting(true)
-              }
-            >
-              {personalAdmin ? t('revokePersonal') : t('grantPersonal')}
-            </ActionButton>
-          </div>
-          {errorAt('admin') !== undefined && (
-            <ActionError>{errorAt('admin')}</ActionError>
+                    {pending === 'assign' && <Spinner />}
+                    {t('assignRole')}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    className="w-auto min-w-40"
+                  >
+                    {assignable.map((role) => (
+                      <DropdownMenuItem
+                        key={role.id}
+                        className="pointer-coarse:min-h-11"
+                        onClick={() =>
+                          void act('assign', 'admin: user role assign', () =>
+                            adminApi.users.assignRole(id, role.id),
+                          )
+                        }
+                      >
+                        {builtinRoleName(role.name, locale)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {errorAt('assign') !== undefined && (
+                  <ActionError>{errorAt('assign')}</ActionError>
+                )}
+              </div>
+            </div>
           )}
-        </section>
-      </div>
+          {tab === 'rights' && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-base leading-6 font-semibold">
+                  {tAdmin('roles.adminRight')}
+                </h2>
+                <span className="text-data">
+                  {adminRightText(detail.adminRight, { t, locale })}
+                </span>
+                <ActionButton
+                  disabled={busy}
+                  pending={pending === 'admin'}
+                  onClick={
+                    personalAdmin
+                      ? () =>
+                          void act('admin', PERSONAL_ADMIN_LOG_EVENT, () =>
+                            adminApi.users.setPersonalAdmin(id, false),
+                          )
+                      : () => setGranting(true)
+                  }
+                >
+                  {personalAdmin ? t('revokePersonal') : t('grantPersonal')}
+                </ActionButton>
+              </div>
+              {errorAt('admin') !== undefined && (
+                <ActionError>{errorAt('admin')}</ActionError>
+              )}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <ConfirmDialog
         open={blocking}

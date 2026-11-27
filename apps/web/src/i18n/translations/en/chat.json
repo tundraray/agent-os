@@ -18,9 +18,27 @@
     "speaking": "Assistant is speaking"
   },
   "copy": "Copy",
+  "aside": {
+    "ask": "Ask aside",
+    "toMain": "To main chat",
+    "sent": "Sent",
+    "toMainFailed": "Couldn't send. Try again."
+  },
+  "edit": {
+    "action": "Edit",
+    "hint": "The reply will come in a new branch — this conversation stays as it is.",
+    "cancel": "Cancel",
+    "send": "Send"
+  },
+  "agentsStrip": {
+    "region": "Conversation agents",
+    "heading": "{count, plural, =1 {Agent · 1} other {Agents · #}}",
+    "agent": "{name}, {status}"
+  },
   "loadEarlier": "Show earlier messages",
   "loadingEarlier": "Loading earlier messages…",
   "scrollToBottom": "Go to latest message",
+  "newMessages": "New messages",
   "suggestions": "Suggestions",
   "starter": {
     "meetingPlan": {
@@ -104,12 +122,14 @@
     "add": "Add",
     "agents": "Agents",
     "noAgents": "No agents available",
+    "noAgentsMatch": "No matching agents",
     "createAgent": "Create an agent in chat",
     "createAgentHint": "Describe the agent, the chat will build it",
     "connections": "Connections",
     "connectionsHint": "Service accounts your agents work with",
     "schedule": "Schedule",
     "scheduleHint": "The agent does the task by itself at the set time",
+    "sendLater": "Send later",
     "testRun": {
       "name": "Create and check an agent",
       "hint": "The trainer will build the agent and tests · up to {cap}",

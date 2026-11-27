@@ -11,12 +11,16 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
-import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
+import {
+  ConversationStateSchema,
+  THREAD_PAGE_SIZE,
+  type ConversationState,
+} from '@agent-os/contracts';
+import { useStore } from 'zustand';
 import { RotateCwIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   SidebarGroup,
@@ -25,13 +29,11 @@ import {
 } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
-import { focusAfterNewChat, focusShellTarget } from '@/lib/focus';
+import { focusAfterNewChat } from '@/lib/focus';
 import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
+import { asideOf } from '@/lib/shell/workspace-store';
 import { logger } from '@/lib/logger';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
-import { forkRefusalText } from '@/lib/library/library-errors';
-import { threadPath } from '@/lib/shell-route';
-import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import {
   entryActivityAt,
   groupThreadsByDate,
@@ -46,6 +48,7 @@ import {
   ThreadHistoryItem,
 } from './thread-history-item';
 import { useShellServices, useShellStatus } from './shell-actions';
+import { useOpenBranch } from './use-open-branch';
 
 export type ThreadHistoryListState =
   | { kind: 'loading' }
@@ -160,6 +163,24 @@ const entryIdsOf = (state: ThreadHistoryListState): ReadonlySet<string> =>
       ? state.groups.flatMap((group) => group.entries.map((entry) => entry.id))
       : [],
   );
+
+/** `custom` is the library's untyped bag: a value that is not a known state shows no mark. */
+function conversationStateOf(value: unknown): ConversationState | null {
+  const parsed = ConversationStateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The mark a row shows (improvements KD-5): a conversation on screen — the open one or the side chat's branch —
+ * never lights «новый ответ» or «сбой», since the employee sees that answer as it comes.
+ */
+function shownState(
+  state: ConversationState | null,
+  { onScreen }: { onScreen: boolean },
+): ConversationState | null {
+  if (onScreen && (state === 'new_answer' || state === 'failed')) return null;
+  return state;
+}
 
 /** ↑/↓ — previous/next thread link across group boundaries, Home/End — first/last; other keys are left alone. */
 function moveFocusBetweenLinks(event: KeyboardEvent<HTMLElement>): void {
@@ -469,9 +490,6 @@ export function ThreadHistoryList() {
   const aui = useAui();
   const services = useShellServices();
   const pathname = usePathname();
-  const router = useRouter();
-  const tThread = useTranslations('shell.thread');
-  const tErrors = useTranslations('errors');
   // Deleting the open thread: the runtime leaves it, url-sync replaces the route with `/`, then focus follows
   // the «Новый чат» pointer rule (UXRD 7.4).
   const focusOnRoot = useRef(false);
@@ -484,6 +502,7 @@ export function ThreadHistoryList() {
   const loadMoreFailed = useShellStatus((s) => s.loadMoreFailed);
   const activityAt = useShellStatus((s) => s.activityAt);
   const titleWaiting = useShellStatus((s) => s.titleWaiting);
+  const asideBranchId = useStore(services.workspace, (s) => s.aside?.branchId);
   const now = useNow();
 
   const entries = useMemo(
@@ -510,6 +529,7 @@ export function ThreadHistoryList() {
             ),
             forkable: custom?.forkable === true,
             forked: custom?.forked === true,
+            state: conversationStateOf(custom?.state),
           };
         }),
     [threadItems, activityAt, now, services],
@@ -517,6 +537,13 @@ export function ThreadHistoryList() {
   const groups = useMemo(
     () => groupThreadsByDate(entries, now),
     [entries, now],
+  );
+  // The branch on «В стороне» counts as on screen only beside its own conversation: the tab is there only then (KD-5).
+  const mainRemoteId =
+    entries.find((entry) => entry.id === mainThreadId)?.remoteId ?? null;
+  const shownBranchId = useStore(
+    services.workspace,
+    (s) => asideOf(s, mainRemoteId)?.branchId ?? null,
   );
 
   // The skeleton covers the first load and a retry after an error; a later reload keeps the list on screen.
@@ -541,24 +568,38 @@ export function ThreadHistoryList() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [aui, onePageLoaded]);
 
-  // A conversation started without this tab's send (a schedule run, another tab) shows itself by a `tree` note
-  // whose id the list does not hold: page 1 is re-read then, on the same terms as coming back to the tab.
+  // Page 1 carries each row's state (improvements KD-5): any `tree` note re-reads it — a new conversation, a reply
+  // started or finished, a question asked — on the same terms as coming back to the tab.
+  const reads = useMemo(
+    () =>
+      createCoalescedRunner(() => aui.threads.reload(), {
+        minIntervalMs: TREE_RELOAD_INTERVAL_MS,
+      }),
+    [aui],
+  );
+  useEffect(() => () => reads.cancel(), [reads]);
+  useEffect(() => {
+    if (!onePageLoaded) return;
+    return services.live.onTree(() => void reads.request());
+  }, [services, reads, onePageLoaded]);
+  const requestRead = useEffectEvent(() => {
+    if (onePageLoaded) void reads.request();
+  });
+  // Leaving a conversation takes its «новый ответ» off the row only once page 1 is read again (KD-5).
+  const previousMainThread = useRef(mainThreadId);
+  useEffect(() => {
+    if (previousMainThread.current === mainThreadId) return;
+    previousMainThread.current = mainThreadId;
+    requestRead();
+  }, [mainThreadId]);
+  // A side chat's branch has no message yet, so no `tree` note announces it (KD-5). The list may be off screen
+  // while the panel folds the sidebar, so the check also runs when it mounts again.
   const isUnlisted = useEffectEvent(
     (threadId: string) => !entries.some((entry) => entry.remoteId === threadId),
   );
   useEffect(() => {
-    if (!onePageLoaded) return;
-    const reads = createCoalescedRunner(() => aui.threads.reload(), {
-      minIntervalMs: TREE_RELOAD_INTERVAL_MS,
-    });
-    const unsubscribe = services.live.onTree((threadId) => {
-      if (isUnlisted(threadId)) void reads.request();
-    });
-    return () => {
-      unsubscribe();
-      reads.cancel();
-    };
-  }, [aui, services, onePageLoaded]);
+    if (asideBranchId !== undefined && isUnlisted(asideBranchId)) requestRead();
+  }, [asideBranchId]);
 
   useEffect(() => {
     if (!focusOnRoot.current || pathname !== '/') return;
@@ -567,22 +608,9 @@ export function ThreadHistoryList() {
   }, [pathname]);
 
   // Flow 3: the fork opens like any conversation by its address, and its row joins the list there (KD-8).
-  const fork = async (entry: ThreadListEntry): Promise<void> => {
-    if (entry.remoteId === undefined) return;
-    try {
-      const thread = await threadsApiClient.forkThread(entry.remoteId);
-      router.push(threadPath(thread.id));
-      focusShellTarget('composer');
-      services.announcer.getState().announce('announce.forkOpened', {
-        title: thread.title ?? tThread('untitled'),
-      });
-    } catch (error) {
-      logger.warn('[web-shell] thread fork refused', {
-        threadId: entry.remoteId,
-        ...describeApiError(error),
-      });
-      toast.error(forkRefusalText(tErrors, error));
-    }
+  const openBranch = useOpenBranch();
+  const fork = (entry: ThreadListEntry): void => {
+    if (entry.remoteId !== undefined) void openBranch(entry.remoteId);
   };
 
   const state: ThreadHistoryListState =
@@ -637,6 +665,12 @@ export function ThreadHistoryList() {
         <ThreadHistoryItem
           key={entry.id}
           entry={entry}
+          state={shownState(entry.state, {
+            onScreen:
+              entry.id === mainThreadId ||
+              (entry.remoteId !== undefined &&
+                entry.remoteId === shownBranchId),
+          })}
           isActive={entry.id === mainThreadId}
           titlePending={
             entry.remoteId !== undefined &&
@@ -645,7 +679,7 @@ export function ThreadHistoryList() {
           // A failed PATCH: the list adapter shows the toast, the runtime rolls the title back and logs the rejection.
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}
-          onFork={() => void fork(entry)}
+          onFork={() => fork(entry)}
         />
       )}
     />

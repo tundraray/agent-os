@@ -185,9 +185,7 @@ export class ToolRegistry {
       calls.flatMap(({ server }) => (server === null ? [] : [server])),
     );
     const rows = await this.mcpServerRows.findMany([...names]);
-    const listed = new Map(
-      rows.map((row) => [row.name, storedMcpTools(row.tools)]),
-    );
+    const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row)]));
     return calls.map(
       ({ tool, server }): ToolDisplay =>
         (server === null
@@ -205,7 +203,8 @@ export class ToolRegistry {
    *   a root; the `everySession` tools (`read_tool_result`, `search_tool_result`). A tool with `describe` reads
    *   as it says for this declaration.
    * - The external tools are chosen by the owner's rights alone: `run_code` in every session (code-execution
-   *   KD-3), then the MCP tools of the declared servers (`*` — all) that are enabled in the registry, whose
+   *   KD-3), then the MCP tools of the declared servers (`*` — all) that are enabled in the registry, not
+   *   switched off by the admin (access-levels KD-2), whose
    *   server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled owner gets no MCP
    *   tool, and his model call fails the step) and, for an `oauth` server, that the owner has an account on.
    *
@@ -226,8 +225,9 @@ export class ToolRegistry {
   }
 
   /**
-   * The set a call is checked against: `toolsFor` without the owner's access filter and without the account
-   * filter. A call to a server the owner may not use is then refused `no_access` by the call check, and a call
+   * The set a call is checked against: `toolsFor` without the owner's access filter, the account filter and the
+   * admin's switch-off. A call to a server the owner may not use is then refused `no_access` by the call check, a
+   * switched-off tool `tool_disabled` (access-levels KD-2), and a call
    * the model asked for before the account went away gets `auth_required`, not `tool_not_in_definition` (C3;
    * design-mcp-connect.md DC-2).
    */
@@ -301,7 +301,7 @@ export class ToolRegistry {
     );
   }
 
-  /** The MCP tools of the given servers whose pair the gate allows the owner; none for a disabled owner. */
+  /** The MCP tools of the given servers the admin left on and the gate allows the owner; none for a disabled owner. */
   private async allowedTools(
     rows: readonly McpServerRow[],
     ownerId: string,
@@ -309,8 +309,8 @@ export class ToolRegistry {
     if (rows.length === 0) return [];
     const answer = await this.access.tools(ownerId);
     if (answer.kind === 'owner_disabled') return [];
-    return mcpToolsOf(rows).filter((tool) =>
-      answer.allows(tool.mcp.server, tool.mcp.tool),
+    return mcpToolsOf(rows).filter(
+      (tool) => tool.mcp.enabled && answer.allows(tool.mcp),
     );
   }
 
@@ -348,7 +348,7 @@ function systemTool(
 
 function mcpToolsOf(rows: readonly McpServerRow[]): McpSessionTool[] {
   return rows.flatMap((row) =>
-    (storedMcpTools(row.tools) ?? []).map((mcp): McpSessionTool => ({
+    (storedMcpTools(row) ?? []).map((mcp): McpSessionTool => ({
       kind: 'external',
       name: mcp.name,
       description: mcpToolDescription(mcp),

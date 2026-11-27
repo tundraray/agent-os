@@ -31,7 +31,7 @@ import { RolesService } from './roles.service';
 export class AdminRolesController {
   constructor(private readonly roles: RolesService) {}
 
-  /** The roles by name with the employee count, `isAdmin` and `builtin`. */
+  /** The roles by name with the employee count, `isAdmin` and `builtinKind`. */
   @Get('roles')
   list(): Promise<RoleList> {
     return this.roles.list();

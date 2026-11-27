@@ -1,35 +1,40 @@
-import type { GrantEffect, GrantTargetBody } from '@agent-os/contracts';
+import type { GrantEffect } from '@agent-os/contracts';
 import {
   allowedCatalogue,
   effectiveAccess,
   type EffectiveAccess,
-  type GrantRow,
   type ModelAccess,
 } from './effective-access';
+import type { GrantHolder, GrantRow, GrantRowTarget } from './grant-rows';
 
 const A = 'anthropic/a';
 const B = 'anthropic/b';
 const C = 'anthropic/c';
 
 let nextId = 0;
+const ROLE: GrantHolder = { kind: 'role', id: 'r1' };
+const PERSONAL: GrantHolder = { kind: 'user', id: 'u1' };
 function grant(
   effect: GrantEffect,
-  target: GrantTargetBody,
+  target: GrantRowTarget,
   quotaUsd: number | null = null,
+  holder: GrantHolder = ROLE,
 ): GrantRow {
   nextId += 1;
-  return { id: `g${nextId}`, effect, target, quotaUsd };
+  return { id: `g${nextId}`, holder, effect, target, quotaUsd };
 }
-const server = (name: string): GrantTargetBody => ({
+const personal = (effect: GrantEffect, target: GrantRowTarget): GrantRow =>
+  grant(effect, target, null, PERSONAL);
+const server = (name: string): GrantRowTarget => ({
   kind: 'server',
   server: name,
 });
-const tool = (serverName: string, toolName: string): GrantTargetBody => ({
+const tool = (serverName: string, toolName: string): GrantRowTarget => ({
   kind: 'tool',
   server: serverName,
   tool: toolName,
 });
-const model = (id: string): GrantTargetBody => ({ kind: 'model', model: id });
+const model = (id: string): GrantRowTarget => ({ kind: 'model', model: id });
 
 type Question =
   | { kind: 'tools'; server: string; registry: string[] }
@@ -39,7 +44,13 @@ type Question =
 
 function ask(answer: EffectiveAccess, question: Question): unknown {
   if (question.kind === 'tools')
-    return question.registry.filter((t) => answer.tool(question.server, t));
+    return question.registry.filter(
+      (t) =>
+        answer.tool(
+          { server: question.server, tool: t, readOnly: false },
+          false,
+        ).state === 'available',
+    );
   if (question.kind === 'model') return answer.model(question.model);
   if (question.kind === 'allowedCatalogue')
     return allowedCatalogue(answer, question.catalogue);
@@ -61,7 +72,8 @@ type Row = {
 };
 
 // KD-2, UC-4: AC-16.1, AC-16.2, AC-17.1, AC-17.2, AC-17.3, AC-21.1, AC-21.2, AC-21.5, DC-1, Invariant 2.
-describe('effective rights: a server right covers its tools, a personal tool right gives that tool only, a deny wins over any allow, quotas add up and one grant without a quota lifts the limit', () => {
+// Tool rows: the rows of each holder reach the coverage rule as his levels by server (access-levels KD-1, KD-3).
+describe('effective rights: a server right covers its tools, a personal tool right gives that tool only, a personal deny wins over a role, quotas add up and one grant without a quota lifts the limit', () => {
   it.each<Row>([
     {
       name: 'a role right on a server gives all its tools',
@@ -75,7 +87,7 @@ describe('effective rights: a server right covers its tools, a personal tool rig
     },
     {
       name: 'a personal tool right without the server gives that tool only',
-      grants: [grant('allow', tool('tracker', 'create'))],
+      grants: [personal('allow', tool('tracker', 'create'))],
       question: {
         kind: 'tools',
         server: 'tracker',
@@ -87,7 +99,7 @@ describe('effective rights: a server right covers its tools, a personal tool rig
       name: 'a personal tool deny beats the role server right',
       grants: [
         grant('allow', server('backoffice')),
-        grant('deny', tool('backoffice', 'write')),
+        personal('deny', tool('backoffice', 'write')),
       ],
       question: {
         kind: 'tools',
@@ -97,9 +109,9 @@ describe('effective rights: a server right covers its tools, a personal tool rig
       expected: ['read'],
     },
     {
-      name: 'a server deny beats a personal right on its tool',
+      name: 'a personal server deny beats a role right on its tool',
       grants: [
-        grant('deny', server('logs')),
+        personal('deny', server('logs')),
         grant('allow', tool('logs', 'search')),
       ],
       question: { kind: 'tools', server: 'logs', registry: ['search', 'tail'] },

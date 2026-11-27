@@ -356,7 +356,8 @@ function RecordToolBlock(props: ToolBlockProps & { toolName: ChatRecordTool }) {
 /**
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
  * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
- * A record tool that changes a record reads its refusal as «Не сохранено:» and the platform's text as is (KD-4).
+ * A record tool that changes a record reads its refusal as «Не сохранено:» and the platform's text as is (KD-4),
+ * except an `unattended` one.
  */
 function reasonLine(
   t: ErrorsTranslator,
@@ -376,6 +377,10 @@ function reasonLine(
     result: unknown;
   },
 ): ReasonLine | null {
+  // A schedule's run had no one to confirm the change: MC-2 for a record tool too, nothing was attempted (IM-03).
+  if (outcome === 'refused' && refusalReasonOf(artifact) === 'unattended') {
+    return refusalOf(t, artifact);
+  }
   if (
     outcome === 'refused' &&
     RECORD_CHANGE_TOOLS.has(toolName) &&

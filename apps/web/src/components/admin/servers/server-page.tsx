@@ -1,19 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { LoaderCircle, WrenchIcon } from 'lucide-react';
+import { InfoIcon, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  McpErrorCode,
-  type McpServerView,
-  type McpToolView,
-} from '@agent-os/contracts';
+import { McpErrorCode, type McpServerView } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ThreadNotice } from '@/components/shell/thread-notice';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { StateBadge } from '@/components/state-badge';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
@@ -21,7 +20,12 @@ import { sharedTokenRules } from '@/lib/admin/form-rules';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { takeAdminConnectReturn } from '@/lib/mcp/connect-return';
-import { adminPath } from '@/lib/shell-route';
+import {
+  adminPath,
+  adminRecordPath,
+  adminRecordTabPath,
+  type AdminRecordTab,
+} from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import {
   AdminForm,
@@ -29,59 +33,29 @@ import {
   CONTROL_SIZE,
   describeRefusal,
   FormError,
+  RECORD_TABS,
 } from '../admin-form';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
-import {
-  ActionsMenu,
-  DataTable,
-  type DataTableColumn,
-  type DataTableRow,
-} from '../data-table';
+import { ActionsMenu } from '../data-table';
+import { ChangedDot } from '../levels/level-select';
 import { SavingSwitch } from '../saving-switch';
 import { SecretField } from '../secret-field';
+import { ServerAccessTab, useServerAccess } from './server-access-tab';
 import { serverModeLabel, ServerStatusBadge } from './server-list';
-
-/** UXRD MC-29 (`admin.servers.page`); the tool names and descriptions come from the MCP server as they are. */
-type PageTranslator = ReturnType<typeof useTranslations<'admin.servers.page'>>;
-
-/** The tool's name keeps its width; the long description is the column that gives way. */
-const toolColumns = (t: PageTranslator): readonly DataTableColumn[] => [
-  { header: t('tool'), shrinks: false },
-  { header: t('description'), shrinks: true },
-  { header: t('action') },
-];
+import { ServerToolsTab } from './server-tools-tab';
 
 const isAccountRequired = (error: unknown): boolean =>
   isApiRequestError(error) && error.code === McpErrorCode.MCP_ACCOUNT_REQUIRED;
 
-const toToolRow = (t: PageTranslator, tool: McpToolView): DataTableRow => ({
-  key: tool.name,
-  name: tool.title ?? tool.name,
-  cells: [
-    <span key="tool" className="flex min-w-0 items-baseline gap-2">
-      {tool.title !== null && (
-        <span className="truncate" title={tool.title}>
-          {tool.title}
-        </span>
-      )}
-      <span
-        className={cn(
-          'truncate font-mono text-mono-compact',
-          tool.title !== null && 'text-muted-foreground',
-        )}
-        title={tool.name}
-      >
-        {tool.name}
-      </span>
-    </span>,
-    <span key="description" className="block truncate" title={tool.description}>
-      {tool.description}
-    </span>,
-    // A tool without the read-only hint changes data (UXRD AD-10).
-    tool.readOnly ? t('reads') : t('changes'),
-  ],
-});
+/** «Инструменты» lives at the server's own address, «Доступ» after it (access-levels C3 web «Адреса»). */
+export type ServerTab = 'tools' | AdminRecordTab<'servers'>;
+const SERVER_TABS: readonly ServerTab[] = ['tools', 'access'];
+
+const tabHref = (name: string, tab: ServerTab): string =>
+  tab === 'tools'
+    ? adminRecordPath('servers', name)
+    : adminRecordTabPath('servers', name, tab);
 
 /** A failed connection return; the page names it in its own language when it renders. */
 type ConnectFailure = 'connect_failed' | 'tools_failed';
@@ -95,12 +69,21 @@ function takeConnectFailure(server: string): ConnectFailure | null {
 }
 
 /**
- * UXRD AD-10: a registered server — the switch, the tools with what each does, the administrator's own
- * account, the shared token, the tools refresh and the delete. Name, address and mode only read (DC-10).
+ * UXRD AD-10: a registered server — the switch, the address, the shared token, the tools refresh and the delete,
+ * and under them the tabs «Инструменты» (ST-01) and «Доступ» (ST-02). Name, address and mode only read (DC-10).
+ * The access draft lives here, not in its tab, so switching tabs keeps unsaved changes (access-levels KD-7).
  */
-export function ServerPage({ name }: { name: string }) {
+export function ServerPage({
+  name,
+  tab = 'tools',
+}: {
+  name: string;
+  tab?: ServerTab;
+}) {
   const titles = useAdminTitles();
   const t = useTranslations('admin.servers.page');
+  const tTabs = useTranslations('admin.servers.tabs');
+  const tLevels = useTranslations('admin.levels');
   const tErrors = useTranslations('errors');
   const router = useRouter();
   const { navigate } = useShellServices();
@@ -125,6 +108,7 @@ export function ServerPage({ name }: { name: string }) {
     returned.current = null;
     return view;
   }, `server:${name}`);
+  const access = useServerAccess(name);
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -169,6 +153,7 @@ export function ServerPage({ name }: { name: string }) {
         t('refreshed', { added: added.length, removed: removed.length }),
       );
       server.reload();
+      access.read.reload();
     } catch (error) {
       if (isAccountRequired(error)) {
         // DC-11: the administrator has no account on the server yet — the tab goes to connect it.
@@ -232,10 +217,7 @@ export function ServerPage({ name }: { name: string }) {
           onSave={saveEnabled}
           logEvent="admin: server enable"
         />
-        <ServerAddress
-          server={data}
-          connectUrl={adminApi.servers.connectUrl(name)}
-        />
+        <ServerAddress server={data} />
         {data.mode === 'shared' && (
           <SharedTokenForm
             isSet={data.sharedTokenSet}
@@ -245,19 +227,57 @@ export function ServerPage({ name }: { name: string }) {
             onSaved={server.reload}
           />
         )}
-        <div className="flex flex-col gap-3">
-          {toolsNotice !== null && <FormError>{toolsNotice}</FormError>}
-          <DataTable
-            caption={t('tools')}
-            columns={toolColumns(t)}
-            state={{
-              status: 'ready',
-              rows: data.tools.map((tool) => toToolRow(t, tool)),
-              empty: { Icon: WrenchIcon, title: t('noTools') },
-            }}
-          />
-        </div>
+        {data.status === 'disabled' && (
+          <p
+            className={cn(
+              CAPTION,
+              'flex items-start gap-2 text-muted-foreground',
+            )}
+          >
+            <InfoIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            {t('disabledHint')}
+          </p>
+        )}
+        {toolsNotice !== null && <FormError>{toolsNotice}</FormError>}
       </div>
+      <Tabs value={tab} className="mt-6 gap-4">
+        <TabsList variant="line" className={RECORD_TABS.list}>
+          {SERVER_TABS.map((value) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              nativeButton={false}
+              className={RECORD_TABS.tab}
+              // Same page: a plain link, so the leave guard does not ask (access-level-editor, «Уход с изменениями»).
+              render={<Link href={tabHref(name, value)} />}
+            >
+              {tTabs(value)}
+              {value === 'access' && access.draft.changedCount > 0 && (
+                <>
+                  <ChangedDot />
+                  <span className="sr-only"> {tLevels('tabChanged')}</span>
+                </>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={tab}>
+          {tab === 'tools' ? (
+            <ServerToolsTab
+              server={data}
+              connectUrl={adminApi.servers.connectUrl(name)}
+              change={change}
+              onToolSaved={() => {
+                // The page's server is the one truth of the tools: the tab, opened again, shows the saved class.
+                server.reload();
+                access.read.reload();
+              }}
+            />
+          ) : (
+            <ServerAccessTab server={name} state={access} />
+          )}
+        </TabsContent>
+      </Tabs>
       <ConfirmDialog
         open={deleting}
         onOpenChange={setDeleting}
@@ -273,16 +293,10 @@ export function ServerPage({ name }: { name: string }) {
 }
 
 /**
- * DC-10: the address and the mode are text, never fields. A server waiting for the administrator's account
- * offers the connection as a link: the connect route redirects to the authorization server.
+ * DC-10: the address and the mode are text, never fields. A server waiting for the administrator's account offers
+ * the connection in «Инструменты» (ST-01), where its tools will appear.
  */
-function ServerAddress({
-  server,
-  connectUrl,
-}: {
-  server: McpServerView;
-  connectUrl: string;
-}) {
+function ServerAddress({ server }: { server: McpServerView }) {
   const t = useTranslations('admin.servers');
   return (
     <div className="flex flex-col gap-1">
@@ -298,21 +312,49 @@ function ServerAddress({
         </span>
         <span>{serverModeLabel(t, server.mode)}</span>
       </p>
+      {server.mode === 'oauth' && server.oauthClientId !== null && (
+        <OAuthClient
+          clientId={server.oauthClientId}
+          secretSet={server.oauthClientSecretSet}
+        />
+      )}
       <p className={cn(CAPTION, 'text-muted-foreground')}>
         {t('page.readOnlyHint')}
       </p>
-      {server.status === 'awaiting_admin_account' && (
-        <a
-          href={connectUrl}
-          className={buttonVariants({
-            size: 'sm',
-            className: cn(CONTROL_SIZE, 'mt-2 w-fit'),
-          })}
-        >
-          {t('page.connect')}
-        </a>
-      )}
     </div>
+  );
+}
+
+/**
+ * AD-10: the ready OAuth app of a personal-OAuth server — its «Client ID» in Mono and whether «Client Secret» is
+ * held; both only read (KD-6, AC-35.5), the secret's value never comes back.
+ */
+function OAuthClient({
+  clientId,
+  secretSet,
+}: {
+  clientId: string;
+  secretSet: boolean;
+}) {
+  const t = useTranslations('admin.servers');
+  const tSecret = useTranslations('admin.secret');
+  return (
+    <dl className="flex flex-col gap-1 text-data text-foreground">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+        <dt className="text-muted-foreground">{t('oauthClientId')}:</dt>
+        <dd className="min-w-0 font-mono text-mono-compact [overflow-wrap:anywhere]">
+          {clientId}
+        </dd>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <dt className="text-muted-foreground">{t('oauthClientSecret')}:</dt>
+        <dd>
+          <StateBadge state="neutral">
+            {secretSet ? tSecret('set') : tSecret('notSet')}
+          </StateBadge>
+        </dd>
+      </div>
+    </dl>
   );
 }
 

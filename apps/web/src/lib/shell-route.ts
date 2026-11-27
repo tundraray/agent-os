@@ -37,11 +37,27 @@ const hasRecordPages = (section: AdminSection): boolean => section !== 'models';
 export const LIBRARY_TABS = ['system', 'shared', 'bans'] as const;
 export type LibraryTab = (typeof LIBRARY_TABS)[number];
 
-/** A list carries its tab in the section `library` only; a new record there is a new agent. */
+/**
+ * The tabs of a record page after its first one (access-levels KD-7): the first tab — «Инструменты» of a role or an
+ * employee, «Инструменты» of a server — lives at the record's own address.
+ */
+export const ADMIN_RECORD_TABS = {
+  roles: ['models', 'rights', 'members'],
+  users: ['models', 'rights', 'roles'],
+  servers: ['access'],
+} as const;
+type TabbedSection = keyof typeof ADMIN_RECORD_TABS;
+export type AdminRecordTab<S extends TabbedSection = TabbedSection> =
+  (typeof ADMIN_RECORD_TABS)[S][number];
+
+const isTabbedSection = (section: AdminSection): section is TabbedSection =>
+  section in ADMIN_RECORD_TABS;
+
+/** A list carries its tab in the section `library` only; a new record there is a new agent; a record its tab. */
 export type AdminPage =
   | { kind: 'list'; tab?: LibraryTab }
   | { kind: 'new' }
-  | { kind: 'record'; key: string }
+  | { kind: 'record'; key: string; tab?: AdminRecordTab }
   | { kind: 'memory'; key: string };
 
 /** An employee's library page (design-web.md KD-1): the list, a record by its id, a new agent or a deep agent's memory. */
@@ -112,6 +128,13 @@ export const adminPath = (section: AdminSection): string =>
 export const adminRecordPath = (section: AdminSection, key: string): string =>
   `${adminPath(section)}/${encodeURIComponent(key)}`;
 
+/** The only way a record tab after the first is addressed: `/admin/roles/<id>/models`. */
+export const adminRecordTabPath = <S extends TabbedSection>(
+  section: S,
+  key: string,
+  tab: AdminRecordTab<S>,
+): string => `${adminRecordPath(section, key)}/${tab}`;
+
 /** The only way the panel's memory page path of a company deep agent is built. */
 export const adminMemoryPath = (key: string): string =>
   `${adminRecordPath('library', key)}${MEMORY_SUFFIX}`;
@@ -164,6 +187,19 @@ function libraryAdminPage(pathname: string): AdminPage | undefined {
   return key === undefined ? undefined : { kind: 'memory', key };
 }
 
+/** `/admin/<section>/<key>/<tab>` of a section whose record page has tabs. */
+function recordTabPage(
+  pathname: string,
+  section: AdminSection,
+): AdminPage | undefined {
+  if (!isTabbedSection(section)) return undefined;
+  for (const tab of ADMIN_RECORD_TABS[section]) {
+    const key = singleSegment(pathname, `${adminPath(section)}/`, `/${tab}`);
+    if (key !== undefined) return { kind: 'record', key, tab };
+  }
+  return undefined;
+}
+
 /** `/admin` and any unknown path under it open «Сотрудники». */
 function parseAdminPage(pathname: string): {
   section: AdminSection;
@@ -183,6 +219,8 @@ function parseAdminPage(pathname: string): {
       ? singleSegment(pathname, `${adminPath(section)}/`)
       : undefined;
     if (key !== undefined) return { section, page: { kind: 'record', key } };
+    const tabPage = recordTabPage(pathname, section);
+    if (tabPage !== undefined) return { section, page: tabPage };
   }
   return { section: 'users', page: { kind: 'list' } };
 }

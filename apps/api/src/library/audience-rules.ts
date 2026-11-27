@@ -44,11 +44,15 @@ export interface SystemAudienceInput {
   /** Of the body's roles and users, those that exist. */
   readonly existingRoleIds: readonly string[];
   readonly existingUserIds: readonly string[];
+  /** The built-in «Все сотрудники» role. */
+  readonly everyoneRoleId: string;
 }
 
 /**
  * Whether the admin may set this audience of a system record: a default agent's audience is fixed
- * (data-model design-agents.md, KD-4), and every role and employee named must exist.
+ * (data-model design-agents.md, KD-4), and every role and employee named must exist. «Все сотрудники» is no
+ * holder: it has no membership rows, so a record shared with it would reach nobody — the audience's own
+ * `everyone` is the way to share with all.
  */
 export function decideSystemAudience(
   input: SystemAudienceInput,
@@ -58,8 +62,9 @@ export function decideSystemAudience(
   const roles = new Set(input.existingRoleIds);
   const users = new Set(input.existingUserIds);
   const missing =
-    input.roleIds.some((roleId) => !roles.has(roleId)) ||
-    input.userIds.some((userId) => !users.has(userId));
+    input.roleIds.some(
+      (roleId) => !roles.has(roleId) || roleId === input.everyoneRoleId,
+    ) || input.userIds.some((userId) => !users.has(userId));
   return missing
     ? { kind: 'refused', reason: 'holder_not_found' }
     : { kind: 'allowed' };

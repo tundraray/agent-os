@@ -1,10 +1,11 @@
 import type {
   AgentStatus,
   ChatStatus,
+  ConversationState,
   TaskStatus,
   WaitReason,
 } from '@agent-os/contracts';
-import { chatStatus } from './chat-status';
+import { chatStatus, conversationState } from './chat-status';
 
 type Row = {
   name: string;
@@ -78,4 +79,73 @@ describe('chat status', () => {
       expect(chatStatus({ root, task, training: false })).toEqual(expected);
     },
   );
+});
+
+type StateRow = {
+  name: string;
+  facts: Partial<Parameters<typeof conversationState>[0]>;
+  expected: ConversationState | null;
+};
+
+const IDLE_READ = {
+  questionOpen: false,
+  rootAnswering: false,
+  agentsWorking: false,
+  lastAnswerSeq: null,
+  lastFailureSeq: null,
+  seenThroughSeq: 0,
+};
+
+// improvements design-server.md, «How the conversation state works», AC-06.1, AC-06.2: a question beats work, work
+// beats the last entry after the seen mark, and a read failure or answer gives no state.
+describe('conversation state', () => {
+  it.each<StateRow>([
+    {
+      name: "a subagent's card while the root works waits for you",
+      facts: { questionOpen: true, rootAnswering: true, agentsWorking: true },
+      expected: 'waiting_for_you',
+    },
+    {
+      name: 'the root answering is working, though an answer is unread',
+      facts: { rootAnswering: true, lastAnswerSeq: 4 },
+      expected: 'working',
+    },
+    {
+      name: 'an agent under an idle root is working',
+      facts: { agentsWorking: true },
+      expected: 'working',
+    },
+    {
+      name: 'an answer after the mark is new',
+      facts: { lastAnswerSeq: 6, seenThroughSeq: 3 },
+      expected: 'new_answer',
+    },
+    {
+      name: 'a failure after the mark is failed',
+      facts: { lastFailureSeq: 5, seenThroughSeq: 3 },
+      expected: 'failed',
+    },
+    {
+      name: 'a failure, then an answer is a new answer',
+      facts: { lastFailureSeq: 4, lastAnswerSeq: 7, seenThroughSeq: 2 },
+      expected: 'new_answer',
+    },
+    {
+      name: 'a read failure gives no state',
+      facts: { lastFailureSeq: 5, lastAnswerSeq: 2, seenThroughSeq: 5 },
+      expected: null,
+    },
+    {
+      name: 'a read answer gives no state',
+      facts: { lastAnswerSeq: 6, seenThroughSeq: 8 },
+      expected: null,
+    },
+    {
+      name: 'a conversation without answers gives no state',
+      facts: {},
+      expected: null,
+    },
+  ])('conversation state: $name', ({ facts, expected }) => {
+    expect(conversationState({ ...IDLE_READ, ...facts })).toBe(expected);
+  });
 });

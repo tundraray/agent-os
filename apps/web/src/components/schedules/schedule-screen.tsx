@@ -40,6 +40,7 @@ import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
 import { schedulesPath, threadPath } from '@/lib/shell-route';
 import { startTimer } from '@/lib/timer';
+import { allowedToolLine, useScheduleTools } from './allowed-tools';
 import { ScheduleDialog } from './schedule-dialog';
 import {
   agentName,
@@ -341,9 +342,13 @@ const titleOf = (schedule: ScheduleView, untitled: string): string => {
   return title === '' ? untitled : title;
 };
 
-/** SH-05 pairs (MC-8): the label over the value below 640 px, at its left from 640 px. */
+/**
+ * SH-05 pairs (MC-8): the label over the value below 640 px, at its left from 640 px. «Без вас» (IM-02) takes the
+ * actions' titles from the owner's tools, read on open; until then, or without a title, a pair reads technically.
+ */
 function Settings({ schedule }: { schedule: ScheduleView }) {
   const t = useTranslations('schedules');
+  const tools = useScheduleTools().data?.tools ?? [];
   const format = useFormatter();
   const tThread = useTranslations('shell.thread');
   const conversation = schedule.conversation;
@@ -413,6 +418,22 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
         </span>
       </Pair>
       <Pair label={t('page.target')}>{target}</Pair>
+      <Pair label={t('page.allowedTools')}>
+        {schedule.allowedTools.length === 0 ? (
+          t('page.readsOnly')
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {schedule.allowedTools.map((pair) => (
+              <li
+                key={`${pair.server}/${pair.tool}`}
+                className="wrap-break-word"
+              >
+                {allowedToolLine(t, pair, tools)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Pair>
       <Pair label={t('page.created')}>{created}</Pair>
     </dl>
   );

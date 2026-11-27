@@ -21,7 +21,16 @@
     "save": "Save",
     "created": "Schedule created. Next trigger — {at}.",
     "open": "Open",
-    "saved": "Schedule saved"
+    "saved": "Schedule saved",
+    "laterTitle": "Send later",
+    "schedule": "Schedule",
+    "allowedTools": {
+      "label": "Without you",
+      "hint": "The agent will do what is ticked on schedule without your confirmation. Any other change it will not make, and it will say so in its reply.",
+      "none": "You have no actions that change data in systems.",
+      "loadFailed": "Could not load the actions",
+      "retry": "Retry"
+    }
   },
   "rule": {
     "label": "When",
@@ -104,6 +113,9 @@
     "when": "When",
     "next": "Next trigger",
     "target": "Reply",
+    "allowedTools": "Without you",
+    "toolLine": "{tool} · {server}",
+    "readsOnly": "Only reads",
     "created": "Created",
     "replyTo": "To the conversation “<link>{title}</link>”",
     "createdIn": "{day} in the conversation “<link>{title}</link>”",

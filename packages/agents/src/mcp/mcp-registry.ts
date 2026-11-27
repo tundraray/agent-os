@@ -7,9 +7,12 @@ import {
   type McpServerStatus,
   type McpServerSummary,
   type McpServerView,
+  type McpToolSetting,
+  type McpToolSettings,
   type McpToolView,
   type RegisterMcpServerBody,
   type UpdateMcpServerBody,
+  type UpdateMcpToolBody,
 } from '@agent-os/contracts';
 import {
   McpServersRepository,
@@ -45,7 +48,13 @@ import {
   mcpFailureReason,
   transportFailureReason,
 } from './mcp-failure';
-import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool';
+import {
+  type ListedMcpTool,
+  type McpTool,
+  newToolsAfterRefresh,
+  storedMcpTools,
+  toMcpTool,
+} from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
 import { shapeBlockOf } from './tool-shape';
 
@@ -74,6 +83,22 @@ export interface McpServerWrite {
 export interface McpToolsRefresh extends McpServerWrite {
   readonly added: readonly string[];
   readonly removed: readonly string[];
+}
+
+/** The server's new marks as an audit entry of their clearing keeps them: the names of the new tools. */
+export interface McpNewToolsAuditState {
+  readonly newTools: readonly string[];
+}
+
+/**
+ * The new marks of a server cleared: the server as the admin now sees it, and «было/стало» for `admin_change`.
+ * `changed` is `false` when the server had no new tool: nothing was written and nothing is audited.
+ */
+export interface McpToolsReview {
+  readonly view: McpServerView;
+  readonly before: McpNewToolsAuditState;
+  readonly after: McpNewToolsAuditState;
+  readonly changed: boolean;
 }
 
 export interface McpServerRemoval {
@@ -183,7 +208,7 @@ function statusOf(
 
 function summaryOf(
   row: McpServerRow,
-  tools = storedMcpTools(row.tools),
+  tools = storedMcpTools(row),
 ): McpServerSummary {
   return {
     name: row.name,
@@ -198,17 +223,27 @@ function toolViewOf(tool: McpTool): McpToolView {
   return {
     name: tool.tool,
     title: tool.display.toolTitle ?? null,
-    description: tool.description,
     readOnly: tool.readOnly,
+    enabled: tool.enabled,
+    isNew: tool.isNew,
+    description: tool.description,
+    serverReadOnly: tool.serverReadOnly,
+    overridden: tool.overridden,
   };
 }
 
-/** The server for the admin: whether a shared token is set, never its value (AC-13.5). */
+/**
+ * The server for the admin: whether a shared token and an OAuth client secret are set, never their values
+ * (AC-13.5, AC-35.5). The row does not tell a client the admin entered from one the platform registered, so the
+ * client id is shown for either.
+ */
 function viewOf(row: McpServerRow): McpServerView {
-  const tools = storedMcpTools(row.tools);
+  const tools = storedMcpTools(row);
   return {
     ...summaryOf(row, tools),
     sharedTokenSet: row.sharedToken !== null,
+    oauthClientId: row.oauthClientId,
+    oauthClientSecretSet: row.oauthClientSecret !== null,
     tools: (tools ?? []).map(toolViewOf),
   };
 }
@@ -222,9 +257,76 @@ function auditStateOf(
     url: row.url,
     mode: row.mode,
     enabled: row.enabled,
-    tools: storedMcpTools(row.tools)?.map((tool) => tool.tool) ?? null,
+    tools: storedMcpTools(row)?.map((tool) => tool.tool) ?? null,
     ...(tokenChanged ? { sharedToken: SECRET_MARK } : {}),
   };
+}
+
+/** A tool as an audit entry of its change keeps it: on or off, the effective class and the server's mark. */
+export interface McpToolAuditState {
+  readonly enabled: boolean;
+  readonly readOnly: boolean;
+  readonly serverReadOnly: boolean | null;
+}
+
+/**
+ * A tool's settings write: the tool as the admin now sees it, and «было/стало» for `admin_change`. `changed` is
+ * `false` when the patch asked for the setting the tool already had: nothing was written and nothing is audited.
+ */
+export interface McpToolWrite {
+  readonly view: McpToolView;
+  readonly before: McpToolAuditState;
+  readonly after: McpToolAuditState;
+  readonly changed: boolean;
+}
+
+function toolAuditStateOf(tool: McpTool): McpToolAuditState {
+  return {
+    enabled: tool.enabled,
+    readOnly: tool.readOnly,
+    serverReadOnly: tool.serverReadOnly,
+  };
+}
+
+/** The tool of the server's list by its name; one the list does not hold is `MCP_TOOL_NOT_FOUND`. */
+function listedTool(row: McpServerRow, tool: string): McpTool {
+  const found = storedMcpTools(row)?.find((listed) => listed.tool === tool);
+  if (found === undefined) {
+    throw new McpError(
+      McpErrorCode.MCP_TOOL_NOT_FOUND,
+      `MCP server ${row.name} does not list tool ${tool}`,
+    );
+  }
+  return found;
+}
+
+/**
+ * The settings with the patch of one tool applied: a field left out keeps its setting, `enabled: true` and
+ * `readOnly: null` remove theirs, and a tool left with no setting leaves the object.
+ */
+function withSetting(
+  settings: McpToolSettings,
+  tool: string,
+  patch: UpdateMcpToolBody,
+): McpToolSettings {
+  const current = settings[tool] ?? {};
+  const disabled =
+    patch.enabled === undefined ? current.enabled === false : !patch.enabled;
+  const readOnly =
+    patch.readOnly === undefined
+      ? current.readOnly
+      : (patch.readOnly ?? undefined);
+  const next: McpToolSetting = {
+    ...(disabled ? { enabled: false } : {}),
+    ...(readOnly === undefined ? {} : { readOnly }),
+  };
+  const { [tool]: _replaced, ...others } = settings;
+  return Object.keys(next).length === 0 ? others : { ...others, [tool]: next };
+}
+
+/** Whether two settings of one tool say the same; a missing one is no setting. */
+function sameSetting(a: McpToolSetting = {}, b: McpToolSetting = {}): boolean {
+  return a.enabled === b.enabled && a.readOnly === b.readOnly;
 }
 
 function difference(
@@ -273,13 +375,17 @@ export class McpRegistry {
 
   /**
    * Registers a checked server (DC-6): `shared` — enabled with the tools its token lists; `oauth` — the
-   * platform's OAuth client registered at the server's authorization server, waiting for the admin's account
-   * (DC-7). A failed check stores nothing.
+   * platform's OAuth client registered at the server's authorization server, or the ready client the admin
+   * entered, waiting for the admin's account (DC-7). A failed check stores nothing.
    */
   register(input: McpServerRegistration): Promise<McpServerWrite> {
     return this.logged(
       'mcp server registration',
-      { server: input.name, mode: input.mode },
+      {
+        server: input.name,
+        mode: input.mode,
+        readyOAuthClient: input.oauthClientId !== undefined,
+      },
       async () => {
         const { name, url, mode } = input;
         if ((await this.mcpServerRows.find(name)) !== undefined)
@@ -303,7 +409,7 @@ export class McpRegistry {
                 name,
                 url,
                 mode,
-                ...(await this.registerOAuthClient(url, input.redirectUrl)),
+                ...(await this.oauthClientOf(input)),
               };
         const inserted = await this.mcpServerRows.insert(row);
         if (inserted === undefined) throw nameTaken(name);
@@ -351,7 +457,8 @@ export class McpRegistry {
   /**
    * Reads the tool list anew with the given credentials (the shared token or the current admin's account,
    * chosen by the caller) and replaces it whole; a failed read keeps the old list. A server that waited for
-   * its list is switched on with it (waiting → enabled).
+   * its list is switched on with it (waiting → enabled). The added names join `new_tools`, which keeps the marks
+   * of earlier refreshes; the first list marks none new (access-levels, «Настройки инструмента»).
    */
   refreshTools(name: string, auth: McpAuth): Promise<McpToolsRefresh> {
     return this.logged(
@@ -360,18 +467,84 @@ export class McpRegistry {
       async () => {
         const row = await this.rowOf(name);
         const tools = await this.listChecked(name, row.url, auth);
+        const before = storedMcpTools(row)?.map((tool) => tool.tool) ?? null;
+        const after = tools.map((tool) => tool.tool);
+        const added = difference(after, before);
         const write = await this.write(
           name,
-          { tools, ...(row.tools === null ? { enabled: true } : {}) },
+          row.tools === null
+            ? { tools, newTools: [], enabled: true }
+            : {
+                tools,
+                newTools: newToolsAfterRefresh(row.newTools, added, after),
+              },
           false,
         );
-        return {
-          ...write,
-          added: difference(write.after.tools, write.before?.tools ?? null),
-          removed: difference(write.before?.tools ?? null, write.after.tools),
-        };
+        return { ...write, added, removed: difference(before, after) };
       },
     );
+  }
+
+  /**
+   * Switches one tool on or off and corrects its class; `readOnly: null` returns the class to the server's mark
+   * (access-levels, «Настройки инструмента»). A tool not in the server's list is `MCP_TOOL_NOT_FOUND`. The
+   * server's row is held from the read of its settings to their write, so two changes of one server made at
+   * once both stay (AC-36.1).
+   */
+  updateTool(
+    name: string,
+    tool: string,
+    patch: UpdateMcpToolBody,
+  ): Promise<McpToolWrite> {
+    const fields = {
+      server: name,
+      tool,
+      enabled: patch.enabled,
+      readOnly: patch.readOnly,
+    };
+    return this.logged('mcp tool update', fields, async () => {
+      const change = await this.db.transaction(async () => {
+        const before = await this.mcpServerRows.findForUpdate(name);
+        if (before === undefined) throw notFound(name);
+        listedTool(before, tool);
+        const toolSettings = withSetting(before.toolSettings, tool, patch);
+        if (sameSetting(before.toolSettings[tool], toolSettings[tool]))
+          return { before, after: before, changed: false };
+        const written = await this.mcpServerRows.update(name, { toolSettings });
+        if (written === undefined) throw notFound(name);
+        return { before, after: written.after, changed: true };
+      });
+      const after = listedTool(change.after, tool);
+      return {
+        view: toolViewOf(after),
+        before: toolAuditStateOf(listedTool(change.before, tool)),
+        after: toolAuditStateOf(after),
+        changed: change.changed,
+      };
+    });
+  }
+
+  /**
+   * «Отметить просмотренными»: clears every new mark of the server in one step, after which the server's own
+   * mark of those tools applies again. The row is held from the read to the write, as in `updateTool`.
+   */
+  markToolsReviewed(name: string): Promise<McpToolsReview> {
+    return this.logged('mcp tools review', { server: name }, async () => {
+      const change = await this.db.transaction(async () => {
+        const before = await this.mcpServerRows.findForUpdate(name);
+        if (before === undefined) throw notFound(name);
+        if (before.newTools.length === 0) return { before, after: before };
+        const written = await this.mcpServerRows.update(name, { newTools: [] });
+        if (written === undefined) throw notFound(name);
+        return { before, after: written.after };
+      });
+      return {
+        view: viewOf(change.after),
+        before: { newTools: change.before.newTools },
+        after: { newTools: change.after.newTools },
+        changed: change.before !== change.after,
+      };
+    });
   }
 
   /**
@@ -434,12 +607,12 @@ export class McpRegistry {
       throw checkFailed('insecure_url');
   }
 
-  /** The server's tools by name as `McpTool`s, or the reason the listing failed. */
+  /** The server's tools by name as listed, or the reason the listing failed. */
   private async listChecked(
     name: string,
     url: string,
     auth: McpAuth,
-  ): Promise<McpTool[]> {
+  ): Promise<ListedMcpTool[]> {
     const { client, callTimeoutMs } = this;
     try {
       const listed = await client.listTools({
@@ -468,7 +641,7 @@ export class McpRegistry {
    * One record per listing about the declared result shapes (tool-output-shapes design-core.md, «Логирование»),
    * measured by the same function the agent's step uses; the shape text and the schema stay out of the log.
    */
-  private logShapes(server: string, tools: readonly McpTool[]): void {
+  private logShapes(server: string, tools: readonly ListedMcpTool[]): void {
     const shapes = tools.flatMap(({ tool, outputSchema }) =>
       outputSchema === undefined
         ? []
@@ -490,25 +663,40 @@ export class McpRegistry {
 
   /**
    * KD-4: the server answers a request without a token with 401; its protected-resource metadata names the
-   * authorization server, whose metadata has a registration endpoint and PKCE `S256`; the platform registers
+   * authorization server, whose metadata has PKCE `S256`. With a ready client of the admin that client is
+   * stored as given; otherwise the metadata must have a registration endpoint, and the platform registers
    * as a public client with one return address, the server's own. OAuth support is decided by the protected-resource metadata,
    * never by a fallback to the server's origin.
    */
-  private async registerOAuthClient(
-    url: string,
-    redirectUrl: string,
-  ): Promise<
+  private async oauthClientOf({
+    url,
+    redirectUrl,
+    oauthClientId,
+    oauthClientSecret,
+  }: McpServerRegistration): Promise<
     Pick<NewMcpServerRow, 'oauthServer' | 'oauthClientId' | 'oauthClientSecret'>
   > {
     const fetchFn = deadlineFetch(this.callTimeoutMs);
     const resourceMetadataUrl = await this.challengeOf(url, fetchFn);
     if (resourceMetadataUrl !== undefined)
       this.requireSecureUrl(resourceMetadataUrl);
-    const metadata = await this.discoverRegistrable(
+    const metadata = await this.discoverOAuthServer(
       url,
       resourceMetadataUrl,
       fetchFn,
     );
+    if (oauthClientId !== undefined) {
+      return {
+        oauthServer: metadata,
+        oauthClientId,
+        oauthClientSecret: oauthClientSecret ?? null,
+      };
+    }
+    if (metadata.registration_endpoint === undefined) {
+      this.logger.warn('mcp server does not register OAuth clients', { url });
+      throw checkFailed('oauth_not_supported');
+    }
+    this.requireSecureUrl(metadata.registration_endpoint);
     try {
       const client = await registerClient(metadata.issuer, {
         metadata,
@@ -559,8 +747,8 @@ export class McpRegistry {
     throw checkFailed(response.ok ? 'oauth_not_supported' : 'not_mcp');
   }
 
-  /** Authorization server metadata that allows registration and PKCE, its addresses passing the address rule. */
-  private async discoverRegistrable(
+  /** Authorization server metadata that allows PKCE, its addresses passing the address rule. */
+  private async discoverOAuthServer(
     url: string,
     resourceMetadataUrl: URL | undefined,
     fetchFn: FetchLike,
@@ -579,13 +767,13 @@ export class McpRegistry {
       (info.resourceMetadata?.authorization_servers?.length ?? 0) > 0;
     if (
       !announced ||
-      metadata?.registration_endpoint === undefined ||
+      metadata === undefined ||
       !(metadata.code_challenge_methods_supported ?? []).includes(PKCE_METHOD)
     ) {
       this.logger.warn('mcp server has no usable OAuth metadata', {
         url,
         resourceMetadata: info.resourceMetadata !== undefined,
-        registrationEndpoint: metadata?.registration_endpoint !== undefined,
+        authorizationServerMetadata: metadata !== undefined,
       });
       throw checkFailed('oauth_not_supported');
     }
@@ -594,7 +782,6 @@ export class McpRegistry {
       metadata.issuer,
       metadata.authorization_endpoint,
       metadata.token_endpoint,
-      metadata.registration_endpoint,
     ]) {
       this.requireSecureUrl(address);
     }

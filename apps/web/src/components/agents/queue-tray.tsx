@@ -10,15 +10,23 @@ import { cn } from '@/lib/utils';
 /** message-queue.md, Variants: three entries are shown, the rest fold into «и ещё {N}». */
 const VISIBLE_ENTRIES = 3;
 
-const prefersReducedMotion = (): boolean =>
+export const prefersReducedMotion = (): boolean =>
   typeof window !== 'undefined' &&
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
-/** «К запросу»: scrolls the feed to the decision card and moves focus onto it (message-queue.md, Focus). */
-function focusDecision(decisionId: string): void {
-  const card = document.querySelector<HTMLElement>(
-    `[data-decision-id="${CSS.escape(decisionId)}"]`,
-  );
+/** A feed card by its anchor: a decision card's `data-decision-id` or a run card's `data-agent-id`. */
+export type FeedCardAnchor = { decisionId: string } | { agentId: string };
+
+/**
+ * «К запросу» and the strip «Агенты беседы»: scrolls the feed to the card and moves focus onto it (message-queue.md,
+ * Focus).
+ */
+export function focusFeedCard(anchor: FeedCardAnchor): void {
+  const selector =
+    'decisionId' in anchor
+      ? `[data-decision-id="${CSS.escape(anchor.decisionId)}"]`
+      : `[data-agent-id="${CSS.escape(anchor.agentId)}"]`;
+  const card = document.querySelector<HTMLElement>(selector);
   if (card === null) return;
   card.scrollIntoView({
     block: 'center',
@@ -116,7 +124,7 @@ export function QueueTray({ tray }: QueueTrayProps) {
                 {' '}
                 <button
                   type="button"
-                  onClick={() => focusDecision(decisionId)}
+                  onClick={() => focusFeedCard({ decisionId })}
                   className="text-primary focus-visible:ring-ring inline-flex items-center gap-0.5 rounded-sm align-baseline outline-none hover:underline focus-visible:ring-2 pointer-coarse:h-11"
                 >
                   {t('toDecision')}

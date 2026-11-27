@@ -3,6 +3,7 @@ import {
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  SchedulesRepository,
   SettingsRepository,
   ToolResultsRepository,
 } from '@agent-os/db';
@@ -51,6 +52,8 @@ export class AgentDeps {
     /** The memory block of every step: the records visible to the run and the size setting (design-memory.md KD-3). */
     @Inject(MemoriesRepository) readonly memoryRows: MemoriesRepository,
     @Inject(SettingsRepository) readonly settingsRows: SettingsRepository,
+    /** The permission of the schedule whose mark the conversation's last message carries (improvements KD-2). */
+    @Inject(SchedulesRepository) readonly scheduleRows: SchedulesRepository,
     /**
      * The tools library: the session's tools for the task's owner and the agent's declaration — for the model call
      * and for the check of its calls; `toolOf` keeps the log rule of a tool the session was not offered.

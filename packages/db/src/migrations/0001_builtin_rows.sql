@@ -1,5 +1,7 @@
 -- Custom SQL migration file, put your code below! --
-INSERT INTO "app"."identity_roles" ("name", "is_admin", "builtin", "train_own", "train_any") VALUES ('Супер-администратор', true, true, true, true);--> statement-breakpoint
+INSERT INTO "app"."identity_roles" ("name", "is_admin", "builtin_kind", "train_own", "train_any") VALUES
+  ('Супер-администратор', true, 'super_admin', true, true),
+  ('Все сотрудники', false, 'everyone', false, false);--> statement-breakpoint
 INSERT INTO "app"."settings" ("key", "value") VALUES
   ('sign_in_settings', '{"publicUrl": null, "idleMinutes": 480, "absoluteMinutes": 1440}'),
   ('library_settings', '{"defaultMaxTurns": 40}'),

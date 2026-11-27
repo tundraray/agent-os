@@ -5,6 +5,7 @@ export {
   type AccessGate,
   type AuditRecord,
   type EmbeddingVerdict,
+  type GateTool,
   ModelNotConfiguredError,
   ModelRefusedError,
   type ModelVerdict,
@@ -43,6 +44,7 @@ export type {
 } from './mcp/mcp-accounts';
 export { McpError, type McpRefusalCode } from './mcp/mcp-errors';
 export type {
+  McpNewToolsAuditState,
   McpServerAuditState,
   McpServerRegistration,
   McpServerRemoval,

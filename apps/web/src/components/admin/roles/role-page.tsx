@@ -1,6 +1,7 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { UsersIcon } from 'lucide-react';
@@ -13,36 +14,58 @@ import {
 import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { builtinRoleName } from '@/i18n/builtin-name';
-import { adminPath, adminRecordPath } from '@/lib/shell-route';
+import {
+  adminPath,
+  adminRecordPath,
+  adminRecordTabPath,
+  type AdminRecordTab,
+} from '@/lib/shell-route';
+import { CAPTION, RECORD_TABS } from '../admin-form';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { ActionsMenu, DataTable, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
+import { ChangedDot } from '../levels/level-select';
 import { SavingSwitch } from '../saving-switch';
 import { RoleNameDialog } from './role-name-dialog';
+import { RoleToolsTab, useRoleLevels } from './role-tools-tab';
 
 const ADMIN_RIGHT_LOG_EVENT = 'admin: role admin right';
+
+/** «Инструменты» lives at the role's own address; the others after it (access-levels C3 web «Адреса»). */
+type RoleTab = 'tools' | AdminRecordTab<'roles'>;
+const ROLE_TABS: readonly RoleTab[] = ['tools', 'models', 'rights', 'members'];
+
+const tabHref = (id: string, tab: RoleTab): string =>
+  tab === 'tools'
+    ? adminRecordPath('roles', id)
+    : adminRecordTabPath('roles', id, tab);
 
 /** Error handling: like a role that is gone (404), a built-in one (409) is read again; the page shows what the server holds. */
 const isBuiltinRefusal = (error: unknown): boolean =>
   isApiRequestError(error) && error.code === IdentityErrorCode.BUILTIN_ROLE;
 
 /**
- * UXRD AD-06: a role's page — the admin right, the rights, the members (read only), rename and delete. The
- * built-in role (DC-5) has no «⋯» menu and its admin right is on and unavailable.
+ * UXRD AD-06: a role's page — the header with its «⋯» menu and the tabs «Инструменты», «Модели», «Права»,
+ * «Участники». The levels draft lives here, not in its tab, so switching tabs keeps unsaved changes (KD-11).
+ * «Супер-администратор» has no menu; «Все сотрудники» has only «Создать копию» (AC-38.2).
  */
-export function RolePage({ id }: { id: string }) {
+export function RolePage({ id, tab = 'tools' }: { id: string; tab?: RoleTab }) {
   const titles = useAdminTitles();
   const t = useTranslations('admin.roles');
+  const tLevels = useTranslations('admin.levels');
   const locale = useLocale();
   const router = useRouter();
   const role = useResource(() => adminApi.roles.get(id), `role:${id}`);
+  const levels = useRoleLevels(id);
   const [renaming, setRenaming] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [grantingAdmin, setGrantingAdmin] = useState(false);
 
@@ -74,6 +97,20 @@ export function RolePage({ id }: { id: string }) {
     router.push(adminPath('roles'));
   };
 
+  const kind = data.builtinKind;
+  const copyAction = { label: t('copy'), onSelect: () => setCopying(true) };
+  const actions =
+    kind === 'super_admin'
+      ? []
+      : kind === 'everyone'
+        ? [copyAction]
+        : [
+            { label: t('rename'), onSelect: () => setRenaming(true) },
+            copyAction,
+            { label: t('remove'), onSelect: () => setDeleting(true) },
+          ];
+  const toolsChanged = levels.draft.changedCount > 0;
+
   return (
     <>
       <PageHeader
@@ -81,52 +118,64 @@ export function RolePage({ id }: { id: string }) {
         parent={titles.parent('roles')}
         title={name}
         badge={
-          data.builtin ? (
+          kind !== null ? (
             <StateBadge variant="source">{t('builtin')}</StateBadge>
           ) : undefined
         }
       >
-        {data.builtin ? undefined : (
-          <ActionsMenu
-            name={name}
-            actions={[
-              { label: t('rename'), onSelect: () => setRenaming(true) },
-              { label: t('remove'), onSelect: () => setDeleting(true) },
-            ]}
-          />
-        )}
+        {actions.length > 0 && <ActionsMenu name={name} actions={actions} />}
       </PageHeader>
-      <div className="flex max-w-3xl flex-col gap-6">
-        {/* DC-5: the built-in role keeps the admin right — its switch is on and unavailable. */}
-        <SavingSwitch
-          label={t('adminRight')}
-          checked={data.builtin || data.isAdmin}
-          disabled={data.builtin}
-          onSave={(isAdmin) => save({ isAdmin })}
-          logEvent={ADMIN_RIGHT_LOG_EVENT}
-          confirmOn={() => setGrantingAdmin(true)}
+      <Tabs value={tab} className="gap-4">
+        <TabsList variant="line" className={RECORD_TABS.list}>
+          {ROLE_TABS.map((value) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              nativeButton={false}
+              className={RECORD_TABS.tab}
+              // Same page: a plain link, so the leave guard does not ask (access-level-editor, «Уход с изменениями»).
+              render={<Link href={tabHref(id, value)} />}
+            >
+              {t(`tabs.${value}`)}
+              {value === 'tools' && toolsChanged && (
+                <>
+                  <ChangedDot />
+                  <span className="sr-only"> {tLevels('tabChanged')}</span>
+                </>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={tab}>
+          {tab === 'tools' && (
+            <RoleToolsTab roleName={name} builtinKind={kind} levels={levels} />
+          )}
+          {tab === 'models' && <GrantsSection holder={{ kind: 'role', id }} />}
+          {tab === 'rights' && (
+            <RightsTab
+              role={data}
+              onSave={save}
+              confirmAdmin={setGrantingAdmin}
+            />
+          )}
+          {tab === 'members' &&
+            (kind === 'everyone' ? (
+              <p className="text-data text-muted-foreground">
+                {t('everyoneMembers')}
+              </p>
+            ) : (
+              <MembersTab members={data.members} />
+            ))}
+        </TabsContent>
+      </Tabs>
+      {kind !== 'super_admin' && (
+        <RoleNameDialog
+          open={copying}
+          onOpenChange={setCopying}
+          copyOf={{ id, name: data.name }}
         />
-        {/* RT-01: the training rights save at once; the built-in role has both, on and unavailable. */}
-        <SavingSwitch
-          label={t('trainOwn.label')}
-          hint={data.builtin ? t('alwaysOn') : t('trainOwn.hint')}
-          checked={data.builtin || data.trainOwn}
-          disabled={data.builtin}
-          onSave={(trainOwn) => save({ trainOwn })}
-          logEvent="admin: role train own"
-        />
-        <SavingSwitch
-          label={t('trainAny.label')}
-          hint={data.builtin ? t('alwaysOn') : t('trainAny.hint')}
-          checked={data.builtin || data.trainAny}
-          disabled={data.builtin}
-          onSave={(trainAny) => save({ trainAny })}
-          logEvent="admin: role train any"
-        />
-        <GrantsSection holder={{ kind: 'role', id }} />
-        <MembersSection members={data.members} />
-      </div>
-      {!data.builtin && (
+      )}
+      {kind === null && (
         <>
           <RoleNameDialog
             open={renaming}
@@ -159,10 +208,61 @@ export function RolePage({ id }: { id: string }) {
   );
 }
 
-/** UXRD AD-06 «Сотрудники»: read only, each name links to the employee's page (KD-7). */
-function MembersSection({ members }: { members: RoleDetail['members'] }) {
+/**
+ * AD-06 «Права»: the admin right and the training rights. «Супер-администратор» has them all, on and unavailable;
+ * «Все сотрудники» has none and never can (FR-38).
+ */
+function RightsTab({
+  role,
+  onSave,
+  confirmAdmin,
+}: {
+  role: RoleDetail;
+  onSave: (body: UpdateRoleBody) => Promise<void>;
+  confirmAdmin: (open: boolean) => void;
+}) {
+  const t = useTranslations('admin.roles');
+  const builtin = role.builtinKind !== null;
+  const superAdmin = role.builtinKind === 'super_admin';
+  return (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <SavingSwitch
+        label={t('adminRight')}
+        checked={superAdmin || role.isAdmin}
+        disabled={builtin}
+        onSave={(isAdmin) => onSave({ isAdmin })}
+        logEvent={ADMIN_RIGHT_LOG_EVENT}
+        confirmOn={() => confirmAdmin(true)}
+      />
+      {/* RT-01: the training rights save at once. */}
+      <SavingSwitch
+        label={t('trainOwn.label')}
+        hint={superAdmin ? t('alwaysOn') : t('trainOwn.hint')}
+        checked={superAdmin || role.trainOwn}
+        disabled={builtin}
+        onSave={(trainOwn) => onSave({ trainOwn })}
+        logEvent="admin: role train own"
+      />
+      <SavingSwitch
+        label={t('trainAny.label')}
+        hint={superAdmin ? t('alwaysOn') : t('trainAny.hint')}
+        checked={superAdmin || role.trainAny}
+        disabled={builtin}
+        onSave={(trainAny) => onSave({ trainAny })}
+        logEvent="admin: role train any"
+      />
+      {role.builtinKind === 'everyone' && (
+        <p className={`${CAPTION} text-muted-foreground`}>
+          {t('everyoneRights')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** AD-06 «Участники»: read only, each name links to the employee's page (KD-7). */
+function MembersTab({ members }: { members: RoleDetail['members'] }) {
   const t = useTranslations('admin');
-  const headingId = useId();
   const rows: DataTableRow[] = members.map((member) => ({
     key: member.id,
     name: member.name,
@@ -175,19 +275,14 @@ function MembersSection({ members }: { members: RoleDetail['members'] }) {
   }));
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {t('roles.members')}
-      </h2>
-      <DataTable
-        caption={t('roles.members')}
-        columns={[{ header: t('users.employee') }]}
-        state={{
-          status: 'ready',
-          rows,
-          empty: { Icon: UsersIcon, title: t('roles.noMembers') },
-        }}
-      />
-    </section>
+    <DataTable
+      caption={t('roles.tabs.members')}
+      columns={[{ header: t('users.employee') }]}
+      state={{
+        status: 'ready',
+        rows,
+        empty: { Icon: UsersIcon, title: t('roles.noMembers') },
+      }}
+    />
   );
 }

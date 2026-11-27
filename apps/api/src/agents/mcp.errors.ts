@@ -8,6 +8,7 @@ const STATUS_OF: Record<McpRefusalCode, number> = {
   MCP_SERVER_CHECK_FAILED: 422,
   MCP_SERVER_INCOMPLETE: 409,
   MCP_ACCOUNT_REQUIRED: 409,
+  MCP_TOOL_NOT_FOUND: 404,
   // A shared token sent for an `oauth` server: a body the schema alone cannot refuse.
   VALIDATION_FAILED: 400,
 };

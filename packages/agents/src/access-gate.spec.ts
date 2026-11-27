@@ -11,6 +11,7 @@ import {
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  SchedulesRepository,
   SettingsRepository,
   ToolResultsRepository,
   type Database,
@@ -211,12 +212,17 @@ function refusedAgent(refusal: Refusal) {
     sessionRows,
     history,
     messageRows,
-    callRecords: new CallRecords(history, new CodeCallsRepository(db)),
+    callRecords: new CallRecords(
+      history,
+      new CodeCallsRepository(db),
+      sessionRows,
+    ),
     toolResultRows: new ToolResultsRepository(db),
     sessionTaskRows: new ConversationTasksRepository(db),
     // The chat has no memory: its block reads neither.
     memoryRows: new MemoriesRepository(db),
     settingsRows: new SettingsRepository(db),
+    scheduleRows: new SchedulesRepository(db),
   };
   const registry = new ToolRegistry(
     new McpServersRepository(db),

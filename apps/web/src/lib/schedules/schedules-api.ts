@@ -3,8 +3,10 @@ import {
   ScheduleNextRunResponseSchema,
   ScheduleRunsPageSchema,
   ScheduleRunViewSchema,
+  ScheduleToolsResponseSchema,
   ScheduleViewSchema,
   type ScheduleBody,
+  type ScheduleToolsResponse,
   type ScheduleListResponse,
   type ScheduleNextRunRequest,
   type ScheduleNextRunResponse,
@@ -41,6 +43,12 @@ export const schedulesApi = {
       method: 'POST',
       body,
       schema: ScheduleNextRunResponseSchema,
+    }),
+  /** The changing MCP tools the owner has the right to: the choices of «Без вас», by server, then by tool. */
+  tools: (): Promise<ScheduleToolsResponse> =>
+    apiRequest({
+      path: '/api/schedules/tools',
+      schema: ScheduleToolsResponseSchema,
     }),
   get: (id: string): Promise<ScheduleView> =>
     apiRequest({ path: scheduleRoute(id), schema: ScheduleViewSchema }),

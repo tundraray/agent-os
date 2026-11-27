@@ -36,6 +36,7 @@ export type ScheduleChange = Partial<
     | 'pausedBecause'
     | 'nextRunAt'
     | 'ruleSetAt'
+    | 'allowedTools'
   >
 >;
 

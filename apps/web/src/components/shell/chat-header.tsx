@@ -75,6 +75,7 @@ export type ChatHeaderViewProps = {
 };
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
+const ASIDE_CHAT_SELECTOR = '[data-slot="aside-chat"]';
 
 const iconButton = cn(pressable, 'shrink-0 [&_svg]:size-4.5');
 
@@ -429,12 +430,14 @@ function useThreadScrolled(): boolean {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    // Scroll events do not bubble: listen in the capture phase and keep only the feed's viewport.
+    // Scroll events do not bubble: listen in the capture phase and keep only the main feed's viewport — the side
+    // chat's feed has its own (improvements design-web.md, C3).
     const onScroll = (event: Event) => {
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        target.matches(THREAD_VIEWPORT_SELECTOR)
+        target.matches(THREAD_VIEWPORT_SELECTOR) &&
+        target.closest(ASIDE_CHAT_SELECTOR) === null
       ) {
         setScrolled(target.scrollTop > 0);
       }

@@ -36,6 +36,7 @@ import {
   type StartRefusal,
 } from '../start/resolve-start';
 import { History } from '../store/history';
+import { ToolRegistry } from '../tools/tool-registry';
 import { POOL_TASKS, TEST_RUN_POOL_TASKS } from '../training/pool';
 import { pastTaskIds } from '../training/training-reads';
 import {
@@ -139,6 +140,8 @@ export class TrainingOperations {
     @Inject(ToolResultsRepository) toolResultRows: ToolResultsRepository,
     @Inject(RECORD_LIBRARY) private readonly library: RecordLibrary,
     @Inject(ACCESS_GATE) private readonly access: AccessGate,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, 'declaredMcpTools'>,
     @Inject(AgentsProviders)
     private readonly providers: Pick<AgentsProviders, 'connection'>,
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
@@ -170,7 +173,11 @@ export class TrainingOperations {
       async (): Promise<TrainingStart> => {
         const compared = (
           await pastTaskIds(
-            { conversationRows: this.conversationRows, access: this.access },
+            {
+              conversationRows: this.conversationRows,
+              access: this.access,
+              registry: this.registry,
+            },
             ownerId,
             agentId,
           )

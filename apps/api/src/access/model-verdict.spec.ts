@@ -1,6 +1,7 @@
 import type { ModelVerdict } from '@agent-os/agents';
 import type { CatalogModel } from '@agent-os/contracts';
-import { effectiveAccess, type GrantRow } from './effective-access';
+import { effectiveAccess } from './effective-access';
+import type { GrantRow } from './grant-rows';
 import { modelVerdict } from './model-verdict';
 
 const A = 'anthropic/a';
@@ -37,8 +38,10 @@ const EMBEDDING: CatalogModel = {
   inputUsdPerMTok: 0.15,
   dimensions: 768,
 };
+const ROLE = { kind: 'role', id: 'r1' } as const;
 const allowEmbedding: GrantRow = {
   id: 'g5',
+  holder: ROLE,
   effect: 'allow',
   target: { kind: 'model', model: EMBEDDING.id },
   quotaUsd: null,
@@ -47,24 +50,28 @@ const ALLOWED: ModelVerdict = { kind: 'allowed', price: PRICES };
 
 const allowA20: GrantRow = {
   id: 'g1',
+  holder: ROLE,
   effect: 'allow',
   target: { kind: 'model', model: A },
   quotaUsd: 20,
 };
 const allowANoQuota: GrantRow = {
   id: 'g2',
+  holder: ROLE,
   effect: 'allow',
   target: { kind: 'model', model: A },
   quotaUsd: null,
 };
 const allowB: GrantRow = {
   id: 'g3',
+  holder: ROLE,
   effect: 'allow',
   target: { kind: 'model', model: B },
   quotaUsd: null,
 };
 const allowServer: GrantRow = {
   id: 'g4',
+  holder: ROLE,
   effect: 'allow',
   target: { kind: 'server', server: 's' },
   quotaUsd: null,

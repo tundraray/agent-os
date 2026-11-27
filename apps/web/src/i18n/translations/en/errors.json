@@ -91,6 +91,7 @@
   },
   "refusal": {
     "no_access": "No access to the tool",
+    "unattended": "The schedule isn't allowed to do this — there was no one to approve it",
     "model_not_allowed": "Model not allowed",
     "model_not_connected": "Model not connected",
     "tool_not_in_definition": "The tool isn't in the agent's set",
@@ -112,7 +113,8 @@
     "repeated_call": "The same call was repeated",
     "looks_like_secret": "Looks like a secret — not saved",
     "looks_like_instruction": "Looks like an injected instruction — not saved",
-    "memory_changed": "The record was already changed — the agent got its new text"
+    "memory_changed": "The record was already changed — the agent got its new text",
+    "tool_disabled": "The tool is switched off by the administrator"
   },
   "refusalWithModel": {
     "model_not_allowed": "Model not allowed: {model}",
@@ -198,7 +200,7 @@
       "MODEL_ID_TAKEN": "A model with this ID is already in the catalog",
       "MODEL_PROVIDER_NAME_TAKEN": "A provider with this name already exists",
       "MODEL_PROVIDER_HAS_MODELS": "Couldn't delete: the provider has models in the catalog. Remove them first.",
-      "GRANT_TARGET_UNKNOWN": "This server, tool or model no longer exists. Close the window and choose the target again.",
+      "GRANT_TARGET_UNKNOWN": "This model no longer exists. Close the window and choose the model again.",
       "PROVIDER_INCOMPLETE": "Can't turn on: fill in the provider settings first.",
       "MCP_SERVER_INCOMPLETE": "Can't turn on: connect your account and get the tool list first.",
       "PUBLIC_URL_REQUIRED": "Save the Agent OS public address in the sign-in settings first."
@@ -223,7 +225,7 @@
       "timeout": "the server didn't respond in time, try again",
       "not_mcp": "there's no MCP server at this address",
       "unauthorized": "the server didn't accept the access token",
-      "oauth_not_supported": "the server doesn't support personal OAuth. Choose a shared account",
+      "oauth_not_supported": "the server doesn't support personal OAuth or doesn't let clients register themselves. Enter the Client ID and Client Secret of an app created on the server's side, or choose a shared account",
       "registration_rejected": "the authorization server refused to register Agent OS as a client",
       "insecure_url": "the address of the server or of its authorization server isn't https"
     },
@@ -236,8 +238,6 @@
       "nameRequired": "Enter a name",
       "emailRequired": "Enter an email",
       "passwordLength": "Password — 12 to 256 characters",
-      "serverRequired": "Choose a server",
-      "toolRequired": "Choose a tool",
       "modelRequired": "Choose a model",
       "quotaRange": "Quota — $0.01 to $1,000,000, at most two decimal places",
       "roleNameRequired": "Enter a name",
@@ -245,6 +245,7 @@
       "serverNameRule": "Name — 1 to 32 characters: lowercase Latin letters, digits and hyphens, e.g. sentry-prod",
       "serverUrl": "Enter an address that starts with https://",
       "sharedToken": "Enter a token — up to 4096 characters",
+      "oauthClientId": "Enter the Client ID: a Client Secret doesn't work without it",
       "modelNameLength": "Name — 1 to 80 characters",
       "thresholdRule": "Threshold — a whole number greater than zero",
       "priceRule": "Enter a price — a number from 0",

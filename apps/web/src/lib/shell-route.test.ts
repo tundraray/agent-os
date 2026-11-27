@@ -5,6 +5,7 @@ import {
   adminNewPath,
   adminPath,
   adminRecordPath,
+  adminRecordTabPath,
   agentPath,
   memoryPath,
   parseShellRoute,
@@ -203,12 +204,46 @@ describe('lib/shell-route', () => {
         page: { kind: 'record', key: 'my srv/1' },
       },
     },
+    {
+      pathname: '/admin/roles/r1/models',
+      expected: {
+        kind: 'admin',
+        section: 'roles',
+        page: { kind: 'record', key: 'r1', tab: 'models' },
+      },
+    },
+    {
+      pathname: '/admin/users/u1/roles',
+      expected: {
+        kind: 'admin',
+        section: 'users',
+        page: { kind: 'record', key: 'u1', tab: 'roles' },
+      },
+    },
+    {
+      pathname: '/admin/servers/my%20srv%2F1/access',
+      expected: {
+        kind: 'admin',
+        section: 'servers',
+        page: { kind: 'record', key: 'my srv/1', tab: 'access' },
+      },
+    },
+    {
+      pathname: '/admin/servers/access',
+      expected: {
+        kind: 'admin',
+        section: 'servers',
+        page: { kind: 'record', key: 'access' },
+      },
+    },
+    { pathname: '/admin/roles/r1/roles', expected: usersList },
+    { pathname: '/admin/sign-in/p1/models', expected: usersList },
     { pathname: '/admin/models/x', expected: usersList },
     { pathname: '/admin/users/a/b', expected: usersList },
     { pathname: '/admin/unknown', expected: usersList },
     { pathname: '/administrator', expected: { kind: 'chat' } },
   ])(
-    'panel addresses: a record and a new-record address open their section and page, /admin/servers/new is the server named new while /admin/register-server is the form, /admin and unknown addresses under it open «Сотрудники», keys are percent-decoded: $pathname',
+    'panel addresses: a record, its tab and a new-record address open their section and page, a tab of another section is unknown, /admin/servers/new is the server named new while /admin/register-server is the form, /admin and unknown addresses under it open «Сотрудники», keys are percent-decoded: $pathname',
     ({ pathname, expected }) => {
       expect(parseShellRoute(pathname)).toEqual(expected);
     },
@@ -226,6 +261,9 @@ describe('lib/shell-route', () => {
     });
     expect(adminNewPath('sign-in')).toBe('/admin/sign-in/new');
     expect(adminNewPath('servers')).toBe('/admin/register-server');
+    expect(adminRecordTabPath('servers', 'a/b', 'access')).toBe(
+      '/admin/servers/a%2Fb/access',
+    );
   });
 
   // KD-1, DC-6: the panel's «Агенты и глубокие агенты» keeps its tab and its new agent in the path, so a reload and

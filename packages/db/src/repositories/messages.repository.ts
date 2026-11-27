@@ -169,6 +169,25 @@ export class MessagesRepository {
       .orderBy(asc(messages.seq));
   }
 
+  /**
+   * The session's last message — its last `task` or `user_message` entry by `seq` — read from the table, whatever
+   * was compacted since; `undefined` for a session without one.
+   */
+  async lastMessage(taskId: string): Promise<MessageRow | undefined> {
+    const [row] = await this.db.client
+      .select(ENTRY_COLUMNS)
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, taskId),
+          inArray(messages.kind, ['task', 'user_message']),
+        ),
+      )
+      .orderBy(desc(messages.seq))
+      .limit(1);
+    return row;
+  }
+
   /** The records of the given calls, in order: only call records carry a `call_id`. */
   async callRecords(
     taskId: string,

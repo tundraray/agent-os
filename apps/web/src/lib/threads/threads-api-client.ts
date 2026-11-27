@@ -31,8 +31,10 @@ import {
   type DecisionResponse,
   type DeepAgentRunView,
   type Document,
+  type ForkRequest,
   type InheritedHistory,
   type InterruptResponse,
+  type MarkSeenRequest,
   type RenameThreadRequest,
   type RestartResponse,
   type SendMessageRequest,
@@ -107,12 +109,29 @@ async function deleteThread(threadId: string): Promise<void> {
   await apiRequest({ path: threadRoute(threadId), method: 'DELETE' });
 }
 
-/** 201: the fork; 409 `FORK_REFUSED` carries its `reason`. */
-async function forkThread(threadId: string): Promise<ThreadSummary> {
+/**
+ * 201: the fork; 409 `FORK_REFUSED` carries its `reason`. Without `body` the whole conversation is forked; `throughSeq`
+ * forks it through that message, `edit` replaces an employee's message (improvements design-web.md, KD-2).
+ */
+async function forkThread(
+  threadId: string,
+  body?: ForkRequest,
+): Promise<ThreadSummary> {
   return apiRequest({
     path: `${threadRoute(threadId)}/fork`,
     method: 'POST',
+    body,
     schema: ThreadSummarySchema,
+  });
+}
+
+/** 204: the conversation's «seen through» mark rose to `throughSeq` (improvements KD-4); it never goes down. */
+async function markSeen(threadId: string, throughSeq: number): Promise<void> {
+  const body: MarkSeenRequest = { throughSeq };
+  await apiRequest({
+    path: `${threadRoute(threadId)}/seen`,
+    method: 'PUT',
+    body,
   });
 }
 
@@ -304,6 +323,7 @@ export const threadsApiClient = {
   renameThread,
   deleteThread,
   forkThread,
+  markSeen,
   getThreadForks,
   getConversation,
   getThreadAgents,

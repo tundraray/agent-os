@@ -8,21 +8,26 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
 } from '@nestjs/common';
 import { LOGGER, type Logger } from '@agent-os/common';
 import { loggedRoute } from '../common/logged-route';
 import {
+  ForkRequestSchema,
   HistoryQuerySchema,
+  MarkSeenRequestSchema,
   RenameThreadRequestSchema,
   SendMessageRequestSchema,
   ThreadListQuerySchema,
   type AgentNode,
   type ConversationView,
   type Document,
+  type ForkRequest,
   type HistoryQuery,
   type InterruptResponse,
+  type MarkSeenRequest,
   type RenameThreadRequest,
   type SendMessageRequest,
   type SendMessageResponse,
@@ -185,18 +190,40 @@ export class ThreadsController {
     });
   }
 
-  /** The request body is not read. */
+  /** Raises the «seen through» mark of the conversation (improvements design-server.md, Flow 4). */
+  @Put(':threadId/seen')
+  @HttpCode(204)
+  markSeen(
+    @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(MarkSeenRequestSchema)) body: MarkSeenRequest,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'PUT /threads/:threadId/seen',
+      fields: { ownerId, threadId, throughSeq: body.throughSeq },
+      work: () =>
+        this.conversations.markSeen(threadId, ownerId, body.throughSeq),
+    });
+  }
+
   @Post(':threadId/fork')
   @HttpCode(201)
   fork(
     @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(ForkRequestSchema)) body: ForkRequest,
     @Req() req: AuthedRequest,
   ): Promise<ThreadSummary> {
     const ownerId = req.user.id;
+    const recordId = body.edit?.recordId;
     return this.run({
       route: 'POST /threads/:threadId/fork',
-      fields: { ownerId, threadId },
-      work: () => this.conversations.fork(threadId, ownerId),
+      fields: {
+        ownerId,
+        threadId,
+        ...(recordId === undefined ? {} : { recordId }),
+      },
+      work: () => this.conversations.fork(threadId, ownerId, body),
       outcomeOf: (thread) => ({ forkId: thread.id }),
     });
   }

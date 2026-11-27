@@ -19,6 +19,10 @@ function mcpTool(server: string, tool: string, readOnly: boolean): SessionTool {
       description: tool,
       inputSchema: { type: 'object' },
       readOnly,
+      serverReadOnly: readOnly,
+      overridden: false,
+      enabled: true,
+      isNew: false,
       display: {},
     },
   };

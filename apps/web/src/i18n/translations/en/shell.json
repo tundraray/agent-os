@@ -56,7 +56,19 @@
     "deleted": "Chat deleted",
     "deleteFailed": "Couldn't delete the chat. Try again.",
     "fork": "Fork chat",
-    "forkMark": ", fork"
+    "forkMark": ", fork",
+    "state": {
+      "working": "Working",
+      "waiting_for_you": "Waiting for you",
+      "new_answer": "New answer",
+      "failed": "Failed"
+    },
+    "stateMark": {
+      "working": ", working",
+      "waiting_for_you": ", waiting for you",
+      "new_answer": ", new answer",
+      "failed": ", failed"
+    }
   },
   "deleteDialog": {
     "title": "Delete chat?",
@@ -117,14 +129,19 @@
     "loadError": "Couldn't load the diagram",
     "retry": "Try again",
     "runTitle": "Progress and outcome",
-    "runClose": "Close progress and outcome"
+    "runClose": "Close progress and outcome",
+    "asideTab": "Aside",
+    "asideClose": "Close side chat",
+    "asideResize": "Resize side chat"
   },
   "leaveGuard": {
     "title": "Leave without saving?",
     "body": "Changes to “{name}” aren't saved and will be lost.",
     "bodyNew": "Changes aren't saved and will be lost.",
     "stay": "Stay",
-    "leave": "Leave without saving"
+    "leave": "Leave without saving",
+    "bodyAccess": "Unsaved access changes will be lost: {count}.",
+    "leaveAccess": "Leave"
   },
   "notice": {
     "notFound": {

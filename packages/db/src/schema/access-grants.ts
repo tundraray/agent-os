@@ -8,7 +8,7 @@ import { models } from './models';
 import { identityRoles } from './identity-roles';
 import { identityUsers } from './identity-users';
 
-/** A grant of a role or an employee on a server, a tool or a model; one per holder, effect, target. */
+/** A grant of a role or an employee on a server, its read tools, a tool or a model; one per holder, effect, target. */
 export const accessGrants = app.table(
   'access_grants',
   {
@@ -56,7 +56,8 @@ export const accessGrants = app.table(
     ),
     check(
       'access_grants_target_check',
-      sql`(${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server)}
+      sql`((${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server)}
+            or ${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server_read)})
           and ${t.server} is not null and ${t.tool} is null and ${t.model} is null)
         or (${t.targetKind} = ${literal(GrantTargetKindSchema.enum.tool)}
           and ${t.server} is not null and ${t.tool} is not null and ${t.model} is null)

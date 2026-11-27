@@ -1,9 +1,11 @@
 // schedules-search-memory / schedules - API integration (real AppModule + real Postgres, two employees, scripted model)
-// Design Doc: docs/features/schedules-search-memory/design-schedules.md, Test Strategy UC-1 .. UC-6.
+// Design Doc: docs/features/schedules-search-memory/design-schedules.md, Test Strategy UC-1 .. UC-6; and
+//   docs/features/improvements/design-server.md, Test Strategy UC-3 .. UC-8 (what a schedule's run writes without a person; UC-7
+//   rewrites UC-2 here, where a run's changing call used to wait for a card).
 // PRD: docs/features/schedules-search-memory/prd.md. UXRD: docs/features/schedules-search-memory/uxrd.md.
 //
 // Harness: `createTestApp({ workers: true, mcpServers: ['backoffice'], clock })`: the scripted model double of `@agent-os/agents/testing`
-//   behind the model, the MCP fixture for the changing call of UC-2. Time is the replaced runtime `CLOCK`, a clock the test sets; it only
+//   behind the model, the MCP fixture for the changing calls (`create_incident_note`). Time is the replaced runtime `CLOCK`, a clock the test sets; it only
 //   moves forward, each case in its own month. The test calls the pass directly (`ScheduleTriggersService.pass`); with workers on the
 //   background pass also runs on its own timer, so the cases wait for rows and check the result, not which pass claimed a term. A restart
 //   is `close()` and a new `createTestApp()` over the same clock and model. Blocking an employee ends their sessions, so their rows are read
@@ -25,8 +27,10 @@ import {
   ScheduleRunViewSchema,
   type ScheduleRunsPage,
   ScheduleRunsPageSchema,
+  ScheduleToolsResponseSchema,
   ScheduleViewSchema,
   TestRunStartedSchema,
+  type ToolPair,
 } from '@agent-os/contracts';
 import { waitFor } from '@agent-os/db/testing';
 import { fixtureCallsOf } from '@agent-os/mcp-fixture';
@@ -35,6 +39,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ScheduleTriggersService } from '../src/schedules/schedule-triggers.service';
 import {
   allowRole,
+  auditOf,
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
@@ -50,6 +55,7 @@ import {
 } from './support/createTestApp';
 import {
   agentBody,
+  BUILTIN,
   createRecord,
   createSystemRecord,
   pointBuiltinsAt,
@@ -69,8 +75,31 @@ const MODEL = runModel('haiku-schedules');
 const GENERATED_TITLE = 'Conversation title';
 const HOUR_MS = 3_600_000;
 const CREATE_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
+/** The pair of the changing tool, as a schedule's permission holds it. */
+const NOTE_PAIR: ToolPair = {
+  server: BACKOFFICE_SERVER,
+  tool: 'create_incident_note',
+};
+const START_DEEP_AGENT = 'start_deep_agent';
+/** The built-in research deep agent the briefs of improvements UC-5 name. */
+const DEEP_RESEARCH = BUILTIN.deepResearch;
 
-/** A clock whose `now` the test sets; timers and randomness are the system's. */
+/** `start_deep_agent` arguments for the research deep agent. */
+function briefArgs(question: string) {
+  return {
+    deepAgent: DEEP_RESEARCH.name,
+    question,
+    boundaries: '',
+    result: '',
+  };
+}
+
+/** The deep agent's task: the brief as `start_deep_agent` writes it. */
+function briefTask(question: string): string {
+  return JSON.stringify({ question, boundaries: '', result: '' });
+}
+
+/** A clock whose `now` the test sets; timers are the system's. */
 interface SettableClock extends Clock {
   set(now: Date): void;
 }
@@ -79,7 +108,6 @@ function settableClock(start: Date): SettableClock {
   let current = start;
   return {
     now: () => current,
-    random: () => systemClock.random(),
     setTimer: (ms, callback) => systemClock.setTimer(ms, callback),
     set: (now) => {
       current = now;
@@ -143,6 +171,7 @@ function body(
     target: 'new_conversation',
     conversationId: null,
     language: 'en',
+    allowedTools: [],
     ...fields,
   };
 }
@@ -189,6 +218,12 @@ function schedulesOf(api: ChatApi) {
         api.raw('get', `/schedules/${id}/runs`),
         200,
         ScheduleRunsPageSchema,
+      ),
+    tools: () =>
+      expectBody(
+        api.raw('get', '/schedules/tools'),
+        200,
+        ScheduleToolsResponseSchema,
       ),
   };
 }
@@ -268,6 +303,61 @@ async function conversation(api: ChatApi, text: string, answer: string) {
     'the generated title',
   );
   return id;
+}
+
+/** The calls a conversation's root made, as `[tool, outcome, refusal reason]` in order. */
+function toolResults(view: ConversationView): [string, string, unknown][] {
+  return view.entries.flatMap((entry): [string, string, unknown][] =>
+    entry.kind === 'tool_result'
+      ? [
+          [
+            entry.content.tool,
+            entry.content.outcome,
+            entry.content.refusalReason,
+          ],
+        ]
+      : [],
+  );
+}
+
+/**
+ * The `tool_decision` records of a root's history as `[approved, grant]`, in order (`grant` `null` when the employee decided
+ * alone). Read from the database: the API shows no grant.
+ */
+async function decisionGrants(
+  conversationId: string,
+): Promise<[unknown, unknown][]> {
+  const { rows } = await harness.pool.query<{
+    content: Record<string, unknown>;
+  }>(
+    "SELECT content FROM app.messages WHERE conversation_id = $1 AND kind = 'tool_decision' ORDER BY seq",
+    [conversationId],
+  );
+  return rows.map(({ content }) => [
+    content['approved'],
+    content['grant'] ?? null,
+  ]);
+}
+
+/** The `create_incident_note` calls with these arguments that reached the fixture. */
+function notesSent(args: Readonly<Record<string, unknown>>): unknown[] {
+  return fixtureCallsOf(harness.fixtureLog.callLog, {
+    tool: 'create_incident_note',
+    args,
+  });
+}
+
+/** How many model answers the session holds after its latest message `text`: the step of a run that repeats one instruction. */
+function answersSince(
+  messages: readonly { readonly role: string; readonly content?: unknown }[],
+  text: string,
+): number {
+  let answers = 0;
+  for (const message of [...messages].reverse()) {
+    if (message.role === 'user' && message.content === text) return answers;
+    if (message.role === 'assistant') answers += 1;
+  }
+  return answers;
 }
 
 /** The `user_message` entries of a conversation as text and schedule mark, in order. */
@@ -404,12 +494,13 @@ describe('schedules: due terms trigger one send of the instruction', () => {
     TEST_TIMEOUT_MS,
   );
 
-  // AC: AC-04.2, AC-04.3, AC-07.3.
-  // Catches: a this-conversation term that is dropped while the agent works or waits for a confirmation, or a queued schedule message
-  //   taken as the answer to the confirmation (a changing MCP call sent without the employee's decision), or a schedule message that
-  //   looks like the employee's own.
+  // AC: AC-04.2, AC-04.3, AC-07.3; improvements AC-03.5 (improvements design-server.md Test Strategy UC-7, rewriting UC-2 here).
+  // Catches: a this-conversation term that is dropped while the agent waits for a confirmation or answers the employee, a queued
+  //   schedule message taken as the answer to the confirmation (a changing MCP call sent without the employee's decision), a schedule
+  //   permission that still holds once the owner wrote into the conversation (the allowed pair sent without a card), or a schedule
+  //   message that looks like the employee's own.
   it(
-    'UC-2: this-conversation terms queue marked messages while the agent waits for a confirmation or answers the employee',
+    'UC-2 / improvements UC-7: after the owner writes, the allowed pair asks a card; terms queue marked messages while it waits or the agent answers',
     async () => {
       const start = at('2030-04-01T08:00:00Z');
       clock.set(start);
@@ -417,24 +508,13 @@ describe('schedules: due terms trigger one send of the instruction', () => {
       const schedules = schedulesOf(anna);
       const threadId = await conversation(
         anna,
-        'UC-2: watch the payment queue with me',
+        'UC-7: watch the payment queue with me',
         'Sure.',
       );
-      const instruction = 'UC-2: check the payment queue';
-      harness.model.script(
-        { task: instruction },
-        [
-          {
-            calls: [
-              {
-                tool: CREATE_NOTE,
-                args: { orderId: 'ORD-9001', text: 'Queue is stuck' },
-              },
-            ],
-          },
-        ],
-        { thereafter: { text: 'Queue checked.' } },
-      );
+      const instruction = 'UC-7: check the payment queue';
+      harness.model.script({ task: instruction }, [], {
+        thereafter: { text: 'Queue checked.' },
+      });
       const schedule = await schedules.create(
         body({
           name: 'Queue check',
@@ -442,18 +522,26 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           rule: { kind: 'every_hours', hours: 1 },
           target: 'this_conversation',
           conversationId: threadId,
+          allowedTools: [NOTE_PAIR],
         }),
       );
+      expect(schedule.allowedTools).toEqual([NOTE_PAIR]);
 
-      // Term 1: the message asks for a changing call, which waits for a decision
-      clock.set(later(start, HOUR_MS + 1_000));
-      await pass();
+      // Anna's own message asks for the allowed pair: her turn is not the schedule's, so the call waits for her decision
+      const own = 'UC-7: note the stuck queue';
+      const note = { orderId: 'ORD-7001', text: 'UC-7: queue is stuck' };
+      harness.model.script(
+        { task: own },
+        [{ calls: [{ tool: CREATE_NOTE, args: note }] }],
+        { thereafter: { text: 'Not noted.' } },
+      );
+      await anna.send(threadId, own);
       const waiting = await untilOpenDecision(anna, threadId);
 
-      // Term 2 while the decision is open: the message is queued, the decision stays open and nothing is sent
-      clock.set(later(start, 2 * HOUR_MS + 1_000));
+      // Term 1 while the decision is open: the message is queued, the decision stays open and nothing is sent
+      clock.set(later(start, HOUR_MS + 1_000));
       await pass();
-      await untilRuns(schedule.id, 2);
+      await untilRuns(schedule.id, 1);
       const queued = await anna.history(threadId);
       expect(
         queued.decisions.filter((decision) => decision.status === 'open'),
@@ -461,14 +549,14 @@ describe('schedules: due terms trigger one send of the instruction', () => {
       expect(queued.pending).toMatchObject([
         { source: 'user', text: instruction },
       ]);
-      expect(
-        fixtureCallsOf(harness.fixtureLog.callLog, {
-          tool: 'create_incident_note',
-        }),
-      ).toEqual([]);
+      expect(notesSent(note)).toEqual([]);
 
       // Anna declines; the queued message is read after her decision
       const decision = waiting.decisions.find((one) => one.status === 'open')!;
+      expect(decision).toMatchObject({
+        server: BACKOFFICE_SERVER,
+        tool: 'create_incident_note',
+      });
       await anna.decide(decision.decisionId, { approve: false });
       await waitFor(
         () => anna.history(threadId),
@@ -479,17 +567,17 @@ describe('schedules: due terms trigger one send of the instruction', () => {
         'the queued message read after the decision',
       );
 
-      // Term 3 while the agent answers Anna's own message
-      const own = 'UC-2: and what about refunds?';
+      // Term 2 while the agent answers Anna's next message
+      const next = 'UC-7: and what about refunds?';
       const held = createLatch();
-      const ownScript = harness.model.script({ task: own }, [
+      const nextScript = harness.model.script({ task: next }, [
         { latch: held, text: 'Refunds are fine.' },
       ]);
-      await anna.send(threadId, own);
-      await ownScript.called(1);
-      clock.set(later(start, 3 * HOUR_MS + 1_000));
+      await anna.send(threadId, next);
+      await nextScript.called(1);
+      clock.set(later(start, 2 * HOUR_MS + 1_000));
       await pass();
-      await untilRuns(schedule.id, 3);
+      await untilRuns(schedule.id, 2);
       held.open();
       const done = await waitFor(
         () => anna.history(threadId),
@@ -497,32 +585,29 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           view.chat.status === 'idle' &&
           userMessages(view).length === 4 &&
           view.pending.length === 0,
-        'the third schedule message answered',
+        'the second schedule message answered',
       );
 
       expect(
         (await runRows(schedule.id)).map((row) => row.conversationId),
-      ).toEqual([threadId, threadId, threadId]);
+      ).toEqual([threadId, threadId]);
       const mark = {
         scheduleId: schedule.id,
         name: 'Queue check',
         manual: false,
       };
       expect(userMessages(done)).toEqual([
-        [instruction, mark],
-        [instruction, mark],
         [own, null],
+        [instruction, mark],
+        [next, null],
         [instruction, mark],
       ]);
       expect(done.entries.at(-1)).toMatchObject({
         kind: 'model_answer',
         content: { text: 'Queue checked.' },
       });
-      expect(
-        fixtureCallsOf(harness.fixtureLog.callLog, {
-          tool: 'create_incident_note',
-        }),
-      ).toEqual([]);
+      expect(await decisionGrants(threadId)).toEqual([[false, null]]);
+      expect(notesSent(note)).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );
@@ -961,6 +1046,347 @@ describe('schedules: due terms trigger one send of the instruction', () => {
       expect((await schedules.list()).schedules.map((one) => one.id)).toEqual([
         here.id,
       ]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // improvements: what a schedule's run may write without a person (docs/features/improvements/design-server.md, Test Strategy
+  // UC-3 .. UC-8; UC-7 is UC-2 above). Each case in a month of its own, after the months above.
+  // ---------------------------------------------------------------------------------------------------------------
+
+  // AC: improvements AC-03.1, AC-03.3.
+  // Catches: a schedule's run that waits for a card on an allowed pair (at its term or on «Run now»), an allowed call sent without
+  //   the schedule's grant on its decision, a brief that asks the owner in a run nobody watches, or an allowed call sent twice.
+  it(
+    'improvements UC-3 + UC-5: at the term and on «Run now» the allowed pair goes without a card with the schedule grant, and the brief starts without a question',
+    async () => {
+      const start = at('2030-08-05T08:00:00Z');
+      clock.set(start);
+      const anna = chatApi(harness.app, await employee());
+      const schedules = schedulesOf(anna);
+      const instruction = 'UC-3: file the morning incident note';
+      const question = 'UC-5: why did the morning payments fail?';
+      const note = { orderId: 'ORD-3001', text: 'UC-3: morning failures' };
+      // Each run of the same instruction: the note, then the brief, then the answers (to the brief's start and to the report)
+      harness.model.script({ task: instruction }, [], {
+        thereafter: (messages) => {
+          const answered = answersSince(messages, instruction);
+          if (answered === 0)
+            return { calls: [{ tool: CREATE_NOTE, args: note }] };
+          if (answered === 1)
+            return {
+              calls: [{ tool: START_DEEP_AGENT, args: briefArgs(question) }],
+            };
+          return { text: 'UC-3: the note is filed and the research runs.' };
+        },
+      });
+      harness.model.script({ task: briefTask(question) }, [], {
+        thereafter: { text: 'UC-5: the research is done.' },
+      });
+      const schedule = await schedules.create(
+        body({
+          name: 'Morning note',
+          instruction,
+          rule: { kind: 'every_hours', hours: 1 },
+          allowedTools: [NOTE_PAIR],
+        }),
+      );
+
+      // The term, then «Run now»: two runs, each in its new conversation
+      clock.set(later(start, HOUR_MS + 1_000));
+      await pass();
+      await untilRuns(schedule.id, 1);
+      const manual = await schedules.runNow(schedule.id);
+      const conversations = (await untilRuns(schedule.id, 2)).map(
+        (row) => row.conversationId!,
+      );
+      expect(conversations).toContain(manual.conversationId);
+
+      for (const threadId of conversations) {
+        const done = await waitFor(
+          () => anna.history(threadId),
+          (view) =>
+            view.chat.status === 'idle' &&
+            view.agents.some(
+              (agent) =>
+                agent.origin?.recordId === DEEP_RESEARCH.id &&
+                agent.status === 'completed',
+            ) &&
+            view.entries.at(-1)?.kind === 'model_answer',
+          'the run with its research done',
+        );
+        expect(done.decisions).toEqual([]);
+        expect(toolResults(done)).toEqual([
+          ['create_incident_note', 'success', null],
+          [START_DEEP_AGENT, 'success', null],
+        ]);
+        expect(await decisionGrants(threadId)).toEqual([
+          [true, { kind: 'schedule', scheduleId: schedule.id }],
+          [true, { kind: 'schedule', scheduleId: schedule.id }],
+        ]);
+      }
+      expect(notesSent(note)).toHaveLength(2);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // AC: improvements AC-03.2, FR-03 (a deleted schedule's mark).
+  // Catches: a changing call outside the schedule's permission that is sent, or that opens a card the run then waits on forever; a
+  //   `run_code` write that slips through because it has no pair; a run that ends without an answer; a deleted schedule's mark that
+  //   still allows its old pairs (the schedule read by id alone, or kept from before the delete).
+  it(
+    'improvements UC-4: in a schedule run a write outside the permission is refused unattended without a question, and a deleted schedule allows nothing',
+    async () => {
+      const start = at('2030-09-02T08:00:00Z');
+      clock.set(start);
+      const anna = chatApi(harness.app, await employee());
+      const schedules = schedulesOf(anna);
+      const hourly: ScheduleRule = { kind: 'every_hours', hours: 1 };
+
+      // A schedule that allows nothing; its run asks for the changing tool and for a `run_code` write
+      const unallowed = 'UC-4: note the failures without permission';
+      const note = { orderId: 'ORD-4101', text: 'UC-4: not allowed' };
+      const codeNote = {
+        orderId: 'ORD-4102',
+        text: 'UC-4: not allowed by code',
+      };
+      harness.model.script(
+        { task: unallowed },
+        [
+          {
+            calls: [
+              { tool: CREATE_NOTE, args: note },
+              {
+                tool: 'run_code',
+                args: {
+                  description: 'UC-4: a note by code',
+                  class: 'write',
+                  script: `await callTool(${JSON.stringify(CREATE_NOTE)}, ${JSON.stringify(codeNote)}); return "sent";`,
+                },
+              },
+            ],
+          },
+        ],
+        { thereafter: { text: 'UC-4: the notes need the owner.' } },
+      );
+      const empty = await schedules.create(
+        body({ instruction: unallowed, rule: hourly }),
+      );
+
+      // A schedule that allows the pair, deleted while its run's model answer is held
+      const deleted = 'UC-4: note the failures, then the schedule goes';
+      const lateNote = { orderId: 'ORD-4103', text: 'UC-4: schedule deleted' };
+      const held = createLatch();
+      const deletedScript = harness.model.script(
+        { task: deleted },
+        [{ latch: held, calls: [{ tool: CREATE_NOTE, args: lateNote }] }],
+        { thereafter: { text: 'UC-4: the note needs the owner.' } },
+      );
+      const gone = await schedules.create(
+        body({
+          instruction: deleted,
+          rule: hourly,
+          allowedTools: [NOTE_PAIR],
+        }),
+      );
+
+      clock.set(later(start, HOUR_MS + 1_000));
+      await pass();
+      const [emptyRun] = await untilRuns(empty.id, 1);
+      const [goneRun] = await untilRuns(gone.id, 1);
+      await deletedScript.called(1);
+      expect((await anna.raw('delete', `/schedules/${gone.id}`)).status).toBe(
+        204,
+      );
+      held.open();
+
+      for (const [threadId, expected] of [
+        [
+          emptyRun!.conversationId!,
+          [
+            ['create_incident_note', 'refused', 'unattended'],
+            ['run_code', 'refused', 'unattended'],
+          ],
+        ],
+        [
+          goneRun!.conversationId!,
+          [['create_incident_note', 'refused', 'unattended']],
+        ],
+      ] as const) {
+        const done = await waitFor(
+          () => anna.history(threadId),
+          (view) =>
+            view.chat.status === 'idle' &&
+            view.entries.at(-1)?.kind === 'model_answer',
+          'the run answered after its refusals',
+        );
+        expect(done.decisions).toEqual([]);
+        expect(toolResults(done)).toEqual(expected);
+        expect(await decisionGrants(threadId)).toEqual([]);
+      }
+      for (const args of [note, codeNote, lateNote])
+        expect(notesSent(args)).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // AC: improvements AC-03.4.
+  // Catches: a schedule's permission that sends a call the owner lost the right to (the permission checked before the rights), or
+  //   a refusal by rights that leaves no `access_denied` record as it does in the chat.
+  it(
+    'improvements UC-6: a pair the owner lost the right to is refused no_access with an access_denied record, though the schedule still lists it',
+    async () => {
+      const start = at('2030-10-07T08:00:00Z');
+      clock.set(start);
+      const annaSession = await employee();
+      const anna = chatApi(harness.app, annaSession);
+      const schedules = schedulesOf(anna);
+      const instruction = 'UC-6: note the failures after the right is gone';
+      const note = { orderId: 'ORD-6001', text: 'UC-6: no right' };
+      harness.model.script(
+        { task: instruction },
+        [{ calls: [{ tool: CREATE_NOTE, args: note }] }],
+        { thereafter: { text: 'UC-6: I may not write the note.' } },
+      );
+      const schedule = await schedules.create(
+        body({
+          instruction,
+          rule: { kind: 'every_hours', hours: 1 },
+          allowedTools: [NOTE_PAIR],
+        }),
+      );
+      await grantTo(
+        harness.app,
+        admin,
+        { userId: annaSession.id },
+        {
+          effect: 'deny',
+          target: {
+            kind: 'tool',
+            server: BACKOFFICE_SERVER,
+            tool: 'create_incident_note',
+          },
+        },
+      );
+
+      clock.set(later(start, HOUR_MS + 1_000));
+      await pass();
+      const [run] = await untilRuns(schedule.id, 1);
+      const done = await waitFor(
+        () => anna.history(run!.conversationId!),
+        (view) =>
+          view.chat.status === 'idle' &&
+          view.entries.at(-1)?.kind === 'model_answer',
+        'the run answered after the refusal',
+      );
+      expect(done.decisions).toEqual([]);
+      expect(toolResults(done)).toEqual([
+        ['create_incident_note', 'refused', 'no_access'],
+      ]);
+      expect(await decisionGrants(run!.conversationId!)).toEqual([]);
+      expect(notesSent(note)).toEqual([]);
+      expect(
+        await auditOf(harness.pool, {
+          kind: 'access_denied',
+          objectType: 'tool',
+          actors: [annaSession.id],
+        }),
+      ).toMatchObject([
+        {
+          objectId: `${BACKOFFICE_SERVER}/create_incident_note`,
+          reason: 'no_access',
+        },
+      ]);
+      expect((await schedules.get(schedule.id)).allowedTools).toEqual([
+        NOTE_PAIR,
+      ]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // AC: improvements NFR-02, FR-03 (saving a pair that is not the owner's).
+  // Catches: another employee who reads or changes a schedule's permission, a tool list that offers another employee's tools or a
+  //   read-only tool, a save that stores a pair outside the owner's changing tools (and then a run that writes under it), or a
+  //   repeated pair stored twice.
+  it(
+    "improvements UC-8: the permission and the tool list are the owner's own; a pair outside them is 400 and nothing is written",
+    async () => {
+      clock.set(at('2030-11-04T08:00:00Z'));
+      const anna = chatApi(harness.app, await employee());
+      const boris = chatApi(harness.app, await employee(false));
+      const daily: ScheduleRule = { kind: 'daily', time: '09:00' };
+
+      // Anna's list: her changing tools by server and name, the back office's read-only tools left out
+      const { tools } = await schedulesOf(anna).tools();
+      const backOffice = tools.filter(
+        (tool) => tool.server === BACKOFFICE_SERVER,
+      );
+      expect(backOffice.map(({ server, tool }) => ({ server, tool }))).toEqual([
+        NOTE_PAIR,
+      ]);
+      expect(backOffice[0]?.description).toEqual(expect.any(String));
+      const keys = tools.map(({ server, tool }) => `${server}\n${tool}`);
+      expect(keys).toEqual([...keys].sort());
+
+      // A repeated pair is kept once; a read-only tool is refused
+      const schedule = await schedulesOf(anna).create(
+        body({ rule: daily, allowedTools: [NOTE_PAIR, NOTE_PAIR] }),
+      );
+      expect(schedule.allowedTools).toEqual([NOTE_PAIR]);
+      expect(
+        (
+          await expectError(
+            anna.raw(
+              'put',
+              `/schedules/${schedule.id}`,
+              body({
+                rule: daily,
+                allowedTools: [
+                  NOTE_PAIR,
+                  { server: BACKOFFICE_SERVER, tool: 'get_order' },
+                ],
+              }),
+            ),
+            400,
+          )
+        ).errorCode,
+      ).toBe('VALIDATION_FAILED');
+      const before = await schedulesOf(anna).get(schedule.id);
+      expect(before.allowedTools).toEqual([NOTE_PAIR]);
+
+      // Boris: Anna's schedule is missing for him, his tool list holds none of Anna's rights, her pair is not his to allow
+      for (const [method, payload] of [
+        ['get', undefined],
+        ['put', body({ rule: daily, allowedTools: [] })],
+      ] as const)
+        expect(
+          (
+            await expectError(
+              boris.raw(method, `/schedules/${schedule.id}`, payload),
+              404,
+            )
+          ).errorCode,
+        ).toBe('SCHEDULE_NOT_FOUND');
+      expect(
+        (await schedulesOf(boris).tools()).tools.filter(
+          (tool) => tool.server === BACKOFFICE_SERVER,
+        ),
+      ).toEqual([]);
+      expect(
+        (
+          await expectError(
+            boris.raw(
+              'post',
+              '/schedules',
+              body({ rule: daily, allowedTools: [NOTE_PAIR] }),
+            ),
+            400,
+          )
+        ).errorCode,
+      ).toBe('VALIDATION_FAILED');
+      expect((await schedulesOf(boris).list()).schedules).toEqual([]);
+      expect(await schedulesOf(anna).get(schedule.id)).toEqual(before);
     },
     TEST_TIMEOUT_MS,
   );

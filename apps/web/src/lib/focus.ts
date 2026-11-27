@@ -1,7 +1,10 @@
 import { logger } from '@/lib/logger';
 
-/** Where focus lands after a shell transition (UXRD 7.4). */
-export type FocusTarget = 'composer' | 'page-title';
+/**
+ * Where focus lands after a shell transition (UXRD 7.4). 'aside-composer' is the side chat's own field: a search
+ * for 'composer' returns the first field of the document, the main one (improvements design-web.md, C3).
+ */
+export type FocusTarget = 'composer' | 'aside-composer' | 'page-title';
 
 /** Frames to wait for the target of the new view to render before giving up (about half a second). */
 const MAX_FRAMES = 30;
@@ -13,7 +16,7 @@ const SETTLE_FRAMES = 300;
 export const isFinePointer = (): boolean =>
   window.matchMedia('(pointer: fine)').matches;
 
-/** 'composer' → [data-shell-focus="composer"] (ComposerPrimitive.Input), 'page-title' → [data-shell-focus="page-title"] (h1, tabIndex -1). */
+/** 'composer' → [data-shell-focus="composer"] (ComposerPrimitive.Input), the same for 'aside-composer', 'page-title' → [data-shell-focus="page-title"] (h1, tabIndex -1). */
 export const shellTargetElement = (target: FocusTarget): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`);
 

@@ -156,7 +156,11 @@ function createThreadFeeds({
           if (threadId === remoteId) void store.load();
         }),
         live.onReady(() => {
-          if (watches(remoteId)) void store.load();
+          // Created in this tab and not read yet: the conversation is on the server only from its first message,
+          // and the accepted send reads the feed. A read now would be 404 and show «не найдено».
+          const { loaded, view } = store.getState();
+          if (watches(remoteId) && !(loaded && view === null))
+            void store.load();
         }),
         live.onDelta((delta) => {
           if (watches(remoteId)) store.applyDelta(delta);

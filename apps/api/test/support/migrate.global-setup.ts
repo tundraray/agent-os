@@ -16,7 +16,7 @@ export default migrateForRun(async (pool, runRows) => {
     runRows,
   ]);
   await pool.query(
-    'DELETE FROM app.identity_roles WHERE name LIKE $1 AND NOT builtin',
+    'DELETE FROM app.identity_roles WHERE name LIKE $1 AND builtin_kind IS NULL',
     [runRows],
   );
 });

@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { createLeaveGuard, type LeaveGuard } from './leave-guard';
+import {
+  createLeaveGuard,
+  type LeaveGuard,
+  type LeaveSubject,
+} from './leave-guard';
 
 type Outcome = {
   leave: boolean;
-  held: string | null;
-  question: { name: string } | null;
+  held: LeaveSubject | null;
+  question: LeaveSubject | null;
 };
+
+const RECORD: LeaveSubject = { kind: 'record', name: 'Разбор логов' };
 
 /** Each row drives a fresh guard and returns the answer of its `confirmLeave()`. */
 const cases: Array<
@@ -23,7 +29,7 @@ const cases: Array<
   [
     'released before navigating: leaves without a question',
     (guard) => {
-      guard.hold('Разбор логов');
+      guard.hold(RECORD);
       guard.release();
       return guard.confirmLeave();
     },
@@ -32,18 +38,18 @@ const cases: Array<
   [
     'held, «Остаться»: stays and keeps the hold',
     (guard) => {
-      guard.hold('Разбор логов');
+      guard.hold(RECORD);
       const answer = guard.confirmLeave();
-      expect(guard.getState().question).toEqual({ name: 'Разбор логов' });
+      expect(guard.getState().question).toEqual(RECORD);
       guard.answer(false);
       return answer;
     },
-    { leave: false, held: 'Разбор логов', question: null },
+    { leave: false, held: RECORD, question: null },
   ],
   [
     'held, «Уйти без сохранения»: leaves and the hold is gone',
     (guard) => {
-      guard.hold('Разбор логов');
+      guard.hold(RECORD);
       const answer = guard.confirmLeave();
       guard.answer(true);
       return answer;
@@ -53,7 +59,7 @@ const cases: Array<
   [
     'held, released while asking: the question closes with «leave»',
     (guard) => {
-      guard.hold('Разбор логов');
+      guard.hold(RECORD);
       const answer = guard.confirmLeave();
       guard.release();
       return answer;

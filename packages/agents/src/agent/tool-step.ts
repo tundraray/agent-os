@@ -3,6 +3,7 @@ import {
   ChildFinishedPayloadSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
+  type ToolPair,
   type ToolRefusalReason,
   ToolRefusalReasonSchema,
 } from '@agent-os/contracts';
@@ -22,9 +23,10 @@ import {
   requestedName,
 } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
-import type { CallEnding } from '../store/call-records';
+import { ANSWER_LOST_TEXT, type CallEnding } from '../store/call-records';
 import type { Session } from '../store/sessions';
 import {
+  isAccessRefusal,
   isInCommit,
   reportCheck,
   type ResolvedCall,
@@ -33,10 +35,16 @@ import {
 } from '../tools/call-check';
 import type { NotSent, ToolExecution } from '../tools/tool-execution';
 import type { ConfirmedSend } from '../tools/tool-runner';
-import { callTargetOf, isMcp, loggedArgsOf } from '../tools/tool-registry';
+import {
+  callTarget,
+  callTargetOf,
+  isMcp,
+  loggedArgsOf,
+} from '../tools/tool-registry';
 import { isQuestion } from '../task-tree';
 import type { AgentDeps } from './agent-deps';
 import { agentOwner } from './agent-owner';
+import { callRule, type CallRuling } from './call-rule';
 import type { BaseAgent } from './base-agent';
 import type { CallClosing, DelegatedCall } from './delegation';
 import { entriesOf } from './deliver';
@@ -75,10 +83,14 @@ const ConfirmationQuestionSchema = z.object({
   payload: z.object({ callId: z.string(), content: z.unknown() }).loose(),
 });
 
-/** The answer `resolveConfirmation` gives the question; `args` — the employee's edit, if the tool allows one. */
+/**
+ * The answer `resolveConfirmation` gives the question; `args` — the employee's edit, if the tool allows one;
+ * `allowInConversation` — the third answer «allow in this conversation» (improvements design-server.md Flow 2).
+ */
 export const ConfirmationResolutionSchema = z.object({
   approve: z.boolean(),
   args: z.unknown().optional(),
+  allowInConversation: z.boolean().optional(),
 });
 
 /** The employee's decision on one call, read from the answered question. */
@@ -86,6 +98,8 @@ interface CallDecision {
   readonly callId: string;
   readonly approve: boolean;
   readonly args?: unknown;
+  /** The approval also allows the call's pair in the conversation. */
+  readonly allowInConversation: boolean;
   /** `content` of the question's input, handed to the tool (code-execution KD-10; deep-agents KD-3). */
   readonly confirmed?: unknown;
 }
@@ -116,12 +130,64 @@ async function answerOf(
       decision: {
         callId,
         approve: resolution.approve,
+        allowInConversation: resolution.allowInConversation === true,
         ...(resolution.args === undefined ? {} : { args: resolution.args }),
         ...(content === undefined ? {} : { confirmed: content }),
       },
     };
   }
   return undefined;
+}
+
+/** The ruling on a call and the facts the step logs with it. */
+interface RuledCall {
+  readonly ruling: CallRuling;
+  readonly scheduleId: string | null;
+  readonly pair: ToolPair | null;
+}
+
+/** The server–tool pair of an MCP tool; `null` for every other tool, which no permission can name (KD-2). */
+function pairOf(resolved: ResolvedCall): ToolPair | null {
+  const { server, tool } = callTarget(resolved.tool);
+  return server === null ? null : { server, tool };
+}
+
+/**
+ * Reads the facts of the call rule now and asks it (improvements design-server.md KD-1, KD-2): the last message of
+ * the root's history, straight from the table; with a schedule mark — that schedule's pairs, read by its id and the
+ * caller's owner (none for a deleted or another's one); without one — the pairs allowed to the conversation.
+ */
+async function ruleOn(
+  deps: Pick<AgentDeps, 'history' | 'scheduleRows' | 'sessionRows'>,
+  resolved: ResolvedCall,
+  cardKind: string,
+): Promise<RuledCall> {
+  const { caller } = resolved;
+  const pair = pairOf(resolved);
+  const scheduleId =
+    (await deps.history.lastMessage(caller.rootId))?.content.schedule
+      ?.scheduleId ?? null;
+  const schedulePairs =
+    scheduleId === null
+      ? []
+      : ((await deps.scheduleRows.findOwned(scheduleId, caller.ownerId))
+          ?.schedule.allowedTools ?? []);
+  const conversationPairs =
+    scheduleId === null
+      ? await deps.sessionRows.grantedTools(caller.rootId)
+      : [];
+  return {
+    ruling: callRule({
+      rootId: caller.rootId,
+      pair,
+      cardKind,
+      scheduleId,
+      schedulePairs,
+      conversationPairs,
+    }),
+    scheduleId,
+    pair,
+  };
 }
 
 /** The call a step asks about and its question (`effects.ask`). */
@@ -233,7 +299,9 @@ function commitOf(
  *   `repeated_call`, audited for an MCP tool; a second one runs and its result's text gets the mark;
  *   a call needing confirmation without a decision is checked by its tool's `review`, if it has one, outside
  *   any transaction (deep-agents KD-3) — a refusal closes it `refused` with its text and asks nothing —
- *   and then asks the employee (`effects.ask`, data-model KD-3) and ends the step with `wait`, the ready
+ *   then goes through the call rule (improvements design-server.md KD-1, KD-4): sent without a card under a
+ *   schedule's or the conversation's grant, refused `unattended` in a schedule's run, or else it
+ *   asks the employee (`effects.ask`, data-model KD-3) and ends the step with `wait`, the ready
  *   results committed and the call's `tool_confirmation` written, the rest waiting; the answer comes as the
  *   question's `child_finished` to the next step (Flow 2); a rejected one is
  *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
@@ -438,7 +506,9 @@ export async function runToolStep(
         ? 'resumed_after_loss'
         : 'sending_without_loss',
     });
-    closings.push(close(call, { outcome: unknown }));
+    closings.push(
+      close(call, { outcome: unknown, resultText: ANSWER_LOST_TEXT }),
+    );
   }
 
   const toolAccess = await access.tools(session.ownerId);
@@ -525,10 +595,14 @@ export async function runToolStep(
         );
       };
       if (check.kind === 'refused') {
-        // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
-        if (check.reason === 'no_access' && target.server !== null) {
+        // Before any confirmation: a pair the owner may not use, or a switched-off tool, is never offered to the employee (Flow 2).
+        if (isAccessRefusal(check.reason) && target.server !== null) {
           await audit(
-            toolDeniedEntry(session.ownerId, target.server, target.tool),
+            toolDeniedEntry(
+              session.ownerId,
+              { server: target.server, tool: target.tool },
+              check.reason,
+            ),
           );
         }
         refuse(check.reason, check.text);
@@ -608,25 +682,61 @@ export async function runToolStep(
               request.payload.content,
             );
           } else {
-            ctx.logger.info('tool call awaits confirmation', {
+            // After the rights, the arguments and the repeat rule, and after the card's own check (KD-4).
+            const { ruling, scheduleId, pair } = await ruleOn(
+              deps,
+              resolved,
+              request.kind,
+            );
+            const ruled = {
               callId: call.callId,
+              agentId: ctx.taskId,
+              rootId: caller.rootId,
+              scheduleId,
+              server: pair?.server ?? null,
               tool: call.tool,
-              server: call.server,
-              args: argsOf(call),
-              outcome: null,
-              reason: 'awaiting_confirmation',
-            });
-            logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
-              calls: closings.length,
-              asked: call.callId,
-            });
-            return {
-              outcome: 'wait',
-              commit: commitOf(deps, ctx, closings, closedChildren, {
-                call,
-                question: { kind: request.kind, payload: request.payload },
-              }),
             };
+            if (ruling.kind === 'refuse') {
+              ctx.logger.info('tool call refused: nobody to confirm it', {
+                ...ruled,
+                reason: ruling.reason,
+              });
+              refuse(ruling.reason, ruling.text);
+              continue;
+            }
+            if (ruling.kind === 'send') {
+              // The card's content is the decision, as in a training tree; the decision carries the grant (KD-3).
+              ctx.logger.info('tool call sent by a permission without a card', {
+                ...ruled,
+                grant: ruling.grant.kind,
+              });
+              send = await runner.sendUnasked(
+                resolved,
+                ctx,
+                request.payload.content,
+                ruling.grant,
+              );
+            } else {
+              ctx.logger.info('tool call awaits confirmation', {
+                callId: call.callId,
+                tool: call.tool,
+                server: call.server,
+                args: argsOf(call),
+                outcome: null,
+                reason: 'awaiting_confirmation',
+              });
+              logStep(ctx, STEP_KIND, stepStartedAt, 'wait', {
+                calls: closings.length,
+                asked: call.callId,
+              });
+              return {
+                outcome: 'wait',
+                commit: commitOf(deps, ctx, closings, closedChildren, {
+                  call,
+                  question: { kind: request.kind, payload: request.payload },
+                }),
+              };
+            }
           }
         } else if (!callDecision.approve) {
           ctx.logger.info('tool call rejected by the employee', {
@@ -650,11 +760,17 @@ export async function runToolStep(
           );
           continue;
         } else {
+          // «Allow in this conversation» joins the pair to the conversation's permission with the intent (Flow 2);
+          // a call without a pair has nothing to allow.
+          const pair = pairOf(resolved);
           send = await runner.sendConfirmed(
             resolved,
             ctx,
             callDecision.args,
             callDecision.confirmed,
+            callDecision.allowInConversation && pair !== null
+              ? { kind: 'conversation', rootId: caller.rootId, pair }
+              : undefined,
           );
         }
         if (send.kind === 'not_sent') {

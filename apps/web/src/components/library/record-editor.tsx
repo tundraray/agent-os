@@ -192,7 +192,7 @@ export function RecordEditor({
   // DC-2: hold the unsaved changes while they exist, under the saved name («» for a new record).
   const heldName = saved === null ? '' : builtinName(saved, locale);
   useEffect(() => {
-    if (changed && !gone) leaveGuard.hold(heldName);
+    if (changed && !gone) leaveGuard.hold({ kind: 'record', name: heldName });
     else leaveGuard.release();
   }, [changed, gone, heldName, leaveGuard]);
   useEffect(() => () => leaveGuard.release(), [leaveGuard]);

@@ -1,5 +1,5 @@
 {
-  "id": "10bf5cb4-1d65-4f96-850c-f8653eaf252e",
+  "id": "adabfbfe-7a8c-4827-987c-f67055d2d9bd",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -666,6 +666,20 @@
           "notNull": true,
           "default": 0
         },
+        "granted_tools": {
+          "name": "granted_tools",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "seen_through_seq": {
+          "name": "seen_through_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1210,7 +1224,7 @@
         },
         "code_calls_refusal_reason_check": {
           "name": "code_calls_refusal_reason_check",
-          "value": "\"app\".\"code_calls\".\"refusal_reason\" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed')"
+          "value": "\"app\".\"code_calls\".\"refusal_reason\" in ('tool_not_in_definition', 'no_access', 'tool_disabled', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed', 'unattended')"
         }
       },
       "isRLSEnabled": false
@@ -1354,6 +1368,20 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
+        },
+        "tool_settings": {
+          "name": "tool_settings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "new_tools": {
+          "name": "new_tools",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
         },
         "shared_token": {
           "name": "shared_token",
@@ -1718,12 +1746,11 @@
           "notNull": true,
           "default": false
         },
-        "builtin": {
-          "name": "builtin",
-          "type": "boolean",
+        "builtin_kind": {
+          "name": "builtin_kind",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -1748,13 +1775,34 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "identity_roles_builtin_kind_idx": {
+          "name": "identity_roles_builtin_kind_idx",
+          "columns": [
+            {
+              "expression": "builtin_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"app\".\"identity_roles\".\"builtin_kind\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "identity_roles_builtin_kind_check": {
+          "name": "identity_roles_builtin_kind_check",
+          "value": "\"app\".\"identity_roles\".\"builtin_kind\" in ('super_admin', 'everyone')"
+        }
+      },
       "isRLSEnabled": false
     },
     "app.identity_role_members": {
@@ -2410,7 +2458,7 @@
         },
         "access_grants_target_kind_check": {
           "name": "access_grants_target_kind_check",
-          "value": "\"app\".\"access_grants\".\"target_kind\" in ('server', 'tool', 'model')"
+          "value": "\"app\".\"access_grants\".\"target_kind\" in ('server', 'server_read', 'tool', 'model')"
         },
         "access_grants_holder_check": {
           "name": "access_grants_holder_check",
@@ -2418,7 +2466,7 @@
         },
         "access_grants_target_check": {
           "name": "access_grants_target_check",
-          "value": "(\"app\".\"access_grants\".\"target_kind\" = 'server'\n          and \"app\".\"access_grants\".\"server\" is not null and \"app\".\"access_grants\".\"tool\" is null and \"app\".\"access_grants\".\"model\" is null)\n        or (\"app\".\"access_grants\".\"target_kind\" = 'tool'\n          and \"app\".\"access_grants\".\"server\" is not null and \"app\".\"access_grants\".\"tool\" is not null and \"app\".\"access_grants\".\"model\" is null)\n        or (\"app\".\"access_grants\".\"target_kind\" = 'model'\n          and \"app\".\"access_grants\".\"server\" is null and \"app\".\"access_grants\".\"tool\" is null and \"app\".\"access_grants\".\"model\" is not null)"
+          "value": "((\"app\".\"access_grants\".\"target_kind\" = 'server'\n            or \"app\".\"access_grants\".\"target_kind\" = 'server_read')\n          and \"app\".\"access_grants\".\"server\" is not null and \"app\".\"access_grants\".\"tool\" is null and \"app\".\"access_grants\".\"model\" is null)\n        or (\"app\".\"access_grants\".\"target_kind\" = 'tool'\n          and \"app\".\"access_grants\".\"server\" is not null and \"app\".\"access_grants\".\"tool\" is not null and \"app\".\"access_grants\".\"model\" is null)\n        or (\"app\".\"access_grants\".\"target_kind\" = 'model'\n          and \"app\".\"access_grants\".\"server\" is null and \"app\".\"access_grants\".\"tool\" is null and \"app\".\"access_grants\".\"model\" is not null)"
         },
         "access_grants_deny_holder_check": {
           "name": "access_grants_deny_holder_check",
@@ -3640,6 +3688,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "allowed_tools": {
+          "name": "allowed_tools",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "state": {
           "name": "state",

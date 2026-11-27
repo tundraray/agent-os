@@ -59,6 +59,24 @@ const DENSITY = {
   comfortable: { control: COMFORT_CONTROL, text: 'text-sm md:text-sm' },
 } as const;
 
+/**
+ * The edge of an unchecked checkbox or radio in the panel. Foundations give form controls `--input`, which in the
+ * light theme equals `--border` and is too faint for a 16 px box; `--muted-foreground` keeps it visible. The dark
+ * theme's `--input` already reads.
+ */
+export const CONTROL_EDGE = 'border-muted-foreground dark:border-input';
+
+/**
+ * The tabs of a record page (a role, an employee, a server): at a narrow width the list scrolls sideways without a
+ * visible scrollbar, and never vertically — the active line sits inside the list's height (32 px, 52 px under a
+ * coarse pointer, whose tabs are 44 px), where the default would put it a pixel below. The tabs start at the left:
+ * a centred list that overflows would cut its first tab beyond the scroll's reach.
+ */
+export const RECORD_TABS = {
+  list: 'no-scrollbar max-w-full justify-start overflow-x-auto overflow-y-hidden pointer-coarse:h-13!',
+  tab: 'flex-none after:-bottom-1! pointer-coarse:h-11',
+} as const;
+
 /** Caption 12 / 16 under a field or a switch (foundations, typography). */
 export const CAPTION = 'text-xs leading-4';
 

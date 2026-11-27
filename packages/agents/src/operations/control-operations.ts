@@ -1,5 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import {
+  AGENTS_TOOL_CONFIRMATION,
   AgentMessageKindSchema,
   type DecisionResponse,
   SessionTaskStatusSchema,
@@ -49,6 +50,15 @@ import { inTrainingTree } from '../training/training-tree';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
+
+/** The card of a changing MCP tool: the plain tool confirmation with a server. */
+function isMcpCard(card: z.infer<typeof QuestionInputSchema>): boolean {
+  return (
+    card.kind === AGENTS_TOOL_CONFIRMATION &&
+    card.payload.server !== null &&
+    card.payload.server !== ''
+  );
+}
 
 /** A test run's trainer: a root `trainer` task with `testRun` in its input. */
 function isTestRunRoot(task: Task): boolean {
@@ -251,34 +261,55 @@ export class ControlOperations {
     ownerId,
     approve,
     args,
-  }: ResolveConfirmationRequest): Promise<DecisionResponse['outcome']> {
+    allowInConversation,
+  }: ResolveConfirmationRequest): Promise<
+    DecisionResponse['outcome'] | 'not_mcp_card'
+  > {
     return this.logged(
       'resolveConfirmation',
-      { decisionId, ownerId, approve, withArgs: args !== undefined },
+      {
+        decisionId,
+        ownerId,
+        approve,
+        withArgs: args !== undefined,
+        allowInConversation: allowInConversation === true,
+      },
       async () => {
         // The decision is the answer to a question task (data-model/design-runtime.md, KD-3). The edit is
         // checked only against an open question of this owner. For any other task `tasks.answer` answers
         // `already_answered` (answered or stopped) or `TASK_NOT_FOUND` (missing, another owner's, deleted or
         // not a question) and writes nothing; `TASK_NOT_FOUND` passes through as the runtime's error.
         const question =
-          args === undefined
+          args === undefined && allowInConversation !== true
             ? undefined
             : await this.tasks.get(decisionId, ownerId);
+        const card =
+          question !== undefined && isQuestion(question)
+            ? QuestionInputSchema.parse(question.input)
+            : undefined;
+        // The third answer allows a pair, so only a changing MCP tool's card takes it (improvements
+        // design-server.md, Contract Definitions «POST /api/decisions/:decisionId»); nothing is written otherwise.
+        if (
+          allowInConversation === true &&
+          card !== undefined &&
+          !isMcpCard(card)
+        ) {
+          return 'not_mcp_card';
+        }
         const edited =
-          question !== undefined &&
-          isQuestion(question) &&
-          question.status === waiting
-            ? {
-                args: this.editedArgs(
-                  QuestionInputSchema.parse(question.input).payload,
-                  args,
-                ),
-              }
+          args !== undefined &&
+          card !== undefined &&
+          question?.status === waiting
+            ? { args: this.editedArgs(card.payload, args) }
             : {};
-        // The tool step reads `{ approve, args? }` from the question's result and the call id from its input.
+        // The tool step reads `{ approve, args?, allowInConversation? }` from the question's result and the call
+        // id from its input.
         const outcome = await this.tasks.answer(decisionId, ownerId, {
           approve,
           ...edited,
+          ...(allowInConversation === true
+            ? { allowInConversation: true }
+            : {}),
         });
         return outcome === 'answered' ? 'resolved' : 'already_resolved';
       },
