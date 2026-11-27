@@ -1,0 +1,84 @@
+{
+  // Ports: web 3000, API 4000 (PORT in apps/api/.env), Node inspector 9229.
+  // The API needs Postgres (`pnpm db:up`) and apps/api/.env.
+  // The launch configurations start their own servers: stop a `pnpm dev` that already holds
+  // ports 3000/4000 first, or use "API: attach".
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pnpm run dev",
+      "cwd": "${workspaceFolder}/apps/api",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "sourceMaps": true,
+      // rspack bundles the API and the workspace packages into apps/api/dist; its maps name the
+      // sources `webpack://api/./src/...` and `webpack://api/../../packages/...`, relative to apps/api.
+      "outFiles": ["${workspaceFolder}/apps/api/dist/**/*.js"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/apps/api/dist/**",
+        "!**/node_modules/**"
+      ],
+      "sourceMapPathOverrides": {
+        "webpack://api/*": "${workspaceFolder}/apps/api/*"
+      }
+    },
+    {
+      "name": "API: attach",
+      "type": "node",
+      "request": "attach",
+      // For an API already running via `pnpm --filter api start:debug` (inspector on 9229).
+      "port": 9229,
+      "restart": true,
+      "cwd": "${workspaceFolder}/apps/api",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/apps/api/dist/**/*.js"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/apps/api/dist/**",
+        "!**/node_modules/**"
+      ],
+      "sourceMapPathOverrides": {
+        "webpack://api/*": "${workspaceFolder}/apps/api/*"
+      }
+    },
+    {
+      "name": "Web",
+      "type": "node",
+      "request": "launch",
+      // Next's own full-stack setup: the server under the debugger, plus a Chrome session
+      // opened on the address the server prints.
+      "program": "${workspaceFolder}/apps/web/node_modules/next/dist/bin/next",
+      "args": ["dev"],
+      "runtimeArgs": ["--inspect"],
+      "cwd": "${workspaceFolder}/apps/web",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "serverReadyAction": {
+        "action": "debugWithChrome",
+        "killOnServerStop": true,
+        "pattern": "- Local:.+(https?://.+)",
+        "uriFormat": "%s",
+        "webRoot": "${workspaceFolder}/apps/web"
+      }
+    },
+    {
+      "name": "Test: current file",
+      "type": "node-terminal",
+      "request": "launch",
+      // Runs the `test` script (vitest run) of the workspace that owns the open file,
+      // filtered to that file; no timeout while stopped on a breakpoint.
+      "command": "pnpm run test \"${file}\" --test-timeout=0",
+      "cwd": "${fileDirname}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full stack",
+      "configurations": ["API", "Web"],
+      "stopAll": true
+    }
+  ]
+}

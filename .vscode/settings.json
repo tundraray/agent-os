@@ -1,0 +1,76 @@
+{
+  // Project defaults only: what the repository's tooling needs to work correctly and cheaply.
+  // Personal preferences (theme, fonts, minimap) belong in user settings.
+
+  // --- Generated folders (same list as .gitignore plus the turbo outputs in turbo.json) ---------
+  // Not watched: the file watcher is the first thing that slows down in a pnpm monorepo.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.turbo/**": true,
+    "**/.next/**": true,
+    "**/dist/**": true,
+    "**/.playwright-mcp/**": true,
+    "apps/api/self-check-reports/**": true
+  },
+  // Not searched: generated output, the lockfile and the drizzle-kit snapshots.
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.turbo": true,
+    "**/.next": true,
+    "**/dist": true,
+    "**/*.tsbuildinfo": true,
+    "**/.playwright-mcp": true,
+    "apps/api/self-check-reports": true,
+    "pnpm-lock.yaml": true,
+    "packages/db/src/migrations/meta": true
+  },
+  // pnpm's node_modules is symlinks into .pnpm: following them searches every package many times.
+  "search.followSymlinks": false,
+
+  // --- TypeScript -------------------------------------------------------------------------------
+  // The repository is on TypeScript 6 (root devDependency); the editor must check with the same
+  // compiler as `tsc --noEmit`. VS Code 1.148 names: the `typescript.tsdk`,
+  // `typescript.enablePromptUseWorkspaceTsdk` and `typescript.tsserver.maxTsServerMemory` keys are
+  // deprecated in favour of these.
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
+  // Nine tsconfig projects that consume each other as source: the server sits near the 3072 MB
+  // default, and hitting the cap means a crash and a full reload. 4096 leaves room without
+  // letting a runaway server take the machine.
+  "js/ts.tsserver.maxMemory": 4096,
+
+  // --- Linting ----------------------------------------------------------------------------------
+  // ESLint exists only in apps/web (ESLint 9, flat config in apps/web/eslint.config.mjs — flat is
+  // the default there, no flag needed). Every other workspace is linted by oxlint. Naming the one
+  // working directory stops the extension from probing the rest of the repository.
+  "eslint.workingDirectories": [{ "directory": "apps/web" }],
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+  // Lint fixes on save are limited to ESLint: the general `source.fixAll` also runs the TypeScript
+  // fix-all on every save.
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+
+  // --- Formatting: Prettier (.prettierrc at the root, `pnpm format:check` runs in CI) -----------
+  // Markdown is left out on purpose: .prettierignore excludes *.md and docs.
+  "[typescript][typescriptreact][javascript][javascriptreact][json][jsonc][css][yaml]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  // .gitattributes stores every text file with LF.
+  "files.eol": "\n",
+
+  // --- File types -------------------------------------------------------------------------------
+  // The oxlint configs carry comments.
+  "files.associations": {
+    ".oxlintrc.json": "jsonc"
+  },
+  // Tailwind v4 at-rules (@theme, @custom-variant, @apply) in apps/web/src/app/globals.css are
+  // unknown to the built-in CSS validator.
+  "css.lint.unknownAtRules": "ignore"
+}
