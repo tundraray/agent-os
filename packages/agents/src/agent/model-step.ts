@@ -28,6 +28,7 @@ import {
   FAILURE_REASONS,
   failResult,
   logStep,
+  overflowResult,
   previewEntries,
   providerMessagesOf,
   refusedResult,
@@ -141,7 +142,10 @@ export async function childrenInFlight(
  *   `complete` with `{ report, document }`, the session closed and its counter reset. How the turn ends is the agent's
  *   (`endOfTurn`), as are the tools it declares (`offeredDeclaration`) and the turn counter after the delivered
  *   messages (`turnsAfterDelivery`).
- * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7).
+ * - The first provider overflow (`context_overflow` with the session's mark clear) → `continue`: the commit sets
+ *   the mark and raises `last_input_tokens` to the threshold, so the next step compacts with previews; with the
+ *   mark set it fails like any `model_error` (runtime-fixes KD-5).
+ * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7), and clears the overflow mark.
  */
 export async function runModelStep(
   deps: AgentDeps,
@@ -252,6 +256,21 @@ export async function runModelStep(
       patch: {},
     });
   }
+  if (
+    result.kind === 'model_error' &&
+    result.reason === FAILURE_REASONS.context_overflow &&
+    !session.overflowed
+  ) {
+    return overflowResult({
+      deps,
+      ctx,
+      stepKind: STEP_KIND,
+      startedAt,
+      session,
+      writeEntries: writtenBeforeCall,
+      patch: {},
+    });
+  }
   if (result.kind === 'model_error') {
     logStep(ctx, STEP_KIND, startedAt, 'fail', {
       reason: result.reason,
@@ -269,7 +288,11 @@ export async function runModelStep(
   }
 
   const counted = turns + 1;
-  const answered = answerFields(sessionTools, result);
+  // A model answer ends an overflow (KD-5): the mark is cleared, and the log shows the recovery.
+  const answered = {
+    ...answerFields(sessionTools, result),
+    overflowCleared: session.overflowed,
+  };
   const answerEntry: NewHistoryEntry = {
     kind: 'model_answer',
     content: {
@@ -285,6 +308,7 @@ export async function runModelStep(
   const callPatch: SessionPatch = {
     turns: counted,
     lastInputTokens: result.usage.inputTokens,
+    overflowed: false,
   };
   const writeAnswer = async (
     after: readonly NewHistoryEntry[],

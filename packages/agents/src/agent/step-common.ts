@@ -17,6 +17,7 @@ import {
 import type { AgentTurnMessage } from '../model/mastra-turn';
 import { buildProviderMessages } from '../model/provider-messages';
 import type { NewHistoryEntry } from '../store/history';
+import type { Session } from '../store/sessions';
 import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
 import { agentOwner } from './agent-owner';
@@ -78,13 +79,18 @@ function withChipLines(entries: readonly HistoryEntry[]): HistoryEntry[] {
   });
 }
 
-/** The provider messages of a step: the history read, then the entries not written yet (`shown`). */
+/**
+ * The provider messages of a step: the history read, then the entries not written yet (`shown`);
+ * `toolResultPreviewChars` — the compaction with the overflow mark shows long tool results by their start (KD-5).
+ */
 export function providerMessagesOf(
   view: SessionHistory,
   shown: readonly HistoryEntry[],
+  toolResultPreviewChars?: number,
 ): AgentTurnMessage[] {
   const { forkPrefix } = view;
   return buildProviderMessages({
+    ...(toolResultPreviewChars === undefined ? {} : { toolResultPreviewChars }),
     ...(forkPrefix === undefined
       ? {}
       : {
@@ -133,6 +139,56 @@ export function failResult(input: {
         ...input.patch,
         turns: 0,
         closed: true,
+      });
+    },
+  };
+}
+
+/**
+ * The first provider overflow of a model or compaction call (runtime-fixes design-steps.md, KD-5, Flow 2): the commit
+ * writes what the step owes, sets the session's overflow mark and raises `last_input_tokens` to the compaction
+ * threshold when it is below, so the next step compacts by `compactionDue`; no turn is counted, the step continues.
+ */
+export function overflowResult(input: {
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'compactAtTokens'>;
+  readonly ctx: StepContext;
+  readonly stepKind: string;
+  readonly startedAt: number;
+  readonly session: Pick<Session, 'model' | 'lastInputTokens'>;
+  /** Writes the entries the step still owes and returns them. */
+  readonly writeEntries: () => Promise<readonly NewHistoryEntry[]>;
+  readonly patch: SessionPatch;
+}): StepResult {
+  const { deps, ctx, session } = input;
+  const lastInputTokens = Math.max(
+    session.lastInputTokens ?? 0,
+    deps.compactAtTokens,
+  );
+  ctx.logger.warn(
+    'model context overflow: the next step compacts with tool result previews',
+    {
+      stepKind: input.stepKind,
+      agentId: ctx.taskId,
+      rootId: ctx.rootId,
+      ownerId: ctx.ownerId,
+      stepNo: ctx.stepNo,
+      model: session.model,
+      lastInputTokens: session.lastInputTokens,
+      compactAtTokens: deps.compactAtTokens,
+    },
+  );
+  logStep(ctx, input.stepKind, input.startedAt, 'continue', {
+    reason: FAILURE_REASONS.context_overflow,
+    overflowMarked: true,
+  });
+  return {
+    outcome: 'continue',
+    commit: async () => {
+      await deps.history.append(ctx.taskId, await input.writeEntries());
+      await deps.sessionRows.update(ctx.taskId, {
+        ...input.patch,
+        overflowed: true,
+        lastInputTokens,
       });
     },
   };

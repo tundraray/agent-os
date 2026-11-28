@@ -82,6 +82,11 @@ export const conversations = app.table(
     /** Input tokens of the last model call; drives compaction. */
     lastInputTokens: integer('last_input_tokens'),
     /**
+     * The last provider overflow has not ended in a model answer yet (runtime-fixes design-steps.md, KD-5):
+     * the compaction shows tool results by their start, and another overflow fails the agent.
+     */
+    overflowed: boolean('overflowed').notNull().default(false),
+    /**
      * The last number given to a task of the session's list (deep-agents design-task-list.md, KD-1); never
      * goes back, so a deleted task's number is not given again.
      */

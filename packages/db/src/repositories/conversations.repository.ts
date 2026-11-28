@@ -113,6 +113,7 @@ export interface SessionPatch {
   readonly interrupted?: boolean;
   readonly closed?: boolean;
   readonly lastInputTokens?: number | null;
+  readonly overflowed?: boolean;
   readonly forkedFromId?: string;
   readonly forkedThroughSeq?: number;
   readonly seenThroughSeq?: number;

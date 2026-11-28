@@ -11,10 +11,13 @@ import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
+import { readToolResultSettings } from '../tools/tool-result-settings';
 import {
   callUnlessAborted,
+  FAILURE_REASONS,
   failResult,
   logStep,
+  overflowResult,
   previewEntries,
   providerMessagesOf,
   refusedResult,
@@ -56,6 +59,8 @@ export function compactionDue(
  * the model sees the summary and what follows it, the employee reads the whole history. An empty summary
  * compacts nothing (agent-harness KD-7): the prelude and the delivered messages are written, `last_input_tokens`
  * is cleared, and the step returns `continue` without a `compaction` entry or `compacted` event.
+ * With the session's overflow mark set the call shows tool results longer than `previewChars` by their start
+ * (runtime-fixes KD-5); a first overflow of this call sets the mark and compacts again, with the mark it fails.
  */
 export async function runCompactionStep(
   deps: AgentDeps,
@@ -89,6 +94,20 @@ export async function runCompactionStep(
   );
   // History holds tool calls, and the provider takes them only with the tools defined.
   const sessionTools = await registry.toolsFor(agentOwner(ctx), declaration);
+  // After an overflow the model sees long tool results by their start (runtime-fixes KD-5); the history stays whole.
+  const previewChars = session.overflowed
+    ? (await readToolResultSettings(deps.settingsRows)).previewChars
+    : undefined;
+  if (previewChars !== undefined) {
+    ctx.logger.info('compaction after an overflow shows tool result previews', {
+      agentId: ctx.taskId,
+      rootId: ctx.rootId,
+      ownerId: ctx.ownerId,
+      stepNo: ctx.stepNo,
+      model: session.model,
+      previewChars,
+    });
+  }
 
   const result = await callUnlessAborted(ctx, () =>
     modelClient.call({
@@ -99,7 +118,7 @@ export async function runCompactionStep(
       model: session.model,
       instructions: withStepBlocks(definition.prompt, { memory, tasks }),
       messages: [
-        ...providerMessagesOf(view, shown),
+        ...providerMessagesOf(view, shown, previewChars),
         { role: 'user', content: COMPACTION_REQUEST },
       ],
       tools: sessionTools,
@@ -136,6 +155,21 @@ export async function runCompactionStep(
       audit,
       writeEntries: writeOwedEntries,
       patch: { ...prelude?.patch },
+    });
+  }
+  if (
+    result.kind === 'model_error' &&
+    result.reason === FAILURE_REASONS.context_overflow &&
+    !session.overflowed
+  ) {
+    return overflowResult({
+      deps,
+      ctx,
+      stepKind: STEP_KIND,
+      startedAt,
+      session,
+      writeEntries: writeOwedEntries,
+      patch: { ...prelude?.patch, turns },
     });
   }
   if (result.kind === 'model_error') {
@@ -190,6 +224,7 @@ export async function runCompactionStep(
   logStep(ctx, STEP_KIND, startedAt, 'continue', {
     compactedInputTokens: session.lastInputTokens,
     turns,
+    afterOverflow: session.overflowed,
   });
   return {
     outcome: 'continue',

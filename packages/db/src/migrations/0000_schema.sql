@@ -68,6 +68,7 @@ CREATE TABLE "app"."conversations" (
 	"interrupted" boolean DEFAULT false NOT NULL,
 	"closed" boolean DEFAULT false NOT NULL,
 	"last_input_tokens" integer,
+	"overflowed" boolean DEFAULT false NOT NULL,
 	"last_task_number" integer DEFAULT 0 NOT NULL,
 	"granted_tools" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"seen_through_seq" integer DEFAULT 0 NOT NULL,

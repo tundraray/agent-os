@@ -171,13 +171,21 @@ export interface ScriptedModelError {
   readonly statusCode: number;
   /** Each failing call waits on it first, so a test decides when the agent fails. */
   readonly latch?: Latch;
+  /** The provider's response body, as the adapter rules read it (a context overflow, runtime-fixes KD-4). */
+  readonly body?: string;
 }
 
 export function modelError(
   statusCode = DEFAULT_ERROR_STATUS,
   latch?: Latch,
+  body?: string,
 ): ScriptedModelError {
-  return { kind: 'model_error', statusCode, ...(latch && { latch }) };
+  return {
+    kind: 'model_error',
+    statusCode,
+    ...(latch && { latch }),
+    ...(body !== undefined && { body }),
+  };
 }
 
 /** A reply computed from the call's input: the messages exactly as the provider would get them, and the call itself. */
@@ -433,7 +441,7 @@ export function createScriptedModel(): ScriptedModel {
     if (textReply === undefined)
       throw new Error('No text script answers a completeText call');
     if (isModelError(textReply))
-      throw providerError('completeText', textReply.statusCode);
+      throw providerError('completeText', textReply.statusCode, textReply.body);
     return streamAnswer(textReply, options, () => []);
   }
 
@@ -472,7 +480,11 @@ export function createScriptedModel(): ScriptedModel {
         typeof reply === 'function' ? reply(call.messages, recorded) : reply;
       if (isModelError(answer)) {
         await answer.latch?.pass(options.signal);
-        throw providerError(`agent ${call.agentName}`, answer.statusCode);
+        throw providerError(
+          `agent ${call.agentName}`,
+          answer.statusCode,
+          answer.body,
+        );
       }
 
       const generation = await streamAnswer(answer, options, () =>

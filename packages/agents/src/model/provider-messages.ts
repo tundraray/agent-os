@@ -7,6 +7,7 @@ import {
 
 import { foldCalls, requestedName } from '../history/call-state';
 import type { HistoryContent, HistoryEntry } from '../history/history';
+import { cutText, STORED_RESULT_MARK } from '../tools/large-result';
 import type {
   AgentToolCall,
   AgentToolResult,
@@ -48,6 +49,12 @@ export interface ProviderMessagesInput {
   readonly forkPrefix?: ForkPrefix;
   /** The session's own entries in `seq` order, at least from its last compaction on. */
   readonly entries: readonly HistoryEntry[];
+  /**
+   * Set by the compaction step while the overflow mark stands (runtime-fixes design-steps.md, KD-5): every tool
+   * result longer than this many characters is shown by its start with the cut count; a stored result's
+   * wrapper is already short and stays whole. The history itself is not changed.
+   */
+  readonly toolResultPreviewChars?: number;
 }
 
 function childReportText(report: HistoryContent<'child_report'>): string {
@@ -69,8 +76,18 @@ function childReportText(report: HistoryContent<'child_report'>): string {
   return `${facts}\n${body}${document}`;
 }
 
-function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {
-  const text = result.text ?? '';
+/** A result's text as the model sees it: its start when a preview length is set and the text is a plain, longer result. */
+function resultText(text: string, previewChars: number | undefined): string {
+  return previewChars === undefined || text.startsWith(STORED_RESULT_MARK)
+    ? text
+    : cutText(text, previewChars);
+}
+
+function toolResultOf(
+  result: HistoryContent<'tool_result'>,
+  previewChars: number | undefined,
+): AgentToolResult {
+  const text = resultText(result.text ?? '', previewChars);
   const data =
     result.outcome === 'success'
       ? text
@@ -243,7 +260,9 @@ export function buildProviderMessages(
           break;
         }
         case 'tool_result':
-          results.push(toolResultOf(entry.content));
+          results.push(
+            toolResultOf(entry.content, input.toolResultPreviewChars),
+          );
           openCalls.delete(entry.content.callId);
           if (openCalls.size === 0) closeAnswer();
           break;

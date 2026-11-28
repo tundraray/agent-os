@@ -1,6 +1,6 @@
 {
-  "id": "fd7cae91-172e-4e99-b0bc-a3169d0645b2",
-  "prevId": "f5c99d63-5c8c-4546-975a-a72ea117d03c",
+  "id": "aa7e7a9a-c84c-4fb5-aa90-ffefb0ac73f0",
+  "prevId": "d842f633-f90b-4a50-a88e-9ead4ef34933",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -658,6 +658,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "overflowed": {
+          "name": "overflowed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "last_task_number": {
           "name": "last_task_number",

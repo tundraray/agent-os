@@ -39,13 +39,19 @@
 // - AC-02.4: INT-3 row C (wiring; the recognition rule is unit)
 // - AC-02.5: unit
 
+import type { AgentHistoryEntry, AgentTurnMessage } from '@agent-os/agents';
 import {
   createLatch,
   createLibraryDouble,
   createScriptedModel,
   inputLines,
+  modelError,
+  type ScriptedReply,
 } from '@agent-os/agents/testing';
+import { parseSettingsValue } from '@agent-os/contracts';
+import { conversations, settings as settingsTable } from '@agent-os/db';
 import { newUser, waitFor } from '@agent-os/db/testing';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
@@ -59,9 +65,64 @@ import {
   waitForTaskStatus,
   ZOMBIE_RUNTIME,
 } from './support/agentsHarness';
+import { SEARCH_LOGS, WINDOW } from './support/logs-reader';
+import { LOGS_SERVER } from './support/mcp-servers';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
+
+/** `AGENT_COMPACT_AT_TOKENS` of INT-3: far above the default usage of a scripted answer. */
+const COMPACT_AT_TOKENS = 5_000;
+
+/** A recorded OpenAI overflow body (the harness provider is `openai_compatible`): code `context_length_exceeded`. */
+const OVERFLOW_BODY = JSON.stringify({
+  error: {
+    message:
+      "This model's maximum context length is 128000 tokens. However, your messages resulted in 131072 tokens.",
+    type: 'invalid_request_error',
+    param: 'messages',
+    code: 'context_length_exceeded',
+  },
+});
+
+/** Another 400 of the same provider: not an overflow. */
+const OTHER_400_BODY = JSON.stringify({
+  error: {
+    message: 'Unrecognized request argument supplied: foo',
+    type: 'invalid_request_error',
+    param: null,
+    code: null,
+  },
+});
+
+/** The text of a data envelope as the model reads it. */
+function escaped(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+/** The outputs of every tool result in a model input, in order. */
+function toolOutputs(messages: readonly AgentTurnMessage[]): string[] {
+  return messages.flatMap((message) =>
+    message.role === 'tool'
+      ? message.results.map((result) =>
+          typeof result.output === 'string'
+            ? result.output
+            : JSON.stringify(result.output),
+        )
+      : [],
+  );
+}
+
+/** The texts of the tool results of a history, in order. */
+function resultTexts(history: readonly AgentHistoryEntry[]): string[] {
+  return history.flatMap((entry) =>
+    entry.kind === 'tool_result' ? [entry.content.text ?? ''] : [],
+  );
+}
 
 describe('runtime-fixes / steps - an interrupted answer stays in the history, and an overflowing history is compacted once', () => {
   // INT-1  The transaction that interrupts or stops writes the partial answer, once, before the mark
@@ -511,7 +572,213 @@ describe('runtime-fixes / steps - an interrupted answer stays in the history, an
   // @category: core-functionality
   // @dependency: ProviderAdapter overflow rule, ModelClient, model step, compaction step, BaseAgent.step (compactionDue), conversations repository (overflow mark, last_input_tokens), ScriptedModel (model_error with body), Postgres
   // @complexity: high
-  it.todo(
+  it(
     'INT-3: a provider overflow compacts the history once with previews of long tool results and the agent goes on; a second overflow fails it with context_overflow; another 400 does not compact',
+    async () => {
+      const ownerId = await newUser();
+      const overflow = () => modelError(400, undefined, OVERFLOW_BODY);
+      // Three direct reads, each above `previewChars` and below `storeFromChars` (checked below): they come whole.
+      const reads = {
+        calls: [20, 25, 30].map((pageSize) => ({
+          tool: SEARCH_LOGS,
+          args: { ...WINDOW, pageSize },
+        })),
+      };
+      const compactionHeld = createLatch();
+      const model = createScriptedModel();
+      const recoverTask = 'INT-3 A: overflow, then recover';
+      const recovering = model.script({ task: recoverTask }, [
+        reads,
+        overflow(),
+        { text: 'summary A', latch: compactionHeld },
+        { text: 'answer after the overflow' },
+        overflow(),
+        { text: 'summary A2' },
+        { text: 'answer after the second overflow' },
+      ]);
+      const rowB: readonly {
+        readonly task: string;
+        readonly replies: readonly ScriptedReply[];
+        readonly calls: number;
+        readonly compactions: number;
+      }[] = [
+        {
+          task: 'INT-3 B1: the call after the compaction overflows',
+          replies: [reads, overflow(), { text: 'summary B1' }, overflow()],
+          calls: 4,
+          compactions: 1,
+        },
+        {
+          task: 'INT-3 B2: the compaction with the mark overflows',
+          replies: [reads, overflow(), overflow()],
+          calls: 3,
+          compactions: 0,
+        },
+      ];
+      const failingScripts = rowB.map((row) =>
+        model.script({ task: row.task }, row.replies),
+      );
+      const otherTask = 'INT-3 C: another 400';
+      const other = model.script({ task: otherTask }, [
+        reads,
+        modelError(400, undefined, OTHER_400_BODY),
+      ]);
+      const harness = await createAgentsHarness({
+        model,
+        access: { [ownerId]: [LOGS_SERVER] },
+        variables: { AGENT_COMPACT_AT_TOKENS: String(COMPACT_AT_TOKENS) },
+        root: testRecord('int-3 overflow', { servers: [LOGS_SERVER] }),
+      });
+      const markOf = async (agentId: string) => {
+        const [row] = await harness.db
+          .select({
+            overflowed: conversations.overflowed,
+            lastInputTokens: conversations.lastInputTokens,
+          })
+          .from(conversations)
+          .where(eq(conversations.id, agentId));
+        return row;
+      };
+      const start = async (task: string) =>
+        (
+          await harness.sessions.start({
+            ownerId,
+            prompt: task,
+            description: 'overflowing agent',
+          })
+        ).agentId;
+      try {
+        const [settingsRow] = await harness.db
+          .select({ value: settingsTable.value })
+          .from(settingsTable)
+          .where(eq(settingsTable.key, 'tool_result_settings'));
+        const { previewChars, storeFromChars } = parseSettingsValue(
+          'tool_result_settings',
+          settingsRow?.value,
+        );
+
+        // Row A - When: the call after three long direct results overflows
+        const recoverId = await start(recoverTask);
+        await compactionHeld.reached();
+
+        // Then: the step committed with the mark and the threshold; the conversation goes on
+        expect(await markOf(recoverId)).toEqual({
+          overflowed: true,
+          lastInputTokens: COMPACT_AT_TOKENS,
+        });
+        const texts = resultTexts(await historyOf(harness, recoverId, ownerId));
+        expect(texts).toHaveLength(3);
+        for (const text of texts) {
+          expect(text.length).toBeGreaterThan(previewChars);
+          expect(text.length).toBeLessThanOrEqual(storeFromChars);
+        }
+        compactionHeld.open();
+        await recovering.called(4);
+        await waitForTaskStatus(harness, recoverId, ownerId, 'waiting');
+
+        // Then: the overflowing call carried the results whole, the compaction call their starts with the cut
+        // count, and the history keeps them whole for the employee
+        const [, overflowed, compacting, afterCompaction] = recovering.calls;
+        expect(toolOutputs(overflowed?.messages ?? [])).toEqual(
+          texts.map((text) => expect.stringContaining(escaped(text))),
+        );
+        const previews = toolOutputs(compacting?.messages ?? []);
+        expect(previews).toEqual(
+          texts.map((text) =>
+            expect.stringContaining(
+              escaped(
+                `${text.slice(0, previewChars)}\nresult cut by ${text.length - previewChars} characters`,
+              ),
+            ),
+          ),
+        );
+        previews.forEach((preview, index) =>
+          expect(preview).not.toContain(escaped(texts[index] ?? '')),
+        );
+        expect(
+          resultTexts(await historyOf(harness, recoverId, ownerId)),
+        ).toEqual(texts);
+        // Then: the next model call reads the summary, and the answer clears the mark
+        expect(inputLines(afterCompaction?.messages ?? []).slice(0, 2)).toEqual(
+          [
+            'user: <data source="summary of the earlier history" author="agents">\nsummary A\n</data>',
+            'user: [event] compacted',
+          ],
+        );
+        expect(
+          historyLines(await historyOf(harness, recoverId, ownerId)).slice(-3),
+        ).toEqual([
+          'compaction: summary A',
+          'event: compacted',
+          'model_answer: answer after the overflow []',
+        ]);
+        expect((await markOf(recoverId))?.overflowed).toBe(false);
+
+        // When: a later call overflows again; Then: it is a first overflow again, compacted, not a failure
+        await harness.sessions.send({
+          agentId: recoverId,
+          ownerId,
+          text: 'one more question',
+        });
+        await recovering.called(7);
+        await waitForTaskStatus(harness, recoverId, ownerId, 'waiting');
+        expect(
+          historyLines(await historyOf(harness, recoverId, ownerId)).slice(-4),
+        ).toEqual([
+          'user_message: one more question',
+          'compaction: summary A2',
+          'event: compacted',
+          'model_answer: answer after the second overflow []',
+        ]);
+        expect((await markOf(recoverId))?.overflowed).toBe(false);
+
+        // Row B - When: the overflow comes back after the compaction, or the compaction itself overflows
+        for (const [index, row] of rowB.entries()) {
+          const agentId = await start(row.task);
+          const failed = await waitForTaskStatus(
+            harness,
+            agentId,
+            ownerId,
+            'failed',
+          );
+
+          // Then: the agent fails with context_overflow after at most one compaction
+          expect(failed.failure?.reason).toBe('context_overflow');
+          expect(failingScripts[index]?.calls).toHaveLength(row.calls);
+          const lines = historyLines(
+            await historyOf(harness, agentId, ownerId),
+          );
+          expect(
+            lines.filter((line) => line.startsWith('compaction: ')),
+          ).toHaveLength(row.compactions);
+          expect(lines.at(-1)).toBe('event: failed context_overflow');
+        }
+
+        // Row C - When: another 400 answers the call after the reads
+        const otherId = await start(otherTask);
+        const ended = await waitForTaskStatus(
+          harness,
+          otherId,
+          ownerId,
+          'failed',
+        );
+
+        // Then: the agent fails as today: no compaction call, no mark
+        expect(ended.failure?.reason).toBe('model_error');
+        expect(other.calls).toHaveLength(2);
+        const otherLines = historyLines(
+          await historyOf(harness, otherId, ownerId),
+        );
+        expect(
+          otherLines.filter((line) => line.startsWith('compaction: ')),
+        ).toEqual([]);
+        expect(otherLines.at(-1)).toBe('event: failed model_error');
+        expect((await markOf(otherId))?.overflowed).toBe(false);
+      } finally {
+        compactionHeld.open();
+        await harness.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
   );
 });

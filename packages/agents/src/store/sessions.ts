@@ -92,6 +92,8 @@ export interface Session {
   readonly interrupted: boolean;
   readonly closed: boolean;
   readonly lastInputTokens: number | null;
+  /** The last provider overflow has not ended in a model answer yet (runtime-fixes design-steps.md, KD-5). */
+  readonly overflowed: boolean;
   readonly createdAt: Date;
 }
 
@@ -183,6 +185,7 @@ function toSession(row: ConversationRow): Session {
     interrupted: row.interrupted,
     closed: row.closed,
     lastInputTokens: row.lastInputTokens,
+    overflowed: row.overflowed,
     createdAt: row.createdAt,
   };
 }

@@ -135,6 +135,7 @@ const SESSION: Session = {
   interrupted: false,
   closed: false,
   lastInputTokens: 50_000,
+  overflowed: false,
   createdAt: new Date(0),
 };
 

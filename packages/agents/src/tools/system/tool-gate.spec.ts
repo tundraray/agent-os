@@ -530,6 +530,7 @@ const SESSION: Session = {
   interrupted: false,
   closed: false,
   lastInputTokens: null,
+  overflowed: false,
   createdAt: new Date(0),
 };
 
