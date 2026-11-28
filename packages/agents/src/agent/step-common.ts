@@ -139,6 +139,7 @@ export function failResult(input: {
         ...input.patch,
         turns: 0,
         closed: true,
+        overflowed: false,
       });
     },
   };
