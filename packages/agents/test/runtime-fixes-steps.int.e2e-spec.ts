@@ -53,7 +53,9 @@ import {
   createAgentsHarness,
   historyLines,
   historyOf,
+  ledgerRowsOf,
   testRecord,
+  toolCallRowsOf,
   waitForTaskStatus,
   ZOMBIE_RUNTIME,
 } from './support/agentsHarness';
@@ -71,23 +73,263 @@ describe('runtime-fixes / steps - an interrupted answer stays in the history, an
   // AC-01.6: "Given в оборванном ответе модель начала вызов инструмента, но не дописала его, when ход прерван, then этого вызова нет ни в истории, ни в аудите, а текст до него сохранён."
   // Behavior: «Прервать» / «Стоп» while the scripted answer is held after its text parts -> the interrupt or stop transaction fences the task, the hook reads the text from `ModelClient` and writes one
   //   `model_answer` through `History.append` -> after the command answers `agents.history` already holds it, before `interrupted` / the stop mark; the model's next input has it in that order.
-  // Rows (table, one scripted run each):
-  //   A1 "interrupt, text": the answer streams 'Начало ответа' in two parts and is held; `agents.interrupt`; at once after it (before any step runs) history ends `model_answer: Начало ответа []`
-  //      with no `event: interrupted` yet (the step writes it later); the employee then sends a message -> the step closes calls, writes `event: interrupted`, and the model double's next input
-  //      lists the partial answer, then the interrupted mark, then the message (AC-01.2). Exactly one `model_answer` for that call; one ledger row for the aborted call by its estimate (unchanged).
-  //   A2 "interrupt, no text": the answer is held before any part; the interrupt writes no `model_answer` at all (history is task, then the event) - AC-01.5
+  // Rows (table, one scripted run each; design v1.3: every row cuts off the answer to the employee's SECOND message, after the agent answered its task):
+  //   A1 "interrupt, text": the answer streams 'Начало ответа' in two parts and is held; `agents.interrupt`; at once after it history holds the question, then `model_answer: Начало ответа []`,
+  //      and at most the `event: interrupted` the next step writes after it; that step calls no model until a message comes; the employee then sends a message -> the model double's next input
+  //      lists the question, the partial answer, the interrupted mark, then the message (AC-01.2). Exactly one `model_answer` for that call; one ledger row for the aborted call by its estimate (unchanged).
+  //   A2 "interrupt, no text": the answer is held before any part; the interrupt writes no `model_answer` at all (history is the question, then the event) - AC-01.5
   //   A3 "interrupt, text then a started tool call": the answer streams text, then a tool call that is never finished, then is held; after the interrupt the history holds the text only: no
-  //      `tool_call` line for it, no row in the tool-call audit of the harness - AC-01.6
-  //   B  "stop of a tree": root R with a child C, each held mid-answer with text; `agents.stop` on R: the history of R and of C each ends `model_answer: <its text>` followed by the stop mark
-  //      (`stopped` for R, `stopped_with_parent` for C); the stop-mark order holds after a reload of the history - AC-01.3
+  //      tool call in the answer, no `tool_result` line, no row in the tool-call audit - AC-01.6
+  //   B  "stop of a tree": root R with a child C, each held mid-answer with text (R on the employee's question, C on its task); `agents.stop` on R: the history of R and of C each ends
+  //      `model_answer: <its text>` followed by the stop mark (`stopped` for R, `stopped_with_parent` for C); the order holds after a reload of the history - AC-01.3
   // Catches: (1) the text written AFTER the mark or by the next step, so a re-read right after the command misses it and the screen loses the draft (the original defect); (2) the text lost
   //   because the hook is not called for one of the two paths (interrupt vs end `stopped`) or not for a descendant of a stopped tree; (3) an empty `model_answer` written for an empty text;
-  //   (4) a half-written tool call that leaks into the history or the audit. No unit test sees the transaction order or the descendant walk.
+  //   (4) a half-written tool call that leaks into the history or the audit; (5) the question standing after the partial answer, or answered again after the interrupt. No unit test sees the
+  //   transaction order or the descendant walk.
   // @category: core-functionality
   // @dependency: RuntimeModule (TaskControl, interrupt hook, TaskEndHooks), createAgents (interrupt, stop, history, send), ModelClient text holder, History.append, ScriptedModel (hold after parts), Postgres
   // @complexity: high
-  it.todo(
+  it(
     'INT-1: interrupt and stop write the text the model had already written as one model_answer before the interrupted or stop mark; no text writes nothing; a half-written tool call is not kept',
+    async () => {
+      const ownerId = await newUser();
+      const question = 'INT-1: second question';
+      const questionLine = `user_message: ${question}`;
+
+      // Rows A - Given: three agents, each answered its task and waits; the answer to the question is held
+      // after its text (A1), before any part (A2), after its text with a tool call never finished (A3)
+      const interruptModel = createScriptedModel();
+      const textHeld = createLatch();
+      const silentHeld = createLatch();
+      const callHeld = createLatch();
+      const rows = [
+        {
+          task: 'INT-1 A1: interrupted with text',
+          held: textHeld,
+          cut: { text: ['Начало ', 'ответа'], latchAfterText: textHeld },
+          partial: ['model_answer: Начало ответа []'],
+        },
+        {
+          task: 'INT-1 A2: interrupted before any text',
+          held: silentHeld,
+          cut: { text: 'never streamed', latch: silentHeld },
+          partial: [],
+        },
+        {
+          task: 'INT-1 A3: interrupted with a started tool call',
+          held: callHeld,
+          cut: {
+            text: ['Looking ', 'it up'],
+            calls: [{ tool: 'list_agents', args: {} }],
+            latchAfterText: callHeld,
+          },
+          partial: ['model_answer: Looking it up []'],
+        },
+      ];
+      const scripts = rows.map((row) =>
+        interruptModel.script({ task: row.task }, [
+          { text: 'First answer.' },
+          row.cut,
+          { text: 'Answer after the interrupt.' },
+        ]),
+      );
+      const interrupting = await createAgentsHarness({
+        model: interruptModel,
+        library: createLibraryDouble(),
+        access: {},
+        root: testRecord('int-1 interrupt'),
+      });
+      try {
+        for (const [index, row] of rows.entries()) {
+          const script = scripts[index];
+          const { agentId } = await interrupting.sessions.start({
+            ownerId,
+            prompt: row.task,
+            description: `interrupted agent ${index + 1}`,
+          });
+          await waitForTaskStatus(interrupting, agentId, ownerId, 'waiting');
+          await interrupting.sessions.send({
+            agentId,
+            ownerId,
+            text: question,
+          });
+          await row.held.reached();
+
+          // When: the employee interrupts the held answer
+          expect(
+            await interrupting.sessions.interrupt({ agentId, ownerId }),
+          ).toBe('interrupted');
+
+          // Then: at once after the command the question and the partial answer are in the history, before the mark
+          const before = [
+            `task: ${row.task}`,
+            'model_answer: First answer. []',
+            questionLine,
+            ...row.partial,
+          ];
+          const atOnce = historyLines(
+            await historyOf(interrupting, agentId, ownerId),
+          );
+          expect(atOnce.slice(0, before.length)).toEqual(before);
+          expect(atOnce.slice(before.length)).toEqual(
+            atOnce.length > before.length ? ['event: interrupted'] : [],
+          );
+
+          // Then: the step that took the interrupt writes the mark after it and calls no model
+          await waitFor(
+            () => historyOf(interrupting, agentId, ownerId),
+            (entries) => historyLines(entries).at(-1) === 'event: interrupted',
+            `the interrupted event of row ${index + 1}`,
+          );
+          await waitForTaskStatus(interrupting, agentId, ownerId, 'waiting');
+          expect(
+            historyLines(await historyOf(interrupting, agentId, ownerId)),
+          ).toEqual([...before, 'event: interrupted']);
+          expect(script.calls).toHaveLength(2);
+          // Then: the tool call the model never finished is neither in the history nor in the audit
+          expect(await toolCallRowsOf(interrupting.db, agentId)).toEqual([]);
+
+          // When: the employee writes again
+          row.held.open();
+          await interrupting.sessions.send({ agentId, ownerId, text: 'go on' });
+          await script.called(3);
+          await waitForTaskStatus(interrupting, agentId, ownerId, 'waiting');
+
+          // Then: the model reads the question, its partial answer, the mark and the message, in that order
+          const partialInput = row.partial.map((line) =>
+            line.replace('model_answer: ', 'assistant: '),
+          );
+          expect(
+            inputLines(script.calls[2]?.messages ?? []).slice(
+              -(3 + partialInput.length),
+            ),
+          ).toEqual([
+            `user: ${question}`,
+            ...partialInput,
+            'user: [event] interrupted',
+            'user: go on',
+          ]);
+          expect(
+            historyLines(await historyOf(interrupting, agentId, ownerId)),
+          ).toEqual([
+            ...before,
+            'event: interrupted',
+            'user_message: go on',
+            'model_answer: Answer after the interrupt. []',
+          ]);
+          // Then: the aborted call is one ledger row, as before: three calls, three rows
+          expect(
+            await ledgerRowsOf(interrupting.db, ownerId, agentId),
+          ).toHaveLength(3);
+        }
+      } finally {
+        for (const row of rows) row.held.open();
+        await interrupting.close();
+      }
+
+      // Row B - Given: root R started child C, answered and waits; C is held mid-answer on its task, and R mid-answer
+      // on the employee's question
+      const library = createLibraryDouble();
+      const childRecord = library.add(testRecord('int1-child'));
+      const rootHeld = createLatch();
+      const childHeld = createLatch();
+      const stopModel = createScriptedModel();
+      const rootTask = 'INT-1 B: root of the stopped tree';
+      const childTask = 'INT-1 B: child of the stopped tree';
+      const rootScript = stopModel.script({ task: rootTask }, [
+        {
+          calls: [
+            {
+              tool: 'start_agent',
+              args: {
+                agent: 'int1-child',
+                description: 'stopped child',
+                prompt: childTask,
+              },
+            },
+          ],
+        },
+        { text: 'Child started.' },
+        { text: ['Root ', 'partial'], latchAfterText: rootHeld },
+      ]);
+      stopModel.script({ task: childTask }, [
+        { text: ['Child ', 'partial'], latchAfterText: childHeld },
+      ]);
+      const stopping = await createAgentsHarness({
+        model: stopModel,
+        library,
+        access: {},
+        root: testRecord('int-1 root', {
+          tools: ['start_agent'],
+          agents: [childRecord],
+        }),
+      });
+      try {
+        const { agentId: rootId } = await stopping.sessions.start({
+          ownerId,
+          prompt: rootTask,
+          description: 'stopped root',
+        });
+        await rootScript.called(2);
+        await waitForTaskStatus(stopping, rootId, ownerId, 'waiting');
+        await childHeld.reached();
+        const [childId] = (await toolCallRowsOf(stopping.db, rootId)).flatMap(
+          (call) => (call.childTaskId === null ? [] : [call.childTaskId]),
+        );
+        if (childId === undefined) throw new Error('the root started no child');
+        await stopping.sessions.send({
+          agentId: rootId,
+          ownerId,
+          text: question,
+        });
+        await rootHeld.reached();
+
+        // When: the employee stops R
+        const stoppedIds = await stopping.sessions.stop({
+          agentId: rootId,
+          ownerId,
+        });
+
+        // Then: R and C are stopped, and each history holds its text before its stop mark
+        expect(stoppedIds.slice(0, 2)).toEqual([rootId, childId]);
+        const expectedRoot = [
+          `task: ${rootTask}`,
+          'model_answer:  [start_agent]',
+          'tool_result: start_agent success',
+          'model_answer: Child started. []',
+          questionLine,
+          'model_answer: Root partial []',
+          'event: stopped',
+        ];
+        const expectedChild = [
+          `task: ${childTask}`,
+          'model_answer: Child partial []',
+          'event: stopped_with_parent',
+        ];
+        expect(
+          historyLines(await historyOf(stopping, rootId, ownerId)),
+        ).toEqual(expectedRoot);
+        expect(
+          historyLines(await historyOf(stopping, childId, ownerId)),
+        ).toEqual(expectedChild);
+
+        // Then: after the cut-off calls end, a reload of the history shows the same order
+        rootHeld.open();
+        childHeld.open();
+        expect(rootScript.calls).toHaveLength(3);
+        expect(
+          historyLines(await historyOf(stopping, rootId, ownerId)),
+        ).toEqual(expectedRoot);
+        expect(
+          historyLines(await historyOf(stopping, childId, ownerId)),
+        ).toEqual(expectedChild);
+      } finally {
+        rootHeld.open();
+        childHeld.open();
+        await stopping.close();
+      }
+    },
+    TEST_TIMEOUT_MS,
   );
 
   // INT-2  A restart repeats the step and a step time limit fails it; the employee's question is in the history once, with no copy of the cut text

@@ -247,6 +247,12 @@ interface SentRequest {
   readonly record: (usage: CallUsage) => Promise<{ readonly callId: string }>;
 }
 
+/** The text a running agent call has streamed so far, and the signal of its step. */
+interface HeldText {
+  text: string;
+  readonly signal: AbortSignal;
+}
+
 /** The answer of the provider with the id of its ledger row, or the provider's error. */
 type Generated =
   | {
@@ -324,12 +330,15 @@ function isBilled(cut: {
  * lost. An answered request is recorded with the provider's usage; one cut by a cancel, or by a failure
  * after its answer began, with an estimate, so a call interrupted before its answer ends still counts
  * against the quota. A request the provider rejected before any output is not billed and leaves no row
- * (`isBilled`). Each text part of an agent's answer goes to `onTextDelta` with its running `offset`.
+ * (`isBilled`). Each text part of an agent's answer goes to `onTextDelta` with its running `offset`, and the
+ * text of the running answer is held by task until the call ends (`textOf`, runtime-fixes KD-2).
  */
 @Injectable()
 export class ModelClient {
   /** The package logger: `completeText` runs outside any step. */
   private readonly logger: Logger;
+  /** The text of each running agent call whose parts go to the feed, by task (KD-2). */
+  private readonly heldTexts = new Map<string, HeldText>();
 
   constructor(
     /** The seam of the model: Mastra in production, a scripted double in tests (plan Notes 9). */
@@ -388,29 +397,31 @@ export class ModelClient {
     if (verdict.kind === 'refused') return { kind: 'not_started', verdict };
     const connected = await this.connectionOf(request.model, request.logger);
     if (connected.kind === 'model_error') return connected;
-    const result = await this.generate({
-      call: {
-        purpose: 'agent_turn',
-        agentName: request.agentName,
-        model: request.model,
-        connection: connected.connection,
-        instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
-        messages: request.messages,
-        tools: request.tools,
-        maxOutputTokens: this.config.maxOutputTokens,
-      },
-      signal: request.signal,
-      logger: request.logger,
-      onText: this.deltaReceiver(request),
-      record: (usage) =>
-        this.ledger.record({
-          ownerId: request.ownerId,
-          taskId: request.taskId,
+    const result = await this.holdingText(request, (onText) =>
+      this.generate({
+        call: {
+          purpose: 'agent_turn',
+          agentName: request.agentName,
           model: request.model,
-          price: verdict.price,
-          usage,
-        }),
-    });
+          connection: connected.connection,
+          instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
+          messages: request.messages,
+          tools: request.tools,
+          maxOutputTokens: this.config.maxOutputTokens,
+        },
+        signal: request.signal,
+        logger: request.logger,
+        onText,
+        record: (usage) =>
+          this.ledger.record({
+            ownerId: request.ownerId,
+            taskId: request.taskId,
+            model: request.model,
+            price: verdict.price,
+            usage,
+          }),
+      }),
+    );
     if (result.kind === 'model_error') return result;
     const { generation, callId, durationMs } = result;
     const { usage } = generation;
@@ -619,6 +630,39 @@ export class ModelClient {
       callId,
       durationMs: this.clock.now().getTime() - startedAt,
     };
+  }
+
+  /**
+   * The text the model has written so far in the task's running agent call (KD-2): its text parts only, never
+   * a tool call; `''` when no such call runs or its step's signal was aborted.
+   */
+  textOf(taskId: string): string {
+    const held = this.heldTexts.get(taskId);
+    return held === undefined || held.signal.aborted ? '' : held.text;
+  }
+
+  /**
+   * Runs one request of an agent call with its text parts going to the feed and, when the call streams its
+   * text (`streamsText`), held by task until the call ends in any way (KD-2). A call of a cut-off step that ends
+   * after the task's next call began releases only its own text.
+   */
+  private async holdingText<T>(
+    request: ModelCallRequest,
+    send: (onText: (text: string) => void) => Promise<T>,
+  ): Promise<T> {
+    const feed = this.deltaReceiver(request);
+    if (!request.streamsText) return send(feed);
+    const held: HeldText = { text: '', signal: request.signal };
+    this.heldTexts.set(request.taskId, held);
+    try {
+      return await send((text) => {
+        held.text += text;
+        feed(text);
+      });
+    } finally {
+      if (this.heldTexts.get(request.taskId) === held)
+        this.heldTexts.delete(request.taskId);
+    }
   }
 
   /** The text parts of an agent's call, with offsets from 0, to the hook. */

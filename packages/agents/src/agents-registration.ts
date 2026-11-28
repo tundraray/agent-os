@@ -11,7 +11,12 @@ import {
   SettingsRepository,
   TrainingsRepository,
 } from '@agent-os/db';
-import { HandlerRegistry, TaskControl } from '@agent-os/runtime';
+import {
+  HandlerRegistry,
+  TaskControl,
+  TaskEndHooks,
+  TaskInterruptHooks,
+} from '@agent-os/runtime';
 import {
   Inject,
   Injectable,
@@ -22,6 +27,7 @@ import {
 
 import type { AccessAudit, AccessGate } from './access-gate';
 import { AgentFactory } from './agent/agent-factory';
+import { writePartialAnswer } from './agent/partial-answer';
 import {
   ACCESS_AUDIT,
   ACCESS_GATE,
@@ -31,6 +37,7 @@ import {
   RECORD_LIBRARY,
 } from './agents.tokens';
 import type { AgentsConfig } from './config';
+import { ModelClient } from './model/model-client';
 import { createStartDeepAgentTool } from './deep/start-deep-agent';
 import { createTaskTool } from './deep/task-delegation';
 import { AgentsProviders } from './providers/provider-registry';
@@ -170,9 +177,13 @@ export class SystemToolsRegistration implements OnModuleInit {
 
 /**
  * Registers the package in the runtime (plan Notes 8): the agents (`ChatAgent`, `Agent`, `DeepAgent`, `Trainer`)
- * as the live task types of `AGENT_TASK_TYPES` — one object per task, made by `AgentFactory`.
+ * as the live task types of `AGENT_TASK_TYPES` — one object per task, made by `AgentFactory` — and the partial
+ * answer (runtime-fixes KD-1) as the interrupt hook and as a task end hook that acts only on a `stopped` end.
  * Once every module has registered its tools it closes the tools library.
  */
+/** The name of the partial answer's hooks in the runtime. */
+const PARTIAL_ANSWER_HOOK = 'agents.partial-answer';
+
 @Injectable()
 export class AgentsRegistration
   implements OnModuleInit, OnApplicationBootstrap, OnApplicationShutdown
@@ -186,9 +197,27 @@ export class AgentsRegistration
     @Inject(AGENTS_CONFIG)
     private readonly config: Pick<AgentsConfig, 'allowHttpUrls'>,
     @Inject(AGENTS_LOGGER) private readonly logger: Logger,
+    @Inject(TaskInterruptHooks)
+    private readonly interruptHooks: Pick<TaskInterruptHooks, 'register'>,
+    @Inject(TaskEndHooks)
+    private readonly endHooks: Pick<TaskEndHooks, 'register'>,
+    @Inject(ModelClient) private readonly modelClient: ModelClient,
+    @Inject(History) private readonly history: History,
   ) {}
 
   onModuleInit(): void {
+    const partialAnswer = {
+      modelClient: this.modelClient,
+      history: this.history,
+      logger: this.logger.child({ service: 'agents.partial-answer' }),
+    };
+    this.interruptHooks.register(PARTIAL_ANSWER_HOOK, (task) =>
+      writePartialAnswer(partialAnswer, task, 'interrupt'),
+    );
+    this.endHooks.register(PARTIAL_ANSWER_HOOK, async (end) => {
+      if (end.status === 'stopped')
+        await writePartialAnswer(partialAnswer, end, 'stop');
+    });
     // The agent classes the runtime launches, each a live task type: one object per task, from the factory.
     for (const type of AGENT_TASK_TYPES) {
       this.handlers.registerLive({

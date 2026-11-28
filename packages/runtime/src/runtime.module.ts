@@ -20,6 +20,7 @@ import { StepCommitter } from './steps/step-commit';
 import { RunningTaskRegistry } from './tasks/running-task.registry';
 import { TaskControl } from './tasks/task-control';
 import { TaskEndHooks } from './tasks/task-end-hooks';
+import { TaskInterruptHooks } from './tasks/task-interrupt-hooks';
 import { Tasks } from './tasks/tasks';
 import { BackgroundPasses } from './workers/background-passes';
 import { RecoverySweeper } from './workers/recovery.sweeper';
@@ -36,6 +37,7 @@ type RuntimeModuleOptions = Pick<ModuleMetadata, 'imports'> &
 const PUBLIC_SERVICES = [
   HandlerRegistry,
   TaskEndHooks,
+  TaskInterruptHooks,
   BackgroundPasses,
   TaskControl,
   Inbox,
@@ -50,9 +52,10 @@ const PUBLIC_SERVICES = [
  * repositories of `DbModule` and logs through `LOGGER`, both provided globally by the composition
  * root; the package reads no environment (ADR-0004).
  *
- * Upper modules register their handlers (`HandlerRegistry`), task end hooks (`TaskEndHooks`) and
- * background passes (`BackgroundPasses`) in `onModuleInit`; `RuntimeWorkers` starts the workers in
- * `onApplicationBootstrap` and stops them in `beforeApplicationShutdown`.
+ * Upper modules register their handlers (`HandlerRegistry`), task end hooks (`TaskEndHooks`), the
+ * interrupt hook (`TaskInterruptHooks`) and background passes (`BackgroundPasses`) in `onModuleInit`;
+ * `RuntimeWorkers` starts the workers in `onApplicationBootstrap` and stops them in
+ * `beforeApplicationShutdown`.
  */
 @Global()
 @Module({})

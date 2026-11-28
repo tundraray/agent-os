@@ -70,7 +70,8 @@ export class History {
 
   /**
    * Appends the entries in order with `seq` = `max(seq) + 1`, `+ 2`, …: history is written only in a
-   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time. Returns the appended entries.
+   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time, or by the partial
+   * answer in the transaction that fences the step (runtime-fixes KD-1). Returns the appended entries.
    */
   async append(
     taskId: string,
