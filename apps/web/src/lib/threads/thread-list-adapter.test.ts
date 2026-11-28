@@ -61,14 +61,24 @@ describe('thread list adapter', () => {
             remoteId: 'a',
             title: 'Первая',
             lastMessageAt: FIXTURE_DATE,
-            custom: { forkable: true, forked: false, state: 'new_answer' },
+            custom: {
+              forkable: true,
+              forked: false,
+              state: 'new_answer',
+              notificationLevel: null,
+            },
           },
           {
             status: 'regular',
             remoteId: 'b',
             title: undefined,
             lastMessageAt: FIXTURE_DATE,
-            custom: { forkable: true, forked: false, state: null },
+            custom: {
+              forkable: true,
+              forked: false,
+              state: null,
+              notificationLevel: null,
+            },
           },
         ],
         nextCursor: undefined,
@@ -150,6 +160,7 @@ describe('thread list adapter', () => {
       forkable: true,
       forked: false,
       state: null,
+      notificationLevel: null,
     });
   });
 
@@ -166,7 +177,12 @@ describe('thread list adapter', () => {
       remoteId: 'a',
       title: 'Первая',
       lastMessageAt: FIXTURE_DATE,
-      custom: { forkable: true, forked: false, state: null },
+      custom: {
+        forkable: true,
+        forked: false,
+        state: null,
+        notificationLevel: null,
+      },
     });
   });
 

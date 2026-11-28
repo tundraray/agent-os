@@ -4,6 +4,8 @@ import {
   type CurrentUser,
   type Language,
   type LanguageBody,
+  type NotificationLevel,
+  type NotificationLevelBody,
   type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
@@ -42,6 +44,16 @@ async function saveLanguage(language: Language): Promise<void> {
   await apiRequest({ path: '/api/auth/me/language', method: 'PUT', body });
 }
 
+/** 204; the employee's default notification level (live-feed design-server.md, KD-7). */
+async function saveNotificationLevel(level: NotificationLevel): Promise<void> {
+  const body: NotificationLevelBody = { level };
+  await apiRequest({
+    path: '/api/auth/me/notification-level',
+    method: 'PUT',
+    body,
+  });
+}
+
 /** The provider sign-in answers 302 to the provider, so the tab goes to this address instead of a request. */
 function providerSignInUrl(providerId: string, next: string): string {
   const query = new URLSearchParams({ next }).toString();
@@ -55,5 +67,6 @@ export const authApi = {
   signInWithPassword,
   changePassword,
   saveLanguage,
+  saveNotificationLevel,
   providerSignInUrl,
 };

@@ -1,4 +1,8 @@
-import type { CurrentUser, Language } from '@agent-os/contracts';
+import type {
+  CurrentUser,
+  Language,
+  NotificationLevel,
+} from '@agent-os/contracts';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { describeApiError } from '@/lib/api/api-request';
 import { loginPath } from '@/lib/auth/login-reason';
@@ -19,6 +23,8 @@ export type CurrentUserStore = StoreApi<CurrentUserState> & {
   revokeAdmin: () => void;
   /** The API confirmed the employee's interface language: the read employee carries it from now on. */
   setLanguage: (language: Language) => void;
+  /** The API confirmed the employee's default notification level (live-feed FR-10). */
+  setNotificationLevel: (level: NotificationLevel) => void;
 };
 
 type CurrentUserDeps = {
@@ -63,6 +69,11 @@ export function createCurrentUserStore({
       const { user } = state.getState();
       if (user === null) return;
       state.setState({ user: { ...user, language } });
+    },
+    setNotificationLevel: (notificationLevel: NotificationLevel): void => {
+      const { user } = state.getState();
+      if (user === null) return;
+      state.setState({ user: { ...user, notificationLevel } });
     },
   });
 }

@@ -36,6 +36,7 @@ import {
   type InheritedHistory,
   type InterruptResponse,
   type MarkSeenRequest,
+  type NotificationLevel,
   type RenameThreadRequest,
   type RestartResponse,
   type SendMessageRequest,
@@ -45,6 +46,7 @@ import {
   type ThreadDocumentsView,
   type ThreadForksResponse,
   type ThreadListResponse,
+  type ThreadNotificationLevelRequest,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
@@ -131,6 +133,19 @@ async function markSeen(threadId: string, throughSeq: number): Promise<void> {
   const body: MarkSeenRequest = { throughSeq };
   await apiRequest({
     path: `${threadRoute(threadId)}/seen`,
+    method: 'PUT',
+    body,
+  });
+}
+
+/** 204: the conversation's own notification level, `null` — as the employee's default (live-feed KD-7). */
+async function setNotificationLevel(
+  threadId: string,
+  level: NotificationLevel | null,
+): Promise<void> {
+  const body: ThreadNotificationLevelRequest = { level };
+  await apiRequest({
+    path: `${threadRoute(threadId)}/notification-level`,
     method: 'PUT',
     body,
   });
@@ -335,6 +350,7 @@ export const threadsApiClient = {
   deleteThread,
   forkThread,
   markSeen,
+  setNotificationLevel,
   getThreadForks,
   getConversation,
   getThreadAgents,

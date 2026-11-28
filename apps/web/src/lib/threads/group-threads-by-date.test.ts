@@ -27,6 +27,7 @@ function entry(id: string, activityAt: Date | number): ThreadListEntry {
     forkable: true,
     forked: false,
     state: null,
+    notificationLevel: null,
   };
 }
 

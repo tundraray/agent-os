@@ -57,6 +57,12 @@
     "deleteFailed": "Couldn't delete the chat. Try again.",
     "fork": "Fork chat",
     "forkMark": ", fork",
+    "notifications": "Notifications",
+    "levelDefault": "Default · {level}",
+    "enableInBrowser": "Turn on in browser",
+    "browserBlocked": "Browser doesn't show notifications — details",
+    "notificationsFailed": "Couldn't change notifications for this chat. Try again.",
+    "silentMark": ", notifications off",
     "state": {
       "working": "Working",
       "waiting_for_you": "Waiting for you",
@@ -87,6 +93,17 @@
     "themeSystem": "System",
     "signOut": "Sign out",
     "signOutFailed": "Couldn't sign out. Try again."
+  },
+  "notifications": {
+    "offer": "Get notified when an agent finishes or needs you?",
+    "enable": "Turn on notifications",
+    "dismiss": "Dismiss",
+    "denied": "The browser didn't allow notifications. You can turn them on in the site settings.",
+    "event": {
+      "decision": "Waiting for your decision",
+      "answer": "Reply ready",
+      "failure": "Failed: the agent stopped with an error"
+    }
   },
   "spend": {
     "ready": "Spending for {month}: {amount}",

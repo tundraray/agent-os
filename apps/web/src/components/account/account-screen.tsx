@@ -8,12 +8,13 @@ import { ConnectionsSection } from './connections-section';
 import { LanguageSection } from './language-section';
 import { MemorySection } from './memory-section';
 import { ModelsSection } from './models-section';
+import { NotificationsSection } from './notifications-section';
 import { PasswordSection } from './password-section';
 
 /**
  * Screen 3 «Мой доступ» (UXRD): sections one under another in the feed column (chat-shell UXRD, D-01);
  * the title is the shell header's `h1`. The parts `mcp-connect` and `access` add MA-01 and MA-02 above
- * MA-03; the i18n section LN-01 comes last. The store comes from the shell: one read of the employee per
+ * MA-03; the i18n section LN-01 and the live-feed section LF-04 come last. The store comes from the shell: one read of the employee per
  * page load.
  */
 export function AccountScreen({
@@ -40,6 +41,7 @@ export function AccountScreen({
         <MemorySection />
         <PasswordSection hasPassword={user?.hasPassword === true} />
         <LanguageSection currentUser={currentUser} />
+        <NotificationsSection currentUser={currentUser} />
       </div>
     </div>
   );

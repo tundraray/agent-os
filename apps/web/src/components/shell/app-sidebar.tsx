@@ -44,6 +44,7 @@ import {
 } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { ConversationSearch } from './conversation-search';
+import { NotificationOffer } from './notification-offer';
 import { useShellActions, useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
 import { THREAD_LINK_ATTRIBUTE } from './thread-history-item';
@@ -251,6 +252,7 @@ export function AppSidebar() {
           </nav>
         )}
       </SidebarContent>
+      {!isStrip && <NotificationOffer />}
       <SidebarFooter className="border-t border-sidebar-border">
         <UserMenu />
       </SidebarFooter>

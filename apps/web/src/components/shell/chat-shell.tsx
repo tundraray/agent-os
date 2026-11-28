@@ -50,6 +50,7 @@ import { LeaveGuardDialog } from './leave-guard-dialog';
 import { MainView, useConversationFeed } from './main-view';
 import { SchemaPanel, useChatTasks, type ChatTasks } from './schema-panel';
 import { useShellServices } from './shell-actions';
+import { useAttentionNotifications } from './use-attention-notifications';
 import {
   FEED_MIN_WIDTH,
   WORKSPACE_DEFAULT_SIZE,
@@ -100,6 +101,7 @@ export function ChatShell({
         <ShellAnnouncer />
         <GlobalShortcuts />
         <LeaveGuard />
+        <AttentionNotifications />
         <SkipLink />
         <AppSidebar />
         <ShellMain>{children}</ShellMain>
@@ -420,6 +422,12 @@ function GlobalShortcuts() {
 function LeaveGuard() {
   useLeaveGuardHistory();
   return <LeaveGuardDialog />;
+}
+
+/** live-feed KD-5: the shell's one listener that turns `attention` into a browser notification. */
+function AttentionNotifications() {
+  useAttentionNotifications();
+  return null;
 }
 
 /** Crossing to ≥ 768 px closes the drawer, so it does not reopen by itself when the window narrows again. */

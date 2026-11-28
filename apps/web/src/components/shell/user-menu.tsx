@@ -46,6 +46,9 @@ import { ShellLink } from './shell-link';
 
 type ShellTranslator = ReturnType<typeof useTranslations<'shell'>>;
 
+/** Marks the user block's trigger (SB-11); focus lands on it once the offer LF-03 is gone (live-feed UXRD). */
+export const USER_MENU_ATTRIBUTE = 'data-shell-user-menu';
+
 const THEMES = [
   { value: 'light', label: 'userMenu.themeLight', icon: SunIcon },
   { value: 'dark', label: 'userMenu.themeDark', icon: MoonIcon },
@@ -177,6 +180,7 @@ export function UserMenu() {
           <DropdownMenuTrigger
             render={
               <SidebarMenuButton
+                {...{ [USER_MENU_ATTRIBUTE]: '' }}
                 size="lg"
                 // In the 48 px strip the spend line is clipped: it moves into the avatar's tooltip.
                 tooltip={

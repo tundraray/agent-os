@@ -32,6 +32,10 @@ import {
   type OpenEventSource,
 } from '@/lib/live/live-store';
 import { logger } from '@/lib/logger';
+import {
+  createNotificationsStore,
+  type NotificationsStore,
+} from '@/lib/notifications/notifications-store';
 import { createSearchStore, type SearchStore } from '@/lib/search/search-store';
 import {
   createWorkspaceStore,
@@ -68,6 +72,8 @@ export type ShellServices = {
   feeds: ThreadFeeds;
   /** The signed-in employee, read once per shell mount by the user block. */
   currentUser: CurrentUserStore;
+  /** Browser notification permission and the offer LF-03 (live-feed KD-5). */
+  notifications: NotificationsStore;
   /** The «Агенты» screen's store, one per shell; created on first read, so pages and expansion outlive a visit. */
   readonly agentList: AgentListStore;
   /** Live data of library records (KD-2); created on first read, so a visit without records reads nothing. */
@@ -122,6 +128,7 @@ type ThreadFeedsDeps = {
   status: ShellStatusStore;
   live: LiveStore;
   announcer: AnnouncerStore;
+  notifications: NotificationsStore;
 };
 
 /**
@@ -134,6 +141,7 @@ function createThreadFeeds({
   status,
   live,
   announcer,
+  notifications,
 }: ThreadFeedsDeps): ThreadFeeds {
   const feeds = new Map<string, { store: FeedStore; release: () => void }>();
   const watches = (remoteId: string): boolean =>
@@ -149,7 +157,11 @@ function createThreadFeeds({
         status,
         announcer,
         logger,
-        onActivity: () => status.getState().bumpActivity(itemId, Date.now()),
+        // An accepted message starts an agent's work: the moment the offer LF-03 may appear (live-feed KD-5).
+        onActivity: () => {
+          status.getState().bumpActivity(itemId, Date.now());
+          notifications.noteMessageAccepted();
+        },
       });
       const unsubscribers = [
         // The root agent's id is the conversation's, so `agentId` keeps the records of its own answer alone.
@@ -210,7 +222,14 @@ export function createShellServices({
   const status = createShellStatusStore();
   const announcer = createAnnouncerStore();
   const live = createLiveStore({ openEventSource, announcer, logger });
-  const feeds = createThreadFeeds({ api: apiClient, status, live, announcer });
+  const notifications = createNotificationsStore({ logger });
+  const feeds = createThreadFeeds({
+    api: apiClient,
+    status,
+    live,
+    announcer,
+    notifications,
+  });
   const listAdapter = createThreadListAdapter({
     api: apiClient,
     status,
@@ -228,6 +247,7 @@ export function createShellServices({
     announcer,
     feeds,
     currentUser,
+    notifications,
     get agentList() {
       agentList ??= createAgentListStore({ api: apiClient, live, logger });
       return agentList;

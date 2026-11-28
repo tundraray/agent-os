@@ -33,6 +33,7 @@ const customOf = (thread: ReadThread) => ({
   forkable: thread.forkable,
   forked: thread.forkedFrom !== null,
   state: 'state' in thread ? thread.state : null,
+  notificationLevel: thread.notificationLevel,
 });
 
 const toRemoteMetadata = (thread: ReadThread): RemoteThreadMetadata => ({

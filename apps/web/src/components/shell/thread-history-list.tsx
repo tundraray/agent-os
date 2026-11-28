@@ -15,12 +15,15 @@ import { usePathname } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import {
   ConversationStateSchema,
+  NotificationLevelSchema,
   THREAD_PAGE_SIZE,
   type ConversationState,
+  type NotificationLevel,
 } from '@agent-os/contracts';
 import { useStore } from 'zustand';
 import { RotateCwIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   SidebarGroup,
@@ -40,6 +43,7 @@ import {
   type ThreadGroup,
   type ThreadListEntry,
 } from '@/lib/threads/group-threads-by-date';
+import { rowLevel } from '@/lib/threads/shell-status-store';
 import { DeleteThreadDialog } from './delete-thread-dialog';
 import {
   THREAD_ACTIONS_ATTRIBUTE,
@@ -48,6 +52,7 @@ import {
   ThreadHistoryItem,
 } from './thread-history-item';
 import { useShellServices, useShellStatus } from './shell-actions';
+import { useEnableNotifications } from './use-enable-notifications';
 import { useOpenBranch } from './use-open-branch';
 
 export type ThreadHistoryListState =
@@ -167,6 +172,12 @@ const entryIdsOf = (state: ThreadHistoryListState): ReadonlySet<string> =>
 /** `custom` is the library's untyped bag: a value that is not a known state shows no mark. */
 function conversationStateOf(value: unknown): ConversationState | null {
   const parsed = ConversationStateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** The same bag's level; `null` is «как по умолчанию», which `toRemoteMetadata` puts for every read row. */
+function listedLevelOf(value: unknown): NotificationLevel | null {
+  const parsed = NotificationLevelSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -503,37 +514,54 @@ export function ThreadHistoryList() {
   const activityAt = useShellStatus((s) => s.activityAt);
   const titleWaiting = useShellStatus((s) => s.titleWaiting);
   const asideBranchId = useStore(services.workspace, (s) => s.aside?.branchId);
+  const savedLevels = useShellStatus((s) => s.savedLevels);
+  const defaultLevel = useStore(
+    services.currentUser,
+    (s) => s.user?.notificationLevel ?? null,
+  );
+  const permission = useStore(services.notifications, (s) => s.permission);
+  const t = useTranslations('shell.thread');
+  const enableNotifications = useEnableNotifications();
   const now = useNow();
 
-  const entries = useMemo(
-    () =>
-      threadItems
-        .filter((item) => item.status === 'regular')
-        .map((item): ThreadListEntry => {
-          // `toRemoteMetadata` puts both flags in `custom`; a thread made in this tab has them from its create.
-          const custom =
-            item.custom ??
-            (item.remoteId === undefined
+  // The level each row is listed with, by item id: a save from the menu remembers it (KD-7).
+  const { entries, listedLevels } = useMemo(() => {
+    const listed = new Map<string, NotificationLevel | null>();
+    const rows = threadItems
+      .filter((item) => item.status === 'regular')
+      .map((item): ThreadListEntry => {
+        // `toRemoteMetadata` puts both flags in `custom`; a thread made in this tab has them from its create.
+        const custom =
+          item.custom ??
+          (item.remoteId === undefined
+            ? undefined
+            : services.listAdapter.createdCustom(item.remoteId));
+        const listedLevel = listedLevelOf(custom?.notificationLevel);
+        listed.set(item.id, listedLevel);
+        return {
+          id: item.id,
+          remoteId: item.remoteId,
+          title: item.title,
+          activityAt: entryActivityAt(
+            {
+              lastMessageAt: item.lastMessageAt,
+              activityAt: activityAt[item.id],
+            },
+            now,
+          ),
+          forkable: custom?.forkable === true,
+          forked: custom?.forked === true,
+          state: conversationStateOf(custom?.state),
+          notificationLevel: rowLevel(
+            listedLevel,
+            item.remoteId === undefined
               ? undefined
-              : services.listAdapter.createdCustom(item.remoteId));
-          return {
-            id: item.id,
-            remoteId: item.remoteId,
-            title: item.title,
-            activityAt: entryActivityAt(
-              {
-                lastMessageAt: item.lastMessageAt,
-                activityAt: activityAt[item.id],
-              },
-              now,
-            ),
-            forkable: custom?.forkable === true,
-            forked: custom?.forked === true,
-            state: conversationStateOf(custom?.state),
-          };
-        }),
-    [threadItems, activityAt, now, services],
-  );
+              : savedLevels[item.remoteId],
+          ),
+        };
+      });
+    return { entries: rows, listedLevels: listed };
+  }, [threadItems, activityAt, now, services, savedLevels]);
   const groups = useMemo(
     () => groupThreadsByDate(entries, now),
     [entries, now],
@@ -617,6 +645,33 @@ export function ThreadHistoryList() {
     if (entry.remoteId !== undefined) void openBranch(entry.remoteId);
   };
 
+  // Flow 5 of live-feed design-web.md: after 204 the row takes the level; an error keeps the old mark and shows MC-9.
+  const chooseLevel = async (
+    entry: ThreadListEntry,
+    level: NotificationLevel | null,
+  ): Promise<void> => {
+    const remoteId = entry.remoteId;
+    if (remoteId === undefined) return;
+    try {
+      await services.apiClient.setNotificationLevel(remoteId, level);
+      logger.info('thread notification level saved', {
+        threadId: remoteId,
+        level,
+      });
+      services.status.getState().saveLevel(remoteId, {
+        level,
+        listed: listedLevels.get(entry.id) ?? null,
+      });
+    } catch (error) {
+      logger.error('thread notification level save failed', {
+        threadId: remoteId,
+        level,
+        ...describeApiError(error),
+      });
+      toast.error(t('notificationsFailed'));
+    }
+  };
+
   const state: ThreadHistoryListState =
     isLoading && !listShown
       ? { kind: 'loading' }
@@ -677,6 +732,12 @@ export function ThreadHistoryList() {
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}
           onFork={() => fork(entry)}
+          notifications={{
+            defaultLevel,
+            permission,
+            onChoose: (level) => void chooseLevel(entry, level),
+            onEnable: () => void enableNotifications(),
+          }}
         />
       )}
     />

@@ -8,6 +8,29 @@
     "saveFailed": "Couldn't save the language: try again.",
     "announced": "Interface language: English"
   },
+  "notifications": {
+    "heading": "Notifications",
+    "browser": {
+      "default": "The browser doesn't show Agent OS notifications yet.",
+      "granted": "The browser shows notifications while at least one Agent OS tab is open.",
+      "denied": "The browser blocked notifications for Agent OS. Allow them in the site settings — the icon left of the address.",
+      "insecure": "Notifications are unavailable: the browser shows them only on a secure (https) address. Ask your administrator to open Agent OS over https.",
+      "unsupported": "This browser doesn't show notifications."
+    },
+    "enable": "Turn on notifications",
+    "defaultLevel": "Default for all chats",
+    "level": {
+      "all": "All events",
+      "decisions_and_failures": "Decisions and failures",
+      "off": "Off"
+    },
+    "levelHint": {
+      "all": "needs you, reply ready, failure",
+      "decisions_and_failures": "needs you, failure"
+    },
+    "appliesEverywhere": "Applies on all your devices.",
+    "saveFailed": "Couldn't save: try again."
+  },
   "retry": "Retry",
   "connections": {
     "title": "Connections",
