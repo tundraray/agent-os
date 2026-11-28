@@ -251,7 +251,7 @@ export class ThreadsController {
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
-    const { text, recordId } = body;
+    const { recordId } = body;
     return this.run({
       route: 'POST /threads/:threadId/messages',
       fields: {
@@ -259,7 +259,7 @@ export class ThreadsController {
         threadId,
         ...(recordId === undefined ? {} : { recordId }),
       },
-      work: () => this.conversations.send(threadId, ownerId, text, recordId),
+      work: () => this.conversations.send(threadId, ownerId, body),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });
   }

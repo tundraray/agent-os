@@ -682,7 +682,7 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     ).toBeInTheDocument();
     expect(within(queueTray).getByText(queued)).toBeInTheDocument();
     expect(composer).toHaveValue('');
-    expect(sendBodies).toEqual([{ text: queued }]);
+    expect(sendBodies).toEqual([{ text: queued, sendKey: expect.any(String) }]);
     const breaches = trackOnePlace(container, queued);
 
     // Act 1b: the re-read brings it as `pending`; then it is delivered and a `tree` note re-reads
@@ -743,7 +743,10 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     expect(composer).toHaveValue(refused);
     expect(tray()).toBeNull();
     expect(feedItems()).not.toContain(`Вы: ${refused}`);
-    expect(sendBodies).toEqual([{ text: queued }, { text: refused }]);
+    expect(sendBodies).toEqual([
+      { text: queued, sendKey: expect.any(String) },
+      { text: refused, sendKey: expect.any(String) },
+    ]);
     expect(conversation.afterSeqs).toEqual([0, 2, 2, 3]);
   });
 });

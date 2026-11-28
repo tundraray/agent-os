@@ -504,7 +504,7 @@ async function refusedMessage(
     chatApi(harness.app, session).raw(
       'post',
       `/threads/${testRunId}/messages`,
-      { text: 'Ещё одно' },
+      { text: 'Ещё одно', sendKey: randomUUID() },
     ),
     409,
   );
@@ -640,7 +640,10 @@ describe('create-and-test / test-run - the trainer agrees a plan, creates and te
       expect(
         (
           await expectError(
-            api.raw('post', `/agents/${runId}/messages`, { text: 'ещё' }),
+            api.raw('post', `/agents/${runId}/messages`, {
+              text: 'ещё',
+              sendKey: randomUUID(),
+            }),
             404,
           )
         ).errorCode,

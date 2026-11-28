@@ -152,7 +152,7 @@ export class AgentsController {
     return this.run({
       route: 'POST /agents/:agentId/messages',
       fields: { ownerId, agentId },
-      work: () => this.control.send(agentId, ownerId, body.text),
+      work: () => this.control.send(agentId, ownerId, body),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });
   }

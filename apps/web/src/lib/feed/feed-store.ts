@@ -337,20 +337,24 @@ export function createFeedStore({
 
   /**
    * Sends text; once the server accepted it, puts the optimistic entry where KD-4 says and re-reads.
-   * A refused or lost request leaves no entry and keeps the text for the composer.
+   * A refused or lost request leaves no entry and keeps the text and its send key for the composer: the
+   * composer's next send repeats that key (runtime-fixes design-send.md, KD-3). A quiet send takes a new key
+   * and leaves the composer's failure alone.
    */
   async function deliver(
     text: string,
-    call: () => Promise<Accepted>,
+    call: (sendKey: string) => Promise<Accepted>,
     place: OptimisticEntry['place'],
     record: ChipRecord | null,
     quiet: boolean,
   ): Promise<void> {
     const where = firstMessage() ? 'first_message' : 'message';
-    set({ sendFailure: null });
+    const sendKey =
+      (quiet ? undefined : get().sendFailure?.sendKey) ?? crypto.randomUUID();
+    if (!quiet) set({ sendFailure: null });
     let accepted: Accepted;
     try {
-      accepted = await call();
+      accepted = await call(sendKey);
     } catch (error) {
       // A test run's refusal names the agent being trained (MC-17).
       const name = get().view?.training?.run?.agent?.name;
@@ -358,6 +362,7 @@ export function createFeedStore({
         set({
           sendFailure: {
             text,
+            sendKey,
             cause: error,
             context: {
               where,
@@ -375,11 +380,12 @@ export function createFeedStore({
 
   const sendCall = (
     text: string,
+    sendKey: string,
     record: ChipRecord | null,
   ): Promise<SendMessageResponse> =>
     source.kind === 'thread'
-      ? api.sendThreadMessage(source.threadId, text, record?.id)
-      : api.sendAgentMessage(source.agentId, text);
+      ? api.sendThreadMessage(source.threadId, text, sendKey, record?.id)
+      : api.sendAgentMessage(source.agentId, text, sendKey);
 
   const interruptCall = (): Promise<InterruptResponse> =>
     source.kind === 'thread'
@@ -403,13 +409,13 @@ export function createFeedStore({
       const chip = source.kind === 'thread' ? (record ?? null) : null;
       return deliver(
         text,
-        async () => {
+        async (sendKey) => {
           // A refusal of a message with a chip is logged by `command` with `recordId` and its code.
           const extra: Record<string, string> =
             chip === null ? {} : { recordId: chip.id };
           const { messageId } = await command(
             'send',
-            () => sendCall(text, chip),
+            () => sendCall(text, sendKey, chip),
             extra,
           );
           if (chip !== null)

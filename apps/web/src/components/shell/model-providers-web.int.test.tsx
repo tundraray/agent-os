@@ -1409,6 +1409,6 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
             request.path === '/api/threads/t-1/messages',
         )
         .map((request) => request.body),
-    ).toEqual([{ text: TYPED }]);
+    ).toEqual([{ text: TYPED, sendKey: expect.any(String) }]);
   });
 });

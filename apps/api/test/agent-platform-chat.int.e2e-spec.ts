@@ -421,7 +421,11 @@ const AGENT_ROUTES: readonly RouteCall[] = [
   {
     method: 'post',
     path: (id) => `/agents/${id}/messages`,
-    body: { text: "INT-4: a message to someone else's agent" },
+    // The key is required, or a 400 would stand in for the 404 under test; every call with it is refused, so none takes it.
+    body: {
+      text: "INT-4: a message to someone else's agent",
+      sendKey: randomUUID(),
+    },
   },
   { method: 'post', path: (id) => `/agents/${id}/interrupt` },
   { method: 'post', path: (id) => `/agents/${id}/stop` },
@@ -2399,6 +2403,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         `/threads/${bottom}/messages`,
         {
           text: 'INT-3 A: a message to the deleted conversation',
+          sendKey: randomUUID(),
         },
       );
       expect({
@@ -2680,7 +2685,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         // Case 2 - Given: an id without a first message; When: its first message and its delete start together
         const racing = await api.createThread();
         const [sent, deleted] = await Promise.all([
-          api.raw('post', `/threads/${racing.id}/messages`, { text: raceTask }),
+          api.raw('post', `/threads/${racing.id}/messages`, {
+            text: raceTask,
+            sendKey: randomUUID(),
+          }),
           api.raw('delete', `/threads/${racing.id}`),
         ]);
 
@@ -2917,6 +2925,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           await expectError(
             b.raw('post', `/threads/${aThread.id}/messages`, {
               text: "INT-4: a message into someone else's conversation",
+              sendKey: randomUUID(),
             }),
             404,
           ),
@@ -3053,6 +3062,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           `/threads/${aThread.id}/messages`,
           {
             text: "INT-4 B: a first message with A's deleted id",
+            sendKey: randomUUID(),
           },
         );
 

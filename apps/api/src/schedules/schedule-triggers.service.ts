@@ -229,7 +229,7 @@ export class ScheduleTriggersService {
           ? schedule.conversationId
           : randomUUID();
       const sent = await inSavepoint(this.db, () =>
-        this.conversations.send(
+        this.conversations.sendScheduled(
           target,
           ownerId,
           schedule.instruction,

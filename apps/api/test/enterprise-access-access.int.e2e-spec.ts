@@ -1282,6 +1282,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const refusedStart = await expectBody(
         borisApi.raw('post', `/threads/${borisThread}/messages`, {
           text: borisTask,
+          sendKey: randomUUID(),
         }),
         409,
         StartRefusedErrorSchema,

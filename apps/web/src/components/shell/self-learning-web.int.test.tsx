@@ -643,7 +643,7 @@ describe('create-and-test / chat-web - integration (jsdom + MSW)', () => {
     await vi.waitFor(() =>
       expect(posts.at(-1)).toEqual({
         path: `/api/threads/${TEST_RUN_ID}/messages`,
-        body: { text: 'Создать и проверить' },
+        body: { text: 'Создать и проверить', sendKey: expect.any(String) },
       }),
     );
   });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import {
   AgentListPageSchema,
@@ -83,7 +84,7 @@ export interface ChatApi {
   deleteThread(threadId: string): Promise<void>;
   history(threadId: string, afterSeq?: number): Promise<ConversationView>;
   threadAgents(threadId: string): Promise<AgentNode[]>;
-  /** `POST /threads/:id/messages`, 202. */
+  /** `POST /threads/:id/messages`, 202, with a new send key on every call. */
   send(threadId: string, text: string): Promise<SendMessageResponse>;
   /** `POST /threads/:id/interrupt`, 200; no body. */
   interrupt(threadId: string): Promise<InterruptResponse>;
@@ -93,6 +94,7 @@ export interface ChatApi {
   agentPage(agentId: string, afterSeq?: number): Promise<AgentPageView>;
   inherited(agentId: string, afterSeq?: number): Promise<InheritedHistory>;
   run(agentId: string): Promise<DeepAgentRunView>;
+  /** `POST /agents/:id/messages`, 202, with a new send key on every call. */
   sendToAgent(agentId: string, text: string): Promise<SendMessageResponse>;
   interruptAgent(agentId: string): Promise<InterruptResponse>;
   stopAgent(agentId: string): Promise<StopResponse>;
@@ -163,7 +165,7 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         SendMessageResponseSchema,
         'post',
         `/threads/${threadId}/messages`,
-        { text },
+        { text, sendKey: randomUUID() },
       ),
     interrupt: (threadId) =>
       ok(
@@ -198,7 +200,7 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         SendMessageResponseSchema,
         'post',
         `/agents/${agentId}/messages`,
-        { text },
+        { text, sendKey: randomUUID() },
       ),
     interruptAgent: (agentId) =>
       ok(200, InterruptResponseSchema, 'post', `/agents/${agentId}/interrupt`),

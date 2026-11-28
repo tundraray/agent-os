@@ -183,16 +183,17 @@ async function getThreadDocument(
 }
 
 /**
- * 202: the message is queued; `messageId` is null for the conversation's first message. `recordId` is
- * the chip's record (KD-5), sent only when there is one.
+ * 202: the message is queued; `messageId` is null for the conversation's first message and for a repeat of
+ * `sendKey`. `recordId` is the chip's record (KD-5), sent only when there is one.
  */
 async function sendThreadMessage(
   threadId: string,
   text: string,
+  sendKey: string,
   recordId?: string,
 ): Promise<SendMessageResponse> {
   const body: SendMessageRequest =
-    recordId === undefined ? { text } : { text, recordId };
+    recordId === undefined ? { text, sendKey } : { text, sendKey, recordId };
   return apiRequest({
     path: `${threadRoute(threadId)}/messages`,
     method: 'POST',
@@ -263,8 +264,9 @@ async function getAgentTasks(agentId: string): Promise<AgentTasksView> {
 async function sendAgentMessage(
   agentId: string,
   text: string,
+  sendKey: string,
 ): Promise<SendMessageResponse> {
-  const body: SendMessageRequest = { text };
+  const body: SendMessageRequest = { text, sendKey };
   return apiRequest({
     path: `${agentRoute(agentId)}/messages`,
     method: 'POST',

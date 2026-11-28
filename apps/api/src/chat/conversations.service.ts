@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   inRootLaunchSet,
   type AgentHistoryEntry,
@@ -21,6 +22,7 @@ import {
   type ForkRequest,
   type InterruptResponse,
   type ScheduleMark,
+  type SendMessageRequest,
   type SendMessageResponse,
   type ThreadDocumentsView,
   type ThreadForksResponse,
@@ -32,8 +34,10 @@ import {
   AgentsRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  Db,
   DocumentsRepository,
   RuntimeModelCallsRepository,
+  SendKeysRepository,
   type TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
@@ -95,7 +99,10 @@ function toDocumentSummary({
  */
 @Injectable()
 export class ConversationsService {
+  private readonly logger: Logger;
+
   constructor(
+    private readonly db: Db,
     private readonly titles: TitleService,
     @Inject(ViewOperations) private readonly views: ViewOperations,
     @Inject(ControlOperations) private readonly control: ControlOperations,
@@ -115,7 +122,11 @@ export class ConversationsService {
     private readonly modelCalls: RuntimeModelCallsRepository,
     @Inject(ConversationsRepository)
     private readonly conversations: ConversationsRepository,
-  ) {}
+    @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    @Inject(LOGGER) logger: Logger,
+  ) {
+    this.logger = logger.child({ service: 'chat.conversations' });
+  }
 
   /**
    * A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`), each with its state
@@ -232,62 +243,108 @@ export class ConversationsService {
   }
 
   /**
-   * DC-1: the first message creates the root, with the conversation's id and the text as its task
-   * (`messageId` null); any later one goes into the root's queue and moves the conversation up. The
-   * title starts in the background while it is empty (DC-2). A record chip is checked first (KD-4,
-   * DC-6), so a refused chip leaves the queue untouched. A root the start procedure refuses is
-   * `START_REFUSED` from `agents`, and no conversation appears. The id of a deleted conversation is
-   * taken by its rows: `start` gets `TASK_EXISTS` and `owned()` answers 404, for its owner and anyone
-   * else alike. A send to a conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete
-   * and the send take turns on the root task's lock.
-   *
-   * A schedule's send (schedules KD-2, KD-6) carries its mark into the message or the root's `task` entry and the
-   * title of a new conversation, and starts no title generation. Inside a caller's transaction every write of the
-   * send joins it, so the caller commits the message or the new root with its own rows.
+   * The employee's send (runtime-fixes design-send.md, KD-1, KD-2, Flow 1, Flow 2): one transaction takes the send key
+   * first, then checks the chip and delivers the message. A key this employee has already sent is a repeat:
+   * `messageId` null and nothing is created. A refusal rolls the key back with the rest, so a send after it runs
+   * anew. The title starts after the commit, for a new send only (DC-2).
    */
   async send(
     threadId: string,
     ownerId: string,
+    { text, recordId, sendKey }: SendMessageRequest,
+  ): Promise<SendMessageResponse> {
+    if (!isUuid(threadId)) throw threadNotFound();
+    const sent = await this.db.transaction(async () => {
+      if (!(await this.sendKeys.claim(ownerId, sendKey))) return undefined;
+      const record =
+        recordId === undefined
+          ? undefined
+          : await this.chipOf(ownerId, recordId);
+      return this.deliver(threadId, ownerId, text, record ? { record } : {});
+    });
+    this.logger.info('conversation send', {
+      sendKey,
+      ownerId,
+      threadId,
+      outcome: sent === undefined ? 'repeat' : 'new',
+    });
+    if (sent === undefined) return { messageId: null };
+    if (sent.untitled)
+      this.titles.ensure({
+        threadId,
+        ownerId,
+        ...(sent.created ? { firstText: text } : {}),
+      });
+    return { messageId: sent.messageId };
+  }
+
+  /**
+   * A schedule's send (schedules KD-2, KD-6), without a send key: its mark goes into the message or the root's `task`
+   * entry and the title of a new conversation, and no title generation starts. Inside the caller's transaction every
+   * write of the send joins it, so the caller commits the message or the new root with its own rows.
+   */
+  async sendScheduled(
+    threadId: string,
+    ownerId: string,
     text: string,
-    recordId?: string,
-    scheduled?: { readonly schedule: ScheduleMark; readonly title?: string },
+    recordId: string | undefined,
+    scheduled: { readonly schedule: ScheduleMark; readonly title?: string },
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
     const record =
       recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
-    const chip = {
-      ...(record === undefined ? {} : { record }),
-      ...(scheduled === undefined ? {} : { schedule: scheduled.schedule }),
-    };
+    const { messageId } = await this.deliver(
+      threadId,
+      ownerId,
+      text,
+      {
+        ...(record === undefined ? {} : { record }),
+        schedule: scheduled.schedule,
+      },
+      scheduled.title,
+    );
+    return { messageId };
+  }
+
+  /**
+   * DC-1: the first message creates the root, with the conversation's id and the text as its task (`messageId` null);
+   * any later one goes into the root's queue and moves the conversation up. `untitled` — the conversation's title is
+   * empty; `title` names a new conversation. A root the start procedure refuses is `START_REFUSED` from `agents`, and
+   * no conversation appears. The id of a deleted conversation is taken by its rows: `start` gets `TASK_EXISTS` and
+   * `owned()` answers 404, for its owner and anyone else alike. A send to a conversation deleted meanwhile is
+   * `AGENT_NOT_FOUND` of `agents`: the delete and the send take turns on the root task's lock.
+   */
+  private async deliver(
+    threadId: string,
+    ownerId: string,
+    text: string,
+    chip: { readonly record?: ChipRecord; readonly schedule?: ScheduleMark },
+    title?: string,
+  ): Promise<{
+    readonly messageId: string | null;
+    readonly created: boolean;
+    readonly untitled: boolean;
+  }> {
     const existing = await this.views.root(threadId, ownerId);
-    const created =
+    if (
       existing === undefined &&
       (await this.start(threadId, ownerId, text, {
         ...chip,
-        ...(scheduled?.title === undefined ? {} : { title: scheduled.title }),
-      }));
-    let messageId: string | null = null;
-    let untitled = true;
-    if (!created) {
-      // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
-      // task that is not their conversation, another employee's included.
-      const root = existing ?? (await this.owned(threadId, ownerId));
-      ({ messageId } = await this.control.send({
-        agentId: threadId,
-        ownerId,
-        text,
-        ...chip,
-      }));
-      await this.control.touchRoot(threadId, ownerId);
-      untitled = root.title === '';
-    }
-    if (untitled && scheduled === undefined)
-      this.titles.ensure({
-        threadId,
-        ownerId,
-        ...(created ? { firstText: text } : {}),
-      });
-    return { messageId };
+        ...(title === undefined ? {} : { title }),
+      }))
+    )
+      return { messageId: null, created: true, untitled: true };
+    // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
+    // task that is not their conversation, another employee's included.
+    const root = existing ?? (await this.owned(threadId, ownerId));
+    const { messageId } = await this.control.send({
+      agentId: threadId,
+      ownerId,
+      text,
+      ...chip,
+    });
+    await this.control.touchRoot(threadId, ownerId);
+    return { messageId, created: false, untitled: root.title === '' };
   }
 
   /**

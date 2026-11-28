@@ -5,11 +5,13 @@ export type HistoryStatus =
   'loading' | 'ready' | 'not_found' | 'load_failed' | 'deleted';
 
 /**
- * A message the server did not accept: its text, and the refusal with what the sender knew of it — the
- * composer words the notice under the field in the interface language (`describeLibraryError`).
+ * A message the server did not accept: its text, its send key — the next send from the composer repeats it
+ * (runtime-fixes design-send.md, KD-3) — and the refusal with what the sender knew of it; the composer words the
+ * notice under the field in the interface language (`describeLibraryError`).
  */
 export type SendFailure = {
   text: string;
+  sendKey: string;
   cause: unknown;
   context: LibraryErrorContext;
 };

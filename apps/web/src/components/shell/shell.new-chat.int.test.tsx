@@ -251,7 +251,9 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     expect(sourcesAtCreate).toHaveLength(1);
     expect(sourcesAtCreate[0]).not.toContain(watchUrl);
     expect(atSend).toEqual([{ openUrl: watchUrl, ready: true }]);
-    expect(sendBodies).toEqual([{ text: 'Составь план' }]);
+    expect(sendBodies).toEqual([
+      { text: 'Составь план', sendKey: expect.any(String) },
+    ]);
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
 
@@ -473,7 +475,11 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     await user.type(field, 'по логам{Enter}');
     await waitFor(() =>
       expect(sendBodies).toEqual([
-        { text: 'Собери статус по логам', recordId: RECORD },
+        {
+          text: 'Собери статус по логам',
+          recordId: RECORD,
+          sendKey: expect.any(String),
+        },
       ]),
     );
   });

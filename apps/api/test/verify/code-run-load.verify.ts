@@ -198,6 +198,7 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
             () =>
               employeeB.raw('post', `/threads/${chat.id}/messages`, {
                 text: `UC-N3: message ${round}`,
+                sendKey: randomUUID(),
               }),
             202,
           );

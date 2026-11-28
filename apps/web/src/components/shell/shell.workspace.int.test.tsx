@@ -280,7 +280,9 @@ describe('Shell: side chat (improvements FR-09, AC-09.1 / AC-09.3)', () => {
     expect(
       await within(panel).findByRole('button', { name: 'Отправлено' }),
     ).toBeInTheDocument();
-    expect(sent).toEqual([{ threadId: SOURCE, body: { text: answer } }]);
+    expect(sent).toEqual([
+      { threadId: SOURCE, body: { text: answer, sendKey: expect.any(String) } },
+    ]);
     const mainField = screen
       .getAllByRole('textbox', { name: 'Сообщение' })
       .find((field) => !panel.contains(field));

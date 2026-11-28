@@ -816,7 +816,10 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const refusedFirstMessage = async (text: string) => {
         const { id } = await anyaApi.createThread();
         const refusal = await expectBody(
-          anyaApi.raw('post', `/threads/${id}/messages`, { text }),
+          anyaApi.raw('post', `/threads/${id}/messages`, {
+            text,
+            sendKey: randomUUID(),
+          }),
           409,
           StartRefusedErrorSchema,
         );
@@ -1249,6 +1252,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const refusedStart = await expectBody(
         employeeApi.raw('post', `/threads/${thread}/messages`, {
           text: 'INT-6 row 2: the first message after the default model went',
+          sendKey: randomUUID(),
         }),
         409,
         StartRefusedErrorSchema,

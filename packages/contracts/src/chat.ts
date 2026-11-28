@@ -52,11 +52,13 @@ const SeqSchema = z.number().int().nonnegative();
 /**
  * Body of POST /threads/:threadId/messages and POST /agents/:agentId/messages. `recordId` is the
  * record chip; it is not checked as a UUID here: the service answers any id it cannot start with the
- * same 404 as an invisible record.
+ * same 404 as an invisible record. `sendKey` is the send's key (runtime-fixes design-send.md, KD-5): one
+ * key is one send of the employee, a repeat of it creates nothing.
  */
 export const SendMessageRequestSchema = z.object({
   text: ChatTextSchema,
   recordId: z.string().min(1).optional(),
+  sendKey: z.uuid(),
 });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 
@@ -68,9 +70,11 @@ export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 export const ForkRequestSchema = z
   .object({
     throughSeq: z.number().int().min(1).optional(),
-    edit: SendMessageRequestSchema.extend({
-      seq: z.number().int().min(1),
-    }).optional(),
+    edit: SendMessageRequestSchema.omit({ sendKey: true })
+      .extend({
+        seq: z.number().int().min(1),
+      })
+      .optional(),
   })
   .refine((body) => body.throughSeq === undefined || body.edit === undefined, {
     message: 'At most one of throughSeq and edit',

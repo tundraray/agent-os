@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   AgentsError,
   ViewOperations,
@@ -20,11 +21,18 @@ import {
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type SendMessageRequest,
+  type SendMessageResponse,
   type AgentTasksView,
   type SpendResponse,
   type StopResponse,
 } from '@agent-os/contracts';
-import { AgentsRepository, TrainingsRepository } from '@agent-os/db';
+import {
+  AgentsRepository,
+  Db,
+  SendKeysRepository,
+  TrainingsRepository,
+} from '@agent-os/db';
 import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';
@@ -60,7 +68,10 @@ type ListedAgent = {
  */
 @Injectable()
 export class AgentControlService {
+  private readonly logger: Logger;
+
   constructor(
+    private readonly db: Db,
     @Inject(ViewOperations) private readonly views: ViewOperations,
     @Inject(ControlOperations) private readonly control: ControlOperations,
     @Inject(StartOperations) private readonly starts: StartOperations,
@@ -71,7 +82,11 @@ export class AgentControlService {
     private readonly trainings: TrainingsRepository,
     @Inject(AgentsRepository)
     private readonly agents: AgentsRepository,
-  ) {}
+    @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    @Inject(LOGGER) logger: Logger,
+  ) {
+    this.logger = logger.child({ service: 'chat.agent-control' });
+  }
 
   /**
    * KD-7: the top agents (children of roots) of all the owner's conversations, newest first
@@ -206,14 +221,28 @@ export class AgentControlService {
     return this.views.taskList(agentId, ownerId);
   }
 
-  /** A message to the agent; to a finished agent it continues with its history. */
+  /**
+   * A message to the agent; to a finished agent it continues with its history. One transaction takes the send key
+   * first (runtime-fixes design-send.md, KD-1, KD-2), then checks the agent and queues the message; a key this
+   * employee has already sent is a repeat: `messageId` null and nothing is queued.
+   */
   async send(
     agentId: string,
     ownerId: string,
-    text: string,
-  ): Promise<{ messageId: string }> {
-    await this.agent(agentId, ownerId);
-    return this.control.send({ agentId, ownerId, text });
+    { text, sendKey }: SendMessageRequest,
+  ): Promise<SendMessageResponse> {
+    const sent = await this.db.transaction(async () => {
+      if (!(await this.sendKeys.claim(ownerId, sendKey))) return undefined;
+      await this.agent(agentId, ownerId);
+      return this.control.send({ agentId, ownerId, text });
+    });
+    this.logger.info('agent send', {
+      sendKey,
+      ownerId,
+      agentId,
+      outcome: sent === undefined ? 'repeat' : 'new',
+    });
+    return { messageId: sent?.messageId ?? null };
   }
 
   /** As the conversation's interrupt (FR-16). */

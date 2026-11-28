@@ -166,7 +166,10 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
         '/api/threads/t-new/messages',
       ]),
     );
-    expect(posts[1].body).toEqual({ text: 'Привет' });
+    expect(posts[1].body).toEqual({
+      text: 'Привет',
+      sendKey: expect.any(String),
+    });
     expect(screen.getByText('Привет')).toBeInTheDocument();
     expect(screen.getByText('Привет!')).toBeInTheDocument();
 
