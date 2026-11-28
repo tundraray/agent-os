@@ -29,3 +29,4 @@
 
 - [design-memory.md](../../features/self-learning/design-memory.md) — оглавление памяти глубокого агента (KD-3)
 - [design-task-list.md](../../features/deep-agents/design-task-list.md) — блок задач сессии по флажку `taskList` (KD-2)
+- [agent-guidance/design-server.md](../../features/agent-guidance/design-server.md) — инструкции организации и сотрудника, каталог скиллов; порядок блоков (KD-3)
