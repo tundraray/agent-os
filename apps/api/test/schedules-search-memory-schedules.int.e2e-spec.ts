@@ -83,6 +83,8 @@ const NOTE_PAIR: ToolPair = {
 const START_DEEP_AGENT = 'start_deep_agent';
 /** The built-in research deep agent the briefs of improvements UC-5 name. */
 const DEEP_RESEARCH = BUILTIN.deepResearch;
+/** Its final subagent, which it gives the answer to by name with `task`; without its report the run does not end. */
+const DEEP_RESEARCH_ANSWER = 'deep-research-answer';
 
 /** `start_deep_agent` arguments for the research deep agent. */
 function briefArgs(question: string) {
@@ -1092,9 +1094,29 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           return { text: 'UC-3: the note is filed and the research runs.' };
         },
       });
+      // Each research run: the deep agent ends only after its final subagent reported, so it gives the answer to it first
+      const answerTask = 'UC-5: answer assignment';
       harness.model.script({ task: briefTask(question) }, [], {
-        thereafter: { text: 'UC-5: the research is done.' },
+        thereafter: (messages) =>
+          answersSince(messages, briefTask(question)) === 0
+            ? {
+                calls: [
+                  {
+                    tool: 'task',
+                    args: {
+                      subagentType: DEEP_RESEARCH_ANSWER,
+                      description: answerTask,
+                    },
+                  },
+                ],
+              }
+            : { text: 'UC-5: the research is done.' },
       });
+      harness.model.script(
+        { task: `Question: ${question}\n\n${answerTask}` },
+        [],
+        { thereafter: { text: 'UC-5: the payments failed on a timeout.' } },
+      );
       const schedule = await schedules.create(
         body({
           name: 'Morning note',
@@ -1292,8 +1314,9 @@ describe('schedules: due terms trigger one send of the instruction', () => {
         'the run answered after the refusal',
       );
       expect(done.decisions).toEqual([]);
+      // The owner's set no longer offers the tool, so the row keeps the name as the model asked it; the pair is in the audit
       expect(toolResults(done)).toEqual([
-        ['create_incident_note', 'refused', 'no_access'],
+        [CREATE_NOTE, 'refused', 'no_access'],
       ]);
       expect(await decisionGrants(run!.conversationId!)).toEqual([]);
       expect(notesSent(note)).toEqual([]);
