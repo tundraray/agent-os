@@ -13,30 +13,45 @@ import {
 } from 'react';
 import { useTranslations } from 'next-intl';
 import { useAui, useAuiState } from '@assistant-ui/react';
+import { ClockIcon } from 'lucide-react';
 import {
+  useAgentCommands,
   useChatAgents,
-  type ChatAgent,
+  type ComposerCommand,
 } from '@/components/assistant-ui/elements/composer-actions';
 import { useShellServices } from '@/components/shell/shell-actions';
 import type { SeedTarget } from '@/lib/threads/composer-seed';
 import { cn } from '@/lib/utils';
 
-/** The `@` being typed: where it stands and what follows it up to the caret. */
-type Mention = { start: number; query: string };
+/** The sign being typed — `@` of an agent or `/` of a command —, where it stands and what follows it up to the caret. */
+type Mention = { sign: '@' | '/'; start: number; query: string };
 
-/** `@` at the start of the field or after whitespace, with no whitespace between it and the caret (IM-12). */
+/**
+ * `@` at the start of the field or after whitespace (IM-12), or `/` as the field's first character (SL-01), with no
+ * whitespace between it and the caret.
+ */
 function mentionAt(text: string, caret: number): Mention | null {
-  const match = /(?:^|\s)@(\S*)$/.exec(text.slice(0, caret));
+  const before = text.slice(0, caret);
+  const command = /^\/(\S*)$/.exec(before);
+  if (command !== null) return { sign: '/', start: 0, query: command[1] ?? '' };
+  const match = /(?:^|\s)@(\S*)$/.exec(before);
   if (match === null) return null;
   const query = match[1] ?? '';
-  return { start: caret - query.length - 1, query };
+  return { sign: '@', start: caret - query.length - 1, query };
 }
 
-function matching(agents: ChatAgent[], query: string): ChatAgent[] {
+/**
+ * A row of the list — an agent of «+» or a command. Choosing it removes the typed sign, puts `inserted` in its place
+ * and runs `run`.
+ */
+type Row = Omit<ComposerCommand, 'run'> & {
+  inserted?: string;
+  run?: () => void;
+};
+
+function matching(rows: Row[], query: string): Row[] {
   const wanted = query.toLocaleLowerCase();
-  return agents.filter((agent) =>
-    agent.chip.name.toLocaleLowerCase().includes(wanted),
-  );
+  return rows.filter((row) => row.name.toLocaleLowerCase().includes(wanted));
 }
 
 type FieldProps = Pick<
@@ -61,15 +76,18 @@ export type AgentMention = {
 };
 
 /**
- * improvements IM-12, KD-7: `@` in the field of a conversation with «+» opens the rows of «Агенты» above it. The field
- * stays assistant-ui's input and takes the combobox role while the list is open; focus never leaves it. A choice puts
- * the same chip as «+», replacing the previous one, and removes `@` with what was typed after it.
+ * improvements IM-12, KD-7: `@` in the field of a conversation with «+» opens the rows of «Агенты» above it; `/` as the
+ * field's first character opens «Команды» (chat-scheduling SL-01, KD-6). The field stays assistant-ui's input and takes
+ * the combobox role while the list is open; focus never leaves it. A choice removes the sign with what was typed after
+ * it: an agent puts the same chip as «+», replacing the previous one; «Запланировать» starts the phrase «Запланируй: »
+ * and keeps the chip; the other commands do what their «+» item does. Nothing is sent.
  */
 export function useAgentMention(target: SeedTarget): AgentMention {
   const t = useTranslations('chat.composer');
   const aui = useAui();
   const { composerSeed } = useShellServices();
   const agents = useChatAgents();
+  const agentCommands = useAgentCommands(target);
   const text = useAuiState((state) => state.composer.text);
   const listId = useId();
   const field = useRef<HTMLTextAreaElement | null>(null);
@@ -91,7 +109,27 @@ export function useAgentMention(target: SeedTarget): AgentMention {
   const mention =
     caret === null ? null : mentionAt(text, Math.min(caret, text.length));
   const open = mention !== null && mention.start !== dismissedAt;
-  const shown = open ? matching(agents, mention.query) : [];
+  const rows: Row[] =
+    mention?.sign === '/'
+      ? [
+          {
+            key: 'schedule',
+            icon: ClockIcon,
+            name: t('commands.schedule'),
+            hint: t('commands.scheduleHint'),
+            // Only a phrase, through `setText`: a text seed would drop the agent chip (KD-6).
+            inserted: t('commands.scheduleText'),
+          },
+          ...agentCommands,
+        ]
+      : agents.map((agent) => ({
+          key: agent.chip.id,
+          icon: agent.icon,
+          name: agent.chip.name,
+          hint: agent.hint,
+          run: () => composerSeed.put(target, { record: agent.chip }),
+        }));
+  const shown = open ? matching(rows, mention.query) : [];
   const activeIndex = Math.min(active, Math.max(shown.length - 1, 0));
   const optionId = (index: number): string => `${listId}-${index}`;
   const activeId = open && shown.length > 0 ? optionId(activeIndex) : null;
@@ -107,12 +145,15 @@ export function useAgentMention(target: SeedTarget): AgentMention {
     setCaret(event.currentTarget.selectionStart);
   };
 
-  const choose = (agent: ChatAgent): void => {
+  const choose = (row: Row): void => {
     if (mention === null || caret === null) return;
-    composerSeed.put(target, { record: agent.chip });
-    restoreCaret.current = mention.start;
-    setCaret(mention.start);
-    aui.composer.setText(text.slice(0, mention.start) + text.slice(caret));
+    const inserted = row.inserted ?? '';
+    restoreCaret.current = mention.start + inserted.length;
+    setCaret(restoreCaret.current);
+    aui.composer.setText(
+      text.slice(0, mention.start) + inserted + text.slice(caret),
+    );
+    row.run?.();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -164,26 +205,28 @@ export function useAgentMention(target: SeedTarget): AgentMention {
       <div
         id={listId}
         role="listbox"
-        aria-label={t('agents')}
+        aria-label={t(mention.sign === '/' ? 'commands.label' : 'agents')}
         className="bg-popover text-popover-foreground ring-foreground/10 absolute bottom-full left-0 z-20 mb-2 max-h-62 w-max max-w-full overflow-y-auto rounded-lg p-1 shadow-lg ring-1 max-[480px]:w-full"
       >
         {shown.length === 0 ? (
           <p className="text-muted-foreground px-1.5 py-1 text-sm">
-            {t(agents.length === 0 ? 'noAgents' : 'noAgentsMatch')}
+            {mention.sign === '/'
+              ? t('commands.none')
+              : t(agents.length === 0 ? 'noAgents' : 'noAgentsMatch')}
           </p>
         ) : (
-          shown.map((agent, index) => {
-            const Icon = agent.icon;
+          shown.map((row, index) => {
+            const Icon = row.icon;
             const selected = index === activeIndex;
             return (
               <div
-                key={agent.chip.id}
+                key={row.key}
                 id={optionId(index)}
                 role="option"
                 aria-selected={selected}
                 // The field keeps focus: a press must not blur it before the choice.
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(agent)}
+                onClick={() => choose(row)}
                 className={cn(
                   'flex cursor-default items-start gap-1.5 rounded-md px-1.5 py-1.5 text-sm select-none',
                   selected && 'bg-accent text-accent-foreground',
@@ -194,9 +237,10 @@ export function useAgentMention(target: SeedTarget): AgentMention {
                   className="text-muted-foreground mt-0.5 size-4 shrink-0"
                 />
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{agent.chip.name}</span>
-                  <span className="text-muted-foreground truncate text-xs leading-4">
-                    {agent.hint}
+                  <span className="truncate">{row.name}</span>
+                  {/* SL-01, 360 px: the hints wrap in a list as wide as the field. */}
+                  <span className="text-muted-foreground truncate text-xs leading-4 max-[480px]:whitespace-normal">
+                    {row.hint}
                   </span>
                 </span>
               </div>

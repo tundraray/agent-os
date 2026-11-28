@@ -151,5 +151,19 @@
   "set_personal_instructions": {
     "title": "Личная инструкция",
     "args": { "text": "Текст" }
+  },
+  "list_schedules": { "title": "Список расписаний", "args": {} },
+  "manage_schedule": {
+    "title": "Расписание",
+    "args": {
+      "action": "Действие",
+      "scheduleId": "Расписание",
+      "name": "Название",
+      "instruction": "Инструкция",
+      "agentId": "Агент",
+      "rule": "Когда",
+      "target": "Ответ",
+      "timeZone": "Часовой пояс"
+    }
   }
 }

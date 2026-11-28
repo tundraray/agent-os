@@ -129,9 +129,6 @@
     "createAgentHint": "Describe the agent, the chat will build it",
     "connections": "Connections",
     "connectionsHint": "Service accounts your agents work with",
-    "schedule": "Schedule",
-    "scheduleHint": "The agent does the task by itself at the set time",
-    "sendLater": "Send later",
     "testRun": {
       "name": "Create and check an agent",
       "hint": "The trainer will build the agent and tests · up to {cap}",
@@ -142,6 +139,13 @@
       "starting": "Starting…",
       "send": "Create and check",
       "count": "{count} of {max}"
+    },
+    "commands": {
+      "label": "Commands",
+      "none": "No commands found",
+      "schedule": "Schedule",
+      "scheduleHint": "The agent does the task by itself at the set time",
+      "scheduleText": "Schedule: "
     }
   },
   "replying": "Assistant is replying…",

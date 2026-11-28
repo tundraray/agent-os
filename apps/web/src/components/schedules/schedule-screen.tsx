@@ -341,7 +341,7 @@ const titleOf = (schedule: ScheduleView, untitled: string): string => {
   return title === '' ? untitled : title;
 };
 
-/** SH-05 pairs (MC-8): the label over the value below 640 px, at its left from 640 px. */
+/** SH-05 pairs (MC-8, chat-scheduling SP-02): the label over the value below 640 px, at its left from 640 px. */
 function Settings({ schedule }: { schedule: ScheduleView }) {
   const t = useTranslations('schedules');
   const format = useFormatter();
@@ -359,28 +359,12 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
         {chunks}
       </ShellLink>
     );
-  const day = format.dateTime(new Date(schedule.createdAt), {
-    day: 'numeric',
-    month: 'short',
-    timeZone: schedule.timeZone,
-  });
-
   const target =
     schedule.target === 'new_conversation'
       ? t('dialog.newConversation')
       : conversation === null || conversation.deleted
         ? t('dialog.namedConversation', { title: conversationTitle })
         : t.rich('page.replyTo', {
-            title: conversationTitle,
-            link: conversationLink,
-          });
-  const created =
-    conversation === null
-      ? day
-      : conversation.deleted
-        ? t('page.createdDeleted', { day })
-        : t.rich('page.createdIn', {
-            day,
             title: conversationTitle,
             link: conversationLink,
           });
@@ -413,7 +397,9 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
         </span>
       </Pair>
       <Pair label={t('page.target')}>{target}</Pair>
-      <Pair label={t('page.created')}>{created}</Pair>
+      <Pair label={t('page.access')}>
+        {t(`dialog.access.${schedule.access}`)}
+      </Pair>
     </dl>
   );
 }

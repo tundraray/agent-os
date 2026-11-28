@@ -8,10 +8,7 @@ import {
   useAgentMention,
   type AgentMention,
 } from '@/components/assistant-ui/elements/agent-mention';
-import {
-  ComposerActions,
-  SendLater,
-} from '@/components/assistant-ui/elements/composer-actions';
+import { ComposerActions } from '@/components/assistant-ui/elements/composer-actions';
 import { TestRunFooter } from '@/components/assistant-ui/elements/test-run-footer';
 import {
   TEST_RUN_ICON,
@@ -1200,7 +1197,6 @@ const SeededComposer: FC<{
       newThreadFailure={newThreadFailure}
       textTarget={target}
       actions={<ComposerActions target={target} />}
-      sendLater={<SendLater target={target} />}
       mention={mention}
       chip={
         action !== null ? (
@@ -1319,8 +1315,6 @@ const Composer: FC<{
   chip: ReactNode;
   /** The start of the action row: «+» where a chip is supported. */
   actions?: ReactNode;
-  /** «Отправить позже» left of «Отправить» (improvements IM-08): where «+» is. */
-  sendLater?: ReactNode;
   /** The `@` list of agents (improvements IM-12): where «+» is; elsewhere `@` is a plain character. */
   mention?: AgentMention;
   newThreadFailure?: SendFailure | null;
@@ -1336,7 +1330,6 @@ const Composer: FC<{
   placeholder,
   chip,
   actions,
-  sendLater,
   mention,
   newThreadFailure = null,
   onRemoveChip,
@@ -1416,7 +1409,6 @@ const Composer: FC<{
         <ComposerAction
           sendBlocked={sendBlocked}
           actions={actions}
-          sendLater={sendLater}
           testRun={testRun}
         />
       </div>
@@ -1462,9 +1454,8 @@ const FeedInterrupt: FC = () => {
 const ComposerAction: FC<{
   sendBlocked: boolean;
   actions: ReactNode;
-  sendLater: ReactNode;
   testRun: TestRunStart | null;
-}> = ({ sendBlocked, actions, sendLater, testRun }) => {
+}> = ({ sendBlocked, actions, testRun }) => {
   const t = useTranslations('chat');
 
   return (
@@ -1510,7 +1501,6 @@ const ComposerAction: FC<{
           </AuiIf>
         </AuiIf>
         <FeedInterrupt />
-        {testRun === null && sendLater}
         <AuiIf condition={(s) => !shouldShowComposerResume(s)}>
           {testRun !== null ? (
             <TestRunSubmit target={testRun.target} pending={testRun.pending} />

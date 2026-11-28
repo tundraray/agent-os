@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ClockIcon } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import type { ScheduleView } from '@agent-os/contracts';
@@ -11,30 +12,33 @@ import {
   type DataTableRow,
 } from '@/components/admin/data-table';
 import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
 import type { SchedulesTranslator } from '@/i18n/catalog';
 import type { Formatter } from '@/i18n/formats';
 import { focusShellTarget } from '@/lib/focus';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
-import { schedulePath } from '@/lib/shell-route';
+import { schedulePath, threadPath } from '@/lib/shell-route';
 import {
-  agentName,
   ruleLine,
-  ScheduleStateBadge,
   useReloadAfterTerm,
   useReloadOnAnyChange,
 } from './schedule-parts';
+import { ScheduleDialog } from './schedule-dialog';
 import { formatRunTime } from './schedule-rule-field';
 
 /**
- * SH-04 «Расписания»: the employee's schedules in the server's order — active by the next run, then paused, then
- * completed — as link rows, «Две строки» below 768 px. Read on open, on every live change and shortly after the
+ * SH-04 «Расписания» (chat-scheduling SP-01, SP-03): the employee's schedules in the server's order — active by the
+ * next run, then paused, then completed. A row is the name and one line, the same at every width; it opens the
+ * schedule's conversation, and «Подробнее» its page. Read on open, on every live change and shortly after the
  * nearest next term, so a new trigger or a pause the pass made shows while the page is open.
  */
 export function SchedulesScreen() {
   const t = useTranslations('schedules');
   const format = useFormatter();
+  const router = useRouter();
   const list = useResource(schedulesApi.list, 'schedules', 'schedules');
+  const [creating, setCreating] = useState(false);
   useReloadOnAnyChange(list.reload);
   useReloadAfterTerm(
     earliestTerm(list.data?.schedules),
@@ -48,13 +52,18 @@ export function SchedulesScreen() {
   }, []);
 
   const columns: readonly DataTableColumn[] = [
-    { header: t('list.columns.schedule'), shrinks: true },
-    { header: t('list.columns.state') },
-    { header: t('list.columns.next') },
-    { header: t('list.columns.last') },
+    { header: t('list.columns.schedule') },
   ];
   const state = resourceTableState(list, t('list.loadFailed'), (data) => ({
-    rows: data.schedules.map((schedule) => rowOf(schedule, t, format)),
+    rows: data.schedules.map((schedule) => ({
+      ...rowOf(schedule, t, format),
+      actions: [
+        {
+          label: t('list.details'),
+          onSelect: () => router.push(schedulePath(schedule.id)),
+        },
+      ],
+    })),
     empty: {
       Icon: ClockIcon,
       title: t('list.emptyTitle'),
@@ -64,15 +73,24 @@ export function SchedulesScreen() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <PageHeader title={t('list.title')} />
+      <PageHeader title={t('list.title')}>
+        <Button
+          size="sm"
+          className="w-full pointer-coarse:h-11 md:w-auto"
+          onClick={() => setCreating(true)}
+        >
+          {t('list.create')}
+        </Button>
+      </PageHeader>
       <div className="mx-auto w-full max-w-(--thread-max-width) px-4 py-4 md:py-6">
-        <DataTable
-          caption={t('list.title')}
-          columns={columns}
-          state={state}
-          twoLines
-        />
+        <DataTable caption={t('list.title')} columns={columns} state={state} />
       </div>
+      <ScheduleDialog
+        mode={{ kind: 'create' }}
+        open={creating}
+        onOpenChange={setCreating}
+        onSaved={list.reload}
+      />
     </div>
   );
 }
@@ -91,51 +109,47 @@ function earliestTerm(
       );
 }
 
+/**
+ * SP-03: where a row leads — the schedule's conversation, else the last run's (a «новая беседа» schedule), else the
+ * schedule's page when there is no conversation yet or it is deleted (AC-09.3 – AC-09.5).
+ */
+function rowHref(schedule: ScheduleView): string {
+  if (schedule.conversation !== null && !schedule.conversation.deleted)
+    return threadPath(schedule.conversation.id);
+  const lastConversation = schedule.lastRun?.conversationId ?? null;
+  return lastConversation === null
+    ? schedulePath(schedule.id)
+    : threadPath(lastConversation);
+}
+
+/** MC-3: «{следующее срабатывание или состояние} · {правило} · {доступ}», the time in the schedule's zone. */
 function rowOf(
   schedule: ScheduleView,
   t: SchedulesTranslator,
   format: Formatter,
-): DataTableRow {
-  const details = [
+): Omit<DataTableRow, 'actions'> {
+  const when =
+    schedule.state === 'active' && schedule.nextRunAt !== null
+      ? formatRunTime(format, schedule.nextRunAt, schedule.timeZone)
+      : t(`state.${schedule.state}`);
+  const line = [
+    when,
     ruleLine(t, format, schedule.rule),
-    schedule.timeZone,
-    agentName(t, schedule),
+    t(`dialog.access.${schedule.access}`),
   ].join(' · ');
-  const at = (time: string | null | undefined): string =>
-    time == null ? '—' : formatRunTime(format, time, schedule.timeZone);
   return {
     key: schedule.id,
     name: schedule.name,
-    href: schedulePath(schedule.id),
+    href: rowHref(schedule),
     cells: [
       <span key="schedule" className="flex min-w-0 flex-col py-1">
-        <span className="truncate" title={schedule.name}>
-          {schedule.name}
-        </span>
-        <span
-          className="truncate text-xs leading-4 text-muted-foreground"
-          title={details}
-        >
-          {details}
+        <span className="wrap-break-word">{schedule.name}</span>
+        {/* The link reads «{название}, {вторая строка}» (UXRD Accessibility, SP-03). */}
+        <span className="sr-only">, </span>
+        <span className="text-xs leading-4 wrap-break-word text-muted-foreground">
+          {line}
         </span>
       </span>,
-      <ScheduleStateBadge key="state" state={schedule.state} />,
-      <Labelled key="next" label={t('list.nextLabel')}>
-        {at(schedule.nextRunAt)}
-      </Labelled>,
-      <Labelled key="last" label={t('list.lastLabel')}>
-        {at(schedule.lastRun?.dueAt)}
-      </Labelled>,
     ],
   };
-}
-
-/** Below 768 px the list has no header, so a time carries its column's label there. */
-function Labelled({ label, children }: { label: string; children: string }) {
-  return (
-    <span className="tabular-nums">
-      <span className="md:hidden">{label} </span>
-      {children}
-    </span>
-  );
 }

@@ -1,35 +1,23 @@
 // schedules-search-memory / schedules - web integration (Vitest + RTL + MSW 2, jsdom)
-// Design Doc: docs/features/schedules-search-memory/design-schedules.md, Test Strategy UC-7 (the dialog from the message field);
-//   UXRD SH-01 (menu item "Запланировать"), SH-02 (dialog), KD-1, MC-1, MC-2.
+// Design Doc: docs/features/schedules-search-memory/design-schedules.md, «Страницы»: the open schedule page re-reads after its term.
 //
 // Harness (src/test/, as self-learning-web.int.test.tsx): `renderWithRuntime({ pathname })` mounts the shell with mocked next/navigation;
 //   MSW server from '@/test/msw-server' (`onUnhandledRequest: 'error'`); answers built to pass the schemas of `packages/contracts`
-//   (`ScheduleBody`, `ScheduleView`, next-run preview). Page TZ = 'Europe/Berlin' (vitest.config.ts).
-// Mock boundary: network (MSW), next/navigation, the event source of LiveStore. The composer, the menu, the dialog and `schedulesApi` are real.
+//   (`ScheduleView`). Page TZ = 'Europe/Berlin' (vitest.config.ts).
+// Mock boundary: network (MSW), next/navigation, the event source of LiveStore. The page and `schedulesApi` are real.
 //
 // Server-side proofs are not repeated here: schedule rules, rights and runs are apps/api schedules-search-memory-schedules (UC-1 .. UC-6).
 // The schedule page is tested only for its re-read after the term (a pause of the pass sends no `tree` note).
-// Not tested: the rest of the "Schedules" pages (list, history) and the feed caption "По расписанию «{имя}»" — presentation of data the API test proves.
-// improvements design-web.md, Test Strategy UC-5 («Отправить позже»: AC-10.1); UXRD IM-08, MC-1, MC-5.
 
 import {
-  ScheduleBodySchema,
   ScheduleViewSchema,
   type ScheduleBody,
-  type ScheduleNextRunResponse,
   type ScheduleView,
 } from '@agent-os/contracts';
-import { screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import {
-  conversationWithTurns,
-  fixtureId,
-  recordSummary,
-  threadList,
-  threadSummary,
-} from '@/test/fixtures';
+import { fixtureId, threadList } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
@@ -64,145 +52,6 @@ function createdSchedule(body: ScheduleBody): ScheduleView {
     access: body.access,
   } satisfies ScheduleView);
 }
-
-/** The conversation `THREAD_ID` with two turns, its list and the rule preview the dialog asks for. */
-function conversationHandlers() {
-  const thread = threadSummary({ id: THREAD_ID });
-  return [
-    http.get(`${API}/api/threads`, () =>
-      HttpResponse.json(threadList([thread])),
-    ),
-    http.get(`${API}/api/threads/${THREAD_ID}`, () =>
-      HttpResponse.json(thread),
-    ),
-    http.get(`${API}/api/threads/${THREAD_ID}/history`, () =>
-      HttpResponse.json(
-        conversationWithTurns(thread, ['Сводка за вчера', 'Готово']),
-      ),
-    ),
-    http.post(`${API}/api/schedules/next-run`, () =>
-      HttpResponse.json({
-        nextRunAt: NEXT_RUN_AT,
-      } satisfies ScheduleNextRunResponse),
-    ),
-  ];
-}
-
-/** The bodies of every POST /api/schedules the shell made. */
-function recordCreates(): unknown[] {
-  const bodies: unknown[] = [];
-  const record = async ({ request }: { request: Request }) => {
-    if (request.method !== 'POST') return;
-    if (new URL(request.url).pathname !== '/api/schedules') return;
-    bodies.push(JSON.parse(await request.clone().text()));
-  };
-  server.events.on('request:start', record);
-  onTestFinished(() => {
-    server.events.removeListener('request:start', record);
-  });
-  return bodies;
-}
-
-describe('schedules: the dialog from the message field', () => {
-  // AC: AC-01.1 "Given an employee created the schedule 'weekdays at 9:00', when they open the list, then they see it with the nearest
-  //   term" (the creation step, from the web side).
-  // Catches: the dialog losing the typed text or chip, or leaving the text in the field after the schedule was made (the same instruction
-  //   sent twice), or sending the wrong zone / conversation so the server schedules the wrong thing.
-  it('UC-7: "+" -> "Запланировать" opens the dialog with the field text and agent; creating clears the field and names the next run', async () => {
-    const thread = threadSummary({ id: THREAD_ID });
-    server.use(
-      http.get(`${API}/api/threads`, () =>
-        HttpResponse.json(threadList([thread])),
-      ),
-      http.get(`${API}/api/threads/${THREAD_ID}`, () =>
-        HttpResponse.json(thread),
-      ),
-      http.get(`${API}/api/threads/${THREAD_ID}/history`, () =>
-        HttpResponse.json(
-          conversationWithTurns(thread, ['Сводка за вчера', 'Готово']),
-        ),
-      ),
-      http.get(`${API}/api/library`, () =>
-        HttpResponse.json([recordSummary({ id: AGENT_ID, name: AGENT_NAME })]),
-      ),
-      http.post(`${API}/api/schedules/next-run`, () =>
-        HttpResponse.json({
-          nextRunAt: NEXT_RUN_AT,
-        } satisfies ScheduleNextRunResponse),
-      ),
-      http.post(`${API}/api/schedules`, async ({ request }) =>
-        HttpResponse.json(
-          createdSchedule(ScheduleBodySchema.parse(await request.json())),
-          { status: 201 },
-        ),
-      ),
-    );
-    const creates = recordCreates();
-    const user = userEvent.setup();
-    renderWithRuntime({ pathname: `/chat/${THREAD_ID}` });
-
-    // The field holds a text and the agent's chip
-    const field = await screen.findByRole('textbox', { name: 'Сообщение' });
-    await user.click(screen.getByRole('button', { name: 'Добавить' }));
-    await user.click(
-      await screen.findByRole('menuitem', { name: new RegExp(AGENT_NAME) }),
-    );
-    await user.type(field, INSTRUCTION);
-
-    // "+" -> "Запланировать": the dialog starts from the field's text and agent
-    await user.click(screen.getByRole('button', { name: 'Добавить' }));
-    await user.click(
-      await screen.findByRole('menuitem', { name: /Запланировать/ }),
-    );
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Новое расписание',
-    });
-    expect(
-      within(dialog).getByRole('textbox', { name: 'Инструкция' }),
-    ).toHaveValue(INSTRUCTION);
-    expect(
-      within(dialog).getByRole('combobox', { name: 'Агент' }),
-    ).toHaveTextContent(AGENT_NAME);
-    expect(
-      await within(dialog).findByText(
-        /Следующее срабатывание: 7\sянв\.,\s09:00/,
-      ),
-    ).toBeInTheDocument();
-
-    await user.click(
-      within(dialog).getByRole('button', { name: 'Создать расписание' }),
-    );
-
-    // The body: the instruction, the chip's agent, the rule, the browser's zone, the language and this conversation
-    await vi.waitFor(() =>
-      expect(creates).toEqual([
-        {
-          name: '',
-          instruction: INSTRUCTION,
-          agentId: AGENT_ID,
-          rule: { kind: 'weekdays', days: [1, 2, 3, 4, 5], time: '09:00' },
-          timeZone: 'Europe/Berlin',
-          target: 'new_conversation',
-          conversationId: THREAD_ID,
-          language: 'ru',
-          access: 'read',
-        },
-      ]),
-    );
-
-    // The dialog closed, the field and its chip are empty, the notice names the next run
-    expect(
-      await screen.findByText(
-        /Расписание создано\. Следующее срабатывание — 7\sянв\.,\s09:00\./,
-      ),
-    ).toBeInTheDocument();
-    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(field).toHaveValue('');
-    expect(
-      screen.queryByRole('button', { name: `Убрать: ${AGENT_NAME}` }),
-    ).toBeNull();
-  });
-});
 
 describe('schedules: the open page after its term', () => {
   // Risk: the pass pauses a schedule whose conversation is deleted at its term without touching any conversation, so no `tree` note
@@ -261,51 +110,5 @@ describe('schedules: the open page after its term', () => {
     expect(
       screen.getByText(/Беседа «Беседа» удалена, поэтому расписание на паузе/),
     ).toBeInTheDocument();
-  });
-});
-
-describe('schedules: «Отправить позже»', () => {
-  // AC: AC-10.1 "«Отправить позже» opens the schedule dialog with the field's text, once, in this conversation; nothing is sent".
-  // Catches: the dialog taking the defaults «по будням в новую беседу», or the field's text going out as a message.
-  it('UC-5: opens the dialog MC-5 with the field text, «Один раз» and «В эту беседу», and sends no message', async () => {
-    const sends: string[] = [];
-    const record = ({ request }: { request: Request }) => {
-      if (request.method === 'POST' && request.url.endsWith('/messages'))
-        sends.push(request.url);
-    };
-    server.events.on('request:start', record);
-    onTestFinished(() => {
-      server.events.removeListener('request:start', record);
-    });
-    server.use(...conversationHandlers());
-    const user = userEvent.setup();
-    renderWithRuntime({ pathname: `/chat/${THREAD_ID}` });
-
-    const field = await screen.findByRole('textbox', { name: 'Сообщение' });
-    expect(
-      screen.queryByRole('button', { name: 'Отправить позже' }),
-    ).toBeNull();
-    await user.type(field, 'Собери статус');
-    await user.click(
-      await screen.findByRole('button', { name: 'Отправить позже' }),
-    );
-
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Отправить позже',
-    });
-    expect(
-      within(dialog).getByRole('textbox', { name: 'Инструкция' }),
-    ).toHaveValue('Собери статус');
-    expect(
-      within(dialog).getByRole('radio', { name: 'Один раз' }),
-    ).toBeChecked();
-    expect(
-      within(dialog).getByRole('radio', { name: 'В эту беседу' }),
-    ).toBeChecked();
-    expect(
-      within(dialog).getByRole('button', { name: 'Запланировать' }),
-    ).toBeInTheDocument();
-    expect(field).toHaveValue('Собери статус');
-    expect(sends).toEqual([]);
   });
 });

@@ -148,5 +148,19 @@
   "set_personal_instructions": {
     "title": "Personal instruction",
     "args": { "text": "Text" }
+  },
+  "list_schedules": { "title": "Schedule list", "args": {} },
+  "manage_schedule": {
+    "title": "Schedule",
+    "args": {
+      "action": "Action",
+      "scheduleId": "Schedule",
+      "name": "Name",
+      "instruction": "Instruction",
+      "agentId": "Agent",
+      "rule": "When",
+      "target": "Reply",
+      "timeZone": "Time zone"
+    }
   }
 }
