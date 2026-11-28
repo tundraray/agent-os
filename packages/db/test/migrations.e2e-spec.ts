@@ -82,6 +82,7 @@ const APP_TABLES = [
   'runtime_tasks',
   'schedule_runs',
   'schedules',
+  'send_keys',
   'settings',
   'tool_results',
   'trainings',

@@ -21,6 +21,7 @@ import { RuntimeInboxRepository } from './runtime-inbox.repository';
 import { RuntimeModelCallsRepository } from './runtime-model-calls.repository';
 import { RuntimeTasksRepository } from './runtime-tasks.repository';
 import { SchedulesRepository } from './schedules.repository';
+import { SendKeysRepository } from './send-keys.repository';
 import { SettingsRepository } from './settings.repository';
 import { TrainingsRepository } from './trainings.repository';
 
@@ -47,6 +48,7 @@ export * from './runtime-inbox.repository';
 export * from './runtime-model-calls.repository';
 export * from './runtime-tasks.repository';
 export * from './schedules.repository';
+export * from './send-keys.repository';
 export * from './settings.repository';
 export * from './trainings.repository';
 
@@ -75,6 +77,7 @@ export const REPOSITORIES = [
   RuntimeModelCallsRepository,
   RuntimeTasksRepository,
   SchedulesRepository,
+  SendKeysRepository,
   SettingsRepository,
   TrainingsRepository,
 ];

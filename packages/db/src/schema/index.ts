@@ -88,6 +88,12 @@ export * from './schedules';
 export * from './schedule-runs';
 
 // ---------------------------------------------------------------------------------------------
+// Send keys (runtime-fixes/design-send.md, Data Model, KD-1): one row per accepted send of an employee
+// with a key; goes with the employee by cascade, never expires.
+// ---------------------------------------------------------------------------------------------
+export * from './send-keys';
+
+// ---------------------------------------------------------------------------------------------
 // Settings (data-model/design-schema.md, KD-3): one row per key, the value checked by the key's schema
 // in `@agent-os/contracts`. Written only by the settings service of `apps/api`.
 // ---------------------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 {
-  "id": "adabfbfe-7a8c-4827-987c-f67055d2d9bd",
+  "id": "f5c99d63-5c8c-4546-975a-a72ea117d03c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -4017,6 +4017,54 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "app.send_keys": {
+      "name": "send_keys",
+      "schema": "app",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "send_key": {
+          "name": "send_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "send_keys_user_id_identity_users_id_fk": {
+          "name": "send_keys_user_id_identity_users_id_fk",
+          "tableFrom": "send_keys",
+          "tableTo": "identity_users",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "send_keys_user_id_send_key_pk": {
+          "name": "send_keys_user_id_send_key_pk",
+          "columns": [
+            "user_id",
+            "send_key"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
