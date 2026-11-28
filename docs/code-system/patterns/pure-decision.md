@@ -37,4 +37,4 @@
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — правило правки документа: дописать, заменить фрагмент, предел (`notepad-rules.ts`, KD-2, KD-5)
 - [design-schedules.md](../../features/schedules-search-memory/design-schedules.md) — правило сроков (`schedule-rule.ts`) (KD-7)
 - [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — проверка записи памяти по шаблонам bb `memoryCheckReason` (KD-4)
-- [design-steps.md](../../features/runtime-fixes/design-steps.md) — правило переполнения в адаптерах провайдеров и выбор сжатия по отметке (KD-4, KD-5)
+- [design-steps.md](../../features/runtime-fixes/design-steps.md) — правило переполнения в адаптерах провайдеров (KD-4)
