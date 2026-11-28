@@ -64,6 +64,7 @@ export type {
   AgentConfirmation,
   AgentHistoryEntry,
   ForkResult,
+  HistoryWindow,
 } from './operations/agent-sessions';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';

@@ -3,7 +3,6 @@ import { Inject, Injectable } from '@nestjs/common';
 import { LOGGER, type Logger } from '@agent-os/common';
 import {
   inRootLaunchSet,
-  type AgentHistoryEntry,
   type RootSession,
   ViewOperations,
   ControlOperations,
@@ -20,6 +19,7 @@ import {
   type HistoryEntry,
   type DocumentSummary,
   type ForkRequest,
+  type HistoryQuery,
   type InterruptResponse,
   type NotificationLevel,
   type ScheduleMark,
@@ -57,14 +57,15 @@ import { chatStatus, conversationState } from './chat-status';
 import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
   focusOf,
-  nextAfterSeqOf,
+  focusTools,
   toAgentTree,
   toConfirmation,
   toHistoryEntry,
   toPending,
+  toWindowFields,
   trainingOf,
 } from './conversation-view';
-import { testRunSummary } from './test-run-summary';
+import { TEST_RUN_SUMMARY_TOOLS, testRunSummary } from './test-run-summary';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { rootDescription } from './root-description';
@@ -400,50 +401,49 @@ export class ConversationsService {
   }
 
   /**
-   * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a page of
-   * the root's history after `afterSeq`, its queue, the decisions of the whole tree in every status, the
-   * agents under the root and the record in focus (deep-agents KD-6), read from the root's whole history.
+   * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a window of
+   * the root's history (live-feed KD-5), its queue, the decisions of the whole tree in every status, the
+   * agents under the root and the record in focus (deep-agents KD-6), read from a selection of the root's
+   * history (live-feed KD-6).
    */
   async view(
     threadId: string,
     ownerId: string,
-    afterSeq: number,
+    query: HistoryQuery,
   ): Promise<ConversationView> {
     const owned = await this.owned(threadId, ownerId);
     const thread = toThreadSummary(owned);
-    const [
-      task,
-      views,
-      entries,
-      messages,
-      confirmations,
-      rootHistory,
-      training,
-    ] = await Promise.all([
-      this.tasks.get(threadId, ownerId),
-      this.views.list(threadId, ownerId),
-      this.views.history({
-        agentId: threadId,
-        ownerId,
-        afterSeq,
-        limit: HISTORY_PAGE_SIZE,
-      }),
-      this.inbox.listPending(threadId, ownerId),
-      this.views.confirmations(threadId, ownerId),
-      this.wholeHistory(threadId, ownerId),
-      this.trainings.find(threadId),
-    ]);
+    const [task, views, window, messages, confirmations, training] =
+      await Promise.all([
+        this.tasks.get(threadId, ownerId),
+        this.views.list(threadId, ownerId),
+        this.views.window({
+          agentId: threadId,
+          ownerId,
+          ...query,
+          limit: HISTORY_PAGE_SIZE,
+        }),
+        this.inbox.listPending(threadId, ownerId),
+        this.views.confirmations(threadId, ownerId),
+        this.trainings.find(threadId),
+      ]);
     const root = views.find((view) => view.agentId === threadId);
     if (root === undefined)
       throw new Error(`Conversation ${threadId} has no view of its root`);
     const decisions = confirmations.map((confirmation) =>
       toConfirmation(confirmation, views),
     );
-    const history = rootHistory.map(toHistoryEntry);
-    const run =
+    const rootDecisions = decisions.filter(
+      (decision) => decision.agentId === threadId,
+    );
+    const [focusEntries, run] = await Promise.all([
+      this.selection(threadId, ownerId, focusTools(rootDecisions)),
       training?.description == null
         ? null
-        : await this.runSummary(training, task, history);
+        : this.selection(threadId, ownerId, TEST_RUN_SUMMARY_TOOLS).then(
+            (entries) => this.runSummary(training, task, entries),
+          ),
+    ]);
     return {
       thread,
       chat: {
@@ -456,14 +456,13 @@ export class ConversationsService {
         rootAgentId: threadId,
         model: root.model,
       },
-      entries: entries.map(toHistoryEntry),
-      nextAfterSeq: nextAfterSeqOf(entries),
+      ...toWindowFields(window, query),
       pending: toPending(messages, views, confirmations),
       decisions,
       agents: toAgentTree(views, threadId),
       focus: focusOf(
-        history,
-        decisions.filter((decision) => decision.agentId === threadId),
+        focusEntries,
+        rootDecisions,
         views.filter((view) => view.parentId === threadId),
       ),
       training: trainingOf(
@@ -477,7 +476,7 @@ export class ConversationsService {
     };
   }
 
-  /** The test run's summary (KD-9) from its row, root, pool, versions, spend and the trainer's whole history. */
+  /** The test run's summary (KD-9) from its row, root, pool, versions, spend and the selection of the trainer's history. */
   private async runSummary(
     row: TrainingRow,
     root: Task,
@@ -504,22 +503,15 @@ export class ConversationsService {
     });
   }
 
-  /** The root's history from its first entry, page by page. */
-  private async wholeHistory(
+  /** The successful results of the root's named tools and the employee's first message after each (live-feed KD-6). */
+  private async selection(
     threadId: string,
     ownerId: string,
-  ): Promise<AgentHistoryEntry[]> {
-    const entries: AgentHistoryEntry[] = [];
-    for (;;) {
-      const page = await this.views.history({
-        agentId: threadId,
-        ownerId,
-        afterSeq: entries.at(-1)?.seq ?? 0,
-        limit: HISTORY_PAGE_SIZE,
-      });
-      entries.push(...page);
-      if (page.length < HISTORY_PAGE_SIZE) return entries;
-    }
+    tools: readonly string[],
+  ): Promise<HistoryEntry[]> {
+    return (await this.views.successfulResults(threadId, ownerId, tools)).map(
+      toHistoryEntry,
+    );
   }
 
   /** The agents of the conversation under its root (AC-24.1). */

@@ -28,8 +28,8 @@ import { TestRunSummarySchema } from './training';
 
 /** Max length of a chat message after trimming. */
 export const CHAT_MESSAGE_MAX_LENGTH = 20000;
-/** Max number of history entries in one page (the limit of the agents' `history`). */
-export const HISTORY_PAGE_SIZE = 500;
+/** Max number of history entries in one window or page (live-feed KD-5). */
+export const HISTORY_PAGE_SIZE = 100;
 /** Page size of GET /api/agents. */
 export const AGENT_PAGE_SIZE = 20;
 
@@ -82,10 +82,19 @@ export const ForkRequestSchema = z
   .default({});
 export type ForkRequest = z.infer<typeof ForkRequestSchema>;
 
-/** Query of the history routes: entries with a greater `seq`; 0 by default. */
-export const HistoryQuerySchema = z.object({
-  afterSeq: z.coerce.number().int().nonnegative().default(0),
-});
+/**
+ * Query of the history routes (live-feed KD-5): `beforeSeq` — the window before that entry, `afterSeq` — the entries
+ * after it; neither — the last window. At most one of them. The `inherited` route reads from the start without one.
+ */
+export const HistoryQuerySchema = z
+  .object({
+    beforeSeq: z.coerce.number().int().nonnegative().optional(),
+    afterSeq: z.coerce.number().int().nonnegative().optional(),
+  })
+  .refine(
+    (query) => query.beforeSeq === undefined || query.afterSeq === undefined,
+    { message: 'At most one of beforeSeq and afterSeq' },
+  );
 export type HistoryQuery = z.infer<typeof HistoryQuerySchema>;
 
 /** Query of GET /agents: the cursor is opaque, as in the thread list. */
@@ -471,8 +480,10 @@ export const ChatStatusSchema = z.enum([
 ]);
 export type ChatStatus = z.infer<typeof ChatStatusSchema>;
 
-/** Next `afterSeq` to read from, or null when everything is read. */
+/** Next `afterSeq` to read from, or null when everything is read; `null` in a window read without `afterSeq`. */
 const NextAfterSeqSchema = SeqSchema.nullable();
+/** Shown entries exist before the first entry of the window (live-feed KD-5). */
+const HasOlderSchema = z.boolean();
 
 /** What the conversation last did to the record in focus (KD-6). */
 export const RecordFocusActionSchema = z.enum([
@@ -524,6 +535,7 @@ export const ConversationViewSchema = z.object({
   }),
   entries: z.array(HistoryEntrySchema).max(HISTORY_PAGE_SIZE),
   nextAfterSeq: NextAfterSeqSchema,
+  hasOlder: HasOlderSchema,
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   agents: z.array(AgentNodeSchema),
@@ -545,6 +557,7 @@ export const AgentPageViewSchema = z.object({
   }),
   entries: z.array(HistoryEntrySchema).max(HISTORY_PAGE_SIZE),
   nextAfterSeq: NextAfterSeqSchema,
+  hasOlder: HasOlderSchema,
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   children: z.array(AgentNodeSchema),

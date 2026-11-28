@@ -89,6 +89,22 @@ export interface HistoryRequest extends AgentRef {
   readonly limit: number;
 }
 
+/**
+ * A window of the employee's history (live-feed KD-5): the last `limit` shown entries, the `limit` before `beforeSeq`,
+ * or the `limit` after `afterSeq`; at most one of the two numbers.
+ */
+export interface HistoryWindowRequest extends AgentRef {
+  readonly beforeSeq?: number;
+  readonly afterSeq?: number;
+  readonly limit: number;
+}
+
+/** A window of shown entries in order, and whether shown entries exist before its first one. */
+export interface HistoryWindow {
+  readonly entries: AgentHistoryEntry[];
+  readonly hasOlder: boolean;
+}
+
 export interface ResolveConfirmationRequest {
   readonly decisionId: string;
   readonly ownerId: string;

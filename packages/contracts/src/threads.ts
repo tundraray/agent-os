@@ -103,7 +103,8 @@ export type MatchPlace = z.infer<typeof MatchPlaceSchema>;
 /**
  * One found place. `threadId`/`title` — the employee's conversation (the tree root); `agent` — the
  * sub-agent it was found at, `null` in the employee's conversation or in the title; `tool` and `callId`
- * only for `tool_result`, `seq` only for `message`; `titleMarks` only for `title`, `snippet` for the rest.
+ * only for `tool_result`; `seq` — the history entry of a `message` or the `tool_result` entry of a result (live-feed
+ * KD-5), `null` for `title`; `titleMarks` only for `title`, `snippet` for the rest.
  */
 export const ConversationMatchSchema = z.object({
   threadId: ThreadIdSchema,

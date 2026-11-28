@@ -18,6 +18,7 @@ import {
   type DecisionResponse,
   type DeepAgentRunView,
   type HistoryEntry,
+  type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
@@ -45,6 +46,7 @@ import {
   toHistoryEntry,
   toDeepAgentRunView,
   toPending,
+  toWindowFields,
   trainingOf,
 } from './conversation-view';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
@@ -125,22 +127,22 @@ export class AgentControlService {
     return { count: counts.reduce((sum, count) => sum + count, 0) };
   }
 
-  /** `AgentPageView`: the agent with its conversation, a page of its history, its queue, own requests and subtree. */
+  /** `AgentPageView`: the agent with its conversation, a window of its history (live-feed KD-5), its queue, own requests and subtree. */
   async history(
     agentId: string,
     ownerId: string,
-    afterSeq: number,
+    query: HistoryQuery,
   ): Promise<AgentPageView> {
     const view = await this.agent(agentId, ownerId);
     const conversation = await this.views.root(view.rootId, ownerId);
     if (conversation === undefined) throw agentNotFound();
-    const [views, entries, messages, confirmations, training] =
+    const [views, window, messages, confirmations, training] =
       await Promise.all([
         this.views.list(view.rootId, ownerId),
-        this.views.history({
+        this.views.window({
           agentId,
           ownerId,
-          afterSeq,
+          ...query,
           limit: HISTORY_PAGE_SIZE,
         }),
         this.inbox.listPending(agentId, ownerId),
@@ -162,8 +164,7 @@ export class AgentControlService {
         threadTitle: toThreadSummary(conversation).title,
         ...(parentDescription === undefined ? {} : { parentDescription }),
       },
-      entries: entries.map(toHistoryEntry),
-      nextAfterSeq: nextAfterSeqOf(entries),
+      ...toWindowFields(window, query),
       pending: toPending(messages, views, confirmations),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)

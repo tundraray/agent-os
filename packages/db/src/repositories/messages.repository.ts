@@ -9,11 +9,15 @@ import {
   gt,
   gte,
   inArray,
+  lt,
   lte,
   max,
+  min,
   notInArray,
+  or,
   sql,
 } from 'drizzle-orm';
+import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db';
 import { messages } from '../schema';
 
@@ -147,6 +151,78 @@ export class MessagesRepository {
       )
       .orderBy(asc(messages.seq))
       .limit(limit);
+  }
+
+  /**
+   * The last `limit` entries of any kind but `hiddenKinds` with `seq` less than `beforeSeq` (all of them without it),
+   * newest first: a window read backwards by the primary key (live-feed KD-5).
+   */
+  pageBefore(
+    taskId: string,
+    beforeSeq: number | undefined,
+    limit: number,
+    hiddenKinds: readonly string[],
+  ): Promise<MessageRow[]> {
+    return this.db.client
+      .select(ENTRY_COLUMNS)
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, taskId),
+          beforeSeq === undefined ? undefined : lt(messages.seq, beforeSeq),
+          notInArray(messages.kind, [...hiddenKinds]),
+        ),
+      )
+      .orderBy(desc(messages.seq))
+      .limit(limit);
+  }
+
+  /**
+   * The successful `tool_result` entries of the named tools and the first `user_message` after each of them, in
+   * order (live-feed KD-6): what the record in focus and a test run's summary read instead of the whole history.
+   */
+  successfulResults(
+    taskId: string,
+    tools: readonly string[],
+  ): Promise<MessageRow[]> {
+    if (tools.length === 0) return Promise.resolve([]);
+    const isSuccessOf = (table: { kind: AnyPgColumn; content: AnyPgColumn }) =>
+      and(
+        eq(table.kind, 'tool_result'),
+        inArray(sql`${table.content} ->> 'tool'`, [...tools]),
+        sql`${table.content} ->> 'outcome' = ${ToolOutcomeSchema.enum.success}`,
+      );
+    const result = alias(messages, 'result');
+    const answer = alias(messages, 'answer');
+    const answers = this.db.client
+      .select({ seq: min(answer.seq) })
+      .from(result)
+      .innerJoin(
+        answer,
+        and(
+          eq(answer.conversationId, result.conversationId),
+          eq(answer.kind, 'user_message'),
+          gt(answer.seq, result.seq),
+        ),
+      )
+      .where(and(eq(result.conversationId, taskId), isSuccessOf(result)))
+      .groupBy(result.seq);
+    return this.db.client
+      .select(ENTRY_COLUMNS)
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, taskId),
+          or(
+            isSuccessOf(messages),
+            and(
+              eq(messages.kind, 'user_message'),
+              inArray(messages.seq, answers),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(messages.seq));
   }
 
   /** Every entry with `seq` greater than `seq`, in order: what was appended since. */

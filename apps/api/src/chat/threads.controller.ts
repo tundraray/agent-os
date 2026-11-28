@@ -112,10 +112,11 @@ export class ThreadsController {
     return this.run({
       route: 'GET /threads/:threadId/history',
       fields: { ownerId, threadId },
-      work: () => this.conversations.view(threadId, ownerId, query.afterSeq),
+      work: () => this.conversations.view(threadId, ownerId, query),
       outcomeOf: (view) => ({
         chatStatus: view.chat.status,
         entries: view.entries.length,
+        hasOlder: view.hasOlder,
       }),
     });
   }

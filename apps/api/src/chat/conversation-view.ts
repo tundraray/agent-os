@@ -3,6 +3,7 @@ import type {
   AgentHistoryEntry,
   AgentView as AgentsAgentView,
   DeepAgentRun,
+  HistoryWindow,
 } from '@agent-os/agents';
 import {
   AGENTS_BRIEF_CONFIRMATION,
@@ -21,8 +22,10 @@ import {
   type AgentView,
   type Confirmation,
   type ConversationTraining,
+  type ConversationView,
   type DeepAgentRunView,
   type HistoryEntry,
+  type HistoryQuery,
   type PendingMessage,
   type RecordFocus,
   type RecordFocusAction,
@@ -155,6 +158,22 @@ export const nextAfterSeqOf = (
   entries: readonly AgentHistoryEntry[],
 ): number | null =>
   entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null;
+
+/**
+ * The window fields of a history view (live-feed KD-5): its entries, `hasOlder`, and `nextAfterSeq` of a read
+ * after `afterSeq` — `null` in a window read without it.
+ */
+export function toWindowFields(
+  window: HistoryWindow,
+  query: HistoryQuery,
+): Pick<ConversationView, 'entries' | 'nextAfterSeq' | 'hasOlder'> {
+  return {
+    entries: window.entries.map(toHistoryEntry),
+    nextAfterSeq:
+      query.afterSeq === undefined ? null : nextAfterSeqOf(window.entries),
+    hasOlder: window.hasOlder,
+  };
+}
 
 /**
  * A decision request in any status, with the record the asking agent started from: `views` are the
@@ -313,6 +332,23 @@ export function focusOf(
       return { ...target, at: entry.content.finishedAt ?? entry.createdAt };
   }
   return null;
+}
+
+/**
+ * The tools whose successful results `focusOf` reads (live-feed KD-6): the record tools and the tools of the root's
+ * `agents.brief` requests, which start a deep agent by its brief.
+ */
+export function focusTools(confirmations: readonly Confirmation[]): string[] {
+  const briefTools = confirmations
+    .filter((confirmation) => confirmation.kind === AGENTS_BRIEF_CONFIRMATION)
+    .map((confirmation) => confirmation.tool);
+  return [
+    ...new Set([
+      ...Object.keys(RECORD_ID_ACTIONS),
+      CREATE_RECORD_TOOL,
+      ...briefTools,
+    ]),
+  ];
 }
 
 /** Payloads of the queue messages of an agent (the agents package, `agent/deliver.ts`). */

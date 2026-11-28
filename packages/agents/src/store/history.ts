@@ -117,6 +117,40 @@ export class History {
   }
 
   /**
+   * A window for the employee read backwards (live-feed KD-5): the last `limit` shown entries before `beforeSeq`
+   * (of the whole history without it), in order.
+   */
+  async pageBefore(
+    taskId: string,
+    beforeSeq: number | undefined,
+    limit: number,
+  ): Promise<PageEntry[]> {
+    const rows = await this.rows.pageBefore(
+      taskId,
+      beforeSeq,
+      limit,
+      HIDDEN_KINDS,
+    );
+    // The hidden kinds are filtered out by the query, which reads newest first.
+    return rows.reverse().map(toEntry) as PageEntry[];
+  }
+
+  /** The successful results of the named tools and the employee's first message after each, in order (KD-6). */
+  async successfulResults(
+    taskId: string,
+    tools: readonly string[],
+  ): Promise<
+    Extract<HistoryEntry, { kind: 'tool_result' | 'user_message' }>[]
+  > {
+    const rows = await this.rows.successfulResults(taskId, tools);
+    // The query selects only these two kinds.
+    return rows.map(toEntry) as Extract<
+      HistoryEntry,
+      { kind: 'tool_result' | 'user_message' }
+    >[];
+  }
+
+  /**
    * The session's assignment: the text of its `task` entry, its first own entry (data-model design-agents.md,
    * KD-6). A session without one is broken.
    */
