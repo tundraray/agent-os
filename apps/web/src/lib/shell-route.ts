@@ -22,6 +22,9 @@ const ADMIN_PATH_PREFIX = `${ADMIN_PATH}/`;
 const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
 const SCHEDULES_PATH = '/schedules';
+/** The employee's tracker (task-tracker KD-1); free, since an agent's tab sits under `/agents/<id>/tasks`. */
+const TRACKER_PATH = '/tasks';
+const TRACKER_PATH_PREFIX = `${TRACKER_PATH}/`;
 const SCHEDULES_PATH_PREFIX = `${SCHEDULES_PATH}/`;
 /** After a record id: a deep agent's memory (self-learning UXRD ME-01). */
 const MEMORY_SUFFIX = '/memory';
@@ -99,17 +102,21 @@ export type ShellRoute =
   | { kind: 'library'; page: LibraryPage }
   | { kind: 'schedules' }
   | { kind: 'schedule'; scheduleId: string }
+  | { kind: 'tracker' }
+  | { kind: 'trackerTask'; taskId: string }
   | { kind: 'admin'; section: AdminSection; page: AdminPage };
 
 /**
- * A screen with its own `PageHeader` and no composer: the panel, the library and the schedules. The shell header
+ * A screen with its own `PageHeader` and no composer: the panel, the library, the schedules and the tracker. The shell header
  * gives it the header slot, the skip link leads to its `h1`, and it titles the tab itself.
  */
 export const isPageRoute = (route: ShellRoute): boolean =>
   route.kind === 'admin' ||
   route.kind === 'library' ||
   route.kind === 'schedules' ||
-  route.kind === 'schedule';
+  route.kind === 'schedule' ||
+  route.kind === 'tracker' ||
+  route.kind === 'trackerTask';
 
 /** The only way a thread path is built: Link href, replaceState, pathname comparison. */
 export const threadPath = (threadId: string): string =>
@@ -140,6 +147,13 @@ export const schedulesPath = (): string => SCHEDULES_PATH;
 /** The only way a schedule page path is built (UXRD SH-05); an unknown or foreign id shows SH-08 there. */
 export const schedulePath = (id: string): string =>
   `${SCHEDULES_PATH_PREFIX}${encodeURIComponent(id)}`;
+
+/** The only way the tracker's list path is built (task-tracker TT-02). */
+export const trackerPath = (): string => TRACKER_PATH;
+
+/** The only way a tracker task's path is built (TT-05); an unknown or foreign id shows TT-12 there. */
+export const trackerTaskPath = (id: string): string =>
+  `${TRACKER_PATH_PREFIX}${encodeURIComponent(id)}`;
 
 /** The only way a panel section list path is built. */
 export const adminPath = (section: AdminSection): string =>
@@ -277,6 +291,13 @@ export function parseShellRoute(pathname: string | null): ShellRoute {
     return scheduleId === undefined
       ? { kind: 'schedules' }
       : { kind: 'schedule', scheduleId };
+  }
+  // `/tasks`, an id after it; any other path under it opens the list.
+  if (pathname === TRACKER_PATH || pathname.startsWith(TRACKER_PATH_PREFIX)) {
+    const taskId = singleSegment(pathname, TRACKER_PATH_PREFIX);
+    return taskId === undefined
+      ? { kind: 'tracker' }
+      : { kind: 'trackerTask', taskId };
   }
   if (pathname === ADMIN_PATH || pathname.startsWith(ADMIN_PATH_PREFIX)) {
     return { kind: 'admin', ...parseAdminPage(pathname) };

@@ -13,17 +13,14 @@ import {
 } from '@/components/admin/data-table';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { useReloadOnAnyChange } from '@/hooks/use-reload-on-any-change';
 import { useResource } from '@/hooks/use-resource';
 import type { SchedulesTranslator } from '@/i18n/catalog';
 import type { Formatter } from '@/i18n/formats';
 import { focusShellTarget } from '@/lib/focus';
 import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { schedulePath, threadPath } from '@/lib/shell-route';
-import {
-  ruleLine,
-  useReloadAfterTerm,
-  useReloadOnAnyChange,
-} from './schedule-parts';
+import { ruleLine, useReloadAfterTerm } from './schedule-parts';
 import { ScheduleDialog } from './schedule-dialog';
 import { formatRunTime } from './schedule-rule-field';
 

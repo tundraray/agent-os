@@ -12,6 +12,7 @@ import enPages from './translations/en/pages.json';
 import enSchedules from './translations/en/schedules.json';
 import enShell from './translations/en/shell.json';
 import enTools from './translations/en/tools.json';
+import enTracker from './translations/en/tracker.json';
 import ruAccount from './translations/ru/account.json';
 import ruAdmin from './translations/ru/admin.json';
 import ruAgents from './translations/ru/agents.json';
@@ -26,6 +27,7 @@ import ruPages from './translations/ru/pages.json';
 import ruSchedules from './translations/ru/schedules.json';
 import ruShell from './translations/ru/shell.json';
 import ruTools from './translations/ru/tools.json';
+import ruTracker from './translations/ru/tracker.json';
 import type { useTranslations } from 'next-intl';
 import type { Locale } from './pick-locale';
 
@@ -48,6 +50,7 @@ const en = {
   schedules: enSchedules,
   shell: enShell,
   tools: enTools,
+  tracker: enTracker,
 };
 
 /** The English catalog sets the type, so `tsc` rejects a Russian catalog missing a key. */
@@ -65,6 +68,7 @@ export type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
 export type SchedulesTranslator = ReturnType<
   typeof useTranslations<'schedules'>
 >;
+export type TrackerTranslator = ReturnType<typeof useTranslations<'tracker'>>;
 export type ModelsTranslator = ReturnType<
   typeof useTranslations<'admin.models'>
 >;
@@ -100,6 +104,7 @@ const ru: Messages = {
   schedules: ruSchedules,
   shell: ruShell,
   tools: ruTools,
+  tracker: ruTracker,
 };
 
 type MessageTree = { [key: string]: string | MessageTree };

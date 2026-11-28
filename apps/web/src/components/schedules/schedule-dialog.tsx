@@ -11,9 +11,8 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
-import { BotIcon, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { useStore } from 'zustand';
 import {
   CHAT_MESSAGE_MAX_LENGTH,
   SCHEDULE_NAME_MAX_LENGTH,
@@ -23,9 +22,9 @@ import {
   type ScheduleTarget,
   type ScheduleView,
 } from '@agent-os/contracts';
+import { AgentField } from '@/components/agent-field';
 import {
   AdminRadioField,
-  AdminSelectField,
   AdminTextField,
   CAPTION,
   COMFORT_CONTROL,
@@ -33,7 +32,6 @@ import {
 } from '@/components/admin/admin-form';
 import { Checkbox } from '@/components/ui/checkbox';
 import { FieldError } from '@/components/ui/field';
-import { RECORD_KIND_ICON } from '@/components/library/record-label';
 import {
   checkRule,
   defaultRuleDraft,
@@ -44,7 +42,7 @@ import {
   type RuleDraft,
   type RuleError,
 } from '@/components/schedules/schedule-rule-field';
-import { useShellServices } from '@/components/shell/shell-actions';
+import { useChatAgents } from '@/components/assistant-ui/elements/composer-actions';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -54,10 +52,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { builtinName } from '@/i18n/builtin-name';
 import { cn } from 'cn';
 import { describeApiError } from '@/lib/api/api-request';
-import { canUseInChat } from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
 import { startTimer } from '@/lib/timer';
 import { schedulePath } from '@/lib/shell-route';
@@ -115,13 +111,11 @@ export function ScheduleDialog({
   );
 }
 
-/** The value of «Агент чата» in the agent select: record ids are UUIDs, so it never meets one. */
-const CHAT_AGENT = 'chat';
-
 type Values = {
   name: string;
   instruction: string;
-  agentId: string;
+  /** `null` — the chat agent. */
+  agentId: string | null;
   rule: RuleDraft;
   timeZone: string;
   target: ScheduleTarget;
@@ -149,7 +143,7 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
       values: {
         name: '',
         instruction: '',
-        agentId: CHAT_AGENT,
+        agentId: null,
         rule: defaultRuleDraft(now),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         target: 'new_conversation',
@@ -164,7 +158,7 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
     values: {
       name: schedule.name,
       instruction: schedule.instruction,
-      agentId: schedule.agent?.id ?? CHAT_AGENT,
+      agentId: schedule.agent?.id ?? null,
       rule: ruleDraftOf(schedule.rule, now),
       timeZone: schedule.timeZone,
       // A deleted conversation takes no replies, so the dialog opens on the only target that can be saved.
@@ -193,8 +187,7 @@ function ScheduleForm({
   const format = useFormatter();
   const router = useRouter();
   const id = useId();
-  const { libraryIndex } = useShellServices();
-  const records = useStore(libraryIndex, (state) => state.records);
+  const chatAgents = useChatAgents();
   const [start] = useState(() => startOf(mode, new Date()));
   const [values, setValues] = useState(start.values);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -221,11 +214,7 @@ function ScheduleForm({
   }, [errorsShown]);
 
   const agents = agentChoices(
-    [...(records?.values() ?? [])].filter(canUseInChat).map((record) => ({
-      id: record.id,
-      kind: record.kind,
-      name: builtinName(record, locale),
-    })),
+    chatAgents.map((agent) => agent.chip),
     start.agent,
   );
   const agentName =
@@ -274,7 +263,7 @@ function ScheduleForm({
     const body: ScheduleBody = {
       name: values.name.trim(),
       instruction,
-      agentId: values.agentId === CHAT_AGENT ? null : values.agentId,
+      agentId: values.agentId,
       rule: checked.rule,
       timeZone: values.timeZone,
       target: values.target,
@@ -379,27 +368,10 @@ function ScheduleForm({
             error={errors.instruction}
             onChange={(instruction) => set('instruction', instruction)}
           />
-          <AdminSelectField
+          <AgentField
             id={fieldId('agent')}
-            density="comfortable"
-            label={t('dialog.agent')}
+            agents={agents}
             value={values.agentId}
-            options={[
-              { id: CHAT_AGENT, name: t('dialog.chatAgent'), icon: BotIcon },
-              ...agents.map((agent) => ({
-                ...agent,
-                icon: RECORD_KIND_ICON[agent.kind],
-              })),
-            ].map(({ id: value, name, icon: Icon }) => ({
-              value,
-              label: name,
-              content: (
-                <>
-                  <Icon aria-hidden className="text-muted-foreground" />
-                  {name}
-                </>
-              ),
-            }))}
             error={errors.agent}
             onChange={(agentId) => set('agentId', agentId)}
           />

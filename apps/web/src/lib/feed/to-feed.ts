@@ -72,6 +72,8 @@ export type FeedView = { hasOlder: boolean } & (
       training: ConversationView['training'];
       /** The root's «seen through» mark at the latest read (improvements KD-4). */
       seenThroughSeq: number;
+      /** The tracker task the conversation is linked to, its title as of the latest read (task-tracker KD-5). */
+      trackerTask: ConversationView['trackerTask'];
     }
   | {
       kind: 'agent';
@@ -105,6 +107,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
       focus: page.focus,
       training: page.training,
       seenThroughSeq: page.seenThroughSeq,
+      trackerTask: page.trackerTask,
     };
   }
   return {

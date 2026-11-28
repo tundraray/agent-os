@@ -1,0 +1,82 @@
+{
+  "status": {
+    "todo": "To do",
+    "in_progress": "In progress",
+    "in_review": "In review",
+    "needs_decision": "Needs decision",
+    "done": "Done",
+    "cancelled": "Cancelled"
+  },
+  "list": {
+    "title": "Tasks",
+    "filter": "Show",
+    "open": "Open",
+    "group": "{status} · {count}",
+    "changed": ", changed {time}",
+    "newTask": "New task",
+    "created": "Task “{title}” created",
+    "emptyOpenTitle": "No open tasks",
+    "emptyOpenHint": "Write a to-do in the field above — do it yourself or delegate it to an agent.",
+    "emptyStatus": "No tasks with the status “{status}”",
+    "loadFailed": "Couldn't load tasks"
+  },
+  "task": {
+    "delegate": "Delegate to agent",
+    "actions": "Task actions",
+    "rename": "Rename",
+    "delete": "Delete",
+    "statusButton": "Status: {status}",
+    "statusAnnounced": "Status: {status}",
+    "description": "Description",
+    "edit": "Edit",
+    "addDescription": "Add description",
+    "save": "Save",
+    "delegated": "Delegated: {agent}",
+    "openConversation": "Open chat",
+    "deleteTitle": "Delete the task?",
+    "deleteBody": "The task “{title}” and its comments will be gone. Its chats stay in the chat list and keep working.",
+    "deleteConfirm": "Delete",
+    "deleted": "Task deleted"
+  },
+  "feed": {
+    "label": "Task feed",
+    "you": "You",
+    "article": "{author}, {time}",
+    "from": "from the chat “<link>{title}</link>”",
+    "fromDeleted": "from the chat “{title}” · chat deleted",
+    "forwarded": "Sent to the chat “<link>{title}</link>”",
+    "forwardedDeleted": "Sent to the chat “{title}” · chat deleted",
+    "created": "You created the task",
+    "delegated": "You delegated the task to the agent “{agent}” · chat “{title}”",
+    "delegatedChat": "You delegated the task to the chat agent · chat “{title}”",
+    "statusByYou": "You changed the status to “{status}”",
+    "statusByAgent": "The agent “{agent}” changed the status to “{status}”",
+    "statusByChat": "The chat agent changed the status to “{status}”",
+    "empty": "No comments yet",
+    "agentComment": "Comment from {agent}: {text}",
+    "comment": "Comment",
+    "forward": "Send to agent",
+    "target": "to the chat “{title}”",
+    "notDelegated": "The task isn't delegated to an agent yet",
+    "allDeleted": "All chats of the task are deleted",
+    "sendToAgent": "Send to agent",
+    "send": "Comment"
+  },
+  "conversations": {
+    "title": "Chats · {count}",
+    "titleEmpty": "Chats",
+    "delegatedAt": "delegated {time}",
+    "deleted": "chat deleted",
+    "empty": "The task isn't delegated to an agent yet."
+  },
+  "dialog": {
+    "title": "Delegate to agent",
+    "note": "Anything else to tell the agent",
+    "optional": "(optional)",
+    "hint": "The agent gets the title, the description and the latest comments of the task.",
+    "working": "A chat already works on the task: “{title}”. Delegating opens another one.",
+    "submit": "Delegate"
+  },
+  "caption": "For the task “{title}”",
+  "captionText": "For the task “<name>{title}</name>”"
+}

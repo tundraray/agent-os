@@ -21,6 +21,9 @@ export type FailedAction =
   | 'take'
   | 'send'
   | 'restore'
+  | 'create_task'
+  | 'status'
+  | 'delegate'
   /** An action that names itself on its button: «Не удалось: …». */
   | 'action';
 

@@ -213,21 +213,21 @@
       "failed": "failed {count}",
       "cancelled": "cancelled {count}"
     },
-    "task": "task {number}",
+    "task": "step {number}",
     "rowLabel": "{subagent}: {item}, {status}"
   },
   "tasks": {
     "tabs": {
       "activity": "Activity",
-      "tasks": "Tasks · {count}"
+      "tasks": "Plan · {count}"
     },
-    "listLabel": "Tasks",
-    "rowButton": "Task {number}: {subject}, {status}",
+    "listLabel": "Plan",
+    "rowButton": "Step {number}: {subject}, {status}",
     "waitsFor": "waits for {numbers}",
-    "emptyTitle": "No tasks yet",
-    "emptyHint": "The agent's tasks and delegations appear here.",
-    "loading": "Loading tasks…",
-    "loadError": "Couldn't load tasks",
+    "emptyTitle": "No plan yet",
+    "emptyHint": "The plan's steps and the agent's delegations appear here.",
+    "loading": "Loading the plan…",
+    "loadError": "Couldn't load the plan",
     "retry": "Try again"
   },
   "documents": {

@@ -25,6 +25,7 @@ import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useReloadOnAnyChange } from '@/hooks/use-reload-on-any-change';
 import {
   usePagedResource,
   useResource,
@@ -42,11 +43,9 @@ import { schedulesPath, threadPath } from '@/lib/shell-route';
 import { startTimer } from '@/lib/timer';
 import { ScheduleDialog } from './schedule-dialog';
 import {
-  agentName,
   ruleLine,
   ScheduleStateBadge,
   useReloadAfterTerm,
-  useReloadOnAnyChange,
   zoneLine,
 } from './schedule-parts';
 import { formatRunTime } from './schedule-rule-field';
@@ -344,6 +343,7 @@ const titleOf = (schedule: ScheduleView, untitled: string): string => {
 /** SH-05 pairs (MC-8, chat-scheduling SP-02): the label over the value below 640 px, at its left from 640 px. */
 function Settings({ schedule }: { schedule: ScheduleView }) {
   const t = useTranslations('schedules');
+  const tAgent = useTranslations('common.agentField');
   const format = useFormatter();
   const tThread = useTranslations('shell.thread');
   const conversation = schedule.conversation;
@@ -378,7 +378,9 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
       </Pair>
       <Pair label={t('page.agent')}>
         <span className="inline-flex flex-wrap items-center gap-2">
-          <span className="wrap-break-word">{agentName(t, schedule)}</span>
+          <span className="wrap-break-word">
+            {schedule.agent?.name ?? tAgent('chatAgent')}
+          </span>
           {schedule.agent?.available === false && (
             <StateBadge state="off">{t('page.agentUnavailable')}</StateBadge>
           )}

@@ -17,5 +17,9 @@
     "save": "Save",
     "loadFailed": "Couldn’t load",
     "retry": "Retry"
+  },
+  "agentField": {
+    "label": "Agent",
+    "chatAgent": "Chat agent"
   }
 }

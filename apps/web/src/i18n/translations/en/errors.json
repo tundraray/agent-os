@@ -9,7 +9,10 @@
     "take": "Couldn't take the agent: <server>{text}</server>",
     "send": "Couldn't send: <server>{text}</server>",
     "restore": "Couldn't restore: <server>{text}</server>",
-    "action": "Couldn't do it: <server>{text}</server>"
+    "action": "Couldn't do it: <server>{text}</server>",
+    "create_task": "Couldn't create the task: <server>{text}</server>",
+    "status": "Couldn't change the status: <server>{text}</server>",
+    "delegate": "Couldn't delegate: <server>{text}</server>"
   },
   "noConnection": {
     "save": "Couldn't save: no connection to the server",
@@ -21,10 +24,13 @@
     "take": "Couldn't take the agent: no connection to the server",
     "send": "Couldn't send: no connection to the server",
     "restore": "Couldn't restore: no connection to the server",
-    "action": "Couldn't do it: no connection to the server"
+    "action": "Couldn't do it: no connection to the server",
+    "create_task": "Couldn't create the task: no connection to the server",
+    "status": "Couldn't change the status: no connection to the server",
+    "delegate": "Couldn't delegate: no connection to the server"
   },
+  "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
   "schedules": {
-    "agentUnavailable": "The agent “{name}” is not available to you — choose another one.",
     "conversationDeleted": "The conversation was deleted — replies will go to a new conversation. Save again."
   },
   "library": {

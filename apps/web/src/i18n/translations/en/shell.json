@@ -4,6 +4,7 @@
     "newChat": "New chat",
     "newChatTooltip": "New chat · {shortcut}",
     "panel": "Admin panel",
+    "tasks": "Tasks",
     "agents": "Agents",
     "library": "Library",
     "schedules": "Schedules",
@@ -206,11 +207,20 @@
       "title": "Couldn't load the schedule",
       "description": "Check your connection and try again."
     },
+    "taskNotFound": {
+      "title": "Task not found",
+      "description": "It was deleted, or it belongs to another employee."
+    },
+    "taskLoadError": {
+      "title": "Couldn't load the task",
+      "description": "Check your connection and try again."
+    },
     "retry": "Retry",
     "toAgents": "Back to agents",
     "toChat": "Go to chat",
     "toList": "Back to list",
     "toLibrary": "Go to library",
-    "toSchedules": "Back to schedules"
+    "toSchedules": "Back to schedules",
+    "toTasks": "Back to tasks"
   }
 }

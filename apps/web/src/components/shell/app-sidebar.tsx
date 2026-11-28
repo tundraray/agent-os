@@ -8,6 +8,7 @@ import {
   DiamondIcon,
   HandIcon,
   LibraryBigIcon,
+  ListChecksIcon,
   SearchIcon,
   SquarePenIcon,
   XIcon,
@@ -40,6 +41,7 @@ import {
   libraryPath,
   parseShellRoute,
   schedulesPath,
+  trackerPath,
   type ShellRoute,
 } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
@@ -261,6 +263,9 @@ export function AppSidebar() {
   );
 }
 
+/** «Задачи» in the sidebar (task-tracker TT-01); the task caption in a conversation's header shows it too (TT-10). */
+export const TRACKER_ICON = ListChecksIcon;
+
 /** The employee's sections; mounted off the panel only, so the panel never reads the awaiting count. */
 function SectionNavItems({
   route,
@@ -273,6 +278,13 @@ function SectionNavItems({
   const awaiting = useAwaitingCount();
   return (
     <>
+      <SectionNavItem
+        href={trackerPath()}
+        label={t('tasks')}
+        icon={TRACKER_ICON}
+        isActive={route.kind === 'tracker' || route.kind === 'trackerTask'}
+        onMobilePick={onMobilePick}
+      />
       <SectionNavItem
         href={AGENTS_PATH}
         label={t('agents')}
@@ -301,7 +313,7 @@ function SectionNavItems({
 
 type SectionNavItemProps = {
   href: string;
-  /** The item's visible name (agent-platform MC-1, custom-agents MC-1, schedules MC-6). */
+  /** The item's visible name (agent-platform MC-1, custom-agents MC-1, schedules MC-6, task-tracker MC-1). */
   label: string;
   icon: LucideIcon;
   /** Selected on every page of its section, like the active thread (SB-06). */
@@ -312,7 +324,7 @@ type SectionNavItemProps = {
 };
 
 /**
- * A section of the employee's sidebar under SB-03: «Агенты» (NV-01), «Библиотека» (LB-01) and «Расписания» (SH-03).
+ * A section of the employee's sidebar under SB-03: «Задачи» (task-tracker TT-01), «Агенты» (NV-01), «Библиотека» (LB-01) and «Расписания» (SH-03).
  * With decisions waiting: `Hand` and the number in `--approval` on the right, in the strip a 6 px dot;
  * the number swaps without animation.
  */

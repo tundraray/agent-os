@@ -7,8 +7,6 @@
     "nameHint": "Leave it empty and the start of the instruction becomes the name.",
     "instruction": "Instruction",
     "instructionHint": "What the agent should do — just as you would write it in the chat",
-    "agent": "Agent",
-    "chatAgent": "Chat agent",
     "target": "Where to reply",
     "newConversation": "A new conversation each time",
     "newConversationHint": "A separate conversation for every trigger — for independent reports.",

@@ -83,7 +83,7 @@ const deepOrigin = () => ({
   builtinKey: null,
 });
 
-/** The task list's rows as their expand buttons read them (MC-12): «Задача {N}: {тема}, {статус}». */
+/** The task list's rows as their expand buttons read them (MC-12): «Шаг {N}: {тема}, {статус}». */
 function taskRows(list: HTMLElement): (string | null)[] {
   return within(list)
     .getAllByRole('button')
@@ -423,15 +423,15 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     // Assert 1 (AC-15.1, KD-7): the panel opened by itself on «Задачи · 3», focus stayed out of it, the conversation's tasks are listed
     const panel = await screen.findByRole('complementary', { name: 'Схема' });
     const tasksTab = await within(panel).findByRole('tab', {
-      name: 'Задачи · 3',
+      name: 'План · 3',
     });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(panel.contains(document.activeElement)).toBe(false);
-    const list = within(panel).getByRole('list', { name: 'Задачи' });
+    const list = within(panel).getByRole('list', { name: 'План' });
     expect(taskRows(list)).toEqual([
-      'Задача 1: Найти релизы за год, Готова',
-      'Задача 2: Сравнить с инцидентами, В работе',
-      'Задача 3: Написать сводку, Ожидает',
+      'Шаг 1: Найти релизы за год, Готов',
+      'Шаг 2: Сравнить с инцидентами, В работе',
+      'Шаг 3: Написать сводку, Ожидает',
     ]);
     expect(
       within(list).getByText('В работе · Сравниваю релизы с инцидентами'),
@@ -459,11 +459,11 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     // Assert 2 (AC-15.1): the rows follow without a reload; task 3 waits for nothing any more
     await waitFor(() => {
       expect(
-        taskRows(within(panel).getByRole('list', { name: 'Задачи' })),
+        taskRows(within(panel).getByRole('list', { name: 'План' })),
       ).toEqual([
-        'Задача 1: Найти релизы за год, Готова',
-        'Задача 2: Сравнить с инцидентами, Готова',
-        'Задача 3: Написать сводку, В работе',
+        'Шаг 1: Найти релизы за год, Готов',
+        'Шаг 2: Сравнить с инцидентами, Готов',
+        'Шаг 3: Написать сводку, В работе',
       ]);
     });
     expect(
@@ -551,10 +551,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
       within(strip)
         .getAllByRole('button')
         .map((button) => button.getAttribute('aria-label')),
-    ).toEqual([
-      `${DEEP_AGENT_NAME}, Ждёт вас`,
-      'Разбор логов, Работает',
-    ]);
+    ).toEqual([`${DEEP_AGENT_NAME}, Ждёт вас`, 'Разбор логов, Работает']);
 
     // Act 2: choose the deep agent
     await user.click(
@@ -645,15 +642,15 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     renderWithRuntime({ pathname: `/agents/${DEEP_RUN_ID}/tasks` });
 
     // Assert 1 (AC-04.1, DA-04): «Задачи · 2» chosen - the count is the tasks only -, the tasks with their statuses, the composer stays
-    const tasksTab = await screen.findByRole('tab', { name: 'Задачи · 2' });
+    const tasksTab = await screen.findByRole('tab', { name: 'План · 2' });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Ход работы' })).toHaveAttribute(
       'aria-selected',
       'false',
     );
-    expect(taskRows(screen.getByRole('list', { name: 'Задачи' }))).toEqual([
-      'Задача 1: Собрать логи за ночь, Готова',
-      'Задача 2: Найти причину отказов, Ожидает',
+    expect(taskRows(screen.getByRole('list', { name: 'План' }))).toEqual([
+      'Шаг 1: Собрать логи за ночь, Готов',
+      'Шаг 2: Найти причину отказов, Ожидает',
     ]);
     expect(screen.getByRole('textbox')).toBeInTheDocument();
 
@@ -685,7 +682,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     expect(
       within(links[1]).getByText('Сбой · исчерпан предел шагов'),
     ).toBeInTheDocument();
-    expect(within(links[2]).getByText('задача 1')).toBeInTheDocument();
-    expect(within(links[0]).queryByText('задача 1')).toBeNull();
+    expect(within(links[2]).getByText('шаг 1')).toBeInTheDocument();
+    expect(within(links[0]).queryByText('шаг 1')).toBeNull();
   });
 });

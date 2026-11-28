@@ -186,9 +186,9 @@
   "taskStatus": {
     "pending": "Ожидает",
     "in_progress": "В работе",
-    "completed": "Готова",
-    "unfinished": "Не закончена",
-    "skipped": "Не потребовалась"
+    "completed": "Готов",
+    "unfinished": "Не закончен",
+    "skipped": "Не потребовался"
   },
   "trainingStatus": {
     "running": "Идёт",
@@ -213,21 +213,21 @@
       "failed": "сбой {count}",
       "cancelled": "отменено {count}"
     },
-    "task": "задача {number}",
+    "task": "шаг {number}",
     "rowLabel": "{subagent}: {item}, {status}"
   },
   "tasks": {
     "tabs": {
       "activity": "Ход работы",
-      "tasks": "Задачи · {count}"
+      "tasks": "План · {count}"
     },
-    "listLabel": "Задачи",
-    "rowButton": "Задача {number}: {subject}, {status}",
+    "listLabel": "План",
+    "rowButton": "Шаг {number}: {subject}, {status}",
     "waitsFor": "ждёт {numbers}",
-    "emptyTitle": "Задач пока нет",
-    "emptyHint": "Здесь появятся задачи и поручения агента.",
-    "loading": "Загружаем задачи…",
-    "loadError": "Не удалось загрузить задачи",
+    "emptyTitle": "Плана пока нет",
+    "emptyHint": "Здесь появятся шаги плана и поручения агента.",
+    "loading": "Загружаем план…",
+    "loadError": "Не удалось загрузить план",
     "retry": "Повторить"
   },
   "documents": {

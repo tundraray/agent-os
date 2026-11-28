@@ -336,6 +336,40 @@ export function ConversationStateGlyph({
   );
 }
 
+/**
+ * A conversation's state as an icon with its label beside it in the state's colour (agent-status.md, «Состояния
+ * беседы»): a tracker task's row and its conversations (task-tracker TT-03, TT-08). Decorative — the row says the
+ * state in its own name.
+ */
+export function ConversationStateLabel({
+  state,
+  label,
+}: {
+  state: ConversationState;
+  label: string;
+}) {
+  const look = state === 'new_answer' ? null : CONVERSATION_STATE_LOOK[state];
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'inline-flex min-w-0 items-center gap-1 text-xs leading-4',
+        look?.tone ?? 'text-foreground',
+        toneTransition,
+      )}
+    >
+      <FadeSlot swapKey={state}>
+        {look === null ? (
+          <span className="size-2 rounded-full bg-current" />
+        ) : (
+          <look.Icon aria-hidden className="size-3.5" />
+        )}
+      </FadeSlot>
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 const toneTransition =
   'transition-colors duration-(--duration-fast) motion-reduce:transition-none';
 

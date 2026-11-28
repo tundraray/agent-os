@@ -21,6 +21,8 @@ import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
 import { ScheduleScreen } from '@/components/schedules/schedule-screen';
 import { SchedulesScreen } from '@/components/schedules/schedules-screen';
+import { TaskScreen } from '@/components/tracker/task-screen';
+import { TasksScreen } from '@/components/tracker/tasks-screen';
 import { FeedProvider } from '@/lib/feed/feed-context';
 import type { FeedStore } from '@/lib/feed/feed-store';
 import { focusShellTarget } from '@/lib/focus';
@@ -103,7 +105,7 @@ const DELETED_THREAD_COMPONENTS: ThreadComponents = {
  * under the shell's `AgentFeedProvider`; `/account` — «Мой доступ»; a conversation — the feed (its skeleton
  * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07;
  * `/admin/…` — the panel behind `AdminGate`; `/library` — the library list; `/library/<id>` — the record page;
- * `/schedules` — the schedules list; `/schedules/<id>` — a schedule's page.
+ * `/schedules` — the schedules list; `/schedules/<id>` — a schedule's page; `/tasks` — the tracker's list; `/tasks/<id>` — a task's screen.
  */
 export function MainView() {
   const route = parseShellRoute(usePathname());
@@ -130,6 +132,10 @@ export function MainView() {
     return (
       <NewRecordPage key={route.page.recordKind} kind={route.page.recordKind} />
     );
+  if (route.kind === 'tracker') return <TasksScreen />;
+  // A new key per task: the dialogs, the comment draft and the switch of one never carry over to the next.
+  if (route.kind === 'trackerTask')
+    return <TaskScreen key={route.taskId} id={route.taskId} />;
   if (route.kind === 'schedules') return <SchedulesScreen />;
   // A new key per schedule: the dialogs and the history of one never carry over to the next.
   if (route.kind === 'schedule')
