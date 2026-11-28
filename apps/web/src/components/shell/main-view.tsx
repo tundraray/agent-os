@@ -11,11 +11,18 @@ import {
   Thread,
   type ThreadComponents,
 } from '@/components/assistant-ui/elements/thread.aui';
+import {
+  EditableUserMessage,
+  EditMessageButton,
+  MessageEditProvider,
+} from '@/components/assistant-ui/elements/message-edit';
 import { MemoryPage } from '@/components/library/memory-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
 import { ScheduleScreen } from '@/components/schedules/schedule-screen';
 import { SchedulesScreen } from '@/components/schedules/schedules-screen';
+import { TaskScreen } from '@/components/tracker/task-screen';
+import { TasksScreen } from '@/components/tracker/tasks-screen';
 import { FeedProvider } from '@/lib/feed/feed-context';
 import type { FeedStore } from '@/lib/feed/feed-store';
 import { focusShellTarget } from '@/lib/focus';
@@ -26,6 +33,7 @@ import {
   type MainView as MainViewKind,
 } from '@/lib/threads/resolve-main-view';
 import { parseShellRoute } from '@/lib/shell-route';
+import { AskAsideButton } from './aside-chat';
 import {
   useShellActions,
   useShellServices,
@@ -79,7 +87,13 @@ export function useConversationFeed(): FeedStore | null {
   );
 }
 
-const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome };
+/** improvements IM-13, IM-05: a conversation's own messages get «Изменить», its answers «Спросить в стороне»; an agent page neither. */
+const THREAD_COMPONENTS: ThreadComponents = {
+  Welcome: ShellWelcome,
+  UserActions: EditMessageButton,
+  AssistantActions: AskAsideButton,
+  UserMessageBody: EditableUserMessage,
+};
 /** E-8: the open thread was deleted elsewhere — the feed stays, the notice takes the composer's place. */
 const DELETED_THREAD_COMPONENTS: ThreadComponents = {
   Welcome: ShellWelcome,
@@ -91,7 +105,7 @@ const DELETED_THREAD_COMPONENTS: ThreadComponents = {
  * under the shell's `AgentFeedProvider`; `/account` — «Мой доступ»; a conversation — the feed (its skeleton
  * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07;
  * `/admin/…` — the panel behind `AdminGate`; `/library` — the library list; `/library/<id>` — the record page;
- * `/schedules` — the schedules list; `/schedules/<id>` — a schedule's page.
+ * `/schedules` — the schedules list; `/schedules/<id>` — a schedule's page; `/tasks` — the tracker's list; `/tasks/<id>` — a task's screen.
  */
 export function MainView() {
   const route = parseShellRoute(usePathname());
@@ -115,7 +129,13 @@ export function MainView() {
   if (route.kind === 'library' && route.page.kind === 'record')
     return <RecordPage key={route.page.id} id={route.page.id} />;
   if (route.kind === 'library' && route.page.kind === 'new')
-    return <NewRecordPage />;
+    return (
+      <NewRecordPage key={route.page.recordKind} kind={route.page.recordKind} />
+    );
+  if (route.kind === 'tracker') return <TasksScreen />;
+  // A new key per task: the dialogs, the comment draft and the switch of one never carry over to the next.
+  if (route.kind === 'trackerTask')
+    return <TaskScreen key={route.taskId} id={route.taskId} />;
   if (route.kind === 'schedules') return <SchedulesScreen />;
   // A new key per schedule: the dialogs and the history of one never carry over to the next.
   if (route.kind === 'schedule')
@@ -159,18 +179,20 @@ function ConversationView() {
     case 'switching':
       return (
         <FeedProvider feed={feed}>
-          <Thread
-            components={
-              view.kind === 'thread' && view.deleted
-                ? DELETED_THREAD_COMPONENTS
-                : THREAD_COMPONENTS
-            }
-            historyPending={
-              view.kind === 'switching' ||
-              (routeThreadId !== undefined && bodyLoading)
-            }
-            seedTarget={seedTarget}
-          />
+          <MessageEditProvider>
+            <Thread
+              components={
+                view.kind === 'thread' && view.deleted
+                  ? DELETED_THREAD_COMPONENTS
+                  : THREAD_COMPONENTS
+              }
+              historyPending={
+                view.kind === 'switching' ||
+                (routeThreadId !== undefined && bodyLoading)
+              }
+              seedTarget={seedTarget}
+            />
+          </MessageEditProvider>
         </FeedProvider>
       );
     case 'not-found':

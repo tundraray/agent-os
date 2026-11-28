@@ -1,6 +1,10 @@
 'use client';
 
-import type { AdminPage } from '@/lib/shell-route';
+import {
+  ADMIN_RECORD_TABS,
+  type AdminPage,
+  type AdminRecordTab,
+} from '@/lib/shell-route';
 import { UserList } from './user-list';
 import { UserPage } from './user-page';
 
@@ -9,13 +13,22 @@ type UsersSectionProps = {
   page: AdminPage;
 };
 
+const isUserTab = (
+  tab: AdminRecordTab | undefined,
+): tab is AdminRecordTab<'users'> =>
+  ADMIN_RECORD_TABS.users.some((userTab) => userTab === tab);
+
 /**
  * The «Сотрудники» section: the list (AD-03, with AD-16) or one employee's page (AD-04). The page is keyed by
- * the employee, so another employee's address starts from a fresh read.
+ * the employee alone: another employee's address starts from a fresh read, a tab change keeps the unsaved levels.
  */
 export function UsersSection({ page }: UsersSectionProps) {
   return page.kind === 'record' ? (
-    <UserPage key={page.key} id={page.key} />
+    <UserPage
+      key={page.key}
+      id={page.key}
+      tab={isUserTab(page.tab) ? page.tab : 'tools'}
+    />
   ) : (
     <UserList />
   );

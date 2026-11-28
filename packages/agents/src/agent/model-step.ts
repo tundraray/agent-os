@@ -8,7 +8,6 @@ import type { SessionPatch } from '@agent-os/db';
 import {
   isFinished,
   type StepContext,
-  type StepEffects,
   type StepResult,
 } from '@agent-os/runtime';
 
@@ -24,14 +23,17 @@ import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
+import { instructionBlocks } from './instruction-blocks';
 import {
   callUnlessAborted,
   FAILURE_REASONS,
   failResult,
   logStep,
+  overflowResult,
   previewEntries,
   providerMessagesOf,
   refusedResult,
+  signalAttention,
   type StepPrelude,
   withStepBlocks,
 } from './step-common';
@@ -50,6 +52,9 @@ const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
+
+/** After the call the step owes no entry: its debt was written before the call (KD-1). */
+const writtenBeforeCall = async (): Promise<readonly NewHistoryEntry[]> => [];
 
 /**
  * The journal fields of an answered model call (FR-07, AC-07.1, DC-10): the tools the model was shown,
@@ -128,7 +133,9 @@ export async function childrenInFlight(
  * (continuation, interrupt).
  *
  * - The turn limit spent → `fail` `turn_limit`, the delivered messages written before the `failed` event.
- * - Otherwise the delivered messages go to history before the call, and the model of the session
+ * - Otherwise the prelude, the delivered messages and their session fields are written by
+ *   `ctx.guardWithDelivery` before the call (runtime-fixes KD-1); fenced → `continue` without a call or a write.
+ *   Then the model of the session
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
  *   `model_error`; a call `AccessGate` refused → `fail` with the verdict's reason, the model not called.
  *   Each failure closes the session and resets the turn counter (DC-1).
@@ -137,7 +144,10 @@ export async function childrenInFlight(
  *   `complete` with `{ report, document }`, the session closed and its counter reset. How the turn ends is the agent's
  *   (`endOfTurn`), as are the tools it declares (`offeredDeclaration`) and the turn counter after the delivered
  *   messages (`turnsAfterDelivery`).
- * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7).
+ * - The first provider overflow (`context_overflow` with the session's mark clear) → `continue`: the commit sets
+ *   the mark and raises `last_input_tokens` to the threshold, so the next step compacts with previews; with the
+ *   mark set it fails like any `model_error` (runtime-fixes KD-5).
+ * - Every commit writes the turn counter and `last_input_tokens` of the call (KD-7), and clears the overflow mark.
  */
 export async function runModelStep(
   deps: AgentDeps,
@@ -192,8 +202,24 @@ export async function runModelStep(
     ...(prelude?.entries ?? []),
     ...delivered,
   ]);
+  // KD-1 (runtime-fixes design-steps.md): the step's debt and its session fields lie in history before the
+  // call, with the messages marked delivered; an interrupt or a stop during the call then finds the question
+  // written, and a step repeated after a restart gets no message again. The commit writes only the answer.
+  const debt = await ctx.guardWithDelivery(async () => {
+    await deps.history.append(ctx.taskId, await writeStepEntries());
+    await deps.sessionRows.update(ctx.taskId, { ...basePatch, turns });
+  });
+  if (debt.outcome === 'fenced') {
+    logStep(ctx, STEP_KIND, startedAt, 'continue', {
+      fenced: true,
+      deliveredMessages: ctx.messages.length,
+    });
+    return { outcome: 'continue' };
+  }
   // Memory is live data read beside the version on every step (design-memory.md KD-3); a failed read fails the step.
   const memory = await memoryBlock(deps, agent.caller, ctx.logger);
+  // The two instructions are live data too (agent-guidance KD-4): a change reaches the next step.
+  const instructions = await instructionBlocks(deps, ctx);
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
   const declaration = await agent.offeredDeclaration(ctx);
@@ -208,6 +234,7 @@ export async function runModelStep(
       agentName: definition.name,
       model: session.model,
       instructions: withStepBlocks(definition.prompt, {
+        ...instructions,
         memory,
         tasks: taskBlock(tasks),
       }),
@@ -230,8 +257,23 @@ export async function runModelStep(
       model: session.model,
       refusal: result.verdict,
       audit,
-      writeEntries: writeStepEntries,
-      patch: basePatch,
+      writeEntries: writtenBeforeCall,
+      patch: {},
+    });
+  }
+  if (
+    result.kind === 'model_error' &&
+    result.reason === FAILURE_REASONS.context_overflow &&
+    !session.overflowed
+  ) {
+    return overflowResult({
+      deps,
+      ctx,
+      stepKind: STEP_KIND,
+      startedAt,
+      session,
+      writeEntries: writtenBeforeCall,
+      patch: {},
     });
   }
   if (result.kind === 'model_error') {
@@ -245,13 +287,17 @@ export async function runModelStep(
       ctx,
       reason: result.reason,
       message: modelErrorMessage(session.model, result),
-      writeEntries: writeStepEntries,
-      patch: basePatch,
+      writeEntries: writtenBeforeCall,
+      patch: {},
     });
   }
 
   const counted = turns + 1;
-  const answered = answerFields(sessionTools, result);
+  // A model answer ends an overflow (KD-5): the mark is cleared, and the log shows the recovery.
+  const answered = {
+    ...answerFields(sessionTools, result),
+    overflowCleared: session.overflowed,
+  };
   const answerEntry: NewHistoryEntry = {
     kind: 'model_answer',
     content: {
@@ -265,21 +311,21 @@ export async function runModelStep(
     },
   };
   const callPatch: SessionPatch = {
-    ...basePatch,
     turns: counted,
     lastInputTokens: result.usage.inputTokens,
+    overflowed: false,
   };
   const writeAnswer = async (
-    effects: StepEffects,
     after: readonly NewHistoryEntry[],
     patch: SessionPatch,
   ): Promise<void> => {
-    await deps.history.append(ctx.taskId, [
-      ...(await writeStepEntries()),
-      answerEntry,
-      ...after,
-    ]);
+    await deps.history.append(ctx.taskId, [answerEntry, ...after]);
     await deps.sessionRows.update(ctx.taskId, patch);
+  };
+  // An answer that ends the root's turn calls the employee (live-feed KD-4); a subagent's answer does not.
+  const writeTurnEnd = async (patch: SessionPatch): Promise<void> => {
+    await writeAnswer([], patch);
+    if (ctx.parentId === null) await signalAttention(deps, ctx, 'answer');
   };
 
   if (result.toolCalls.length > 0) {
@@ -290,7 +336,7 @@ export async function runModelStep(
     });
     return {
       outcome: 'continue',
-      commit: (effects) => writeAnswer(effects, [], callPatch),
+      commit: () => writeAnswer([], callPatch),
     };
   }
 
@@ -312,7 +358,7 @@ export async function runModelStep(
       });
       return {
         outcome: 'wait',
-        commit: (effects) => writeAnswer(effects, [], callPatch),
+        commit: () => writeTurnEnd(callPatch),
       };
     case 'notice':
       if (ending.openTasks !== undefined) {
@@ -342,9 +388,8 @@ export async function runModelStep(
       });
       return {
         outcome: 'continue',
-        commit: (effects) =>
+        commit: () =>
           writeAnswer(
-            effects,
             [{ kind: 'notice', content: noticeContent(ending) }],
             callPatch,
           ),
@@ -357,8 +402,7 @@ export async function runModelStep(
       return {
         outcome: 'complete',
         result: { report: ending.report, document: ending.document },
-        commit: (effects) =>
-          writeAnswer(effects, [], { ...callPatch, turns: 0, closed: true }),
+        commit: () => writeTurnEnd({ ...callPatch, turns: 0, closed: true }),
       };
   }
 }

@@ -68,11 +68,16 @@ CREATE TABLE "app"."conversations" (
 	"interrupted" boolean DEFAULT false NOT NULL,
 	"closed" boolean DEFAULT false NOT NULL,
 	"last_input_tokens" integer,
+	"overflowed" boolean DEFAULT false NOT NULL,
 	"last_task_number" integer DEFAULT 0 NOT NULL,
+	"granted_tools" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"seen_through_seq" integer DEFAULT 0 NOT NULL,
+	"notification_level" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "conversations_start_call_check" CHECK (("app"."conversations"."start_call_id" is not null) = ("app"."conversations"."parent_id" is not null)),
 	CONSTRAINT "conversations_root_check" CHECK (("app"."conversations"."title" is not null) = ("app"."conversations"."parent_id" is null) and ("app"."conversations"."updated_at" is not null) = ("app"."conversations"."parent_id" is null)),
-	CONSTRAINT "conversations_fork_check" CHECK ("app"."conversations"."forked_from_id" is null or ("app"."conversations"."parent_id" is null and "app"."conversations"."forked_through_seq" is not null))
+	CONSTRAINT "conversations_fork_check" CHECK ("app"."conversations"."forked_from_id" is null or ("app"."conversations"."parent_id" is null and "app"."conversations"."forked_through_seq" is not null)),
+	CONSTRAINT "conversations_notification_level_check" CHECK ("app"."conversations"."notification_level" in ('all', 'decisions_and_failures', 'off'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."messages" (
@@ -109,7 +114,7 @@ CREATE TABLE "app"."code_calls" (
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "code_calls_conversation_id_run_call_id_attempt_seq_pk" PRIMARY KEY("conversation_id","run_call_id","attempt","seq"),
 	CONSTRAINT "code_calls_outcome_check" CHECK ("app"."code_calls"."outcome" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required', 'recorded')),
-	CONSTRAINT "code_calls_refusal_reason_check" CHECK ("app"."code_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed'))
+	CONSTRAINT "code_calls_refusal_reason_check" CHECK ("app"."code_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'tool_disabled', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared', 'repeated_call', 'admin_only', 'builtin', 'name_taken', 'system_name', 'server_not_allowed', 'all_servers_not_allowed', 'agent_not_visible', 'version_conflict', 'looks_like_secret', 'looks_like_instruction', 'memory_changed', 'unattended'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."conversation_tasks" (
@@ -133,6 +138,8 @@ CREATE TABLE "app"."mcp_servers" (
 	"mode" text NOT NULL,
 	"enabled" boolean DEFAULT false NOT NULL,
 	"tools" jsonb,
+	"tool_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"new_tools" text[] DEFAULT '{}'::text[] NOT NULL,
 	"shared_token" text,
 	"oauth_server" jsonb,
 	"oauth_client_id" text,
@@ -175,9 +182,14 @@ CREATE TABLE "app"."identity_users" (
 	"is_admin" boolean DEFAULT false NOT NULL,
 	"last_sign_in_at" timestamp with time zone,
 	"language" text,
+	"theme" text,
+	"notification_level" text DEFAULT 'all' NOT NULL,
+	"instructions" text DEFAULT '' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "identity_users_status_check" CHECK ("app"."identity_users"."status" in ('active', 'disabled')),
-	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru'))
+	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru')),
+	CONSTRAINT "identity_users_theme_check" CHECK ("app"."identity_users"."theme" in ('graphite', 'petrol', 'nord')),
+	CONSTRAINT "identity_users_notification_level_check" CHECK ("app"."identity_users"."notification_level" in ('all', 'decisions_and_failures', 'off'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."identity_roles" (
@@ -186,8 +198,9 @@ CREATE TABLE "app"."identity_roles" (
 	"is_admin" boolean DEFAULT false NOT NULL,
 	"train_own" boolean DEFAULT false NOT NULL,
 	"train_any" boolean DEFAULT false NOT NULL,
-	"builtin" boolean DEFAULT false NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"builtin_kind" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "identity_roles_builtin_kind_check" CHECK ("app"."identity_roles"."builtin_kind" in ('super_admin', 'everyone'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."identity_role_members" (
@@ -279,9 +292,10 @@ CREATE TABLE "app"."access_grants" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "access_grants_holder_target_key" UNIQUE NULLS NOT DISTINCT("role_id","user_id","effect","target_kind","server","tool","model"),
 	CONSTRAINT "access_grants_effect_check" CHECK ("app"."access_grants"."effect" in ('allow', 'deny')),
-	CONSTRAINT "access_grants_target_kind_check" CHECK ("app"."access_grants"."target_kind" in ('server', 'tool', 'model')),
+	CONSTRAINT "access_grants_target_kind_check" CHECK ("app"."access_grants"."target_kind" in ('server', 'server_read', 'tool', 'model')),
 	CONSTRAINT "access_grants_holder_check" CHECK (num_nonnulls("app"."access_grants"."role_id", "app"."access_grants"."user_id") = 1),
-	CONSTRAINT "access_grants_target_check" CHECK (("app"."access_grants"."target_kind" = 'server'
+	CONSTRAINT "access_grants_target_check" CHECK ((("app"."access_grants"."target_kind" = 'server'
+            or "app"."access_grants"."target_kind" = 'server_read')
           and "app"."access_grants"."server" is not null and "app"."access_grants"."tool" is null and "app"."access_grants"."model" is null)
         or ("app"."access_grants"."target_kind" = 'tool'
           and "app"."access_grants"."server" is not null and "app"."access_grants"."tool" is not null and "app"."access_grants"."model" is null)
@@ -305,7 +319,7 @@ CREATE TABLE "app"."agents" (
 	"active_version_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "agents_kind_check" CHECK ("app"."agents"."kind" in ('agent', 'deep_agent')),
+	CONSTRAINT "agents_kind_check" CHECK ("app"."agents"."kind" in ('agent', 'deep_agent', 'skill')),
 	CONSTRAINT "agents_builtin_key_check" CHECK ("app"."agents"."builtin_key" is null or ("app"."agents"."owner_id" is null and "app"."agents"."builtin_key" in ('chat', 'agent', 'deep_agent', 'trainer'))),
 	CONSTRAINT "agents_closed_at_check" CHECK ("app"."agents"."closed_at" is null or "app"."agents"."owner_id" is not null),
 	CONSTRAINT "agents_deleted_at_check" CHECK ("app"."agents"."deleted_at" is null or "app"."agents"."builtin_key" is null)
@@ -398,6 +412,7 @@ CREATE TABLE "app"."schedules" (
 	"language" text NOT NULL,
 	"target" text NOT NULL,
 	"conversation_id" uuid,
+	"access" text DEFAULT 'read' NOT NULL,
 	"state" text NOT NULL,
 	"paused_because" text,
 	"next_run_at" timestamp with time zone,
@@ -406,6 +421,7 @@ CREATE TABLE "app"."schedules" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "schedules_language_check" CHECK ("app"."schedules"."language" in ('en', 'ru')),
 	CONSTRAINT "schedules_target_check" CHECK ("app"."schedules"."target" in ('new_conversation', 'this_conversation')),
+	CONSTRAINT "schedules_access_check" CHECK ("app"."schedules"."access" in ('read', 'full')),
 	CONSTRAINT "schedules_state_check" CHECK ("app"."schedules"."state" in ('active', 'paused', 'completed')),
 	CONSTRAINT "schedules_paused_because_check" CHECK ("app"."schedules"."paused_because" in ('conversation_deleted')),
 	CONSTRAINT "schedules_next_run_check" CHECK (("app"."schedules"."next_run_at" is not null) = ("app"."schedules"."state" = 'active')),
@@ -422,12 +438,52 @@ CREATE TABLE "app"."schedule_runs" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "app"."tracker_tasks" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"owner_id" uuid NOT NULL,
+	"title" text NOT NULL,
+	"description" text DEFAULT '' NOT NULL,
+	"status" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "tracker_tasks_status_check" CHECK ("app"."tracker_tasks"."status" in ('todo', 'in_progress', 'in_review', 'needs_decision', 'done', 'cancelled'))
+);
+--> statement-breakpoint
+CREATE TABLE "app"."tracker_task_conversations" (
+	"conversation_id" uuid PRIMARY KEY NOT NULL,
+	"task_id" uuid NOT NULL,
+	"agent_id" uuid,
+	"agent_name" text,
+	"delegated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "app"."tracker_task_events" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"task_id" uuid NOT NULL,
+	"kind" text NOT NULL,
+	"author" text NOT NULL,
+	"conversation_id" uuid,
+	"text" text,
+	"status" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "tracker_task_events_kind_check" CHECK ("app"."tracker_task_events"."kind" in ('comment', 'status')),
+	CONSTRAINT "tracker_task_events_author_check" CHECK ("app"."tracker_task_events"."author" in ('employee', 'agent')),
+	CONSTRAINT "tracker_task_events_status_check" CHECK ("app"."tracker_task_events"."status" in ('todo', 'in_progress', 'in_review', 'needs_decision', 'done', 'cancelled')),
+	CONSTRAINT "tracker_task_events_content_check" CHECK (("app"."tracker_task_events"."text" is not null) = ("app"."tracker_task_events"."kind" = 'comment') and ("app"."tracker_task_events"."status" is not null) = ("app"."tracker_task_events"."kind" = 'status'))
+);
+--> statement-breakpoint
+CREATE TABLE "app"."send_keys" (
+	"user_id" uuid NOT NULL,
+	"send_key" uuid NOT NULL,
+	CONSTRAINT "send_keys_user_id_send_key_pk" PRIMARY KEY("user_id","send_key")
+);
+--> statement-breakpoint
 CREATE TABLE "app"."settings" (
 	"key" text PRIMARY KEY NOT NULL,
 	"value" jsonb NOT NULL,
 	"updated_at" timestamp with time zone,
 	"updated_by" uuid,
-	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings'))
+	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions', 'appearance_settings'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."audit_events" (
@@ -496,6 +552,13 @@ ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_agent_id_agents_id_fk" F
 ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_schedule_id_schedules_id_fk" FOREIGN KEY ("schedule_id") REFERENCES "app"."schedules"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_tasks" ADD CONSTRAINT "tracker_tasks_owner_id_identity_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_task_id_tracker_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."tracker_tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_agent_id_agents_id_fk" FOREIGN KEY ("agent_id") REFERENCES "app"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_events" ADD CONSTRAINT "tracker_task_events_task_id_tracker_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."tracker_tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_events" ADD CONSTRAINT "tracker_task_events_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."send_keys" ADD CONSTRAINT "send_keys_user_id_identity_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."settings" ADD CONSTRAINT "settings_updated_by_identity_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "app"."identity_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "runtime_tasks_ready_idx" ON "app"."runtime_tasks" USING btree ("created_at","task_id") WHERE "app"."runtime_tasks"."status" = 'queued';--> statement-breakpoint
 CREATE INDEX "runtime_tasks_root_idx" ON "app"."runtime_tasks" USING btree ("root_id");--> statement-breakpoint
@@ -517,6 +580,7 @@ CREATE INDEX "tool_results_text_search_idx" ON "app"."tool_results" USING gin (t
 CREATE UNIQUE INDEX "identity_users_email_idx" ON "app"."identity_users" USING btree ("email");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_users_login_idx" ON "app"."identity_users" USING btree ("login");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_roles_name_idx" ON "app"."identity_roles" USING btree (lower("name"));--> statement-breakpoint
+CREATE UNIQUE INDEX "identity_roles_builtin_kind_idx" ON "app"."identity_roles" USING btree ("builtin_kind") WHERE "app"."identity_roles"."builtin_kind" is not null;--> statement-breakpoint
 CREATE INDEX "identity_role_members_user_idx" ON "app"."identity_role_members" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "identity_sessions_user_idx" ON "app"."identity_sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "access_grants_user_idx" ON "app"."access_grants" USING btree ("user_id");--> statement-breakpoint
@@ -543,4 +607,9 @@ CREATE INDEX "schedules_conversation_idx" ON "app"."schedules" USING btree ("con
 CREATE INDEX "schedules_due_idx" ON "app"."schedules" USING btree ("next_run_at") WHERE "app"."schedules"."state" = 'active';--> statement-breakpoint
 CREATE UNIQUE INDEX "schedule_runs_term_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at") WHERE not "app"."schedule_runs"."manual";--> statement-breakpoint
 CREATE INDEX "schedule_runs_page_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");
+CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");--> statement-breakpoint
+CREATE INDEX "tracker_tasks_owner_updated_idx" ON "app"."tracker_tasks" USING btree ("owner_id","updated_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "tracker_task_conversations_task_idx" ON "app"."tracker_task_conversations" USING btree ("task_id","delegated_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "tracker_task_conversations_agent_idx" ON "app"."tracker_task_conversations" USING btree ("agent_id");--> statement-breakpoint
+CREATE INDEX "tracker_task_events_task_idx" ON "app"."tracker_task_events" USING btree ("task_id","created_at");--> statement-breakpoint
+CREATE INDEX "tracker_task_events_conversation_idx" ON "app"."tracker_task_events" USING btree ("conversation_id");

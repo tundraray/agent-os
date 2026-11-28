@@ -1,8 +1,11 @@
 import {
+  IdentityUsersRepository,
   MemoriesRepository,
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  RuntimeTasksRepository,
+  SchedulesRepository,
   SettingsRepository,
   ToolResultsRepository,
 } from '@agent-os/db';
@@ -51,6 +54,11 @@ export class AgentDeps {
     /** The memory block of every step: the records visible to the run and the size setting (design-memory.md KD-3). */
     @Inject(MemoriesRepository) readonly memoryRows: MemoriesRepository,
     @Inject(SettingsRepository) readonly settingsRows: SettingsRepository,
+    /** The task owner's personal instruction, read for the instruction block of every model call (agent-guidance KD-4). */
+    @Inject(IdentityUsersRepository)
+    readonly userRows: Pick<IdentityUsersRepository, 'instructions'>,
+    /** The permission of the schedule whose mark the conversation's last message carries (improvements KD-2). */
+    @Inject(SchedulesRepository) readonly scheduleRows: SchedulesRepository,
     /**
      * The tools library: the session's tools for the task's owner and the agent's declaration — for the model call
      * and for the check of its calls; `toolOf` keeps the log rule of a tool the session was not offered.
@@ -67,15 +75,19 @@ export class AgentDeps {
     @Inject(ACCESS_AUDIT) readonly audit: AccessAudit,
     /**
      * The catalogue as the owner sees it now: the lines of an agent's `start_agent` and the chat listing are
-     * read from it on every step (KD-4; data-model design-agents.md, KD-6).
+     * read from it on every step (KD-4; data-model design-agents.md, KD-6), and so is the skill catalogue of a
+     * version's `read_skill` (agent-guidance KD-6).
      */
     @Inject(RECORD_LIBRARY)
-    readonly library: Pick<RecordLibrary, 'listVisible'>,
+    readonly library: Pick<RecordLibrary, 'listVisible' | 'skills'>,
     @Inject(ModelClient) readonly modelClient: Pick<ModelClient, 'call'>,
     /** Children of the agent: the end of a turn waits for the unfinished ones (DC-3). */
     @Inject(TaskControl) readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
     @Inject(Inbox) readonly inbox: Pick<Inbox, 'listPending'>,
+    /** The sender of the attention events a step commits (live-feed design-server.md KD-4). */
+    @Inject(RuntimeTasksRepository)
+    readonly signals: Pick<RuntimeTasksRepository, 'notify'>,
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'compactAtTokens'>,
   ) {
     this.compactAtTokens = config.compactAtTokens;

@@ -83,6 +83,7 @@ import {
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
+  revokeFrom,
   runModel,
   type RunRole,
   useRunModels,
@@ -895,11 +896,12 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         models: [DEFAULT_MODEL, SECOND_MODEL],
         servers: [BACKOFFICE_SERVER],
       });
-      const jiraGrant = await grantTo(
+      const jiraGrant = { kind: 'server', server: LOGS_SERVER } as const;
+      await grantTo(
         app,
         admin,
         { roleId: authorRole.id },
-        { effect: 'allow', target: { kind: 'server', server: LOGS_SERVER } },
+        { effect: 'allow', target: jiraGrant },
       );
       const sharedRole = await newRole('Копирование-общая', {
         models: [DEFAULT_MODEL],
@@ -997,13 +999,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       // Step 4 (AC-07.2, pass row) - Given: the administrator takes Алиса's Jira right away (a new record with
       // Jira is now refused, so the loss reached the rule); When: she saves a prompt edit that keeps Jira;
       // Then: 200, the version up by one, Jira still in the record
-      const removed = await apiRequest(
-        app,
-        admin,
-        'delete',
-        `/admin/grants/${jiraGrant.id}`,
-      );
-      expect(removed.status).toBe(204);
+      await revokeFrom(app, admin, { roleId: authorRole.id }, jiraGrant);
       await expectRefusal(
         apiRequest(
           app,

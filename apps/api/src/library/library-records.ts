@@ -1,6 +1,7 @@
 import { HttpException, Inject, Injectable } from '@nestjs/common';
 import { LOGGER, type LogFields, type Logger } from '@agent-os/common';
 import type {
+  ConnectedSkill,
   RecordAuthor,
   RecordBody,
   RecordDetail,
@@ -24,6 +25,7 @@ import type {
   LibraryRecord,
   ServerFacts,
 } from './library.types';
+import { contentSkills } from './record-content';
 import { auditSample, recordDetail, type ViewContext } from './record-view';
 import { decideDelete } from './save-rules';
 import {
@@ -54,9 +56,18 @@ export function readOnly(): HttpException {
   return libraryError('RECORD_READ_ONLY');
 }
 
-/** Whether the content names other records: the agents an agent may start. */
+/** Whether the content names other records: the agents an agent may start, the skills of its list. */
 export function refersToRecords(body: RecordBody): boolean {
-  return body.kind === 'agent' && body.content.agents.length > 0;
+  return (
+    (body.kind === 'agent' && body.content.agents.length > 0) ||
+    contentSkills(body).length > 0
+  );
+}
+
+/** Ids of the records the viewer sees that a content may name, by kind. */
+export interface VisibleRecordIds {
+  readonly agentIds: readonly string[];
+  readonly skillIds: readonly string[];
 }
 
 /** The record just read inside its own transaction; missing means the code is wrong, not the request. */
@@ -75,6 +86,13 @@ export function recordFields(record: {
   version: number;
 }): LogFields {
   return { recordId: record.id, kind: record.kind, version: record.version };
+}
+
+function idsOfKind(
+  rows: readonly AgentRecordRow[],
+  kind: RecordBody['kind'],
+): string[] {
+  return rows.filter((row) => row.kind === kind).map((row) => row.id);
 }
 
 /** A role or an employee by id, with the place of its name in the database's order of names. */
@@ -134,6 +152,13 @@ export class LibraryRecords {
   async visible(viewer: LibraryViewer, id?: string): Promise<LibraryRecord[]> {
     return this.named(
       await this.stored(await this.repository.findVisible(viewer, id)),
+    );
+  }
+
+  /** The undeleted records with these ids, without a visibility check: the skills of a version's list (agent-guidance KD-6). */
+  async notDeleted(ids: readonly string[]): Promise<LibraryRecord[]> {
+    return this.named(
+      await this.stored(await this.repository.findNotDeleted(ids)),
     );
   }
 
@@ -198,21 +223,47 @@ export class LibraryRecords {
     return recordDetail(
       record,
       await this.contextOf(viewer, isAdmin, scope, facts),
+      await this.connectedSkills(record.body),
     );
   }
 
-  /** Ids of the agent records the viewer sees; read only when the content names records. */
-  async visibleAgentIds(
+  /**
+   * The undeleted skills of an agent's list, in its order, whoever views the record; no text (agent-guidance
+   * AC-06.7).
+   */
+  private async connectedSkills(body: RecordBody): Promise<ConnectedSkill[]> {
+    const ids = contentSkills(body);
+    const rows = await this.repository.findNotDeleted(ids);
+    return ids.flatMap((id) => {
+      const row = rows.find(
+        (candidate) => candidate.id === id && candidate.kind === 'skill',
+      );
+      return row === undefined
+        ? []
+        : [{ id: row.id, name: row.name, description: row.description }];
+    });
+  }
+
+  /** Ids of the agents and the skills the viewer sees; read only when the content names records. */
+  async visibleRecordIds(
     viewer: LibraryViewer,
     needed: boolean,
-  ): Promise<string[]> {
+  ): Promise<VisibleRecordIds> {
+    if (!needed) return { agentIds: [], skillIds: [] };
+    const rows = await this.repository.findVisible(viewer);
+    return {
+      agentIds: idsOfKind(rows, 'agent'),
+      skillIds: idsOfKind(rows, 'skill'),
+    };
+  }
+
+  /** Ids of the system skills of the panel: the skills a system record may hold (agent-guidance DC-4). */
+  async systemSkillIds(needed: boolean): Promise<string[]> {
     if (!needed) return [];
-    const records = await this.stored(
-      await this.repository.findVisible(viewer),
+    return idsOfKind(
+      await this.repository.findInPanel({ list: 'system' }),
+      'skill',
     );
-    return records
-      .filter((record) => record.body.kind === 'agent')
-      .map((record) => record.id);
   }
 
   async visibleOne(

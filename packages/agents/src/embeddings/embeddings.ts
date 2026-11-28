@@ -16,11 +16,8 @@ import type { AccessGate } from '../access-gate';
 import { ACCESS_GATE, EMBEDDING_CLIENT } from '../agents.tokens';
 import {
   classifyRejection,
-  PROVIDER_RETRIES,
   type ProviderError,
-  pause,
-  providerRetryDelayMs,
-} from '../model/retry-policy';
+} from '../model/provider-rejection';
 import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 import {
   type EmbeddingInputType,
@@ -100,15 +97,14 @@ interface EmbedCall {
   readonly connection: ProviderConnection;
 }
 
-/** A batch the provider answered, or its error after the retries. */
+/** A batch the provider answered, or its error. */
 type BatchOutcome =
   | { readonly kind: 'answered'; readonly batch: EmbeddingBatch }
   | { readonly kind: 'failed'; readonly error: ProviderError };
 
-/** The client's own timeout: no status, retried like a network failure («Как разбирается ошибка провайдера»). */
+/** The client's own timeout: no status, like a network failure («Как разбирается ошибка провайдера»). */
 const TIMED_OUT: ProviderError = {
   statusCode: null,
-  retryable: true,
   reason: 'provider_unavailable',
   responseBody: null,
 };
@@ -152,12 +148,13 @@ function unavailable(
   return { kind: 'unavailable', reason, model, message };
 }
 
-/** The reason after the retries: the chat's `provider_tools_rejected` cannot apply to embeddings. */
+/** The reason of the failure: the chat's `provider_tools_rejected` and `context_overflow` are `provider_error` here. */
 function failure(call: EmbedCall, error: ProviderError): EmbedUnavailable {
   const status =
     error.statusCode === null ? '' : `, status ${error.statusCode}`;
   const reason =
-    error.reason === 'provider_tools_rejected'
+    error.reason === 'provider_tools_rejected' ||
+    error.reason === 'context_overflow'
       ? 'provider_error'
       : error.reason;
   const message = `Embedding model ${call.model} of provider ${call.connection.name} failed: ${reason}${status}`;
@@ -166,7 +163,7 @@ function failure(call: EmbedCall, error: ProviderError): EmbedUnavailable {
 
 /**
  * The embeddings of the platform's own features (design-core.md KD-6, Flow 2): the gate's verdict, the
- * provider's readiness, batches of up to 100 texts one after another with the chat's retries, a ledger row per
+ * provider's readiness, batches of up to 100 texts one after another, one request each, a ledger row per
  * answered batch at the input price on the employee or the platform, the vectors checked against the catalogue's
  * dimensions and scaled to unit length. It keeps no state and never throws for a provider or access problem;
  * texts are never logged.
@@ -182,7 +179,7 @@ export class AgentsEmbeddings {
     @Inject(AgentsProviders)
     private readonly providers: Pick<AgentsProviders, 'connection'>,
     @Inject(TokenLedger) private readonly ledger: Pick<TokenLedger, 'record'>,
-    /** Times the pauses between retries. */
+    /** Times the calls for the logs. */
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -264,7 +261,6 @@ export class AgentsEmbeddings {
     return (
       rejection ?? {
         statusCode: null,
-        retryable: false,
         reason: 'provider_error',
         responseBody: null,
       }
@@ -305,7 +301,7 @@ export class AgentsEmbeddings {
   }
 
   /**
-   * One batch with up to two retries of a provider error at 1 and 3 seconds. A request the provider rejected
+   * One request of a batch (improvements KD-5): a provider error ends it. A request the provider rejected
    * leaves no ledger row; a stop that cut a sent request is recorded as an estimate (Invariant 6) and rejects.
    */
   private async sendBatch(
@@ -313,56 +309,49 @@ export class AgentsEmbeddings {
     texts: readonly string[],
   ): Promise<BatchOutcome> {
     const { signal, logger } = call.request;
-    for (let retries = 0; ; retries += 1) {
-      signal.throwIfAborted();
-      const startedAt = this.clock.now().getTime();
-      let batch: EmbeddingBatch;
-      try {
-        batch = await this.client.embed({
-          connection: call.connection,
-          modelName: call.model.slice(call.connection.name.length + 1),
-          texts,
-          inputType: call.request.inputType,
-          dimensions: call.dimensions,
-          signal,
-        });
-      } catch (caught) {
-        const durationMs = this.clock.now().getTime() - startedAt;
-        if (signal.aborted) {
-          if (
-            classifyRejection(caught, providerAdapter(call.connection.kind)) ===
-            null
-          ) {
-            await this.record(call, texts, null, durationMs);
-          }
-          throw signal.reason;
-        }
-        const error = this.rejectionOf(caught, call.connection);
-        // The logger's mask hides any remembered key the provider might echo in its body (KD-7).
-        logger.warn('embedding call failed', {
-          model: call.model,
-          provider: call.connection.name,
-          reason: error.reason,
-          statusCode: error.statusCode,
-          responseBody: error.responseBody,
-          error: caught instanceof Error ? caught.message : String(caught),
-          retryable: error.retryable,
-          attempt: retries + 1,
-          durationMs,
-        });
-        if (!error.retryable || retries === PROVIDER_RETRIES)
-          return { kind: 'failed', error };
-        await pause(this.clock, providerRetryDelayMs(retries + 1), signal);
-        continue;
-      }
-      await this.record(
-        call,
+    signal.throwIfAborted();
+    const startedAt = this.clock.now().getTime();
+    let batch: EmbeddingBatch;
+    try {
+      batch = await this.client.embed({
+        connection: call.connection,
+        modelName: call.model.slice(call.connection.name.length + 1),
         texts,
-        batch.inputTokens,
-        this.clock.now().getTime() - startedAt,
-      );
-      return { kind: 'answered', batch };
+        inputType: call.request.inputType,
+        dimensions: call.dimensions,
+        signal,
+      });
+    } catch (caught) {
+      const durationMs = this.clock.now().getTime() - startedAt;
+      if (signal.aborted) {
+        if (
+          classifyRejection(caught, providerAdapter(call.connection.kind)) ===
+          null
+        ) {
+          await this.record(call, texts, null, durationMs);
+        }
+        throw signal.reason;
+      }
+      const error = this.rejectionOf(caught, call.connection);
+      // The logger's mask hides any remembered key the provider might echo in its body (KD-7).
+      logger.warn('embedding call failed', {
+        model: call.model,
+        provider: call.connection.name,
+        reason: error.reason,
+        statusCode: error.statusCode,
+        responseBody: error.responseBody,
+        error: caught instanceof Error ? caught.message : String(caught),
+        durationMs,
+      });
+      return { kind: 'failed', error };
     }
+    await this.record(
+      call,
+      texts,
+      batch.inputTokens,
+      this.clock.now().getTime() - startedAt,
+    );
+    return { kind: 'answered', batch };
   }
 
   /** The batches one after another; the first failure ends the call, and the rows of earlier batches stay. */

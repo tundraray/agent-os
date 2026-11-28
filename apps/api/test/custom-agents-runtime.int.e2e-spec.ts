@@ -769,7 +769,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const sent = await api(boris).raw(
         'post',
         `/threads/${borisThread}/messages`,
-        { text: chipped, recordId: r.id },
+        { text: chipped, recordId: r.id, sendKey: randomUUID() },
       );
       expect(sent.status).toBe(202);
       const chippedView = await untilAnswered(
@@ -818,6 +818,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
           api(boris).raw('post', `/threads/${borisThread}/messages`, {
             text: 'INT-3 B: чип, которого нет в наборе чата',
             recordId,
+            sendKey: randomUUID(),
           }),
           404,
         );
@@ -865,6 +866,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const firstRefused = await expectBody(
         api(dima).raw('post', `/threads/${dimaThread}/messages`, {
           text: 'INT-3 B: Дима пишет без прав',
+          sendKey: randomUUID(),
         }),
         409,
         StartRefusedErrorSchema,

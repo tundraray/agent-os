@@ -12,6 +12,7 @@ import type {
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import {
+  appearanceSettings,
   currentUser,
   modelDefaults,
   modelProviderView,
@@ -30,7 +31,7 @@ import {
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
  * «Системные» tab of «Агенты и глубокие агенты» (self-learning AS-01); the settings of large tool results by the
  * «MCP-серверы» list (tool-result-reading R-5). A session's task list is read by a deep agent's page and, for
- * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12); the conversation's documents by its panel (self-learning DC-02); every deep agent card reads its training state (self-learning KD-1). A test that cares overrides them with
+ * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12); the conversation's documents by its panel (self-learning DC-02); every deep agent card reads its training state (self-learning KD-1). Every shown conversation raises its «seen through» mark (improvements KD-4). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [
@@ -70,6 +71,14 @@ const shellDefaults = [
   ),
   http.get('/api/admin/tool-results/settings', () =>
     HttpResponse.json(toolResultSettings()),
+  ),
+  http.get('/api/admin/appearance/settings', () =>
+    HttpResponse.json(appearanceSettings()),
+  ),
+  http.put('/api/auth/me/theme', () => new HttpResponse(null, { status: 204 })),
+  http.put(
+    '/api/threads/:threadId/seen',
+    () => new HttpResponse(null, { status: 204 }),
   ),
   http.get('/api/library/:id/training', () =>
     HttpResponse.json({

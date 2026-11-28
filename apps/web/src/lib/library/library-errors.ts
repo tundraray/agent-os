@@ -96,7 +96,8 @@ export type LibraryErrorContext = {
   changedFields?: readonly string[];
 };
 
-export type LibraryErrorField = 'name' | 'servers' | 'model' | 'agents';
+export type LibraryErrorField =
+  'name' | 'servers' | 'model' | 'agents' | 'skills';
 
 export type LibraryErrorPlace =
   /** RV-02 instead of the page. */
@@ -281,6 +282,8 @@ function rejected(
       );
     case 'sharing_banned':
       return at(form, t('library.sharingBanned'));
+    case 'skill_not_visible':
+      return at({ at: 'field', field: 'skills' }, fallback);
     case 'audience_fixed':
     case 'builtin':
     case 'holder_not_found':

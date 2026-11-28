@@ -2,7 +2,7 @@
 // Design Doc: docs/features/deep-agents/design-agent-types.md (v1.3), Test Strategy UC-10 (the diagram panel, the task list and the record
 //   card in the library), §KD-6 and §C3 web (the panel, the tab «Задачи», the «Запись» card); UXRD: docs/features/deep-agents/uxrd.md
 //   DA-04, DA-05, DA-11, DA-12, DA-13, MC-9–MC-14, MC-24, MC-25; design-task-list.md KD-5 (the tab «Задачи» shows the conversation's list).
-// Budget Used: WEB-1 and WEB-2 of the part (work plan phases 9 and 8).
+// Budget Used: WEB-1 and WEB-2 of the part (work plan phases 9 and 8); improvements design-web.md UC-8 (the strip «Агенты беседы»).
 // Test Type: Integration.
 //
 // Harness (src/test/, same as agent-platform-web.int.test.tsx and self-learning-web.int.test.tsx): `renderWithRuntime({ pathname })`
@@ -32,6 +32,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentNode,
   agentPageView,
+  confirmation,
   conversationView,
   deepAgentContent,
   deepAgentOrigin,
@@ -82,7 +83,7 @@ const deepOrigin = () => ({
   builtinKey: null,
 });
 
-/** The task list's rows as their expand buttons read them (MC-12): «Задача {N}: {тема}, {статус}». */
+/** The task list's rows as their expand buttons read them (MC-12): «Шаг {N}: {тема}, {статус}». */
 function taskRows(list: HTMLElement): (string | null)[] {
   return within(list)
     .getAllByRole('button')
@@ -417,20 +418,20 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
       }),
       sessionTask({ id: 3, subject: 'Написать сводку', blockedBy: [2] }),
     ];
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 1 (AC-15.1, KD-7): the panel opened by itself on «Задачи · 3», focus stayed out of it, the conversation's tasks are listed
     const panel = await screen.findByRole('complementary', { name: 'Схема' });
     const tasksTab = await within(panel).findByRole('tab', {
-      name: 'Задачи · 3',
+      name: 'План · 3',
     });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(panel.contains(document.activeElement)).toBe(false);
-    const list = within(panel).getByRole('list', { name: 'Задачи' });
+    const list = within(panel).getByRole('list', { name: 'План' });
     expect(taskRows(list)).toEqual([
-      'Задача 1: Найти релизы за год, Готова',
-      'Задача 2: Сравнить с инцидентами, В работе',
-      'Задача 3: Написать сводку, Ожидает',
+      'Шаг 1: Найти релизы за год, Готов',
+      'Шаг 2: Сравнить с инцидентами, В работе',
+      'Шаг 3: Написать сводку, Ожидает',
     ]);
     expect(
       within(list).getByText('В работе · Сравниваю релизы с инцидентами'),
@@ -453,21 +454,117 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
         blockedBy: [2],
       }),
     ];
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 2 (AC-15.1): the rows follow without a reload; task 3 waits for nothing any more
     await waitFor(() => {
       expect(
-        taskRows(within(panel).getByRole('list', { name: 'Задачи' })),
+        taskRows(within(panel).getByRole('list', { name: 'План' })),
       ).toEqual([
-        'Задача 1: Найти релизы за год, Готова',
-        'Задача 2: Сравнить с инцидентами, Готова',
-        'Задача 3: Написать сводку, В работе',
+        'Шаг 1: Найти релизы за год, Готов',
+        'Шаг 2: Сравнить с инцидентами, Готов',
+        'Шаг 3: Написать сводку, В работе',
       ]);
     });
     expect(
       within(panel).getByText('В работе · Пишу сводку'),
     ).toBeInTheDocument();
+  });
+
+  // AC: improvements AC-12.1 "Полоса агентов: работающий и ждущий, выбор ведёт к карточке" (UXRD IM-11, MC-12; design-web.md, UC-8)
+  // Behavior: Аня's conversation started «Разбор логов», which works, and the deep agent «Разбор ошибок оплаты», whose subagent waits
+  //   for her decision -> the strip «Агенты беседы» shows both, the deep agent first as waiting -> she chooses it -> focus lands on the
+  //   subagent's decision card.
+  // Catches: a deep agent shown as working while its subagent waits (and so a strip that leads nowhere useful), and a choice whose focus
+  //   never reaches the card - the rule's rows in to-feed.test.ts do not see the anchors and the focus in the real feed.
+  // @category: core-functionality
+  // @dependency: Thread, FeedTray, AgentsStrip, stripAgents, RunCard, DecisionCard, FeedStore, MSW, next/navigation mock
+  // @complexity: low
+  it('UC-8: the strip shows the waiting deep agent first and choosing it moves focus to its subagent decision card', async () => {
+    // Arrange: a working agent and a deep agent with a waiting subagent and its open decision
+    const thread = threadSummary({ id: 'a', title: 'Ошибки оплаты' });
+    const view: ConversationView = conversationView({
+      thread,
+      chat: {
+        status: 'working',
+        failureReason: null,
+        rootAgentId: 'root',
+        model: 'claude-haiku-4-5',
+      },
+      entries: [
+        historyEntry({
+          kind: 'task',
+          seq: 1,
+          content: { text: 'Почему падают оплаты?' },
+        }),
+      ],
+      agents: [
+        agentNode({
+          agentId: 'logs',
+          name: 'Разбор логов',
+          status: 'working',
+          createdAt: fixtureTime(1),
+        }),
+        agentNode({
+          agentId: DEEP_RUN_ID,
+          name: DEEP_AGENT_NAME,
+          origin: deepOrigin(),
+          status: 'working',
+          createdAt: fixtureTime(1.5),
+          children: [
+            agentNode({
+              agentId: 'sub',
+              parentId: DEEP_RUN_ID,
+              status: 'awaiting_confirmation',
+              createdAt: fixtureTime(2),
+            }),
+          ],
+        }),
+      ],
+      decisions: [
+        confirmation({
+          decisionId: 'd-sub',
+          agentId: 'sub',
+          createdAt: fixtureTime(2.5),
+        }),
+      ],
+    });
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([thread])),
+      ),
+      http.get(`${API}/api/threads/a`, () => HttpResponse.json(thread)),
+      http.get(`${API}/api/threads/a/history`, () => HttpResponse.json(view)),
+      http.get(`${API}/api/agents/${DEEP_RUN_ID}/run`, () =>
+        HttpResponse.json(deepAgentRunView({ origin: deepOrigin() })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/chat/a' });
+
+    // Act 1: the strip stands above the composer
+    const strip = await screen.findByRole('region', { name: 'Агенты беседы' });
+
+    // Assert 1 (AC-12.1, MC-12): both agents with their status, the waiting deep agent first
+    expect(within(strip).getByText('Агенты · 2')).toBeInTheDocument();
+    expect(
+      within(strip)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual([`${DEEP_AGENT_NAME}, Ждёт вас`, 'Разбор логов, Работает']);
+
+    // Act 2: choose the deep agent
+    await user.click(
+      within(strip).getByRole('button', {
+        name: `${DEEP_AGENT_NAME}, Ждёт вас`,
+      }),
+    );
+
+    // Assert 2 (AC-12.1, IM-11): focus is on the subagent's decision card
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-decision-id="d-sub"]'),
+    );
+    expect(document.activeElement).not.toBeNull();
   });
 
   // AC: AC-04.1 "Сотрудник видит план глубокого агента на его странице" (вид); AC-23.3 "Сотрудник видит поручения глубокого агента"
@@ -545,15 +642,15 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     renderWithRuntime({ pathname: `/agents/${DEEP_RUN_ID}/tasks` });
 
     // Assert 1 (AC-04.1, DA-04): «Задачи · 2» chosen - the count is the tasks only -, the tasks with their statuses, the composer stays
-    const tasksTab = await screen.findByRole('tab', { name: 'Задачи · 2' });
+    const tasksTab = await screen.findByRole('tab', { name: 'План · 2' });
     expect(tasksTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Ход работы' })).toHaveAttribute(
       'aria-selected',
       'false',
     );
-    expect(taskRows(screen.getByRole('list', { name: 'Задачи' }))).toEqual([
-      'Задача 1: Собрать логи за ночь, Готова',
-      'Задача 2: Найти причину отказов, Ожидает',
+    expect(taskRows(screen.getByRole('list', { name: 'План' }))).toEqual([
+      'Шаг 1: Собрать логи за ночь, Готов',
+      'Шаг 2: Найти причину отказов, Ожидает',
     ]);
     expect(screen.getByRole('textbox')).toBeInTheDocument();
 
@@ -585,7 +682,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
     expect(
       within(links[1]).getByText('Сбой · исчерпан предел шагов'),
     ).toBeInTheDocument();
-    expect(within(links[2]).getByText('задача 1')).toBeInTheDocument();
-    expect(within(links[0]).queryByText('задача 1')).toBeNull();
+    expect(within(links[2]).getByText('шаг 1')).toBeInTheDocument();
+    expect(within(links[0]).queryByText('шаг 1')).toBeNull();
   });
 });

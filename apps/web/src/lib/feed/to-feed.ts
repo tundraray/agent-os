@@ -1,11 +1,19 @@
 import {
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
+  ASK_USER_TOOL,
+  AskUserArgsSchema,
   ChatRecordToolSchema,
   CREATE_RECORD_TOOL,
   DELETE_RECORD_TOOL,
   EDIT_RECORD_TOOL,
   LIBRARY_RECORD_CONFIRMATION,
+  IDENTITY_INSTRUCTIONS_CONFIRMATION,
   LibraryRecordCardSchema,
+  MANAGE_SCHEDULE_TOOL,
+  SCHEDULE_ACCESS_DROPPED_LINE,
+  ScheduleToolActionSchema,
+  SET_PERSONAL_INSTRUCTIONS_TOOL,
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
   type AgentNode,
@@ -22,6 +30,7 @@ import {
   type LibraryRecordCard,
   type PendingMessage,
   type ScheduleMark,
+  type ScheduleToolAction,
   type TestRunSummary,
   type ToolCallState,
   type ToolOutcome,
@@ -41,8 +50,11 @@ import {
 // ---------------------------------------------------------------------------------------------------
 // Inputs
 
-/** A conversation or an agent page with every history entry read so far. */
-export type FeedView =
+/**
+ * A conversation or an agent page with every history entry read so far. `hasOlder` — entries older than the first
+ * one read exist (live-feed KD-2): the feed holds a window, not the start of the history.
+ */
+export type FeedView = { hasOlder: boolean } & (
   | {
       kind: 'thread';
       threadId: string;
@@ -58,6 +70,10 @@ export type FeedView =
       focus: ConversationView['focus'];
       /** The training this conversation belongs to (self-learning KD-3); null outside a training tree. */
       training: ConversationView['training'];
+      /** The root's «seen through» mark at the latest read (improvements KD-4). */
+      seenThroughSeq: number;
+      /** The tracker task the conversation is linked to, its title as of the latest read (task-tracker KD-5). */
+      trackerTask: ConversationView['trackerTask'];
     }
   | {
       kind: 'agent';
@@ -67,18 +83,20 @@ export type FeedView =
       decisions: readonly Confirmation[];
       children: readonly AgentNode[];
       training: AgentPageView['training'];
-    };
+    }
+);
 
 /** A deep agent's run: started from a deep agent record and not as one of its subagents. */
 export function isDeepAgentRun(agent: Pick<AgentView, 'origin'>): boolean {
   return agent.origin?.kind === 'deep_agent' && agent.origin.subagent === null;
 }
 
-/** The view of one page read, with that page's entries. */
+/** The view of one page read, with that page's entries and its `hasOlder`. */
 export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
   if ('chat' in page) {
     return {
       kind: 'thread',
+      hasOlder: page.hasOlder,
       threadId: page.thread.id,
       thread: page.thread,
       chat: page.chat,
@@ -88,10 +106,13 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
       children: page.agents,
       focus: page.focus,
       training: page.training,
+      seenThroughSeq: page.seenThroughSeq,
+      trackerTask: page.trackerTask,
     };
   }
   return {
     kind: 'agent',
+    hasOlder: page.hasOlder,
     agent: page.agent,
     entries: page.entries,
     pending: page.pending,
@@ -99,6 +120,19 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
     children: page.children,
     training: page.training,
   };
+}
+
+/**
+ * The conversation has no task yet (live-feed KD-3): no `task` entry was read and nothing older than the feed exists.
+ * A window of a long conversation lacks the task entry, yet the conversation has one.
+ */
+export function lacksTask(view: FeedView): boolean {
+  return !view.hasOlder && !view.entries.some((entry) => entry.kind === 'task');
+}
+
+/** The `seq` the feed starts at while older entries exist (live-feed KD-3); null when it holds the history's start. */
+export function windowStartOf(view: FeedView): number | null {
+  return view.hasOlder ? (view.entries[0]?.seq ?? null) : null;
 }
 
 /** A message the server accepted (202) and the next re-read has not shown yet (KD-4). */
@@ -168,6 +202,7 @@ export const FEED_PART = {
   offer: 'offer',
   plan: 'plan',
   testRunCard: 'test-run-card',
+  scheduleCard: 'schedule-card',
 } as const;
 
 /** The deep agent card also shows the question of the brief that started it (agent-run-card.md, part 4). */
@@ -176,7 +211,10 @@ export type DecisionPartData = {
   confirmation: Confirmation;
   /** The conversation's root asks: «Чат хочет выполнить:» (MC-19). */
   byChat: boolean;
-  /** How the call of an approved record card ended (DA-11); null before its result and for any other decision. */
+  /**
+   * How the call of an approved record card (DA-11) or personal instruction card (agent-guidance KD-8) ended; null
+   * before its result and for any other decision.
+   */
   saved: RecordSave | null;
 };
 
@@ -233,6 +271,16 @@ export type TestRunCardPartData = {
   last: boolean;
   rounds: readonly (TestRunSummary['rounds'][number] & { number: number })[];
 };
+/** The schedule card of a successful `manage_schedule` call (chat-scheduling KD-1), read from the call and its result. */
+export type ScheduleCardPartData = {
+  /** The schedule of the call: the first line of its result, `Schedule <id>: <name>`. */
+  scheduleId: string;
+  name: string;
+  /** The call's `args.action`: the result word of a pause or a resume; a delete reads nothing. */
+  action: ScheduleToolAction;
+  /** The result's second line is `SCHEDULE_ACCESS_DROPPED_LINE`: the change took full access away. */
+  accessDropped: boolean;
+};
 export type EventPartData = Extract<
   HistoryEntry,
   { kind: 'event' }
@@ -279,6 +327,8 @@ export type ToolCallArtifact = {
 /**
  * `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04), the draft mark, the
  * record chip an employee's message was sent with (KD-5) and the schedule that sent it (schedules SH-07).
+ * `toolFree` marks an answer without tool calls, the only boundary `throughSeq` takes (improvements KD-3); the
+ * fork boundary itself is the message's `seq`, read from its id by `feedSeqOf`.
  */
 export type FeedMessageMeta =
   | {
@@ -298,7 +348,7 @@ export type FeedMessageMeta =
       fromConversation: boolean;
       senderDescription: string | null;
     }
-  | { kind: 'answer'; report: boolean }
+  | { kind: 'answer'; report: boolean; toolFree: boolean }
   | { kind: 'draft' }
   | { kind: 'part' };
 
@@ -306,10 +356,14 @@ type LikePart = Exclude<ThreadMessageLike['content'], string>[number];
 type ToolCallLikePart = Extract<LikePart, { type: 'tool-call' }>;
 type JsonObject = NonNullable<ToolCallLikePart['args']>;
 
-/** Calls another feed piece already shows: a start — the run card or the brief card (MC-23). Only other outcomes draw a block. */
+/**
+ * Calls another feed piece already shows: a start — the run card or the brief card (MC-23); a personal instruction —
+ * its card (agent-guidance KD-8). Only other outcomes draw a block: no card, or a save that did not go through.
+ */
 const SHOWN_ELSEWHERE = new Set<string>([
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
+  SET_PERSONAL_INSTRUCTIONS_TOOL,
 ]);
 const HIDDEN_OUTCOMES = new Set<ToolOutcome>(['success', 'rejected']);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
@@ -390,13 +444,76 @@ function toolCallPart(
   };
 }
 
+/** The first line of a `manage_schedule` result (chat-scheduling design-server.md, «Карточка результата в ленте»). */
+const SCHEDULE_RESULT_TITLE = /^Schedule (\S+): (.+)$/;
+
+/**
+ * The schedule card of a `manage_schedule` call; null for any other call, before the result, for a call that did not
+ * succeed and for a result whose first line does not name a schedule — those stay the call's block.
+ */
+function scheduleCardOf(
+  call: AnswerToolCall,
+  result: ToolResult | undefined,
+): ScheduleCardPartData | null {
+  if (
+    call.tool !== MANAGE_SCHEDULE_TOOL ||
+    call.server !== null ||
+    result?.outcome !== 'success'
+  )
+    return null;
+  const lines = (result.text ?? '').split('\n');
+  const title = SCHEDULE_RESULT_TITLE.exec(lines[0]);
+  const action = ScheduleToolActionSchema.safeParse(
+    stringField(call.args, 'action'),
+  );
+  if (title === null || !action.success) return null;
+  return {
+    scheduleId: title[1],
+    name: title[2],
+    action: action.data,
+    accessDropped: lines[1] === SCHEDULE_ACCESS_DROPPED_LINE,
+  };
+}
+
+/** The questions of an `ask_user` call or card as one comparable value; null for anything outside the contract. */
+function questionsKey(value: unknown): string | null {
+  const parsed = AskUserArgsSchema.safeParse(value);
+  return parsed.success ? JSON.stringify(parsed.data.questions) : null;
+}
+
+/**
+ * The questions of the question cards the feed's own agent asked (agent-guidance KD-2): the card names no call, so an
+ * `ask_user` call is paired with its card by the same questions.
+ */
+function askedQuestionsOf(view: FeedView): Set<string> {
+  const ownerId =
+    view.kind === 'thread' ? view.chat.rootAgentId : view.agent.agentId;
+  return new Set(
+    view.decisions.flatMap((confirmation) => {
+      if (
+        confirmation.kind !== AGENTS_QUESTION_CONFIRMATION ||
+        confirmation.agentId !== ownerId
+      )
+        return [];
+      return questionsKey(confirmation.content) ?? [];
+    }),
+  );
+}
+
 function isDrawnCall(
   call: AnswerToolCall,
   result: ToolResult | undefined,
-  cardCalls: ReadonlySet<string>,
+  { cardCalls, askedQuestions }: EntryContext,
 ): boolean {
   // A trainer's offer or plan is its card instead of the call block (KD-4).
   if (cardCalls.has(call.callId)) return false;
+  // A schedule the call made or changed is its card instead of the call block (chat-scheduling KD-1).
+  if (scheduleCardOf(call, result) !== null) return false;
+  // A question shown as its card has no call line; without a card (refused, nobody to answer) the line stays.
+  if (call.tool === ASK_USER_TOOL && call.server === null) {
+    const key = questionsKey(call.args);
+    return key === null || !askedQuestions.has(key);
+  }
   if (!SHOWN_ELSEWHERE.has(call.tool)) return true;
   return result !== undefined && !HIDDEN_OUTCOMES.has(result.outcome);
 }
@@ -434,6 +551,8 @@ type EntryContext = {
   cards: readonly LibraryRecordCard[];
   /** Calls drawn as the trainer's cards. */
   cardCalls: ReadonlySet<string>;
+  /** The questions of the feed's own agent's question cards (`questionsKey`). */
+  askedQuestions: ReadonlySet<string>;
   /** Entries up to this `seq` are a fork's copy; 0 — none. */
   inheritedThrough: number;
   /** The test run's description: its message carries the action chip; null — none. */
@@ -443,8 +562,9 @@ type EntryContext = {
 function entryMessage(
   view: FeedView,
   entry: HistoryEntry,
-  { results, cards, cardCalls, inheritedThrough, descriptionSeq }: EntryContext,
+  context: EntryContext,
 ): ThreadMessageLike | null {
+  const { results, cards, inheritedThrough, descriptionSeq } = context;
   const id = `seq-${entry.seq}`;
   const testRun =
     entry.seq === descriptionSeq ? { testRun: true as const } : {};
@@ -461,7 +581,12 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'task', record, schedule, ...testRun }),
+        metadata: meta({
+          kind: 'task',
+          record,
+          schedule,
+          ...testRun,
+        }),
       };
     }
     case 'user_message': {
@@ -471,7 +596,12 @@ function entryMessage(
         role: 'user',
         createdAt,
         content: entry.content.text,
-        metadata: meta({ kind: 'user', record, schedule, ...testRun }),
+        metadata: meta({
+          kind: 'user',
+          record,
+          schedule,
+          ...testRun,
+        }),
       };
     }
     case 'agent_message': {
@@ -500,19 +630,19 @@ function entryMessage(
         parts.push({ type: 'text', text: entry.content.text });
       for (const call of entry.content.toolCalls) {
         const result = results.get(call.callId);
-        if (isDrawnCall(call, result, cardCalls))
+        if (isDrawnCall(call, result, context))
           parts.push(toolCallPart(call, result, recordNameOf(call, cards)));
       }
       if (parts.length === 0) return null;
+      const toolFree = entry.content.toolCalls.length === 0;
       // AV-04: on an agent page the answer that ends a turn without calls is the agent's report.
-      const report =
-        view.kind === 'agent' && entry.content.toolCalls.length === 0;
+      const report = view.kind === 'agent' && toolFree;
       return {
         id,
         role: 'assistant',
         createdAt,
         content: parts,
-        metadata: meta({ kind: 'answer', report }),
+        metadata: meta({ kind: 'answer', report, toolFree }),
       };
     }
     case 'child_report': {
@@ -541,7 +671,12 @@ function entryMessage(
           createdAt,
           content: [],
           status: { type: 'incomplete', reason: 'error', error },
-          metadata: meta({ kind: 'answer', report: false }),
+          // The failure is an event, not a model answer: no fork boundary.
+          metadata: meta({
+            kind: 'answer',
+            report: false,
+            toolFree: false,
+          }),
         };
       }
       const model = view.kind === 'thread' ? view.chat.model : view.agent.model;
@@ -698,6 +833,25 @@ function runParts(
   return parts;
 }
 
+/** The schedule cards of the calls in one answer, in call order (chat-scheduling KD-1): each call has its own card. */
+function scheduleCards(
+  entry: HistoryEntry,
+  results: ReadonlyMap<string, ToolResult>,
+): ThreadMessageLike[] {
+  if (entry.kind !== 'model_answer') return [];
+  return entry.content.toolCalls.flatMap((call) => {
+    const data = scheduleCardOf(call, results.get(call.callId));
+    return data === null
+      ? []
+      : dataMessage(
+          `schedule-${call.callId}`,
+          entry.createdAt,
+          FEED_PART.scheduleCard,
+          data,
+        );
+  });
+}
+
 /**
  * The test run's description (KD-4 table): the first `user_message` right after the fork's `forked` event, or the
  * `task` of a test run without a fork. `empty` — the event is followed by something else: the chip stands alone.
@@ -722,7 +876,8 @@ function descriptionOf(
 type FinishedCall = { tool: string; result: ToolResult; at: number };
 
 /**
- * How the call of an approved record card ended. The confirmation names no call, so the result is the first
+ * How the call of an approved record card or personal instruction card ended (agent-guidance KD-8). The
+ * confirmation names no call, so the result is the first
  * one of the same tool the feed's agent wrote after the decision: the conversation's root runs one call at a
  * time, and the call's result is written only once the employee has decided (design-agent-types.md, Flow 1).
  */
@@ -732,7 +887,8 @@ function recordSaveOf(
   calls: readonly FinishedCall[],
 ): RecordSave | null {
   if (
-    confirmation.kind !== LIBRARY_RECORD_CONFIRMATION ||
+    (confirmation.kind !== LIBRARY_RECORD_CONFIRMATION &&
+      confirmation.kind !== IDENTITY_INSTRUCTIONS_CONFIRMATION) ||
     confirmation.resolution?.approve !== true
   )
     return null;
@@ -748,6 +904,19 @@ function recordSaveOf(
     : { outcome: call.result.outcome, text: call.result.text ?? null };
 }
 
+/**
+ * A card created before the feed's first entry while older entries exist (live-feed KD-3): it belongs above the
+ * window and is not drawn, unless it still asks for attention — an open decision, a working or waiting subagent.
+ */
+function olderThanWindow(view: FeedView, createdAt: string): boolean {
+  const first = view.entries[0];
+  return (
+    view.hasOlder &&
+    first !== undefined &&
+    time(createdAt) < time(first.createdAt)
+  );
+}
+
 /** Decisions and direct children, by creation time; equal times keep the API's list order. */
 function floatingItems(
   view: FeedView,
@@ -755,7 +924,13 @@ function floatingItems(
 ): Floating[] {
   const byChatRoot = (c: Confirmation): boolean =>
     view.kind === 'thread' && c.agentId === view.chat.rootAgentId;
-  const decisions = view.decisions.map((confirmation) => {
+  const shownDecisions = view.decisions.filter(
+    (c) => c.status === 'open' || !olderThanWindow(view, c.createdAt),
+  );
+  const shownChildren = view.children.filter(
+    (node) => isActive(node.status) || !olderThanWindow(view, node.createdAt),
+  );
+  const decisions = shownDecisions.map((confirmation) => {
     const data: DecisionPartData = {
       confirmation,
       byChat: byChatRoot(confirmation),
@@ -771,7 +946,7 @@ function floatingItems(
       ),
     };
   });
-  const children = view.children.map((node) => {
+  const children = shownChildren.map((node) => {
     const data: RunCardPartData = {
       ...node,
       briefQuestion: briefQuestionOf(view.decisions, node),
@@ -830,7 +1005,7 @@ const OPENS_TURN = new Set<HistoryEntry['kind']>([
 /**
  * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `local-*`, `draft`): entries
  * by `seq`; each decision and direct child after the last entry created not later than it (KD-3); a test run's
- * cards at the end of the trainer's turn that made their calls; optimistic feed entries, then the draft, last.
+ * cards and the schedule cards at the end of the turn that made their calls; optimistic feed entries, then the draft, last.
  */
 export function toFeed(
   view: FeedView,
@@ -868,6 +1043,7 @@ export function toFeed(
             ...run.plans.map((plan) => plan.callId),
           ],
     ),
+    askedQuestions: askedQuestionsOf(view),
     inheritedThrough:
       view.kind === 'thread' ? (view.thread.forkedFrom?.throughSeq ?? 0) : 0,
     descriptionSeq:
@@ -886,7 +1062,8 @@ export function toFeed(
   }
 
   const messages: ThreadMessageLike[] = [...(anchored.get(-1) ?? [])];
-  // The trainer's cards wait for the end of its turn: its text, often in a later answer, explains them first.
+  // The trainer's cards and the schedule cards wait for the end of the turn: the agent's text, often in a later
+  // answer, explains them first, so a card stands under the reply.
   let turnCards: ThreadMessageLike[] = [];
   entries.forEach((entry, index) => {
     if (OPENS_TURN.has(entry.kind)) {
@@ -913,6 +1090,7 @@ export function toFeed(
         }),
       });
     if (run !== null) turnCards.push(...runParts(run, entry));
+    turnCards.push(...scheduleCards(entry, results));
     messages.push(...(anchored.get(index) ?? []));
   });
   messages.push(...turnCards);
@@ -942,6 +1120,10 @@ export function drawsPending(
 export const selectAgent = (view: FeedView | null) =>
   view?.kind === 'agent' ? view.agent : null;
 
+/** The conversation of a conversation's view; null for an agent page and before the first read. */
+export const selectThreadId = (view: FeedView | null): string | null =>
+  view?.kind === 'thread' ? view.threadId : null;
+
 /** The status the controls follow: a conversation's `chat.status`, an agent's own; null before the first read. */
 const statusOf = (view: FeedView | null): ChatStatus | AgentStatus | null =>
   view === null
@@ -961,6 +1143,122 @@ const awaitsDecision = (view: FeedView | null): boolean =>
 /** The agent works or waits for a decision: a new message goes to the tray (KD-4). */
 export const isBusy = (view: FeedView | null): boolean =>
   canInterrupt(view) || awaitsDecision(view);
+
+const isActive = (status: ChatStatus | AgentStatus): boolean =>
+  status === 'working' || status === 'awaiting_confirmation';
+
+const treeActive = (nodes: readonly AgentNode[]): boolean =>
+  nodes.some((node) => isActive(node.status) || treeActive(node.children));
+
+/**
+ * The branch buttons (improvements KD-3): a conversation that is a chat, whose root and every agent of its tree
+ * neither works nor waits for a decision — the facts the server refuses a fork by. False for an agent page.
+ */
+export const canFork = (view: FeedView | null): boolean =>
+  view?.kind === 'thread' &&
+  view.thread.forkable &&
+  !isActive(view.chat.status) &&
+  !treeActive(view.children);
+
+/** An employee's own message sent from the composer: a task or a message of theirs that no schedule sent. */
+export function isComposerMessage(
+  custom: Record<string, unknown> | undefined,
+): boolean {
+  const kind = custom?.['kind'];
+  return (kind === 'task' || kind === 'user') && custom?.['schedule'] == null;
+}
+
+/** The unread range a conversation fixes when it opens (improvements KD-4): the entries after `afterSeq` through `throughSeq`. */
+export type UnreadRange = { afterSeq: number; throughSeq: number };
+
+const SEQ_ID = /^seq-(\d+)$/;
+
+/**
+ * The `seq` of the history entry a feed message draws (its id `seq-N`); null for any other message.
+ * `useExternalStoreRuntime` with `convertMessage` converts the feed one message at a time and never joins adjacent
+ * answers, so every drawn entry keeps its own id.
+ */
+export function feedSeqOf(messageId: string): number | null {
+  const match = SEQ_ID.exec(messageId);
+  return match === null ? null : Number(match[1]);
+}
+
+/** A feed message as the divider rule reads it: from `toFeed`, or as assistant-ui holds it. */
+type FeedMessageRef = {
+  readonly id?: string | undefined;
+  readonly metadata?:
+    { readonly custom?: Record<string, unknown> | undefined } | undefined;
+};
+
+/**
+ * The `seq` of the message the «Новое» divider stands before (improvements KD-4, UXRD IM-10): the first message of the
+ * range the employee did not send from the composer — a schedule's message counts; null when there is none.
+ * `windowStart` — `windowStartOf` the feed: a window that starts after the «seen through» mark has no divider, since
+ * the first unread message may lie above it (live-feed KD-3, AC-07.2).
+ */
+export function newDividerSeq(
+  messages: readonly FeedMessageRef[],
+  range: UnreadRange | null,
+  windowStart: number | null,
+): number | null {
+  if (range === null) return null;
+  if (windowStart !== null && windowStart > range.afterSeq) return null;
+  for (const message of messages) {
+    const seq = message.id === undefined ? null : feedSeqOf(message.id);
+    if (seq === null || seq <= range.afterSeq || seq > range.throughSeq)
+      continue;
+    if (!isComposerMessage(message.metadata?.custom)) return seq;
+  }
+  return null;
+}
+
+/** An agent of the strip «Агенты беседы» (improvements UXRD IM-11). */
+export type StripAgent = {
+  agentId: string;
+  name: string;
+  builtinKey: string | null;
+  status: 'working' | 'awaiting_confirmation';
+  /** The open decision of the agent or of an agent under it: the card a waiting agent leads to; null — its run card. */
+  decisionId: string | null;
+};
+
+const subtreeIds = (node: AgentNode): string[] => [
+  node.agentId,
+  ...node.children.flatMap(subtreeIds),
+];
+
+const subtreeWaits = (node: AgentNode): boolean =>
+  node.status === 'awaiting_confirmation' || node.children.some(subtreeWaits);
+
+/**
+ * The strip «Агенты беседы» (improvements IM-11, AC-12.1, AC-12.2): the root's direct children that work or wait, the
+ * waiting first. An agent whose subagent waits — a deep agent's step — stands as waiting and leads to that decision.
+ * Empty for an agent page and before the first read.
+ */
+export function stripAgents(view: FeedView | null): StripAgent[] {
+  if (view?.kind !== 'thread') return [];
+  const agents = view.children
+    .filter((node) => isActive(node.status))
+    .map((node): StripAgent => {
+      const ids = new Set(subtreeIds(node));
+      const open = view.decisions.find(
+        (d) => d.status === 'open' && ids.has(d.agentId),
+      );
+      return {
+        agentId: node.agentId,
+        name: node.name,
+        builtinKey: node.origin?.builtinKey ?? null,
+        status: subtreeWaits(node) ? 'awaiting_confirmation' : 'working',
+        decisionId: open?.decisionId ?? null,
+      };
+    });
+  // Array.prototype.sort is stable: each group keeps the API's order.
+  return agents.sort(
+    (a, b) =>
+      Number(b.status === 'awaiting_confirmation') -
+      Number(a.status === 'awaiting_confirmation'),
+  );
+}
 
 export type TrayEntry = {
   /** `messageId` of a queued message or `local-*` of an optimistic one. */

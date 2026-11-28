@@ -1,3 +1,4 @@
+import { NotificationLevelSchema, type ToolPair } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -5,13 +6,14 @@ import {
   check,
   index,
   integer,
+  jsonb,
   text,
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { agentVersions } from './agent-versions';
-import { createdAt, searchVector } from './helpers';
+import { createdAt, isOneOf, searchVector } from './helpers';
 import { identityUsers } from './identity-users';
 import { runtimeTasks } from './runtime-tasks';
 
@@ -80,10 +82,27 @@ export const conversations = app.table(
     /** Input tokens of the last model call; drives compaction. */
     lastInputTokens: integer('last_input_tokens'),
     /**
+     * The last provider overflow has not ended in a model answer yet (runtime-fixes design-steps.md, KD-5):
+     * the compaction shows tool results by their start, and another overflow fails the agent.
+     */
+    overflowed: boolean('overflowed').notNull().default(false),
+    /**
      * The last number given to a task of the session's list (deep-agents design-task-list.md, KD-1); never
      * goes back, so a deleted task's number is not given again.
      */
     lastTaskNumber: integer('last_task_number').notNull().default(0),
+    /** Set on a root: the MCP tools the owner allowed this conversation to call without a card. */
+    grantedTools: jsonb('granted_tools')
+      .$type<ToolPair[]>()
+      .notNull()
+      .default([]),
+    /** Set on a root: the seq of the last entry of its history the owner has seen. */
+    seenThroughSeq: integer('seen_through_seq').notNull().default(0),
+    /**
+     * Written only on a root: the conversation's own notification level; null — the owner's default
+     * (live-feed design-server.md, KD-7). A fork starts without one.
+     */
+    notificationLevel: text('notification_level'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -114,6 +133,10 @@ export const conversations = app.table(
     check(
       'conversations_fork_check',
       sql`${t.forkedFromId} is null or (${t.parentId} is null and ${t.forkedThroughSeq} is not null)`,
+    ),
+    check(
+      'conversations_notification_level_check',
+      isOneOf(t.notificationLevel, NotificationLevelSchema.options),
     ),
   ],
 );

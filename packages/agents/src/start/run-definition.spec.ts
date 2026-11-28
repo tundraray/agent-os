@@ -51,6 +51,7 @@ const AGENT_VERSION: AgentVersion = {
     agents: [VISIBLE_ID, HIDDEN_ID, DEEP_ID],
     tools: ['start_agent', 'list_agents'],
     taskList: true,
+    skills: [],
   },
 };
 
@@ -117,6 +118,7 @@ function deepAgent(
         listDelegation,
         selfLearning: false,
         scripts: [],
+        skills: [],
       },
     },
     name: 'Глубокий ресерч',
@@ -168,6 +170,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -185,6 +188,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: true,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -206,6 +210,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -223,6 +228,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -241,6 +247,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -260,6 +267,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {

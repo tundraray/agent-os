@@ -1,4 +1,9 @@
-import { LanguageSchema, UserStatusSchema } from '@agent-os/contracts';
+import {
+  LanguageSchema,
+  NotificationLevelSchema,
+  ThemeIdSchema,
+  UserStatusSchema,
+} from '@agent-os/contracts';
 import {
   boolean,
   check,
@@ -28,6 +33,14 @@ export const identityUsers = app.table(
     lastSignInAt: timestamp('last_sign_in_at', { withTimezone: true }),
     /** The chosen interface language; null while the employee has not chosen one (i18n KD-4). */
     language: text('language'),
+    /** The employee's own colour theme; null — as in the organisation (theming design-preference.md, KD-1). */
+    theme: text('theme'),
+    /** The employee's default notification level (live-feed design-server.md, KD-7). */
+    notificationLevel: text('notification_level')
+      .notNull()
+      .default(NotificationLevelSchema.enum.all),
+    /** The employee's personal instruction, read by every step of their tasks; empty — none (agent-guidance KD-4). */
+    instructions: text('instructions').notNull().default(''),
     createdAt: createdAt(),
   },
   (t) => [
@@ -40,6 +53,14 @@ export const identityUsers = app.table(
     check(
       'identity_users_language_check',
       isOneOf(t.language, LanguageSchema.options),
+    ),
+    check(
+      'identity_users_theme_check',
+      isOneOf(t.theme, ThemeIdSchema.options),
+    ),
+    check(
+      'identity_users_notification_level_check',
+      isOneOf(t.notificationLevel, NotificationLevelSchema.options),
     ),
   ],
 );

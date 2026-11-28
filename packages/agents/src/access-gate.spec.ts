@@ -5,12 +5,14 @@
 import type { Logger } from '@agent-os/common';
 import {
   CodeCallsRepository,
+  IdentityUsersRepository,
   MemoriesRepository,
   McpAccountsRepository,
   McpServersRepository,
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  SchedulesRepository,
   SettingsRepository,
   ToolResultsRepository,
   type Database,
@@ -98,6 +100,7 @@ const VERSION: AgentVersion = {
     agents: [],
     tools: [LOOKUP],
     taskList: false,
+    skills: [],
   },
 };
 
@@ -134,6 +137,7 @@ const SESSION: Session = {
   interrupted: false,
   closed: false,
   lastInputTokens: 50_000,
+  overflowed: false,
   createdAt: new Date(0),
 };
 
@@ -168,6 +172,11 @@ function stepContext(logger: Logger): StepContext {
     guard: async () => {
       throw new Error('a refused call writes nothing outside the commit');
     },
+    // The model step writes its debt before the call (runtime-fixes KD-1): here into the empty database.
+    guardWithDelivery: async (work) => ({
+      outcome: 'committed',
+      value: await work(),
+    }),
   };
 }
 
@@ -211,12 +220,18 @@ function refusedAgent(refusal: Refusal) {
     sessionRows,
     history,
     messageRows,
-    callRecords: new CallRecords(history, new CodeCallsRepository(db)),
+    callRecords: new CallRecords(
+      history,
+      new CodeCallsRepository(db),
+      sessionRows,
+    ),
     toolResultRows: new ToolResultsRepository(db),
     sessionTaskRows: new ConversationTasksRepository(db),
     // The chat has no memory: its block reads neither.
     memoryRows: new MemoriesRepository(db),
     settingsRows: new SettingsRepository(db),
+    userRows: new IdentityUsersRepository(db),
+    scheduleRows: new SchedulesRepository(db),
   };
   const registry = new ToolRegistry(
     new McpServersRepository(db),
@@ -281,6 +296,7 @@ function refusedAgent(refusal: Refusal) {
       modelClient,
       tasks: { get: notCalled, listTree: async () => [] },
       inbox: { listPending: async () => [] },
+      signals: { notify: async () => undefined },
       compactAtTokens: 100_000,
       library: createLibraryDouble(),
       logger,

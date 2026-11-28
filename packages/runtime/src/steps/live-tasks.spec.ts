@@ -43,7 +43,6 @@ function setup() {
   let time = 0;
   const clock: Clock = {
     now: () => new Date(time),
-    random: () => 0,
     setTimer: () => () => undefined,
   };
   const logger = {

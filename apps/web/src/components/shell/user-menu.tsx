@@ -7,6 +7,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  PaletteIcon,
   ShieldCheckIcon,
   SunIcon,
   type LucideIcon,
@@ -37,7 +38,8 @@ import { describeApiError } from '@/lib/api/api-request';
 import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
-import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
+import { ACCOUNT_PATH, ACCOUNT_THEME_PATH, adminPath } from '@/lib/shell-route';
+import { useCurrentTheme } from '@/lib/use-current-theme';
 import { formatMonth, type Formatter } from '@/i18n/formats';
 import { useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
@@ -46,20 +48,24 @@ import { ShellLink } from './shell-link';
 
 type ShellTranslator = ReturnType<typeof useTranslations<'shell'>>;
 
-const THEMES = [
-  { value: 'light', label: 'userMenu.themeLight', icon: SunIcon },
-  { value: 'dark', label: 'userMenu.themeDark', icon: MoonIcon },
-  { value: 'system', label: 'userMenu.themeSystem', icon: MonitorIcon },
+/** Marks the user block's trigger (SB-11); focus lands on it once the offer LF-03 is gone (live-feed UXRD). */
+export const USER_MENU_ATTRIBUTE = 'data-shell-user-menu';
+
+/** The mode next-themes keeps (TM-01); the colour theme is chosen on «Мой доступ» (theming UXRD, TP-02). */
+const MODES = [
+  { value: 'light', label: 'userMenu.modeLight', icon: SunIcon },
+  { value: 'dark', label: 'userMenu.modeDark', icon: MoonIcon },
+  { value: 'system', label: 'userMenu.modeSystem', icon: MonitorIcon },
 ] as const satisfies ReadonlyArray<{
   value: string;
   label: Parameters<ShellTranslator>[0];
   icon: LucideIcon;
 }>;
 
-type ThemeValue = (typeof THEMES)[number]['value'];
+type ModeValue = (typeof MODES)[number]['value'];
 
-const isThemeValue = (value: unknown): value is ThemeValue =>
-  THEMES.some((theme) => theme.value === value);
+const isModeValue = (value: unknown): value is ModeValue =>
+  MODES.some((mode) => mode.value === value);
 
 /**
  * MC-2 text of SP-01 for the visible line once read, and for the strip's avatar tooltip in every state:
@@ -133,12 +139,14 @@ function menuLabel(
 /**
  * UM-01 (SB-11) + TM-01 + SP-01: the signed-in employee's block at the bottom of the sidebar with the
  * month's spend under the name; its menu holds the name and email, «Мой доступ», «Панель администратора»
- * for an administrator only (MC-6), the theme and «Выйти».
+ * for an administrator only (MC-6), the mode, the line «Тема: …» to the theme section and «Выйти».
  * Servers waiting for the employee's sign-in put a `--warning` dot on the avatar (also in the strip) and
  * the dot with their count next to «Мой доступ».
  */
 export function UserMenu() {
-  const { theme, setTheme } = useTheme();
+  const { theme: mode, setTheme: setMode } = useTheme();
+  const colourTheme = useCurrentTheme();
+  const tTheme = useTranslations('account.theme');
   const { isMobile, state } = useSidebar();
   const isStrip = !isMobile && state === 'collapsed';
   const spend = useSpend();
@@ -177,6 +185,7 @@ export function UserMenu() {
           <DropdownMenuTrigger
             render={
               <SidebarMenuButton
+                {...{ [USER_MENU_ATTRIBUTE]: '' }}
                 size="lg"
                 // In the 48 px strip the spend line is clipped: it moves into the avatar's tooltip.
                 tooltip={
@@ -291,19 +300,25 @@ export function UserMenu() {
             )}
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup
-              value={theme ?? 'system'}
+              value={mode ?? 'system'}
               onValueChange={(value: unknown) => {
-                if (isThemeValue(value)) setTheme(value);
+                if (isModeValue(value)) setMode(value);
               }}
             >
-              <DropdownMenuLabel>{t('userMenu.theme')}</DropdownMenuLabel>
-              {THEMES.map(({ value, label, icon: Icon }) => (
+              <DropdownMenuLabel>{t('userMenu.mode')}</DropdownMenuLabel>
+              {MODES.map(({ value, label, icon: Icon }) => (
                 <DropdownMenuRadioItem key={value} value={value} closeOnClick>
                   <Icon aria-hidden />
                   {t(label)}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuItem render={<ShellLink href={ACCOUNT_THEME_PATH} />}>
+              <PaletteIcon aria-hidden />
+              {t('userMenu.theme', {
+                theme: tTheme(`names.${colourTheme}`),
+              })}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => void signOut()}>
               <LogOutIcon aria-hidden />

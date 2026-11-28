@@ -28,6 +28,8 @@ export interface CopyInput {
   readonly defaultModel: string | null;
   /** Agent records the copier sees. */
   readonly visibleAgentIds: readonly string[];
+  /** Skills the copier sees; a deleted one is not among them. */
+  readonly visibleSkillIds: readonly string[];
   /** The language of the copier's page: the copy mark and an unrenamed built-in name are in it. */
   readonly language: Language;
   /** The source's built-in key; `null` — not a built-in record. */
@@ -42,9 +44,25 @@ export type CopyPlan = Omit<CopyResult, 'record'> & {
 /**
  * The copier's copy of a record (Flow 3; DC-5–DC-7, AC-05.4, AC-05.5): a free name, the servers usable
  * to the copier (all of them for «все серверы»), each model replaced by the four steps of Flow 3, and
- * only the agents the copier sees; what fell out or was replaced is listed.
+ * only the agents and the skills the copier sees (agent-guidance AC-06.8); what fell out or was replaced is
+ * listed. A skill is copied as it is.
  */
 export function planCopy(input: CopyInput): CopyPlan {
+  const name = copyName(
+    sourceName(input),
+    COPY_SUFFIX[input.language],
+    input.takenNames,
+  );
+  const { body } = input;
+  if (body.kind === 'skill')
+    return {
+      name,
+      body,
+      removedServers: [],
+      replacedModels: [],
+      removedAgents: [],
+      removedSkills: [],
+    };
   const removedServers: CopyPlan['removedServers'] = [];
   const replacedModels: CopyPlan['replacedModels'] = [];
   const copyPart = (part: ContentPart): CopiedPart => {
@@ -66,10 +84,14 @@ export function planCopy(input: CopyInput): CopyPlan {
     return { servers, model };
   };
 
-  const { body } = input;
   const [own, ...subagentParts] = contentParts(body).map(copyPart);
   if (own === undefined)
     throw new Error('a record content without its own part');
+  const visibleSkills = new Set(input.visibleSkillIds);
+  const removedSkills = body.content.skills.filter(
+    (id) => !visibleSkills.has(id),
+  );
+  const skills = body.content.skills.filter((id) => visibleSkills.has(id));
   let copy: RecordBody;
   let removedAgents: string[] = [];
   if (body.kind === 'agent') {
@@ -77,7 +99,7 @@ export function planCopy(input: CopyInput): CopyPlan {
     const { content } = body;
     removedAgents = content.agents.filter((id) => !visible.has(id));
     const agents = content.agents.filter((id) => visible.has(id));
-    copy = { kind: 'agent', content: { ...content, ...own, agents } };
+    copy = { kind: 'agent', content: { ...content, ...own, agents, skills } };
   } else {
     const { content } = body;
     const subagents = content.subagents.map((subagent, index) => {
@@ -86,19 +108,19 @@ export function planCopy(input: CopyInput): CopyPlan {
         throw new Error(`subagent ${subagent.name} without its content part`);
       return { ...subagent, ...part };
     });
-    copy = { kind: 'deep_agent', content: { ...content, ...own, subagents } };
+    copy = {
+      kind: 'deep_agent',
+      content: { ...content, ...own, subagents, skills },
+    };
   }
 
   return {
-    name: copyName(
-      sourceName(input),
-      COPY_SUFFIX[input.language],
-      input.takenNames,
-    ),
+    name,
     body: copy,
     removedServers,
     replacedModels,
     removedAgents,
+    removedSkills,
   };
 }
 

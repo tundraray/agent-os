@@ -21,6 +21,7 @@ import { z } from 'zod';
 import type { AccessGate } from '../access-gate';
 import { reportOf } from '../agent/deliver';
 import { taskQuestion } from '../deep/brief';
+import type { RecordLibrary } from '../start/record-library';
 import type { History } from '../store/history';
 import { maskValue, pageOf, wrapperText } from '../tools/large-result';
 import type {
@@ -74,6 +75,8 @@ export interface TrainerToolsDeps {
   readonly tasks: Pick<TaskControl, 'get' | 'listTree'>;
   readonly access: Pick<AccessGate, 'tools'>;
   readonly registry: Pick<ToolRegistry, 'declaredMcpTools'>;
+  /** The skills of the trained version for `agent_definition` (agent-guidance DC-5). */
+  readonly library: Pick<RecordLibrary, 'skills'>;
   readonly maskSecrets: (text: string) => string;
   readonly logger: Logger;
 }
@@ -412,9 +415,9 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
   const agentDefinition = readTool({
     name: AGENT_DEFINITION_TOOL,
     description:
-      'Read the version of the agent you work on — the base version of a training, the latest version of a test run: its number, its content (prompts, subagents, servers, scripts, flags) and the tools of its servers, with whether each only reads.',
+      'Read the version of the agent you work on — the base version of a training, the latest version of a test run: its number, its content (prompts, subagents, servers, scripts, flags), the name, description and text of each of its skills, and the tools of its servers, with whether each only reads.',
     argsSchema: NoArgsSchema,
-    async run(_args, { number, content }, { callId }) {
+    async run(_args, { number, content }, { caller, callId }) {
       const servers = [
         ...new Set([
           ...content.servers,
@@ -422,9 +425,16 @@ export function createTrainerTools(deps: TrainerToolsDeps) {
         ]),
       ];
       const tools = await deps.registry.declaredMcpTools(servers);
+      // The version's skills as its runs read them: undeleted, whoever trains it (KD-6, AC-08.1).
+      const skills = await deps.library.skills(caller.ownerId, content.skills);
       return storedAnswer(callId, {
         version: number,
         content,
+        skills: skills.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          text: skill.content.text,
+        })),
         tools: tools.map((tool) => ({
           name: tool.name,
           readOnly: tool.mcp.readOnly,

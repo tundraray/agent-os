@@ -44,7 +44,6 @@ export const schedulesApi = {
     }),
   get: (id: string): Promise<ScheduleView> =>
     apiRequest({ path: scheduleRoute(id), schema: ScheduleViewSchema }),
-  /** `body.conversationId` stays the conversation the schedule was created in. */
   update: (id: string, body: ScheduleBody): Promise<ScheduleView> =>
     apiRequest({
       path: scheduleRoute(id),

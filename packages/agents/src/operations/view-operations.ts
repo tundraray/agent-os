@@ -44,6 +44,8 @@ import type {
   AgentHistoryEntry,
   AnswerToolCall,
   HistoryRequest,
+  HistoryWindow,
+  HistoryWindowRequest,
   RootsRequest,
   ShownResult,
   StoredResult,
@@ -225,38 +227,139 @@ export class ViewOperations {
       { agentId, ownerId, afterSeq, limit },
       async () => {
         const task = await agentTask(this.tasks, agentId, ownerId);
-        const isStopped = task.status === stopped;
-        const derived = isStopped
-          ? await stopEntries(
-              { history: this.entries, messageRows: this.messageRows },
-              {
-                task,
-                parent: await parentOf(this.tasks, task, ownerId),
-              },
-            )
-          : [];
-        // The page is cut by the query after the call records are left out, so a page shorter than
-        // `limit` is the end of the history.
-        const stored = await this.entries.page(agentId, afterSeq, limit);
-        const answers = stored.filter((entry) => entry.kind === 'model_answer');
-        const calls = await this.callsOf(agentId, answers, isStopped);
-        const page: AgentHistoryEntry[] = stored.map((entry) => {
-          if (entry.kind === 'tool_result') return shownResult(entry);
-          return entry.kind === 'model_answer'
-            ? {
-                ...entry,
-                content: {
-                  text: entry.content.text,
-                  toolCalls: calls.get(entry.seq) ?? [],
-                },
-              }
-            : entry;
-        });
-        page.push(...derived.filter((entry) => entry.seq > afterSeq));
-        return page.slice(0, limit);
+        return this.pageAfter(task, ownerId, afterSeq, limit);
       },
       (entries) => ({ entries: entries.length }),
     );
+  }
+
+  /**
+   * A window of the employee's history (live-feed KD-5): the last `limit` shown entries, the `limit` before
+   * `beforeSeq`, or the page after `afterSeq` as `history` reads it. One more stored entry is read to tell
+   * `hasOlder`; the derived stop entries come last, so only a window that reaches the end holds them.
+   */
+  window({
+    agentId,
+    ownerId,
+    beforeSeq,
+    afterSeq,
+    limit,
+  }: HistoryWindowRequest): Promise<HistoryWindow> {
+    const direction =
+      afterSeq !== undefined
+        ? 'after'
+        : beforeSeq !== undefined
+          ? 'before'
+          : 'last';
+    return this.logged(
+      'window',
+      {
+        agentId,
+        ownerId,
+        direction,
+        seq: afterSeq ?? beforeSeq ?? null,
+        limit,
+      },
+      async () => {
+        const task = await agentTask(this.tasks, agentId, ownerId);
+        if (afterSeq !== undefined)
+          return {
+            entries: await this.pageAfter(task, ownerId, afterSeq, limit),
+            // Entry 1 is the session's `task`, which is shown: a page after any later entry has older ones.
+            hasOlder: afterSeq > 0,
+          };
+        const stored = await this.entries.pageBefore(
+          agentId,
+          beforeSeq,
+          limit + 1,
+        );
+        const derived = (await this.derivedEntries(task, ownerId)).filter(
+          (entry) => beforeSeq === undefined || entry.seq < beforeSeq,
+        );
+        const shown = [...(await this.shown(task, stored)), ...derived];
+        return {
+          entries: shown.slice(-limit),
+          hasOlder: shown.length > limit,
+        };
+      },
+      ({ entries, hasOlder }) => ({ entries: entries.length, hasOlder }),
+    );
+  }
+
+  /**
+   * The successful results of the named tools of the agent and the employee's first message after each, in order
+   * (live-feed KD-6): the selection the record in focus and a test run's summary read instead of the whole history.
+   */
+  successfulResults(
+    agentId: string,
+    ownerId: string,
+    tools: readonly string[],
+  ): Promise<AgentHistoryEntry[]> {
+    return this.logged(
+      'successfulResults',
+      { agentId, ownerId, tools },
+      async () => {
+        await agentTask(this.tasks, agentId, ownerId);
+        const found = await this.entries.successfulResults(agentId, tools);
+        return found.map((entry) =>
+          entry.kind === 'tool_result' ? shownResult(entry) : entry,
+        );
+      },
+      (entries) => ({ entries: entries.length }),
+    );
+  }
+
+  /** The page after `afterSeq` of the owner's agent `task`, the derived stop entries included. */
+  private async pageAfter(
+    task: Task,
+    ownerId: string,
+    afterSeq: number,
+    limit: number,
+  ): Promise<AgentHistoryEntry[]> {
+    const derived = await this.derivedEntries(task, ownerId);
+    // The page is cut by the query after the call records are left out, so a page shorter than
+    // `limit` is the end of the history.
+    const stored = await this.entries.page(task.taskId, afterSeq, limit);
+    const page = await this.shown(task, stored);
+    page.push(...derived.filter((entry) => entry.seq > afterSeq));
+    return page.slice(0, limit);
+  }
+
+  /** The entries a stopped agent's history ends with (Flow 7); none for any other agent. */
+  private async derivedEntries(
+    task: Task,
+    ownerId: string,
+  ): Promise<AgentHistoryEntry[]> {
+    if (task.status !== stopped) return [];
+    return stopEntries(
+      { history: this.entries, messageRows: this.messageRows },
+      { task, parent: await parentOf(this.tasks, task, ownerId) },
+    );
+  }
+
+  /** Stored entries as the employee reads them: each answer with its calls, each result without the child's id. */
+  private async shown(
+    task: Task,
+    stored: readonly PageEntry[],
+  ): Promise<AgentHistoryEntry[]> {
+    const answers = stored.filter((entry) => entry.kind === 'model_answer');
+    const calls = await this.callsOf(
+      task.taskId,
+      answers,
+      task.status === stopped,
+    );
+    return stored.map((entry) => {
+      if (entry.kind === 'tool_result') return shownResult(entry);
+      return entry.kind === 'model_answer'
+        ? {
+            ...entry,
+            content: {
+              text: entry.content.text,
+              toolCalls: calls.get(entry.seq) ?? [],
+            },
+          }
+        : entry;
+    });
   }
 
   confirmations(rootId: string, ownerId: string): Promise<AgentConfirmation[]> {
@@ -297,6 +400,13 @@ export class ViewOperations {
                   : {
                       approve: resolved.approve,
                       args: resolved.args ?? payload.args,
+                      ...(resolved.allowInConversation === true
+                        ? { allowInConversation: true as const }
+                        : {}),
+                      // An answered question card's answers; a skipped one has none (agent-guidance KD-1).
+                      ...(resolved.answers === undefined
+                        ? {}
+                        : { answers: resolved.answers }),
                     },
               createdAt: question.createdAt,
               resolvedAt: status === 'resolved' ? question.finishedAt : null,

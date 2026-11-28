@@ -16,6 +16,12 @@ Agent OS is a proof of concept, not a product in production.
 - Simple, readable code first: clear names, small functions, straight control flow. Clever code loses to obvious code.
 - Describe the architecture: layers, package boundaries and dependency direction are written down (Design Docs, ADRs, `docs/code-system/`) and kept in step with the code.
 - Use common patterns: solve a problem the way the codebase and the ecosystem already solve it. A new pattern needs a reason and goes into the architecture description.
+- Review red flags for simplicity — each needs a reason or goes:
+  - a wrapper, interface or base class that only forwards to one implementation;
+  - an option, parameter or flag that has one value or one caller, or a boolean argument that switches what a function does;
+  - a helper or file used once whose few lines belong next to their caller;
+  - a `try/catch` that swallows an error or returns a default, a fallback the requirement does not ask for;
+  - nesting deeper than three levels, or code written for a future need.
 
 ## Backend structure
 
@@ -34,6 +40,8 @@ Each app and package has its own `CLAUDE.md` with the rules local to it.
 - Many tests are a cost, not a virtue: they mostly duplicate each other and only add run time. Before adding a test, check that no existing test already catches the same defect.
 - No tests for trivial code, library behaviour, or the same behaviour at several levels. One test at the lowest level that catches the defect.
 - When code is deleted or replaced, delete its tests with it.
+- Before writing a test, answer: which concrete defect does it catch, which acceptance criterion or risk does it trace to, and would it fail if the code under it were wrong? No answer, no test.
+- Junk tests to avoid: asserting a constant, an enum's members or a type's shape; asserting what a mock returns or how often it was called as the outcome; an expected value computed by the code under test; a whole-object snapshot; a test with no assertion, or skipped; one test per case where rows of one table do.
 
 ## Logging
 

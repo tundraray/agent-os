@@ -1,43 +1,55 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   inRootLaunchSet,
-  type AgentHistoryEntry,
   type RootSession,
+  signalConversation,
   ViewOperations,
   ControlOperations,
   StartOperations,
 } from '@agent-os/agents';
 import {
-  DocumentRefSchema,
-  HISTORY_PAGE_SIZE,
-  THREAD_PAGE_SIZE,
   type AgentNode,
   type ChipRecord,
   type ConversationView,
   type Document,
-  type HistoryEntry,
+  DocumentRefSchema,
   type DocumentSummary,
+  type ForkRequest,
+  HISTORY_PAGE_SIZE,
+  type HistoryEntry,
+  type HistoryQuery,
   type InterruptResponse,
+  isStartable,
+  type NotificationLevel,
   type ScheduleMark,
+  type SendMessageRequest,
   type SendMessageResponse,
+  type TestRunSummary,
+  THREAD_PAGE_SIZE,
   type ThreadDocumentsView,
   type ThreadForksResponse,
   type ThreadListResponse,
-  type TestRunSummary,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import {
   AgentsRepository,
+  ConversationsRepository,
   ConversationTasksRepository,
+  Db,
   DocumentsRepository,
   RuntimeModelCallsRepository,
+  RuntimeTasksRepository,
+  SendKeysRepository,
+  TrackerTasksRepository,
   type TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
 import {
   Inbox,
   isFinished,
+  QUESTION_TASK_TYPE,
   RuntimeError,
   type Task,
   TaskControl,
@@ -45,18 +57,19 @@ import {
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
-import { chatStatus } from './chat-status';
+import { chatStatus, conversationState } from './chat-status';
 import { forkRefused, httpError, threadNotFound } from './chat.errors';
 import {
   focusOf,
-  nextAfterSeqOf,
+  focusTools,
   toAgentTree,
   toConfirmation,
   toHistoryEntry,
   toPending,
+  toWindowFields,
   trainingOf,
 } from './conversation-view';
-import { testRunSummary } from './test-run-summary';
+import { TEST_RUN_SUMMARY_TOOLS, testRunSummary } from './test-run-summary';
 import { encodeThreadCursor } from './thread-cursor';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { rootDescription } from './root-description';
@@ -92,7 +105,10 @@ function toDocumentSummary({
  */
 @Injectable()
 export class ConversationsService {
+  private readonly logger: Logger;
+
   constructor(
+    private readonly db: Db,
     private readonly titles: TitleService,
     @Inject(ViewOperations) private readonly views: ViewOperations,
     @Inject(ControlOperations) private readonly control: ControlOperations,
@@ -110,9 +126,23 @@ export class ConversationsService {
     private readonly sessionTasks: ConversationTasksRepository,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: RuntimeModelCallsRepository,
-  ) {}
+    @Inject(ConversationsRepository)
+    private readonly conversations: ConversationsRepository,
+    @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    @Inject(TrackerTasksRepository)
+    private readonly trackerTasks: TrackerTasksRepository,
+    /** The sender of the conversation's own events (`signalConversation`). */
+    @Inject(RuntimeTasksRepository)
+    private readonly signals: RuntimeTasksRepository,
+    @Inject(LOGGER) logger: Logger,
+  ) {
+    this.logger = logger.child({ service: 'chat.conversations' });
+  }
 
-  /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
+  /**
+   * A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`), each with its state
+   * (improvements design-server.md, Flow 4): the facts of the whole page are read in one query.
+   */
   async list(ownerId: string, cursor?: string): Promise<ThreadListResponse> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
     const roots = await this.views.roots({
@@ -124,8 +154,22 @@ export class ConversationsService {
     });
     const page = roots.slice(0, THREAD_PAGE_SIZE);
     const last = page.at(-1);
+    const facts = new Map(
+      (
+        await this.conversations.stateFacts(
+          page.map((root) => root.rootId),
+          QUESTION_TASK_TYPE,
+        )
+      ).map((row) => [row.rootId, row]),
+    );
     return {
-      threads: page.map(toThreadSummary),
+      threads: page.map((root) => {
+        const rootFacts = facts.get(root.rootId);
+        return {
+          ...toThreadSummary(root),
+          state: rootFacts === undefined ? null : conversationState(rootFacts),
+        };
+      }),
       nextCursor:
         roots.length > THREAD_PAGE_SIZE && last
           ? encodeThreadCursor({ updatedAt: last.updatedAt, id: last.rootId })
@@ -144,16 +188,45 @@ export class ConversationsService {
       forkable: true,
       forkedFrom: null,
       forkCount: 0,
+      notificationLevel: null,
     };
   }
 
   /**
-   * Flow 1 of design-fork.md: forks the owner's conversation into a new one waiting for a message. A refusal
-   * by the tree is 409 `FORK_REFUSED` with its reason, a refused start 409 `START_REFUSED`; nothing is created.
+   * Flow 1 of design-fork.md and Flow 3 of improvements design-server.md: forks the owner's conversation — whole or
+   * through the message `throughSeq` into a new one waiting for a message, or before the message `edit.seq` with the
+   * edited text, which the fork answers. The edit's chip is checked first, as a send's. A boundary on no message it
+   * may end at is 400 `VALIDATION_FAILED`, a refusal by the tree 409 `FORK_REFUSED` with its reason, a refused start
+   * 409 `START_REFUSED`; nothing is created.
    */
-  async fork(threadId: string, ownerId: string): Promise<ThreadSummary> {
+  async fork(
+    threadId: string,
+    ownerId: string,
+    { throughSeq, edit }: ForkRequest,
+  ): Promise<ThreadSummary> {
     await this.owned(threadId, ownerId);
-    const forked = await this.starts.fork({ threadId, ownerId });
+    const record =
+      edit?.recordId === undefined
+        ? undefined
+        : await this.chipOf(ownerId, edit.recordId);
+    const forked = await this.starts.fork({
+      threadId,
+      ownerId,
+      ...(edit !== undefined
+        ? {
+            boundary: {
+              kind: 'edit',
+              seq: edit.seq,
+              text: edit.text,
+              ...(record === undefined ? {} : { record }),
+            },
+          }
+        : {}),
+      ...(throughSeq !== undefined
+        ? { boundary: { kind: 'through', throughSeq } }
+        : {}),
+    });
+    if (forked.kind === 'not_a_message') throw httpError('VALIDATION_FAILED');
     if (forked.kind === 'refused') throw forkRefused(forked.reason);
     return this.get(forked.threadId, ownerId);
   }
@@ -182,62 +255,164 @@ export class ConversationsService {
   }
 
   /**
-   * DC-1: the first message creates the root, with the conversation's id and the text as its task
-   * (`messageId` null); any later one goes into the root's queue and moves the conversation up. The
-   * title starts in the background while it is empty (DC-2). A record chip is checked first (KD-4,
-   * DC-6), so a refused chip leaves the queue untouched. A root the start procedure refuses is
-   * `START_REFUSED` from `agents`, and no conversation appears. The id of a deleted conversation is
-   * taken by its rows: `start` gets `TASK_EXISTS` and `owned()` answers 404, for its owner and anyone
-   * else alike. A send to a conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete
-   * and the send take turns on the root task's lock.
-   *
-   * A schedule's send (schedules KD-2, KD-6) carries its mark into the message or the root's `task` entry and the
-   * title of a new conversation, and starts no title generation. Inside a caller's transaction every write of the
-   * send joins it, so the caller commits the message or the new root with its own rows.
+   * The employee's send (runtime-fixes design-send.md, KD-1, KD-2, Flow 1, Flow 2): one transaction takes the send key
+   * first, then checks the chip and delivers the message. A key this employee has already sent is a repeat:
+   * `messageId` null and nothing is created. A refusal rolls the key back with the rest, so a send after it runs
+   * anew. The title starts after the commit, for a new send only (DC-2).
    */
   async send(
     threadId: string,
     ownerId: string,
-    text: string,
-    recordId?: string,
-    scheduled?: { readonly schedule: ScheduleMark; readonly title?: string },
+    { text, recordId, sendKey }: SendMessageRequest,
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
-    const record =
-      recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
-    const chip = {
-      ...(record === undefined ? {} : { record }),
-      ...(scheduled === undefined ? {} : { schedule: scheduled.schedule }),
-    };
-    const existing = await this.views.root(threadId, ownerId);
-    const created =
-      existing === undefined &&
-      (await this.start(threadId, ownerId, text, {
-        ...chip,
-        ...(scheduled?.title === undefined ? {} : { title: scheduled.title }),
-      }));
-    let messageId: string | null = null;
-    let untitled = true;
-    if (!created) {
-      // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
-      // task that is not their conversation, another employee's included.
-      const root = existing ?? (await this.owned(threadId, ownerId));
-      ({ messageId } = await this.control.send({
-        agentId: threadId,
-        ownerId,
-        text,
-        ...chip,
-      }));
-      await this.control.touchRoot(threadId, ownerId);
-      untitled = root.title === '';
-    }
-    if (untitled && scheduled === undefined)
+    const sent = await this.db.transaction(async () => {
+      if (!(await this.sendKeys.claim(ownerId, sendKey))) return undefined;
+      const record =
+        recordId === undefined
+          ? undefined
+          : await this.chipOf(ownerId, recordId);
+      return this.deliver(threadId, ownerId, text, record ? { record } : {});
+    });
+    this.logger.info('conversation send', {
+      sendKey,
+      ownerId,
+      threadId,
+      outcome: sent === undefined ? 'repeat' : 'new',
+    });
+    if (sent === undefined) return { messageId: null };
+    if (sent.untitled)
       this.titles.ensure({
         threadId,
         ownerId,
-        ...(created ? { firstText: text } : {}),
+        ...(sent.created ? { firstText: text } : {}),
       });
+    return { messageId: sent.messageId };
+  }
+
+  /**
+   * A send without a send key, of a schedule (schedules KD-2, KD-6) and of the tracker (task-tracker KD-3): a
+   * schedule's mark goes into the message or the root's `task` entry; `title` names a new conversation and
+   * `trackerTask` marks its root's input. No title generation starts. Inside the caller's transaction every write of
+   * the send joins it, so the caller commits the message or the new root with its own rows.
+   */
+  async sendWithoutKey(
+    threadId: string,
+    ownerId: string,
+    text: string,
+    recordId: string | undefined,
+    options: {
+      readonly schedule?: ScheduleMark;
+      readonly title?: string;
+      readonly trackerTask?: true;
+    } = {},
+  ): Promise<SendMessageResponse> {
+    if (!isUuid(threadId)) throw threadNotFound();
+    const { schedule, ...opening } = options;
+    const record =
+      recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
+    const { messageId } = await this.deliver(
+      threadId,
+      ownerId,
+      text,
+      {
+        ...(record === undefined ? {} : { record }),
+        ...(schedule === undefined ? {} : { schedule }),
+      },
+      opening,
+    );
     return { messageId };
+  }
+
+  /**
+   * DC-1: the first message creates the root, with the conversation's id and the text as its task (`messageId` null);
+   * any later one goes into the root's queue and moves the conversation up. `untitled` — the conversation's title is
+   * empty; `opening` — the title and the tracker mark of a new conversation. A root the start procedure refuses is `START_REFUSED` from `agents`, and
+   * no conversation appears. The id of a deleted conversation is taken by its rows: `start` gets `TASK_EXISTS` and
+   * `owned()` answers 404, for its owner and anyone else alike. A send to a conversation deleted meanwhile is
+   * `AGENT_NOT_FOUND` of `agents`: the delete and the send take turns on the root task's lock.
+   */
+  private async deliver(
+    threadId: string,
+    ownerId: string,
+    text: string,
+    chip: { readonly record?: ChipRecord; readonly schedule?: ScheduleMark },
+    opening: { readonly title?: string; readonly trackerTask?: true } = {},
+  ): Promise<{
+    readonly messageId: string | null;
+    readonly created: boolean;
+    readonly untitled: boolean;
+  }> {
+    const existing = await this.views.root(threadId, ownerId);
+    if (
+      existing === undefined &&
+      (await this.start(threadId, ownerId, text, { ...chip, ...opening }))
+    )
+      return { messageId: null, created: true, untitled: true };
+    // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
+    // task that is not their conversation, another employee's included.
+    const root = existing ?? (await this.owned(threadId, ownerId));
+    const { messageId } = await this.control.send({
+      agentId: threadId,
+      ownerId,
+      text,
+      ...chip,
+    });
+    await this.control.touchRoot(threadId, ownerId);
+    return { messageId, created: false, untitled: root.title === '' };
+  }
+
+  /**
+   * Flow 4 of improvements design-server.md: raises the owner's «seen through» mark of the conversation, never down and
+   * never past its last entry. A malformed, missing or foreign id is `THREAD_NOT_FOUND`.
+   */
+  async markSeen(
+    threadId: string,
+    ownerId: string,
+    throughSeq: number,
+  ): Promise<void> {
+    const marked =
+      isUuid(threadId) &&
+      (await this.conversations.markSeen(threadId, ownerId, throughSeq));
+    if (!marked) throw threadNotFound();
+  }
+
+  /**
+   * Flow 4 of live-feed design-server.md: writes the owner's own level of the conversation, `null` — as the owner's
+   * default, with the conversation's `summary` event in the same transaction. A malformed, missing, deleted or
+   * foreign id is `THREAD_NOT_FOUND`, and nothing is written or sent.
+   */
+  async setNotificationLevel(
+    threadId: string,
+    ownerId: string,
+    level: NotificationLevel | null,
+  ): Promise<void> {
+    const written =
+      isUuid(threadId) &&
+      (await this.db.transaction(async () => {
+        if (
+          !(await this.conversations.setNotificationLevel(
+            threadId,
+            ownerId,
+            level,
+          ))
+        )
+          return false;
+        await signalConversation(this.signals, {
+          ownerId,
+          event: {
+            type: 'change',
+            data: { threadId, kind: 'summary' },
+          },
+        });
+        return true;
+      }));
+    if (!written) throw threadNotFound();
+    this.logger.info('conversation notification level set', {
+      threadId,
+      ownerId,
+      level,
+    });
   }
 
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */
@@ -261,49 +436,50 @@ export class ConversationsService {
   }
 
   /**
-   * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a page of
-   * the root's history after `afterSeq`, its queue, the decisions of the whole tree in every status, the
-   * agents under the root and the record in focus (deep-agents KD-6), read from the root's whole history.
+   * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a window of
+   * the root's history (live-feed KD-5), its queue, the decisions of the whole tree in every status, the
+   * agents under the root and the record in focus (deep-agents KD-6), read from a selection of the root's
+   * history (live-feed KD-6), and the tracker task linked to it, read after the owner check (task-tracker KD-1).
    */
   async view(
     threadId: string,
     ownerId: string,
-    afterSeq: number,
+    query: HistoryQuery,
   ): Promise<ConversationView> {
-    const thread = toThreadSummary(await this.owned(threadId, ownerId));
-    const [
-      task,
-      views,
-      entries,
-      messages,
-      confirmations,
-      rootHistory,
-      training,
-    ] = await Promise.all([
-      this.tasks.get(threadId, ownerId),
-      this.views.list(threadId, ownerId),
-      this.views.history({
-        agentId: threadId,
-        ownerId,
-        afterSeq,
-        limit: HISTORY_PAGE_SIZE,
-      }),
-      this.inbox.listPending(threadId, ownerId),
-      this.views.confirmations(threadId, ownerId),
-      this.wholeHistory(threadId, ownerId),
-      this.trainings.find(threadId),
-    ]);
+    const owned = await this.owned(threadId, ownerId);
+    const thread = toThreadSummary(owned);
+    const [task, views, window, messages, confirmations, training, tracked] =
+      await Promise.all([
+        this.tasks.get(threadId, ownerId),
+        this.views.list(threadId, ownerId),
+        this.views.window({
+          agentId: threadId,
+          ownerId,
+          ...query,
+          limit: HISTORY_PAGE_SIZE,
+        }),
+        this.inbox.listPending(threadId, ownerId),
+        this.views.confirmations(threadId, ownerId),
+        this.trainings.find(threadId),
+        this.trackerTasks.findByConversation(threadId),
+      ]);
     const root = views.find((view) => view.agentId === threadId);
     if (root === undefined)
       throw new Error(`Conversation ${threadId} has no view of its root`);
     const decisions = confirmations.map((confirmation) =>
       toConfirmation(confirmation, views),
     );
-    const history = rootHistory.map(toHistoryEntry);
-    const run =
+    const rootDecisions = decisions.filter(
+      (decision) => decision.agentId === threadId,
+    );
+    const [focusEntries, run] = await Promise.all([
+      this.selection(threadId, ownerId, focusTools(rootDecisions)),
       training?.description == null
         ? null
-        : await this.runSummary(training, task, history);
+        : this.selection(threadId, ownerId, TEST_RUN_SUMMARY_TOOLS).then(
+            (entries) => this.runSummary(training, task, entries),
+          ),
+    ]);
     return {
       thread,
       chat: {
@@ -316,14 +492,13 @@ export class ConversationsService {
         rootAgentId: threadId,
         model: root.model,
       },
-      entries: entries.map(toHistoryEntry),
-      nextAfterSeq: nextAfterSeqOf(entries),
+      ...toWindowFields(window, query),
       pending: toPending(messages, views, confirmations),
       decisions,
       agents: toAgentTree(views, threadId),
       focus: focusOf(
-        history,
-        decisions.filter((decision) => decision.agentId === threadId),
+        focusEntries,
+        rootDecisions,
         views.filter((view) => view.parentId === threadId),
       ),
       training: trainingOf(
@@ -333,10 +508,15 @@ export class ConversationsService {
           (await this.agents.exists(training.agentId)),
         run,
       ),
+      seenThroughSeq: owned.seenThroughSeq,
+      trackerTask:
+        tracked === undefined
+          ? null
+          : { id: tracked.task.id, title: tracked.task.title },
     };
   }
 
-  /** The test run's summary (KD-9) from its row, root, pool, versions, spend and the trainer's whole history. */
+  /** The test run's summary (KD-9) from its row, root, pool, versions, spend and the selection of the trainer's history. */
   private async runSummary(
     row: TrainingRow,
     root: Task,
@@ -363,22 +543,15 @@ export class ConversationsService {
     });
   }
 
-  /** The root's history from its first entry, page by page. */
-  private async wholeHistory(
+  /** The successful results of the root's named tools and the employee's first message after each (live-feed KD-6). */
+  private async selection(
     threadId: string,
     ownerId: string,
-  ): Promise<AgentHistoryEntry[]> {
-    const entries: AgentHistoryEntry[] = [];
-    for (;;) {
-      const page = await this.views.history({
-        agentId: threadId,
-        ownerId,
-        afterSeq: entries.at(-1)?.seq ?? 0,
-        limit: HISTORY_PAGE_SIZE,
-      });
-      entries.push(...page);
-      if (page.length < HISTORY_PAGE_SIZE) return entries;
-    }
+    tools: readonly string[],
+  ): Promise<HistoryEntry[]> {
+    return (await this.views.successfulResults(threadId, ownerId, tools)).map(
+      toHistoryEntry,
+    );
   }
 
   /** The agents of the conversation under its root (AC-24.1). */
@@ -430,6 +603,7 @@ export class ConversationsService {
       readonly record?: ChipRecord;
       readonly schedule?: ScheduleMark;
       readonly title?: string;
+      readonly trackerTask?: true;
     },
   ): Promise<boolean> {
     try {
@@ -455,7 +629,12 @@ export class ConversationsService {
    */
   private async chipOf(ownerId: string, recordId: string): Promise<ChipRecord> {
     const resolved = await this.library.resolve(ownerId, recordId);
-    if (resolved === null || !inRootLaunchSet(resolved))
+    // A skill never starts: it answers as a missing record (agent-guidance KD-5).
+    if (
+      resolved === null ||
+      !isStartable(resolved) ||
+      !inRootLaunchSet(resolved)
+    )
       throw libraryError('RECORD_NOT_FOUND');
     return { id: resolved.id, kind: resolved.kind, name: resolved.name };
   }

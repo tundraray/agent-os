@@ -142,5 +142,28 @@
     "args": { "document": "Документ", "offset": "Со строки", "limit": "Строк" }
   },
   "notepad_list": { "title": "Документы блокнота", "args": {} },
-  "notepad_past": { "title": "Прошлые документы", "args": {} }
+  "notepad_past": { "title": "Прошлые документы", "args": {} },
+  "ask_user": {
+    "title": "Вопрос сотруднику",
+    "args": { "questions": "Вопросы" }
+  },
+  "read_skill": { "title": "Чтение скилла", "args": { "name": "Скилл" } },
+  "set_personal_instructions": {
+    "title": "Личная инструкция",
+    "args": { "text": "Текст" }
+  },
+  "list_schedules": { "title": "Список расписаний", "args": {} },
+  "manage_schedule": {
+    "title": "Расписание",
+    "args": {
+      "action": "Действие",
+      "scheduleId": "Расписание",
+      "name": "Название",
+      "instruction": "Инструкция",
+      "agentId": "Агент",
+      "rule": "Когда",
+      "target": "Ответ",
+      "timeZone": "Часовой пояс"
+    }
+  }
 }

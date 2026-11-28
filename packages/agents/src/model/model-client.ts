@@ -44,12 +44,9 @@ import type {
 import { DATA_PREAMBLE } from './provider-messages';
 import {
   classifyRejection,
-  PROVIDER_RETRIES,
   type ProviderError,
   type ProviderRejectionReason,
-  pause,
-  providerRetryDelayMs,
-} from './retry-policy';
+} from './provider-rejection';
 import { tokensOfBytes, utf8Bytes } from './token-estimate';
 
 /**
@@ -68,8 +65,8 @@ export const CODE_RULE = [
 ].join('\n');
 
 /**
- * One text part of an agent's model call (KD-3): `offset` — where the part starts in the text of this
- * attempt; a retry starts again at 0. Parts are not stored anywhere.
+ * One text part of an agent's model call (KD-3): `offset` — where the part starts in the text of the
+ * call. Parts are not stored anywhere.
  */
 export interface TextDelta {
   readonly ownerId: string;
@@ -99,7 +96,7 @@ export interface ModelCallRequest {
   readonly tools: readonly AgentToolDefinition[];
   /** Whether the text parts go to `onTextDelta`: an answer of the agent does, a compaction summary does not. */
   readonly streamsText: boolean;
-  /** The step's signal: a cancel ends the call or the pause with an exception, never with a retry. */
+  /** The step's signal: a cancel ends the call with an exception. */
   readonly signal: AbortSignal;
   readonly logger: Logger;
   /** The caller is in a training tree (`ToolCaller.training`): the training budget is asked first (KD-5). */
@@ -114,7 +111,7 @@ export interface CompleteTextRequest {
   /** The one user message. */
   readonly prompt: string;
   readonly maxOutputTokens: number;
-  /** A cancel ends the call or the pause with an exception, never with a retry. */
+  /** A cancel ends the call with an exception. */
   readonly signal: AbortSignal;
 }
 
@@ -142,18 +139,19 @@ export type ModelFailureReason = Extract<
   | 'provider_key_rejected'
   | 'provider_unavailable'
   | 'provider_tools_rejected'
+  | 'context_overflow'
 >;
 
 /**
- * The provider is not ready (no request was sent), or it kept failing: a final status, or a retryable one
- * after both retries. Not a refusal of rights: nothing is audited (DC-10).
+ * The provider is not ready (no request was sent), or it rejected the one request (improvements KD-5).
+ * Not a refusal of rights: nothing is audited (DC-10).
  */
 export interface ModelError {
   readonly kind: 'model_error';
   readonly reason: ModelFailureReason;
   /** The provider's name, the first part of the model id. */
   readonly provider: string;
-  /** The provider's last status; `null` — no request, a network failure or a timeout. */
+  /** The provider's status; `null` — no request, a network failure or a timeout. */
   readonly statusCode: number | null;
 }
 
@@ -240,18 +238,23 @@ interface Connected {
   readonly connection: ProviderConnection;
 }
 
-/** What one attempt sends; `onText` gets the parts of this attempt only. */
-interface Attempt {
+/** What one model request sends; `onText` gets its text parts. */
+interface SentRequest {
   readonly call: AgentTurnCall;
   readonly signal: AbortSignal;
   readonly logger: Logger;
-  /** A fresh receiver of text parts per attempt, so a retry starts its offsets again at 0. */
-  readonly onText: () => (text: string) => void;
-  /** Writes the ledger row of one attempt at the verdict's price. */
+  readonly onText: (text: string) => void;
+  /** Writes the ledger row of the request at the verdict's price. */
   readonly record: (usage: CallUsage) => Promise<{ readonly callId: string }>;
 }
 
-/** The answer of the provider with the id of its ledger row, or the provider's final error after the retries. */
+/** The text a running agent call has streamed so far, and the signal of its step. */
+interface HeldText {
+  text: string;
+  readonly signal: AbortSignal;
+}
+
+/** The answer of the provider with the id of its ledger row, or the provider's error. */
 type Generated =
   | {
       readonly kind: 'generated';
@@ -278,7 +281,7 @@ function requestBytes(call: AgentTurnCall): number {
 }
 
 /**
- * The usage of an attempt that did not finish: the provider reports usage only when the stream finishes,
+ * The usage of a request that did not finish: the provider reports usage only when the stream finishes,
  * so the row is an estimate — the whole request as uncached input, the streamed text as output.
  */
 function estimatedUsage(sentBytes: number, streamedBytes: number): CallUsage {
@@ -292,7 +295,7 @@ function estimatedUsage(sentBytes: number, streamedBytes: number): CallUsage {
 
 /**
  * An answer whose provider reported no input tokens (some OpenAI-compatible servers): its usage is the
- * estimate of an unfinished attempt — the request and the answer's text in UTF-8 bytes (DC-11). Any other
+ * estimate of an unfinished request — the request and the answer's text in UTF-8 bytes (DC-11). Any other
  * answer is returned as it is. The turn client reports a missing count as zero, and a request is never empty.
  */
 function withReportedInput(
@@ -307,7 +310,7 @@ function withReportedInput(
 }
 
 /**
- * Whether the provider bills an attempt that did not finish — the one place that decides. It does once the
+ * Whether the provider bills a request that did not finish — the one place that decides. It does once the
  * answer began (a text part arrived before the failure, whatever the failure is), and when a cancel cut a
  * request that was sent. It does not when the provider rejected the request before any output: an HTTP
  * error answer (429, 5xx, 529) or a network failure before the stream, which is what an `AI_APICallError`
@@ -323,18 +326,20 @@ function isBilled(cut: {
 
 /**
  * The only place the package calls the model (KD-6). The model wrapper of KD-6 and KD-3: one streamed
- * request through the turn client, up to two retries of a provider error with pauses of 1000 and 3000 ms, a cancel that is never retried, and one token
- * ledger row per billed attempt — by its own statement, so it stays when the step is lost. An answered
- * attempt is recorded with the provider's usage; an attempt cut by a cancel, or by a failure after its
- * answer began, with an estimate, so a call interrupted before its answer ends still counts against the
- * quota. An attempt the provider rejected before any output is not billed and leaves no row (`isBilled`).
- * Each text part of an agent's answer goes to `onTextDelta` with its running `offset`; a retry starts
- * the parts again at offset 0.
+ * request through the turn client, never repeated — a provider error ends the call (improvements KD-5) —
+ * and one token ledger row when the request is billed, by its own statement, so it stays when the step is
+ * lost. An answered request is recorded with the provider's usage; one cut by a cancel, or by a failure
+ * after its answer began, with an estimate, so a call interrupted before its answer ends still counts
+ * against the quota. A request the provider rejected before any output is not billed and leaves no row
+ * (`isBilled`). Each text part of an agent's answer goes to `onTextDelta` with its running `offset`, and the
+ * text of the running answer is held by task until the call ends (`textOf`, runtime-fixes KD-2).
  */
 @Injectable()
 export class ModelClient {
   /** The package logger: `completeText` runs outside any step. */
   private readonly logger: Logger;
+  /** The text of each running agent call whose parts go to the feed, by task (KD-2). */
+  private readonly heldTexts = new Map<string, HeldText>();
 
   constructor(
     /** The seam of the model: Mastra in production, a scripted double in tests (plan Notes 9). */
@@ -345,7 +350,7 @@ export class ModelClient {
     private readonly config: Pick<AgentsConfig, 'maxOutputTokens'>,
     @Inject(AGENTS_LOGGER) logger: Logger,
     /**
-     * Asked once before the first attempt of every call: a refused call does not start (KD-4). `completeText`
+     * Asked once before every call: a refused call does not start (KD-4). `completeText`
      * takes its model from `defaultChatModel`.
      */
     @Inject(ACCESS_GATE)
@@ -355,7 +360,7 @@ export class ModelClient {
     private readonly providers: Pick<AgentsProviders, 'connection'>,
     /** Gets the `access_denied` record of a refused title (KD-6); a step's refusal is audited by the step. */
     @Inject(ACCESS_AUDIT) private readonly audit: AccessAudit,
-    /** Times the pauses between retries. */
+    /** Times the request for the logs. */
     @Inject(CLOCK) private readonly clock: Clock,
     /** Asked before every call of a training tree, and only then (self-learning design-training.md KD-5). */
     @Inject(TrainingBudget)
@@ -369,11 +374,11 @@ export class ModelClient {
   }
 
   /**
-   * Asks `AccessGate.model` once, before the first attempt: a refusal gives `not_started` with the
-   * verdict and the model is not called; provider retries are not checked again. Then reads the provider's
-   * connection: a provider that is not ready gives `model_error` with its reason, without a request. An
-   * answered attempt is a ledger row, and so is one cut by a cancel or by a failure after its answer began;
-   * an attempt the provider rejected before any output is not.
+   * Asks `AccessGate.model` once, before the request: a refusal gives `not_started` with the verdict and
+   * the model is not called. Then reads the provider's connection: a provider that is not ready gives
+   * `model_error` with its reason, without a request. An answered request is a ledger row, and so is one
+   * cut by a cancel or by a failure after its answer began; a request the provider rejected before any
+   * output is not.
    */
   async call(request: ModelCallRequest): Promise<ModelCallResult> {
     // At the cap the budget has already stopped the tree and cut off the calling step, which leaves without writes.
@@ -393,29 +398,31 @@ export class ModelClient {
     if (verdict.kind === 'refused') return { kind: 'not_started', verdict };
     const connected = await this.connectionOf(request.model, request.logger);
     if (connected.kind === 'model_error') return connected;
-    const result = await this.generate({
-      call: {
-        purpose: 'agent_turn',
-        agentName: request.agentName,
-        model: request.model,
-        connection: connected.connection,
-        instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
-        messages: request.messages,
-        tools: request.tools,
-        maxOutputTokens: this.config.maxOutputTokens,
-      },
-      signal: request.signal,
-      logger: request.logger,
-      onText: this.deltaReceiver(request),
-      record: (usage) =>
-        this.ledger.record({
-          ownerId: request.ownerId,
-          taskId: request.taskId,
+    const result = await this.holdingText(request, (onText) =>
+      this.generate({
+        call: {
+          purpose: 'agent_turn',
+          agentName: request.agentName,
           model: request.model,
-          price: verdict.price,
-          usage,
-        }),
-    });
+          connection: connected.connection,
+          instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
+          messages: request.messages,
+          tools: request.tools,
+          maxOutputTokens: this.config.maxOutputTokens,
+        },
+        signal: request.signal,
+        logger: request.logger,
+        onText,
+        record: (usage) =>
+          this.ledger.record({
+            ownerId: request.ownerId,
+            taskId: request.taskId,
+            model: request.model,
+            price: verdict.price,
+            usage,
+          }),
+      }),
+    );
     if (result.kind === 'model_error') return result;
     const { generation, callId, durationMs } = result;
     const { usage } = generation;
@@ -442,9 +449,10 @@ export class ModelClient {
 
   /**
    * One call of the default chat model (`AccessGate.defaultChatModel`) without tools and outside any task:
-   * the same verdict, provider readiness, retries and cancel as `call`, a ledger row without `taskId`, no
-   * text parts to the hook. No default chat model rejects with `ModelNotConfiguredError` before anything
-   * else. A provider that is not ready or keeps failing rejects with an error that names the reason. A
+   * the same verdict, provider readiness, single request and cancel as `call`, a ledger row without
+   * `taskId`, no text parts to the hook. No default chat model rejects with `ModelNotConfiguredError`
+   * before anything else. A provider that is not ready or rejects the request rejects with an error that
+   * names the reason. A
    * refused call rejects before the call: a disabled owner with `OwnerDisabledError`, any other refusal
    * with `ModelRefusedError` after its `access_denied` record.
    */
@@ -484,7 +492,7 @@ export class ModelClient {
       },
       signal: request.signal,
       logger,
-      onText: () => () => {},
+      onText: () => {},
       record: (usage) =>
         this.ledger.record({
           ownerId: request.ownerId,
@@ -528,7 +536,7 @@ export class ModelClient {
     return { kind: 'model_error', reason, provider, statusCode: null };
   }
 
-  /** The gate's verdict for one call, asked once before the first attempt; a refusal is logged. */
+  /** The gate's verdict for one call, asked once before the request; a refusal is logged. */
   private async verdictOf(
     ownerId: string,
     model: string,
@@ -546,118 +554,133 @@ export class ModelClient {
   }
 
   /**
-   * Runs the attempts until an answer, a final provider error, or a cancel (thrown). An answered attempt
+   * Sends the one request: an answer, the provider's error, or a cancel (thrown). An answered request
    * leaves one ledger row, an unfinished one only when `isBilled` says so.
    */
-  private async generate(attempt: Attempt): Promise<Generated> {
-    const sentBytes = requestBytes(attempt.call);
-    const { connection } = attempt.call;
-    const adapter = providerAdapter(connection.kind);
-    for (let retries = 0; ; retries += 1) {
-      attempt.signal.throwIfAborted();
-      const startedAt = this.clock.now().getTime();
-      const onText = attempt.onText();
-      let streamedBytes = 0;
-      let generation: AgentTurnGeneration;
-      try {
-        generation = await this.turnClient.streamTurn(attempt.call, {
-          signal: attempt.signal,
-          onText: (text) => {
-            streamedBytes += utf8Bytes(text);
-            onText(text);
-          },
-        });
-      } catch (error) {
-        const providerError = classifyRejection(error, adapter);
-        const { aborted } = attempt.signal;
-        if (isBilled({ streamedBytes, aborted, providerError })) {
-          const usage = estimatedUsage(sentBytes, streamedBytes);
-          const { callId } = await attempt.record(usage);
-          attempt.logger.warn(
-            'unfinished model attempt recorded with estimated usage',
-            {
-              model: attempt.call.model,
-              callId,
-              ...usage,
-              estimated: true,
-              aborted,
-              attempt: retries + 1,
-              durationMs: this.clock.now().getTime() - startedAt,
-            },
-          );
-        }
-        attempt.signal.throwIfAborted();
-        if (providerError === null) throw error;
-        // The logger's mask hides any remembered key the provider might echo in its body (KD-7).
-        attempt.logger.warn('model call failed', {
-          model: attempt.call.model,
-          provider: connection.name,
-          reason: providerError.reason,
-          statusCode: providerError.statusCode,
-          responseBody: providerError.responseBody,
-          retryable: providerError.retryable,
-          attempt: retries + 1,
-          durationMs: this.clock.now().getTime() - startedAt,
-        });
-        if (!providerError.retryable || retries === PROVIDER_RETRIES) {
-          return {
-            kind: 'model_error',
-            reason: chatReason(providerError.reason),
-            provider: connection.name,
-            statusCode: providerError.statusCode,
-          };
-        }
-        await pause(
-          this.clock,
-          providerRetryDelayMs(retries + 1),
-          attempt.signal,
-        );
-        continue;
-      }
-      const answered = withReportedInput(generation, sentBytes);
-      const { callId } = await attempt.record(answered.usage);
-      if (answered !== generation) {
-        attempt.logger.warn(
-          'model answer without input tokens recorded with estimated usage',
+  private async generate(sent: SentRequest): Promise<Generated> {
+    const sentBytes = requestBytes(sent.call);
+    const { connection } = sent.call;
+    sent.signal.throwIfAborted();
+    const startedAt = this.clock.now().getTime();
+    let streamedBytes = 0;
+    let generation: AgentTurnGeneration;
+    try {
+      generation = await this.turnClient.streamTurn(sent.call, {
+        signal: sent.signal,
+        onText: (text) => {
+          streamedBytes += utf8Bytes(text);
+          sent.onText(text);
+        },
+      });
+    } catch (error) {
+      const providerError = classifyRejection(
+        error,
+        providerAdapter(connection.kind),
+      );
+      const { aborted } = sent.signal;
+      if (isBilled({ streamedBytes, aborted, providerError })) {
+        const usage = estimatedUsage(sentBytes, streamedBytes);
+        const { callId } = await sent.record(usage);
+        sent.logger.warn(
+          'unfinished model request recorded with estimated usage',
           {
-            model: attempt.call.model,
-            provider: connection.name,
+            model: sent.call.model,
             callId,
-            ...answered.usage,
+            ...usage,
             estimated: true,
-            attempt: retries + 1,
+            aborted,
+            durationMs: this.clock.now().getTime() - startedAt,
           },
         );
       }
-      return {
-        kind: 'generated',
-        generation: answered,
-        callId,
+      sent.signal.throwIfAborted();
+      if (providerError === null) throw error;
+      // The logger's mask hides any remembered key the provider might echo in its body (KD-7).
+      sent.logger.warn('model call failed', {
+        model: sent.call.model,
+        provider: connection.name,
+        reason: providerError.reason,
+        statusCode: providerError.statusCode,
+        responseBody: providerError.responseBody,
         durationMs: this.clock.now().getTime() - startedAt,
+      });
+      return {
+        kind: 'model_error',
+        reason: chatReason(providerError.reason),
+        provider: connection.name,
+        statusCode: providerError.statusCode,
       };
+    }
+    const answered = withReportedInput(generation, sentBytes);
+    const { callId } = await sent.record(answered.usage);
+    if (answered !== generation) {
+      sent.logger.warn(
+        'model answer without input tokens recorded with estimated usage',
+        {
+          model: sent.call.model,
+          provider: connection.name,
+          callId,
+          ...answered.usage,
+          estimated: true,
+        },
+      );
+    }
+    return {
+      kind: 'generated',
+      generation: answered,
+      callId,
+      durationMs: this.clock.now().getTime() - startedAt,
+    };
+  }
+
+  /**
+   * The text the model has written so far in the task's running agent call (KD-2): its text parts only, never
+   * a tool call; `''` when no such call runs or its step's signal was aborted.
+   */
+  textOf(taskId: string): string {
+    const held = this.heldTexts.get(taskId);
+    return held === undefined || held.signal.aborted ? '' : held.text;
+  }
+
+  /**
+   * Runs one request of an agent call with its text parts going to the feed and, when the call streams its
+   * text (`streamsText`), held by task until the call ends in any way (KD-2). A call of a cut-off step that ends
+   * after the task's next call began releases only its own text.
+   */
+  private async holdingText<T>(
+    request: ModelCallRequest,
+    send: (onText: (text: string) => void) => Promise<T>,
+  ): Promise<T> {
+    const feed = this.deltaReceiver(request);
+    if (!request.streamsText) return send(feed);
+    const held: HeldText = { text: '', signal: request.signal };
+    this.heldTexts.set(request.taskId, held);
+    try {
+      return await send((text) => {
+        held.text += text;
+        feed(text);
+      });
+    } finally {
+      if (this.heldTexts.get(request.taskId) === held)
+        this.heldTexts.delete(request.taskId);
     }
   }
 
-  /** The text parts of one attempt of an agent's call, with offsets from 0, to the hook. */
-  private deltaReceiver(
-    request: ModelCallRequest,
-  ): () => (text: string) => void {
+  /** The text parts of an agent's call, with offsets from 0, to the hook. */
+  private deltaReceiver(request: ModelCallRequest): (text: string) => void {
     const onTextDelta = this.onTextDelta;
-    if (onTextDelta === undefined || !request.streamsText)
-      return () => () => {};
-    return () => {
-      let offset = 0;
-      return (text) => {
-        const delta: TextDelta = {
-          ownerId: request.ownerId,
-          rootId: request.rootId,
-          agentId: request.taskId,
-          offset,
-          text,
-        };
-        offset += text.length;
-        deliver(onTextDelta, delta, request.logger);
+    if (onTextDelta === undefined || !request.streamsText) return () => {};
+    let offset = 0;
+    return (text) => {
+      const delta: TextDelta = {
+        ownerId: request.ownerId,
+        rootId: request.rootId,
+        agentId: request.taskId,
+        offset,
+        text,
       };
+      offset += text.length;
+      deliver(onTextDelta, delta, request.logger);
     };
   }
 }

@@ -188,7 +188,7 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
       }),
     );
     expect(
-      await screen.findByRole('menuitemradio', { name: 'Системная' }),
+      await screen.findByRole('menuitemradio', { name: 'Системный' }),
     ).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
   });

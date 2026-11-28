@@ -1007,6 +1007,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         language: null,
         trainOwn: false,
         trainingCapUsd: expect.any(Number),
+        notificationLevel: 'all',
+        theme: null,
+        organizationTheme: 'graphite',
       });
       expect(me.id.startsWith('system:')).toBe(false);
 
@@ -1565,6 +1568,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
               language: null,
               trainOwn: false,
               trainingCapUsd: expect.any(Number),
+              notificationLevel: 'all',
+              theme: null,
+              organizationTheme: 'graphite',
             });
             expect(await userDetail(newcomer.id)).toMatchObject({
               login: null,

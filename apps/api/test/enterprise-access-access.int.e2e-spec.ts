@@ -100,8 +100,10 @@ import {
   auditOf,
   grantTo,
   removeRunRows,
+  revokeFrom,
   runModel,
   spendOf,
+  type McpTestTarget,
   type ModelPrices,
   type RunRole,
   useRunModels,
@@ -223,6 +225,7 @@ function accessCheckDeepAgent(): Extract<
       listDelegation: false,
       selfLearning: false,
       scripts: [],
+      skills: [],
     },
   };
 }
@@ -398,6 +401,13 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       ...(quotaUsd === undefined ? {} : { quotaUsd }),
     });
 
+  /** A server or tool right of `holder`, kept as an access level (access-levels KD-6). */
+  const level = (
+    holder: { roleId: string } | { userId: string },
+    effect: 'allow' | 'deny',
+    target: McpTestTarget,
+  ) => grantTo(harness.app, admin, holder, { effect, target });
+
   async function removeGrant(id: string): Promise<void> {
     await expectBody(
       adminRequest('delete', `/admin/grants/${id}`),
@@ -564,9 +574,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // Steps (one story, literal expectations; the registry holds `backoffice` with the mutating tool `create_incident_note` and the read tools
   //   `get_order`, `search_orders`, `logs` with `aggregate_logs`, `get_trace`, `search_logs`, and `tracker` with `search_tickets`; shared-token servers,
   //   so no account of an employee is involved):
-  //   1. DC-2, before any right exists: `POST /api/admin/grants` for a deny to a role -> 422 `GRANT_INVALID`; a quota on a server right -> 422
-  //      `GRANT_INVALID`; a right on tool `ghost_tool` of `backoffice` and a right on a model outside the catalogue -> 422 `GRANT_TARGET_UNKNOWN`
-  //      both; the same personal right created twice -> 201 then 409 `GRANT_EXISTS`. The `access_grants` count after the step equals the
+  //   1. DC-2, before any right exists: `POST /api/admin/grants` for a model deny to a role -> 422 `GRANT_INVALID`; a right on a model outside
+  //      the catalogue -> 422 `GRANT_TARGET_UNKNOWN`; the same personal model right created twice -> 201 then 409 `GRANT_EXISTS`. The `access_grants` count after the step equals the
   //      successful creations only (nothing half saved). The step removes its one right. An employee without the admin right then calls
   //      `POST /api/admin/grants` and `PATCH /api/admin/models/:id` -> 403 `ADMIN_REQUIRED` both, no grant saved, the model unchanged.
   //   2. Setup: role `sre` holds the right to server `backoffice`; Аня is in `sre` and has a personal deny of `create_incident_note`; Борис has a
@@ -590,7 +599,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //      right on the one tool `backoffice/get_order`; his next model call is offered `get_order` and no `logs` tool.
   // Catches: a deny that loses to a role right at one door only (the set, the call, `run_code`, or a workflow agent); the rights read once when the
   //   set was built, so a removed right still opens the call, or an approval that skips the check; a workflow agent or a script with its own looser rule
-  //   than the main chat; a refusal that reaches the server or leaves zero or two audit rows; a grant for a tool or model that does not exist, or a
+  //   than the main chat; a refusal that reaches the server or leaves zero or two audit rows; a grant for a model that does not exist, or a
   //   duplicate, saved and then silently never matching.
   // @category: core-functionality
   // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, start_deep_agent, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
@@ -648,8 +657,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       };
       const toolAudit = () => deniedAudit('tool', people);
 
-      // 1. DC-2, before any right of the step's holders exists: a deny for a role, a quota on a server right, a tool
-      //    the server does not list, a model outside the catalogue, a duplicate - nothing of them is saved
+      // 1. DC-2, before any right of the step's holders exists: a deny for a role, a model outside the catalogue, a
+      //    duplicate - nothing of them is saved. Server and tool rights are access levels (access-levels UC-6 checks them)
       const holderGrants = async (): Promise<number> => {
         const { rows } = await harness.pool.query<{ count: number }>(
           'SELECT count(*)::int AS count FROM app.access_grants WHERE role_id = $1 OR user_id = $2',
@@ -660,37 +669,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(await holderGrants()).toBe(0);
       const postGrant = (body: object) =>
         adminRequest('post', '/admin/grants', body);
-      const backofficeServer = {
-        kind: 'server',
-        server: BACKOFFICE_SERVER,
-      } as const;
       const refused = [
         await expectError(
           postGrant({
             roleId: sre.id,
             effect: 'deny',
-            target: backofficeServer,
-          }),
-          422,
-        ),
-        await expectError(
-          postGrant({
-            userId: anya.id,
-            effect: 'allow',
-            target: backofficeServer,
-            quotaUsd: 5,
-          }),
-          422,
-        ),
-        await expectError(
-          postGrant({
-            userId: anya.id,
-            effect: 'allow',
-            target: {
-              kind: 'tool',
-              server: BACKOFFICE_SERVER,
-              tool: 'ghost_tool',
-            },
+            target: { kind: 'model', model: MODEL_A },
           }),
           422,
         ),
@@ -707,14 +691,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         refused.map((error) => `${error.errorCode} ${error.reason}`),
       ).toEqual([
         'GRANT_INVALID deny_for_role',
-        'GRANT_INVALID quota_not_on_model_allow',
-        'GRANT_TARGET_UNKNOWN tool_unknown',
         'GRANT_TARGET_UNKNOWN model_unknown',
       ]);
       const twice = {
         userId: anya.id,
         effect: 'allow',
-        target: { kind: 'tool', server: BACKOFFICE_SERVER, tool: 'get_order' },
+        target: { kind: 'model', model: MODEL_A },
       };
       const once = await expectBody(postGrant(twice), 201, GrantSchema);
       expect((await expectError(postGrant(twice), 409)).errorCode).toBe(
@@ -757,37 +739,39 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       // 2. Setup: `sre` holds `backoffice`, Аня is in it with a personal deny of `create_incident_note`; Борис has a
       //    personal right on `logs/get_trace`, a personal deny of `logs` and a personal right on `tracker/search_tickets`;
       //    Глеб has `logs` by a role and a personal right on `backoffice/create_incident_note`
-      await grant({ roleId: sre.id }, 'allow', backofficeServer);
+      await level({ roleId: sre.id }, 'allow', {
+        kind: 'server',
+        server: BACKOFFICE_SERVER,
+      });
       await sre.add(anya);
-      await grant({ userId: anya.id }, 'deny', {
+      await level({ userId: anya.id }, 'deny', {
         kind: 'tool',
         server: BACKOFFICE_SERVER,
         tool: 'create_incident_note',
       });
-      await grant({ userId: boris.id }, 'allow', {
+      await level({ userId: boris.id }, 'allow', {
         kind: 'tool',
         server: LOGS_SERVER,
         tool: 'get_trace',
       });
-      await grant({ userId: boris.id }, 'deny', {
+      await level({ userId: boris.id }, 'deny', {
         kind: 'server',
         server: LOGS_SERVER,
       });
-      await grant({ userId: boris.id }, 'allow', {
+      await level({ userId: boris.id }, 'allow', {
         kind: 'tool',
         server: TRACKER_SERVER,
         tool: 'search_tickets',
       });
-      const logsRight = await grant({ roleId: logsReaders.id }, 'allow', {
-        kind: 'server',
-        server: LOGS_SERVER,
-      });
+      const logsRight = { kind: 'server', server: LOGS_SERVER } as const;
+      await level({ roleId: logsReaders.id }, 'allow', logsRight);
       await logsReaders.add(gleb);
-      const glebNoteRight = await grant({ userId: gleb.id }, 'allow', {
+      const glebNoteRight = {
         kind: 'tool',
         server: BACKOFFICE_SERVER,
         tool: 'create_incident_note',
-      });
+      } as const;
+      await level({ userId: gleb.id }, 'allow', glebNoteRight);
       // Аня's own deep agent record: her chat may start it, and its subagent names `backoffice`
       const accessCheck = await createRecord(
         harness.app,
@@ -1017,7 +1001,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(`${request?.server}/${request?.tool}`).toBe(
         `${BACKOFFICE_SERVER}/create_incident_note`,
       );
-      await removeGrant(glebNoteRight.id);
+      await revokeFrom(harness.app, admin, { userId: gleb.id }, glebNoteRight);
       expect(
         await glebApi.decide(request?.decisionId ?? '', { approve: true }),
       ).toEqual({ outcome: 'resolved' });
@@ -1057,7 +1041,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
 
       // 6. AC-18.2 / AC-18.3, no restart: the role right on `logs` goes -> the next model call is offered no `logs`
       //    tool, and the call its script still asks for is refused; a personal right on `get_order` -> offered next
-      await removeGrant(logsRight.id);
+      await revokeFrom(
+        harness.app,
+        admin,
+        { roleId: logsReaders.id },
+        logsRight,
+      );
       const afterRemoval = 'INT-1 step 6: read the trace once more';
       const removedTurn = harness.model.script({ task: afterRemoval }, [
         { calls: [{ tool: GET_TRACE, args: { traceId: 'c6'.repeat(16) } }] },
@@ -1074,7 +1063,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(offered(removedTurn.calls[0])).toEqual([RUN_CODE]);
       // The tool was not offered, so its result keeps the name the model asked for
       expect(resultsOf(refusedLogs, GET_TRACE)).toEqual(['refused no_access']);
-      await grant({ userId: gleb.id }, 'allow', {
+      await level({ userId: gleb.id }, 'allow', {
         kind: 'tool',
         server: BACKOFFICE_SERVER,
         tool: 'get_order',
@@ -1294,6 +1283,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const refusedStart = await expectBody(
         borisApi.raw('post', `/threads/${borisThread}/messages`, {
           text: borisTask,
+          sendKey: randomUUID(),
         }),
         409,
         StartRefusedErrorSchema,

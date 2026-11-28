@@ -7,14 +7,19 @@ import {
   ModelDefaultsSchema,
   ModelProviderErrorCode,
   ModelProviderViewSchema,
+  RoleLevelsSchema,
   RoleSummarySchema,
+  UserLevelsSchema,
   modelProvider,
   type CatalogModel,
+  type Grant,
   type GrantEffect,
   type GrantTargetBody,
   type LongContext,
   type ModelProviderKind,
   type PriceRates,
+  type ToolMark,
+  type UserLevel,
 } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
@@ -253,7 +258,121 @@ export async function useRunModels(
 export type GrantHolder =
   { readonly roleId: string } | { readonly userId: string };
 
-/** Gives `holder` a right or a deny through `POST /api/admin/grants`. */
+/** A right on a server's tools as the tests give it: a whole server or one tool, kept as an access level. */
+export type McpTestTarget =
+  | { readonly kind: 'server'; readonly server: string }
+  | { readonly kind: 'tool'; readonly server: string; readonly tool: string };
+
+/** A holder's level on one server with its marks; a role's marks are allows. */
+interface HeldLevel {
+  readonly level: UserLevel;
+  readonly marks: readonly ToolMark[];
+}
+
+const NO_LEVEL: HeldLevel = { level: 'none', marks: [] };
+
+/** `pick` of the marks, or `none` when no mark is left. */
+function pickOf(marks: readonly ToolMark[]): HeldLevel {
+  return marks.length === 0 ? NO_LEVEL : { level: 'pick', marks };
+}
+
+/**
+ * The level after giving `effect` on the target: a server is `all` or, denied, `denied`; a tool joins the marks of
+ * `pick` (from `none`) and is already given by `all`. Other mixes no test needs, so they throw.
+ */
+function levelWith(
+  held: HeldLevel,
+  effect: GrantEffect,
+  target: McpTestTarget,
+): HeldLevel {
+  if (target.kind === 'server')
+    return { level: effect === 'allow' ? 'all' : 'denied', marks: [] };
+  if (held.level === 'all' && effect === 'allow') return held;
+  if (held.level !== 'none' && held.level !== 'pick')
+    throw new Error(
+      `a ${effect} of ${target.server}/${target.tool} over the level ${held.level}`,
+    );
+  const others = held.marks.filter((mark) => mark.tool !== target.tool);
+  return pickOf([...others, { tool: target.tool, effect }]);
+}
+
+/** The level after taking the target away: a server goes to `none`, a tool leaves the marks of `pick`. */
+function levelWithout(held: HeldLevel, target: McpTestTarget): HeldLevel {
+  if (target.kind === 'server') return NO_LEVEL;
+  if (held.level !== 'pick')
+    throw new Error(
+      `no mark of ${target.server}/${target.tool} in the level ${held.level}`,
+    );
+  return pickOf(held.marks.filter((mark) => mark.tool !== target.tool));
+}
+
+/** The holder's saved level on the server, read through `GET /api/admin/{roles,users}/:id/levels`. */
+async function heldLevel(
+  app: TestApp,
+  admin: Session,
+  holder: GrantHolder,
+  server: string,
+): Promise<HeldLevel> {
+  if ('roleId' in holder) {
+    const { servers } = await expectBody(
+      apiRequest(app, admin, 'get', `/admin/roles/${holder.roleId}/levels`),
+      200,
+      RoleLevelsSchema,
+    );
+    const row = servers.find((level) => level.server === server);
+    if (row === undefined)
+      throw new Error(`no server ${server} in the registry`);
+    return {
+      level: row.level,
+      marks: row.picked.map((tool) => ({ tool, effect: 'allow' })),
+    };
+  }
+  const { servers } = await expectBody(
+    apiRequest(app, admin, 'get', `/admin/users/${holder.userId}/levels`),
+    200,
+    UserLevelsSchema,
+  );
+  const row = servers.find((level) => level.server === server);
+  if (row === undefined) throw new Error(`no server ${server} in the registry`);
+  return row.personal;
+}
+
+/** Saves the holder's levels on the servers through `PUT /api/admin/{roles,users}/:id/levels`, 200. */
+async function saveLevels(
+  app: TestApp,
+  admin: Session,
+  holder: GrantHolder,
+  levels: ReadonlyArray<HeldLevel & { readonly server: string }>,
+): Promise<void> {
+  if ('roleId' in holder) {
+    const servers = levels.map(({ server, level, marks }) => {
+      if (level === 'denied' || marks.some((mark) => mark.effect === 'deny'))
+        throw new Error(`a role takes no deny on ${server}`);
+      return { server, level, picked: marks.map((mark) => mark.tool) };
+    });
+    await expectBody(
+      apiRequest(app, admin, 'put', `/admin/roles/${holder.roleId}/levels`, {
+        servers,
+      }),
+      200,
+      RoleLevelsSchema,
+    );
+    return;
+  }
+  await expectBody(
+    apiRequest(app, admin, 'put', `/admin/users/${holder.userId}/levels`, {
+      servers: levels,
+    }),
+    200,
+    UserLevelsSchema,
+  );
+}
+
+/**
+ * Gives `holder` a right or a deny. A model goes through `POST /api/admin/grants` and returns the grant; a server
+ * or a tool is an access level (access-levels KD-6): the holder's level is read and saved with the target added, so
+ * a new mark keeps the earlier ones. A level has no grant id; `revokeFrom` takes it away.
+ */
 export function grantTo(
   app: TestApp,
   admin: Session,
@@ -263,12 +382,51 @@ export function grantTo(
     readonly target: GrantTargetBody;
     readonly quotaUsd?: number | null;
   },
-) {
-  return expectBody(
-    apiRequest(app, admin, 'post', '/admin/grants', { ...holder, ...grant }),
-    201,
-    GrantSchema,
-  );
+): Promise<Grant>;
+export function grantTo(
+  app: TestApp,
+  admin: Session,
+  holder: GrantHolder,
+  grant: { readonly effect: GrantEffect; readonly target: McpTestTarget },
+): Promise<void>;
+export async function grantTo(
+  app: TestApp,
+  admin: Session,
+  holder: GrantHolder,
+  grant: {
+    readonly effect: GrantEffect;
+    readonly target: GrantTargetBody | McpTestTarget;
+    readonly quotaUsd?: number | null;
+  },
+): Promise<Grant | void> {
+  const { target } = grant;
+  if (target.kind === 'model')
+    return expectBody(
+      apiRequest(app, admin, 'post', '/admin/grants', {
+        ...holder,
+        ...grant,
+        target,
+      }),
+      201,
+      GrantSchema,
+    );
+  const held = await heldLevel(app, admin, holder, target.server);
+  await saveLevels(app, admin, holder, [
+    { server: target.server, ...levelWith(held, grant.effect, target) },
+  ]);
+}
+
+/** Takes a server or tool right of `grantTo` away: the server's level goes to `none`, or the tool's mark leaves it. */
+export async function revokeFrom(
+  app: TestApp,
+  admin: Session,
+  holder: GrantHolder,
+  target: McpTestTarget,
+): Promise<void> {
+  const held = await heldLevel(app, admin, holder, target.server);
+  await saveLevels(app, admin, holder, [
+    { server: target.server, ...levelWithout(held, target) },
+  ]);
 }
 
 /** A role of the run with its rights. */
@@ -279,8 +437,8 @@ export interface RunRole {
 }
 
 /**
- * Creates the role `<name>-t<runId>` through `POST /api/admin/roles` and allows it each model and each server (all
- * of its tools) without a quota. The servers must already be in the registry.
+ * Creates the role `<name>-t<runId>` through `POST /api/admin/roles`, allows it each model without a quota and gives
+ * it the level «Все» on each server (all of its tools). The servers must already be in the registry.
  */
 export async function allowRole(
   app: TestApp,
@@ -298,12 +456,20 @@ export async function allowRole(
     201,
     RoleSummarySchema,
   );
-  const targets: GrantTargetBody[] = [
-    ...role.models.map((model) => ({ kind: 'model' as const, model })),
-    ...role.servers.map((server) => ({ kind: 'server' as const, server })),
-  ];
-  for (const target of targets)
-    await grantTo(app, admin, { roleId: id }, { effect: 'allow', target });
+  for (const model of role.models)
+    await grantTo(
+      app,
+      admin,
+      { roleId: id },
+      { effect: 'allow', target: { kind: 'model', model } },
+    );
+  if (role.servers.length > 0)
+    await saveLevels(
+      app,
+      admin,
+      { roleId: id },
+      role.servers.map((server) => ({ server, level: 'all', marks: [] })),
+    );
   return {
     id,
     add: async (employee) => {
@@ -353,7 +519,7 @@ export async function removeRunRows(
     rows.models,
   ]);
   await pool.query(
-    'DELETE FROM app.identity_roles WHERE id = ANY($1::uuid[]) AND NOT builtin',
+    'DELETE FROM app.identity_roles WHERE id = ANY($1::uuid[]) AND builtin_kind IS NULL',
     [rows.roles],
   );
 }

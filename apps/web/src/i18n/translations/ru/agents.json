@@ -1,7 +1,7 @@
 {
   "status": {
     "working": "Работает",
-    "awaiting_confirmation": "Ждёт подтверждения",
+    "awaiting_confirmation": "Ждёт вас",
     "interrupted": "Прерван",
     "completed": "Завершён",
     "failed": "Сбой",
@@ -90,7 +90,9 @@
     "groupBrief": "Задание: {question}",
     "approve": "Подтвердить",
     "reject": "Отклонить",
+    "allowInConversation": "Разрешить в этой беседе",
     "approved": "Подтверждено · {time}",
+    "allowedInConversation": "Разрешено в этой беседе: «{tool}» без подтверждения · {time}",
     "rejected": "Отклонено · {time}",
     "briefApproved": "Задание подтверждено · {time}",
     "briefRejected": "Задание отклонено · {time}",
@@ -104,10 +106,10 @@
     "selfLearning": "Глубокий агент учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников."
   },
   "recordCard": {
-    "create": "{kind, select, agent {Создать агента} other {Создать глубокого агента}}",
+    "create": "{kind, select, agent {Создать агента} skill {Создать скилл} other {Создать глубокого агента}}",
     "edit": "Изменить «{name}»",
     "delete": "Удалить «{name}»",
-    "deleteNote": "{kind, select, agent {Агент} other {Глубокий агент}} пропадёт из библиотеки. Вернуть его нельзя.",
+    "deleteNote": "{kind, select, agent {Агент} skill {Скилл} other {Глубокий агент}} пропадёт из библиотеки. Вернуть его нельзя.",
     "changed": "изменено",
     "new": "новый",
     "removed": "Убрано: {what}",
@@ -119,6 +121,27 @@
     "deleted": "Удалено · {time}",
     "notSaved": "Не сохранено: {reason}",
     "showDiagram": "Показать схему"
+  },
+  "question": {
+    "source": "{who, select, chat {Чат спрашивает:} other {Агент «<link>{description}</link>» спрашивает:}}",
+    "sourcePast": "{who, select, chat {Чат спрашивал:} other {Агент «<link>{description}</link>» спрашивал:}}",
+    "group": "{who, select, chat {Вопрос от чата} other {Вопрос от агента «{description}»}}",
+    "multiSelect": "можно несколько",
+    "other": "Другое",
+    "otherPlaceholder": "Свой ответ…",
+    "otherLabel": "Свой ответ на вопрос {number}",
+    "unansweredOne": "Без ответа: вопрос {a} — агент решит сам",
+    "unansweredTwo": "Без ответа: вопросы {a} и {b} — агент решит сам",
+    "unansweredThree": "Без ответа: вопросы {a}, {b} и {c} — агент решит сам",
+    "answer": "Ответить",
+    "skip": "Пропустить",
+    "answerUnavailable": "Выберите ответ хотя бы на один вопрос или нажмите «Пропустить»",
+    "sendFailed": "Не удалось отправить ответ. Попробуйте ещё раз.",
+    "answered": "Отвечено · {time}",
+    "skipped": "Пропущено · {time}",
+    "cancelled": "Не понадобилось",
+    "ownAnswer": "Свой ответ: {text}",
+    "noAnswer": "Без ответа"
   },
   "recordTool": {
     "list_records": "Список библиотеки",
@@ -163,9 +186,9 @@
   "taskStatus": {
     "pending": "Ожидает",
     "in_progress": "В работе",
-    "completed": "Готова",
-    "unfinished": "Не закончена",
-    "skipped": "Не потребовалась"
+    "completed": "Готов",
+    "unfinished": "Не закончен",
+    "skipped": "Не потребовался"
   },
   "trainingStatus": {
     "running": "Идёт",
@@ -190,21 +213,21 @@
       "failed": "сбой {count}",
       "cancelled": "отменено {count}"
     },
-    "task": "задача {number}",
+    "task": "шаг {number}",
     "rowLabel": "{subagent}: {item}, {status}"
   },
   "tasks": {
     "tabs": {
       "activity": "Ход работы",
-      "tasks": "Задачи · {count}"
+      "tasks": "План · {count}"
     },
-    "listLabel": "Задачи",
-    "rowButton": "Задача {number}: {subject}, {status}",
+    "listLabel": "План",
+    "rowButton": "Шаг {number}: {subject}, {status}",
     "waitsFor": "ждёт {numbers}",
-    "emptyTitle": "Задач пока нет",
-    "emptyHint": "Здесь появятся задачи и поручения агента.",
-    "loading": "Загружаем задачи…",
-    "loadError": "Не удалось загрузить задачи",
+    "emptyTitle": "Плана пока нет",
+    "emptyHint": "Здесь появятся шаги плана и поручения агента.",
+    "loading": "Загружаем план…",
+    "loadError": "Не удалось загрузить план",
     "retry": "Повторить"
   },
   "documents": {
@@ -221,5 +244,20 @@
   "fork": {
     "from": "Ответвлено от «<link>{title}</link>»",
     "fromDeleted": "Ответвлено от удалённой беседы"
+  },
+  "instructions": {
+    "title": "Как со мной работать",
+    "description": "Ваши агенты читают этот текст на каждом шаге — в чате, в расписаниях и при обучении. Его видите только вы.",
+    "empty": "Пусто: агенты не получат личную инструкцию",
+    "placeholder": "Например: я SRE команды платежей. Отвечайте коротко и по-русски, команды давайте для bash.",
+    "save": "Сохранить",
+    "edit": "Изменить",
+    "reject": "Отклонить",
+    "saveEdited": "Сохранить с правками",
+    "cancel": "Отмена",
+    "saved": "Сохранено · {time}",
+    "rejected": "Отклонено · {time}",
+    "notSaved": "Не сохранено: {reason}",
+    "cancelled": "Не понадобилось"
   }
 }

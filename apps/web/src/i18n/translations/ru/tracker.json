@@ -1,0 +1,82 @@
+{
+  "status": {
+    "todo": "К выполнению",
+    "in_progress": "В работе",
+    "in_review": "На проверке",
+    "needs_decision": "Нужно решение",
+    "done": "Готово",
+    "cancelled": "Отменена"
+  },
+  "list": {
+    "title": "Задачи",
+    "filter": "Показать",
+    "open": "Открытые",
+    "group": "{status} · {count}",
+    "changed": ", изменена {time}",
+    "newTask": "Новая задача",
+    "created": "Задача «{title}» создана",
+    "emptyOpenTitle": "Открытых задач нет",
+    "emptyOpenHint": "Запишите дело в поле выше — сделаете сами или поручите агенту.",
+    "emptyStatus": "Задач со статусом «{status}» нет",
+    "loadFailed": "Не удалось загрузить задачи"
+  },
+  "task": {
+    "delegate": "Поручить агенту",
+    "actions": "Действия с задачей",
+    "rename": "Переименовать",
+    "delete": "Удалить",
+    "statusButton": "Статус: {status}",
+    "statusAnnounced": "Статус: {status}",
+    "description": "Описание",
+    "edit": "Изменить",
+    "addDescription": "Добавить описание",
+    "save": "Сохранить",
+    "delegated": "Поручено: {agent}",
+    "openConversation": "Открыть беседу",
+    "deleteTitle": "Удалить задачу?",
+    "deleteBody": "Задача «{title}» и её комментарии исчезнут. Беседы задачи останутся в списке бесед и продолжат работу.",
+    "deleteConfirm": "Удалить",
+    "deleted": "Задача удалена"
+  },
+  "feed": {
+    "label": "Лента задачи",
+    "you": "Вы",
+    "article": "{author}, {time}",
+    "from": "из беседы «<link>{title}</link>»",
+    "fromDeleted": "из беседы «{title}» · беседа удалена",
+    "forwarded": "Передано в беседу «<link>{title}</link>»",
+    "forwardedDeleted": "Передано в беседу «{title}» · беседа удалена",
+    "created": "Вы создали задачу",
+    "delegated": "Вы поручили задачу агенту «{agent}» · беседа «{title}»",
+    "delegatedChat": "Вы поручили задачу агенту чата · беседа «{title}»",
+    "statusByYou": "Вы сменили статус на «{status}»",
+    "statusByAgent": "Агент «{agent}» сменил статус на «{status}»",
+    "statusByChat": "Агент чата сменил статус на «{status}»",
+    "empty": "Комментариев пока нет",
+    "agentComment": "Комментарий от {agent}: {text}",
+    "comment": "Комментарий",
+    "forward": "Передать агенту",
+    "target": "в беседу «{title}»",
+    "notDelegated": "Задача ещё не поручена агенту",
+    "allDeleted": "Все беседы задачи удалены",
+    "sendToAgent": "Отправить агенту",
+    "send": "Комментировать"
+  },
+  "conversations": {
+    "title": "Беседы · {count}",
+    "titleEmpty": "Беседы",
+    "delegatedAt": "поручено {time}",
+    "deleted": "беседа удалена",
+    "empty": "Задача ещё не поручена агенту."
+  },
+  "dialog": {
+    "title": "Поручить агенту",
+    "note": "Что ещё сказать агенту",
+    "optional": "(необязательно)",
+    "hint": "Агент получит название, описание и последние комментарии задачи.",
+    "working": "У задачи уже работает беседа «{title}». Поручение откроет ещё одну.",
+    "submit": "Поручить"
+  },
+  "caption": "По задаче «{title}»",
+  "captionText": "По задаче «<name>{title}</name>»"
+}

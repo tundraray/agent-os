@@ -2,6 +2,7 @@ import type {
   ChipRecord,
   ConfirmationStatus,
   ForkRefusalReason,
+  QuestionAnswer,
   ScheduleMark,
   ToolCallState,
 } from '@agent-os/contracts';
@@ -31,12 +32,38 @@ export interface StartRequest {
   readonly schedule?: ScheduleMark;
   /** The conversation's title, written in the transaction that creates the root (schedules KD-6). */
   readonly title?: string;
+  /** A tracker delegation opens the conversation: the mark goes into the root's task input (task-tracker KD-4). */
+  readonly trackerTask?: true;
 }
 
-/** A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, or why not now. */
+/**
+ * Where a fork ends (improvements design-server.md, KD-6): through the message `throughSeq`, or before the employee's
+ * message `seq`, which the fork gets as `text` with its chip and answers.
+ */
+export type ForkBoundary =
+  | { readonly kind: 'through'; readonly throughSeq: number }
+  | {
+      readonly kind: 'edit';
+      readonly seq: number;
+      readonly text: string;
+      readonly record?: ChipRecord;
+    };
+
+/** A fork of the owner's conversation; the whole one without a boundary. */
+export interface ForkRequest {
+  readonly threadId: string;
+  readonly ownerId: string;
+  readonly boundary?: ForkBoundary;
+}
+
+/**
+ * A fork of the owner's conversation (create-and-test design-fork.md, Flow 1): the new one, why not now, or
+ * `not_a_message` — the boundary names no entry it may end at, and nothing is made.
+ */
 export type ForkResult =
   | { readonly kind: 'forked'; readonly threadId: string }
-  | { readonly kind: 'refused'; readonly reason: ForkRefusalReason };
+  | { readonly kind: 'refused'; readonly reason: ForkRefusalReason }
+  | { readonly kind: 'not_a_message' };
 
 export interface AgentRef {
   readonly agentId: string;
@@ -65,12 +92,32 @@ export interface HistoryRequest extends AgentRef {
   readonly limit: number;
 }
 
+/**
+ * A window of the employee's history (live-feed KD-5): the last `limit` shown entries, the `limit` before `beforeSeq`,
+ * or the `limit` after `afterSeq`; at most one of the two numbers.
+ */
+export interface HistoryWindowRequest extends AgentRef {
+  readonly beforeSeq?: number;
+  readonly afterSeq?: number;
+  readonly limit: number;
+}
+
+/** A window of shown entries in order, and whether shown entries exist before its first one. */
+export interface HistoryWindow {
+  readonly entries: AgentHistoryEntry[];
+  readonly hasOlder: boolean;
+}
+
 export interface ResolveConfirmationRequest {
   readonly decisionId: string;
   readonly ownerId: string;
   readonly approve: boolean;
   /** The employee's edit of the arguments; only a tool that allows it accepts one. */
   readonly args?: unknown;
+  /** The third answer «allow in this conversation»: only with `approve` and only on a changing MCP tool's card. */
+  readonly allowInConversation?: true;
+  /** The employee's answers, one per question: only on an `agents.question` card (agent-guidance KD-1). */
+  readonly answers?: readonly QuestionAnswer[];
 }
 
 /** One tool call of a model answer as `history` shows it; an open call carries its state. */
@@ -126,6 +173,10 @@ export interface AgentConfirmation extends ToolDisplay {
   readonly resolution: {
     readonly approve: boolean;
     readonly args: unknown;
+    /** Only when the answer was «allow in this conversation». */
+    readonly allowInConversation?: true;
+    /** Only on an answered `agents.question` card (agent-guidance KD-1). */
+    readonly answers?: readonly QuestionAnswer[];
   } | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;

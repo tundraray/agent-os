@@ -59,7 +59,7 @@ const JIRA: McpConnection = {
 const isDark = (): boolean =>
   document.documentElement.classList.contains('dark');
 
-async function chooseTheme(
+async function chooseMode(
   user: ReturnType<typeof userEvent.setup>,
   label: string,
 ): Promise<void> {
@@ -75,24 +75,24 @@ afterEach(() => {
   document.documentElement.style.colorScheme = '';
 });
 
-describe('UserMenu — theme (TM-01, AC-09.1, AC-12.1)', () => {
-  it('«Тёмная» puts `dark` on <html>; «Системная» follows prefers-color-scheme', async () => {
+describe('UserMenu — mode (TM-01, AC-09.1, AC-12.1; theming MC-1)', () => {
+  it('«Тёмный» puts `dark` on <html>; «Системный» follows prefers-color-scheme', async () => {
     setTestMedia({ colorScheme: 'dark' });
     const user = userEvent.setup();
     renderUserMenu();
 
-    await chooseTheme(user, 'Светлая');
+    await chooseMode(user, 'Светлый');
     await waitFor(() => expect(isDark()).toBe(false));
 
-    await chooseTheme(user, 'Тёмная');
+    await chooseMode(user, 'Тёмный');
     await waitFor(() => expect(isDark()).toBe(true));
     expect(screen.getByRole('button', { name: MENU_BUTTON })).toHaveFocus();
 
-    await chooseTheme(user, 'Светлая');
+    await chooseMode(user, 'Светлый');
     await waitFor(() => expect(isDark()).toBe(false));
 
-    // The OS prefers dark: «Системная» must switch <html> back to dark, then track the OS setting.
-    await chooseTheme(user, 'Системная');
+    // The OS prefers dark: «Системный» must switch <html> back to dark, then track the OS setting.
+    await chooseMode(user, 'Системный');
     await waitFor(() => expect(isDark()).toBe(true));
 
     setTestMedia({ colorScheme: 'light' });
@@ -122,6 +122,10 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
     expect(
       within(menu).getByRole('menuitem', { name: 'Мой доступ' }),
     ).toHaveAttribute('href', '/account');
+    // Theming TP-02, KD-5: the line names the current theme and leads to its section, not just the page.
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Тема: Графит' }),
+    ).toHaveAttribute('href', '/account#theme');
     expect(within(menu).queryByText(/разработки/)).toBeNull();
 
     await user.click(within(menu).getByRole('menuitem', { name: 'Выйти' }));

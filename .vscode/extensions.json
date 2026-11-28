@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    // Formatter of the whole repository (.prettierrc, `pnpm format:check` in CI).
+    "esbenp.prettier-vscode",
+    // Linter of apps/web (eslint.config.mjs).
+    "dbaeumer.vscode-eslint",
+    // Linter of apps/api and every package (.oxlintrc.json).
+    "oxc.oxc-vscode"
+  ],
+  "unwantedRecommendations": [
+    // Neither tool is configured here: Prettier formats, there is no stylelint config.
+    "biomejs.biome",
+    "stylelint.vscode-stylelint"
+  ]
+}

@@ -5,6 +5,7 @@ export {
   type AccessGate,
   type AuditRecord,
   type EmbeddingVerdict,
+  type GateTool,
   ModelNotConfiguredError,
   ModelRefusedError,
   type ModelVerdict,
@@ -43,6 +44,7 @@ export type {
 } from './mcp/mcp-accounts';
 export { McpError, type McpRefusalCode } from './mcp/mcp-errors';
 export type {
+  McpNewToolsAuditState,
   McpServerAuditState,
   McpServerRegistration,
   McpServerRemoval,
@@ -62,7 +64,12 @@ export type {
   AgentConfirmation,
   AgentHistoryEntry,
   ForkResult,
+  HistoryWindow,
 } from './operations/agent-sessions';
+export {
+  CONVERSATION_CHANGE_CHANNEL,
+  signalConversation,
+} from './conversation-signal';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';
 export {

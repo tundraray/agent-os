@@ -135,6 +135,7 @@ const deepAgentContent = {
 describe('the task-list flag a record leaves out', () => {
   it('is on for an agent and a deep agent and off for a subagent', () => {
     const agentBody = CreateRecordBodySchema.parse(agent);
+    if (agentBody.kind !== 'agent') throw new Error('not an agent');
     const deepAgent = DeepAgentContentSchema.parse(deepAgentContent);
 
     expect({

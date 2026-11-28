@@ -146,7 +146,8 @@ export function SecretField({
             name={id}
             autoComplete="new-password"
             spellCheck={false}
-            placeholder={t('placeholder')}
+            // «Новое значение» names a replacement; a field with nothing held yet takes a first value.
+            placeholder={isSet ? t('placeholder') : undefined}
             compact
             className="font-mono text-mono-compact"
             showLabel={t('show')}

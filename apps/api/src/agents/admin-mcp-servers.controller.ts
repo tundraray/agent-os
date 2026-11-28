@@ -13,13 +13,18 @@ import {
 } from '@nestjs/common';
 import { AgentsMcp } from '@agent-os/agents';
 import {
+  McpServerNameSchema,
   RegisterMcpServerBodySchema,
   UpdateMcpServerBodySchema,
+  UpdateMcpToolBodySchema,
+  type McpCallbackUrl,
   type McpServerSummary,
   type McpServerView,
+  type McpToolView,
   type RefreshMcpToolsResponse,
   type RegisterMcpServerBody,
   type UpdateMcpServerBody,
+  type UpdateMcpToolBody,
 } from '@agent-os/contracts';
 import type { Response } from 'express';
 import { AuditLog } from '../audit/audit-log';
@@ -34,6 +39,9 @@ import {
   refuseCrossSite,
 } from './mcp-connections.controller';
 import { mcpAnswer } from './mcp.errors';
+
+/** The audit object of one tool's settings: id `<server>/<tool>`. */
+const MCP_TOOL_OBJECT_TYPE = 'mcp_tool';
 
 /**
  * The MCP server registry for an administrator (design-mcp-connect.md, Contract «Реестр — для `admin`»).
@@ -80,6 +88,17 @@ export class AdminMcpServersController {
   @Get(':name')
   detail(@Param('name') name: string): Promise<McpServerView> {
     return mcpAnswer(this.mcp.get(name));
+  }
+
+  /**
+   * The OAuth return address (Redirect URI) of a server of that name, registered or not yet (AC-35.1): the one
+   * registration sends to the authorization server. 400 for a name the registration would refuse.
+   */
+  @Get(':name/callback-url')
+  async callbackUrl(
+    @Param('name', new ZodValidationPipe(McpServerNameSchema)) name: string,
+  ): Promise<McpCallbackUrl> {
+    return { url: mcpCallbackUrl(await this.settings.publicUrlFor(), name) };
   }
 
   /** 302 to the authorization server with the admin target, or to `/admin/servers/<name>?error=connect_failed`. */
@@ -148,6 +167,56 @@ export class AdminMcpServersController {
       added: [...refresh.added],
       removed: [...refresh.removed],
     };
+  }
+
+  /**
+   * «Отметить просмотренными»: every new mark of the server cleared in one step, so its tools take the server's
+   * own mark again: `McpServerView`; 404 MCP_SERVER_NOT_FOUND. Audited as `admin_change` on `mcp_server` with the
+   * new tool names before and after; a server without new tools writes and audits nothing.
+   */
+  @Post(':name/tools/reviewed')
+  @HttpCode(200)
+  async markToolsReviewed(
+    @Param('name') name: string,
+    @Req() req: AuthedRequest,
+  ): Promise<McpServerView> {
+    const review = await mcpAnswer(this.mcp.markToolsReviewed(name));
+    if (review.changed) {
+      await recordServerChange(this.auditLog, {
+        actor: req.user.id,
+        server: name,
+        change: review,
+      });
+    }
+    return review.view;
+  }
+
+  /**
+   * One tool switched on or off or its class corrected (access-levels, «Настройки инструмента»): `McpToolView`;
+   * 404 MCP_SERVER_NOT_FOUND, MCP_TOOL_NOT_FOUND. Audited as `admin_change` on `mcp_tool` `<server>/<tool>`,
+   * after the write like every registry write; a PATCH that changes nothing writes and audits nothing.
+   */
+  @Patch(':name/tools/:tool')
+  async updateTool(
+    @Param('name') name: string,
+    @Param('tool') tool: string,
+    @Body(new ZodValidationPipe(UpdateMcpToolBodySchema))
+    body: UpdateMcpToolBody,
+    @Req() req: AuthedRequest,
+  ): Promise<McpToolView> {
+    const write = await mcpAnswer(this.mcp.updateTool(name, tool, body));
+    if (write.changed) {
+      await this.auditLog.record({
+        kind: 'admin_change',
+        actor: req.user.id,
+        objectType: MCP_TOOL_OBJECT_TYPE,
+        objectId: `${name}/${tool}`,
+        before: { ...write.before },
+        after: { ...write.after },
+        outcome: 'ok',
+      });
+    }
+    return write.view;
   }
 
   /**

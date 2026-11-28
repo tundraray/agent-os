@@ -87,7 +87,7 @@ const NO_CHILDREN: readonly AgentNode[] = [];
 
 /**
  * DA-05 and DA-09: the deep agent's tasks and delegations in place of the feed on the tab «Задачи»; the composer
- * stays under it. «Ждёт подтверждения» of a delegation is its subagent's status among the agent's children.
+ * stays under it. «Ждёт вас» of a delegation is its subagent's status among the agent's children.
  */
 function TasksFeed() {
   const tasks = useContext(TasksContext);
@@ -133,7 +133,7 @@ type DeepAgentTabsProps = {
 /**
  * DA-04: only a deep agent's page has the tab row «Ход работы» and «Задачи · {N}» under the header; it does not
  * scroll with the content. The chosen tab is the page's address, so «Назад» returns to the previous one; the
- * list is read on open and on every `tree` note of the agent's conversation, so the count is live on both tabs.
+ * list is read on open and on every live change of the agent's conversation, so the count is live on both tabs.
  */
 function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
   const t = useTranslations('agents.tasks');

@@ -297,6 +297,7 @@ export class Dispatcher {
       {
         db: this.deps.db,
         tasks: this.deps.tasks,
+        inbox: this.deps.inbox,
         crashPoints: this.deps.crashPoints,
         logger: this.deps.logger,
       },

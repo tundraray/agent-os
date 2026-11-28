@@ -5,11 +5,16 @@
   },
   "rules": {
     "typescript/no-explicit-any": "off",
-    // The application is where Nest and Sentry live: the Mastra ban and the package entry rule apply.
+    // The application is where Nest and Sentry live: the Mastra ban and the package entry rule apply,
+    // and its code builds no SQL — every table query lives in the repositories of @agent-os/db.
     "no-restricted-imports": [
       "error",
       {
         "patterns": [
+          {
+            "group": ["drizzle-orm", "drizzle-orm/**"],
+            "message": "No table query outside packages/db: call a repository of @agent-os/db."
+          },
           {
             "group": ["@mastra/*", "@mastra/**"],
             "message": "ADR-0004: Mastra is declared by packages/agents only."
@@ -21,5 +26,28 @@
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      // Tests check rows with raw queries: the same list without the drizzle-orm ban.
+      "files": ["**/*.spec.ts", "test/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@mastra/*", "@mastra/**"],
+                "message": "ADR-0004: Mastra is declared by packages/agents only."
+              },
+              {
+                "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+                "message": "ADR-0004: a package is imported only through its single entry `.` (or `./testing`)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -1,8 +1,10 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
+import { Combobox } from '@base-ui/react/combobox';
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
+import { CheckIcon } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import {
   SCHEDULE_EVERY_HOURS_MAX,
@@ -20,8 +22,8 @@ import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { cn } from 'cn';
 
 /**
- * «Когда» of the schedule dialog (schedule-rule.md): the kind of rule, its parameters, the preview of the next
- * run from the server and the time zone the times are in.
+ * «Когда» and «Часовой пояс» of the schedule dialog (schedule-rule.md): the kind of rule, its parameters, the
+ * preview of the next run from the server and the time zone the rule runs in.
  */
 
 type RuleKind = ScheduleRule['kind'];
@@ -212,8 +214,9 @@ export function formatRunTime(
 export type ScheduleRuleFieldProps = {
   draft: RuleDraft;
   onChange: (draft: RuleDraft) => void;
-  /** The browser's zone for a new schedule, the saved one's own zone for an edit. */
+  /** The chosen zone: the browser's for a new schedule, the saved one's own for an edit to start with. */
   timeZone: string;
+  onTimeZoneChange: (timeZone: string) => void;
   /** Shown after a save attempt; any change of the rule clears it. A preview refused as past shows `past` too. */
   error: RuleError | null;
   /** While the form saves: a surrounding fieldset does not reach these radios, which are not native inputs. */
@@ -224,6 +227,7 @@ export function ScheduleRuleField({
   draft,
   onChange,
   timeZone,
+  onTimeZoneChange,
   error,
   disabled,
 }: ScheduleRuleFieldProps) {
@@ -480,12 +484,94 @@ export function ScheduleRuleField({
           ? t('noNext')
           : t('next', { at: formatRunTime(format, shownAt, timeZone) })}
       </p>
-      <p className={cn(CAPTION, 'text-muted-foreground')}>
-        {t('zone', {
-          zone: timeZone,
-          offset: utcOffset(timeZone),
-        })}
-      </p>
+      <TimeZoneField
+        value={timeZone}
+        onChange={onTimeZoneChange}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
+/** «{zone} (UTC{offset})»: how a zone reads in the field and its list. */
+const zoneLabel = (zone: string): string => `${zone} (UTC${utcOffset(zone)})`;
+
+/**
+ * schedule-rule.md, part 5: a searchable list of the IANA zones, each with its offset now. A zone the list does not
+ * know (`UTC`, an older name) is added, so the starting value shows and stays until another is chosen (KD-4).
+ */
+function TimeZoneField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (timeZone: string) => void;
+  disabled: boolean;
+}) {
+  const t = useTranslations('schedules.rule');
+  const id = useId();
+  const [started] = useState(value);
+  const zones = useMemo(() => {
+    const known = Intl.supportedValuesOf('timeZone');
+    const all = known.includes(started) ? known : [started, ...known];
+    return all.map((zone) => ({ value: zone, label: zoneLabel(zone) }));
+  }, [started]);
+  const chosen = zones.find((zone) => zone.value === value) ?? null;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-foreground">
+        {t('zoneLabel')}
+      </label>
+      <Combobox.Root
+        items={zones}
+        value={chosen}
+        disabled={disabled}
+        onValueChange={(next) => {
+          if (next !== null) onChange(next.value);
+        }}
+        isItemEqualToValue={(item, current) => item.value === current.value}
+        itemToStringLabel={(zone) => zone.label}
+      >
+        <Combobox.Input
+          id={id}
+          render={
+            <Input className={cn(COMFORT_CONTROL, 'text-sm md:text-sm')} />
+          }
+          placeholder={t('zoneSearch')}
+        />
+        <Combobox.Portal>
+          <Combobox.Positioner sideOffset={4} className="isolate z-50">
+            <Combobox.Popup className="max-h-[min(var(--available-height),16rem)] w-(--anchor-width) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+              <Combobox.Empty
+                className={cn(
+                  CAPTION,
+                  'px-2 py-1.5 text-muted-foreground empty:hidden',
+                )}
+              >
+                {t('zoneNotFound')}
+              </Combobox.Empty>
+              <Combobox.List>
+                {(zone: { value: string; label: string }) => (
+                  <Combobox.Item
+                    key={zone.value}
+                    value={zone}
+                    className="flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground pointer-coarse:min-h-11"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {zone.label}
+                    </span>
+                    <Combobox.ItemIndicator>
+                      <CheckIcon className="size-4" aria-hidden />
+                    </Combobox.ItemIndicator>
+                  </Combobox.Item>
+                )}
+              </Combobox.List>
+            </Combobox.Popup>
+          </Combobox.Positioner>
+        </Combobox.Portal>
+      </Combobox.Root>
     </div>
   );
 }

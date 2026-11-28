@@ -50,6 +50,7 @@ const run: RunStart = {
       listDelegation: true,
       selfLearning: false,
       scripts: [],
+      skills: [],
     },
   },
 };

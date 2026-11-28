@@ -37,12 +37,13 @@ import {
   parseShellRoute,
   recordPath,
   threadPath,
+  trackerTaskPath,
   type ShellRoute,
 } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { cn } from '@/lib/utils';
-import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
+import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID, TRACKER_ICON } from './app-sidebar';
 import { useConversationFeed, useMainViewState } from './main-view';
 import { PageHeaderSlot } from './page-header';
 import { ShellLink } from './shell-link';
@@ -75,6 +76,7 @@ export type ChatHeaderViewProps = {
 };
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
+const ASIDE_CHAT_SELECTOR = '[data-slot="aside-chat"]';
 
 const iconButton = cn(pressable, 'shrink-0 [&_svg]:size-4.5');
 
@@ -279,6 +281,7 @@ export function ChatHeader({
       action={
         route.kind === 'chat' && (
           <>
+            <TrackerTaskCaption />
             <ForksButton />
             {run?.testRun === true && run.agentId !== null && (
               <WithTooltip label={tChat('testRun.openAgent')} narrowOnly>
@@ -310,6 +313,49 @@ export function ChatHeader({
       onNewChat={newChat}
       scrolled={scrolled}
     />
+  );
+}
+
+/**
+ * TT-10: «По задаче «{название}»», the link to the conversation's tracker task, first in the actions row. The view
+ * names the task — with its current title — only while the conversation is linked to it: a fork, an unlinked
+ * conversation and one whose task was deleted read `null` (KD-5). Below 640 px the icon alone, the text its name
+ * and hint; the title is cut after 200 px, from 1024 px after 320 px, the whole one in the hint.
+ */
+function TrackerTaskCaption() {
+  const t = useTranslations('tracker');
+  const task = useFeedStoreSelector(
+    useConversationFeed(),
+    (state) => (state.view?.kind === 'thread' ? state.view.trackerTask : null),
+    null,
+  );
+  if (task === null) return null;
+  const caption = t('caption', { title: task.title });
+  return (
+    <WithTooltip label={caption}>
+      <ShellLink
+        href={trackerTaskPath(task.id)}
+        aria-label={caption}
+        className={buttonVariants({
+          variant: 'ghost',
+          size: 'sm',
+          className:
+            'min-w-0 shrink pointer-coarse:h-11 max-sm:size-8 max-sm:px-0 max-sm:pointer-coarse:size-11',
+        })}
+      >
+        <TRACKER_ICON aria-hidden />
+        <span aria-hidden className="truncate max-sm:hidden">
+          {t.rich('captionText', {
+            title: task.title,
+            name: (chunks) => (
+              <span className="inline-block max-w-50 truncate align-bottom lg:max-w-80">
+                {chunks}
+              </span>
+            ),
+          })}
+        </span>
+      </ShellLink>
+    </WithTooltip>
   );
 }
 
@@ -429,12 +475,14 @@ function useThreadScrolled(): boolean {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    // Scroll events do not bubble: listen in the capture phase and keep only the feed's viewport.
+    // Scroll events do not bubble: listen in the capture phase and keep only the main feed's viewport — the side
+    // chat's feed has its own (improvements design-web.md, C3).
     const onScroll = (event: Event) => {
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        target.matches(THREAD_VIEWPORT_SELECTOR)
+        target.matches(THREAD_VIEWPORT_SELECTOR) &&
+        target.closest(ASIDE_CHAT_SELECTOR) === null
       ) {
         setScrolled(target.scrollTop > 0);
       }

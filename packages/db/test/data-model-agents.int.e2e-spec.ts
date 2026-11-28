@@ -116,7 +116,9 @@ describe('data-model / agents: a freshly migrated database holds the default age
           ? deepAgent.content.subagents.map((subagent) => subagent.name)
           : deepAgent,
       ).toEqual(['researcher']);
-      expect(chat?.content.prompt).not.toContain('Start a record by its id');
+      expect(chat?.kind === 'agent' ? chat.content.prompt : chat).not.toContain(
+        'Start a record by its id',
+      );
     },
     ROW_TIMEOUT_MS,
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Bot, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Bot, ScrollText, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
 import type {
@@ -227,6 +227,7 @@ export function Chip({
 export const RECORD_KIND_ICON: Record<RecordKind, LucideIcon> = {
   agent: Bot,
   deep_agent: Workflow,
+  skill: ScrollText,
 };
 
 /** What a screen reader hears after the name, as one phrase (MC-17). */

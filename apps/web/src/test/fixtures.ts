@@ -4,6 +4,7 @@ import {
   AdminUserPageSchema,
   AdminUserSummarySchema,
   AgentListPageSchema,
+  AppearanceSettingsSchema,
   AgentContentSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
@@ -52,6 +53,7 @@ import {
   type AgentListNode,
   type AgentContent,
   type AgentListPage,
+  type AppearanceSettings,
   type AgentNode,
   type AgentPageView,
   type AgentView,
@@ -107,16 +109,22 @@ export function threadSummary(
     forkable: true,
     forkedFrom: null,
     forkCount: 0,
+    notificationLevel: null,
     ...overrides,
   });
 }
 
-/** Body of GET /api/threads; validated by ThreadListResponseSchema. */
+/** Body of GET /api/threads; validated by ThreadListResponseSchema. A thread without `state` is read and idle. */
 export function threadList(
-  threads: ThreadSummary[],
+  threads: (ThreadSummary & {
+    state?: ThreadListResponse['threads'][number]['state'];
+  })[],
   nextCursor: string | null = null,
 ): ThreadListResponse {
-  return ThreadListResponseSchema.parse({ threads, nextCursor });
+  return ThreadListResponseSchema.parse({
+    threads: threads.map((thread) => ({ state: null, ...thread })),
+    nextCursor,
+  });
 }
 
 /**
@@ -162,6 +170,9 @@ export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
     language: null,
     trainOwn: false,
     trainingCapUsd: 2,
+    notificationLevel: 'all',
+    theme: null,
+    organizationTheme: 'graphite',
     ...overrides,
   });
 }
@@ -344,7 +355,10 @@ export function recordConfirmation(
   });
 }
 
-/** GET /threads/:id/history of an idle conversation `t1` with root `root` and nothing read yet. */
+/**
+ * GET /threads/:id/history of an idle conversation `t1` with root `root` and nothing read yet. The employee has seen
+ * every entry (no «Новое» divider, improvements KD-4) unless `seenThroughSeq` says otherwise.
+ */
 export function conversationView(
   overrides: Partial<ConversationView> = {},
 ): ConversationView {
@@ -358,11 +372,17 @@ export function conversationView(
     },
     entries: [],
     nextAfterSeq: null,
+    hasOlder: false,
     pending: [],
     decisions: [],
     agents: [],
     focus: null,
     training: null,
+    seenThroughSeq: Math.max(
+      0,
+      ...(overrides.entries ?? []).map((entry) => entry.seq),
+    ),
+    trackerTask: null,
     ...overrides,
   });
 }
@@ -408,6 +428,7 @@ export function agentPageView(
     },
     entries: [],
     nextAfterSeq: null,
+    hasOlder: false,
     pending: [],
     decisions: [],
     children: [],
@@ -496,7 +517,7 @@ export function roleSummary(
     isAdmin: false,
     trainOwn: false,
     trainAny: false,
-    builtin: false,
+    builtinKind: null,
     ...overrides,
   });
 }
@@ -512,12 +533,16 @@ export function roleDetail(
   });
 }
 
-/** Row of GET /api/admin/grants: role «SRE» (`fixtureId(100)`) may call `sentry` / `list_issues`, no quota. */
+/** Row of GET /api/admin/grants: role «SRE» (`fixtureId(100)`) may use Claude Sonnet 4.5, no quota. */
 export function grant(overrides: Partial<Grant> & Pick<Grant, 'id'>): Grant {
   return GrantSchema.parse({
     holder: { kind: 'role', id: fixtureId(100), name: 'SRE' },
     effect: 'allow',
-    target: { kind: 'tool', server: 'sentry', tool: 'list_issues' },
+    target: {
+      kind: 'model',
+      model: 'anthropic/claude-sonnet-4-5',
+      modelName: 'Claude Sonnet 4.5',
+    },
     quotaUsd: null,
     createdAt: FIXTURE_TIME,
     ...overrides,
@@ -594,12 +619,20 @@ const FIXTURE_TOOLS: McpToolView[] = [
     title: 'List issues',
     description: 'Список задач',
     readOnly: true,
+    enabled: true,
+    isNew: false,
+    serverReadOnly: true,
+    overridden: false,
   },
   {
     name: 'update_issue',
     title: 'Update issue',
     description: 'Изменяет задачу',
     readOnly: false,
+    enabled: true,
+    isNew: false,
+    serverReadOnly: false,
+    overridden: false,
   },
 ];
 
@@ -610,11 +643,15 @@ export function mcpServerView(
   const {
     tools = FIXTURE_TOOLS,
     sharedTokenSet = false,
+    oauthClientId = null,
+    oauthClientSecretSet = false,
     ...summary
   } = overrides;
   return McpServerViewSchema.parse({
     ...mcpServerSummary({ toolCount: tools.length, ...summary }),
     sharedTokenSet,
+    oauthClientId,
+    oauthClientSecretSet,
     tools,
   });
 }
@@ -678,6 +715,11 @@ export function selfLearningSettings(): SelfLearningSettings {
     trainingCapUsd: TRAINING_CAP_USD_DEFAULT,
     updatedAt: null,
   });
+}
+
+/** GET /api/admin/appearance/settings: «Графит», never set. */
+export function appearanceSettings(): AppearanceSettings {
+  return AppearanceSettingsSchema.parse({ theme: 'graphite', updatedAt: null });
 }
 
 /** GET /api/admin/tool-results/settings: the defaults, never set. */
@@ -772,6 +814,7 @@ export function recordDetail(
   const row = recordSummary(summary);
   return RecordDetailSchema.parse({
     ...row,
+    connectedSkills: [],
     content:
       content ??
       (row.kind === 'deep_agent' ? deepAgentContent() : agentContent()),
@@ -785,6 +828,7 @@ export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
     removedServers: [],
     replacedModels: [],
     removedAgents: [],
+    removedSkills: [],
     ...overrides,
   });
 }

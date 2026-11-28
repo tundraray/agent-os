@@ -1,4 +1,3 @@
-import type { GrantTargetBody } from '@agent-os/contracts';
 import {
   grantRules,
   type GrantRuleInput,
@@ -7,14 +6,10 @@ import {
 
 const ROLE_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-000000000002';
-const modelTarget: GrantTargetBody = { kind: 'model', model: 'anthropic/a' };
-const serverTarget: GrantTargetBody = { kind: 'server', server: 's' };
-const toolTarget: GrantTargetBody = { kind: 'tool', server: 's', tool: 't' };
 
 const modelAllow = (quotaUsd: number | null): GrantRuleInput => ({
   roleId: ROLE_ID,
   effect: 'allow',
-  target: modelTarget,
   modelPurpose: 'chat',
   quotaUsd,
 });
@@ -40,8 +35,7 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
       input: {
         roleId: ROLE_ID,
         effect: 'deny',
-        target: serverTarget,
-        modelPurpose: null,
+        modelPurpose: 'chat',
       },
       expected: invalid('deny_for_role'),
     },
@@ -50,39 +44,15 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
       input: {
         userId: USER_ID,
         effect: 'deny',
-        target: toolTarget,
-        modelPurpose: null,
+        modelPurpose: 'chat',
       },
       expected: ok,
-    },
-    {
-      name: 'a quota on a server right',
-      input: {
-        roleId: ROLE_ID,
-        effect: 'allow',
-        target: serverTarget,
-        modelPurpose: null,
-        quotaUsd: 10,
-      },
-      expected: invalid('quota_not_on_model_allow'),
-    },
-    {
-      name: 'a quota on a tool right',
-      input: {
-        userId: USER_ID,
-        effect: 'allow',
-        target: toolTarget,
-        modelPurpose: null,
-        quotaUsd: 10,
-      },
-      expected: invalid('quota_not_on_model_allow'),
     },
     {
       name: 'a quota on a model deny',
       input: {
         userId: USER_ID,
         effect: 'deny',
-        target: modelTarget,
         modelPurpose: 'chat',
         quotaUsd: 10,
       },

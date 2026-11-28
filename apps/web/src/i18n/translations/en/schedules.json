@@ -7,21 +7,26 @@
     "nameHint": "Leave it empty and the start of the instruction becomes the name.",
     "instruction": "Instruction",
     "instructionHint": "What the agent should do — just as you would write it in the chat",
-    "agent": "Agent",
-    "chatAgent": "Chat agent",
     "target": "Where to reply",
     "newConversation": "A new conversation each time",
     "newConversationHint": "A separate conversation for every trigger — for independent reports.",
-    "thisConversation": "In this conversation",
     "namedConversation": "In the conversation “{title}”",
     "thisConversationHint": "The agent sees its earlier replies and can compare with last time.",
-    "noConversationYet": "Available after the first message in the conversation.",
-    "conversationDeleted": "The conversation was deleted — replies will go to a new conversation.",
     "create": "Create schedule",
     "save": "Save",
     "created": "Schedule created. Next trigger — {at}.",
     "open": "Open",
-    "saved": "Schedule saved"
+    "saved": "Schedule saved",
+    "onlyNewConversationHint": "To get replies in one conversation, ask the agent there: “/” → “Schedule”.",
+    "access": {
+      "label": "Access",
+      "read": "Read only",
+      "readHint": "The agent searches and reads. It makes no writes — tickets, emails, data changes — and says so in its reply.",
+      "full": "Full access",
+      "fullHint": "The agent makes writes without your confirmation, within your rights. Your consent is needed below.",
+      "consent": "I understand: on this schedule the agent itself creates and changes records on my behalf — tickets, emails, data in systems — and does not ask for confirmation. It may also make a write from text it read in an email or a ticket.",
+      "consentHint": "To give full access, tick the consent."
+    }
   },
   "rule": {
     "label": "When",
@@ -57,7 +62,9 @@
     },
     "next": "Next trigger: {at}",
     "noNext": "Next trigger: —",
-    "zone": "Times in the {zone} time zone (UTC{offset})"
+    "zoneLabel": "Time zone",
+    "zoneSearch": "Find a time zone…",
+    "zoneNotFound": "No time zone found"
   },
   "errors": {
     "instruction": "Write what the agent should do.",
@@ -69,16 +76,13 @@
   "list": {
     "title": "Schedules",
     "columns": {
-      "schedule": "Schedule",
-      "state": "State",
-      "next": "Next trigger",
-      "last": "Last trigger"
+      "schedule": "Schedule"
     },
-    "lastLabel": "Last trigger:",
     "emptyTitle": "No schedules yet",
-    "emptyHint": "Create one in any conversation: “+” → “Schedule”.",
+    "emptyHint": "Create one with “New schedule” or write in any conversation what to do and when — the agent will set up the schedule.",
     "loadFailed": "Couldn't load schedules",
-    "nextLabel": "Next trigger:"
+    "create": "New schedule",
+    "details": "Details"
   },
   "state": {
     "active": "Active",
@@ -104,12 +108,10 @@
     "when": "When",
     "next": "Next trigger",
     "target": "Reply",
-    "created": "Created",
     "replyTo": "To the conversation “<link>{title}</link>”",
-    "createdIn": "{day} in the conversation “<link>{title}</link>”",
-    "createdDeleted": "{day}, conversation deleted",
     "agentUnavailable": "unavailable",
-    "pausedDeleted": "The conversation “{title}” was deleted, so the schedule is paused. To make it work again, choose replies in a new conversation and resume it."
+    "pausedDeleted": "The conversation “{title}” was deleted, so the schedule is paused. To make it work again, choose replies in a new conversation and resume it.",
+    "access": "Access"
   },
   "notices": {
     "paused": "Paused",
@@ -137,5 +139,14 @@
     "emptyTitle": "No triggers yet",
     "emptyFirst": "The first one — {at}.",
     "loadFailed": "Couldn't load the history"
+  },
+  "card": {
+    "group": "Schedule “{name}”",
+    "open": "Open",
+    "openLabel": "Open the schedule “{name}”",
+    "deleted": "Schedule deleted",
+    "paused": "Paused",
+    "resumed": "Resumed",
+    "accessDropped": "Full access removed: the schedule now only reads. You can give it back in the form — “Open”."
   }
 }

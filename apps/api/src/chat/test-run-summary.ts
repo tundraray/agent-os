@@ -22,6 +22,14 @@ const [, OFFER_AGENT_TOOL, , PROPOSE_PLAN_TOOL, CREATE_AGENT_TOOL] =
   TEST_RUN_TOOLS;
 const PROPOSE_VERSION_TOOL = TRAINER_TOOLS[5];
 
+/** The tools whose successful results `testRunSummary` reads, with the employee's first message after each (live-feed KD-6). */
+export const TEST_RUN_SUMMARY_TOOLS = [
+  OFFER_AGENT_TOOL,
+  PROPOSE_PLAN_TOOL,
+  CREATE_AGENT_TOOL,
+  PROPOSE_VERSION_TOOL,
+];
+
 /** A call's entry and the time of its result. */
 type CallEntry = HistoryEntry & { readonly callId: string };
 

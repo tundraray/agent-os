@@ -261,7 +261,9 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
         200,
         RoleListSchema,
       );
-      const builtinRole = roles.find((role) => role.builtin);
+      const builtinRole = roles.find(
+        (role) => role.builtinKind === 'super_admin',
+      );
       if (builtinRole === undefined)
         throw new Error('No built-in role in GET /admin/roles');
       const builtin = { id: builtinRole.id, name: builtinRole.name };
@@ -314,7 +316,11 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
           200,
           RoleDetailSchema,
         ),
-      ).toMatchObject({ name: builtin.name, isAdmin: true, builtin: true });
+      ).toMatchObject({
+        name: builtin.name,
+        isAdmin: true,
+        builtinKind: 'super_admin',
+      });
 
       // Step 4 - Assigning the built-in role to another employee gives him the admin right, as any role
       const employee = await createEmployee(app, igor);

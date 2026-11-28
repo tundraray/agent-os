@@ -3,7 +3,7 @@ import type {
   LibraryRecordCard,
   LibraryRejectReason,
   RecordAuthor,
-  RecordBody,
+  StartableBody,
 } from '@agent-os/contracts';
 import type { LibraryViewer } from '@agent-os/db';
 import type { StoredBan, StoredRecord } from './stored-records';
@@ -127,7 +127,7 @@ export type SaveCheck =
 export interface ChatRecordInput {
   readonly name: string;
   readonly description: string;
-  readonly body: RecordBody;
+  readonly body: StartableBody;
 }
 
 /**

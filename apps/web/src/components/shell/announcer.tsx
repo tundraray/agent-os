@@ -32,22 +32,21 @@ function resolveValues(
 }
 
 /**
- * The shell's only polite live region (design-web.md, «Доступность»). The region itself stays mounted;
- * the inner node is replaced on every `announce`, so a repeated phrase is spoken again. The store holds a
- * key with values; the phrase is translated here, in the page's language (KD-5).
+ * The shell's only polite live region (design-web.md, «Доступность»). The region itself stays mounted; every
+ * `announce` adds its own node, so phrases announced together are read in turn and a repeated phrase is spoken
+ * again. The store holds keys with values; each phrase is translated here, in the page's language (KD-5).
  */
 export function Announcer({ announcer }: { announcer: AnnouncerStore }) {
   const t = useTranslations();
   const { tools } = useMessages();
-  const message = useStore(announcer, (state) => state.message);
-  const seq = useStore(announcer, (state) => state.seq);
+  const queue = useStore(announcer, (state) => state.queue);
   return (
     <div role="status" aria-live="polite" className="sr-only">
-      <span key={seq}>
-        {message === null
-          ? ''
-          : t(message.key, resolveValues(tools, message.values))}
-      </span>
+      {queue.map(({ seq, announcement }) => (
+        <span key={seq} className="block">
+          {t(announcement.key, resolveValues(tools, announcement.values))}
+        </span>
+      ))}
     </div>
   );
 }

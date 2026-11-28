@@ -1,6 +1,7 @@
 import type { Logger } from '@agent-os/common';
 import type {
   DeepAgentContent,
+  QuestionAnswer,
   ToolOutcome,
   ToolRefusalReason,
 } from '@agent-os/contracts';
@@ -30,6 +31,11 @@ export interface ToolDeclaration {
   readonly startable: readonly string[] | null;
   /** Lines of the deep agents the agent may start, for the description of the tool that does it; `null` — not listed. */
   readonly deepAgents: readonly string[] | null;
+  /**
+   * Lines of the skills the agent may read (agent-guidance KD-6) — its version's list, or the chat's listing — for
+   * the description of `read_skill`; filled for a model call by `offeredDeclaration`, empty otherwise.
+   */
+  readonly skills: readonly string[];
   /** The agent keeps a task list. */
   readonly taskList: boolean;
   /** The agent may give the same work for a list of items. */
@@ -89,6 +95,12 @@ export interface ToolCaller {
    * tasks with these numbers are moved by code only; `null` — an ordinary list.
    */
   readonly fixedTasks: readonly number[] | null;
+  /**
+   * The schedule mark of the root's last message as the tool step read it (chat-scheduling KD-4): the call rule and
+   * `manage_schedule` know a schedule's run by it. `null` — the employee wrote it, and in the agent's own caller,
+   * which no step has read.
+   */
+  readonly scheduleId: string | null;
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */
@@ -144,6 +156,12 @@ export interface OutsideToolInput<Args> {
   readonly guard: StepContext['guard'];
   /** `content` of the resolved request when the call runs on confirmation; absent otherwise (KD-10). */
   readonly confirmed?: unknown;
+  /**
+   * Set only when the call runs on the employee's decision (agent-guidance KD-1): his answers to an
+   * `agents.question` card, `null` — a decision without answers, he skipped the card. Absent when the call runs
+   * without a decision (`sendUnasked`): nobody was there to answer (KD-2).
+   */
+  readonly answers?: readonly QuestionAnswer[] | null;
 }
 
 /** What `review` answers: the call is refused with its reason and text, or the card shows `content`. */

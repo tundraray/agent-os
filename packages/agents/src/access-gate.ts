@@ -1,11 +1,21 @@
 import type { ModelPrice } from '@agent-os/runtime';
 
-/** The employee's tool rights; the pair check needs no database once the grants are read. */
+/** A tool the gate is asked about: its server, its name and its effective class (access-levels KD-4). */
+export interface GateTool {
+  readonly server: string;
+  readonly tool: string;
+  readonly readOnly: boolean;
+}
+
+/**
+ * The employee's tool rights; the check needs no database once the grants are read. It is asked only of a tool
+ * the admin left on: a switched-off one is refused before it.
+ */
 export type ToolAccess =
   | { readonly kind: 'owner_disabled' }
   | {
       readonly kind: 'allowed';
-      readonly allows: (server: string, tool: string) => boolean;
+      readonly allows: (tool: GateTool) => boolean;
     };
 
 /** Why a model call is refused (design-access.md, «Как AccessGate решает о вызове модели»). */

@@ -12,7 +12,6 @@ import type {
   CreateCatalogModelBody,
   CreateGrantBody,
   Grant,
-  GrantTargetBody,
   ModelDefaults,
   ModelProviderKind,
   ModelUnavailableReason,
@@ -22,7 +21,9 @@ import type {
 } from '@agent-os/contracts';
 import {
   AccessGrantsRepository,
+  IdentityRolesRepository,
   ModelsRepository,
+  type AccessGrantWithModelName,
   type GrantHolderQuery,
   Db,
 } from '@agent-os/db';
@@ -51,12 +52,12 @@ import {
   allowedCatalogue,
   effectiveAccess,
   type EffectiveAccess,
-  type GrantRow,
 } from './effective-access';
 import {
   grantColumnsOf,
   toGrantRow,
   toStoredGrant,
+  type GrantRow,
   type StoredGrant,
 } from './grant-rows';
 import { grantRules, type GrantRuleInput } from './grant-rules';
@@ -66,14 +67,6 @@ import {
   toCatalogModelOrUndefined,
 } from './model-rows';
 import { modelVerdict, quotaExhausted } from './model-verdict';
-
-/** A server or tool target of a grant. */
-export type McpGrantTarget = Exclude<GrantTargetBody, { kind: 'model' }>;
-
-/** Whether the server and tool of a target are in the MCP registry; given by the controller (ADR-0014). */
-export type McpTargetCheck = (
-  target: McpGrantTarget,
-) => Promise<'server_unknown' | 'tool_unknown' | null>;
 
 /** The readiness of the named providers; given by the controller from `AgentsProviders.readiness`. */
 export type ProviderReadinessOf = (
@@ -121,6 +114,10 @@ function holderOfBody(body: CreateGrantBody): GrantHolderQuery {
   throw new Error('grant body without a holder passed the schema');
 }
 
+function isModelGrant({ grant }: AccessGrantWithModelName): boolean {
+  return grant.targetKind === 'model';
+}
+
 /** The grant as `grantRules` takes it: a stored grant with a new quota (PATCH). */
 function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
   const holder =
@@ -131,7 +128,6 @@ function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
   return {
     ...holder,
     effect: grant.effect,
-    target: grant.target,
     modelPurpose: null,
     quotaUsd,
   };
@@ -153,13 +149,18 @@ export class AccessService implements AccessGate {
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly identity: IdentityDirectory,
     private readonly grants: AccessGrantsRepository,
+    private readonly roles: IdentityRolesRepository,
     private readonly models: ModelsRepository,
     private readonly settings: SettingsService,
     private readonly auditLog: AuditLog,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
-  /** The employee's tool rights; `owner_disabled` for a disabled or unknown employee. */
+  /**
+   * The employee's tool rights; `owner_disabled` for a disabled or unknown employee. Each tool is answered by
+   * the coverage rule over the levels of his roles, «Все сотрудники» included, and his own (access-levels
+   * KD-3, KD-4); a super-administrator is a branch of the rule.
+   */
   async tools(ownerId: string): Promise<ToolAccess> {
     const startedAt = Date.now();
     if (!(await this.identity.isActive(ownerId))) {
@@ -170,23 +171,30 @@ export class AccessService implements AccessGate {
       });
       return { kind: 'owner_disabled' };
     }
-    const grants = await this.grantRowsOf(ownerId);
+    const { grants, superAdmin } = await this.grantRowsOf(ownerId);
     const access = effectiveAccess(grants);
-    // Not a verdict on any tool: the owner is active and this many grants were read; pairs are refused one by one.
+    // Not a verdict on any tool: the owner is active and this many grants were read; tools are refused one by one.
     this.logger.info('tool access checked', {
       ownerId,
       ownerActive: true,
+      superAdmin,
       grantsRead: grants.length,
       durationMs: Date.now() - startedAt,
     });
     return {
       kind: 'allowed',
-      allows: (server, tool) => {
-        const allowed = access.tool(server, tool);
-        if (!allowed) {
-          this.logger.info('tool pair refused', { ownerId, server, tool });
+      allows: (tool) => {
+        const { state } = access.tool(tool, superAdmin);
+        if (state !== 'available') {
+          this.logger.info('tool refused', {
+            ownerId,
+            server: tool.server,
+            tool: tool.tool,
+            readOnly: tool.readOnly,
+            state,
+          });
         }
-        return allowed;
+        return state === 'available';
       },
     };
   }
@@ -490,11 +498,14 @@ export class AccessService implements AccessGate {
 
   // ---------- Admin: grants ----------
 
-  /** The grants of a role or an employee by creation time. 404 ROLE_NOT_FOUND, USER_NOT_FOUND. */
+  /**
+   * The model grants of a role or an employee by creation time; the rows of access levels are not
+   * grants here (access-levels KD-6). 404 ROLE_NOT_FOUND, USER_NOT_FOUND.
+   */
   async listGrants(holder: GrantHolderQuery): Promise<Grant[]> {
     await this.holderOr404(holder);
     const rows = await this.grants.list(holder);
-    return this.named(rows.map(toStoredGrant));
+    return this.named(rows.filter(isModelGrant).map(toStoredGrant));
   }
 
   /**
@@ -502,15 +513,8 @@ export class AccessService implements AccessGate {
    * embedding model among its reasons, DC-5), 404 ROLE_NOT_FOUND/USER_NOT_FOUND, 422
    * GRANT_TARGET_UNKNOWN, 409 GRANT_EXISTS.
    */
-  async createGrant(
-    actorId: string,
-    body: CreateGrantBody,
-    mcpTargetCheck: McpTargetCheck,
-  ): Promise<Grant> {
-    const targetModel =
-      body.target.kind === 'model'
-        ? await this.findModel(body.target.model)
-        : undefined;
+  async createGrant(actorId: string, body: CreateGrantBody): Promise<Grant> {
+    const targetModel = await this.findModel(body.target.model);
     const rules = grantRules({
       ...body,
       modelPurpose: targetModel?.purpose ?? null,
@@ -518,13 +522,8 @@ export class AccessService implements AccessGate {
     if (rules.kind === 'invalid')
       throw accessError('GRANT_INVALID', rules.reason);
     await this.holderOr404(holderOfBody(body));
-    const unknown =
-      body.target.kind === 'model'
-        ? targetModel === undefined
-          ? 'model_unknown'
-          : null
-        : await mcpTargetCheck(body.target);
-    if (unknown !== null) throw accessError('GRANT_TARGET_UNKNOWN', unknown);
+    if (targetModel === undefined)
+      throw accessError('GRANT_TARGET_UNKNOWN', 'model_unknown');
     const created = await this.db.transaction(async () => {
       const id = await this.grants.insert(grantColumnsOf(body));
       if (id === undefined) throw accessError('GRANT_EXISTS');
@@ -607,7 +606,7 @@ export class AccessService implements AccessGate {
 
   /** The employee's rights now: his roles, then their grants and his own in one query. */
   private async accessOf(ownerId: string): Promise<EffectiveAccess> {
-    return effectiveAccess(await this.grantRowsOf(ownerId));
+    return effectiveAccess((await this.grantRowsOf(ownerId)).grants);
   }
 
   /** The employee's rights and the catalogue chat models they allow, in catalogue order (DC-5). */
@@ -624,12 +623,25 @@ export class AccessService implements AccessGate {
     };
   }
 
-  /** The grants of the employee's roles and his own. */
-  private async grantRowsOf(ownerId: string): Promise<GrantRow[]> {
-    if (!isUuid(ownerId)) return [];
-    const roleIds = await this.identity.rolesOf(ownerId);
-    const rows = await this.grants.ofEmployee(roleIds, ownerId);
-    return rows.map(toGrantRow);
+  /**
+   * The grants of the employee's roles, «Все сотрудники» among them without a membership row (access-levels
+   * KD-5), and his own: the roles first, then the rows in one query (NFR-04). `superAdmin` — he is in the
+   * built-in «Супер-администратор» role, read from the same roles.
+   */
+  private async grantRowsOf(
+    ownerId: string,
+  ): Promise<{ grants: GrantRow[]; superAdmin: boolean }> {
+    if (!isUuid(ownerId)) return { grants: [], superAdmin: false };
+    const held = await this.roles.ofUsers([ownerId]);
+    const everyone = await this.roles.builtinId('everyone');
+    const rows = await this.grants.ofEmployee(
+      [...held.map((role) => role.id), everyone],
+      ownerId,
+    );
+    return {
+      grants: rows.map(toGrantRow),
+      superAdmin: held.some((role) => role.builtinKind === 'super_admin'),
+    };
   }
 
   /** The catalogue model of the id; `undefined` for a missing one. */
@@ -647,9 +659,11 @@ export class AccessService implements AccessGate {
     return spend.get(model) ?? 0;
   }
 
+  /** A level row is no grant of this route: 404 like a missing one (access-levels KD-6). */
   private async grantOr404(id: string): Promise<Grant> {
     const stored = isUuid(id) ? await this.grants.find(id) : undefined;
-    if (stored === undefined) throw accessError('GRANT_NOT_FOUND');
+    if (stored === undefined || !isModelGrant(stored))
+      throw accessError('GRANT_NOT_FOUND');
     const [grant] = await this.named([toStoredGrant(stored)]);
     if (grant === undefined) throw new Error(`grant ${id} lost its holder`);
     return grant;

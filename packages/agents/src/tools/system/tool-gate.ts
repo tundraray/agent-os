@@ -1,4 +1,4 @@
-import type { RecordKind, ToolRefusalReason } from '@agent-os/contracts';
+import type { StartableKind, ToolRefusalReason } from '@agent-os/contracts';
 
 type Refused<Reason extends ToolRefusalReason> = {
   readonly kind: 'refused';
@@ -14,7 +14,7 @@ export type StartTarget =
    * A name; `recordKind` — the kind of the agent it starts as the caller's owner sees it: `deep_agent` when
    * the owner sees no agent with the name but a deep agent (data-model design-agents.md, KD-5).
    */
-  | { readonly kind: 'name'; readonly recordKind: RecordKind };
+  | { readonly kind: 'name'; readonly recordKind: StartableKind };
 
 export interface StartGateInput {
   readonly target: StartTarget;

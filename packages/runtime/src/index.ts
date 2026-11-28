@@ -37,6 +37,11 @@ export {
   type TaskEndStatus,
 } from './tasks/task-end-hooks';
 export {
+  type TaskInterruptHook,
+  type TaskInterruptHookInput,
+  TaskInterruptHooks,
+} from './tasks/task-interrupt-hooks';
+export {
   inSavepoint,
   type SavepointResult,
   withTxRetry,

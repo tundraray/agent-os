@@ -1,9 +1,22 @@
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
+import { EDIT_RECORD_TOOL } from '@agent-os/contracts';
 import { render, screen, within } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback.aui';
+import { ShellServicesContext } from '@/components/shell/shell-actions';
 import type { ToolCallArtifact } from '@/lib/feed/to-feed';
+import { createShellServices } from '@/lib/threads/shell-services';
+
+/** A record tool's block reads the library list from the shell's services. */
+function ShellServices({ children }: { children: ReactNode }) {
+  const [services] = useState(() => createShellServices());
+  return (
+    <ShellServicesContext.Provider value={services}>
+      {children}
+    </ShellServicesContext.Provider>
+  );
+}
 
 // The block reads only the message time from the assistant-ui store; nothing else of the runtime is needed.
 vi.mock('@assistant-ui/react', async (importOriginal) => {
@@ -67,4 +80,43 @@ describe('ToolFallback', () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Результат' })).toBeNull();
   });
+
+  // UC-3, IM-03 (server AC-03.2): a schedule's run refused a change no one could confirm — MC-2, never the
+  // general refusal and never a record tool's «Не сохранено:».
+  it.each([
+    { toolName: 'send_email', server: 'gmail' },
+    { toolName: EDIT_RECORD_TOOL, server: null },
+  ])(
+    'an unattended refusal of $toolName shows the MC-2 line',
+    ({ toolName, server }) => {
+      const props: ComponentProps<typeof ToolFallback> = {
+        type: 'tool-call',
+        toolCallId: 'c2',
+        toolName,
+        args: {},
+        argsText: '{}',
+        result: 'The schedule may not change this without a confirmation.',
+        isError: true,
+        artifact: {
+          ...AUTH_REQUIRED,
+          outcome: 'refused',
+          server,
+          refusalReason: 'unattended',
+        },
+        status: { type: 'complete' },
+        addResult: vi.fn(),
+        resume: vi.fn(),
+        respondToApproval: vi.fn<() => Promise<void>>(),
+      };
+      render(<ToolFallback {...props} />, { wrapper: ShellServices });
+
+      expect(
+        screen.getByText(
+          'Расписанию это не разрешено — подтвердить было некому',
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Не сохранено:/)).toBeNull();
+      expect(screen.queryByText('Платформа отказала в вызове')).toBeNull();
+    },
+  );
 });

@@ -65,11 +65,7 @@ export type ModelDefaultInvalidError = z.infer<
 >;
 
 /** `reason` of a 422 GRANT_TARGET_UNKNOWN. */
-export const GrantTargetUnknownReasonSchema = z.enum([
-  'server_unknown',
-  'tool_unknown',
-  'model_unknown',
-]);
+export const GrantTargetUnknownReasonSchema = z.enum(['model_unknown']);
 export type GrantTargetUnknownReason = z.infer<
   typeof GrantTargetUnknownReasonSchema
 >;
@@ -209,37 +205,26 @@ export type UpdateModelDefaultsBody = z.infer<
 export const GrantEffectSchema = z.enum(['allow', 'deny']);
 export type GrantEffect = z.infer<typeof GrantEffectSchema>;
 
-export const GrantTargetKindSchema = z.enum(['server', 'tool', 'model']);
+/** `server_read`: the read tools of a server (access-levels KD-1). */
+export const GrantTargetKindSchema = z.enum([
+  'server',
+  'server_read',
+  'tool',
+  'model',
+]);
 export type GrantTargetKind = z.infer<typeof GrantTargetKindSchema>;
 
-const serverTarget = z.object({
-  kind: z.literal('server'),
-  server: z.string().min(1),
-});
-const toolTarget = z.object({
-  kind: z.literal('tool'),
-  server: z.string().min(1),
-  tool: z.string().min(1),
-});
 const modelTarget = z.object({
   kind: z.literal('model'),
   model: ModelIdSchema,
 });
 
-/** Target of a grant as the admin sends it. Server and tool names are text, as in the registry. */
-export const GrantTargetBodySchema = z.discriminatedUnion('kind', [
-  serverTarget,
-  toolTarget,
-  modelTarget,
-]);
+/** Target of a grant as the admin sends it: only a model (access-levels KD-6; servers go by levels). */
+export const GrantTargetBodySchema = modelTarget;
 export type GrantTargetBody = z.infer<typeof GrantTargetBodySchema>;
 
-/** Target of a grant in a response: a model target carries the catalogue name. */
-export const GrantTargetSchema = z.discriminatedUnion('kind', [
-  serverTarget,
-  toolTarget,
-  modelTarget.extend({ modelName: z.string() }),
-]);
+/** Target of a grant in a response: the model with its catalogue name. */
+export const GrantTargetSchema = modelTarget.extend({ modelName: z.string() });
 export type GrantTarget = z.infer<typeof GrantTargetSchema>;
 
 export const GrantHolderSchema = z.discriminatedUnion('kind', [
@@ -254,7 +239,7 @@ export const GrantSchema = z.object({
   holder: GrantHolderSchema,
   effect: GrantEffectSchema,
   target: GrantTargetSchema,
-  /** Only on a model allow; `null` — no quota. */
+  /** Only on an allow; `null` — no quota. */
   quotaUsd: z.number().nullable(),
   createdAt: z.iso.datetime(),
 });

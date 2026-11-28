@@ -85,10 +85,11 @@ export class AgentsController {
     return this.run({
       route: 'GET /agents/:agentId/history',
       fields: { ownerId, agentId },
-      work: () => this.control.history(agentId, ownerId, query.afterSeq),
+      work: () => this.control.history(agentId, ownerId, query),
       outcomeOf: (page) => ({
         agentStatus: page.agent.status,
         entries: page.entries.length,
+        hasOlder: page.hasOlder,
       }),
     });
   }
@@ -103,7 +104,8 @@ export class AgentsController {
     return this.run({
       route: 'GET /agents/:agentId/inherited',
       fields: { ownerId, agentId },
-      work: () => this.control.inherited(agentId, ownerId, query.afterSeq),
+      // The inherited part reads from its start without a number.
+      work: () => this.control.inherited(agentId, ownerId, query.afterSeq ?? 0),
       outcomeOf: (page) => ({ entries: page.entries.length }),
     });
   }
@@ -152,7 +154,7 @@ export class AgentsController {
     return this.run({
       route: 'POST /agents/:agentId/messages',
       fields: { ownerId, agentId },
-      work: () => this.control.send(agentId, ownerId, body.text),
+      work: () => this.control.send(agentId, ownerId, body),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });
   }

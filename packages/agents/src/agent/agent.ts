@@ -13,15 +13,16 @@ import { BaseAgent } from './base-agent';
 export class Agent extends BaseAgent {
   /**
    * The model call's declaration lists whom the agent may start as its owner sees the catalogue now
-   * (data-model design-agents.md, KD-6): the agents of its version's `agents` he sees, read on every step. An
-   * agent whose version lists none reads nothing.
+   * (data-model design-agents.md, KD-6): the agents of its version's `agents` he sees, read on every step, beside
+   * the skill catalogue of `BaseAgent`. An agent whose version lists none reads no listing.
    */
   override async offeredDeclaration(
     ctx: StepContext,
   ): Promise<ToolDeclaration> {
+    const declaration = await super.offeredDeclaration(ctx);
     const { agents } = this.definition;
-    if (agents.length === 0) return this.declaration;
+    if (agents.length === 0) return declaration;
     const visible = await this.deps.library.listVisible(agentOwner(ctx));
-    return { ...this.declaration, startable: agentLines(agents, visible) };
+    return { ...declaration, startable: agentLines(agents, visible) };
   }
 }

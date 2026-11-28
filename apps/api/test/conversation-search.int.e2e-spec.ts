@@ -209,14 +209,20 @@ async function wordy(
 
 /**
  * A conversation whose chat starts a general sub-agent with `prompt`; the sub-agent reads the logs (the calls given) and
- * reports, the chat answers the report. Returns the conversation, the sub-agent and its stored results' call ids.
+ * reports, the chat answers the report. Returns the conversation, the sub-agent and its stored results' call ids with
+ * the `seq` of each `tool_result` entry.
  */
 async function withSubagent(
   api: ChatApi,
   text: string,
   prompt: string,
   logCalls: Record<string, unknown>[],
-): Promise<{ threadId: string; agentId: string; callIds: string[] }> {
+): Promise<{
+  threadId: string;
+  agentId: string;
+  callIds: string[];
+  seqOf: Map<string, number>;
+}> {
   harness.model.script({ task: text }, [
     { calls: [startAgent('Разбор логов', prompt)] },
     { text: 'Разбор запущен.' },
@@ -232,17 +238,19 @@ async function withSubagent(
   const [agent] = await api.threadAgents(threadId);
   if (agent === undefined) throw new Error('no sub-agent');
   const page = await api.agentPage(agent.agentId);
-  const callIds = page.entries
-    .filter(
-      (entry): entry is Extract<HistoryEntry, { kind: 'tool_result' }> =>
-        entry.kind === 'tool_result' && entry.content.tool === 'search_logs',
-    )
-    .map((entry) => {
-      expect(entry.content.outcome).toBe('success');
-      return entry.content.callId;
-    });
+  const results = page.entries.filter(
+    (entry): entry is Extract<HistoryEntry, { kind: 'tool_result' }> =>
+      entry.kind === 'tool_result' && entry.content.tool === 'search_logs',
+  );
+  const callIds = results.map((entry) => {
+    expect(entry.content.outcome).toBe('success');
+    return entry.content.callId;
+  });
   expect(callIds).toHaveLength(logCalls.length);
-  return { threadId, agentId: agent.agentId, callIds };
+  const seqOf = new Map(
+    results.map((entry) => [entry.content.callId, entry.seq]),
+  );
+  return { threadId, agentId: agent.agentId, callIds, seqOf };
 }
 
 describe('Conversation search: everything is found, once, in order (UC-1); only your own and only the living (UC-2)', () => {
@@ -324,7 +332,7 @@ describe('Conversation search: everything is found, once, in order (UC-1); only 
           place: 'tool_result',
           agent: { agentId: logs.agentId, name: GENERAL_PURPOSE.name },
           tool: 'search_logs',
-          seq: null,
+          seq: logs.seqOf.get(match.callId!),
           titleMarks: [],
         });
         expect(match.snippet?.text).toContain(SERVICE);

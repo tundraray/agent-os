@@ -1,9 +1,11 @@
 import {
   CHAT_TASK_TYPE,
   type ChipRecord,
-  RecordKindSchema,
+  type NotificationLevel,
+  NotificationLevelSchema,
   type RunOrigin,
   type ScheduleMark,
+  StartableKindSchema,
 } from '@agent-os/contracts';
 import {
   type ConversationRow,
@@ -41,6 +43,11 @@ export const AgentTaskInputSchema = z.object({
   answerFields: z.array(AnswerFieldSchema).optional(),
   /** A trainer task that runs a test run, not a training (design-test-run.md, KD-1). */
   testRun: z.literal(true).optional(),
+  /**
+   * A chat root a tracker delegation opened (task-tracker KD-4): its chat declares `tracker_report`. Set once at the
+   * start and never removed; a fork and a restart start without it.
+   */
+  trackerTask: z.literal(true).optional(),
 });
 export type AgentTaskInput = z.infer<typeof AgentTaskInputSchema>;
 
@@ -92,6 +99,8 @@ export interface Session {
   readonly interrupted: boolean;
   readonly closed: boolean;
   readonly lastInputTokens: number | null;
+  /** The last provider overflow has not ended in a model answer yet (runtime-fixes design-steps.md, KD-5). */
+  readonly overflowed: boolean;
   readonly createdAt: Date;
 }
 
@@ -114,6 +123,10 @@ export interface RootSession {
   } | null;
   /** The live forks of this conversation. */
   readonly forkCount: number;
+  /** The last entry of the root's history the owner has seen (improvements design-server.md, KD-7). */
+  readonly seenThroughSeq: number;
+  /** The conversation's own notification level; `null` — the owner's default (live-feed KD-7). */
+  readonly notificationLevel: NotificationLevel | null;
 }
 
 /** Reads a root's row as a root session; a row without a title or a list time is not a root's. */
@@ -137,6 +150,10 @@ export function toRootSession(row: RootConversationRow): RootSession {
             throughSeq: row.forkedThroughSeq,
           },
     forkCount: row.forkCount,
+    seenThroughSeq: row.seenThroughSeq,
+    notificationLevel: NotificationLevelSchema.nullable().parse(
+      row.notificationLevel,
+    ),
   };
 }
 
@@ -151,7 +168,7 @@ export interface SessionTask {
 function originOf(row: ConversationRow): RunOrigin {
   return {
     recordId: row.agentId,
-    kind: RecordKindSchema.parse(row.agentKind),
+    kind: StartableKindSchema.parse(row.agentKind),
     version: row.versionNumber,
     name: row.agentName,
     author:
@@ -180,6 +197,7 @@ function toSession(row: ConversationRow): Session {
     interrupted: row.interrupted,
     closed: row.closed,
     lastInputTokens: row.lastInputTokens,
+    overflowed: row.overflowed,
     createdAt: row.createdAt,
   };
 }

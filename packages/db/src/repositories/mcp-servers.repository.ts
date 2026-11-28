@@ -13,7 +13,10 @@ export type NewMcpServerRow = Omit<
 
 /** What may change after registration: name, address and mode never do. */
 export type McpServerPatch = Partial<
-  Pick<McpServerRow, 'enabled' | 'tools' | 'sharedToken'>
+  Pick<
+    McpServerRow,
+    'enabled' | 'tools' | 'sharedToken' | 'toolSettings' | 'newTools'
+  >
 >;
 
 /** The server rows before and after a write: the audit record is built from them. */
@@ -34,6 +37,19 @@ export class McpServersRepository {
       .select()
       .from(mcpServers)
       .where(eq(mcpServers.name, name));
+    return row;
+  }
+
+  /**
+   * The server's row held until the caller's transaction ends: a second reader of the same server waits and
+   * then reads what the first wrote, so a read-then-write of one jsonb column loses no update.
+   */
+  async findForUpdate(name: string): Promise<McpServerRow | undefined> {
+    const [row] = await this.db.client
+      .select()
+      .from(mcpServers)
+      .where(eq(mcpServers.name, name))
+      .for('update');
     return row;
   }
 

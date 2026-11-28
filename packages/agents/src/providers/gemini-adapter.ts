@@ -52,6 +52,10 @@ export const geminiAdapter: ProviderAdapter = {
       ) ?? false
     );
   },
+  // Neither Google's documentation nor its code shows the body of an overflow: none is recognised.
+  contextOverflow() {
+    return false;
+  },
   checkRequest(connection) {
     return {
       url: `${connection.baseUrl}/models`,

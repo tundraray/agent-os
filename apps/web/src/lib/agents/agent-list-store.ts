@@ -36,7 +36,7 @@ export type AgentListStore = StoreApi<AgentListState> & {
   refresh: () => Promise<void>;
   toggle: (agentId: string) => void;
   /**
-   * The screen is shown: follows `tree` and `ready` of the live stream, loads the first time and
+   * The screen is shown: follows the live changes and `ready` of the stream, loads the first time and
    * re-reads afterwards. The returned function detaches.
    */
   attach: () => () => void;
@@ -46,11 +46,11 @@ type AgentListLogger = Pick<typeof appLogger, 'warn'>;
 
 export type CreateAgentListStoreInput = {
   api: Pick<ThreadsApiClient, 'listAgents'>;
-  live: Pick<LiveStore, 'onTree' | 'onReady'>;
+  live: Pick<LiveStore, 'onChange' | 'onReady'>;
   logger: AgentListLogger;
 };
 
-/** KD-2: the loaded tree re-reads by any `tree` note, no more than once a second. */
+/** KD-2: the loaded tree re-reads by live changes, no more than once a second. */
 const REFRESH_INTERVAL_MS = 1000;
 
 /** Roots in these statuses are expanded the first time they appear (agent-tree.md, States). */
@@ -202,7 +202,8 @@ export function createAgentListStore({
     },
     attach: () => {
       const unsubscribers = [
-        live.onTree(() => {
+        // Its rows carry the conversation's title, so `summary` re-reads it too (live-feed design-web.md, KD-1).
+        live.onChange({ kinds: ['state', 'summary', 'deleted'] }, () => {
           void refresh();
         }),
         live.onReady(() => {

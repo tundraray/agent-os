@@ -25,6 +25,7 @@ import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useReloadOnAnyChange } from '@/hooks/use-reload-on-any-change';
 import {
   usePagedResource,
   useResource,
@@ -42,11 +43,9 @@ import { schedulesPath, threadPath } from '@/lib/shell-route';
 import { startTimer } from '@/lib/timer';
 import { ScheduleDialog } from './schedule-dialog';
 import {
-  agentName,
   ruleLine,
   ScheduleStateBadge,
   useReloadAfterTerm,
-  useReloadOnAnyTree,
   zoneLine,
 } from './schedule-parts';
 import { formatRunTime } from './schedule-rule-field';
@@ -58,7 +57,7 @@ type Action = 'pause' | 'resume' | 'run';
 
 /**
  * The schedule page `/schedules/<id>` (UXRD Screen 3): SH-05 header, actions and settings, SH-06 history. Both are
- * read on open, after every own change, on every `tree` note and shortly after the next term, so a trigger of the
+ * read on open, after every own change, on every live change and shortly after the next term, so a trigger of the
  * pass — or a pause it makes without one — shows while the page is open (design-schedules «Страницы»); a re-read
  * by note or term leaves the history alone once «Показать ещё» has added a page. Any 404 — a foreign,
  * deleted or missing schedule — is SH-08, which names nothing of the schedule.
@@ -79,13 +78,13 @@ export function ScheduleScreen({ id }: { id: string }) {
     reloadSchedule();
     reloadRuns();
   }, [reloadSchedule, reloadRuns]);
-  // A `tree` note comes often while any conversation runs: it must not drop the pages loaded by «Показать ещё».
-  const reloadOnTree = useCallback(() => {
+  // A live change comes often while any conversation runs: it must not drop the pages loaded by «Показать ещё».
+  const reloadOnChange = useCallback(() => {
     reloadSchedule();
     if (!loadedMore) reloadRuns();
   }, [reloadSchedule, reloadRuns, loadedMore]);
-  useReloadOnAnyTree(reloadOnTree);
-  useReloadAfterTerm(schedule.data?.nextRunAt, schedule.data, reloadOnTree);
+  useReloadOnAnyChange(reloadOnChange);
+  useReloadAfterTerm(schedule.data?.nextRunAt, schedule.data, reloadOnChange);
 
   if (isNotFound(schedule.error))
     return <ThreadNotice variant="schedule-not-found" />;
@@ -341,9 +340,10 @@ const titleOf = (schedule: ScheduleView, untitled: string): string => {
   return title === '' ? untitled : title;
 };
 
-/** SH-05 pairs (MC-8): the label over the value below 640 px, at its left from 640 px. */
+/** SH-05 pairs (MC-8, chat-scheduling SP-02): the label over the value below 640 px, at its left from 640 px. */
 function Settings({ schedule }: { schedule: ScheduleView }) {
   const t = useTranslations('schedules');
+  const tAgent = useTranslations('common.agentField');
   const format = useFormatter();
   const tThread = useTranslations('shell.thread');
   const conversation = schedule.conversation;
@@ -359,28 +359,12 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
         {chunks}
       </ShellLink>
     );
-  const day = format.dateTime(new Date(schedule.createdAt), {
-    day: 'numeric',
-    month: 'short',
-    timeZone: schedule.timeZone,
-  });
-
   const target =
     schedule.target === 'new_conversation'
       ? t('dialog.newConversation')
       : conversation === null || conversation.deleted
         ? t('dialog.namedConversation', { title: conversationTitle })
         : t.rich('page.replyTo', {
-            title: conversationTitle,
-            link: conversationLink,
-          });
-  const created =
-    conversation === null
-      ? day
-      : conversation.deleted
-        ? t('page.createdDeleted', { day })
-        : t.rich('page.createdIn', {
-            day,
             title: conversationTitle,
             link: conversationLink,
           });
@@ -394,7 +378,9 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
       </Pair>
       <Pair label={t('page.agent')}>
         <span className="inline-flex flex-wrap items-center gap-2">
-          <span className="wrap-break-word">{agentName(t, schedule)}</span>
+          <span className="wrap-break-word">
+            {schedule.agent?.name ?? tAgent('chatAgent')}
+          </span>
           {schedule.agent?.available === false && (
             <StateBadge state="off">{t('page.agentUnavailable')}</StateBadge>
           )}
@@ -413,7 +399,9 @@ function Settings({ schedule }: { schedule: ScheduleView }) {
         </span>
       </Pair>
       <Pair label={t('page.target')}>{target}</Pair>
-      <Pair label={t('page.created')}>{created}</Pair>
+      <Pair label={t('page.access')}>
+        {t(`dialog.access.${schedule.access}`)}
+      </Pair>
     </dl>
   );
 }

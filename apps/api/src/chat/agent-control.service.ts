@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { LOGGER, type Logger } from '@agent-os/common';
 import {
   AgentsError,
   ViewOperations,
@@ -17,15 +18,24 @@ import {
   type DecisionResponse,
   type DeepAgentRunView,
   type HistoryEntry,
+  type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
   type RestartResponse,
+  type SendMessageRequest,
+  type SendMessageResponse,
   type AgentTasksView,
   type SpendResponse,
   type StopResponse,
 } from '@agent-os/contracts';
-import { AgentsRepository, TrainingsRepository } from '@agent-os/db';
+import {
+  AgentsRepository,
+  Db,
+  SendKeysRepository,
+  TrainingsRepository,
+} from '@agent-os/db';
 import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
+import { apiError } from '../common/api-error';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
@@ -37,6 +47,7 @@ import {
   toHistoryEntry,
   toDeepAgentRunView,
   toPending,
+  toWindowFields,
   trainingOf,
 } from './conversation-view';
 import { decodeRowCursor, toThreadSummary } from './thread-summary';
@@ -60,7 +71,10 @@ type ListedAgent = {
  */
 @Injectable()
 export class AgentControlService {
+  private readonly logger: Logger;
+
   constructor(
+    private readonly db: Db,
     @Inject(ViewOperations) private readonly views: ViewOperations,
     @Inject(ControlOperations) private readonly control: ControlOperations,
     @Inject(StartOperations) private readonly starts: StartOperations,
@@ -71,7 +85,11 @@ export class AgentControlService {
     private readonly trainings: TrainingsRepository,
     @Inject(AgentsRepository)
     private readonly agents: AgentsRepository,
-  ) {}
+    @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    @Inject(LOGGER) logger: Logger,
+  ) {
+    this.logger = logger.child({ service: 'chat.agent-control' });
+  }
 
   /**
    * KD-7: the top agents (children of roots) of all the owner's conversations, newest first
@@ -110,22 +128,22 @@ export class AgentControlService {
     return { count: counts.reduce((sum, count) => sum + count, 0) };
   }
 
-  /** `AgentPageView`: the agent with its conversation, a page of its history, its queue, own requests and subtree. */
+  /** `AgentPageView`: the agent with its conversation, a window of its history (live-feed KD-5), its queue, own requests and subtree. */
   async history(
     agentId: string,
     ownerId: string,
-    afterSeq: number,
+    query: HistoryQuery,
   ): Promise<AgentPageView> {
     const view = await this.agent(agentId, ownerId);
     const conversation = await this.views.root(view.rootId, ownerId);
     if (conversation === undefined) throw agentNotFound();
-    const [views, entries, messages, confirmations, training] =
+    const [views, window, messages, confirmations, training] =
       await Promise.all([
         this.views.list(view.rootId, ownerId),
-        this.views.history({
+        this.views.window({
           agentId,
           ownerId,
-          afterSeq,
+          ...query,
           limit: HISTORY_PAGE_SIZE,
         }),
         this.inbox.listPending(agentId, ownerId),
@@ -147,8 +165,7 @@ export class AgentControlService {
         threadTitle: toThreadSummary(conversation).title,
         ...(parentDescription === undefined ? {} : { parentDescription }),
       },
-      entries: entries.map(toHistoryEntry),
-      nextAfterSeq: nextAfterSeqOf(entries),
+      ...toWindowFields(window, query),
       pending: toPending(messages, views, confirmations),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)
@@ -206,14 +223,28 @@ export class AgentControlService {
     return this.views.taskList(agentId, ownerId);
   }
 
-  /** A message to the agent; to a finished agent it continues with its history. */
+  /**
+   * A message to the agent; to a finished agent it continues with its history. One transaction takes the send key
+   * first (runtime-fixes design-send.md, KD-1, KD-2), then checks the agent and queues the message; a key this
+   * employee has already sent is a repeat: `messageId` null and nothing is queued.
+   */
   async send(
     agentId: string,
     ownerId: string,
-    text: string,
-  ): Promise<{ messageId: string }> {
-    await this.agent(agentId, ownerId);
-    return this.control.send({ agentId, ownerId, text });
+    { text, sendKey }: SendMessageRequest,
+  ): Promise<SendMessageResponse> {
+    const sent = await this.db.transaction(async () => {
+      if (!(await this.sendKeys.claim(ownerId, sendKey))) return undefined;
+      await this.agent(agentId, ownerId);
+      return this.control.send({ agentId, ownerId, text });
+    });
+    this.logger.info('agent send', {
+      sendKey,
+      ownerId,
+      agentId,
+      outcome: sent === undefined ? 'repeat' : 'new',
+    });
+    return { messageId: sent?.messageId ?? null };
   }
 
   /** As the conversation's interrupt (FR-16). */
@@ -246,7 +277,11 @@ export class AgentControlService {
     return this.starts.restart({ agentId, ownerId });
   }
 
-  /** Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged. */
+  /**
+   * Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged.
+   * «Allow in this conversation» on a card that is not a changing MCP tool's is 400, and the card stays open
+   * (improvements design-server.md Flow 2).
+   */
   async decide(
     decisionId: string,
     ownerId: string,
@@ -258,7 +293,19 @@ export class AgentControlService {
       ownerId,
       approve: decision.approve,
       ...(decision.args === undefined ? {} : { args: decision.args }),
+      ...(decision.allowInConversation === true
+        ? { allowInConversation: true }
+        : {}),
+      ...(decision.answers === undefined ? {} : { answers: decision.answers }),
     });
+    if (outcome === 'not_mcp_card') throw httpError('VALIDATION_FAILED');
+    if (outcome === 'answers_mismatch')
+      throw apiError(
+        400,
+        'VALIDATION_FAILED',
+        'Answers do not match the questions of the card',
+        'answers_mismatch',
+      );
     return { outcome };
   }
 

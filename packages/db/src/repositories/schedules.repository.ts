@@ -36,6 +36,8 @@ export type ScheduleChange = Partial<
     | 'pausedBecause'
     | 'nextRunAt'
     | 'ruleSetAt'
+    | 'conversationId'
+    | 'access'
   >
 >;
 
@@ -100,6 +102,17 @@ export class SchedulesRepository {
         desc(schedules.createdAt),
         desc(schedules.id),
       );
+  }
+
+  /** The owner's schedule changed last: the zone and language of a schedule the chat creates (chat-scheduling KD-5). */
+  async latestOwned(ownerId: string): Promise<ScheduleRow | undefined> {
+    const [row] = await this.db.client
+      .select()
+      .from(schedules)
+      .where(eq(schedules.ownerId, ownerId))
+      .orderBy(desc(schedules.updatedAt), desc(schedules.id))
+      .limit(1);
+    return row;
   }
 
   /** Changes the owner's schedule; `undefined` for another owner's or a missing one. */

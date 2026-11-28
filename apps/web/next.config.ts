@@ -1,10 +1,20 @@
+import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import type { NextConfig } from 'next';
 
 // Read at build time and written into the routes manifest; the image sets it as a build argument.
 const apiInternalUrl = process.env.API_INTERNAL_URL ?? 'http://localhost:4000';
 
+// The machine's own IPv4 addresses: `next dev` serves its dev resources only to origins listed here,
+// so opening the dev server from another device on the network needs them.
+const ownAddresses = Object.values(networkInterfaces()).flatMap((addresses) =>
+  (addresses ?? [])
+    .filter((address) => address.family === 'IPv4' && !address.internal)
+    .map((address) => address.address),
+);
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ownAddresses,
   output: 'standalone',
   // The repository root, so the trace picks up the workspace packages and the pnpm store.
   outputFileTracingRoot: path.resolve(__dirname, '../..'),
@@ -29,7 +39,11 @@ const nextConfig: NextConfig = {
       {
         source: '/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          {
+            // `frame-src 'none'`: a visualization frame cannot navigate itself away (design-inline-vis.md, KD-3).
+            key: 'Content-Security-Policy',
+            value: "frame-ancestors 'none'; frame-src 'none'",
+          },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

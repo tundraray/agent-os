@@ -11,9 +11,16 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
-import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
+import {
+  ConversationStateSchema,
+  NotificationLevelSchema,
+  THREAD_PAGE_SIZE,
+  type ConversationState,
+  type NotificationLevel,
+} from '@agent-os/contracts';
+import { useStore } from 'zustand';
 import { RotateCwIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -25,19 +32,18 @@ import {
 } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
-import { focusAfterNewChat, focusShellTarget } from '@/lib/focus';
+import { focusAfterNewChat } from '@/lib/focus';
 import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
+import { asideOf } from '@/lib/shell/workspace-store';
 import { logger } from '@/lib/logger';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
-import { forkRefusalText } from '@/lib/library/library-errors';
-import { threadPath } from '@/lib/shell-route';
-import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import {
   entryActivityAt,
   groupThreadsByDate,
   type ThreadGroup,
   type ThreadListEntry,
 } from '@/lib/threads/group-threads-by-date';
+import { rowLevel } from '@/lib/threads/shell-status-store';
 import { DeleteThreadDialog } from './delete-thread-dialog';
 import {
   THREAD_ACTIONS_ATTRIBUTE,
@@ -46,6 +52,8 @@ import {
   ThreadHistoryItem,
 } from './thread-history-item';
 import { useShellServices, useShellStatus } from './shell-actions';
+import { useEnableNotifications } from './use-enable-notifications';
+import { useOpenBranch } from './use-open-branch';
 
 export type ThreadHistoryListState =
   | { kind: 'loading' }
@@ -144,7 +152,7 @@ const MORE_SKELETON_ROW_WIDTHS = ['68%', '52%', '80%'] as const;
 /** SB-10 starts the next page this far before it scrolls into view (UXRD 6.8 Default). */
 const AUTO_LOAD_ROOT_MARGIN = '0px 0px 200px 0px';
 
-/** The shortest gap between two re-reads of page 1 by `tree` notes (design-web.md, KD-2). */
+/** The shortest gap between two re-reads of page 1 by live changes (design-web.md, KD-2). */
 const TREE_RELOAD_INTERVAL_MS = 1000;
 
 /** The sidebar's scroll container: the observer's root, so the 200 px margin applies to its edge. */
@@ -160,6 +168,30 @@ const entryIdsOf = (state: ThreadHistoryListState): ReadonlySet<string> =>
       ? state.groups.flatMap((group) => group.entries.map((entry) => entry.id))
       : [],
   );
+
+/** `custom` is the library's untyped bag: a value that is not a known state shows no mark. */
+function conversationStateOf(value: unknown): ConversationState | null {
+  const parsed = ConversationStateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** The same bag's level; `null` is «как по умолчанию», which `toRemoteMetadata` puts for every read row. */
+function listedLevelOf(value: unknown): NotificationLevel | null {
+  const parsed = NotificationLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The mark a row shows (improvements KD-5): a conversation on screen — the open one or the side chat's branch —
+ * never lights «новый ответ» or «сбой», since the employee sees that answer as it comes.
+ */
+function shownState(
+  state: ConversationState | null,
+  { onScreen }: { onScreen: boolean },
+): ConversationState | null {
+  if (onScreen && (state === 'new_answer' || state === 'failed')) return null;
+  return state;
+}
 
 /** ↑/↓ — previous/next thread link across group boundaries, Home/End — first/last; other keys are left alone. */
 function moveFocusBetweenLinks(event: KeyboardEvent<HTMLElement>): void {
@@ -469,9 +501,6 @@ export function ThreadHistoryList() {
   const aui = useAui();
   const services = useShellServices();
   const pathname = usePathname();
-  const router = useRouter();
-  const tThread = useTranslations('shell.thread');
-  const tErrors = useTranslations('errors');
   // Deleting the open thread: the runtime leaves it, url-sync replaces the route with `/`, then focus follows
   // the «Новый чат» pointer rule (UXRD 7.4).
   const focusOnRoot = useRef(false);
@@ -484,39 +513,65 @@ export function ThreadHistoryList() {
   const loadMoreFailed = useShellStatus((s) => s.loadMoreFailed);
   const activityAt = useShellStatus((s) => s.activityAt);
   const titleWaiting = useShellStatus((s) => s.titleWaiting);
+  const asideBranchId = useStore(services.workspace, (s) => s.aside?.branchId);
+  const savedLevels = useShellStatus((s) => s.savedLevels);
+  const defaultLevel = useStore(
+    services.currentUser,
+    (s) => s.user?.notificationLevel ?? null,
+  );
+  const permission = useStore(services.notifications, (s) => s.permission);
+  const t = useTranslations('shell.thread');
+  const enableNotifications = useEnableNotifications();
   const now = useNow();
 
-  const entries = useMemo(
-    () =>
-      threadItems
-        .filter((item) => item.status === 'regular')
-        .map((item): ThreadListEntry => {
-          // `toRemoteMetadata` puts both flags in `custom`; a thread made in this tab has them from its create.
-          const custom =
-            item.custom ??
-            (item.remoteId === undefined
+  // The level each row is listed with, by item id: a save from the menu remembers it (KD-7).
+  const { entries, listedLevels } = useMemo(() => {
+    const listed = new Map<string, NotificationLevel | null>();
+    const rows = threadItems
+      .filter((item) => item.status === 'regular')
+      .map((item): ThreadListEntry => {
+        // `toRemoteMetadata` puts both flags in `custom`; a thread made in this tab has them from its create.
+        const custom =
+          item.custom ??
+          (item.remoteId === undefined
+            ? undefined
+            : services.listAdapter.createdCustom(item.remoteId));
+        const listedLevel = listedLevelOf(custom?.notificationLevel);
+        listed.set(item.id, listedLevel);
+        return {
+          id: item.id,
+          remoteId: item.remoteId,
+          title: item.title,
+          activityAt: entryActivityAt(
+            {
+              lastMessageAt: item.lastMessageAt,
+              activityAt: activityAt[item.id],
+            },
+            now,
+          ),
+          forkable: custom?.forkable === true,
+          forked: custom?.forked === true,
+          state: conversationStateOf(custom?.state),
+          notificationLevel: rowLevel(
+            listedLevel,
+            item.remoteId === undefined
               ? undefined
-              : services.listAdapter.createdCustom(item.remoteId));
-          return {
-            id: item.id,
-            remoteId: item.remoteId,
-            title: item.title,
-            activityAt: entryActivityAt(
-              {
-                lastMessageAt: item.lastMessageAt,
-                activityAt: activityAt[item.id],
-              },
-              now,
-            ),
-            forkable: custom?.forkable === true,
-            forked: custom?.forked === true,
-          };
-        }),
-    [threadItems, activityAt, now, services],
-  );
+              : savedLevels[item.remoteId],
+          ),
+        };
+      });
+    return { entries: rows, listedLevels: listed };
+  }, [threadItems, activityAt, now, services, savedLevels]);
   const groups = useMemo(
     () => groupThreadsByDate(entries, now),
     [entries, now],
+  );
+  // The branch on «В стороне» counts as on screen only beside its own conversation: the tab is there only then (KD-5).
+  const mainRemoteId =
+    entries.find((entry) => entry.id === mainThreadId)?.remoteId ?? null;
+  const shownBranchId = useStore(
+    services.workspace,
+    (s) => asideOf(s, mainRemoteId)?.branchId ?? null,
   );
 
   // The skeleton covers the first load and a retry after an error; a later reload keeps the list on screen.
@@ -526,7 +581,12 @@ export function ThreadHistoryList() {
   if (hasError && listShown) setListShown(false);
 
   // Coming back to the tab re-reads page 1 only while one page is loaded: reload() drops pages 2+ (DD Open Questions 2).
-  const onePageLoaded = entries.length <= THREAD_PAGE_SIZE;
+  // Only rows read from the list count: a conversation created in this tab has no `custom` until the list reads it,
+  // and it must not close the re-reads that would read it — its row sits on top of a full page 1.
+  const onePageLoaded =
+    threadItems.filter(
+      (item) => item.status === 'regular' && item.custom !== undefined,
+    ).length <= THREAD_PAGE_SIZE;
   useEffect(() => {
     if (!onePageLoaded) return;
     const onVisibilityChange = () => {
@@ -541,24 +601,42 @@ export function ThreadHistoryList() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [aui, onePageLoaded]);
 
-  // A conversation started without this tab's send (a schedule run, another tab) shows itself by a `tree` note
-  // whose id the list does not hold: page 1 is re-read then, on the same terms as coming back to the tab.
+  // Page 1 carries each row's state (improvements KD-5): a conversation's state, row or deletion re-reads it — a new
+  // conversation, a reply started or finished, a question asked — on the same terms as coming back to the tab
+  // (live-feed design-web.md, KD-1). A deletion in this tab comes back from the server like any other.
+  const reads = useMemo(
+    () =>
+      createCoalescedRunner(() => aui.threads.reload(), {
+        minIntervalMs: TREE_RELOAD_INTERVAL_MS,
+      }),
+    [aui],
+  );
+  useEffect(() => () => reads.cancel(), [reads]);
+  useEffect(() => {
+    if (!onePageLoaded) return;
+    return services.live.onChange(
+      { kinds: ['state', 'summary', 'deleted'] },
+      () => void reads.request(),
+    );
+  }, [services, reads, onePageLoaded]);
+  const requestRead = useEffectEvent(() => {
+    if (onePageLoaded) void reads.request();
+  });
+  // Leaving a conversation takes its «новый ответ» off the row only once page 1 is read again (KD-5).
+  const previousMainThread = useRef(mainThreadId);
+  useEffect(() => {
+    if (previousMainThread.current === mainThreadId) return;
+    previousMainThread.current = mainThreadId;
+    requestRead();
+  }, [mainThreadId]);
+  // A side chat's branch has no message yet, so no live change announces it (KD-5). The list may be off screen
+  // while the panel folds the sidebar, so the check also runs when it mounts again.
   const isUnlisted = useEffectEvent(
     (threadId: string) => !entries.some((entry) => entry.remoteId === threadId),
   );
   useEffect(() => {
-    if (!onePageLoaded) return;
-    const reads = createCoalescedRunner(() => aui.threads.reload(), {
-      minIntervalMs: TREE_RELOAD_INTERVAL_MS,
-    });
-    const unsubscribe = services.live.onTree((threadId) => {
-      if (isUnlisted(threadId)) void reads.request();
-    });
-    return () => {
-      unsubscribe();
-      reads.cancel();
-    };
-  }, [aui, services, onePageLoaded]);
+    if (asideBranchId !== undefined && isUnlisted(asideBranchId)) requestRead();
+  }, [asideBranchId]);
 
   useEffect(() => {
     if (!focusOnRoot.current || pathname !== '/') return;
@@ -567,21 +645,35 @@ export function ThreadHistoryList() {
   }, [pathname]);
 
   // Flow 3: the fork opens like any conversation by its address, and its row joins the list there (KD-8).
-  const fork = async (entry: ThreadListEntry): Promise<void> => {
-    if (entry.remoteId === undefined) return;
+  const openBranch = useOpenBranch();
+  const fork = (entry: ThreadListEntry): void => {
+    if (entry.remoteId !== undefined) void openBranch(entry.remoteId);
+  };
+
+  // Flow 5 of live-feed design-web.md: after 204 the row takes the level; an error keeps the old mark and shows MC-9.
+  const chooseLevel = async (
+    entry: ThreadListEntry,
+    level: NotificationLevel | null,
+  ): Promise<void> => {
+    const remoteId = entry.remoteId;
+    if (remoteId === undefined) return;
     try {
-      const thread = await threadsApiClient.forkThread(entry.remoteId);
-      router.push(threadPath(thread.id));
-      focusShellTarget('composer');
-      services.announcer.getState().announce('announce.forkOpened', {
-        title: thread.title ?? tThread('untitled'),
+      await services.apiClient.setNotificationLevel(remoteId, level);
+      logger.info('thread notification level saved', {
+        threadId: remoteId,
+        level,
+      });
+      services.status.getState().saveLevel(remoteId, {
+        level,
+        listed: listedLevels.get(entry.id) ?? null,
       });
     } catch (error) {
-      logger.warn('[web-shell] thread fork refused', {
-        threadId: entry.remoteId,
+      logger.error('thread notification level save failed', {
+        threadId: remoteId,
+        level,
         ...describeApiError(error),
       });
-      toast.error(forkRefusalText(tErrors, error));
+      toast.error(t('notificationsFailed'));
     }
   };
 
@@ -616,27 +708,26 @@ export function ThreadHistoryList() {
           );
           return;
         }
-        item.delete().then(
-          // design-web.md, Risks: the tree, the counter and an open agent page of this thread re-read.
-          () => {
-            if (entry.remoteId !== undefined)
-              services.live.emitLocalTree(entry.remoteId);
-          },
-          (error: unknown) => {
-            // A failed DELETE is already reported by the list adapter (toast, rollback, log).
-            if (!isApiRequestError(error)) {
-              logger.error('[web-shell] thread delete failed', {
-                threadId: entry.id,
-                ...describeApiError(error),
-              });
-            }
-          },
-        );
+        item.delete().catch((error: unknown) => {
+          // A failed DELETE is already reported by the list adapter (toast, rollback, log).
+          if (!isApiRequestError(error)) {
+            logger.error('[web-shell] thread delete failed', {
+              threadId: entry.id,
+              ...describeApiError(error),
+            });
+          }
+        });
       }}
       renderItem={(entry, onRequestDelete) => (
         <ThreadHistoryItem
           key={entry.id}
           entry={entry}
+          state={shownState(entry.state, {
+            onScreen:
+              entry.id === mainThreadId ||
+              (entry.remoteId !== undefined &&
+                entry.remoteId === shownBranchId),
+          })}
           isActive={entry.id === mainThreadId}
           titlePending={
             entry.remoteId !== undefined &&
@@ -645,7 +736,13 @@ export function ThreadHistoryList() {
           // A failed PATCH: the list adapter shows the toast, the runtime rolls the title back and logs the rejection.
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}
-          onFork={() => void fork(entry)}
+          onFork={() => fork(entry)}
+          notifications={{
+            defaultLevel,
+            permission,
+            onChoose: (level) => void chooseLevel(entry, level),
+            onEnable: () => void enableNotifications(),
+          }}
         />
       )}
     />

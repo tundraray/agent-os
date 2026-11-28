@@ -1,7 +1,7 @@
 // enterprise-access / admin (web) - integration tests
 // Design Doc: docs/features/enterprise-access/design-admin.md (v1.5), Test Strategy UC-1..UC-10, UC-E1..UC-E9; UXRD: docs/features/enterprise-access/uxrd.md (v2.3)
 //   Screens AD-01..AD-11, AD-14..AD-16, GR-01, GR-02; MC-19, MC-22..MC-30, MC-33, MC-34.
-// Test Type: Integration (Vitest + RTL + MSW 2, jsdom): three cases, INT-1..INT-3, each a table of rows. No web E2E: the design's «L1-сценарии в
+// Test Type: Integration (Vitest + RTL + MSW 2, jsdom): six cases, INT-1..INT-6 (INT-4 — access-levels UC-8, INT-5 — the server's tabs, INT-6 — the employee's «Инструменты»), each a table of rows. No web E2E: the design's «L1-сценарии в
 //   браузере» table is the manual real-browser acceptance.
 //
 // Harness (src/test/): `renderWithRuntime` mounts ChatRuntimeProvider + ChatShell + Toaster with mocked next/navigation (controlled pathname,
@@ -19,7 +19,7 @@
 //
 // Proven by the unit tests next to the code, not here: `parseShellRoute` (lib/shell-route.test.ts), `useResource` (hooks/use-resource.test.tsx),
 //   `apiRequest` (lib/api/api-request.test.ts), `describeAdminError` (lib/admin/admin-errors.test.ts), the form rules (lib/admin/form-rules.test.ts),
-//   orphan grants (lib/admin/grants.test.ts), catalogue prices (i18n/formats.test.ts), `DataTable` focus after a removed row
+//   catalogue prices (i18n/formats.test.ts), `DataTable` focus after a removed row
 //   (components/admin/data-table.test.tsx) and `AdminForm` focus on the first field with an error (components/admin/admin-form.test.tsx).
 //
 // `not automated`: density, tokens, contrast and the keyboard order across the panel (NFR-05, UC-N1) - the L1 browser table; the loss of a deleted
@@ -39,19 +39,27 @@ import {
   McpErrorCode,
   RegisterMcpServerBodySchema,
   ResetPasswordBodySchema,
+  SaveRoleLevelsBodySchema,
+  SaveServerAccessBodySchema,
+  SaveUserLevelsBodySchema,
   SetPersonalAdminBodySchema,
   UpdateGrantBodySchema,
   UpdateMcpServerBodySchema,
+  UpdateMcpToolBodySchema,
   UpdateProviderBodySchema,
   UpdateRoleBodySchema,
   UpdateSignInSettingsBodySchema,
   type AdminUserDetail,
   type CatalogModel,
   type Grant,
+  type LevelTool,
   type McpServerView,
   type McpToolView,
   type ProviderView,
   type RoleDetail,
+  type RoleServerLevel,
+  type ServerAccess,
+  type UserServerLevel,
 } from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
@@ -101,7 +109,7 @@ const adminRequests = ({ requests }: TrackedRequests): string[] =>
     .filter((request) => request.path.startsWith('/api/admin/'))
     .map((request) => `${request.method} ${request.path}`);
 
-/** Opens the user menu, reads its items (the theme radios aside) and closes it again. */
+/** Opens the user menu, reads its items (the mode radios aside) and closes it again. */
 async function userMenuItems(user: UserEvent): Promise<string[]> {
   await user.click(screen.getByRole('button', { name: /^Меню пользователя/ }));
   const items = (await screen.findAllByRole('menuitem')).map(
@@ -222,10 +230,29 @@ const BUILTIN_ROLE = fixtureId(10);
 const SRE = fixtureId(100);
 const DUTY = fixtureId(101);
 const SONNET = 'anthropic/claude-sonnet-4-5';
-/** Role grants of «SRE»: one tool the registry still has, one tool it no longer has, one server that is gone. */
-const SRE_TOOL_GRANT = fixtureId(200);
-const ORPHAN_TOOL_GRANT = fixtureId(201);
-const ORPHAN_SERVER_GRANT = fixtureId(202);
+
+/** A server's tools as a level tab reads them; `null` while it waits for the administrator's account. */
+const levelTools = (view: McpServerView): LevelTool[] | null =>
+  view.status === 'awaiting_admin_account'
+    ? null
+    : view.tools.map(({ name, title, readOnly, enabled, isNew }) => ({
+        name,
+        title,
+        readOnly,
+        enabled,
+        isNew,
+      }));
+
+/** GET /api/admin/mcp-servers/:name/access of a server: its tools as a level tab reads them and the roles with access. */
+const serverAccess = (
+  view: McpServerView,
+  roles: ServerAccess['roles'],
+): ServerAccess => ({
+  server: view.name,
+  status: view.status,
+  tools: levelTools(view),
+  roles,
+});
 
 const roleRef = (role: RoleDetail): { id: string; name: string } => ({
   id: role.id,
@@ -244,9 +271,34 @@ function adminBackend() {
     id: BUILTIN_ROLE,
     name: 'Супер-администратор',
     isAdmin: true,
-    builtin: true,
+    builtinKind: 'super_admin',
   });
+  // The registry as a role's level tab reads it: `jira` has no tool list yet, `sentry` has two tools.
+  const registryLevels = (): RoleServerLevel[] => [
+    {
+      server: 'jira',
+      status: 'awaiting_admin_account',
+      tools: null,
+      level: 'none',
+      picked: [],
+    },
+    {
+      server: 'sentry',
+      status: 'enabled',
+      tools: [],
+      level: 'none',
+      picked: [],
+    },
+  ];
   const store = {
+    /** A role's levels by its id; a role not here reads `registryLevels()`. */
+    levels: new Map<string, RoleServerLevel[]>(),
+    /** The tools of `sentry` with their settings; a PATCH of a tool changes them. */
+    sentryTools: mcpServerView({ name: 'sentry' }).tools,
+    /** The roles with access to `sentry` (ST-02). */
+    sentryAccess: [] as ServerAccess['roles'],
+    /** Personal levels by «<user id>/<server>»; a pair not here is `none`. */
+    personal: new Map<string, UserServerLevel['personal']>(),
     users: [
       adminUserDetail({
         id: ANYA,
@@ -257,20 +309,7 @@ function adminBackend() {
     ] as AdminUserDetail[],
     // The server's order: by name.
     roles: [sre, duty, builtin] as RoleDetail[],
-    grants: [
-      grant({
-        id: SRE_TOOL_GRANT,
-        target: { kind: 'tool', server: 'sentry', tool: 'list_issues' },
-      }),
-      grant({
-        id: ORPHAN_TOOL_GRANT,
-        target: { kind: 'tool', server: 'sentry', tool: 'delete_issue' },
-      }),
-      grant({
-        id: ORPHAN_SERVER_GRANT,
-        target: { kind: 'server', server: 'gitlab' },
-      }),
-    ] as Grant[],
+    grants: [] as Grant[],
     models: [
       catalogModel({ id: SONNET, name: 'Claude Sonnet 4.5' }),
     ] as CatalogModel[],
@@ -287,6 +326,46 @@ function adminBackend() {
   const summaryOf = (detail: AdminUserDetail) => adminUserSummary(detail);
   const modelName = (id: string): string =>
     store.models.find((model) => model.id === id)?.name ?? '';
+  const levelsOf = (id: string): RoleServerLevel[] =>
+    store.levels.get(id) ?? registryLevels();
+  // The registry: `jira` still waits for the administrator's account, so it has no tools.
+  const serverOf = (name: unknown): McpServerView =>
+    name === 'jira'
+      ? mcpServerView({
+          name: 'jira',
+          status: 'awaiting_admin_account',
+          tools: [],
+        })
+      : mcpServerView({ name: 'sentry', tools: store.sentryTools });
+  // An employee's levels: his personal level on each server and the levels of his roles there that are not `none`.
+  const userServers = (id: string): UserServerLevel[] =>
+    ['jira', 'sentry'].map((name) => {
+      const view = serverOf(name);
+      return {
+        server: name,
+        status: view.status,
+        tools: levelTools(view),
+        personal: store.personal.get(`${id}/${name}`) ?? {
+          level: 'none',
+          marks: [],
+        },
+        roles: (user(id)?.roles ?? []).flatMap((ref) => {
+          const held = role(ref.id);
+          const row = levelsOf(ref.id).find((entry) => entry.server === name);
+          return held === undefined || row === undefined || row.level === 'none'
+            ? []
+            : [
+                {
+                  id: held.id,
+                  name: held.name,
+                  builtinKind: held.builtinKind,
+                  level: row.level,
+                  picked: row.picked,
+                },
+              ];
+        }),
+      };
+    });
   const withMemberCounts = (entry: RoleDetail): RoleDetail => {
     const members = store.users
       .filter((member) => member.roles.some((held) => held.id === entry.id))
@@ -317,6 +396,27 @@ function adminBackend() {
       const found = user(params.id);
       return found === undefined ? userNotFound() : HttpResponse.json(found);
     }),
+    // Personal levels: the save replaces the named servers' levels and answers every server.
+    http.get(`${API}/api/admin/users/:id/levels`, ({ params }) =>
+      user(params.id) === undefined
+        ? userNotFound()
+        : HttpResponse.json({
+            superAdmin: false,
+            servers: userServers(String(params.id)),
+          }),
+    ),
+    http.put(`${API}/api/admin/users/:id/levels`, ({ params, request }) =>
+      withBody(request, SaveUserLevelsBodySchema, (body) => {
+        const id = String(params.id);
+        if (user(id) === undefined) return userNotFound();
+        for (const { server: name, level, marks } of body.servers)
+          store.personal.set(`${id}/${name}`, { level, marks });
+        return HttpResponse.json({
+          superAdmin: false,
+          servers: userServers(id),
+        });
+      }),
+    ),
     http.put(`${API}/api/admin/users/:id/password`, ({ params, request }) =>
       withBody(request, ResetPasswordBodySchema, () =>
         user(params.id) === undefined
@@ -379,6 +479,28 @@ function adminBackend() {
         member.roles = member.roles.filter((held) => held.id !== params.id);
       return new HttpResponse(null, { status: 204 });
     }),
+    // Levels of a role: the save replaces the named servers' rows and answers every server.
+    http.get(`${API}/api/admin/roles/:id/levels`, ({ params }) =>
+      role(params.id) === undefined
+        ? roleNotFound()
+        : HttpResponse.json({ servers: levelsOf(String(params.id)) }),
+    ),
+    http.put(`${API}/api/admin/roles/:id/levels`, ({ params, request }) =>
+      withBody(request, SaveRoleLevelsBodySchema, (body) => {
+        const id = String(params.id);
+        if (role(id) === undefined) return roleNotFound();
+        const servers = levelsOf(id).map((row) => {
+          const saved = body.servers.find(
+            (entry) => entry.server === row.server,
+          );
+          return saved === undefined
+            ? row
+            : { ...row, level: saved.level, picked: saved.picked };
+        });
+        store.levels.set(id, servers);
+        return HttpResponse.json({ servers });
+      }),
+    ),
     // Rights
     http.get(`${API}/api/admin/grants`, ({ request }) => {
       const search = new URL(request.url).searchParams;
@@ -390,11 +512,10 @@ function adminBackend() {
     http.post(`${API}/api/admin/grants`, ({ request }) =>
       withBody(request, CreateGrantBodySchema, (body) => {
         const holderRole = role(body.roleId);
-        const sent = body.target;
-        const target =
-          sent.kind === 'model'
-            ? { ...sent, modelName: modelName(sent.model) }
-            : sent;
+        const target = {
+          ...body.target,
+          modelName: modelName(body.target.model),
+        };
         const created = grant({
           id: fixtureId((nextGrant += 1)),
           holder:
@@ -426,7 +547,6 @@ function adminBackend() {
       store.grants = store.grants.filter((entry) => entry.id !== params.id);
       return new HttpResponse(null, { status: 204 });
     }),
-    // The registry: `jira` still waits for the administrator's account, so it has no tools.
     http.get(`${API}/api/admin/mcp-servers`, () =>
       HttpResponse.json([
         mcpServerSummary({
@@ -438,15 +558,69 @@ function adminBackend() {
       ]),
     ),
     http.get(`${API}/api/admin/mcp-servers/:name`, ({ params }) =>
+      HttpResponse.json(serverOf(params.name)),
+    ),
+    // A tool's settings: `readOnly: null` returns the class to the server's mark (access-levels «Настройки инструмента»).
+    http.patch(
+      `${API}/api/admin/mcp-servers/:name/tools/:tool`,
+      ({ params, request }) =>
+        withBody(request, UpdateMcpToolBodySchema, (body) => {
+          const found = store.sentryTools.find(
+            (entry) => entry.name === params.tool,
+          );
+          if (found === undefined)
+            return apiError(404, 'MCP_TOOL_NOT_FOUND', 'Tool not found');
+          const mark = found.serverReadOnly === true;
+          const updated: McpToolView = {
+            ...found,
+            enabled: body.enabled ?? found.enabled,
+            ...(body.readOnly === undefined
+              ? {}
+              : {
+                  readOnly: body.readOnly ?? mark,
+                  overridden: body.readOnly !== null,
+                }),
+          };
+          store.sentryTools = store.sentryTools.map((entry) =>
+            entry.name === updated.name ? updated : entry,
+          );
+          return HttpResponse.json(updated);
+        }),
+    ),
+    // Access of roles to a server: the save replaces the named roles' levels and answers the roles with access.
+    http.get(`${API}/api/admin/mcp-servers/:name/access`, ({ params }) =>
       HttpResponse.json(
-        params.name === 'jira'
-          ? mcpServerView({
-              name: 'jira',
-              status: 'awaiting_admin_account',
-              tools: [],
-            })
-          : mcpServerView({ name: 'sentry' }),
+        serverAccess(
+          serverOf(params.name),
+          params.name === 'sentry' ? store.sentryAccess : [],
+        ),
       ),
+    ),
+    http.put(`${API}/api/admin/mcp-servers/:name/access`, ({ request }) =>
+      withBody(request, SaveServerAccessBodySchema, (body) => {
+        const named = new Set(body.roles.map((entry) => entry.roleId));
+        store.sentryAccess = [
+          ...store.sentryAccess.filter((entry) => !named.has(entry.id)),
+          ...body.roles.flatMap(({ roleId, level, picked }) => {
+            const held = role(roleId);
+            return held === undefined || level === 'none'
+              ? []
+              : [
+                  {
+                    id: held.id,
+                    name: held.name,
+                    builtinKind: held.builtinKind,
+                    memberCount: withMemberCounts(held).memberCount,
+                    level,
+                    picked,
+                  },
+                ];
+          }),
+        ];
+        return HttpResponse.json(
+          serverAccess(serverOf('sentry'), store.sentryAccess),
+        );
+      }),
     ),
     // Models
     http.get(`${API}/api/admin/models`, () => HttpResponse.json(store.models)),
@@ -510,12 +684,20 @@ const REFRESHED_TOOLS: McpToolView[] = [
     title: 'Create issue',
     description: 'Заводит задачу',
     readOnly: false,
+    enabled: true,
+    isNew: true,
+    serverReadOnly: false,
+    overridden: false,
   },
   {
     name: 'list_issues',
     title: 'List issues',
     description: 'Список задач',
     readOnly: true,
+    enabled: true,
+    isNew: false,
+    serverReadOnly: true,
+    overridden: false,
   },
 ];
 
@@ -673,6 +855,36 @@ function signInBackend() {
         });
       },
     ),
+    // «Отметить просмотренными»: the new marks go and each tool takes the server's own mark again.
+    http.post(
+      `${API}/api/admin/mcp-servers/:name/tools/reviewed`,
+      ({ params }) => {
+        const found = registered(params.name);
+        if (found === undefined) return serverNotFound();
+        found.tools = found.tools.map((tool) => ({
+          ...tool,
+          isNew: false,
+          readOnly: tool.overridden
+            ? tool.readOnly
+            : tool.serverReadOnly === true,
+        }));
+        return HttpResponse.json(found);
+      },
+    ),
+    // The registration form shows the return address the API builds for the typed name, registered or not.
+    http.get(`${API}/api/admin/mcp-servers/:name/callback-url`, ({ params }) =>
+      HttpResponse.json({
+        url: `https://agent-os.corp.example/api/mcp/oauth/callback/${String(params.name)}`,
+      }),
+    ),
+    // The server page reads «Доступ» with the role list on open: no role has access here.
+    http.get(`${API}/api/admin/mcp-servers/:name/access`, ({ params }) => {
+      const found = registered(params.name);
+      return found === undefined
+        ? serverNotFound()
+        : HttpResponse.json(serverAccess(found, []));
+    }),
+    http.get(`${API}/api/admin/roles`, () => HttpResponse.json([])),
     http.delete(`${API}/api/admin/mcp-servers/:name`, ({ params }) => {
       if (registered(params.name) === undefined) return serverNotFound();
       store.servers = store.servers.filter(
@@ -683,6 +895,20 @@ function signInBackend() {
   ];
 
   return { store, handlers };
+}
+
+/** ST-01: each open group's name and the technical names of the tools it shows («Меняют: sentry: update_issue»). */
+function toolGroups(server: string): string[] {
+  const region = screen.getByRole('region', { name: `Инструменты ${server}` });
+  return within(region)
+    .getAllByRole('list')
+    .map(
+      (list) =>
+        `${list.getAttribute('aria-label')}: ${within(list)
+          .getAllByRole('listitem')
+          .map((item) => item.dataset.tool)
+          .join(', ')}`,
+    );
 }
 
 /** The rows of a table below its header row, as their text. */
@@ -743,7 +969,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
             id: fixtureId(10),
             name: 'Супер-администратор',
             isAdmin: true,
-            builtin: true,
+            builtinKind: 'super_admin',
             memberCount: 1,
           }),
           roleSummary({ id: fixtureId(100), name: 'SRE' }),
@@ -816,7 +1042,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       await within(employeeHistory).findByRole('link', { name: 'План релиза' }),
     ).toHaveAttribute('href', '/chat/a');
     expect(screen.getByRole('link', { name: 'Агенты' })).toBeInTheDocument();
-    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+    expect(await userMenuItems(user)).toEqual([
+      'Мой доступ',
+      'Тема: Графит',
+      'Выйти',
+    ]);
 
     // Act (row 1): «В чат»
     await followLink(user, toChat, employeeView.setPathname);
@@ -894,6 +1124,8 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       'MCP-серверы',
       'Модели',
       'Агенты и глубокие агенты',
+      'Инструкция для агентов',
+      'Оформление',
     ]);
     expect(
       within(panelNav).getByRole('link', { name: 'Сотрудники' }),
@@ -922,11 +1154,9 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     ).toBeInTheDocument();
     expect(await screen.findByText('SRE')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Создать роль' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Создать роль' });
+    const dialog = await screen.findByRole('dialog', { name: 'Новая роль' });
     await user.type(within(dialog).getByLabelText('Название роли'), 'Дежурный');
-    await user.click(
-      within(dialog).getByRole('button', { name: 'Создать роль' }),
-    );
+    await user.click(within(dialog).getByRole('button', { name: 'Создать' }));
 
     // Assert (row 3): the same address shows «Нет доступа», the ordinary sidebar and a menu without the panel item; no role is left
     expect(
@@ -943,13 +1173,18 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(
       await within(adminHistory).findByRole('link', { name: 'План релиза' }),
     ).toBeInTheDocument();
-    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+    expect(await userMenuItems(user)).toEqual([
+      'Мой доступ',
+      'Тема: Графит',
+      'Выйти',
+    ]);
     expect(adminView.router.push).not.toHaveBeenCalled();
     expect(adminView.router.replace).not.toHaveBeenCalled();
     expect(adminView.assign).not.toHaveBeenCalled();
-    // No panel request followed the 403.
+    // No panel request followed the 403; the dialog read the roles to copy from (AD-17).
     expect(adminRequests(administrator)).toEqual([
       'GET /api/admin/users',
+      'GET /api/admin/roles',
       'GET /api/admin/roles',
       'POST /api/admin/roles',
     ]);
@@ -988,26 +1223,21 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //   4. built-in role (DC-5): the role list has «Супер-администратор» FIRST with «встроенная»; its page has no «Переименовать» and no «Удалить», and the
   //      «Право администратора» switch is on and disabled; on «Дежурный» the switch asks first (Escape sends nothing, it stays off), «Дать право» sends `PATCH /api/admin/roles/:id` with `{ isAdmin: true }`,
   //      then `{ isAdmin: false }`
-  //   5. rights (AC-28.2, AC-29.2, DC-12, DC-14): on the role «SRE» «Добавить право» -> «Что»: «Инструмент сервера»: `jira` (`awaiting_admin_account`)
-  //      cannot be chosen, `sentry` offers ONLY the tools of `GET /api/admin/mcp-servers/sentry` in Mono with «читает» / «меняет», the tool the role
-  //      already has reads «уже есть» and cannot be chosen, there is no field to type a tool name; «Добавить» sends `POST /api/admin/grants` with
-  //      `{ roleId, effect: 'allow', target: { kind: 'tool', server: 'sentry', tool } }`; the same dialog with «Модель» and «Квота за месяц, $» 50 sends
-  //      `{ roleId, effect: 'allow', target: { kind: 'model', model }, quotaUsd: 50 }`; on Аня «Добавить запрет» for `update_issue` sends
+  //   5. model rights (AC-29.2, DC-12, DC-14): the role «SRE» has none; «Разрешить модель» with «Модель» and «Квота за месяц, $» 50 sends
+  //      `{ roleId, effect: 'allow', target: { kind: 'model', model }, quotaUsd: 50 }`; on Аня «Запретить модель» for the model sends
   //      `{ userId, effect: 'deny', ... }` (a deny is never sent as allow); a personal quota 30; reopening the role and Аня shows 50 and 30 exactly as set;
   //      «Изменить квоту» 80 sends `PATCH /api/admin/grants/:id` with `{ quotaUsd: 80 }` and the list shows 80 from the new `GET /api/admin/grants`;
   //      an emptied field sends `{ quotaUsd: null }`
   //   6. server refusals of a right (DC-12): `409 GRANT_EXISTS`, `422 GRANT_TARGET_UNKNOWN`, `422 GRANT_INVALID` (with its `reason`) each leave the dialog
   //      OPEN with the fields kept and the text of the refusal in the form error; no grant row appears or changes
-  //   7. orphan (DC-13): a role grant whose tool is no longer in `tools` of its server (and one whose server is gone) shows «Нет в реестре» with the single
-  //      action «Убрать» -> `DELETE /api/admin/grants/:id`
-  //   9. confirmed destructive and rights-changing actions (UC-4, UC-6; one table: block, delete role and delete grant): the
+  //   9. confirmed destructive and rights-changing actions (UC-4, UC-6; one table: block, delete role and delete grant — «Убрать» sends one DELETE without a dialog): the
   //      dialog names the object («Заблокировать {имя}?», «Удалить роль «{роль}»?»); «Отмена» and Escape send NOTHING; «Заблокировать» sends one
   //      `POST /api/admin/users/:id/block` and the page shows «Отключён» with «Разблокировать» and promises no instant stop of the agents; «Удалить» sends
   //      one `DELETE /api/admin/roles/:id`, opens the role list, toast «Роль удалена», focus on the `h1`; a `404` (`USER_NOT_FOUND`, `ROLE_NOT_FOUND`) or
   //      `409 BUILTIN_ROLE` answer is shown in words at the action and the resource is read again; while the request is open the confirm button
   //      is disabled (one request, not two)
   // Catches: a deny sent as an allow (or the reverse) or a right created on the wrong holder, the one mistake that silently opens or closes a server
-  //   or tool; a tool typed by hand or a server without tools offered, creating a right that matches nothing; a quota that the list shows from the client's own arithmetic instead of the new read; a destructive request sent without the
+  //   or model; a quota that the list shows from the client's own arithmetic instead of the new read; a destructive request sent without the
   //   confirmation, twice, or for another object than the dialog named; a refused action that still changes the screen; the password kept in the
   //   dialog after the reset or reaching a toast or a log record; a built-in role offered «Удалить».
   // @category: core-functionality
@@ -1049,8 +1279,8 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     ).toBeInTheDocument();
     expect(await screen.findByText('Аня Смирнова')).toBeInTheDocument();
 
-    // Row 3 - the roles of Аня (AC-25.1); she has no local account, so no «Сбросить пароль»
-    await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
+    // Row 3 - the roles of Аня (AC-25.1) on her «Роли»; she has no local account, so no «Сбросить пароль»
+    await open(`/admin/users/${ANYA}/roles`, 'Аня Смирнова');
     const anyaRoles = await screen.findByRole('table', { name: 'Роли' });
     expect(
       within(anyaRoles)
@@ -1115,8 +1345,9 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       }),
     ).toBeInTheDocument();
 
-    // Act (row 3): «Дать лично»
-    expect(screen.getByText('нет')).toBeInTheDocument();
+    // Act (row 3): «Дать лично» on her «Права»
+    view.setPathname(`/admin/users/${ANYA}/rights`);
+    expect(await screen.findByText('нет')).toBeInTheDocument();
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Дать лично' }));
     let confirm = await screen.findByRole('alertdialog', {
@@ -1174,26 +1405,20 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       screen.getByRole('button', { name: 'Дать лично' }),
     ).toBeInTheDocument();
 
-    // Row 5 - a personal deny and a personal quota of Аня (AC-28.2, AC-29.2): a deny is sent as a deny, with no quota
-    expect(await screen.findByText('Прав и запретов нет')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Запрет' }));
+    // Row 5 - a personal deny and a personal quota of Аня on her «Модели» (AC-28.2, AC-29.2): a deny is sent as a deny, with no quota
+    view.setPathname(`/admin/users/${ANYA}/models`);
+    expect(
+      await screen.findByText('Личных прав на модели нет'),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Запретить модель' }));
     const denyDialog = await screen.findByRole('dialog', {
-      name: 'Добавить запрет',
+      name: 'Запретить модель',
     });
     expect(within(denyDialog).queryByLabelText('Квота за месяц, $')).toBeNull();
-    await user.click(
-      within(denyDialog).getByRole('radio', { name: 'Инструмент сервера' }),
-    );
-    await chooseOption(user, denyDialog, 'Сервер', 'sentry');
-    expect(
-      (await openSelect(user, denyDialog, 'Инструмент')).map(
-        (option) => option.textContent,
-      ),
-    ).toEqual(['list_issuesчитает', 'update_issueменяет']);
-    await user.click(screen.getByRole('option', { name: /^update_issue/ }));
+    await chooseOption(user, denyDialog, 'Модель', 'Claude Sonnet 4.5');
     mark = api.requests.length;
     await user.click(
-      within(denyDialog).getByRole('button', { name: 'Добавить' }),
+      within(denyDialog).getByRole('button', { name: 'Запретить' }),
     );
     await expectSent(
       api,
@@ -1205,29 +1430,26 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
           body: {
             userId: ANYA,
             effect: 'deny',
-            target: { kind: 'tool', server: 'sentry', tool: 'update_issue' },
+            target: { kind: 'model', model: SONNET },
           },
         },
       ],
       `/api/admin/grants?userId=${ANYA}`,
     );
     const personal = await screen.findByRole('table', {
-      name: 'Личные права и запреты',
+      name: 'Модели',
     });
-    expect(rowCells(personal, 'sentry → update_issue')).toEqual([
-      'sentry → update_issue',
+    expect(rowCells(personal, 'Claude Sonnet 4.5')).toEqual([
+      'Claude Sonnet 4.5',
       'Запрет',
       '—',
       '',
     ]);
 
-    await user.click(screen.getByRole('button', { name: 'Право' }));
+    await user.click(screen.getByRole('button', { name: 'Разрешить модель' }));
     const personalAllow = await screen.findByRole('dialog', {
-      name: 'Добавить право',
+      name: 'Разрешить модель',
     });
-    await user.click(
-      within(personalAllow).getByRole('radio', { name: 'Модель' }),
-    );
     await chooseOption(user, personalAllow, 'Модель', 'Claude Sonnet 4.5');
     await user.type(
       within(personalAllow).getByLabelText('Квота за месяц, $'),
@@ -1235,7 +1457,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     mark = api.requests.length;
     await user.click(
-      within(personalAllow).getByRole('button', { name: 'Добавить' }),
+      within(personalAllow).getByRole('button', { name: 'Разрешить' }),
     );
     await expectSent(
       api,
@@ -1254,14 +1476,23 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       ],
       `/api/admin/grants?userId=${ANYA}`,
     );
+    // The deny and the allow of the same model are two rows, in the server's order.
+    await waitFor(() =>
+      expect(within(personal).getAllByText('Claude Sonnet 4.5')).toHaveLength(
+        2,
+      ),
+    );
+    // The header row holds a `td` for the actions column: only rows with a key are grants.
     expect(
-      await within(personal).findByText('Claude Sonnet 4.5'),
-    ).toBeInTheDocument();
-    expect(rowCells(personal, 'Claude Sonnet 4.5')).toEqual([
-      'Claude Sonnet 4.5',
-      'Право',
-      `30${NBSP}$`,
-      '',
+      within(personal)
+        .getAllByRole('row')
+        .filter((row) => row.hasAttribute('data-row-key'))
+        .map((row) =>
+          Array.from(row.querySelectorAll('td'), (cell) => cell.textContent),
+        ),
+    ).toEqual([
+      ['Claude Sonnet 4.5', 'Запрет', '—', ''],
+      ['Claude Sonnet 4.5', 'Право', `30${NBSP}$`, ''],
     ]);
 
     // Row 9 - blocking: «Отмена» and Escape send nothing; the confirmation sends one POST while its button is unavailable
@@ -1368,7 +1599,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
         .slice(1)
         .map((row) => row.textContent),
     ).toEqual(['Супер-администраторвстроенная0да', 'SRE1—', 'Дежурный1—']);
-    await open(`/admin/roles/${BUILTIN_ROLE}`, 'Супер-администратор');
+    await open(`/admin/roles/${BUILTIN_ROLE}/rights`, 'Супер-администратор');
     expect(screen.getByText('встроенная')).toBeInTheDocument();
     const builtinSwitch = await screen.findByRole('switch', {
       name: 'Право администратора',
@@ -1382,7 +1613,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.queryByText('Удалить')).toBeNull();
 
     // Row 4: the switch of «Дежурный» sends `{ isAdmin }`
-    await open(`/admin/roles/${DUTY}`, 'Дежурный');
+    await open(`/admin/roles/${DUTY}/rights`, 'Дежурный');
     const dutySwitch = await screen.findByRole('switch', {
       name: 'Право администратора',
     });
@@ -1474,7 +1705,9 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       name: 'Удалить роль «Дежурный»?',
     });
     expect(
-      within(confirm).getByText('Сотрудники роли сразу потеряют её права.'),
+      within(confirm).getByText(
+        'Сотрудники роли сразу потеряют её доступ и права.',
+      ),
     ).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
     expect(await within(confirm).findByRole('alert')).toHaveTextContent(
@@ -1513,86 +1746,20 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     expect(readsAfterChange(api, mark)).toContain('/api/admin/roles');
 
-    // Row 5 - the rights of «SRE» (AC-28.2): a tool only from the server's record; `jira` without tools and the tool the
-    // role already has cannot be chosen; no field to type a tool name
-    await open(`/admin/roles/${SRE}`, 'SRE');
-    const sreGrants = await screen.findByRole('table', { name: 'Права' });
-    await waitFor(() =>
-      expect(rowCells(sreGrants, 'sentry → delete_issue')[0]).toBe(
-        'sentry → delete_issueНет в реестре',
-      ),
-    );
-    expect(rowCells(sreGrants, 'sentry → list_issues')).toEqual([
-      'sentry → list_issues',
-      'Право',
-      '—',
-      '',
-    ]);
-    expect(rowCells(sreGrants, 'gitlab')).toEqual([
-      'gitlabНет в реестре',
-      'Право',
-      '—',
-      '',
-    ]);
-
-    await user.click(screen.getByRole('button', { name: 'Добавить право' }));
-    const toolDialog = await screen.findByRole('dialog', {
-      name: 'Добавить право',
-    });
-    await user.click(
-      within(toolDialog).getByRole('radio', { name: 'Инструмент сервера' }),
-    );
-    const serverOptions = await openSelect(user, toolDialog, 'Сервер');
-    expect(serverOptions.map((option) => option.textContent)).toEqual([
-      'jira',
-      'sentry',
-    ]);
-    expect(serverOptions[0]).toHaveAttribute('aria-disabled', 'true');
-    expect(serverOptions[1]).not.toHaveAttribute('aria-disabled', 'true');
-    await user.click(serverOptions[1] ?? toolDialog);
-    const toolOptions = await openSelect(user, toolDialog, 'Инструмент');
-    expect(toolOptions.map((option) => option.textContent)).toEqual([
-      'list_issuesчитаетуже есть',
-      'update_issueменяет',
-    ]);
-    expect(toolOptions[0]).toHaveAttribute('aria-disabled', 'true');
-    expect(readsAfterChange(api, 0)).toContain('/api/admin/mcp-servers/sentry');
-    await user.click(screen.getByRole('option', { name: /^update_issue/ }));
-    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
-    expect(within(toolDialog).queryAllByRole('textbox')).toEqual([]);
-    mark = api.requests.length;
-    await user.click(
-      within(toolDialog).getByRole('button', { name: 'Добавить' }),
-    );
-    await expectSent(
-      api,
-      mark,
-      [
-        {
-          method: 'POST',
-          path: '/api/admin/grants',
-          body: {
-            roleId: SRE,
-            effect: 'allow',
-            target: { kind: 'tool', server: 'sentry', tool: 'update_issue' },
-          },
-        },
-      ],
-      `/api/admin/grants?roleId=${SRE}`,
-    );
+    // Row 5 - the rights of «SRE»: models only, none yet
+    await open(`/admin/roles/${SRE}/models`, 'SRE');
+    // No grant yet: the section shows its empty state, not a table; the tab's panel holds the section.
     expect(
-      await within(sreGrants).findByText('sentry → update_issue'),
+      await screen.findByText('Роли не разрешена ни одна модель'),
     ).toBeInTheDocument();
+    const sreGrants = screen.getByRole('tabpanel', { name: 'Модели' });
 
     // Row 5 and row 6 - a model with a quota of 50; each refusal of the server keeps the dialog open with its fields
     // and changes no row (DC-12)
-    await user.click(screen.getByRole('button', { name: 'Добавить право' }));
+    await user.click(screen.getByRole('button', { name: 'Разрешить модель' }));
     const modelDialog = await screen.findByRole('dialog', {
-      name: 'Добавить право',
+      name: 'Разрешить модель',
     });
-    await user.click(
-      within(modelDialog).getByRole('radio', { name: 'Модель' }),
-    );
     await chooseOption(user, modelDialog, 'Модель', 'Claude Sonnet 4.5');
     await user.type(
       within(modelDialog).getByLabelText('Квота за месяц, $'),
@@ -1613,7 +1780,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
             'Model unknown',
             'model_unknown',
           ),
-        text: 'Этого сервера, инструмента или модели больше нет. Закройте окно и выберите цель снова.',
+        text: 'Этой модели больше нет. Закройте окно и выберите модель снова.',
       },
       {
         answer: () =>
@@ -1642,14 +1809,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
         http.post(`${API}/api/admin/grants`, refusal.answer, { once: true }),
       );
       await user.click(
-        within(modelDialog).getByRole('button', { name: 'Добавить' }),
+        within(modelDialog).getByRole('button', { name: 'Разрешить' }),
       );
       expect(
         await within(modelDialog).findByText(refusal.text),
       ).toBeInTheDocument();
-      expect(
-        within(modelDialog).getByRole('radio', { name: 'Модель' }),
-      ).toBeChecked();
       expect(
         within(modelDialog).getByRole('combobox', { name: 'Модель' }),
       ).toHaveTextContent('Claude Sonnet 4.5');
@@ -1662,7 +1826,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     ).toHaveAttribute('aria-invalid', 'true');
     expect(sreGrants.textContent).toBe(rightsBefore);
     await user.click(
-      within(modelDialog).getByRole('button', { name: 'Добавить' }),
+      within(modelDialog).getByRole('button', { name: 'Разрешить' }),
     );
     const modelGrantBody = {
       roleId: SRE,
@@ -1692,21 +1856,26 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     ]);
 
     // Row 5 (AC-29.2): reopening Аня and the role shows 30 and 50 as they were set
-    await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
+    await open(`/admin/users/${ANYA}/models`, 'Аня Смирнова');
     const anyaRights = await screen.findByRole('table', {
-      name: 'Личные права и запреты',
+      name: 'Модели',
     });
+    // Her deny and her allow of the same model: the allow keeps its quota.
+    await waitFor(() =>
+      expect(within(anyaRights).getAllByText('Claude Sonnet 4.5')).toHaveLength(
+        2,
+      ),
+    );
     expect(
-      await within(anyaRights).findByText('Claude Sonnet 4.5'),
-    ).toBeInTheDocument();
-    expect(rowCells(anyaRights, 'Claude Sonnet 4.5')).toEqual([
-      'Claude Sonnet 4.5',
-      'Право',
-      `30${NBSP}$`,
-      '',
-    ]);
-    await open(`/admin/roles/${SRE}`, 'SRE');
-    const rights = await screen.findByRole('table', { name: 'Права' });
+      within(anyaRights)
+        .getAllByRole('row')
+        .filter((row) => row.hasAttribute('data-row-key'))
+        .map((row) =>
+          Array.from(row.querySelectorAll('td'), (cell) => cell.textContent),
+        ),
+    ).toContainEqual(['Claude Sonnet 4.5', 'Право', `30${NBSP}$`, '']);
+    await open(`/admin/roles/${SRE}/models`, 'SRE');
+    const rights = await screen.findByRole('table', { name: 'Модели' });
     expect(
       await within(rights).findByText('Claude Sonnet 4.5'),
     ).toBeInTheDocument();
@@ -1792,15 +1961,15 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       ]),
     );
 
-    // Row 7 and row 9 - an orphan (DC-13, UC-E9) has the single action «Убрать», which sends one DELETE without a dialog
+    // Row 9 - «Убрать» sends one DELETE without a dialog (UC-E9)
     await user.click(
       within(rights).getByRole('button', {
-        name: 'Действия: sentry → delete_issue',
+        name: 'Действия: Claude Sonnet 4.5',
       }),
     );
     expect(
       (await screen.findAllByRole('menuitem')).map((item) => item.textContent),
-    ).toEqual(['Убрать']);
+    ).toEqual(['Изменить квоту', 'Убрать']);
     mark = api.requests.length;
     await user.click(screen.getByRole('menuitem', { name: 'Убрать' }));
     await expectSent(
@@ -1809,7 +1978,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       [
         {
           method: 'DELETE',
-          path: `/api/admin/grants/${ORPHAN_TOOL_GRANT}`,
+          path: `/api/admin/grants/${modelGrant?.id}`,
           body: null,
         },
       ],
@@ -1817,9 +1986,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
-    await waitFor(() =>
-      expect(within(rights).queryByText('sentry → delete_issue')).toBeNull(),
-    );
+    // The last grant is gone: the section's empty state replaces its table.
+    expect(
+      await screen.findByText('Роли не разрешена ни одна модель'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Claude Sonnet 4.5')).toBeNull();
 
     // Row 1 - a local account (AC-25.3); the account rows come last, so a defect in them does not hide the rights rows
     await open('/admin/users', 'Сотрудники');
@@ -2022,7 +2193,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //   5. register a server, personal OAuth (AC-27.1, DC-9): «Зарегистрировать сервер» -> «Имя» sentry, «Адрес», «Личный OAuth» -> ONE
   //      `POST /api/admin/mcp-servers` with `{ name, url, mode: 'oauth' }` (no token key); `201 awaiting_admin_account` sends the TAB to
   //      `/api/admin/mcp-servers/sentry/connect` by navigation ([support] `location.assign` spy) and no `fetch` goes there; the tab returns at
-  //      `/admin/servers/sentry?connected=1`: «Включён» and the tools table with «читает» and «меняет», and `connected` is removed from the address (a
+  //      `/admin/servers/sentry?connected=1`: «Включён» and the tools in «Меняют» and «Читают» (ST-01), and `connected` is removed from the address (a
   //      reload does not repeat it); `?error=connect_failed` shows «Ждёт аккаунта администратора», «Подключить мой аккаунт» (the same connect address)
   //      and the MC-29 text once; `?error=tools_failed` shows its text above the table
   //   6. register a server, shared token (DC-10): «Общая учётная запись» -> «Токен доступа» -> `POST` with `{ mode: 'shared', sharedToken }`, the button
@@ -2034,7 +2205,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      подключите свой аккаунт и получите список инструментов.»; «Удалить» -> «Удалить сервер «{имя}»?» -> one `DELETE /api/admin/mcp-servers/:name`
   //      and the list
   //   8. refresh (DC-11, UC-E8): «Обновить список» sends `POST /api/admin/mcp-servers/:name/tools/refresh`, shows «Обновляем…», then «Список
-  //      обновлён: новых {N}, убрано {M}» from `added` and `removed` and the new tools table; `409 MCP_ACCOUNT_REQUIRED` shows NO error text and sends
+  //      обновлён: новых {N}, убрано {M}» from `added` and `removed` and the new tools with the MC-36 warning, which «Отметить просмотренными» clears with one `POST .../tools/reviewed`; `409 MCP_ACCOUNT_REQUIRED` shows NO error text and sends
   //      the tab to the same connect address as «Подключить мой аккаунт»; `422 MCP_SERVER_CHECK_FAILED` keeps the old tool list and shows its reason
   // Catches: a provider secret or shared token kept in page state, a toast, a log record, a title or an error text after it was sent (the one defect
   //   that makes «не показывается обратно» a fiction); a replacement secret sent on every save or the stored one overwritten with an empty value; a
@@ -2478,6 +2649,12 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.getByLabelText('Токен доступа')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Личный OAuth' }));
     expect(screen.queryByLabelText('Токен доступа')).toBeNull();
+    // The Redirect URI is the API's address for the name, not one the browser builds from its own origin.
+    expect(
+      await screen.findByText(
+        'https://agent-os.corp.example/api/mcp/oauth/callback/sentry',
+      ),
+    ).toBeInTheDocument();
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
 
@@ -2521,12 +2698,12 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(window.location.pathname).toBe('/admin/servers/sentry');
     expect(window.location.search).toBe('');
     expect(screen.getByRole('switch', { name: 'Включён' })).toBeChecked();
+    expect(toolGroups('sentry')).toEqual(['Меняют: sentry: update_issue']);
+    expect(screen.getByText('Меняют · 1')).toBeInTheDocument();
+    expect(screen.getByText('Читают · 1')).toBeInTheDocument();
     expect(
-      bodyRows(screen.getByRole('table', { name: 'Инструменты' })),
-    ).toEqual([
-      'List issueslist_issuesСписок задаччитает',
-      'Update issueupdate_issueИзменяет задачуменяет',
-    ]);
+      screen.getByRole('button', { name: 'Читают: sentry' }),
+    ).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('alert')).toBeNull();
 
     // Row 5 - `?error=connect_failed` on a server still waiting: its text once and «Подключить мой аккаунт» to the connect address
@@ -2564,7 +2741,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await open('/admin/servers', 'MCP-серверы');
     await open('/admin/servers/sentry', 'sentry');
     expect(
-      screen.getByRole('table', { name: 'Инструменты' }),
+      screen.getByRole('region', { name: 'Инструменты sentry' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(toolsFailed)).toBeNull();
 
@@ -2601,15 +2778,32 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       ],
       '/api/admin/mcp-servers/sentry',
     );
-    const refreshedTools = [
-      'Create issuecreate_issueЗаводит задачуменяет',
-      'List issueslist_issuesСписок задаччитает',
-    ];
-    await waitFor(() =>
-      expect(
-        bodyRows(screen.getByRole('table', { name: 'Инструменты' })),
-      ).toEqual(refreshedTools),
+    const refreshedTools = ['Меняют: sentry: create_issue'];
+    await waitFor(() => expect(toolGroups('sentry')).toEqual(refreshedTools));
+    const newWarning =
+      'Новые инструменты: 1. Пока вы их не просмотрели, они считаются меняющими: роли с уровнем «Только чтение» их не получают, а вызовы требуют подтверждения.';
+    expect(screen.getByText(newWarning)).toBeInTheDocument();
+    expect(screen.getByText('новый — считается меняющим')).toBeInTheDocument();
+
+    // «Отметить просмотренными» sends the one request and the warning goes with the new marks
+    mark = api.requests.length;
+    await user.click(
+      screen.getByRole('button', { name: 'Отметить просмотренными' }),
     );
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'POST',
+          path: '/api/admin/mcp-servers/sentry/tools/reviewed',
+          body: null,
+        },
+      ],
+      '/api/admin/mcp-servers/sentry',
+    );
+    await waitFor(() => expect(screen.queryByText(newWarning)).toBeNull());
+    expect(screen.queryByText('новый — считается меняющим')).toBeNull();
 
     // Row 8: a failed check keeps the old tools and shows its bare reason
     server.use(
@@ -2629,9 +2823,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(
       await screen.findByText('сервер не отвечает по этому адресу'),
     ).toBeInTheDocument();
-    expect(
-      bodyRows(screen.getByRole('table', { name: 'Инструменты' })),
-    ).toEqual(refreshedTools);
+    expect(toolGroups('sentry')).toEqual(refreshedTools);
 
     // Row 8: no administrator account - no error text, the tab goes to the same connect address, no request goes there
     server.use(
@@ -2945,4 +3137,413 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     expect(within(afterDelete).getByText('sentry')).toBeInTheDocument();
   }, 120_000);
+
+  // INT-4 ---------------------------------------------------------------------------------------------------------------------------------
+  // access-levels UC-8: AC-37.5 "«Сохранить» применяет все изменения или ни одно"; AC-37.7 "отмеченный инструмент, которого на сервере больше нет,
+  //   стоит в группе «Нет на сервере»"; AC-36.3 "выключенный для всех инструмент можно отметить, в итог он не входит". Design: access-levels KD-7, C3 web.
+  // Rows (texts from uxrd.md MC-37, MC-38): the role «SRE» has `github` on «Все», `jira` on «Выборочно» with an orphan mark and `notion` on
+  //   «Выборочно» with a tool switched off for everyone; the page is opened by the deep link `?server=jira`.
+  //   1. the deep link expands `jira` and puts the focus on its level; the orphan is checked under «Нет на сервере»
+  //   2. `notion`: the switched-off tool is checked, badged «выключен для всех» and not counted in the total
+  //   3. `github` to «Выборочно» starts with every tool checked; `jira` to «Все» and back to «Выборочно» is its saved value again: one change
+  //   4. «Модели» and back keeps the change, and the tab «Инструменты» says it has unsaved changes
+  //   5. a refused save sent exactly the one changed row and keeps it on screen with the form error; the next save passes
+  // Catches: «Выборочно» starting empty instead of from the previous level; a row back at its saved value still counted or sent; the draft living
+  //   in the tab, so a tab switch loses it; a refusal that drops the changes; an orphan or a switched-off mark hidden or counted.
+  // @category: core-functionality
+  // @dependency: role page, role tools tab, level draft, level editor parts, adminApi roles levels, MSW
+  // @complexity: medium
+  it('INT-4 / access-levels UC-8: the role levels draft starts «Выборочно» from the previous level, counts and sends only the changed row, survives a tab switch and a refused save', async () => {
+    // Arrange
+    const { store, handlers } = adminBackend();
+    const tool = (
+      name: string,
+      title: string,
+      readOnly: boolean,
+      enabled = true,
+    ): LevelTool => ({ name, title, readOnly, enabled, isNew: false });
+    store.levels.set(SRE, [
+      {
+        server: 'github',
+        status: 'enabled',
+        tools: [
+          tool('create_issue', 'Создать задачу', false),
+          tool('list_issues', 'Список задач', true),
+          tool('delete_issue', 'Удалить задачу', false),
+        ],
+        level: 'all',
+        picked: [],
+      },
+      {
+        server: 'jira',
+        status: 'enabled',
+        tools: [
+          tool('search', 'Поиск', true),
+          tool('create', 'Создать', false),
+        ],
+        level: 'pick',
+        picked: ['search', 'old_search'],
+      },
+      {
+        server: 'notion',
+        status: 'enabled',
+        tools: [
+          tool('page_read', 'Прочитать страницу', true),
+          tool('page_delete', 'Удалить страницу', false, false),
+        ],
+        level: 'pick',
+        picked: ['page_read', 'page_delete'],
+      },
+    ]);
+    server.use(
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true })),
+      ),
+      ...handlers,
+    );
+    const api = trackRequests(server);
+    const user = userEvent.setup({ delay: null });
+    const view = renderWithRuntime({
+      pathname: `/admin/roles/${SRE}`,
+      search: '?server=jira',
+    });
+    const editor = async (): Promise<HTMLElement> =>
+      screen.findByRole('table', { name: 'Доступ роли SRE к MCP-серверам' });
+    const bar = (): HTMLElement =>
+      screen.getByRole('region', { name: 'Сохранение' });
+    let table = await editor();
+    const levelOf = (name: string): HTMLElement =>
+      within(table).getByRole('combobox', { name: `Доступ: ${name}` });
+
+    // Assert (row 1): the linked row is expanded and focused; the orphan stays checked under «Нет на сервере»
+    await waitFor(() => expect(levelOf('jira')).toHaveFocus());
+    expect(
+      within(table).getByRole('button', { name: 'Инструменты jira' }),
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      within(table).getByText('Нет на сервере', { selector: 'p' }),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByRole('checkbox', { name: 'old_search (old_search)' }),
+    ).toBeChecked();
+    expect(levelOf('jira')).toHaveTextContent('Выборочно');
+    expect(rowCells(table, 'jira')[2]).toBe('1 из 2');
+
+    // Act and assert (row 2): the switched-off tool of `notion` is checked and not counted
+    await user.click(
+      within(table).getByRole('button', { name: 'Инструменты notion' }),
+    );
+    const switchedOff = within(table).getByRole('checkbox', {
+      name: 'Удалить страницу (page_delete)',
+    });
+    expect(switchedOff).toBeChecked();
+    expect(switchedOff).toHaveAccessibleDescription('выключен для всех');
+    expect(rowCells(table, 'notion')[2]).toBe('1 из 2');
+    expect(bar()).toHaveTextContent('Изменений нет');
+
+    // Act (row 3): `github` to «Выборочно»; `jira` to «Все» and back
+    await chooseOption(user, table, 'Доступ: github', 'Выборочно');
+    for (const name of [
+      'Создать задачу (create_issue)',
+      'Удалить задачу (delete_issue)',
+    ])
+      expect(within(table).getByRole('checkbox', { name })).toBeChecked();
+    expect(rowCells(table, 'github')[2]).toBe('3 из 3');
+    await chooseOption(user, table, 'Доступ: jira', 'Все');
+    expect(bar()).toHaveTextContent('Изменено серверов: 2');
+    await chooseOption(user, table, 'Доступ: jira', 'Выборочно');
+
+    // Assert (row 3): one change
+    expect(bar()).toHaveTextContent('Изменено серверов: 1');
+
+    // Act and assert (row 4): «Модели» and back keep the change
+    expect(
+      screen.getByRole('tab', {
+        name: /^Инструменты\s*есть несохранённые изменения$/,
+      }),
+    ).toBeInTheDocument();
+    await followLink(
+      user,
+      screen.getByRole('tab', { name: 'Модели' }),
+      view.setPathname,
+    );
+    expect(
+      await screen.findByText('Роли не разрешена ни одна модель'),
+    ).toBeInTheDocument();
+    expect(view.router.push).not.toHaveBeenCalled();
+    await followLink(
+      user,
+      screen.getByRole('tab', { name: /^Инструменты/ }),
+      view.setPathname,
+    );
+    table = await editor();
+    expect(levelOf('github')).toHaveTextContent('Выборочно');
+    expect(bar()).toHaveTextContent('Изменено серверов: 1');
+
+    // Act (row 5): the save is refused once
+    server.use(
+      http.put(
+        `${API}/api/admin/roles/:id/levels`,
+        () => apiError(500, 'INTERNAL', 'Internal error'),
+        { once: true },
+      ),
+    );
+    const mark = api.requests.length;
+    await user.click(within(bar()).getByRole('button', { name: 'Сохранить' }));
+
+    // Assert (row 5): one PUT with the one changed row; the error above the bar, the change still on screen
+    const sentRow = {
+      method: 'PUT',
+      path: `/api/admin/roles/${SRE}/levels`,
+      body: {
+        servers: [
+          {
+            server: 'github',
+            level: 'pick',
+            picked: ['create_issue', 'list_issues', 'delete_issue'],
+          },
+        ],
+      },
+    };
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Не удалось сохранить: попробуйте ещё раз. Ни одно изменение не применено — они остались на экране.',
+    );
+    await waitFor(() => expect(changesSince(api, mark)).toEqual([sentRow]));
+    expect(levelOf('github')).toHaveTextContent('Выборочно');
+    expect(bar()).toHaveTextContent('Изменено серверов: 1');
+
+    // Act and assert (row 5): the next save passes and the bar is clean
+    await user.click(within(bar()).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(bar()).toHaveTextContent('Сохранено'));
+    expect(changesSince(api, mark)).toEqual([sentRow, sentRow]);
+    expect(levelOf('github')).toHaveTextContent('Выборочно');
+  });
+
+  // INT-5 ---------------------------------------------------------------------------------------------------------------------------------
+  // access-levels: AC-36.5 "перевод инструмента в «читает» спрашивает подтверждение, которое называет последствие"; AC-39.2 "роли получают доступ к
+  //   серверу со страницы сервера одним сохранением". Design: access-levels C3 web «Вкладка «Инструменты» сервера», Flow 3; UXRD ST-01, ST-02.
+  // Rows (texts from uxrd.md MC-36, MC-39): `sentry` has `update_issue` (server: changes); SRE has «Только чтение» on it.
+  //   1. «Читает» for `update_issue` asks MC-36; «Отмена» sends nothing and keeps «Меняет»; «Перевести» sends ONE `PATCH` with `{ readOnly: true }`,
+  //      and the tool stays in «Меняют» with «исправлено» and «Теперь в группе «Читают»»
+  //   2. «Доступ»: «Супер-администратор» first with «Все · уровни не задаются»; «Дать доступ ролям» adds «Дежурный» at «Только чтение»; «Сохранить»
+  //      sends ONE `PUT` with that role only — SRE, unchanged, is not sent
+  // Catches: a move to «Читает» saved before or without the confirmation (calls of a changing tool would go without the employee's confirmation);
+  //   a save of «Доступ» that rewrites roles the administrator did not touch.
+  // @category: core-functionality
+  // @dependency: server page, server tools tab, server access tab, level draft, adminApi servers, MSW
+  // @complexity: medium
+  it('INT-5 / access-levels ST-01, ST-02: a move to «Читает» is sent only after the confirmation; «Доступ» sends the changed roles only', async () => {
+    // Arrange
+    const { store, handlers } = adminBackend();
+    store.sentryAccess = [
+      {
+        id: SRE,
+        name: 'SRE',
+        builtinKind: null,
+        memberCount: 1,
+        level: 'read',
+        picked: [],
+      },
+    ];
+    server.use(
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true })),
+      ),
+      ...handlers,
+    );
+    const api = trackRequests(server);
+    const user = userEvent.setup({ delay: null });
+    const view = renderWithRuntime({ pathname: '/admin/servers/sentry' });
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'sentry' }),
+    ).toBeInTheDocument();
+    const tools = screen.getByRole('region', { name: 'Инструменты sentry' });
+    let mark = api.requests.length;
+
+    // Act (row 1): «Читает», then «Отмена»
+    await chooseOption(user, tools, 'Класс: Update issue', 'Читает');
+    let confirm = await screen.findByRole('alertdialog', {
+      name: 'Перевести «Update issue» в читающие?',
+    });
+    expect(confirm).toHaveTextContent(
+      'Его вызовы пойдут без подтверждения сотрудника, а роли с уровнем «Только чтение» получат его со следующего шага агента.',
+    );
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+
+    // Assert (row 1): nothing sent, the class is still «Меняет»
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+    expect(
+      within(tools).getByRole('combobox', { name: 'Класс: Update issue' }),
+    ).toHaveTextContent('Меняет');
+
+    // Act and assert (row 1): «Перевести» sends the one PATCH; the tool stays where it was, corrected
+    await chooseOption(user, tools, 'Класс: Update issue', 'Читает');
+    confirm = await screen.findByRole('alertdialog', {
+      name: 'Перевести «Update issue» в читающие?',
+    });
+    await user.click(
+      within(confirm).getByRole('button', { name: 'Перевести' }),
+    );
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([
+        {
+          method: 'PATCH',
+          path: '/api/admin/mcp-servers/sentry/tools/update_issue',
+          body: { readOnly: true },
+        },
+      ]),
+    );
+    expect(
+      await within(tools).findByText('Теперь в группе «Читают»'),
+    ).toBeInTheDocument();
+    expect(within(tools).getByText('исправлено')).toBeInTheDocument();
+    expect(within(tools).getByText('сервер: меняет')).toBeInTheDocument();
+    expect(toolGroups('sentry')).toEqual(['Меняют: sentry: update_issue']);
+
+    // Act and assert (row 1): «Доступ» and back - the tab opens again with the saved class, the tool now in «Читают»
+    await followLink(
+      user,
+      screen.getByRole('tab', { name: 'Доступ' }),
+      view.setPathname,
+    );
+    await screen.findByRole('table', { name: 'Роли с доступом к sentry' });
+    await followLink(
+      user,
+      screen.getByRole('tab', { name: 'Инструменты' }),
+      view.setPathname,
+    );
+    const reopened = await screen.findByRole('region', {
+      name: 'Инструменты sentry',
+    });
+    await user.click(
+      within(reopened).getByRole('button', { name: 'Читают: sentry' }),
+    );
+    expect(toolGroups('sentry')).toEqual([
+      'Читают: sentry: list_issues, update_issue',
+    ]);
+    expect(
+      within(reopened).getByRole('combobox', { name: 'Класс: Update issue' }),
+    ).toHaveTextContent('Читает');
+    expect(within(reopened).getByText('исправлено')).toBeInTheDocument();
+    expect(within(reopened).queryByText('Теперь в группе «Читают»')).toBeNull();
+
+    // Act (row 2): «Доступ», «Дать доступ ролям» -> «Дежурный» -> «Добавить (1)»
+    await followLink(
+      user,
+      screen.getByRole('tab', { name: 'Доступ' }),
+      view.setPathname,
+    );
+    const table = await screen.findByRole('table', {
+      name: 'Роли с доступом к sentry',
+    });
+    expect(bodyRows(table)[0]).toContain(
+      'Супер-администраторВсе · уровни не задаются',
+    );
+    await user.click(screen.getByRole('button', { name: 'Дать доступ ролям' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'Дежурный' }));
+    await user.click(screen.getByRole('button', { name: 'Добавить (1)' }));
+    const bar = screen.getByRole('region', { name: 'Сохранение' });
+    expect(bar).toHaveTextContent('Изменено ролей: 1');
+    expect(
+      within(table).getByRole('combobox', { name: 'Доступ роли Дежурный' }),
+    ).toHaveTextContent('Только чтение');
+    mark = api.requests.length;
+    await user.click(within(bar).getByRole('button', { name: 'Сохранить' }));
+
+    // Assert (row 2): one PUT with the added role only
+    await waitFor(() => expect(bar).toHaveTextContent('Сохранено'));
+    expect(changesSince(api, mark)).toEqual([
+      {
+        method: 'PUT',
+        path: '/api/admin/mcp-servers/sentry/access',
+        body: { roles: [{ roleId: DUTY, level: 'read', picked: [] }] },
+      },
+    ]);
+  });
+
+  // INT-6 ---------------------------------------------------------------------------------------------------------------------------------
+  // AC: AC-40.1 "Given у Ани роль даёт инструмент, when администратор запрещает его Ане лично в «Выборочно», then инструмент у Ани помечен
+  //   «запрещён лично», а остальные по-прежнему от роли"; AC-40.3 - the save sends only the changed server. UXRD EA-01, MC-40.
+  // Behavior: Аня's «SRE» has «Все» on `sentry` (two tools). Her personal level there goes to «Выборочно» - every tool starts at «—», the
+  //   effective access stays the role's; «Update issue» set to «Запрещён» shows «запрещён лично», the total drops to «1 из 2» and «Откуда» still
+  //   names «SRE — Все» with «лично»; «Сохранить» sends ONE `PUT` with `sentry` only and its deny mark.
+  // Catches: a personal deny sent as an allow (or not sent), a save that rewrites servers the administrator did not touch, or an effective
+  //   access that ignores the personal deny or loses the role as its source.
+  // @category: core-functionality
+  // @dependency: employee page, employee tools tab, level draft, coverage rule, adminApi users, MSW
+  // @complexity: medium
+  it('INT-6 / access-levels EA-01: a personal deny under «Выборочно» is shown at once, keeps the role as the source and is sent for the changed server only', async () => {
+    // Arrange
+    const { store, handlers } = adminBackend();
+    store.levels.set(SRE, [
+      {
+        server: 'sentry',
+        status: 'enabled',
+        tools: [],
+        level: 'all',
+        picked: [],
+      },
+    ]);
+    server.use(
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true })),
+      ),
+      ...handlers,
+    );
+    const api = trackRequests(server);
+    const user = userEvent.setup({ delay: null });
+    renderWithRuntime({ pathname: `/admin/users/${ANYA}` });
+    const table = await screen.findByRole('table', {
+      name: 'Доступ Аня Смирнова к MCP-серверам',
+    });
+    expect(rowCells(table, 'sentry').slice(2, 4)).toEqual([
+      '2 из 2',
+      'SRE — Все',
+    ]);
+
+    // Act: personal «Выборочно» on `sentry`, then «Запрещён» for «Update issue»
+    await chooseOption(user, table, 'Личный доступ: sentry', 'Выборочно');
+    expect(
+      within(table).getByRole('combobox', { name: 'Лично: Update issue' }),
+    ).toHaveTextContent('—');
+    await chooseOption(user, table, 'Лично: Update issue', 'Запрещён');
+
+    // Assert: the deny shows at once; the other tool stays the role's
+    expect(
+      within(table).getByRole('combobox', { name: 'Лично: Update issue' }),
+    ).toHaveAccessibleDescription('запрещён лично');
+    await user.click(
+      within(table).getByRole('button', { name: 'Читают: sentry' }),
+    );
+    expect(
+      within(table).getByRole('combobox', { name: 'Лично: List issues' }),
+    ).toHaveAccessibleDescription(/^доступен\s*SRE$/);
+    expect(rowCells(table, 'sentry').slice(2, 4)).toEqual([
+      '1 из 2',
+      'SRE — Все · лично',
+    ]);
+    const bar = screen.getByRole('region', { name: 'Сохранение' });
+    expect(bar).toHaveTextContent('Изменено серверов: 1');
+    const mark = api.requests.length;
+    await user.click(within(bar).getByRole('button', { name: 'Сохранить' }));
+
+    // Assert: one PUT with `sentry` and its deny mark
+    await waitFor(() => expect(bar).toHaveTextContent('Сохранено'));
+    expect(changesSince(api, mark)).toEqual([
+      {
+        method: 'PUT',
+        path: `/api/admin/users/${ANYA}/levels`,
+        body: {
+          servers: [
+            {
+              server: 'sentry',
+              level: 'pick',
+              marks: [{ tool: 'update_issue', effect: 'deny' }],
+            },
+          ],
+        },
+      },
+    ]);
+  });
 });

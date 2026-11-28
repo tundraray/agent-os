@@ -41,7 +41,10 @@ describe('thread list adapter', () => {
         http.get(`${API}/api/threads`, () =>
           HttpResponse.json(
             threadList([
-              threadSummary({ id: 'a', title: 'Первая' }),
+              {
+                ...threadSummary({ id: 'a', title: 'Первая' }),
+                state: 'new_answer',
+              },
               threadSummary({ id: 'b', title: null }),
             ]),
           ),
@@ -58,14 +61,24 @@ describe('thread list adapter', () => {
             remoteId: 'a',
             title: 'Первая',
             lastMessageAt: FIXTURE_DATE,
-            custom: { forkable: true, forked: false },
+            custom: {
+              forkable: true,
+              forked: false,
+              state: 'new_answer',
+              notificationLevel: null,
+            },
           },
           {
             status: 'regular',
             remoteId: 'b',
             title: undefined,
             lastMessageAt: FIXTURE_DATE,
-            custom: { forkable: true, forked: false },
+            custom: {
+              forkable: true,
+              forked: false,
+              state: null,
+              notificationLevel: null,
+            },
           },
         ],
         nextCursor: undefined,
@@ -146,6 +159,8 @@ describe('thread list adapter', () => {
     expect(adapter.createdCustom('n1')).toEqual({
       forkable: true,
       forked: false,
+      state: null,
+      notificationLevel: null,
     });
   });
 
@@ -162,7 +177,12 @@ describe('thread list adapter', () => {
       remoteId: 'a',
       title: 'Первая',
       lastMessageAt: FIXTURE_DATE,
-      custom: { forkable: true, forked: false },
+      custom: {
+        forkable: true,
+        forked: false,
+        state: null,
+        notificationLevel: null,
+      },
     });
   });
 

@@ -7,5 +7,19 @@
   "hidePassword": "Hide password",
   "saving": "Saving…",
   "saved": "Saved",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "instructionField": {
+    "left": "{count, plural, one {# character left} other {# characters left}}",
+    "over": "{count, plural, one {# character over the limit} other {# characters over the limit}}",
+    "cut": "{count, plural, one {Shorten the text by # character} other {Shorten the text by # characters}}",
+    "changed": "Unsaved changes",
+    "discard": "Discard changes",
+    "save": "Save",
+    "loadFailed": "Couldn’t load",
+    "retry": "Retry"
+  },
+  "agentField": {
+    "label": "Agent",
+    "chatAgent": "Chat agent"
+  }
 }

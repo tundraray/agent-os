@@ -1,7 +1,9 @@
 import {
   BoxIcon,
+  FileTextIcon,
   KeyRoundIcon,
   LibraryBigIcon,
+  PaletteIcon,
   ServerIcon,
   ShieldIcon,
   UsersIcon,
@@ -27,9 +29,14 @@ const ICON: Readonly<Record<AdminSection, LucideIcon>> = {
   servers: ServerIcon,
   models: BoxIcon,
   library: LibraryBigIcon,
+  instructions: FileTextIcon,
+  appearance: PaletteIcon,
 };
 
-/** The panel's sections in sidebar order (AD-01, MC-18; the agents and deep agents section — AL-01). */
+/**
+ * The panel's sections in sidebar order (AD-01, MC-18; the agents and deep agents section — AL-01; the organisation's
+ * instruction — agent-guidance OI-01; «Оформление» — theming TP-03).
+ */
 export const ADMIN_SECTIONS: readonly AdminSectionEntry[] =
   ADMIN_SECTION_IDS.map((section) => ({
     section,

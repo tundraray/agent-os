@@ -1,4 +1,4 @@
-import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, or, type SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { accessGrants, models } from '../schema';
 
@@ -42,11 +42,45 @@ export class AccessGrantsRepository {
   }
 
   list(holder: GrantHolderQuery): Promise<AccessGrantWithModelName[]> {
-    return this.withModelName(
-      'roleId' in holder
-        ? eq(accessGrants.roleId, holder.roleId)
-        : eq(accessGrants.userId, holder.userId),
-    );
+    return this.withModelName(holderIs(holder));
+  }
+
+  /** Every grant of the role, the copy of a role starts from them (access-levels AC-37.8). */
+  ofRole(roleId: string): Promise<AccessGrantRow[]> {
+    return this.db.client
+      .select()
+      .from(accessGrants)
+      .where(eq(accessGrants.roleId, roleId))
+      .orderBy(asc(accessGrants.createdAt), asc(accessGrants.id));
+  }
+
+  /** The holder's grants on servers and tools, on the servers named or, without them, on every server. */
+  mcpOf(
+    holder: GrantHolderQuery,
+    servers?: readonly string[],
+  ): Promise<AccessGrantRow[]> {
+    return this.db.client
+      .select()
+      .from(accessGrants)
+      .where(and(holderIs(holder), onServers(servers)))
+      .orderBy(asc(accessGrants.createdAt), asc(accessGrants.id));
+  }
+
+  /** Removes the holder's grants on servers and tools of the servers named (a level is replaced, KD-1). */
+  async deleteMcp(
+    holder: GrantHolderQuery,
+    servers: readonly string[],
+  ): Promise<void> {
+    if (servers.length === 0) return;
+    await this.db.client
+      .delete(accessGrants)
+      .where(and(holderIs(holder), onServers(servers)));
+  }
+
+  /** Adds the grants as they are; the caller has removed any they would repeat. */
+  async insertMany(grants: readonly NewAccessGrantRow[]): Promise<void> {
+    if (grants.length === 0) return;
+    await this.db.client.insert(accessGrants).values([...grants]);
   }
 
   async find(id: string): Promise<AccessGrantWithModelName | undefined> {
@@ -87,3 +121,14 @@ export class AccessGrantsRepository {
       .orderBy(asc(accessGrants.createdAt), asc(accessGrants.id));
   }
 }
+
+const holderIs = (holder: GrantHolderQuery): SQL =>
+  'roleId' in holder
+    ? eq(accessGrants.roleId, holder.roleId)
+    : eq(accessGrants.userId, holder.userId);
+
+/** Grants on a server or its tools: on the servers named, or on any server. */
+const onServers = (servers?: readonly string[]): SQL =>
+  servers === undefined
+    ? isNotNull(accessGrants.server)
+    : inArray(accessGrants.server, [...servers]);

@@ -16,6 +16,7 @@ import {
   AGENTS_PATH,
   libraryPath,
   schedulesPath,
+  trackerPath,
   type AdminSection,
 } from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
@@ -27,6 +28,9 @@ export type ThreadNoticeProps =
       onRetry?: () => void;
       onNewChat: () => void;
     }
+  /** The side chat's tab (improvements IM-06): the reason alone, and «Повторить» for a failed read. */
+  | { variant: 'aside-not-found' }
+  | { variant: 'aside-load-error'; onRetry: () => void }
   /** MC-15: the agent page of a foreign, deleted or missing agent. */
   | { variant: 'agent-not-found' }
   /** MC-16: the agent page could not be read. */
@@ -45,7 +49,11 @@ export type ThreadNoticeProps =
   /** schedules SH-08 (MC-13): a foreign, deleted or missing schedule. */
   | { variant: 'schedule-not-found' }
   /** schedules SH-05 «Error» (MC-8): the schedule page could not be read. */
-  | { variant: 'schedule-load-error'; onRetry: () => void };
+  | { variant: 'schedule-load-error'; onRetry: () => void }
+  /** task-tracker TT-12 (MC-14): a foreign, deleted or missing task. */
+  | { variant: 'task-not-found' }
+  /** task-tracker TT-08 «Error» (MC-6): the task could not be read. */
+  | { variant: 'task-load-error'; onRetry: () => void };
 
 type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
@@ -54,6 +62,8 @@ const COPY = {
   'not-found': 'notFound',
   'load-error': 'loadError',
   deleted: 'deleted',
+  'aside-not-found': 'notFound',
+  'aside-load-error': 'loadError',
   'agent-not-found': 'agentNotFound',
   'agent-load-error': 'agentLoadError',
   'no-access': 'noAccess',
@@ -62,12 +72,14 @@ const COPY = {
   'library-load-error': 'libraryLoadError',
   'schedule-not-found': 'scheduleNotFound',
   'schedule-load-error': 'scheduleLoadError',
+  'task-not-found': 'taskNotFound',
+  'task-load-error': 'taskLoadError',
 } as const satisfies Record<ThreadNoticeProps['variant'], string>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
  * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3), the panel with MC-19 and MC-34,
- * a library record page with MC-6 (RV-02 and its load error), a schedule page with schedules MC-13 and MC-8.
+ * a library record page with MC-6 (RV-02 and its load error), a schedule page with schedules MC-13 and MC-8, a tracker task with task-tracker MC-14 and MC-6.
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
 export function ThreadNotice(props: ThreadNoticeProps) {
@@ -86,6 +98,9 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Link>
         </NoticeScreen>
       );
+    case 'aside-not-found':
+      return <NoticeScreen variant={props.variant}>{null}</NoticeScreen>;
+    case 'aside-load-error':
     case 'agent-load-error':
       return (
         <NoticeScreen variant={props.variant}>
@@ -146,8 +161,24 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Link>
         </NoticeScreen>
       );
+    case 'task-not-found':
+      return (
+        <NoticeScreen
+          variant={props.variant}
+          Icon={SearchXIcon}
+          tab={pageTitle(t('notice.taskNotFound.title'))}
+        >
+          <Link
+            href={trackerPath()}
+            className={buttonVariants({ className: 'pointer-coarse:h-11' })}
+          >
+            {t('notice.toTasks')}
+          </Link>
+        </NoticeScreen>
+      );
     case 'library-load-error':
     case 'schedule-load-error':
+    case 'task-load-error':
       return (
         <NoticeScreen variant={props.variant}>
           <Button className="pointer-coarse:h-11" onClick={props.onRetry}>

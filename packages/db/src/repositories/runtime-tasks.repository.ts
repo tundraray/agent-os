@@ -282,11 +282,12 @@ export class RuntimeTasksRepository {
   }
 
   /**
-   * `pg_notify` of the tree in the open transaction, data `{"rootId"}`: listeners get it when the
-   * transaction commits, and Postgres folds equal notifications of one transaction into one.
+   * `pg_notify` of `data` as JSON on `channel` in the open transaction: listeners get it when the
+   * transaction commits, and Postgres folds equal notifications of one transaction into one. The one
+   * sender of both live channels, `runtime_tree` and `conversation_change`.
    */
-  async notify(channel: string, rootId: string): Promise<void> {
-    const payload = JSON.stringify({ rootId });
+  async notify(channel: string, data: object): Promise<void> {
+    const payload = JSON.stringify(data);
     await this.db.client.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 }

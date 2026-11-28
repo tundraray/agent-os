@@ -36,7 +36,7 @@ import {
   failureName,
   transportFailureReason,
 } from './mcp-failure';
-import { storedMcpTools } from './mcp-tool';
+import { type McpTool, storedMcpTools } from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
 
 /** A token closer than this to its end is refreshed before the call (Runtime settings). */
@@ -135,12 +135,15 @@ function isOAuthServer(row: McpServerRow | undefined): row is McpServerRow {
   return row !== undefined && row.mode === McpServerModeSchema.enum.oauth;
 }
 
-/** An enabled server the employee may use: the gate allows him at least one tool of its list. */
+/** The tools of the server's list the admin has not switched off (access-levels KD-2). */
+function enabledTools(row: McpServerRow): McpTool[] {
+  return (storedMcpTools(row) ?? []).filter((tool) => tool.enabled);
+}
+
+/** An enabled server the employee may use: the gate allows him at least one enabled tool of its list. */
 function usableServer(row: McpServerRow, access: ToolAccess): boolean {
   if (!row.enabled || access.kind === 'owner_disabled') return false;
-  return (storedMcpTools(row.tools) ?? []).some((tool) =>
-    access.allows(row.name, tool.tool),
-  );
+  return enabledTools(row).some((tool) => access.allows(tool));
 }
 
 /**
@@ -474,9 +477,9 @@ export class McpAccounts {
     if (access.kind === 'owner_disabled') return [];
     return rows.map((row) => ({
       server: row.name,
-      tools: (storedMcpTools(row.tools) ?? [])
-        .map((tool) => tool.tool)
-        .filter((tool) => access.allows(row.name, tool)),
+      tools: enabledTools(row)
+        .filter((tool) => access.allows(tool))
+        .map((tool) => tool.tool),
     }));
   }
 

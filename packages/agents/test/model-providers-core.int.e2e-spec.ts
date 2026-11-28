@@ -25,9 +25,9 @@
 //   Isolation: a unique runner `newUser()`, unique provider names and model ids per test; the fake servers are closed in `afterAll`.
 //
 // Proven elsewhere, not repeated here (CLAUDE.md: one test at the lowest level that catches the defect; `provenAt: unit` = a table next to the code):
-//   - `classifyRejection` + `ModelClient` retry rows (packages/agents/src/model/retry-policy.spec.ts, one table: status/body x retries x reason x
-//       ledger row): AC-04.2 (tools rejected, no retry, `responseBody` in the log), AC-09.3 (401/403: no retry, `provider_key_rejected`, no ledger row),
-//       AC-09.5 (408/429/5xx/network: two retries at 1 s and 3 s, `provider_unavailable`), AC-07.3 (same for embeddings), the per-kind
+//   - `classifyRejection` + `ModelClient` rejection rows (packages/agents/src/model/provider-rejection.spec.ts, one table: status/body x reason x
+//       ledger row): AC-04.2 (tools rejected, `responseBody` in the log), AC-09.3 (401/403: `provider_key_rejected`, no ledger row),
+//       improvements AC-02.1 (408/429/5xx/network: one request, `provider_unavailable`), AC-07.3 (same for embeddings), the per-kind
 //       "tools rejected" marker of each adapter (design table "Как разбирается ошибка провайдера").
 //   - `providerReadiness` (packages/agents/src/providers/provider-readiness.spec.ts, one table): `ready` / `missing` / `disabled` / `key_missing` per kind.
 //   - adapter tables (packages/agents/src/providers/*.spec.ts): default base URL per kind, cache mark only on Anthropic, embedding parameters
@@ -734,7 +734,7 @@ describe('model-providers / core - agents integration (real Postgres, provider f
           harness.logs.filter(
             (record) =>
               record.message ===
-                'unfinished model attempt recorded with estimated usage' &&
+                'unfinished model request recorded with estimated usage' &&
               record.fields.model === row.model,
           ),
         (records) => records.length > 0,

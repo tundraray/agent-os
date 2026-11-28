@@ -26,6 +26,8 @@ function entry(id: string, activityAt: Date | number): ThreadListEntry {
       typeof activityAt === 'number' ? activityAt : activityAt.getTime(),
     forkable: true,
     forked: false,
+    state: null,
+    notificationLevel: null,
   };
 }
 

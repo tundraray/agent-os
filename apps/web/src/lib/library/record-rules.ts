@@ -3,12 +3,15 @@ import {
   TRAINER_BUILTIN_KEY,
   type AgentContent,
   type DeepAgentContent,
+  isStartableKind,
   nameWinner,
   type RecordBody,
   type RecordDetail,
   type RecordKind,
   type RecordSummary,
   type RunOrigin,
+  type SkillContent,
+  type StartableKind,
   type Subagent,
 } from '@agent-os/contracts';
 import type { LibraryTranslator } from '@/i18n/catalog';
@@ -21,13 +24,14 @@ import type { LibraryTranslator } from '@/i18n/catalog';
 type LiveRecord<K extends keyof RecordSummary> =
   Pick<RecordSummary, K> | null | undefined;
 
-/** «Использовать в чате» (AC-26.2, RV-01). */
-export function canUseInChat(
-  record: Pick<
+/** «Использовать в чате» (AC-26.2, RV-01); a skill never starts (agent-guidance KD-5). */
+export function canUseInChat<
+  T extends Pick<
     RecordSummary,
-    'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
+    'kind' | 'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
   >,
-): boolean {
+>(record: T): record is T & { kind: StartableKind } {
+  if (!isStartableKind(record.kind)) return false;
   if (
     record.builtinKey === CHAT_BUILTIN_KEY ||
     record.builtinKey === TRAINER_BUILTIN_KEY
@@ -108,6 +112,8 @@ export type RecordField =
   | 'model'
   | 'maxTurns'
   | 'agents'
+  | 'skills'
+  | 'steps'
   | 'finalSubagent';
 
 /** The fields of one subagent of a deep agent. */
@@ -136,6 +142,8 @@ const FIELD_LABEL = {
   model: 'fields.model',
   maxTurns: 'fields.maxTurns',
   agents: 'fields.agents',
+  skills: 'fields.skills',
+  steps: 'fields.steps',
   finalSubagent: 'definition.finalSubagent',
 } as const satisfies Record<RecordField, string>;
 
@@ -163,16 +171,29 @@ export type AgentDefinition = {
   readonly content: AgentContent;
 };
 
-/** A saved agent record: the only kind the editor opens. */
+/** A skill's definition as the editor's form holds it (agent-guidance KD-5). */
+export type SkillDefinition = {
+  readonly name: string;
+  readonly description: string;
+  readonly kind: 'skill';
+  readonly content: SkillContent;
+};
+
+/** What the record editor's form holds: an agent or a skill. */
+export type EditorDefinition = AgentDefinition | SkillDefinition;
+
+/** A saved agent record. */
 export type AgentRecord = Extract<RecordDetail, { kind: 'agent' }>;
 
-/** Only the definition of a saved agent, as the form holds it. */
-export function definitionOf({
-  name,
-  description,
-  content,
-}: AgentRecord): AgentDefinition {
-  return { name, description, kind: 'agent', content };
+/** A saved record the editor opens: an agent or a skill. */
+export type EditorRecord = Extract<RecordDetail, { kind: 'agent' | 'skill' }>;
+
+/** Only the definition of a saved record, as the form holds it. */
+export function definitionOf(record: EditorRecord): EditorDefinition {
+  const { name, description } = record;
+  return record.kind === 'agent'
+    ? { name, description, kind: 'agent', content: record.content }
+    : { name, description, kind: 'skill', content: record.content };
 }
 
 /**
@@ -192,6 +213,10 @@ export function changedFields(
   if (before.kind === 'deep_agent' && after.kind === 'deep_agent') {
     changed.push(...deepAgentChanges(before.content, after.content));
   }
+  if (before.kind === 'skill' && after.kind === 'skill')
+    changed.push(
+      ...scalarChanges([['steps', before.content.text === after.content.text]]),
+    );
   return changed;
 }
 
@@ -202,6 +227,7 @@ function agentChanges(
   return [
     ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
     ...listChange('servers', previous.servers, next.servers),
+    ...listChange('skills', previous.skills, next.skills),
     ...scalarChanges([
       ['model', previous.model === next.model],
       ['maxTurns', previous.maxTurns === next.maxTurns],
@@ -249,6 +275,7 @@ function deepAgentChanges(
   return [
     ...scalarChanges([['prompt', previous.prompt === next.prompt]]),
     ...listChange('servers', previous.servers, next.servers),
+    ...listChange('skills', previous.skills, next.skills),
     ...subagents,
     ...scalarChanges([
       ['finalSubagent', previous.finalSubagent === next.finalSubagent],

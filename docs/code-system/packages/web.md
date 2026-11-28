@@ -68,6 +68,7 @@ flowchart LR
 | `src/lib/<область>/` | модули областей клиента API и сторы: `threads` (в том числе `ShellServices`), `agents`, `library`, `admin`, `access`, `mcp`, `auth`, `schedules`; `search` — стор поиска с совпадениями и целью открытого совпадения |
 | `src/lib/live/` | поток событий и стор живых данных |
 | `src/lib/feed/` | лента одной беседы |
+| `src/lib/theme.ts` | id тем, тема по умолчанию, cookie `aos_theme` и `chooseTheme`; значения тем — блоки `globals.css` по атрибуту `data-theme`. тему до первой отрисовки ставит скрипт в `<head>` корневого layout из cookie ([pre-paint-preference.md](../patterns/pre-paint-preference.md); [design-engine.md](../../features/theming/design-engine.md), KD-3) |
 | `src/lib/shell-route.ts` | вид маршрута по адресу и функции адресов |
 | `src/lib/logger.ts` | логгер веба на сервере Next и в браузере ([logging.md](../patterns/logging.md)) |
 | `src/i18n/` | код текста интерфейса: языковой корень, выбор языка, форматы; переводы — файл на язык и область, `translations/<язык>/<область>.json` ([interface-text.md](../patterns/interface-text.md)) |

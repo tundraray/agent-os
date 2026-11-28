@@ -1,8 +1,8 @@
-// KD-3 (offset), Flow 1 Failure handling (a retry starts the parts again at offset 0), Invariant 4 (a
+// KD-3 (offset), Flow 1 Failure handling (a failure after the answer began ends the call), Invariant 4 (a
 // `completeText` call is a ledger row without `taskId`), Contract «Расширения нижних пакетов» (a failing
-// hook is logged and does not break the step); an answered attempt is one ledger row, an attempt cut by a
+// hook is logged and does not break the step); an answered request is one ledger row, a request cut by a
 // cancel or failed after its answer began is one with an estimate from UTF-8 bytes. The port, the gate, the
-// provider registry and the ledger are doubles; the clock fires the retry pause at once.
+// provider registry and the ledger are doubles.
 import type { Logger } from '@agent-os/common';
 import {
   type Clock,
@@ -129,7 +129,6 @@ interface Row {
   readonly hookFails: boolean;
   readonly text: string;
   readonly deltas: readonly Pick<TextDelta, 'offset' | 'text'>[];
-  readonly pauses: readonly number[];
   readonly ledgerRows: readonly ModelCallRecord[];
   readonly hookWarnings: number;
 }
@@ -141,7 +140,7 @@ const TURN_ROW = {
   price: VERDICT_PRICE,
 };
 
-describe('ModelClient streams text parts with running offsets, restarts them on a retry, and survives a failing hook', () => {
+describe('ModelClient streams text parts with running offsets, records a failed answer by its estimate, and survives a failing hook', () => {
   it.each<[string, Row]>([
     [
       'three parts of an answer carry offsets 0, len(p1), len(p1)+len(p2) and give one ledger row',
@@ -155,13 +154,12 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 3, text: 'lo, ' },
           { offset: 7, text: 'world' },
         ],
-        pauses: [],
         ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 0,
       },
     ],
     [
-      'an attempt that streamed a part and failed is retried after the pause from offset 0, and both attempts are ledger rows',
+      'a part streamed, then a failure — model_error and one ledger row by the estimate (improvements AC-02.1)',
       {
         act: 'call',
         attempts: [
@@ -169,14 +167,9 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { parts: ['Fresh', ' answer'] },
         ],
         hookFails: false,
-        text: 'Fresh answer',
-        deltas: [
-          { offset: 0, text: 'Старт' },
-          { offset: 0, text: 'Fresh' },
-          { offset: 5, text: ' answer' },
-        ],
-        pauses: [1000],
-        // The attempt failed after its answer began, so it is a row too: the request as input (an estimate),
+        text: 'model_error 503',
+        deltas: [{ offset: 0, text: 'Старт' }],
+        // The request failed after its answer began, so it is a row: the request as input (an estimate),
         // the 5 streamed Cyrillic characters as 10 bytes — 3 tokens, not the 2 of a character count.
         ledgerRows: [
           {
@@ -188,7 +181,6 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
               cacheWriteTokens: 0,
             },
           },
-          { ...TURN_ROW, usage: LEDGER_USAGE },
         ],
         hookWarnings: 0,
       },
@@ -204,7 +196,6 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 0, text: 'a' },
           { offset: 1, text: 'b' },
         ],
-        pauses: [],
         ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 2,
       },
@@ -217,7 +208,6 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         hookFails: false,
         text: 'Title',
         deltas: [],
-        pauses: [],
         ledgerRows: [
           {
             ownerId: 'owner-1',
@@ -232,15 +222,11 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
   ])('%s', async (_, row) => {
     const deltas: TextDelta[] = [];
     const ledgerRows: ModelCallRecord[] = [];
-    const pauses: number[] = [];
     const logger = loggerDouble();
     const clock: Clock = {
       now: () => new Date(0),
-      random: () => 0,
-      setTimer: (ms, callback) => {
-        pauses.push(ms);
-        queueMicrotask(callback);
-        return () => {};
+      setTimer: () => {
+        throw new Error('ModelClient sets no timer');
       },
     };
     const client = createModelClient({
@@ -305,7 +291,6 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         agentId: 'agent-1',
       });
     }
-    expect(pauses).toEqual(row.pauses);
     expect(ledgerRows).toStrictEqual(row.ledgerRows);
     const hookWarnings = logger.warn.mock.calls.filter(
       ([message]) => message === 'text delta hook failed',
@@ -416,8 +401,8 @@ function deniedTitle(reason: string): AccessDeniedEntry {
   };
 }
 
-// UC-6, DC-7, KD-3, KD-4. Provider rejections, their retries and ledger rows: retry-policy.spec.ts.
-describe("the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict's price, and a refused title calls the audit hook once", () => {
+// UC-6, DC-7, KD-3, KD-4. Provider rejections and their ledger rows: provider-rejection.spec.ts.
+describe("the model verdict comes before the request: a refusal makes no call, every billed request is recorded at the verdict's price, and a refused title calls the audit hook once", () => {
   it.each<[string, VerdictRow]>([
     [
       'a refused call does not start: no provider call and no ledger row',
@@ -520,7 +505,6 @@ describe("the model verdict comes before the first attempt: a refusal makes no c
       },
       clock: {
         now: () => new Date(0),
-        random: () => 0,
         setTimer: (_ms, callback) => {
           queueMicrotask(callback);
           return () => {};

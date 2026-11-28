@@ -128,28 +128,33 @@ export class LibrarySave {
   ): Promise<SaveInput> {
     const { scope, author, body } = request;
     const exceptId = previous?.id;
-    const [ownNames, systemNames, visibleAgentIds, models] = await Promise.all([
-      scope === 'employee' ? this.repository.names(author.id, exceptId) : [],
-      this.repository.names(null, scope === 'system' ? exceptId : undefined),
-      this.records.visibleAgentIds(author, refersToRecords(body)),
-      request.models ??
-        (scope === 'employee'
-          ? this.records.allowedModelIds(author.id)
-          : this.records.catalogueModelIds()),
-    ]);
+    const refers = refersToRecords(body);
+    const [ownNames, systemNames, visible, systemSkillIds, models] =
+      await Promise.all([
+        scope === 'employee' ? this.repository.names(author.id, exceptId) : [],
+        this.repository.names(null, scope === 'system' ? exceptId : undefined),
+        this.records.visibleRecordIds(author, refers),
+        this.records.systemSkillIds(refers && scope === 'system'),
+        request.models ??
+          (scope === 'employee'
+            ? this.records.allowedModelIds(author.id)
+            : this.records.catalogueModelIds()),
+      ]);
     const choices: SaveChoices =
       scope === 'employee'
         ? {
             scope,
             usableServers: request.servers,
             allowedModels: models,
-            visibleAgentIds,
+            visibleAgentIds: visible.agentIds,
+            visibleSkillIds: visible.skillIds,
           }
         : {
             scope,
             registryServers: request.servers,
             catalogueModels: models,
-            visibleAgentIds,
+            visibleAgentIds: visible.agentIds,
+            visibleSkillIds: systemSkillIds,
           };
     return {
       name: body.name,

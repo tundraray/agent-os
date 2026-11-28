@@ -1,6 +1,11 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-import { type ProviderAdapter, keyHeader, rejectionText } from './adapters';
+import {
+  type ProviderAdapter,
+  keyHeader,
+  overflowText,
+  rejectionText,
+} from './adapters';
 import type { ProviderConnection } from './provider-registry';
 
 /** The server is named by the provider's name; it streams the usage only when asked (`includeUsage`). */
@@ -35,6 +40,20 @@ export const openAICompatibleAdapter: ProviderAdapter = {
     return (
       error !== null &&
       (error.message.includes('tools') || error.param.startsWith('tools'))
+    );
+  },
+  // One adapter serves every OpenAI-compatible server, so each server's marker is checked: OpenAI and Groq
+  // (`code`), OpenRouter (`metadata.error_type`), Mistral and llama.cpp (`type`), vLLM (fixed text, which
+  // also catches OpenAI's code-less «This model's maximum context length»).
+  contextOverflow(statusCode, body) {
+    const error = overflowText(statusCode, body);
+    return (
+      error !== null &&
+      (error.code === 'context_length_exceeded' ||
+        error.errorType === 'context_length_exceeded' ||
+        error.type === 'invalid_request_prompt_too_long' ||
+        error.type === 'exceed_context_size_error' ||
+        error.message.includes('maximum context length'))
     );
   },
   checkRequest(connection) {

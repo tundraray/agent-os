@@ -11,7 +11,9 @@ import {
   type CreateLocalUserBody,
   type Language,
   type MyRoleList,
+  type NotificationLevel,
   type PasswordChangeBody,
+  type ThemeId,
   type UserStatus,
 } from '@agent-os/contracts';
 import {
@@ -340,6 +342,33 @@ export class UsersService {
   /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
   async setOwnLanguage(userId: string, language: Language): Promise<void> {
     await this.users.setLanguage(userId, language);
+  }
+
+  /** The employee saves his own theme, null — as in the organisation (theming KD-1); no audit: it grants nothing. */
+  async setOwnTheme(userId: string, theme: ThemeId | null): Promise<void> {
+    await this.users.setTheme(userId, theme);
+  }
+
+  /**
+   * The employee's own personal instruction, saved by the main chat's `set_personal_instructions` after he confirmed
+   * its card (agent-guidance KD-8), in the caller's transaction; the call's `tool_result` is its audit. Only the
+   * length is logged (AC-04.3).
+   */
+  async setOwnInstructions(userId: string, text: string): Promise<void> {
+    await this.users.setInstructions(userId, text);
+    this.logger.info('personal instructions saved', {
+      userId,
+      textChars: text.length,
+      outcome: 'ok',
+    });
+  }
+
+  /** The employee saves his own default notification level (live-feed KD-7); no audit: the level grants nothing. */
+  async setOwnNotificationLevel(
+    userId: string,
+    level: NotificationLevel,
+  ): Promise<void> {
+    await this.users.setNotificationLevel(userId, level);
   }
 
   /** Logs a refused own change and gives its 400 answer; the password stays as it was (AC-33.4). */

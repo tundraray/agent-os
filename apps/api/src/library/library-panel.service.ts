@@ -7,7 +7,7 @@ import type {
   SystemRecordAudienceBody,
   UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AgentsRepository, Db } from '@agent-os/db';
+import { AgentsRepository, Db, IdentityRolesRepository } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import { IdentityDirectory } from '../identity/identity-directory';
@@ -50,6 +50,7 @@ export class LibraryPanelService {
     private readonly saving: LibrarySave,
     private readonly repository: AgentsRepository,
     private readonly identity: IdentityDirectory,
+    private readonly roles: IdentityRolesRepository,
     private readonly auditLog: AuditLog,
   ) {}
 
@@ -198,6 +199,7 @@ export class LibraryPanelService {
             userIds: body.userIds,
             existingRoleIds: existing.roleIds,
             existingUserIds: existing.userIds,
+            everyoneRoleId: await this.roles.builtinId('everyone'),
           });
           if (decision.kind === 'refused')
             throw libraryError('RECORD_REJECTED', decision.reason);

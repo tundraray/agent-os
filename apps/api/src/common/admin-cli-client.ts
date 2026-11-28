@@ -12,7 +12,7 @@ export const DEFAULT_API = 'http://localhost:4000';
 
 /**
  * The fixture servers of the developer's registry: `seed:mcp` registers them — `shared` with the shared
- * token, `oauth` with personal OAuth — and `seed:access` allows them to the built-in role.
+ * token, `oauth` with personal OAuth.
  */
 export const SEED_MCP_SERVERS = {
   shared: ['logs', 'tracker'],

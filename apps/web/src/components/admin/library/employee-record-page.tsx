@@ -182,6 +182,9 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
           missingRights={record.missingRights}
           variant="page"
           recordHref={panelRecordHref}
+          connectedSkills={
+            record.kind === 'skill' ? undefined : record.connectedSkills
+          }
         />
         {record.kind === 'deep_agent' && (
           <AgentScripts scripts={record.content.scripts} />

@@ -15,15 +15,19 @@ import { LOGGER, type Logger } from '@agent-os/common';
 import {
   LanguageBodySchema,
   nextPath,
+  NotificationLevelBodySchema,
   PasswordChangeBodySchema,
   PasswordSignInBodySchema,
+  ThemeBodySchema,
   type CurrentUser,
   type LanguageBody,
   type MyRoleList,
+  type NotificationLevelBody,
   type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
   type SignInError,
+  type ThemeBody,
 } from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 import { AuditLog } from '../audit/audit-log';
@@ -35,12 +39,14 @@ import { ProvidersService } from './providers.service';
 import { Public } from './public.decorator';
 import {
   clearSessionCookie,
+  clearThemeCookie,
   cookieOptions,
   frontendOrigin,
   readCookie,
   readSessionToken,
   setLocaleCookie,
   setSessionCookie,
+  setThemeCookie,
 } from './session-cookie';
 import { SessionStore } from './session.store';
 import { SignInService } from './sign-in.service';
@@ -124,6 +130,7 @@ export class AuthController {
     }
     setSessionCookie(res, signedIn.token);
     setLocaleCookie(res, signedIn.language);
+    setThemeCookie(res, signedIn.theme);
     res.redirect(302, `${frontendOrigin()}${signedIn.next}`);
   }
 
@@ -145,19 +152,34 @@ export class AuthController {
     );
     setSessionCookie(res, signedIn.token);
     setLocaleCookie(res, signedIn.language);
+    setThemeCookie(res, signedIn.theme);
   }
 
-  /** The employee of the session; the `aos_locale` cookie follows his choice (i18n KD-2). */
+  /**
+   * The employee of the session with his own theme and the organisation's; the `aos_locale` cookie follows his
+   * choice (i18n KD-2), the theme cookie is the web's to keep (theming KD-3).
+   */
   @Get('me')
   async me(
     @Req() req: AuthedRequest,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CurrentUser> {
-    const { id, email, name, isAdmin, hasPassword, language, trainOwn } =
-      req.user;
+    const {
+      id,
+      email,
+      name,
+      isAdmin,
+      hasPassword,
+      language,
+      trainOwn,
+      notificationLevel,
+      theme,
+    } = req.user;
     const { trainingCapUsd } = (
       await this.settings.read('self_learning_settings')
     ).value;
+    const organizationTheme = (await this.settings.read('appearance_settings'))
+      .value.theme;
     setLocaleCookie(res, language);
     return {
       id,
@@ -168,6 +190,9 @@ export class AuthController {
       language,
       trainOwn,
       trainingCapUsd,
+      notificationLevel,
+      theme,
+      organizationTheme,
     };
   }
 
@@ -206,7 +231,40 @@ export class AuthController {
     });
   }
 
-  /** 204 always; a live cookie's session row is deleted and `sign_out` written to the audit. */
+  /** 204 without a body and without a cookie; null — as in the organisation; only the employee of `req.user` changes (theming KD-1). */
+  @Put('me/theme')
+  @HttpCode(204)
+  async changeTheme(
+    @Body(new ZodValidationPipe(ThemeBodySchema)) body: ThemeBody,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    await this.users.setOwnTheme(req.user.id, body.theme);
+    this.logger.info('theme saved', {
+      userId: req.user.id,
+      sessionId: req.user.sessionId,
+      theme: body.theme,
+      outcome: 'ok',
+    });
+  }
+
+  /** 204; only the employee of `req.user` changes (live-feed design-server.md, KD-7). */
+  @Put('me/notification-level')
+  @HttpCode(204)
+  async changeNotificationLevel(
+    @Body(new ZodValidationPipe(NotificationLevelBodySchema))
+    body: NotificationLevelBody,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    await this.users.setOwnNotificationLevel(req.user.id, body.level);
+    this.logger.info('notification level saved', {
+      userId: req.user.id,
+      sessionId: req.user.sessionId,
+      level: body.level,
+      outcome: 'ok',
+    });
+  }
+
+  /** 204 always, the session, language and theme cookies cleared; a live cookie's session row is deleted and `sign_out` written to the audit. */
   @Public()
   @Post('sign-out')
   @HttpCode(204)
@@ -217,6 +275,7 @@ export class AuthController {
     const token = readSessionToken(req);
     clearSessionCookie(res);
     setLocaleCookie(res, null);
+    clearThemeCookie(res);
     const session =
       token === undefined ? undefined : await this.sessions.find(token);
     if (session === undefined) return;

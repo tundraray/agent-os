@@ -85,6 +85,8 @@ export class IdentitySessionsRepository {
         trainAny: TRAIN_ANY,
         hasPassword: sql<boolean>`${identityUsers.passwordHash} is not null`,
         language: identityUsers.language,
+        theme: identityUsers.theme,
+        notificationLevel: identityUsers.notificationLevel,
         signInSettings: settings.value,
       })
       .from(identitySessions)

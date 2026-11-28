@@ -1,10 +1,20 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
+/**
+ * What the unsaved changes on screen are: a library record by its name (MC-11), access levels by the number of
+ * changed rows (access-levels UXRD MC-37), or an instruction by its section's title (agent-guidance MC-9); the
+ * dialog words its question by it.
+ */
+export type LeaveSubject =
+  | { kind: 'record'; name: string }
+  | { kind: 'access'; changes: number }
+  | { kind: 'instructions'; title: string };
+
 export type LeaveGuardState = {
-  /** The name of the record with unsaved changes on screen; `null` — nothing is held. */
-  held: string | null;
-  /** The open MC-11 question, with the held name; the dialog shows it and answers. */
-  question: { name: string } | null;
+  /** The unsaved changes on screen; `null` — nothing is held. */
+  held: LeaveSubject | null;
+  /** The open question, with what is held; the dialog shows it and answers. */
+  question: LeaveSubject | null;
 };
 
 /**
@@ -13,10 +23,10 @@ export type LeaveGuardState = {
  * question, so a caller that must stay synchronous checks `held` before awaiting.
  */
 export type LeaveGuard = StoreApi<LeaveGuardState> & {
-  hold: (name: string) => void;
+  hold: (subject: LeaveSubject) => void;
   /** Nothing to protect any more; an open question is answered «leave». */
   release: () => void;
-  /** Whether to leave: at once `true` while nothing is held, otherwise the employee's answer to MC-11. */
+  /** Whether to leave: at once `true` while nothing is held, otherwise the employee's answer to the question. */
   confirmLeave: () => Promise<boolean>;
   /** The dialog's answer: «Остаться» → `false` and the hold stays; «Уйти без сохранения» → `true`, released. */
   answer: (leave: boolean) => void;
@@ -40,7 +50,7 @@ export function createLeaveGuard(): LeaveGuard {
   }
 
   return Object.assign(store, {
-    hold: (name: string): void => store.setState({ held: name }),
+    hold: (subject: LeaveSubject): void => store.setState({ held: subject }),
     release: (): void => {
       if (pending !== null) settle(true);
       else store.setState({ held: null });
@@ -51,7 +61,7 @@ export function createLeaveGuard(): LeaveGuard {
       if (pending === null) {
         const { promise, resolve } = Promise.withResolvers<boolean>();
         pending = { promise, resolve };
-        store.setState({ question: { name: held } });
+        store.setState({ question: held });
       }
       return pending.promise;
     },

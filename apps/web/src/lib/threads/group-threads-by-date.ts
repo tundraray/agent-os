@@ -1,3 +1,5 @@
+import type { ConversationState, NotificationLevel } from '@agent-os/contracts';
+
 export type DateGroupKey =
   'today' | 'yesterday' | 'previous7' | 'previous30' | 'older';
 
@@ -10,6 +12,10 @@ export type ThreadListEntry = {
   forkable: boolean;
   /** The conversation is a fork: the row shows the branch icon (FK-02). */
   forked: boolean;
+  /** What the conversation is doing (improvements IM-09); `null` — read and idle, no mark. */
+  state: ConversationState | null;
+  /** The conversation's own notification level; `null` — as the employee's default (live-feed KD-7). */
+  notificationLevel: NotificationLevel | null;
 };
 
 /** A date group by its key; the list translates the key into the group's heading. */

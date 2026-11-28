@@ -1,20 +1,32 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
-import type { RecordDetail } from '@agent-os/contracts';
+import { toast } from 'sonner';
+import { RECORD_SKILLS_MAX, type RecordDetail } from '@agent-os/contracts';
 import { FormWarning } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
 import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { adminApi } from '@/lib/admin/admin-api';
 import type { ModelNames } from '@/lib/agents/format';
 import { focusShellTarget } from '@/lib/focus';
 import { builtinName } from '@/i18n/builtin-name';
 import { libraryApi } from '@/lib/library/library-api';
+import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
 import { libraryPath, memoryPath, recordPath } from '@/lib/shell-route';
-import type { EditorMode } from './agent-fields';
+import { AgentsField, type EditorMode } from './agent-fields';
 import { AgentScripts } from './agent-script';
 import { useCopyRecord } from './copy-record';
 import { DefinitionView } from './definition-view';
@@ -164,6 +176,14 @@ export function DeepAgentCard({
           variant="page"
           recordHref={recordPath}
           modelNames={modelNames}
+          connectedSkills={record.connectedSkills}
+          skillsAction={
+            <SkillsDialog
+              record={record}
+              system={system}
+              onSave={(skills) => saveContent({ skills })}
+            />
+          }
         />
         <AgentScripts
           scripts={record.content.scripts}
@@ -177,5 +197,133 @@ export function DeepAgentCard({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * SP-02 (agent-guidance UXRD, MC-14, MC-16): «Изменить» under the row «Скиллы» opens «Скиллы «{имя}»» with the
+ * field «Скиллы»; «Сохранить» saves the list through the card's `saveContent`, closes the window and says so. The
+ * limit is checked before sending; a refusal stays at the field.
+ */
+function SkillsDialog({
+  record,
+  system,
+  onSave,
+}: {
+  record: DeepAgentRecord;
+  system: boolean;
+  onSave: (skills: string[]) => Promise<void>;
+}) {
+  const t = useTranslations('library');
+  const tErrors = useTranslations('errors');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [skills, setSkills] = useState<string[]>(record.content.skills);
+  const [error, setError] = useState<ReactNode>(undefined);
+  const [saving, setSaving] = useState(false);
+
+  const start = (next: boolean): void => {
+    if (saving) return;
+    if (next) {
+      setSkills(record.content.skills);
+      setError(undefined);
+    }
+    setOpen(next);
+  };
+
+  async function save(): Promise<void> {
+    if (saving) return;
+    if (skills.length > RECORD_SKILLS_MAX) {
+      setError(
+        t('agentFields.checks.tooManySkills', { max: RECORD_SKILLS_MAX }),
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(skills);
+      setOpen(false);
+      toast.success(t('skillFields.saved'));
+    } catch (cause) {
+      // `recordAction` has logged the refusal.
+      setError(
+        describeLibraryError(tErrors, cause, {
+          where: 'editor',
+          admin: system,
+          kind: record.kind,
+          name: record.name,
+        }).text,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={start}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-fit pointer-coarse:h-11"
+        onClick={() => start(true)}
+      >
+        {t('skillFields.change')}
+      </Button>
+      <DialogContent size="full-narrow">
+        <DialogHeader>
+          <DialogTitle>
+            {t('skillFields.dialogTitle', {
+              name: builtinName(record, locale),
+            })}
+          </DialogTitle>
+        </DialogHeader>
+        <fieldset disabled={saving} className="contents">
+          <AgentsField
+            id={`${id}-skills`}
+            kind="skill"
+            recordId={record.id}
+            chosen={skills}
+            error={error}
+            onChange={(next) => {
+              setSkills(next);
+              setError(undefined);
+            }}
+          />
+        </fieldset>
+        <DialogFooter>
+          <DialogClose
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="pointer-coarse:h-11"
+              />
+            }
+            disabled={saving}
+          >
+            {tCommon('cancel')}
+          </DialogClose>
+          <Button
+            type="button"
+            size="sm"
+            className="pointer-coarse:h-11"
+            aria-busy={saving || undefined}
+            onClick={() => void save()}
+          >
+            {saving && (
+              <LoaderCircle
+                aria-hidden
+                className="animate-spin motion-reduce:animate-none"
+              />
+            )}
+            {t('share.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

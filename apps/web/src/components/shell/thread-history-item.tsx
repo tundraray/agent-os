@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import {
+  BellOffIcon,
   GitBranchIcon,
   MoreHorizontalIcon,
   PencilIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { ConversationState } from '@agent-os/contracts';
+import { ConversationStateGlyph } from '@/components/agents/agent-status';
 import { ShimmerLabel } from '@/components/surfaces';
 import {
   DropdownMenu,
@@ -35,6 +38,11 @@ import { threadPath } from '@/lib/shell-route';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
 import { cn } from '@/lib/utils';
 import { ShellLink } from './shell-link';
+import {
+  isSilent,
+  ThreadNotificationsMenu,
+  type RowNotifications,
+} from './thread-notifications-menu';
 import { ThreadTitleField } from './thread-title-field';
 
 /** Marks a thread link: ↑/↓/Home/End of the list move focus between these elements. */
@@ -51,6 +59,8 @@ const TOOLTIP_DELAY_MS = 500;
 
 export type ThreadHistoryItemProps = {
   entry: ThreadListEntry;
+  /** The state mark the row shows (IM-09): the list hides «новый ответ» and «сбой» of a conversation on screen. */
+  state: ConversationState | null;
   /** The thread open in the main area: background, weight and `aria-current="page"`. */
   isActive: boolean;
   /** The title is still awaited (reply running or title poll pending): «Новая беседа» shimmers. */
@@ -61,6 +71,8 @@ export type ThreadHistoryItemProps = {
   onRequestDelete: () => void;
   /** «Ответвить чат» in the «⋯» menu (create-and-test FK-01): the list forks the thread and opens the fork. */
   onFork: () => void;
+  /** The submenu «Уведомления» (live-feed LF-05) and the mark «без уведомлений» (LF-06). */
+  notifications: RowNotifications;
 };
 
 /**
@@ -71,11 +83,13 @@ export type ThreadHistoryItemProps = {
  */
 export function ThreadHistoryItem({
   entry,
+  state,
   isActive,
   titlePending,
   onRename,
   onRequestDelete,
   onFork,
+  notifications,
 }: ThreadHistoryItemProps) {
   const t = useTranslations('shell.thread');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -86,6 +100,7 @@ export function ThreadHistoryItem({
   const [forking, setForking] = useState(false);
   const focusLinkAfterEdit = useRef(false);
   const label = entry.title ?? t('untitled');
+  const silent = isSilent(entry.notificationLevel, notifications.defaultLevel);
   const linkProps = { [THREAD_LINK_ATTRIBUTE]: '' };
   const rowProps = { [THREAD_ROW_ATTRIBUTE]: entry.id };
   const actionsProps = { [THREAD_ACTIONS_ATTRIBUTE]: '' };
@@ -167,14 +182,34 @@ export function ThreadHistoryItem({
           {entry.forked && (
             <GitBranchIcon aria-hidden className="text-muted-foreground" />
           )}
-          <ShimmerLabel
-            ref={labelRef}
-            className="truncate"
-            active={entry.title === undefined && titlePending}
-          >
-            {label}
-          </ShimmerLabel>
+          {/* Fills the row so the state mark sits at its end, just before «⋯» (IM-09); the mark «без
+              уведомлений» follows the title, which is cut earlier by its width (live-feed LF-06). */}
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <ShimmerLabel
+              ref={labelRef}
+              className="min-w-0 truncate"
+              active={entry.title === undefined && titlePending}
+            >
+              {label}
+            </ShimmerLabel>
+            {silent && (
+              <BellOffIcon
+                aria-hidden
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+            )}
+          </span>
           {entry.forked && <span className="sr-only">{t('forkMark')}</span>}
+          {silent && <span className="sr-only">{t('silentMark')}</span>}
+          {state !== null && (
+            <>
+              <span className="sr-only">{t(`stateMark.${state}`)}</span>
+              <ConversationStateGlyph
+                state={state}
+                label={t(`state.${state}`)}
+              />
+            </>
+          )}
         </SidebarMenuButton>
         <TooltipContent side="right" align="center">
           {label}
@@ -221,6 +256,10 @@ export function ThreadHistoryItem({
               {t('fork')}
             </DropdownMenuItem>
           )}
+          <ThreadNotificationsMenu
+            level={entry.notificationLevel}
+            notifications={notifications}
+          />
           {/* The dialog opens from the click, like the field above: no wait for the menu's exit animation. */}
           <DropdownMenuItem
             variant="destructive"

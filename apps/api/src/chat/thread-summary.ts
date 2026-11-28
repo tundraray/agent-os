@@ -28,5 +28,6 @@ export function toThreadSummary(root: RootSession): ThreadSummary {
         ? null
         : { ...forkedFrom, title: forkedFrom.title || null },
     forkCount: root.forkCount,
+    notificationLevel: root.notificationLevel,
   };
 }

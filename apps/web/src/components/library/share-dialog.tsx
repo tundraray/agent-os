@@ -329,7 +329,11 @@ function EmployeeAudience({ record, name, onDone }: AudienceFormProps) {
             kind={record.kind}
             offer={offer}
             onChange={setOffer}
-            consequence={t('share.consequence', { kind: record.kind })}
+            consequence={
+              record.kind === 'skill'
+                ? t('share.consequenceSkill')
+                : t('share.consequence', { kind: record.kind })
+            }
           />
         )}
       </fieldset>
@@ -505,7 +509,9 @@ function HolderSearch({
 
   const candidates = useMemo((): Holder[] => {
     const needle = query.trim().toLocaleLowerCase(locale);
+    // «Все сотрудники» is not a holder: the dialog's own «everyone» reach shares with all (the API refuses it).
     const matchingRoles = roles
+      .filter((role) => role.builtinKind !== 'everyone')
       .map((role): Holder => ({
         kind: 'role',
         id: role.id,
@@ -659,7 +665,12 @@ function Delivery({
 }) {
   const t = useTranslations('library');
   const options: readonly AdminRadioOption<DeliveryValue>[] = [
-    { value: 'chat', label: t('share.offer', { kind }) },
+    {
+      value: 'chat',
+      // agent-guidance MC-13: a skill is read by the chat, not started.
+      label:
+        kind === 'skill' ? t('share.offerSkill') : t('share.offer', { kind }),
+    },
     { value: 'library', label: t('share.libraryOnly') },
   ];
   return (

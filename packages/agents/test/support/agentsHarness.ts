@@ -138,6 +138,11 @@ export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = {
   reaperMs: 600_000,
 };
 
+/** What the model reads for a call whose answer was lost (improvements FR-01), written out independently of the code. */
+export const LOST_ANSWER =
+  'The run stopped while this call was in flight, so its answer was lost. Nobody rejected the call. ' +
+  'The action may have been carried out. Do not repeat it before checking whether it was.';
+
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
 
@@ -195,6 +200,7 @@ export function testRecord(
       agents: [],
       tools: [],
       taskList: false,
+      skills: [],
       ...content,
     },
   };
@@ -248,7 +254,8 @@ export function testSubagent(
  */
 export function testDeepAgent(
   name: string,
-  content: DeepAgentContent,
+  content: Omit<DeepAgentContent, 'skills'> &
+    Partial<Pick<DeepAgentContent, 'skills'>>,
   overrides: TestDeepAgentOverrides = {},
 ): TestDeepAgentRecord {
   return {
@@ -258,7 +265,7 @@ export function testDeepAgent(
     everyone: true,
     offerInChat: true,
     ...overrides,
-    content,
+    content: { skills: [], ...content },
   };
 }
 
@@ -324,6 +331,7 @@ async function addDefaultAgents(library: LibraryDouble): Promise<void> {
         listDelegation: true,
         selfLearning: false,
         scripts: [],
+        skills: [],
       },
     });
   }

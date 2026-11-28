@@ -1,6 +1,11 @@
 import type { Logger } from '@agent-os/common';
 import {
+  AGENTS_QUESTION_CONFIRMATION,
+  AGENTS_TOOL_CONFIRMATION,
   AgentMessageKindSchema,
+  AskUserArgsSchema,
+  answersMismatch,
+  type QuestionAnswer,
   type DecisionResponse,
   SessionTaskStatusSchema,
   TaskStatusSchema,
@@ -13,14 +18,17 @@ import {
   AgentsRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  Db,
   RuntimeModelCallsRepository,
+  RuntimeTasksRepository,
   TrainingsRepository,
 } from '@agent-os/db';
-import { Inbox, type Task, TaskControl } from '@agent-os/runtime';
+import { Inbox, type Task, TaskControl, withTxRetry } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
+import { signalConversation } from '../conversation-signal';
 import { AgentsError } from '../errors';
 import { messagePayload } from '../resume';
 import {
@@ -49,6 +57,29 @@ import { inTrainingTree } from '../training/training-tree';
 
 const { waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
+
+/** The card of a changing MCP tool: the plain tool confirmation with a server. */
+function isMcpCard(card: z.infer<typeof QuestionInputSchema>): boolean {
+  return (
+    card.kind === AGENTS_TOOL_CONFIRMATION &&
+    card.payload.server !== null &&
+    card.payload.server !== ''
+  );
+}
+
+/**
+ * Why `answers` do not fit the open card (agent-guidance DC-1), `null` when they do: a card of another kind has
+ * no questions, so any answers miss it.
+ */
+function answersMismatchOf(
+  card: z.infer<typeof QuestionInputSchema>,
+  answers: readonly QuestionAnswer[],
+): string | null {
+  if (card.kind !== AGENTS_QUESTION_CONFIRMATION)
+    return `answers on a ${card.kind} card`;
+  const { questions } = AskUserArgsSchema.parse(card.payload.content);
+  return answersMismatch(questions, answers);
+}
 
 /** A test run's trainer: a root `trainer` task with `testRun` in its input. */
 function isTestRunRoot(task: Task): boolean {
@@ -95,6 +126,10 @@ export class ControlOperations {
     private readonly sessionTaskRows: Pick<ConversationTasksRepository, 'list'>,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: Pick<RuntimeModelCallsRepository, 'sumTree'>,
+    @Inject(Db) private readonly db: Db,
+    /** The sender of the conversation's own events (`signalConversation`). */
+    @Inject(RuntimeTasksRepository)
+    private readonly signals: Pick<RuntimeTasksRepository, 'notify'>,
   ) {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
@@ -251,34 +286,72 @@ export class ControlOperations {
     ownerId,
     approve,
     args,
-  }: ResolveConfirmationRequest): Promise<DecisionResponse['outcome']> {
+    allowInConversation,
+    answers,
+  }: ResolveConfirmationRequest): Promise<
+    DecisionResponse['outcome'] | 'not_mcp_card' | 'answers_mismatch'
+  > {
     return this.logged(
       'resolveConfirmation',
-      { decisionId, ownerId, approve, withArgs: args !== undefined },
+      {
+        decisionId,
+        ownerId,
+        approve,
+        withArgs: args !== undefined,
+        allowInConversation: allowInConversation === true,
+        answers: answers?.length ?? null,
+      },
       async () => {
         // The decision is the answer to a question task (data-model/design-runtime.md, KD-3). The edit is
         // checked only against an open question of this owner. For any other task `tasks.answer` answers
         // `already_answered` (answered or stopped) or `TASK_NOT_FOUND` (missing, another owner's, deleted or
         // not a question) and writes nothing; `TASK_NOT_FOUND` passes through as the runtime's error.
         const question =
-          args === undefined
+          args === undefined &&
+          allowInConversation !== true &&
+          answers === undefined
             ? undefined
             : await this.tasks.get(decisionId, ownerId);
+        const card =
+          question !== undefined && isQuestion(question)
+            ? QuestionInputSchema.parse(question.input)
+            : undefined;
+        // The third answer allows a pair, so only a changing MCP tool's card takes it (improvements
+        // design-server.md, Contract Definitions «POST /api/decisions/:decisionId»); nothing is written otherwise.
+        if (
+          allowInConversation === true &&
+          card !== undefined &&
+          !isMcpCard(card)
+        ) {
+          return 'not_mcp_card';
+        }
+        const open = card !== undefined && question?.status === waiting;
+        // The answers are checked against the open card's questions before the answer (agent-guidance DC-1).
+        const mismatch =
+          answers !== undefined && open
+            ? answersMismatchOf(card, answers)
+            : null;
+        if (mismatch !== null) {
+          this.logger.info('decision answers rejected', {
+            decisionId,
+            ownerId,
+            reason: mismatch,
+          });
+          return 'answers_mismatch';
+        }
         const edited =
-          question !== undefined &&
-          isQuestion(question) &&
-          question.status === waiting
-            ? {
-                args: this.editedArgs(
-                  QuestionInputSchema.parse(question.input).payload,
-                  args,
-                ),
-              }
+          args !== undefined && open
+            ? { args: this.editedArgs(card.payload, args) }
             : {};
-        // The tool step reads `{ approve, args? }` from the question's result and the call id from its input.
+        // The tool step reads `{ approve, args?, allowInConversation?, answers? }` from the question's result and
+        // the call id from its input.
         const outcome = await this.tasks.answer(decisionId, ownerId, {
           approve,
           ...edited,
+          ...(allowInConversation === true
+            ? { allowInConversation: true }
+            : {}),
+          ...(answers === undefined ? {} : { answers }),
         });
         return outcome === 'answered' ? 'resolved' : 'already_resolved';
       },
@@ -293,7 +366,10 @@ export class ControlOperations {
     );
   }
 
-  /** Sets the title and moves the root session up; `undefined` as in `root`. */
+  /**
+   * Sets the title and moves the root session up, with the conversation's `summary` event in the same
+   * transaction (live-feed design-server.md, KD-2); `undefined` as in `root`.
+   */
   renameRoot(
     rootId: string,
     ownerId: string,
@@ -302,17 +378,19 @@ export class ControlOperations {
     return this.logged(
       'renameRoot',
       { rootId, ownerId },
-      async () => {
-        if (!(await this.sessionRows.renameRoot(rootId, ownerId, title)))
-          return undefined;
-        const row = await this.sessionRows.root(rootId, ownerId);
-        return row === undefined ? undefined : toRootSession(row);
-      },
+      () =>
+        this.db.transaction(async () => {
+          if (!(await this.sessionRows.renameRoot(rootId, ownerId, title)))
+            return undefined;
+          await this.signalSummary(rootId, ownerId);
+          const row = await this.sessionRows.root(rootId, ownerId);
+          return row === undefined ? undefined : toRootSession(row);
+        }),
       (renamed) => ({ found: renamed !== undefined }),
     );
   }
 
-  /** Writes a generated title only into an empty one; `true` when it was written. */
+  /** Writes a generated title only into an empty one, with `summary` only when it was written; `true` then. */
   titleRootIfEmpty(
     rootId: string,
     ownerId: string,
@@ -321,21 +399,58 @@ export class ControlOperations {
     return this.logged(
       'titleRootIfEmpty',
       { rootId, ownerId },
-      () => this.sessionRows.titleRootIfEmpty(rootId, ownerId, title),
+      () =>
+        this.db.transaction(async () => {
+          const written = await this.sessionRows.titleRootIfEmpty(
+            rootId,
+            ownerId,
+            title,
+          );
+          if (written) await this.signalSummary(rootId, ownerId);
+          return written;
+        }),
       (written) => ({ written }),
     );
   }
 
   /**
-   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`, in
-   * its own transaction, which it repeats after a deadlock): the deletion mark lives on the tasks
-   * only (KD-2), and from then on the conversation answers as a missing one everywhere. The rows
-   * stay. `AGENT_NOT_FOUND` for a missing, another owner's or an already deleted root.
+   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`): the deletion mark
+   * lives on the tasks only (KD-2), and from then on the conversation answers as a missing one everywhere. The rows
+   * stay. The `deleted` event with the owner goes in the same transaction (live-feed design-server.md, Flow 2); the
+   * transaction is opened here under `withTxRetry`, because `deleteTree` repeats nothing inside a caller's one.
+   * `AGENT_NOT_FOUND` for a missing, another owner's or an already deleted root.
    */
   deleteRoot(rootId: string, ownerId: string): Promise<void> {
     return this.logged('deleteRoot', { rootId, ownerId }, () =>
-      asAgent(this.tasks.deleteTree(rootId, ownerId).then(() => undefined)),
+      asAgent(
+        withTxRetry(
+          {
+            db: this.db,
+            logger: this.logger,
+            operation: 'agents.deleteRoot',
+            taskId: rootId,
+          },
+          async () => {
+            await this.tasks.deleteTree(rootId, ownerId);
+            await signalConversation(this.signals, {
+              ownerId,
+              event: {
+                type: 'change',
+                data: { threadId: rootId, kind: 'deleted' },
+              },
+            });
+          },
+        ),
+      ),
     );
+  }
+
+  /** The conversation's list row changed (title or level): its `summary` event to the owner. */
+  private signalSummary(rootId: string, ownerId: string): Promise<void> {
+    return signalConversation(this.signals, {
+      ownerId,
+      event: { type: 'change', data: { threadId: rootId, kind: 'summary' } },
+    });
   }
 
   /** The edited arguments parsed by the tool's schema; `INVALID_ARGUMENTS` unless the tool allows the edit. */

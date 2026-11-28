@@ -66,6 +66,30 @@ describe('admin bodies: kebab name, http(s) url, a token only and always for sha
       valid: false,
     },
     {
+      label: 'oauth with a ready client id',
+      schema: register,
+      body: { ...oauth, oauthClientId: 'Iv1.abc' },
+      valid: true,
+    },
+    {
+      label: 'oauth with a ready client id and secret',
+      schema: register,
+      body: { ...oauth, oauthClientId: 'Iv1.abc', oauthClientSecret: 's' },
+      valid: true,
+    },
+    {
+      label: 'oauth with a client secret and no id',
+      schema: register,
+      body: { ...oauth, oauthClientSecret: 's' },
+      valid: false,
+    },
+    {
+      label: 'shared with a ready client',
+      schema: register,
+      body: { ...shared, oauthClientId: 'Iv1.abc' },
+      valid: false,
+    },
+    {
       label: 'unknown mode',
       schema: register,
       body: { ...oauth, mode: 'stdio' },

@@ -9,6 +9,7 @@ import type {
   ThreadListEntry,
 } from '@/lib/threads/group-threads-by-date';
 import { ThreadHistoryItem } from './thread-history-item';
+import type { RowNotifications } from './thread-notifications-menu';
 import {
   ThreadHistoryListView,
   type ThreadHistoryListViewProps,
@@ -25,8 +26,17 @@ const entry = (
   activityAt: 0,
   forkable: true,
   forked: false,
+  state: null,
+  notificationLevel: null,
   ...overrides,
 });
+
+const NOTIFICATIONS: RowNotifications = {
+  defaultLevel: 'all',
+  permission: 'granted',
+  onChoose: vi.fn(),
+  onEnable: vi.fn(),
+};
 
 const GROUPS: readonly ThreadGroup[] = [
   { key: 'today', entries: [entry('a', 'План релиза'), entry('b', 'Отчёт')] },
@@ -51,11 +61,13 @@ const renderItem: ThreadHistoryListViewProps['renderItem'] = (
   <ThreadHistoryItem
     key={item.id}
     entry={item}
+    state={null}
     isActive={false}
     titlePending={false}
     onRename={vi.fn()}
     onRequestDelete={onRequestDelete}
     onFork={vi.fn()}
+    notifications={NOTIFICATIONS}
   />
 );
 
@@ -80,11 +92,13 @@ function renderView(
     <ThreadHistoryItem
       key={item.id}
       entry={item}
+      state={null}
       isActive={item.id === props.activeThreadId}
       titlePending={false}
       onRename={vi.fn()}
       onRequestDelete={onRequestDelete}
       onFork={vi.fn()}
+      notifications={NOTIFICATIONS}
     />
   );
   render(

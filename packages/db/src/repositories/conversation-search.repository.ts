@@ -135,7 +135,8 @@ export class ConversationSearchRepository {
 
   /**
    * `found` and `page` carry only the position and ids of a place; its text is read again for the page rows
-   * alone (`entry_seq` names the history entry, `null` for a title or a stored result).
+   * alone (`entry_seq` names the history entry, `null` for a title or a stored result). `seq` is the entry of a
+   * message or the `tool_result` entry of a result, a stored one too (live-feed KD-5).
    */
   private pageQuery(input: ConversationSearchInput): SQL {
     /** A scalar subquery: an init plan the planner takes as a constant of each index scan. */
@@ -165,7 +166,7 @@ export class ConversationSearchRepository {
             else 'm:' || ${entry.conversationId} || ':' || lpad(${entry.seq}::text, 10, '0') end,
           ${atMs(entry.createdAt)},
           case when ${entry.kind} = ${literal(toolResult)} then ${literal(toolResult)} else ${literal(message)} end,
-          ${entry.conversationId}, case when ${entry.kind} <> ${literal(toolResult)} then ${entry.seq} end,
+          ${entry.conversationId}, ${entry.seq},
           ${entry.callId}, ${entry.content} ->> 'tool', ${entry.seq}, ${task.rootId}
         from ${messages} ${entry}, ${conversations} ${place}, ${runtimeTasks} ${task}
         where ${searchVector(messageText(entry.content))} @@ ${query}
@@ -176,7 +177,7 @@ export class ConversationSearchRepository {
             where ${result.conversationId} = ${entry.conversationId} and ${result.callId} = ${entry.callId})))
         union all
         select 'r:' || ${result.conversationId} || ':' || ${result.callId}, ${atMs(result.createdAt)},
-          ${literal(toolResult)}, ${result.conversationId}, null, ${result.callId}, ${record.content} ->> 'tool',
+          ${literal(toolResult)}, ${result.conversationId}, ${record.seq}, ${result.callId}, ${record.content} ->> 'tool',
           null, ${task.rootId}
         from ${toolResults} ${result}, ${messages} ${record}, ${conversations} ${place},
           ${runtimeTasks} ${task}

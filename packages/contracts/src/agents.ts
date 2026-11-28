@@ -26,6 +26,11 @@ export const AGENT_TASK_TYPES: readonly string[] = [
 /** Decision kind of a tool call that waits for the employee's confirmation. */
 export const AGENTS_TOOL_CONFIRMATION = 'agents.tool_confirmation';
 
+/** The tool an agent asks the employee questions with (agent-guidance design-server.md, KD-1). */
+export const ASK_USER_TOOL = 'ask_user';
+/** The main chat's tool that replaces the employee's personal instruction (agent-guidance KD-8). */
+export const SET_PERSONAL_INSTRUCTIONS_TOOL = 'set_personal_instructions';
+
 /** Kind of a history entry. */
 export const HistoryEntryKindSchema = z.enum([
   'task',
@@ -108,6 +113,8 @@ export type ToolOutcome = z.infer<typeof ToolOutcomeSchema>;
 export const ToolRefusalReasonSchema = z.enum([
   'tool_not_in_definition',
   'no_access',
+  /** The administrator turned the tool off on its server (access-levels KD-2). */
+  'tool_disabled',
   'not_allowed',
   'depth_limit',
   'model_not_connected',
@@ -139,13 +146,22 @@ export const ToolRefusalReasonSchema = z.enum([
   'looks_like_instruction',
   /** A memory record is already on another version (memory-hygiene KD-2). */
   'memory_changed',
+  /** A changing call in a scheduled run that nobody is there to confirm (improvements design-server.md). */
+  'unattended',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 
+/** An MCP tool by its server and name: the pair rights and audit already know a tool by. */
+export const ToolPairSchema = z.object({
+  server: z.string().min(1),
+  tool: z.string().min(1),
+});
+export type ToolPair = z.infer<typeof ToolPairSchema>;
+
 /**
  * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal
- * of the access gate. `provider_*` name a provider state or rejection; `model_error` is any other
- * provider error. The runtime's own reasons are `RuntimeFailureReason`.
+ * of the access gate. `provider_*` name a provider state or rejection; `context_overflow` — the history does
+ * not fit the model's context window even after compaction; `model_error` is any other provider error. The runtime's own reasons are `RuntimeFailureReason`.
  */
 export const AgentFailureReasonSchema = z.enum([
   'turn_limit',
@@ -156,6 +172,7 @@ export const AgentFailureReasonSchema = z.enum([
   'provider_key_rejected',
   'provider_unavailable',
   'provider_tools_rejected',
+  'context_overflow',
   'owner_disabled',
   'quota_exhausted',
   'model_not_connected',

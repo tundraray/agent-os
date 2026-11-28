@@ -551,7 +551,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
         ]),
       ],
     };
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert (after the re-read): the draft gave way to its entry, three steps with new statuses, the report last, no repeats
     await waitFor(() =>
@@ -682,7 +682,7 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     ).toBeInTheDocument();
     expect(within(queueTray).getByText(queued)).toBeInTheDocument();
     expect(composer).toHaveValue('');
-    expect(sendBodies).toEqual([{ text: queued }]);
+    expect(sendBodies).toEqual([{ text: queued, sendKey: expect.any(String) }]);
     const breaches = trackOnePlace(container, queued);
 
     // Act 1b: the re-read brings it as `pending`; then it is delivered and a `tree` note re-reads
@@ -700,7 +700,7 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
       ],
       pending: [],
     };
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 1b: the tray is empty and the message is in the feed at its place; never missing, never twice
     await waitFor(() => expect(tray()).toBeNull());
@@ -743,7 +743,10 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
     expect(composer).toHaveValue(refused);
     expect(tray()).toBeNull();
     expect(feedItems()).not.toContain(`Вы: ${refused}`);
-    expect(sendBodies).toEqual([{ text: queued }, { text: refused }]);
+    expect(sendBodies).toEqual([
+      { text: queued, sendKey: expect.any(String) },
+      { text: refused, sendKey: expect.any(String) },
+    ]);
     expect(conversation.afterSeqs).toEqual([0, 2, 2, 3]);
   });
 });
@@ -969,7 +972,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     );
     expect(ticketCard).toHaveAttribute('data-state', 'open');
     expect(
-      within(ticketCard).getByText('Ждёт подтверждения'),
+      within(ticketCard).getByText('Ждёт вас'),
     ).toBeInTheDocument();
     expect(within(ticketCard).getByRole('button', { name: 'Отклонить' })).toBe(
       reject,
@@ -992,6 +995,160 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       { decisionId: 'd-ticket', body: { approve: false } },
       { decisionId: 'd-ticket', body: { approve: false } },
     ]);
+  });
+
+  // improvements design-web.md UC-2 (AC-08.1, FR-08, IM-04): the third answer only on an MCP tool's card.
+  // Catches: «Разрешить в этой беседе» on a brief or on a tool card without a server, the answer sent without `allowInConversation`, or the re-read card
+  //   showing the plain «Подтверждено» instead of MC-4.
+  it('AC-08.1: an MCP card answers «Разрешить в этой беседе» with allowInConversation and shows MC-4; a brief and a code run keep their buttons', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-28T12:00:00+01:00'));
+    const briefArgs = {
+      deepAgent: DEEP_AGENT_NAME,
+      question: 'Почему падает выгрузка?',
+      boundaries: 'Только логи за неделю',
+      result: 'Короткий отчёт',
+    };
+    const brief = confirmation({
+      decisionId: 'd-brief',
+      agentId: 'root',
+      description: 'Чат',
+      kind: AGENTS_BRIEF_CONFIRMATION,
+      tool: 'start_deep_agent',
+      server: null,
+      args: briefArgs,
+      content: briefArgs,
+      createdAt: fixtureTime(3),
+    });
+    // A tool card without a server (a code run, an agent's script): the right kind, still no third answer.
+    const code = confirmation({
+      decisionId: 'd-code',
+      agentId: 'root',
+      description: 'Чат',
+      tool: 'run_code',
+      server: null,
+      args: {
+        description: 'Посчитать сбои',
+        class: 'read',
+        script: 'return 1;',
+      },
+      content: { canCall: [] },
+      createdAt: fixtureTime(3.5),
+    });
+    const ticket = confirmation({
+      decisionId: 'd-ticket',
+      agentId: 'root',
+      description: 'Чат',
+      tool: 'create_ticket',
+      server: 'backoffice',
+      args: { title: 'Сбой выгрузки' },
+      content: { title: 'Сбой выгрузки' },
+      toolTitle: 'Создать заявку',
+      createdAt: fixtureTime(4),
+    });
+    const conversation = serveConversation(
+      THREAD,
+      conversationView({
+        thread: THREAD,
+        chat: {
+          status: 'awaiting_confirmation',
+          failureReason: null,
+          rootAgentId: 'root',
+          model: 'claude-haiku-4-5',
+        },
+        entries: [
+          historyEntry({
+            kind: 'task',
+            seq: 1,
+            content: { text: 'Заведи заявку о сбое' },
+          }),
+          historyEntry({
+            kind: 'model_answer',
+            seq: 2,
+            content: { text: 'Нужны два решения.' },
+          }),
+        ],
+        decisions: [brief, code, ticket],
+      }),
+    );
+    const bodies: DecisionRequest[] = [];
+    server.use(
+      http.post(`${API}/api/decisions/d-ticket`, async ({ request }) => {
+        const body = DecisionRequestSchema.parse(await request.json());
+        bodies.push(body);
+        conversation.view = {
+          ...conversation.view,
+          decisions: conversation.view.decisions.map(
+            (decision): Confirmation =>
+              decision.decisionId !== 'd-ticket'
+                ? decision
+                : {
+                    ...decision,
+                    status: 'resolved',
+                    resolution: {
+                      approve: true,
+                      args: decision.args,
+                      allowInConversation: true,
+                    },
+                    resolvedAt: fixtureTime(120),
+                  },
+          ),
+        };
+        return HttpResponse.json({
+          outcome: 'resolved',
+        } satisfies DecisionResponse);
+      }),
+    );
+    const user = userEvent.setup();
+    await openConversation('Нужны два решения.');
+    const buttonsOf = (card: HTMLElement): string[] =>
+      within(card)
+        .getAllByRole('button')
+        .map((button) => text(button))
+        .filter((label) =>
+          ['Подтвердить', 'Разрешить в этой беседе', 'Отклонить'].includes(
+            label,
+          ),
+        );
+
+    // Assert 1: three answers in the IM-04 order on the MCP card, none of them on the brief
+    const ticketCard = await screen.findByRole('group', {
+      name: 'Нужно решение: Создать заявку',
+    });
+    expect(buttonsOf(ticketCard)).toEqual([
+      'Подтвердить',
+      'Разрешить в этой беседе',
+      'Отклонить',
+    ]);
+    const briefCard = screen.getByRole('group', {
+      name: 'Задание: Почему падает выгрузка?',
+    });
+    expect(
+      within(briefCard).queryByRole('button', {
+        name: 'Разрешить в этой беседе',
+      }),
+    ).toBeNull();
+    const codeCard = screen.getByRole('group', {
+      name: 'Нужно решение: Выполнить код',
+    });
+    expect(buttonsOf(codeCard)).toEqual(['Подтвердить', 'Отклонить']);
+
+    // Act: the third answer
+    await user.click(
+      within(ticketCard).getByRole('button', {
+        name: 'Разрешить в этой беседе',
+      }),
+    );
+
+    // Assert 2: the request carries the flag; the re-read card shows MC-4
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Разрешено в этой беседе: «Создать заявку» без подтверждения · 11:02',
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(bodies).toEqual([{ approve: true, allowInConversation: true }]);
   });
 });
 
@@ -1139,7 +1296,7 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
       },
       root,
     ]);
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert: the new root is first in the tree without a reload (AC-21.1)
     await waitFor(() =>

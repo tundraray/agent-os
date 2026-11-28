@@ -63,6 +63,7 @@ import {
   type AgentNode,
   type ConversationView,
   type HistoryEntry,
+  ThreadSummarySchema,
 } from '@agent-os/contracts';
 import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -75,7 +76,13 @@ import {
   runModel,
   useRunModels,
 } from './support/access';
-import { type ChatApi, chatApi, expectError, type Method } from './support/api';
+import {
+  type ChatApi,
+  chatApi,
+  expectBody,
+  expectError,
+  type Method,
+} from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { BUILTIN, pointBuiltinsAt } from './support/library';
 import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers';
@@ -128,6 +135,8 @@ let INT1: Record<'a' | 'b' | 'c' | 'd' | 'e' | 'f', Session>;
 let INT2: Record<'a' | 'b' | 'c' | 'd' | 'e' | 'eOther', Session>;
 let INT3: Record<'a' | 'b' | 'c', Session>;
 let INT4: Record<'a' | 'b', Session>;
+/** improvements UC-9: Anna allows a pair in her conversation, Boris answers her card. */
+let UC9: Record<'anna' | 'boris', Session>;
 
 /** `get_trace` arguments, one per held or plain read call of the file (the fixture counts calls per arguments). */
 const TRACE_B = { traceId: 'b1'.repeat(16) };
@@ -146,6 +155,12 @@ const NOTE_B = { orderId: 'ORD-1001', text: 'INT-1 B: customer charged twice' };
 const NOTE_INT2_A = { orderId: 'ORD-2001', text: 'INT-2 A: grandchild note' };
 const NOTE_INT2_B = { orderId: 'ORD-2002', text: 'INT-2 B: helper note' };
 const NOTE_INT4 = { orderId: 'ORD-4001', text: "INT-4: the owner's note" };
+
+/** improvements UC-9: the notes of the allowed pair (two in the conversation, one in its fork) and the note of `run_code`. */
+const NOTE_UC9_FIRST = { orderId: 'ORD-9101', text: 'UC-9: the first note' };
+const NOTE_UC9_SECOND = { orderId: 'ORD-9102', text: 'UC-9: the second note' };
+const NOTE_UC9_CODE = { orderId: 'ORD-9103', text: 'UC-9: a note by code' };
+const NOTE_UC9_FORK = { orderId: 'ORD-9104', text: 'UC-9: the fork note' };
 
 /** Names of the fixture's file latches: each holds one read call of the file until released. */
 const FIXTURE_LATCHES = {
@@ -222,8 +237,8 @@ function liveReader(api: ChatApi, threadId: string): LiveReader {
 }
 
 /**
- * Takes the stream's `tree` notes one by one, re-reading the conversation in the handler of each, until
- * `done` holds: what the test then sees became visible through a note, not through polling.
+ * Takes the stream's `change` events one by one, re-reading the conversation in the handler of each, until
+ * `done` holds: what the test then sees became visible through an event, not through polling.
  */
 async function untilNoted(
   stream: SseStream,
@@ -236,11 +251,13 @@ async function untilNoted(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const note = await stream
-      .next('tree', Math.max(deadline - Date.now(), 1))
+      .next('change', Math.max(deadline - Date.now(), 1))
       .catch((error: unknown) => {
-        throw new Error(`No tree note made ${what} visible: ${String(error)}`);
+        throw new Error(
+          `No change event made ${what} visible: ${String(error)}`,
+        );
       });
-    expect(note.data).toEqual({ threadId });
+    expect(isChangeOf(note, threadId)).toBe(true);
     const view = await read();
     if (done(view)) return { view, note };
   }
@@ -348,11 +365,11 @@ async function allAgents(
   return { pages, agents: pages.flatMap((page) => page.agents) };
 }
 
-/** Whether a stream event is a `tree` note of this thread. */
-function isTreeOf(event: SseEvent, threadId: string): boolean {
-  if (event.type !== 'tree') return false;
+/** Whether a stream event is a `change` event of this thread. */
+function isChangeOf(event: SseEvent, threadId: string): boolean {
+  if (event.type !== 'change') return false;
   const parsed = LiveEventSchema.parse({ type: event.type, data: event.data });
-  return parsed.type === 'tree' && parsed.data.threadId === threadId;
+  return parsed.type === 'change' && parsed.data.threadId === threadId;
 }
 
 /** One route of the API with the id in its path; the body, when given, is sent as JSON. */
@@ -406,7 +423,11 @@ const AGENT_ROUTES: readonly RouteCall[] = [
   {
     method: 'post',
     path: (id) => `/agents/${id}/messages`,
-    body: { text: "INT-4: a message to someone else's agent" },
+    // The key is required, or a 400 would stand in for the 404 under test; every call with it is refused, so none takes it.
+    body: {
+      text: "INT-4: a message to someone else's agent",
+      sendKey: randomUUID(),
+    },
   },
   { method: 'post', path: (id) => `/agents/${id}/interrupt` },
   { method: 'post', path: (id) => `/agents/${id}/stop` },
@@ -496,6 +517,38 @@ async function ledgerCalls(
   const [counts] = rows;
   if (counts === undefined) throw new Error('the ledger count returned no row');
   return counts;
+}
+
+/**
+ * improvements UC-9: the `tool_decision` records of one agent's history as `[approved, grant]`, in order (`grant`
+ * `null` when the employee decided alone). Read through the harness pool: the API shows no grant.
+ */
+async function decisionGrants(
+  harness: TestApp,
+  conversationId: string,
+): Promise<[unknown, unknown][]> {
+  const { rows } = await harness.pool.query<{
+    content: Record<string, unknown>;
+  }>(
+    "SELECT content FROM app.messages WHERE conversation_id = $1 AND kind = 'tool_decision' ORDER BY seq",
+    [conversationId],
+  );
+  return rows.map(({ content }) => [
+    content['approved'],
+    content['grant'] ?? null,
+  ]);
+}
+
+/** improvements UC-9: the pairs a conversation's root allows (`conversations.granted_tools`). */
+async function grantedTools(
+  harness: TestApp,
+  conversationId: string,
+): Promise<unknown> {
+  const { rows } = await harness.pool.query<{ grantedTools: unknown }>(
+    'SELECT granted_tools AS "grantedTools" FROM app.conversations WHERE id = $1',
+    [conversationId],
+  );
+  return rows[0]?.grantedTools;
 }
 
 /**
@@ -597,6 +650,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     INT3 = { a: await employee(), b: await employee(), c: await employee() };
     // A: the owner of the data; B: the other employee who calls every route with A's ids.
     INT4 = { a: await employee(), b: await employee() };
+    UC9 = { anna: await employee(), boris: await employee() };
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -885,16 +939,20 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           "the writer's report",
           2_000,
         );
-        // Then: the chat answers the report by itself, without an employee message
-        await untilNoted(
-          stream,
-          thread.id,
-          () => reader.read(),
-          () =>
-            reader.entries.at(-1)?.kind === 'model_answer' &&
-            reader.entries.some((entry) => entry.kind === 'child_report'),
-          "the chat's answer to the report",
-        );
+        // Then: the chat answers the report by itself, without an employee message. The step that takes the report
+        // writes it and its answer in one commit, so the note that showed the report may have shown the answer too:
+        // a further note is awaited only while the answer is not among the entries the notes' reads brought
+        const answeredReport = () =>
+          reader.entries.at(-1)?.kind === 'model_answer' &&
+          reader.entries.some((entry) => entry.kind === 'child_report');
+        if (!answeredReport())
+          await untilNoted(
+            stream,
+            thread.id,
+            () => reader.read(),
+            answeredReport,
+            "the chat's answer to the report",
+          );
         await untilIdle(
           api,
           thread.id,
@@ -2347,6 +2405,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         `/threads/${bottom}/messages`,
         {
           text: 'INT-3 A: a message to the deleted conversation',
+          sendKey: randomUUID(),
         },
       );
       expect({
@@ -2429,7 +2488,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           withoutTask: 1,
         });
 
-        // Case 2 - Given: the title model fails on every attempt; When: the first message is sent
+        // Case 2 - Given: the title model fails; When: the first message is sent
         const callsBeforeFailure = titles.calls.length;
         harness.model.completeText(modelError());
         const failing = await api.createThread();
@@ -2437,9 +2496,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           messageId: null,
         });
 
-        // Then: after the three attempts the title stays empty and no ledger row is written for it (the
-        // provider rejected each attempt before any output), while the message itself was accepted and answered
-        await titles.called(callsBeforeFailure + 3);
+        // Then: after its one request (improvements AC-02.1) the title stays empty and no ledger row is written
+        // for it (the provider rejected it before any output), while the message itself was accepted and answered
+        await titles.called(callsBeforeFailure + 1);
         await untilIdle(
           api,
           failing.id,
@@ -2513,15 +2572,14 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           withoutTask: 3,
         });
 
-        // Then: every title call was made from the conversation's first message, the retry included (Notes 5(в))
+        // Then: every title call was made from the conversation's first message, the next send's generation
+        // included (Notes 5(в)); the failing prompt appears once per generation
         expect(
           titles.calls
             .filter((call) => call.prompt.includes('INT-3 B'))
             .map((call) => call.prompt),
         ).toEqual([
           '<message>\nINT-3 B: first message of the titled conversation\n</message>',
-          '<message>\nINT-3 B: first message whose title fails\n</message>',
-          '<message>\nINT-3 B: first message whose title fails\n</message>',
           '<message>\nINT-3 B: first message whose title fails\n</message>',
           '<message>\nINT-3 B: first message whose title fails\n</message>',
           '<message>\nINT-3 B: first message renamed meanwhile\n</message>',
@@ -2629,7 +2687,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         // Case 2 - Given: an id without a first message; When: its first message and its delete start together
         const racing = await api.createThread();
         const [sent, deleted] = await Promise.all([
-          api.raw('post', `/threads/${racing.id}/messages`, { text: raceTask }),
+          api.raw('post', `/threads/${racing.id}/messages`, {
+            text: raceTask,
+            sendKey: randomUUID(),
+          }),
           api.raw('delete', `/threads/${racing.id}`),
         ]);
 
@@ -2866,6 +2927,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           await expectError(
             b.raw('post', `/threads/${aThread.id}/messages`, {
               text: "INT-4: a message into someone else's conversation",
+              sendKey: randomUUID(),
             }),
             404,
           ),
@@ -2934,7 +2996,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           "the writer's text parts on A's stream",
         );
         await aControl.until(
-          (events) => events.some((event) => isTreeOf(event, aThread.id)),
+          (events) => events.some((event) => isChangeOf(event, aThread.id)),
           "a note of A's thread on A's stream",
         );
         expect(
@@ -2956,7 +3018,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         // When: B writes in its own conversation (its note comes after every signal of A's: the hub handles them in order)
         await b.send(bThread.id, 'INT-4 B: still here');
         await bOnOwn.until(
-          (events) => events.some((event) => isTreeOf(event, bThread.id)),
+          (events) => events.some((event) => isChangeOf(event, bThread.id)),
           "a note of B's own thread",
         );
 
@@ -2964,7 +3026,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         for (const stream of [bOnAThread, bOnAWriter, bOnOwn]) {
           expect(stream.events[0]?.type).toBe('ready');
           expect(
-            stream.events.filter((event) => isTreeOf(event, aThread.id)),
+            stream.events.filter((event) => isChangeOf(event, aThread.id)),
           ).toEqual([]);
           expect(
             deltasOf(stream.events).filter((delta) =>
@@ -3002,6 +3064,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           `/threads/${aThread.id}/messages`,
           {
             text: "INT-4 B: a first message with A's deleted id",
+            sendKey: randomUUID(),
           },
         );
 
@@ -3027,17 +3090,226 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         const aNext = await a.createThread();
         await a.send(aNext.id, aNextTask);
         await aAfterDelete.until(
-          (events) => events.some((event) => isTreeOf(event, aNext.id)),
+          (events) => events.some((event) => isChangeOf(event, aNext.id)),
           "a note of A's next thread",
         );
         expect(
-          aAfterDelete.events.filter((event) => isTreeOf(event, aThread.id)),
+          aAfterDelete.events.filter((event) => isChangeOf(event, aThread.id)),
         ).toEqual([]);
       } finally {
         readerHeld.release();
         bOwnHeld.open();
         for (const stream of streams) stream.close();
       }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // improvements UC-9  «Allow in this conversation» (docs/features/improvements/design-server.md, Test Strategy UC-9, Flow 2)
+  // ---------------------------------------------------------------------------------------------------------------
+  // AC: AC-04.1, AC-04.2, FR-04 (the third answer on a card that is not a changing MCP tool's), NFR-02.
+  // Catches: a third answer that does not allow the pair (the next call of the same pair asks again) or that sends it without the
+  //   conversation's grant on its decision; a permission that leaks to another tool or to a fork; a third answer accepted on a
+  //   `run_code` or brief card (400 expected, the card stays open), or together with a rejection; another owner's third answer that
+  //   is not answered as a missing decision; a resolution that forgets «allowed in this conversation» on a re-read.
+  it(
+    'improvements UC-9: «allow in this conversation» sends the same pair without a card, other tools and the fork still ask, a non-MCP card refuses the third answer',
+    async () => {
+      const anna = chatApi(harness.app, UC9.anna);
+      const boris = chatApi(harness.app, UC9.boris);
+      const task = 'UC-9: file the incident notes';
+      const forkTask = 'UC-9: file the note in the fork too';
+      const question = 'UC-9: why were the notes needed?';
+      const noteCode = `await callTool(${JSON.stringify(CREATE_INCIDENT_NOTE)}, ${JSON.stringify(NOTE_UC9_CODE)}); return "sent";`;
+      const chat = harness.model.script(
+        { task },
+        [
+          { calls: [{ tool: CREATE_INCIDENT_NOTE, args: NOTE_UC9_FIRST }] },
+          { calls: [{ tool: CREATE_INCIDENT_NOTE, args: NOTE_UC9_SECOND }] },
+          {
+            calls: [
+              {
+                tool: 'run_code',
+                args: {
+                  description: 'UC-9: a note by code',
+                  class: 'write',
+                  script: noteCode,
+                },
+              },
+            ],
+          },
+          { calls: [{ tool: START_DEEP_AGENT, args: briefArgs(question) }] },
+        ],
+        { thereafter: { text: 'UC-9: the notes are filed.' } },
+      );
+      harness.model.script(
+        { task: forkTask },
+        [{ calls: [{ tool: CREATE_INCIDENT_NOTE, args: NOTE_UC9_FORK }] }],
+        { thereafter: { text: 'UC-9: not in the fork, then.' } },
+      );
+      const openDecision = async (threadId: string, what: string) => {
+        const view = await waitFor(
+          () => anna.history(threadId),
+          (seen) => seen.decisions.some((one) => one.status === 'open'),
+          what,
+        );
+        const open = view.decisions.find((one) => one.status === 'open');
+        if (open === undefined) throw new Error(`no open decision: ${what}`);
+        return open;
+      };
+      const statusOf = async (threadId: string, decisionId: string) =>
+        (await anna.history(threadId)).decisions.find(
+          (one) => one.decisionId === decisionId,
+        )?.status;
+      const notesSent = (args: Readonly<Record<string, unknown>>) =>
+        fixtureCallsOf(harness.fixtureLog.callLog, {
+          tool: 'create_incident_note',
+          args,
+        });
+      const thread = await anna.createThread();
+      await anna.send(thread.id, task);
+
+      // The first card of the pair: the third answer with a rejection is a schema error, and the card stays open
+      const first = await openDecision(thread.id, 'the card of the first note');
+      expect(first).toMatchObject({
+        kind: AGENTS_TOOL_CONFIRMATION,
+        server: BACKOFFICE_SERVER,
+        tool: 'create_incident_note',
+      });
+      expect(
+        (
+          await expectError(
+            anna.raw('post', `/decisions/${first.decisionId}`, {
+              approve: false,
+              allowInConversation: true,
+            }),
+            400,
+          )
+        ).errorCode,
+      ).toBe('VALIDATION_FAILED');
+      // Boris's third answer on Anna's card answers as a missing decision and changes nothing
+      expect(
+        (
+          await expectError(
+            boris.raw('post', `/decisions/${first.decisionId}`, {
+              approve: true,
+              allowInConversation: true,
+            }),
+            404,
+          )
+        ).errorCode,
+      ).toBe('DECISION_NOT_FOUND');
+      expect(await statusOf(thread.id, first.decisionId)).toBe('open');
+      expect(notesSent(NOTE_UC9_FIRST)).toEqual([]);
+
+      // Anna allows the pair in this conversation: this call and the next one of the same pair go, the second without a card
+      expect(
+        await anna.decide(first.decisionId, {
+          approve: true,
+          allowInConversation: true,
+        }),
+      ).toEqual({ outcome: 'resolved' });
+
+      // The next card is `run_code`'s: another tool asks, and a third answer on it is 400 with the card still open
+      const code = await openDecision(thread.id, 'the card of run_code');
+      expect(code).toMatchObject({ tool: 'run_code', server: null });
+      expect(
+        (
+          await expectError(
+            anna.raw('post', `/decisions/${code.decisionId}`, {
+              approve: true,
+              allowInConversation: true,
+            }),
+            400,
+          )
+        ).errorCode,
+      ).toBe('VALIDATION_FAILED');
+      expect(await statusOf(thread.id, code.decisionId)).toBe('open');
+      await anna.decide(code.decisionId, { approve: false });
+
+      // The brief's card refuses the third answer too
+      const brief = await openDecision(thread.id, 'the brief');
+      expect(brief.kind).toBe(AGENTS_BRIEF_CONFIRMATION);
+      expect(
+        (
+          await expectError(
+            anna.raw('post', `/decisions/${brief.decisionId}`, {
+              approve: true,
+              allowInConversation: true,
+            }),
+            400,
+          )
+        ).errorCode,
+      ).toBe('VALIDATION_FAILED');
+      expect(await statusOf(thread.id, brief.decisionId)).toBe('open');
+      await anna.decide(brief.decisionId, { approve: false });
+      await chat.called(5);
+      const done = await untilIdle(
+        anna,
+        thread.id,
+        (view) =>
+          linesOf(view.entries).at(-1) ===
+          'model_answer: UC-9: the notes are filed. []',
+        'the answer after the decisions',
+      );
+
+      // Then: both notes of the pair went once each, the note by code never; both decisions carry the conversation's grant
+      expect(notesSent(NOTE_UC9_FIRST)).toHaveLength(1);
+      expect(notesSent(NOTE_UC9_SECOND)).toHaveLength(1);
+      expect(notesSent(NOTE_UC9_CODE)).toEqual([]);
+      expect(done.agents).toEqual([]);
+      expect(done.decisions.map((one) => [one.tool, one.status])).toEqual([
+        ['create_incident_note', 'resolved'],
+        ['run_code', 'resolved'],
+        [START_DEEP_AGENT, 'resolved'],
+      ]);
+      expect(done.decisions[0]?.resolution).toEqual({
+        approve: true,
+        args: NOTE_UC9_FIRST,
+        allowInConversation: true,
+      });
+      expect(done.decisions[1]?.resolution).not.toHaveProperty(
+        'allowInConversation',
+      );
+      expect(await decisionGrants(harness, thread.id)).toEqual([
+        [true, { kind: 'conversation' }],
+        [true, { kind: 'conversation' }],
+        [false, null],
+        [false, null],
+      ]);
+      expect(await grantedTools(harness, thread.id)).toEqual([
+        { server: BACKOFFICE_SERVER, tool: 'create_incident_note' },
+      ]);
+
+      // A fork starts without the permission: the same pair asks there
+      const fork = await expectBody(
+        anna.raw('post', `/threads/${thread.id}/fork`),
+        201,
+        ThreadSummarySchema,
+      );
+      expect(await grantedTools(harness, fork.id)).toEqual([]);
+      await anna.send(fork.id, forkTask);
+      const forkCard = await openDecision(fork.id, 'the card in the fork');
+      expect(forkCard).toMatchObject({
+        server: BACKOFFICE_SERVER,
+        tool: 'create_incident_note',
+        args: NOTE_UC9_FORK,
+      });
+      expect(notesSent(NOTE_UC9_FORK)).toEqual([]);
+      await anna.decide(forkCard.decisionId, { approve: false });
+      await untilIdle(
+        anna,
+        fork.id,
+        (view) =>
+          linesOf(view.entries).at(-1) ===
+          'model_answer: UC-9: not in the fork, then. []',
+        "the fork's answer",
+      );
+      expect(notesSent(NOTE_UC9_FORK)).toEqual([]);
+      expect(await grantedTools(harness, thread.id)).toEqual([
+        { server: BACKOFFICE_SERVER, tool: 'create_incident_note' },
+      ]);
     },
     TEST_TIMEOUT_MS,
   );

@@ -49,6 +49,6 @@ import { UsersService } from './users.service';
     { provide: GOOGLE_ISSUER_URL, useValue: DEFAULT_GOOGLE_ISSUER_URL },
     { provide: APP_GUARD, useClass: SessionGuard },
   ],
-  exports: [IdentityDirectory, IdentitySettings],
+  exports: [IdentityDirectory, IdentitySettings, UsersService],
 })
 export class IdentityModule {}

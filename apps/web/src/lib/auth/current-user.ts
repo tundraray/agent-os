@@ -1,4 +1,9 @@
-import type { CurrentUser, Language } from '@agent-os/contracts';
+import type {
+  CurrentUser,
+  Language,
+  NotificationLevel,
+  ThemeId,
+} from '@agent-os/contracts';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { describeApiError } from '@/lib/api/api-request';
 import { loginPath } from '@/lib/auth/login-reason';
@@ -19,6 +24,12 @@ export type CurrentUserStore = StoreApi<CurrentUserState> & {
   revokeAdmin: () => void;
   /** The API confirmed the employee's interface language: the read employee carries it from now on. */
   setLanguage: (language: Language) => void;
+  /** The API confirmed the employee's default notification level (live-feed FR-10). */
+  setNotificationLevel: (level: NotificationLevel) => void;
+  /** The API saved the employee's own theme; null — as in the organisation (theming KD-1). */
+  setTheme: (theme: ThemeId | null) => void;
+  /** The API saved the organisation's theme (theming Flow 4). */
+  setOrganizationTheme: (organizationTheme: ThemeId) => void;
 };
 
 type CurrentUserDeps = {
@@ -64,8 +75,30 @@ export function createCurrentUserStore({
       if (user === null) return;
       state.setState({ user: { ...user, language } });
     },
+    setNotificationLevel: (notificationLevel: NotificationLevel): void => {
+      const { user } = state.getState();
+      if (user === null) return;
+      state.setState({ user: { ...user, notificationLevel } });
+    },
+    setTheme: (theme: ThemeId | null): void => {
+      const { user } = state.getState();
+      if (user === null) return;
+      state.setState({ user: { ...user, theme } });
+    },
+    setOrganizationTheme: (organizationTheme: ThemeId): void => {
+      const { user } = state.getState();
+      if (user === null) return;
+      state.setState({ user: { ...user, organizationTheme } });
+    },
   });
 }
+
+/** The theme the interface is drawn in: the employee's own, without it the organisation's (theming, Terms). */
+export const effectiveTheme = ({
+  theme,
+  organizationTheme,
+}: Pick<CurrentUser, 'theme' | 'organizationTheme'>): ThemeId =>
+  theme ?? organizationTheme;
 
 /** UXRD UM-01: the name, or the email up to «@» when the name is empty (`CurrentUser` carries no login). */
 export function displayName(user: CurrentUser): string {

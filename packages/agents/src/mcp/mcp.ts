@@ -4,6 +4,7 @@ import {
   type McpServerSummary,
   type McpServerView,
   type UpdateMcpServerBody,
+  type UpdateMcpToolBody,
 } from '@agent-os/contracts';
 import { Inject, Injectable } from '@nestjs/common';
 
@@ -21,6 +22,8 @@ import {
   type McpServerRegistration,
   type McpServerRemoval,
   type McpServerWrite,
+  type McpToolWrite,
+  type McpToolsReview,
   type McpToolsRefresh,
   credentialsCheckFailed,
   notFound,
@@ -90,6 +93,20 @@ export class AgentsMcp {
       if (isRejectedToken(error)) await credentials.rejected();
       throw error;
     }
+  }
+
+  /** One tool's settings (access-levels, «Настройки инструмента»): «было/стало» for `admin_change`. */
+  updateTool(
+    name: string,
+    tool: string,
+    patch: UpdateMcpToolBody,
+  ): Promise<McpToolWrite> {
+    return this.registry.updateTool(name, tool, patch);
+  }
+
+  /** Clears the server's new marks: «было/стало» for `admin_change`. */
+  markToolsReviewed(name: string): Promise<McpToolsReview> {
+    return this.registry.markToolsReviewed(name);
   }
 
   remove(name: string): Promise<McpServerRemoval> {

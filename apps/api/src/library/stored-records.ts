@@ -3,6 +3,7 @@ import {
   DeepAgentContentSchema,
   RecordKindSchema,
   type RecordBody,
+  SkillContentSchema,
 } from '@agent-os/contracts';
 import type { AgentBanRow, AgentRecordRow, AgentShareRow } from '@agent-os/db';
 
@@ -52,9 +53,17 @@ const NO_HOLDERS: StoredHolders = { everyone: false, roleIds: [], userIds: [] };
 
 /** The kind and the content of a stored row, checked by the kind's schema. */
 export function recordBody(kind: string, content: unknown): RecordBody {
-  return RecordKindSchema.parse(kind) === 'agent'
-    ? { kind: 'agent', content: AgentContentSchema.parse(content) }
-    : { kind: 'deep_agent', content: DeepAgentContentSchema.parse(content) };
+  switch (RecordKindSchema.parse(kind)) {
+    case 'agent':
+      return { kind: 'agent', content: AgentContentSchema.parse(content) };
+    case 'deep_agent':
+      return {
+        kind: 'deep_agent',
+        content: DeepAgentContentSchema.parse(content),
+      };
+    case 'skill':
+      return { kind: 'skill', content: SkillContentSchema.parse(content) };
+  }
 }
 
 /** The holders of the records, by record id; roles and employees each in the order the holder rows came in. */

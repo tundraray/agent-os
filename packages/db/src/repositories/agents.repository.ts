@@ -219,6 +219,17 @@ export class AgentsRepository {
     return row;
   }
 
+  /**
+   * The undeleted agents of `ids` with their active versions, without a visibility check: the skills of an
+   * agent's list come with the agent (agent-guidance design-server.md, KD-6).
+   */
+  async findNotDeleted(ids: readonly string[]): Promise<AgentRecordRow[]> {
+    if (ids.length === 0) return [];
+    return this.where(
+      and(notDeleted, inArray(agents.id, [...ids])) ?? sql`false`,
+    );
+  }
+
   /** The agent with its active version, deleted or not: a test run's view reads it (design-test-run.md, KD-6). */
   async findAny(id: string): Promise<AgentRecordRow | undefined> {
     const [row] = await this.where(eq(agents.id, id));

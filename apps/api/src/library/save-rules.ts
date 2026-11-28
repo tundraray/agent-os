@@ -7,6 +7,7 @@ import {
 } from '@agent-os/contracts';
 import {
   contentParts,
+  contentSkills,
   fieldPath,
   isNameTaken,
   type ContentPart,
@@ -27,12 +28,16 @@ export type SaveChoices =
       readonly usableServers: readonly string[];
       readonly allowedModels: readonly string[];
       readonly visibleAgentIds: readonly string[];
+      /** Skills the employee sees. */
+      readonly visibleSkillIds: readonly string[];
     }
   | {
       readonly scope: 'system';
       readonly registryServers: readonly string[];
       readonly catalogueModels: readonly string[];
       readonly visibleAgentIds: readonly string[];
+      /** The system skills of the panel: a system record holds only those. */
+      readonly visibleSkillIds: readonly string[];
     };
 
 export interface SaveInput {
@@ -171,8 +176,20 @@ function contentRefusal({
   const hiddenAgents = contentAgents(body).filter(
     outside(keptAgents, choices.visibleAgentIds),
   );
-  return hiddenAgents.length > 0
-    ? { reason: 'agent_not_visible', path: 'agents', values: hiddenAgents }
+  if (hiddenAgents.length > 0)
+    return {
+      reason: 'agent_not_visible',
+      path: 'agents',
+      values: hiddenAgents,
+    };
+
+  // Only an added skill must be visible to the author (agent-guidance DC-4): one already in the list stays.
+  const keptSkills = new Set(previous ? contentSkills(previous.body) : []);
+  const hiddenSkills = contentSkills(body).filter(
+    outside(keptSkills, choices.visibleSkillIds),
+  );
+  return hiddenSkills.length > 0
+    ? { reason: 'skill_not_visible', path: 'skills', values: hiddenSkills }
     : null;
 }
 

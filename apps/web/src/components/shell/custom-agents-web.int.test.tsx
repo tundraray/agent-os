@@ -1000,7 +1000,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Assert (row 1): the decision card names the asking agent's record - name and author from `origin`, the role from the live data
     const agentCard = await runCard(
-      'Проверка инцидента 42: Ждёт подтверждения',
+      'Проверка инцидента 42: Ждёт вас',
     );
     await waitFor(() =>
       expect(labelOf(agentCard, 'Разбор инцидентов')).toHaveTextContent(
@@ -1216,7 +1216,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
 
     // Assert (row 4): the labels keep name and author of the origin, with no audience, no «changed» line, no restart, no note
     const unreadCard = await runCard(
-      'Проверка инцидента 42: Ждёт подтверждения',
+      'Проверка инцидента 42: Ждёт вас',
     );
     expect(labelOf(unreadCard, 'Разбор инцидентов')).toHaveTextContent(
       ', автор Аня Смирнова',

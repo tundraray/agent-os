@@ -8,21 +8,27 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
 } from '@nestjs/common';
 import { LOGGER, type Logger } from '@agent-os/common';
 import { loggedRoute } from '../common/logged-route';
 import {
+  ForkRequestSchema,
   HistoryQuerySchema,
+  MarkSeenRequestSchema,
   RenameThreadRequestSchema,
   SendMessageRequestSchema,
   ThreadListQuerySchema,
+  ThreadNotificationLevelRequestSchema,
   type AgentNode,
   type ConversationView,
   type Document,
+  type ForkRequest,
   type HistoryQuery,
   type InterruptResponse,
+  type MarkSeenRequest,
   type RenameThreadRequest,
   type SendMessageRequest,
   type SendMessageResponse,
@@ -30,6 +36,7 @@ import {
   type ThreadForksResponse,
   type ThreadListQuery,
   type ThreadListResponse,
+  type ThreadNotificationLevelRequest,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -105,10 +112,11 @@ export class ThreadsController {
     return this.run({
       route: 'GET /threads/:threadId/history',
       fields: { ownerId, threadId },
-      work: () => this.conversations.view(threadId, ownerId, query.afterSeq),
+      work: () => this.conversations.view(threadId, ownerId, query),
       outcomeOf: (view) => ({
         chatStatus: view.chat.status,
         entries: view.entries.length,
+        hasOlder: view.hasOlder,
       }),
     });
   }
@@ -185,18 +193,58 @@ export class ThreadsController {
     });
   }
 
-  /** The request body is not read. */
+  /** Raises the «seen through» mark of the conversation (improvements design-server.md, Flow 4). */
+  @Put(':threadId/seen')
+  @HttpCode(204)
+  markSeen(
+    @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(MarkSeenRequestSchema)) body: MarkSeenRequest,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'PUT /threads/:threadId/seen',
+      fields: { ownerId, threadId, throughSeq: body.throughSeq },
+      work: () =>
+        this.conversations.markSeen(threadId, ownerId, body.throughSeq),
+    });
+  }
+
+  /** The conversation's own notification level, `null` — as the default (live-feed design-server.md, Flow 4). */
+  @Put(':threadId/notification-level')
+  @HttpCode(204)
+  setNotificationLevel(
+    @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(ThreadNotificationLevelRequestSchema))
+    body: ThreadNotificationLevelRequest,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'PUT /threads/:threadId/notification-level',
+      fields: { ownerId, threadId, level: body.level },
+      work: () =>
+        this.conversations.setNotificationLevel(threadId, ownerId, body.level),
+    });
+  }
+
   @Post(':threadId/fork')
   @HttpCode(201)
   fork(
     @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(ForkRequestSchema)) body: ForkRequest,
     @Req() req: AuthedRequest,
   ): Promise<ThreadSummary> {
     const ownerId = req.user.id;
+    const recordId = body.edit?.recordId;
     return this.run({
       route: 'POST /threads/:threadId/fork',
-      fields: { ownerId, threadId },
-      work: () => this.conversations.fork(threadId, ownerId),
+      fields: {
+        ownerId,
+        threadId,
+        ...(recordId === undefined ? {} : { recordId }),
+      },
+      work: () => this.conversations.fork(threadId, ownerId, body),
       outcomeOf: (thread) => ({ forkId: thread.id }),
     });
   }
@@ -224,7 +272,7 @@ export class ThreadsController {
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
-    const { text, recordId } = body;
+    const { recordId } = body;
     return this.run({
       route: 'POST /threads/:threadId/messages',
       fields: {
@@ -232,7 +280,7 @@ export class ThreadsController {
         threadId,
         ...(recordId === undefined ? {} : { recordId }),
       },
-      work: () => this.conversations.send(threadId, ownerId, text, recordId),
+      work: () => this.conversations.send(threadId, ownerId, body),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });
   }

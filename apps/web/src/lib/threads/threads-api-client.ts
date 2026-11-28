@@ -31,8 +31,12 @@ import {
   type DecisionResponse,
   type DeepAgentRunView,
   type Document,
+  type ForkRequest,
+  type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
+  type MarkSeenRequest,
+  type NotificationLevel,
   type RenameThreadRequest,
   type RestartResponse,
   type SendMessageRequest,
@@ -42,6 +46,7 @@ import {
   type ThreadDocumentsView,
   type ThreadForksResponse,
   type ThreadListResponse,
+  type ThreadNotificationLevelRequest,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
@@ -107,12 +112,42 @@ async function deleteThread(threadId: string): Promise<void> {
   await apiRequest({ path: threadRoute(threadId), method: 'DELETE' });
 }
 
-/** 201: the fork; 409 `FORK_REFUSED` carries its `reason`. */
-async function forkThread(threadId: string): Promise<ThreadSummary> {
+/**
+ * 201: the fork; 409 `FORK_REFUSED` carries its `reason`. Without `body` the whole conversation is forked; `throughSeq`
+ * forks it through that message, `edit` replaces an employee's message (improvements design-web.md, KD-2).
+ */
+async function forkThread(
+  threadId: string,
+  body?: ForkRequest,
+): Promise<ThreadSummary> {
   return apiRequest({
     path: `${threadRoute(threadId)}/fork`,
     method: 'POST',
+    body,
     schema: ThreadSummarySchema,
+  });
+}
+
+/** 204: the conversation's «seen through» mark rose to `throughSeq` (improvements KD-4); it never goes down. */
+async function markSeen(threadId: string, throughSeq: number): Promise<void> {
+  const body: MarkSeenRequest = { throughSeq };
+  await apiRequest({
+    path: `${threadRoute(threadId)}/seen`,
+    method: 'PUT',
+    body,
+  });
+}
+
+/** 204: the conversation's own notification level, `null` — as the employee's default (live-feed KD-7). */
+async function setNotificationLevel(
+  threadId: string,
+  level: NotificationLevel | null,
+): Promise<void> {
+  const body: ThreadNotificationLevelRequest = { level };
+  await apiRequest({
+    path: `${threadRoute(threadId)}/notification-level`,
+    method: 'PUT',
+    body,
   });
 }
 
@@ -125,14 +160,22 @@ async function getThreadForks(threadId: string): Promise<ThreadForksResponse> {
 
 const agentRoute = (agentId: string): string =>
   `/api/agents/${encodeURIComponent(agentId)}`;
-const afterSeqQuery = (afterSeq: number): string => `?afterSeq=${afterSeq}`;
+
+/** The query of a history route (live-feed KD-5): none — the last window, `beforeSeq` — the window before it, `afterSeq` — the entries after it. */
+function historyQuery({ beforeSeq, afterSeq }: HistoryQuery): string {
+  const params = new URLSearchParams();
+  if (beforeSeq !== undefined) params.set('beforeSeq', `${beforeSeq}`);
+  if (afterSeq !== undefined) params.set('afterSeq', `${afterSeq}`);
+  const query = params.toString();
+  return query === '' ? '' : `?${query}`;
+}
 
 async function getConversation(
   threadId: string,
-  afterSeq: number,
+  query: HistoryQuery,
 ): Promise<ConversationView> {
   return apiRequest({
-    path: `${threadRoute(threadId)}/history${afterSeqQuery(afterSeq)}`,
+    path: `${threadRoute(threadId)}/history${historyQuery(query)}`,
     schema: ConversationViewSchema,
   });
 }
@@ -164,16 +207,17 @@ async function getThreadDocument(
 }
 
 /**
- * 202: the message is queued; `messageId` is null for the conversation's first message. `recordId` is
- * the chip's record (KD-5), sent only when there is one.
+ * 202: the message is queued; `messageId` is null for the conversation's first message and for a repeat of
+ * `sendKey`. `recordId` is the chip's record (KD-5), sent only when there is one.
  */
 async function sendThreadMessage(
   threadId: string,
   text: string,
+  sendKey: string,
   recordId?: string,
 ): Promise<SendMessageResponse> {
   const body: SendMessageRequest =
-    recordId === undefined ? { text } : { text, recordId };
+    recordId === undefined ? { text, sendKey } : { text, sendKey, recordId };
   return apiRequest({
     path: `${threadRoute(threadId)}/messages`,
     method: 'POST',
@@ -208,10 +252,10 @@ async function getAwaitingCount(): Promise<AwaitingCount> {
 
 async function getAgentPage(
   agentId: string,
-  afterSeq: number,
+  query: HistoryQuery,
 ): Promise<AgentPageView> {
   return apiRequest({
-    path: `${agentRoute(agentId)}/history${afterSeqQuery(afterSeq)}`,
+    path: `${agentRoute(agentId)}/history${historyQuery(query)}`,
     schema: AgentPageViewSchema,
   });
 }
@@ -221,7 +265,7 @@ async function getInherited(
   afterSeq: number,
 ): Promise<InheritedHistory> {
   return apiRequest({
-    path: `${agentRoute(agentId)}/inherited${afterSeqQuery(afterSeq)}`,
+    path: `${agentRoute(agentId)}/inherited${historyQuery({ afterSeq })}`,
     schema: InheritedHistorySchema,
   });
 }
@@ -244,8 +288,9 @@ async function getAgentTasks(agentId: string): Promise<AgentTasksView> {
 async function sendAgentMessage(
   agentId: string,
   text: string,
+  sendKey: string,
 ): Promise<SendMessageResponse> {
-  const body: SendMessageRequest = { text };
+  const body: SendMessageRequest = { text, sendKey };
   return apiRequest({
     path: `${agentRoute(agentId)}/messages`,
     method: 'POST',
@@ -304,6 +349,8 @@ export const threadsApiClient = {
   renameThread,
   deleteThread,
   forkThread,
+  markSeen,
+  setNotificationLevel,
   getThreadForks,
   getConversation,
   getThreadAgents,

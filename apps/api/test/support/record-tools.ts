@@ -36,12 +36,17 @@ export function recordToolCall(
   return { tool, args };
 }
 
-/** The content as the chat sends it: the whole record of its kind without `selfLearning` and `scripts`. */
+/** The content as the chat sends it: the whole record of its kind without `selfLearning`, `scripts` and `skills`. */
 function chatContent(body: RecordBody): Record<string, unknown> {
-  if (body.kind === 'agent') return { ...body.content };
+  if (body.kind === 'skill') throw new Error('The chat never sends a skill');
+  if (body.kind === 'agent') {
+    const { skills: _skills, ...content } = body.content;
+    return content;
+  }
   const {
     selfLearning: _selfLearning,
     scripts: _scripts,
+    skills: _skills,
     ...content
   } = body.content;
   return content;

@@ -4,6 +4,7 @@
     "newChat": "New chat",
     "newChatTooltip": "New chat · {shortcut}",
     "panel": "Admin panel",
+    "tasks": "Tasks",
     "agents": "Agents",
     "library": "Library",
     "schedules": "Schedules",
@@ -56,7 +57,25 @@
     "deleted": "Chat deleted",
     "deleteFailed": "Couldn't delete the chat. Try again.",
     "fork": "Fork chat",
-    "forkMark": ", fork"
+    "forkMark": ", fork",
+    "notifications": "Notifications",
+    "levelDefault": "Default · {level}",
+    "enableInBrowser": "Turn on in browser",
+    "browserBlocked": "Browser doesn't show notifications — details",
+    "notificationsFailed": "Couldn't change notifications for this chat. Try again.",
+    "silentMark": ", notifications off",
+    "state": {
+      "working": "Working",
+      "waiting_for_you": "Waiting for you",
+      "new_answer": "New answer",
+      "failed": "Failed"
+    },
+    "stateMark": {
+      "working": ", working",
+      "waiting_for_you": ", waiting for you",
+      "new_answer": ", new answer",
+      "failed": ", failed"
+    }
   },
   "deleteDialog": {
     "title": "Delete chat?",
@@ -69,12 +88,24 @@
     "label": "{named, select, yes {User menu {name}} other {User menu}}{needsAuth, plural, =0 {} other {, sign-in needed: #}}",
     "myAccess": "My access",
     "adminPanel": "Admin panel",
-    "theme": "Theme",
-    "themeLight": "Light",
-    "themeDark": "Dark",
-    "themeSystem": "System",
+    "mode": "Mode",
+    "modeLight": "Light",
+    "modeDark": "Dark",
+    "modeSystem": "System",
+    "theme": "Theme: {theme}",
     "signOut": "Sign out",
     "signOutFailed": "Couldn't sign out. Try again."
+  },
+  "notifications": {
+    "offer": "Get notified when an agent finishes or needs you?",
+    "enable": "Turn on notifications",
+    "dismiss": "Dismiss",
+    "denied": "The browser didn't allow notifications. You can turn them on in the site settings.",
+    "event": {
+      "decision": "Waiting for your decision",
+      "answer": "Reply ready",
+      "failure": "Failed: the agent stopped with an error"
+    }
   },
   "spend": {
     "ready": "Spending for {month}: {amount}",
@@ -113,18 +144,23 @@
     "openInLibrary": "Open in library",
     "emptyTitle": "The diagram appears here",
     "emptyHint": "Ask the chat to create or show an agent — its diagram appears here.",
-    "gone": "{kind, select, agent {Agent} other {Deep agent}} “{name}” was deleted or closed to you",
+    "gone": "{kind, select, agent {Agent} skill {Skill} other {Deep agent}} “{name}” was deleted or closed to you",
     "loadError": "Couldn't load the diagram",
     "retry": "Try again",
     "runTitle": "Progress and outcome",
-    "runClose": "Close progress and outcome"
+    "runClose": "Close progress and outcome",
+    "asideTab": "Aside",
+    "asideClose": "Close side chat",
+    "asideResize": "Resize side chat"
   },
   "leaveGuard": {
     "title": "Leave without saving?",
     "body": "Changes to “{name}” aren't saved and will be lost.",
     "bodyNew": "Changes aren't saved and will be lost.",
     "stay": "Stay",
-    "leave": "Leave without saving"
+    "leave": "Leave without saving",
+    "bodyAccess": "Unsaved access changes will be lost: {count}.",
+    "leaveAccess": "Leave"
   },
   "notice": {
     "notFound": {
@@ -171,11 +207,20 @@
       "title": "Couldn't load the schedule",
       "description": "Check your connection and try again."
     },
+    "taskNotFound": {
+      "title": "Task not found",
+      "description": "It was deleted, or it belongs to another employee."
+    },
+    "taskLoadError": {
+      "title": "Couldn't load the task",
+      "description": "Check your connection and try again."
+    },
     "retry": "Retry",
     "toAgents": "Back to agents",
     "toChat": "Go to chat",
     "toList": "Back to list",
     "toLibrary": "Go to library",
-    "toSchedules": "Back to schedules"
+    "toSchedules": "Back to schedules",
+    "toTasks": "Back to tasks"
   }
 }

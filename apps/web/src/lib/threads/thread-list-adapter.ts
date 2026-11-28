@@ -1,5 +1,5 @@
 import type { RemoteThreadListAdapter } from '@assistant-ui/react';
-import type { ThreadSummary } from '@agent-os/contracts';
+import type { ThreadListResponse, ThreadSummary } from '@agent-os/contracts';
 import { logger } from '@/lib/logger';
 import type { ThreadsApiClient } from './threads-api-client';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
@@ -26,12 +26,17 @@ export type ThreadListAdapterDeps = {
   feeds: { forget: (remoteId: string) => void };
 };
 
-const customOf = (thread: ThreadSummary) => ({
+/** Only rows of `GET /api/threads` carry `state`; a single thread read has none and shows no mark. */
+type ReadThread = ThreadSummary | ThreadListResponse['threads'][number];
+
+const customOf = (thread: ReadThread) => ({
   forkable: thread.forkable,
   forked: thread.forkedFrom !== null,
+  state: 'state' in thread ? thread.state : null,
+  notificationLevel: thread.notificationLevel,
 });
 
-const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
+const toRemoteMetadata = (thread: ReadThread): RemoteThreadMetadata => ({
   status: 'regular',
   remoteId: thread.id,
   title: thread.title ?? undefined,

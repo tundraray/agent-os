@@ -6,6 +6,7 @@ import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
 import { ThreadHistoryItem } from './thread-history-item';
+import type { RowNotifications } from './thread-notifications-menu';
 
 type User = ReturnType<typeof userEvent.setup>;
 
@@ -16,7 +17,16 @@ const entry = (title: string | undefined): ThreadListEntry => ({
   activityAt: 0,
   forkable: false,
   forked: false,
+  state: null,
+  notificationLevel: null,
 });
+
+const NOTIFICATIONS: RowNotifications = {
+  defaultLevel: 'all',
+  permission: 'granted',
+  onChoose: vi.fn(),
+  onEnable: vi.fn(),
+};
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
@@ -33,11 +43,13 @@ function renderItem(title: string | undefined) {
   render(
     <ThreadHistoryItem
       entry={entry(title)}
+      state={null}
       isActive={false}
       titlePending={false}
       onRename={onRename}
       onRequestDelete={vi.fn()}
       onFork={vi.fn()}
+      notifications={NOTIFICATIONS}
     />,
     { wrapper: Wrapper },
   );

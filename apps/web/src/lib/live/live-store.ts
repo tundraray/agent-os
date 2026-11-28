@@ -1,4 +1,8 @@
-import { LiveEventSchema, type LiveEvent } from '@agent-os/contracts';
+import {
+  LiveEventSchema,
+  type LiveChangeKind,
+  type LiveEvent,
+} from '@agent-os/contracts';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import {
@@ -26,6 +30,18 @@ export type LiveEventSource = {
 export type OpenEventSource = (url: string) => LiveEventSource;
 
 export type LiveDelta = Extract<LiveEvent, { type: 'delta' }>['data'];
+export type LiveChange = Extract<LiveEvent, { type: 'change' }>['data'];
+export type LiveAttention = Extract<LiveEvent, { type: 'attention' }>['data'];
+
+/**
+ * Which changes reach a subscriber (live-feed design-web.md, KD-1): one of `kinds`, of the conversation
+ * `threadId` when given; `agentId` narrows `entries` — the only kind that names an agent — to that agent.
+ */
+export type LiveChangeFilter = {
+  kinds: readonly LiveChangeKind[];
+  threadId?: string;
+  agentId?: string;
+};
 
 export type LiveState = {
   connection: LiveConnection;
@@ -40,11 +56,15 @@ export type LiveStore = StoreApi<LiveState> & {
   watch: (target: LiveTarget | null) => Promise<void>;
   /** Closes the stream and all timers; the next `watch` opens the stream again (StrictMode remount). */
   dispose: () => void;
+  /** Every subscriber's `ready`: the stream opened, or a `change` came that the web does not understand. */
   onReady: (listener: () => void) => () => void;
-  onTree: (listener: (threadId: string) => void) => () => void;
+  /** The `change` frames that match `filter`. */
+  onChange: (
+    filter: LiveChangeFilter,
+    listener: (change: LiveChange) => void,
+  ) => () => void;
+  onAttention: (listener: (attention: LiveAttention) => void) => () => void;
   onDelta: (listener: (delta: LiveDelta) => void) => () => void;
-  /** Hands a `tree` note to the subscribers without the server: a deletion in this tab. */
-  emitLocalTree: (threadId: string) => void;
 };
 
 type LiveLogger = Pick<typeof appLogger, 'warn'>;
@@ -58,10 +78,22 @@ const READY_WAIT_MS = 1000;
 
 const LIVE_EVENT_TYPES: readonly LiveEvent['type'][] = [
   'ready',
-  'tree',
+  'change',
+  'attention',
   'delta',
   'ping',
 ];
+
+function matches(filter: LiveChangeFilter, change: LiveChange): boolean {
+  if (!filter.kinds.includes(change.kind)) return false;
+  if (filter.threadId !== undefined && filter.threadId !== change.threadId)
+    return false;
+  return (
+    change.kind !== 'entries' ||
+    filter.agentId === undefined ||
+    filter.agentId === change.agentId
+  );
+}
 
 const defaultOpenEventSource: OpenEventSource = (url) =>
   new EventSource(url, { withCredentials: true });
@@ -120,7 +152,11 @@ export function createLiveStore({
   }));
 
   const readyListeners = new Set<() => void>();
-  const treeListeners = new Set<(threadId: string) => void>();
+  const changeListeners = new Set<{
+    filter: LiveChangeFilter;
+    listener: (change: LiveChange) => void;
+  }>();
+  const attentionListeners = new Set<(attention: LiveAttention) => void>();
   const deltaListeners = new Set<(delta: LiveDelta) => void>();
 
   let source: LiveEventSource | null = null;
@@ -161,8 +197,8 @@ export function createLiveStore({
     });
   }
 
-  function dispatchTree(threadId: string): void {
-    for (const listener of treeListeners) listener(threadId);
+  function dispatchReady(): void {
+    for (const listener of readyListeners) listener();
   }
 
   function handleReady(): void {
@@ -170,7 +206,22 @@ export function createLiveStore({
     state.setState({ connection: 'open' });
     if (wasLost) announcer.getState().announce('announce.connectionRestored');
     settleWaiters();
-    for (const listener of readyListeners) listener();
+    dispatchReady();
+  }
+
+  /**
+   * A `change` the web does not understand — a kind it does not know, or a body it cannot read — goes to everyone
+   * as `ready`: every screen part already rereads itself on `ready` (live-feed design-web.md, KD-1, AC-06.3).
+   */
+  function dropFrame(type: LiveEvent['type'], reason: string): void {
+    if (type !== 'change') {
+      logger.warn(`live frame dropped: ${reason}`, { eventType: type });
+      return;
+    }
+    logger.warn(`live change not understood (${reason}): rereading as ready`, {
+      eventType: type,
+    });
+    dispatchReady();
   }
 
   function handleFrame(type: LiveEvent['type'], event: Event): void {
@@ -179,12 +230,12 @@ export function createLiveStore({
       const raw = frameData(event);
       data = typeof raw === 'string' ? JSON.parse(raw) : raw;
     } catch {
-      logger.warn('live frame dropped: not JSON', { eventType: type });
+      dropFrame(type, 'not JSON');
       return;
     }
     const parsed = LiveEventSchema.safeParse({ type, data });
     if (!parsed.success) {
-      logger.warn('live frame dropped: schema mismatch', { eventType: type });
+      dropFrame(type, 'schema mismatch');
       return;
     }
     const frame = parsed.data;
@@ -192,8 +243,12 @@ export function createLiveStore({
       case 'ready':
         handleReady();
         break;
-      case 'tree':
-        dispatchTree(frame.data.threadId);
+      case 'change':
+        for (const { filter, listener } of changeListeners)
+          if (matches(filter, frame.data)) listener(frame.data);
+        break;
+      case 'attention':
+        for (const listener of attentionListeners) listener(frame.data);
         break;
       case 'delta':
         for (const listener of deltaListeners) listener(frame.data);
@@ -268,10 +323,13 @@ export function createLiveStore({
       settleWaiters();
     },
     onReady: (listener: () => void) => subscribe(readyListeners, listener),
-    onTree: (listener: (threadId: string) => void) =>
-      subscribe(treeListeners, listener),
+    onChange: (
+      filter: LiveChangeFilter,
+      listener: (change: LiveChange) => void,
+    ) => subscribe(changeListeners, { filter, listener }),
+    onAttention: (listener: (attention: LiveAttention) => void) =>
+      subscribe(attentionListeners, listener),
     onDelta: (listener: (delta: LiveDelta) => void) =>
       subscribe(deltaListeners, listener),
-    emitLocalTree: dispatchTree,
   });
 }

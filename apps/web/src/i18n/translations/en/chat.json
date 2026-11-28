@@ -18,9 +18,29 @@
     "speaking": "Assistant is speaking"
   },
   "copy": "Copy",
+  "aside": {
+    "ask": "Ask aside",
+    "toMain": "To main chat",
+    "sent": "Sent",
+    "toMainFailed": "Couldn't send. Try again."
+  },
+  "edit": {
+    "action": "Edit",
+    "hint": "The reply will come in a new branch — this conversation stays as it is.",
+    "cancel": "Cancel",
+    "send": "Send"
+  },
+  "agentsStrip": {
+    "region": "Conversation agents",
+    "heading": "{count, plural, =1 {Agent · 1} other {Agents · #}}",
+    "agent": "{name}, {status}"
+  },
   "loadEarlier": "Show earlier messages",
   "loadingEarlier": "Loading earlier messages…",
+  "loadEarlierFailed": "Couldn't load earlier messages.",
+  "loadEarlierRetry": "Retry",
   "scrollToBottom": "Go to latest message",
+  "newMessages": "New messages",
   "suggestions": "Suggestions",
   "starter": {
     "meetingPlan": {
@@ -104,12 +124,11 @@
     "add": "Add",
     "agents": "Agents",
     "noAgents": "No agents available",
+    "noAgentsMatch": "No matching agents",
     "createAgent": "Create an agent in chat",
     "createAgentHint": "Describe the agent, the chat will build it",
     "connections": "Connections",
     "connectionsHint": "Service accounts your agents work with",
-    "schedule": "Schedule",
-    "scheduleHint": "The agent does the task by itself at the set time",
     "testRun": {
       "name": "Create and check an agent",
       "hint": "The trainer will build the agent and tests · up to {cap}",
@@ -120,6 +139,13 @@
       "starting": "Starting…",
       "send": "Create and check",
       "count": "{count} of {max}"
+    },
+    "commands": {
+      "label": "Commands",
+      "none": "No commands found",
+      "schedule": "Schedule",
+      "scheduleHint": "The agent does the task by itself at the set time",
+      "scheduleText": "Schedule: "
     }
   },
   "replying": "Assistant is replying…",
@@ -196,5 +222,17 @@
     "seek": "Seek",
     "playFailed": "Couldn't play the audio",
     "video": "Video"
+  },
+  "inlineVis": {
+    "drawing": "Drawing a visualization…",
+    "untitled": "Visualization",
+    "named": "Visualization: {title}",
+    "showCode": "Show code",
+    "hideCode": "Hide code",
+    "failed": "The visualization didn't render",
+    "failedAfter": "The visualization hit an error: {text}",
+    "confirmTitle": "Open an address from the visualization?",
+    "confirmText": "Check the whole address: the page may have added conversation data to it.",
+    "open": "Open"
   }
 }

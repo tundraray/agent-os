@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import {
   AgentsMcp,
   inRootLaunchSet,
+  signalConversation,
   testRunPoolWrite,
   ToolRegistry,
   type InCommitAgentTool,
@@ -15,6 +16,7 @@ import {
   DEEP_AGENT_SUBAGENTS_MIN,
   DeepAgentContentSchema,
   IdSchema,
+  isStartable,
   RECORD_MAX_TURNS_MIN,
   SessionTaskStatusSchema,
   TEST_RUN_PLAN_REVISIONS_MAX,
@@ -27,6 +29,7 @@ import {
   ConversationsRepository,
   ConversationTasksRepository,
   MessagesRepository,
+  RuntimeTasksRepository,
   type TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
@@ -233,6 +236,7 @@ function createTestRunTools(deps: {
   readonly sessionTaskRows: ConversationTasksRepository;
   readonly conversationRows: ConversationsRepository;
   readonly messageRows: MessagesRepository;
+  readonly signals: RuntimeTasksRepository;
   readonly logger: Logger;
 }) {
   const logger = deps.logger.child({ service: 'library.test_run_tools' });
@@ -310,7 +314,9 @@ function createTestRunTools(deps: {
     // The chip rule of a message: a record the starter's chat may start (DC-3).
     async prepare({ args, caller }) {
       const resolved = await deps.library.resolve(caller.ownerId, args.agentId);
-      return resolved === null || !inRootLaunchSet(resolved)
+      return resolved === null ||
+        !isStartable(resolved) ||
+        !inRootLaunchSet(resolved)
         ? null
         : { id: resolved.id, kind: resolved.kind, name: resolved.name };
     },
@@ -502,15 +508,23 @@ function createTestRunTools(deps: {
           [AGENT_TASK, SessionTaskStatusSchema.enum.completed],
         ]),
       );
-      // A forked run keeps the fork's title (KD-6).
+      // A forked run keeps the fork's title (KD-6); a written title tells the owner's list (live-feed KD-2).
       if (
-        (await deps.conversationRows.find(caller.rootId))?.forkedFromId == null
-      )
-        await deps.conversationRows.renameRoot(
+        (await deps.conversationRows.find(caller.rootId))?.forkedFromId ==
+          null &&
+        (await deps.conversationRows.renameRoot(
           caller.rootId,
           caller.ownerId,
           `Проверка «${args.name}»`,
-        );
+        ))
+      )
+        await signalConversation(deps.signals, {
+          ownerId: caller.ownerId,
+          event: {
+            type: 'change',
+            data: { threadId: caller.rootId, kind: 'summary' },
+          },
+        });
       logger.info('agent created', { ...call, recordId: agent.id });
       return {
         kind: 'done',
@@ -572,6 +586,7 @@ export class TestRunToolsRegistration implements OnModuleInit {
     private readonly sessionTaskRows: ConversationTasksRepository,
     private readonly conversationRows: ConversationsRepository,
     private readonly messageRows: MessagesRepository,
+    private readonly signals: RuntimeTasksRepository,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -587,6 +602,7 @@ export class TestRunToolsRegistration implements OnModuleInit {
       sessionTaskRows: this.sessionTaskRows,
       conversationRows: this.conversationRows,
       messageRows: this.messageRows,
+      signals: this.signals,
       logger: this.logger,
     });
     for (const tool of tools) this.registry.register(tool);

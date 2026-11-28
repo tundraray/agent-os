@@ -7,6 +7,7 @@ import {
 } from '@agent-os/agents';
 import {
   DeepAgentContentSchema,
+  isStartable,
   roundFailed,
   roundJudged,
   type StartTestRunBody,
@@ -114,7 +115,12 @@ export class TestRunService {
     const agentId = row.takenAgentId ?? row.offeredAgentId;
     if (agentId === null) throw trainingError('TEST_RUN_NO_OFFER');
     const resolved = await this.library.resolve(actor.id, agentId);
-    if (resolved === null || !inRootLaunchSet(resolved))
+    // A skill never starts: it answers as a missing record (agent-guidance KD-5).
+    if (
+      resolved === null ||
+      !isStartable(resolved) ||
+      !inRootLaunchSet(resolved)
+    )
       throw libraryError('RECORD_NOT_FOUND');
     const taken = await this.operations.takeTestRun({
       ownerId: actor.id,

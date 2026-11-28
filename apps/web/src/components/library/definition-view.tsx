@@ -13,10 +13,13 @@ import { useStore } from 'zustand';
 import {
   ALL_SERVERS,
   type AgentContent,
+  type ConnectedSkill,
   type DeepAgentContent,
   type MissingRight,
   type RecordBody,
   type RecordKind,
+  type SkillContent,
+  type StartableBody,
   type Subagent,
 } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
@@ -38,8 +41,15 @@ import { cn } from 'cn';
  */
 export type DefinitionViewVariant = 'card' | 'edit' | 'page' | 'schema';
 
-/** «Пояснение получателю» (AC-29.1, MC-6): the author and the viewer's roles the record is shared with. */
-export type DefinitionRecipient = { author: string; roles: readonly string[] };
+/**
+ * «Пояснение получателю» (AC-29.1, MC-6): the author and the viewer's roles the record is shared with; `offered` —
+ * the viewer's chat takes the record (a skill's note says so, agent-guidance MC-13).
+ */
+export type DefinitionRecipient = {
+  author: string;
+  roles: readonly string[];
+  offered: boolean;
+};
 
 export type DefinitionViewProps = {
   definition: { readonly description: string } & RecordBody;
@@ -54,6 +64,10 @@ export type DefinitionViewProps = {
   modelNames?: ModelNames;
   /** «Правка»: what the edit changes against the saved version (`changedFields`). */
   changes?: readonly ChangedField[];
+  /** The record's skills as its read names them (`connectedSkills`); the row «Скиллы» stands only with them. */
+  connectedSkills?: readonly ConnectedSkill[];
+  /** The owner's «Изменить» under the row «Скиллы» (agent-guidance SP-02); with it the row stands even empty. */
+  skillsAction?: ReactNode;
 };
 
 const CAPTION = 'text-muted-foreground text-xs leading-4 font-medium';
@@ -72,16 +86,32 @@ export function DefinitionView({
   recordHref,
   modelNames,
   changes = [],
+  connectedSkills = [],
+  skillsAction,
 }: DefinitionViewProps) {
-  if (variant === 'schema')
-    return <SchemaRows definition={definition} missingRights={missingRights} />;
   const marks = marksOf(changes);
+  if (definition.kind !== 'skill' && variant === 'schema')
+    return <SchemaRows definition={definition} missingRights={missingRights} />;
+  const skills =
+    connectedSkills.length > 0 || skillsAction !== undefined ? (
+      <SkillsRow
+        skills={connectedSkills}
+        recordHref={recordHref}
+        action={skillsAction}
+      />
+    ) : null;
   return (
     <div className="@container flex flex-col gap-2">
       {recipient != null && (
         <RecipientNote kind={definition.kind} recipient={recipient} />
       )}
-      {definition.kind === 'agent' ? (
+      {definition.kind === 'skill' ? (
+        <SkillRows
+          description={definition.description}
+          content={definition.content}
+          marks={marks}
+        />
+      ) : definition.kind === 'agent' ? (
         <dl className="flex flex-col gap-2">
           <DescriptionRow description={definition.description} marks={marks} />
           <AgentRows
@@ -91,6 +121,7 @@ export function DefinitionView({
             marks={marks}
             recordHref={recordHref}
             modelNames={modelNames}
+            skills={skills}
           />
         </dl>
       ) : (
@@ -101,6 +132,7 @@ export function DefinitionView({
           variant={variant}
           marks={marks}
           modelNames={modelNames}
+          skills={skills}
         />
       )}
     </div>
@@ -124,12 +156,19 @@ function RecipientNote({
     >
       <Info aria-hidden className="text-info mt-px size-4 shrink-0" />
       <p className="text-foreground text-xs leading-4 font-medium">
-        {t('definition.recipient', {
-          author: recipient.author,
-          roleCount: roles.length,
-          roles: roles.join(', '),
-          kind,
-        })}
+        {kind === 'skill'
+          ? t('definition.recipientSkill', {
+              author: recipient.author,
+              roleCount: roles.length,
+              roles: roles.join(', '),
+              offered: recipient.offered ? 'yes' : 'no',
+            })
+          : t('definition.recipient', {
+              author: recipient.author,
+              roleCount: roles.length,
+              roles: roles.join(', '),
+              kind,
+            })}
       </p>
     </div>
   );
@@ -250,6 +289,86 @@ function DescriptionRow({
   );
 }
 
+/**
+ * A skill (skill-record.md, «Страница для читателя»): «Когда применять» as a line and «Шаги» as long text, whole
+ * behind «Показать целиком» in every variant.
+ */
+function SkillRows({
+  description,
+  content,
+  marks,
+}: {
+  description: string;
+  content: SkillContent;
+  marks: Marks;
+}) {
+  const tLibrary = useTranslations('library');
+  return (
+    <dl className="flex flex-col gap-2">
+      <Row
+        label={tLibrary('fields.whenToUse')}
+        changed={marks.changed('description')}
+      >
+        <span className="break-words whitespace-pre-wrap">{description}</span>
+      </Row>
+      <Row label={tLibrary('fields.steps')} changed={marks.changed('steps')}>
+        <LongText text={content.text} collapsible />
+      </Row>
+    </dl>
+  );
+}
+
+/**
+ * «Скиллы» (skill-picker.md, «Строка «Скиллы» в просмотре»; agent-guidance KD-7): a skill in the viewer's library
+ * list is a label linking to its page; any other is its name, its description and «текст вам не виден».
+ */
+function SkillsRow({
+  skills,
+  recordHref,
+  action,
+}: {
+  skills: readonly ConnectedSkill[];
+  recordHref?: (recordId: string) => string;
+  action?: ReactNode;
+}) {
+  const { libraryIndex } = useShellServices();
+  const records = useStore(libraryIndex, (state) => state.records);
+  const t = useTranslations('library');
+  return (
+    <Row label={t('fields.skills')}>
+      {skills.length === 0 && '—'}
+      <ul className="flex flex-col gap-1 empty:hidden">
+        {skills.map((skill) => {
+          const summary = records?.get(skill.id);
+          return (
+            <li key={skill.id} className="min-w-0">
+              {summary === undefined ? (
+                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                  <span className="min-w-0 break-words">
+                    <span className="font-medium">{skill.name}</span>
+                    <span className="text-muted-foreground">
+                      {' '}
+                      — {skill.description}
+                    </span>
+                  </span>
+                  <StateBadge state="off">{t('skillFields.hidden')}</StateBadge>
+                </span>
+              ) : (
+                <RecordLabel
+                  variant="row"
+                  summary={summary}
+                  href={recordHref?.(skill.id)}
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {action !== undefined && <div className="pt-1">{action}</div>}
+    </Row>
+  );
+}
+
 type AgentRowsProps = {
   content: AgentContent;
   missing: readonly string[];
@@ -257,6 +376,8 @@ type AgentRowsProps = {
   marks: Marks;
   recordHref?: (recordId: string) => string;
   modelNames?: ModelNames;
+  /** The row «Скиллы», right after «Системы». */
+  skills: ReactNode;
 };
 
 function AgentRows({
@@ -266,6 +387,7 @@ function AgentRows({
   marks,
   recordHref,
   modelNames,
+  skills,
 }: AgentRowsProps) {
   const t = useTranslations('formats');
   const tLibrary = useTranslations('library');
@@ -291,6 +413,7 @@ function AgentRows({
         <Servers servers={content.servers} missing={missing} />
         <RemovedLine names={marks.removed('servers')} />
       </Row>
+      {skills}
       <CapabilitiesRow taskList={content.taskList} />
       {(content.agents.length > 0 || removedAgents.length > 0) && (
         <Row
@@ -416,6 +539,8 @@ type DeepAgentRowsProps = {
   variant: DefinitionViewVariant;
   marks: Marks;
   modelNames?: ModelNames;
+  /** The row «Скиллы», right after «Системы». */
+  skills: ReactNode;
 };
 
 /** Parts 1–4 and 6–11 of a deep agent: the brief phrase stands before the team, the deep agent's own model last. */
@@ -426,6 +551,7 @@ function DeepAgentRows({
   variant,
   marks,
   modelNames,
+  skills,
 }: DeepAgentRowsProps) {
   const t = useTranslations('formats');
   const tLibrary = useTranslations('library');
@@ -452,6 +578,7 @@ function DeepAgentRows({
           />
           <RemovedLine names={marks.removed('servers')} />
         </Row>
+        {skills}
         <CapabilitiesRow
           taskList={content.taskList}
           listDelegation={content.listDelegation}
@@ -618,7 +745,9 @@ function SubagentItem({
 function SchemaRows({
   definition,
   missingRights,
-}: Pick<DefinitionViewProps, 'definition' | 'missingRights'>) {
+}: Pick<DefinitionViewProps, 'missingRights'> & {
+  definition: { readonly description: string } & StartableBody;
+}) {
   const tLibrary = useTranslations('library');
   const locale = useLocale();
   const subagents =

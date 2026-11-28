@@ -79,9 +79,28 @@ export type Language = z.infer<typeof LanguageSchema>;
 /** The cookie the API writes with the employee's language and the Next server reads (i18n design-web.md, KD-2). */
 export const LOCALE_COOKIE = 'aos_locale';
 
+/** The built-in colour themes in card order (theming design-preference.md, KD-6). */
+export const ThemeIdSchema = z.enum(['graphite', 'petrol', 'nord']);
+export type ThemeId = z.infer<typeof ThemeIdSchema>;
+
+/** The cookie with the theme of this browser: the web's head script reads it, the API writes it at sign-in (KD-3). */
+export const THEME_COOKIE = 'aos_theme';
+
+/**
+ * Which events the web notifies the employee about (live-feed design-server.md, KD-7): `all`, decisions and
+ * failures only, or none. The employee's default and a conversation's own level take these values.
+ */
+export const NotificationLevelSchema = z.enum([
+  'all',
+  'decisions_and_failures',
+  'off',
+]);
+export type NotificationLevel = z.infer<typeof NotificationLevelSchema>;
+
 /**
  * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
- * while the employee has not chosen one.
+ * while the employee has not chosen one; `notificationLevel` is the employee's default level; `theme` is null
+ * while the employee follows `organizationTheme` (theming design-preference.md, KD-4).
  */
 export const CurrentUserSchema = z.object({
   id: IdSchema,
@@ -93,12 +112,25 @@ export const CurrentUserSchema = z.object({
   /** The role's right to train own agents; with `trainingCapUsd`, the cap of one training now (design-test-run.md, KD-6). */
   trainOwn: z.boolean(),
   trainingCapUsd: z.number(),
+  notificationLevel: NotificationLevelSchema,
+  theme: ThemeIdSchema.nullable(),
+  organizationTheme: ThemeIdSchema,
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
+
+/** Body of PUT /api/auth/me/theme: the employee's own theme, or null — as in the organisation (KD-1). */
+export const ThemeBodySchema = z.object({ theme: ThemeIdSchema.nullable() });
+export type ThemeBody = z.infer<typeof ThemeBodySchema>;
 
 /** Body of PUT /api/auth/me/language. */
 export const LanguageBodySchema = z.object({ language: LanguageSchema });
 export type LanguageBody = z.infer<typeof LanguageBodySchema>;
+
+/** Body of PUT /api/auth/me/notification-level: the employee's default level. */
+export const NotificationLevelBodySchema = z.object({
+  level: NotificationLevelSchema,
+});
+export type NotificationLevelBody = z.infer<typeof NotificationLevelBodySchema>;
 
 /** Body of POST /api/auth/password. */
 export const PasswordSignInBodySchema = z.object({
@@ -188,16 +220,22 @@ export type SetPersonalAdminBody = z.infer<typeof SetPersonalAdminBodySchema>;
 
 // ---------- Admin: roles ----------
 
+/** Kind of a built-in role (access-levels KD-5): at most one role of each kind. */
+export const BuiltinRoleKindSchema = z.enum(['super_admin', 'everyone']);
+export type BuiltinRoleKind = z.infer<typeof BuiltinRoleKindSchema>;
+
 export const RoleSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
-  memberCount: z.number().int().nonnegative(),
+  /** Null for «Все сотрудники»: its membership is implicit (access-levels KD-5). */
+  memberCount: z.number().int().nonnegative().nullable(),
   isAdmin: z.boolean(),
   /** The right to train the employee's own agents (KD-8). */
   trainOwn: z.boolean(),
   /** The right to train any agent of the catalogue or the panel (KD-8). */
   trainAny: z.boolean(),
-  builtin: z.boolean(),
+  /** The kind of a built-in role; null for a role an administrator created. */
+  builtinKind: BuiltinRoleKindSchema.nullable(),
 });
 export type RoleSummary = z.infer<typeof RoleSummarySchema>;
 
@@ -213,8 +251,14 @@ export const RoleDetailSchema = RoleSummarySchema.extend({
 });
 export type RoleDetail = z.infer<typeof RoleDetailSchema>;
 
-/** Body of POST /api/admin/roles. */
-export const CreateRoleBodySchema = z.object({ name: RoleNameSchema });
+/**
+ * Body of POST /api/admin/roles; `copyFrom` — the id of a role whose levels and model grants the new role copies,
+ * without its employees, the admin right or the training rights (access-levels AC-37.8).
+ */
+export const CreateRoleBodySchema = z.object({
+  name: RoleNameSchema,
+  copyFrom: IdSchema.optional(),
+});
 export type CreateRoleBody = z.infer<typeof CreateRoleBodySchema>;
 
 /** Body of PATCH /api/admin/roles/:id: at least one of `name`, `isAdmin`, `trainOwn`, `trainAny`. */

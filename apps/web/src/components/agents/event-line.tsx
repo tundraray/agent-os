@@ -38,6 +38,7 @@ import { useFeedSelector } from '@/lib/feed/feed-context';
 import type { EventPartData, AnswerRefusedPartData } from '@/lib/feed/to-feed';
 import { logger } from '@/lib/logger';
 import { threadPath } from '@/lib/shell-route';
+import { cn } from '@/lib/utils';
 
 type StatusEvent = Exclude<HistoryEvent, 'continued' | 'compacted' | 'forked'>;
 
@@ -108,6 +109,11 @@ export function EventLine({ data }: { data: EventPartData }) {
   );
 }
 
+const DIVIDER_CLASS =
+  'mx-auto flex w-full max-w-(--prose-max-width) items-center gap-3';
+// Below 640 px the text wraps to two lines, and the lines go (feed-divider.md, «Перенос»).
+const DIVIDER_LINE = 'bg-border h-px min-w-4 flex-1 max-sm:hidden';
+
 /**
  * FK-03 (feed-divider.md, MC-19): «Ответвлено от «{название}» · {время}» with the source as a link, or the deleted
  * source without one; the lines at the sides are decorative and give way when the text wraps.
@@ -120,14 +126,9 @@ function ForkDivider({ at }: { at: string }) {
       state.view?.kind === 'thread' ? state.view.thread.forkedFrom : null,
     null,
   );
-  // Below 640 px the text wraps to two lines, and the lines go (feed-divider.md, «Перенос»).
-  const line = 'bg-border h-px min-w-4 flex-1 max-sm:hidden';
   return (
-    <div
-      data-slot="feed-divider"
-      className="mx-auto flex w-full max-w-(--prose-max-width) items-center gap-3"
-    >
-      <span aria-hidden className={line} />
+    <div data-slot="feed-divider" className={DIVIDER_CLASS}>
+      <span aria-hidden className={DIVIDER_LINE} />
       <p className="text-muted-foreground max-w-full text-center text-xs leading-4 font-medium">
         <GitBranchIcon
           aria-hidden
@@ -151,7 +152,28 @@ function ForkDivider({ at }: { at: string }) {
           {formatListTime(format, at)}
         </time>
       </p>
-      <span aria-hidden className={line} />
+      <span aria-hidden className={DIVIDER_LINE} />
+    </div>
+  );
+}
+
+/**
+ * IM-10 (feed-divider.md, «Новое»; MC-11): the lines and «Новые сообщения» before the first unread message, without
+ * icon, link or time. `className` adds the feed's scroll margin: the conversation opens on it.
+ */
+export function NewDivider({ className }: { className?: string }) {
+  const t = useTranslations('chat');
+  return (
+    <div
+      data-slot="feed-divider"
+      data-variant="new"
+      className={cn(DIVIDER_CLASS, className)}
+    >
+      <span aria-hidden className={DIVIDER_LINE} />
+      <p className="text-muted-foreground max-w-full text-center text-xs leading-4 font-medium">
+        {t('newMessages')}
+      </p>
+      <span aria-hidden className={DIVIDER_LINE} />
     </div>
   );
 }

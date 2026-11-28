@@ -36,3 +36,4 @@
 - [design-schema.md](../../features/data-model/design-schema.md) — таблица `settings`, реестр ключей и один писатель (KD-3)
 - [design-agents.md](../../features/data-model/design-agents.md) — системная модель беседы — поле `chatModel` ключа `model_defaults` (KD-3)
 - [design-memory.md](../../features/self-learning/design-memory.md) — размер оглавления памяти в ключе `self_learning_settings` (KD-6)
+- [agent-guidance/design-server.md](../../features/agent-guidance/design-server.md) — инструкция организации в ключе `organisation_instructions` (KD-4)

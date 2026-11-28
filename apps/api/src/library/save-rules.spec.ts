@@ -23,6 +23,7 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
       agents: [],
       tools: [],
       taskList: true,
+      skills: [],
       ...fields,
     },
   };
@@ -56,6 +57,7 @@ function deepAgent(
       listDelegation: true,
       selfLearning,
       scripts: [],
+      skills: [],
     },
   };
 }
@@ -65,12 +67,14 @@ const employee: SaveChoices = {
   usableServers: ['sentry'],
   allowedModels: [HAIKU],
   visibleAgentIds: [AGENT_SEEN],
+  visibleSkillIds: [],
 };
 const admin: SaveChoices = {
   scope: 'system',
   registryServers: ['sentry', 'gmail', 'jira'],
   catalogueModels: [HAIKU, SONNET],
   visibleAgentIds: [AGENT_SEEN],
+  visibleSkillIds: [],
 };
 
 function save(fields: Partial<SaveInput>): SaveInput {

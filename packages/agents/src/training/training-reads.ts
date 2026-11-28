@@ -12,6 +12,7 @@ import type {
 import type { AccessGate } from '../access-gate';
 import type { History } from '../store/history';
 import type { ToolCaller } from '../tools/tool';
+import type { ToolRegistry } from '../tools/tool-registry';
 
 /** The newest past tasks a start and a trainer's read look through. */
 const PAST_TASKS_SCANNED = 50;
@@ -19,6 +20,8 @@ const PAST_TASKS_SCANNED = 50;
 /**
  * The past tasks of the agent, newest first, whose runs called no MCP tool the owner has no right to
  * (design-training.md, KD-2): the comparison of a start and every trainer's read take them by this one rule.
+ * A past call names only its server and tool, so the gate is asked of the tool in the server's current list;
+ * a tool gone from the list, of a switched-off server, or switched off is not available (access-levels KD-4).
  * With `conversationId`, only that conversation when it is one.
  */
 export async function pastTaskIds(
@@ -28,6 +31,7 @@ export async function pastTaskIds(
       'pastTasks' | 'serversCalled'
     >;
     readonly access: Pick<AccessGate, 'tools'>;
+    readonly registry: Pick<ToolRegistry, 'declaredMcpTools'>;
   },
   ownerId: string,
   agentId: string,
@@ -43,14 +47,18 @@ export async function pastTaskIds(
     deps.access.tools(ownerId),
     deps.conversationRows.serversCalled(past),
   ]);
+  const listed = await deps.registry.declaredMcpTools([
+    ...new Set(calls.map((call) => call.server)),
+  ]);
+  const available = (call: { server: string; tool: string }): boolean => {
+    if (access.kind === 'owner_disabled') return false;
+    const tool = listed.find(
+      ({ mcp }) => mcp.server === call.server && mcp.tool === call.tool,
+    );
+    return tool !== undefined && tool.mcp.enabled && access.allows(tool.mcp);
+  };
   const denied = new Set(
-    calls
-      .filter(
-        (call) =>
-          access.kind === 'owner_disabled' ||
-          !access.allows(call.server, call.tool),
-      )
-      .map((call) => call.runId),
+    calls.filter((call) => !available(call)).map((call) => call.runId),
   );
   return past.filter((id) => !denied.has(id));
 }

@@ -10,10 +10,10 @@ import {
   nameWinner,
   type McpServerMode,
   type ModelProviderState,
-  type RecordBody,
   type RecordHeader,
   RecordKindSchema,
-  type ResolvedRecord,
+  type ResolvedAgent,
+  type StartableBody,
   type ToolCallState,
   type ToolOutcome,
   type ToolRefusalReason,
@@ -57,7 +57,7 @@ import type {
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,
  * `@agent-os/agents/testing`): an `AgentTurnModelClient` behind `AGENT_TURN_CLIENT`, so it stands
- * INSIDE `ModelClient`, below its ledger write — the token ledger, the retries, the text parts with
+ * INSIDE `ModelClient`, below its ledger write — the token ledger, the text parts with
  * their offsets and the provider messages are the package's own. A script is a list of replies of one
  * agent; every call is recorded with the messages exactly as the provider would get them, which is the
  * assertion surface for "the next model call sees X". An answer may carry its text in parts, which
@@ -74,7 +74,7 @@ export const DEFAULT_USAGE: CallUsage = {
   cacheWriteTokens: 0,
 };
 
-/** The status of a scripted provider error unless named: retryable, so `ModelClient` retries it. */
+/** The status of a scripted provider error unless named: an overloaded provider, `provider_unavailable`. */
 const DEFAULT_ERROR_STATUS = 503;
 
 /**
@@ -155,28 +155,37 @@ export interface ScriptedAnswer {
   /** Over {@link DEFAULT_USAGE}. */
   readonly usage?: Partial<CallUsage>;
   readonly latch?: Latch;
+  /** Waited on after the text parts streamed, so a step is held with its text already in the feed. */
+  readonly latchAfterText?: Latch;
   /** The answer ends at the output length limit: the double reports `finishReason: 'length'` (KD-3). */
   readonly cutOff?: true;
 }
 
 /**
  * A provider error instead of an answer: the double rejects the call as the provider client does
- * (`AI_APICallError` with `statusCode`). Each retry of `ModelClient` is a call of its own, so a script
- * whose every call fails (`thereafter: modelError()`) makes the session's model call end in
- * `model_error` after the retries (1000 and 3000 ms: about 4 s per failing agent).
+ * (`AI_APICallError` with `statusCode`), and the session's model call ends in `model_error` after that one
+ * request.
  */
 export interface ScriptedModelError {
   readonly kind: 'model_error';
   readonly statusCode: number;
   /** Each failing call waits on it first, so a test decides when the agent fails. */
   readonly latch?: Latch;
+  /** The provider's response body, as the adapter rules read it (a context overflow, runtime-fixes KD-4). */
+  readonly body?: string;
 }
 
 export function modelError(
   statusCode = DEFAULT_ERROR_STATUS,
   latch?: Latch,
+  body?: string,
 ): ScriptedModelError {
-  return { kind: 'model_error', statusCode, ...(latch && { latch }) };
+  return {
+    kind: 'model_error',
+    statusCode,
+    ...(latch && { latch }),
+    ...(body !== undefined && { body }),
+  };
 }
 
 /** A reply computed from the call's input: the messages exactly as the provider would get them, and the call itself. */
@@ -234,7 +243,7 @@ export interface RecordedTextCall {
   readonly prompt: string;
 }
 
-/** The `completeText` calls the text script answered, in order (each retry is a call of its own). */
+/** The `completeText` calls the text script answered, in order. */
 export interface TextScript {
   readonly calls: readonly RecordedTextCall[];
   /** Resolves once `count` calls have started. */
@@ -254,7 +263,7 @@ export interface ScriptedModel {
   ): Script;
   /**
    * Sets the reply to every `completeText` call: an answer (its latch holds the call), or a provider
-   * error on every attempt. Without it a `completeText` call fails as a defect of the test.
+   * error. Without it a `completeText` call fails as a defect of the test.
    */
   completeText(reply: ScriptedAnswer | ScriptedModelError): TextScript;
 }
@@ -309,7 +318,8 @@ function resolveWaiters(
 
 /**
  * Answers a call as the provider would stream it: after the latch (if any), each text part goes to
- * `onText` in order, then the generation with the tool calls `toolCalls` makes and the usage.
+ * `onText` in order, then, after `latchAfterText` (if any), the generation with the tool calls
+ * `toolCalls` makes and the usage.
  */
 async function streamAnswer(
   answer: ScriptedAnswer,
@@ -323,6 +333,8 @@ async function streamAnswer(
   for (const part of parts) {
     if (part !== '') onText(part);
   }
+  await answer.latchAfterText?.pass(signal);
+  signal.throwIfAborted();
   const calls = toolCalls();
   return {
     finishReason: answer.cutOff
@@ -429,7 +441,7 @@ export function createScriptedModel(): ScriptedModel {
     if (textReply === undefined)
       throw new Error('No text script answers a completeText call');
     if (isModelError(textReply))
-      throw providerError('completeText', textReply.statusCode);
+      throw providerError('completeText', textReply.statusCode, textReply.body);
     return streamAnswer(textReply, options, () => []);
   }
 
@@ -468,7 +480,11 @@ export function createScriptedModel(): ScriptedModel {
         typeof reply === 'function' ? reply(call.messages, recorded) : reply;
       if (isModelError(answer)) {
         await answer.latch?.pass(options.signal);
-        throw providerError(`agent ${call.agentName}`, answer.statusCode);
+        throw providerError(
+          `agent ${call.agentName}`,
+          answer.statusCode,
+          answer.body,
+        );
       }
 
       const generation = await streamAnswer(answer, options, () =>
@@ -540,11 +556,11 @@ export interface RecordedEmbeddingCall {
 
 /**
  * The embeddings seam double (ADR-0004), behind `EMBEDDING_CLIENT`: it stands below the service,
- * so the batches, retries, ledger rows and checks are the package's own. The switches are read on every call.
+ * so the batches, ledger rows and checks are the package's own. The switches are read on every call.
  */
 export interface ScriptedEmbeddings {
   readonly client: EmbeddingClient;
-  /** Every request in order of arrival; each retry is a request of its own. */
+  /** Every request in order of arrival. */
   readonly calls: readonly RecordedEmbeddingCall[];
   /** The provider reports no token count. */
   withoutTokenCount: boolean;
@@ -683,7 +699,10 @@ export function createAccessGateDouble(
     async tools(ownerId) {
       if (disabled(ownerId)) return { kind: 'owner_disabled' };
       const servers = serversOf(ownerId);
-      return { kind: 'allowed', allows: (server) => servers.has(server) };
+      return {
+        kind: 'allowed',
+        allows: ({ server }) => servers.has(server),
+      };
     },
     async model(ownerId, model) {
       if (disabled(ownerId))
@@ -750,7 +769,7 @@ export function createProviderRegistryDouble(
 }
 
 /** A record the library double holds: its kind and content, its owner and who sees it. */
-export type LibraryDoubleRecord = RecordBody & {
+export type LibraryDoubleRecord = StartableBody & {
   /** A fresh uuid when omitted. */
   readonly id?: string;
   readonly name: string;
@@ -773,7 +792,7 @@ export type LibraryDoubleRecord = RecordBody & {
 export interface LibraryDoubleEdit {
   readonly name?: string;
   readonly description?: string;
-  readonly body?: RecordBody;
+  readonly body?: StartableBody;
 }
 
 /**
@@ -825,7 +844,7 @@ interface StoredRecord {
 /** An agent row the double writes: what it was when it gave the agent out first. */
 interface AgentRowOf {
   readonly id: string;
-  readonly kind: RecordBody['kind'];
+  readonly kind: StartableBody['kind'];
   readonly ownerId: string | null;
   readonly name: string;
   readonly description: string;
@@ -855,7 +874,7 @@ export function createLibraryDouble(): LibraryDouble {
     return version;
   }
 
-  function addVersion(record: StoredRecord, body: RecordBody): string {
+  function addVersion(record: StoredRecord, body: StartableBody): string {
     const previous = versions.get(record.versionId);
     const version: AgentVersion = {
       id: randomUUID(),
@@ -933,11 +952,11 @@ export function createLibraryDouble(): LibraryDouble {
   async function resolvedOf(
     record: StoredRecord,
     viewerId: string | null,
-  ): Promise<ResolvedRecord> {
+  ): Promise<ResolvedAgent> {
     await persist(record.versionId);
     const { kind: _kind, ...header } = headerOf(record, viewerId);
     const version = versionOf(record.versionId);
-    const body: RecordBody =
+    const body: StartableBody =
       version.kind === 'agent'
         ? { kind: 'agent', content: structuredClone(version.content) }
         : { kind: 'deep_agent', content: structuredClone(version.content) };
@@ -950,7 +969,7 @@ export function createLibraryDouble(): LibraryDouble {
       const id = record.id ?? randomUUID();
       if (records.has(id))
         throw new Error(`The library double already holds record ${id}`);
-      const body: RecordBody =
+      const body: StartableBody =
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
           : { kind: 'deep_agent', content: record.content };
@@ -981,7 +1000,7 @@ export function createLibraryDouble(): LibraryDouble {
       }
       record.name = change.name ?? record.name;
       record.description = change.description ?? record.description;
-      const body: RecordBody =
+      const body: StartableBody =
         change.body ??
         (current.kind === 'agent'
           ? { kind: 'agent', content: current.content }
@@ -1025,6 +1044,10 @@ export function createLibraryDouble(): LibraryDouble {
           `The library double holds no default agent ${builtinKey}`,
         );
       return resolvedOf(record, null);
+    },
+    // The double holds agents and deep agents only: no list names a skill it holds.
+    async skills() {
+      return [];
     },
     async listVisible(viewerId) {
       const visible = [...records.values()].filter((record) =>

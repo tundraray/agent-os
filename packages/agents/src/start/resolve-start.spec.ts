@@ -63,6 +63,7 @@ function agentContent(
     agents,
     tools: ['start_agent'],
     taskList: false,
+    skills: [],
   };
 }
 
@@ -92,6 +93,7 @@ function deepAgentContent(): DeepAgentContent {
     listDelegation: true,
     selfLearning: false,
     scripts: [],
+    skills: [],
   };
 }
 

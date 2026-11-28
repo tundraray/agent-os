@@ -70,7 +70,8 @@ export class History {
 
   /**
    * Appends the entries in order with `seq` = `max(seq) + 1`, `+ 2`, …: history is written only in a
-   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time. Returns the appended entries.
+   * step's commit or its `guard` (plan Notes 11), and an agent runs one step at a time, or by the partial
+   * answer in the transaction that fences the step (runtime-fixes KD-1). Returns the appended entries.
    */
   async append(
     taskId: string,
@@ -116,6 +117,40 @@ export class History {
   }
 
   /**
+   * A window for the employee read backwards (live-feed KD-5): the last `limit` shown entries before `beforeSeq`
+   * (of the whole history without it), in order.
+   */
+  async pageBefore(
+    taskId: string,
+    beforeSeq: number | undefined,
+    limit: number,
+  ): Promise<PageEntry[]> {
+    const rows = await this.rows.pageBefore(
+      taskId,
+      beforeSeq,
+      limit,
+      HIDDEN_KINDS,
+    );
+    // The hidden kinds are filtered out by the query, which reads newest first.
+    return rows.reverse().map(toEntry) as PageEntry[];
+  }
+
+  /** The successful results of the named tools and the employee's first message after each, in order (KD-6). */
+  async successfulResults(
+    taskId: string,
+    tools: readonly string[],
+  ): Promise<
+    Extract<HistoryEntry, { kind: 'tool_result' | 'user_message' }>[]
+  > {
+    const rows = await this.rows.successfulResults(taskId, tools);
+    // The query selects only these two kinds.
+    return rows.map(toEntry) as Extract<
+      HistoryEntry,
+      { kind: 'tool_result' | 'user_message' }
+    >[];
+  }
+
+  /**
    * The session's assignment: the text of its `task` entry, its first own entry (data-model design-agents.md,
    * KD-6). A session without one is broken.
    */
@@ -145,6 +180,24 @@ export class History {
         entry.kind === 'task' || entry.kind === 'user_message',
     );
     return message?.content.record ?? null;
+  }
+
+  /**
+   * The session's last message: its last `task` or `user_message` entry, whatever was compacted since
+   * (improvements design-server.md KD-1); `undefined` for a session without one.
+   */
+  async lastMessage(
+    taskId: string,
+  ): Promise<
+    Extract<HistoryEntry, { kind: 'task' | 'user_message' }> | undefined
+  > {
+    const row = await this.rows.lastMessage(taskId);
+    if (row === undefined) return undefined;
+    // The query selects only these two kinds.
+    return toEntry(row) as Extract<
+      HistoryEntry,
+      { kind: 'task' | 'user_message' }
+    >;
   }
 
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */

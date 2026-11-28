@@ -579,7 +579,10 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
 
       // A replay takes no message: it answers as a missing agent
       const toReplay = await expectError(
-        api.raw('post', `/agents/${baseId}/messages`, { text: 'ещё' }),
+        api.raw('post', `/agents/${baseId}/messages`, {
+          text: 'ещё',
+          sendKey: randomUUID(),
+        }),
         404,
       );
       expect(toReplay.errorCode).toBe('AGENT_NOT_FOUND');
@@ -754,7 +757,10 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
 
       const anyaApi = chatApi(harness.app, anya);
       for (const [path, body] of [
-        [`/agents/${trainingId}/messages`, { text: 'ещё' }],
+        [
+          `/agents/${trainingId}/messages`,
+          { text: 'ещё', sendKey: randomUUID() },
+        ],
         [`/agents/${trainingId}/restart`, undefined],
       ] as const) {
         const error = await expectError(anyaApi.raw('post', path, body), 404);
@@ -908,10 +914,10 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
       const after = RecordDetailSchema.parse(
         await getRecord(harness.app, anya, record.id),
       );
-      expect([after.version, after.content.prompt]).toEqual([
-        saved.version,
-        `${prompts.base} v4`,
-      ]);
+      expect([
+        after.version,
+        after.kind === 'deep_agent' && after.content.prompt,
+      ]).toEqual([saved.version, `${prompts.base} v4`]);
       expect(
         (await auditOfRecord(harness.pool, record.id)).filter(
           (event) => event.kind === 'training_activate',

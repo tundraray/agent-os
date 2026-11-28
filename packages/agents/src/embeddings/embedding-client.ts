@@ -48,7 +48,7 @@ export class EmbeddingTimeoutError extends Error {
 
 /**
  * Calls the embedding model's own `doEmbed`, without the `ai` package: no `ai` version shares the provider
- * packages' copy of `@ai-sdk/provider`, and the retries are the service's (task-10 Investigation Notes).
+ * packages' copy of `@ai-sdk/provider` (task-10 Investigation Notes).
  */
 export function createEmbeddingClient(): EmbeddingClient {
   return {

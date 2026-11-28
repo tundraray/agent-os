@@ -12,6 +12,7 @@ import {
 import {
   AgentsMcp,
   type McpConnectResult,
+  type McpNewToolsAuditState,
   type McpServerAuditState,
 } from '@agent-os/agents';
 import type { McpConnection } from '@agent-os/contracts';
@@ -37,8 +38,8 @@ export async function recordServerChange(
     readonly actor: string;
     readonly server: string;
     readonly change: {
-      readonly before: McpServerAuditState | null;
-      readonly after: McpServerAuditState | null;
+      readonly before: McpServerAuditState | McpNewToolsAuditState | null;
+      readonly after: McpServerAuditState | McpNewToolsAuditState | null;
     };
   },
 ): Promise<void> {

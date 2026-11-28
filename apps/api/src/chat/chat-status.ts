@@ -1,5 +1,11 @@
 import type { AgentView } from '@agent-os/agents';
-import type { ChatStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
+import type {
+  ChatStatus,
+  ConversationState,
+  TaskStatus,
+  WaitReason,
+} from '@agent-os/contracts';
+import type { ConversationStateFactsRow } from '@agent-os/db';
 
 export interface ChatStatusInput {
   /** The root's view. */
@@ -49,4 +55,20 @@ export function chatStatus({
         failureReason: null,
       };
   }
+}
+
+/**
+ * The state of a conversation in the list (improvements design-server.md, «How the conversation state works»): a
+ * question open in its tree first, then the root or an agent under it working, then the later of the last answer
+ * and the last failure if it comes after the «seen through» mark; `null` — read and idle.
+ */
+export function conversationState(
+  facts: Omit<ConversationStateFactsRow, 'rootId'>,
+): ConversationState | null {
+  if (facts.questionOpen) return 'waiting_for_you';
+  if (facts.rootAnswering || facts.agentsWorking) return 'working';
+  const answer = facts.lastAnswerSeq ?? 0;
+  const failure = facts.lastFailureSeq ?? 0;
+  if (Math.max(answer, failure) <= facts.seenThroughSeq) return null;
+  return failure > answer ? 'failed' : 'new_answer';
 }

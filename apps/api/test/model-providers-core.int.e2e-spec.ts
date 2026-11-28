@@ -774,7 +774,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
   //   2. model chosen, its provider disabled, and Gemini without key -> the same request is refused 409 `START_REFUSED` `provider_disabled`,
   //      `provider_key_missing`, each with the `model` field; the scripted model received no call. `provider_missing` is not exercised here: the
   //      database forbids a catalogued model without its provider; the reason remains for the race between the catalogue read and the provider
-  //      read and is proven in packages/agents/src/model/retry-policy.spec.ts and packages/agents/src/providers/provider-readiness.spec.ts
+  //      read and is proven in packages/agents/src/model/provider-rejection.spec.ts and packages/agents/src/providers/provider-readiness.spec.ts
   //   3. a run is in progress (the scripted model is held at its second call by a latch); the administrator disables the provider (PATCH
   //      `enabled: false`); the latch is released -> the run ends `failed` with `failureReason` `provider_disabled`, not `model_error`; the
   //      scripted model's second call never happened; then the same with the key removed (`apiKey: null`) -> `provider_key_missing`
@@ -816,7 +816,10 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const refusedFirstMessage = async (text: string) => {
         const { id } = await anyaApi.createThread();
         const refusal = await expectBody(
-          anyaApi.raw('post', `/threads/${id}/messages`, { text }),
+          anyaApi.raw('post', `/threads/${id}/messages`, {
+            text,
+            sendKey: randomUUID(),
+          }),
           409,
           StartRefusedErrorSchema,
         );
@@ -1249,6 +1252,7 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const refusedStart = await expectBody(
         employeeApi.raw('post', `/threads/${thread}/messages`, {
           text: 'INT-6 row 2: the first message after the default model went',
+          sendKey: randomUUID(),
         }),
         409,
         StartRefusedErrorSchema,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { PlusIcon, ShieldCheckIcon, UserIcon, UsersIcon } from 'lucide-react';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -28,7 +29,13 @@ import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
-import { buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
@@ -42,7 +49,8 @@ import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
 import {
   adminLibraryTabPath,
-  adminNewAgentPath,
+  adminNewRecordPath,
+  FORM_KINDS,
   adminRecordPath,
   LIBRARY_TABS,
   type AdminPage,
@@ -98,7 +106,8 @@ export function LibrarySection({ page }: LibrarySectionProps) {
     return <LibraryRecord key={page.key} id={page.key} />;
   if (page.kind === 'memory')
     return <MemoryPage key={page.key} id={page.key} variant="panel" />;
-  if (page.kind === 'new') return <NewSystemRecordPage />;
+  if (page.kind === 'newRecord')
+    return <NewSystemRecordPage key={page.recordKind} kind={page.recordKind} />;
   return (
     <LibraryTabs
       tab={page.kind === 'list' ? (page.tab ?? 'system') : 'system'}
@@ -187,17 +196,33 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
   );
 }
 
-/** «Создать» (AL-01): the empty agent form of AL-02; a deep agent has no form (deep-agents UXRD KD-1). */
+/**
+ * «Создать» (AL-01, agent-guidance SK-05, MC-13): the empty form of a company agent or skill of AL-02; a deep agent
+ * has no form (deep-agents UXRD KD-1).
+ */
 function CreateButton() {
   const t = useTranslations('library.screen');
+  const tLibrary = useTranslations('library');
+  const router = useRouter();
   return (
-    <ShellLink
-      href={adminNewAgentPath()}
-      className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}
-    >
-      <PlusIcon aria-hidden />
-      {t('create')}
-    </ShellLink>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button size="sm" className={CONTROL_SIZE} />}
+      >
+        <PlusIcon aria-hidden />
+        {t('create')}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-32">
+        {FORM_KINDS.map((kind) => (
+          <DropdownMenuItem
+            key={kind}
+            onClick={() => router.push(adminNewRecordPath(kind))}
+          >
+            {tLibrary('kindTitle', { kind })}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

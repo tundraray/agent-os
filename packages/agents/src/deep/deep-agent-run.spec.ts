@@ -53,6 +53,7 @@ const deepAgentVersion: AgentVersion = {
     listDelegation: true,
     selfLearning: false,
     scripts: [],
+    skills: [],
   },
 };
 

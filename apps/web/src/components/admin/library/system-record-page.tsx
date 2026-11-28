@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import type { RecordDetail } from '@agent-os/contracts';
 import { RecordPlaceholder } from '@/components/admin/admin-header';
-import { blankAgent } from '@/components/library/agent-fields';
+import { BLANK_SKILL, blankAgent } from '@/components/library/agent-fields';
 import { DeepAgentCard } from '@/components/library/deep-agent-card';
 import {
   RecordEditor,
@@ -13,11 +13,12 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { libraryApi } from '@/lib/library/library-api';
-import type { AgentRecord } from '@/lib/library/record-rules';
+import type { EditorRecord } from '@/lib/library/record-rules';
+import type { FormKind } from '@/lib/shell-route';
 
 /**
- * `/admin/library/<id>` of a company record (no author): AL-02, the agent editor in mode `system`; a company deep
- * agent opens in its card (deep-agents UXRD DA-13).
+ * `/admin/library/<id>` of a company record (no author): AL-02, the record editor in mode `system` for an agent or
+ * a skill (agent-guidance SK-05); a company deep agent opens in its card (deep-agents UXRD DA-13).
  */
 export function SystemRecordPage({
   record,
@@ -31,9 +32,12 @@ export function SystemRecordPage({
   return <SystemEditor start={{ saved: record }} created={created} />;
 }
 
-/** `/admin/library/new/agent`: the empty form of a company agent (AL-02); a deep agent has no form (UXRD KD-1). */
-export function NewSystemRecordPage() {
-  return <SystemEditor start="new" created={false} />;
+/**
+ * `/admin/library/new/agent` and `/new/skill`: the empty form of a company agent or skill (AL-02, SK-05); a deep
+ * agent has no form (UXRD KD-1).
+ */
+export function NewSystemRecordPage({ kind }: { kind: FormKind }) {
+  return <SystemEditor start={{ blank: kind }} created={false} />;
 }
 
 /**
@@ -47,7 +51,7 @@ function SystemEditor({
   start,
   created,
 }: {
-  start: { saved: AgentRecord } | 'new';
+  start: { saved: EditorRecord } | { blank: FormKind };
   created: boolean;
 }) {
   const t = useTranslations('admin.library');
@@ -72,7 +76,12 @@ function SystemEditor({
     );
   }
   const source: RecordEditorSource =
-    start === 'new' ? { blank: blankAgent(choices.data) } : start;
+    'saved' in start
+      ? start
+      : {
+          blank:
+            start.blank === 'skill' ? BLANK_SKILL : blankAgent(choices.data),
+        };
   return (
     <RecordEditor
       mode="system"

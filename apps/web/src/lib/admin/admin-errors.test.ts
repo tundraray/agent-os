@@ -190,11 +190,9 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
     ],
     [
       'GRANT_TARGET_UNKNOWN',
-      refusal(422, 'GRANT_TARGET_UNKNOWN', 'tool_unknown'),
+      refusal(422, 'GRANT_TARGET_UNKNOWN', 'model_unknown'),
       {},
-      form(
-        'Этого сервера, инструмента или модели больше нет. Закройте окно и выберите цель снова.',
-      ),
+      form('Этой модели больше нет. Закройте окно и выберите модель снова.'),
     ],
     [
       'GRANT_INVALID with another reason',

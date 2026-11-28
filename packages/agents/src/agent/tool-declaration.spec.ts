@@ -108,6 +108,7 @@ function agentRun(taskList: boolean): RunStart {
       agents: [],
       tools: ['start_agent', 'list_agents'],
       taskList,
+      skills: [],
     },
   };
   return { version, name: 'Помощник', subagent: null, model: MODEL };
@@ -135,6 +136,7 @@ const DEEP_CONTENT: DeepAgentContent = {
   listDelegation: true,
   selfLearning: false,
   scripts: [],
+  skills: [],
 };
 
 function deepRun(content: DeepAgentContent): RunStart {

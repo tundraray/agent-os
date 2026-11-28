@@ -44,6 +44,8 @@ type PageHeaderProps = {
   parent?: { title: string; href: string };
   /** The area the page belongs to, named in the tab after the parent (the panel's «Панель»). */
   area?: string;
+  /** Stands in the `h1`'s place while given: the tracker task's rename field (task-tracker KD-6). */
+  titleField?: ReactNode;
   /** A state badge after the title. */
   badge?: ReactNode;
   /** The screen's actions, at the right end of the header. */
@@ -59,6 +61,7 @@ export function PageHeader({
   title,
   parent,
   area,
+  titleField,
   badge,
   children,
 }: PageHeaderProps) {
@@ -87,14 +90,16 @@ export function PageHeader({
             />
           </>
         )}
-        <h1
-          tabIndex={-1}
-          data-shell-focus="page-title"
-          title={title}
-          className="min-w-16 shrink truncate px-1 text-sm font-medium outline-none"
-        >
-          {title}
-        </h1>
+        {titleField ?? (
+          <h1
+            tabIndex={-1}
+            data-shell-focus="page-title"
+            title={title}
+            className="min-w-16 shrink truncate px-1 text-sm font-medium outline-none"
+          >
+            {title}
+          </h1>
+        )}
         {badge}
       </div>
       {children !== undefined && (

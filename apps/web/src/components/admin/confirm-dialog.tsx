@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import {
@@ -28,6 +28,12 @@ export type ConfirmDialogProps = {
    * dialog hands focus to the page `h1` instead. A cancelled dialog still returns it to that control.
    */
   focusTitleAfterConfirm?: boolean;
+  /** Shown whole below the text, as plain selectable text that wraps anywhere: the address of a visualization link. */
+  address?: string;
+  /** `default` when the confirmed action destroys nothing (opening an address). */
+  confirmVariant?: 'destructive' | 'default';
+  /** The element that gets focus back however the dialog closes. */
+  returnFocus?: RefObject<HTMLElement | null>;
 } & (
   | {
       /** Names the change in the log, e.g. «admin: user block»; the dialog logs the refusal and words it as the panel's. */
@@ -43,7 +49,8 @@ export type ConfirmDialogProps = {
 
 /**
  * The one confirmation of the panel's destructive actions (block, delete a role, a model, a server), of
- * giving the admin right, and of the library's deleting a record and closing its access.
+ * giving the admin right, of the library's deleting a record and closing its access, and of opening an address a
+ * visualization offers.
  * One request per confirmation: while it runs the button and «Отмена» are unavailable and Esc closes nothing, so
  * a refusal is always seen and the request's follow-up never outlives its dialog.
  */
@@ -57,6 +64,9 @@ export function ConfirmDialog({
   logEvent,
   refusalText,
   focusTitleAfterConfirm = false,
+  address,
+  confirmVariant = 'destructive',
+  returnFocus,
 }: ConfirmDialogProps) {
   const t = useTranslations('common');
   const tErrors = useTranslations('errors');
@@ -98,13 +108,22 @@ export function ConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={changeOpen}>
-      <AlertDialogContent finalFocus={titleFocus}>
+      <AlertDialogContent finalFocus={returnFocus ?? titleFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle className="wrap-break-word">
             {title}
           </AlertDialogTitle>
-          <AlertDialogDescription className="wrap-break-word">
+          <AlertDialogDescription className="wrap-break-word" render={<div />}>
             {body}
+            {address !== undefined && (
+              // Out of the tab order: Tab moves only between the two buttons (inline-visualization.md).
+              <div
+                tabIndex={-1}
+                className="text-foreground mt-3 max-h-[40vh] overflow-y-auto text-left font-mono break-all select-text"
+              >
+                {address}
+              </div>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error !== null && <FormError>{error}</FormError>}
@@ -117,7 +136,7 @@ export function ConfirmDialog({
             {t('cancel')}
           </AlertDialogCancel>
           <Button
-            variant="destructive"
+            variant={confirmVariant}
             size="sm"
             className={CONTROL_SIZE}
             disabled={pending}

@@ -16,9 +16,11 @@ import type {
 import { isFinished, type Task, type TaskControl } from '@agent-os/runtime';
 
 import { openCalls } from '../history/call-state';
+import type { HistoryEntry } from '../history/history';
 import { interruptedResults } from '../store/call-records';
 import type { History } from '../store/history';
 import { isQuestion } from '../task-tree';
+import type { ForkBoundary } from './agent-sessions';
 import { agentNotFound } from './operation-support';
 
 /** What the model reads after the inherited history (create-and-test design-fork.md, KD-3). */
@@ -64,6 +66,27 @@ export async function readForkRefusal(
   const [root, ...below] = await tasks.listTree(sourceId, ownerId);
   if (root === undefined) throw agentNotFound(sourceId);
   return forkRefusal([root, ...below]);
+}
+
+/**
+ * The last entry a fork inherits (improvements design-server.md, «How the fork boundary works»): a `throughSeq` on a
+ * `task`, a `user_message` or a model answer without calls is that entry; an `edit.seq` on a `task` or a `user_message`
+ * is the entry before it, 0 for the first message. `entry` is the source root's entry at the boundary's seq; `null`
+ * when there is none or it is of another kind, or when an edit names a message a schedule sent: only the employee's
+ * own message can be edited (ForkRequest).
+ */
+export function inheritedThrough(
+  entry: HistoryEntry | undefined,
+  boundary: ForkBoundary,
+): number | null {
+  if (entry === undefined) return null;
+  const isMessage = entry.kind === 'task' || entry.kind === 'user_message';
+  if (boundary.kind === 'edit') {
+    return isMessage && entry.content.schedule === null ? entry.seq - 1 : null;
+  }
+  const isAnswer =
+    entry.kind === 'model_answer' && entry.content.toolCalls.length === 0;
+  return isMessage || isAnswer ? entry.seq : null;
 }
 
 export interface CopyHistoryDeps {
@@ -130,12 +153,14 @@ export async function copyHistory(
           ?.lastInputTokens,
       }
     : {};
+  const eventSeq = appended.at(-1)!.seq;
+  // The fork starts read through its last entry (improvements design-server.md, Data Model).
   await deps.sessionRows.update(targetId, {
     forkedFromId,
     forkedThroughSeq: throughSeq,
+    seenThroughSeq: eventSeq,
     ...lastInputTokens,
   });
-  const eventSeq = appended.at(-1)!.seq;
   deps.logger.info('history copied', {
     sourceId,
     targetId,

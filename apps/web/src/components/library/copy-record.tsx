@@ -46,6 +46,10 @@ type CopyPlan = {
   dropped: PartServers[];
   /** A company record with «Все системы»: the systems the copy gets instead; `null` — not such a record. */
   allServers: readonly string[] | null;
+  /** The record's skills by id, as its read names them; empty for a skill. */
+  skillNames: ReadonlyMap<string, string>;
+  /** Skills the copy loses: the copier's library list does not hold them (agent-guidance KD-7, AC-06.8). */
+  hiddenSkills: readonly string[];
 };
 
 const droppedOf = (rights: readonly MissingRight[]): PartServers[] =>
@@ -54,22 +58,37 @@ const droppedOf = (rights: readonly MissingRight[]): PartServers[] =>
     .map(({ subagent, servers }) => ({ subagent, servers }));
 
 const hasAllServers = (record: RecordDetail): boolean =>
-  record.content.servers.includes(ALL_SERVERS) ||
-  (record.kind === 'deep_agent' &&
-    record.content.subagents.some((subagent) =>
-      subagent.servers.includes(ALL_SERVERS),
-    ));
+  record.kind !== 'skill' &&
+  (record.content.servers.includes(ALL_SERVERS) ||
+    (record.kind === 'deep_agent' &&
+      record.content.subagents.some((subagent) =>
+        subagent.servers.includes(ALL_SERVERS),
+      )));
 
 /**
- * What the dialog must name before the copy. Only a company record can hold «Все системы»; a library row
- * has no content, so such a record is read first, and the copier's own systems come from `choices`.
+ * What the dialog must name before the copy. A library row has no content, so an agent or a deep agent is read first:
+ * its skills the copier does not see in `records` are lost (agent-guidance KD-7). Only a company record can hold
+ * «Все системы», and the copier's own systems then come from `choices`.
  */
-async function planCopy(record: CopySource): Promise<CopyPlan> {
+async function planCopy(
+  record: CopySource,
+  records: ReadonlyMap<string, RecordSummary> | null,
+): Promise<CopyPlan> {
   const dropped = droppedOf(record.missingRights);
-  if (record.author !== null) return { record, dropped, allServers: null };
-  const detail = 'content' in record ? record : await libraryApi.get(record.id);
-  if (!hasAllServers(detail)) return { record, dropped, allServers: null };
-  return { record, dropped, allServers: (await libraryApi.choices()).servers };
+  const detail =
+    'content' in record || record.kind === 'skill'
+      ? record
+      : await libraryApi.get(record.id);
+  const connected = 'connectedSkills' in detail ? detail.connectedSkills : [];
+  const skillNames = new Map(connected.map((skill) => [skill.id, skill.name]));
+  const hiddenSkills = connected
+    .filter((skill) => records?.has(skill.id) !== true)
+    .map((skill) => skill.name);
+  const allServers =
+    record.author === null && 'content' in detail && hasAllServers(detail)
+      ? (await libraryApi.choices()).servers
+      : null;
+  return { record, dropped, allServers, skillNames, hiddenSkills };
 }
 
 const partLine = (
@@ -87,8 +106,12 @@ const partLine = (
 function copiedNotice(
   t: LibraryTranslator,
   result: CopyResult,
+  skillNames: ReadonlyMap<string, string>,
 ): { title: string; description: string | undefined } {
   const { name } = result.record;
+  const removedSkills = result.removedSkills.flatMap(
+    (id) => skillNames.get(id) ?? [],
+  );
   const runsNowhere =
     result.replacedModels.length === 0 &&
     result.record.missingRights.some((right) => right.model !== null);
@@ -109,6 +132,10 @@ function copiedNotice(
         ? replaced(from, to)
         : t('subagentLine', { subagent, text: replaced(from, to) }),
     ),
+    // A removed skill the source read does not name was deleted meanwhile: it vanishes without a mark (UXRD SK-01).
+    ...(removedSkills.length === 0
+      ? []
+      : [t('copy.removedSkills', { names: removedSkills.join(', ') })]),
   ];
   return {
     title: runsNowhere
@@ -145,13 +172,13 @@ export function useCopyRecord(): CopyRecord {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ReactNode>(null);
 
-  async function run(record: CopySource): Promise<void> {
+  async function run({ record, skillNames }: CopyPlan): Promise<void> {
     const result = await recordAction(
       { recordId: record.id, kind: record.kind, action: 'copy', version: null },
       () => libraryApi.copy(record.id, locale),
     );
     void libraryIndex.refresh();
-    const notice = copiedNotice(tLibrary, result);
+    const notice = copiedNotice(tLibrary, result, skillNames);
     toast.success(notice.title, {
       description: notice.description,
       action: {
@@ -171,7 +198,7 @@ export function useCopyRecord(): CopyRecord {
     setError(null);
     let next: CopyPlan;
     try {
-      next = await planCopy(record);
+      next = await planCopy(record, libraryIndex.getState().records);
     } catch (cause) {
       logger.warn('library: copy preparation read failed', {
         recordId: record.id,
@@ -181,13 +208,17 @@ export function useCopyRecord(): CopyRecord {
       setPending(false);
       return;
     }
-    if (next.dropped.length > 0 || next.allServers !== null) {
+    if (
+      next.dropped.length > 0 ||
+      next.allServers !== null ||
+      next.hiddenSkills.length > 0
+    ) {
       setPlan(next);
       setPending(false);
       return;
     }
     try {
-      await run(record);
+      await run(next);
     } catch (cause) {
       // `recordAction` has logged the refusal.
       setError(copyFailed(t, cause));
@@ -201,7 +232,7 @@ export function useCopyRecord(): CopyRecord {
     setPending(true);
     setError(null);
     try {
-      await run(plan.record);
+      await run(plan);
       setPlan(null);
     } catch (cause) {
       setError(copyFailed(t, cause));
@@ -238,6 +269,13 @@ export function useCopyRecord(): CopyRecord {
                 heading={tLibrary('copy.allServers')}
                 parts={[{ subagent: null, servers: plan.allServers }]}
               />
+            )}
+            {plan.hiddenSkills.length > 0 && (
+              <p>
+                {tLibrary('copy.droppedSkills', {
+                  names: plan.hiddenSkills.join(', '),
+                })}
+              </p>
             )}
             {error !== null && <FormError>{error}</FormError>}
           </div>

@@ -44,6 +44,8 @@ const oauthServer = {
   url: 'https://mcp.sentry.dev/mcp',
   mode: 'oauth',
   sharedToken: '',
+  oauthClientId: '',
+  oauthClientSecret: '',
 } as const;
 const prices = {
   inputUsdPerMTok: '1',
@@ -269,6 +271,13 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
         }),
       {
         sharedToken: 'Введите токен — до 4096 знаков',
+      },
+    ],
+    [
+      'an oauth server with a client secret and no client id',
+      () => serverRules({ ...oauthServer, oauthClientSecret: 's' }),
+      {
+        oauthClientId: 'Введите Client ID: Client Secret без него не работает',
       },
     ],
     // model-providers DC-1, MC-4

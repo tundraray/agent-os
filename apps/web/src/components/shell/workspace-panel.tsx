@@ -14,6 +14,7 @@ import { usePanelRef, type PanelSize } from 'react-resizable-panels';
 import { useStore } from 'zustand';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { ResizableHandle, ResizablePanel } from '@/components/ui/resizable';
+import { shellTargetElement } from '@/lib/focus';
 import { useShellServices } from './shell-actions';
 
 /** WS-01 element id: the target of HD-04 `aria-controls`. */
@@ -42,6 +43,8 @@ type WorkspacePanelProps = {
   children: ReactNode;
   /** A test run's or a training's conversation: the panel is «Ход и итог» (self-learning UXRD TR-01, MC-10). */
   run: boolean;
+  /** The panel is on «В стороне»: its heading is the tab's name (improvements UXRD IM-06). */
+  aside: boolean;
 };
 
 /**
@@ -53,6 +56,7 @@ export function WorkspacePanel({
   onClose,
   children,
   run,
+  aside,
 }: WorkspacePanelProps) {
   const t = useTranslations('shell.schema');
   const panelRef = usePanelRef();
@@ -85,7 +89,7 @@ export function WorkspacePanel({
   return (
     <>
       <ResizableHandle
-        aria-label={t('resize')}
+        aria-label={t(aside ? 'asideResize' : 'resize')}
         onKeyDownCapture={resizeByKeyboard}
         className="data-[separator=hover]:bg-ring data-[separator=active]:bg-ring after:w-2 focus-visible:ring-2"
       />
@@ -100,10 +104,10 @@ export function WorkspacePanel({
       >
         <aside
           id={WORKSPACE_ID}
-          aria-label={t(run ? 'runTitle' : 'title')}
+          aria-label={t(headingKey(run, aside))}
           className="flex h-full min-w-0 flex-col"
         >
-          <WorkspaceHeading onClose={onClose} run={run} />
+          <WorkspaceHeading onClose={onClose} run={run} aside={aside} />
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
             {children}
           </div>
@@ -116,19 +120,25 @@ export function WorkspacePanel({
 type WorkspaceDrawerProps = {
   open: boolean;
   onClose: () => void;
+  /** Where focus returns once the drawer closes. */
+  returnFocus: () => HTMLElement | null;
   children: ReactNode;
   run: boolean;
+  aside: boolean;
 };
 
 /**
  * The same panel below 1024 px: a modal drawer on the right, 400 px wide and the full width below 480 px
- * (UXRD Responsive Behavior). Only the header button opens it; Esc and «×» close it and focus returns there.
+ * (UXRD Responsive Behavior). The header button opens it on its heading, «Спросить в стороне» on the side chat's
+ * field (improvements UXRD Accessibility); Esc and «×» close it and focus returns to `returnFocus`.
  */
 export function WorkspaceDrawer({
   open,
   onClose,
+  returnFocus,
   children,
   run,
+  aside,
 }: WorkspaceDrawerProps) {
   const t = useTranslations('shell.schema');
   return (
@@ -142,12 +152,12 @@ export function WorkspaceDrawer({
         <Drawer.Viewport className="fixed inset-0 z-50 flex justify-end">
           <Drawer.Popup
             id={WORKSPACE_ID}
-            aria-label={t(run ? 'runTitle' : 'title')}
-            initialFocus={headingElement}
-            finalFocus={toggleElement}
+            aria-label={t(headingKey(run, aside))}
+            initialFocus={initialFocusElement}
+            finalFocus={returnFocus}
             className="bg-background flex h-full w-[400px] max-w-full flex-col border-l shadow-lg outline-none transition-transform duration-200 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full motion-reduce:transition-none max-[480px]:w-full"
           >
-            <WorkspaceHeading onClose={onClose} run={run} />
+            <WorkspaceHeading onClose={onClose} run={run} aside={aside} />
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
               {children}
             </div>
@@ -158,8 +168,13 @@ export function WorkspaceDrawer({
   );
 }
 
-/** The panel's heading: the drawer opens only by a button, so it always starts there. */
-const headingElement = (): HTMLElement | null =>
+/** The panel's name: «Ход и итог» of a run, «В стороне» while that tab is open, otherwise «Схема». */
+const headingKey = (run: boolean, aside: boolean) =>
+  aside ? 'asideTab' : run ? 'runTitle' : 'title';
+
+/** The side chat's field when the drawer opens on it, otherwise the heading: the drawer opens only by a button. */
+const initialFocusElement = (): HTMLElement | null =>
+  shellTargetElement('aside-composer') ??
   document.querySelector<HTMLElement>('[data-workspace-heading]');
 
 /** The header button «Схема» (HD-04) or «Ход и итог»: where focus returns when the panel or the drawer closes. */
@@ -201,15 +216,17 @@ export function RunButton({
 }
 
 /**
- * The heading «Схема» and «×». An open by «Показать схему» or the header button puts focus on the heading; an
+ * The heading «Схема», «Ход и итог» or «В стороне» and «×». An open by «Показать схему» or the header button puts focus on the heading; an
  * automatic open leaves it in the feed (deep-agents UXRD, Accessibility).
  */
 function WorkspaceHeading({
   onClose,
   run,
+  aside,
 }: {
   onClose: () => void;
   run: boolean;
+  aside: boolean;
 }) {
   const t = useTranslations('shell.schema');
   const { workspace } = useShellServices();
@@ -230,10 +247,10 @@ function WorkspaceHeading({
         data-workspace-heading=""
         className="truncate text-sm font-medium outline-none"
       >
-        {t(run ? 'runTitle' : 'title')}
+        {t(headingKey(run, aside))}
       </h2>
       <TooltipIconButton
-        tooltip={t(run ? 'runClose' : 'close')}
+        tooltip={t(aside ? 'asideClose' : run ? 'runClose' : 'close')}
         className="size-8 pointer-coarse:size-11 [&_svg]:size-4.5"
         onClick={onClose}
       >

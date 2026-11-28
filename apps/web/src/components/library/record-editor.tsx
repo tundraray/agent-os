@@ -35,14 +35,16 @@ import { RecordConflictError, recordAction } from '@/lib/library/record-action';
 import {
   canUseInChat,
   changedFieldLabel,
-  type AgentDefinition,
-  type AgentRecord,
+  type EditorDefinition,
+  type EditorRecord,
 } from '@/lib/library/record-rules';
 import { adminRecordPath, libraryPath, recordPath } from '@/lib/shell-route';
 import { cn } from 'cn';
 import {
   AgentFields,
+  SkillFields,
   validateAgent,
+  validateSkill,
   type AgentField,
   type AgentFieldErrors,
   type EditorChoices,
@@ -56,9 +58,9 @@ import { ConflictBlock, SavePanel } from './save-panel';
 import { useInChat } from './use-in-chat';
 import { useRecordForm } from './use-record-form';
 
-/** The editor's two starts: an own agent as saved, or the blank definition of a new one. */
+/** The editor's two starts: an own agent or skill as saved, or the blank definition of a new one (KD-5). */
 export type RecordEditorSource =
-  { saved: AgentRecord } | { blank: AgentDefinition };
+  { saved: EditorRecord } | { blank: EditorDefinition };
 
 /** The library's routes of the owner, or the panel's of the administrator on a company record. */
 function clientOf(mode: EditorMode) {
@@ -82,9 +84,10 @@ function fieldErrorOf(error: LibraryErrorText | null): AgentFieldErrors {
 
 /** The system a 422 `server_not_allowed` is about: the first ticked one outside the author's systems. */
 function refusedServer(
-  definition: AgentDefinition,
+  definition: EditorDefinition,
   allowed: readonly string[],
 ): { server?: string } {
+  if (definition.kind !== 'agent') return {};
   const server = definition.content.servers.find(
     (name) => name !== ALL_SERVERS && !allowed.includes(name),
   );
@@ -192,7 +195,7 @@ export function RecordEditor({
   // DC-2: hold the unsaved changes while they exist, under the saved name («» for a new record).
   const heldName = saved === null ? '' : builtinName(saved, locale);
   useEffect(() => {
-    if (changed && !gone) leaveGuard.hold(heldName);
+    if (changed && !gone) leaveGuard.hold({ kind: 'record', name: heldName });
     else leaveGuard.release();
   }, [changed, gone, heldName, leaveGuard]);
   useEffect(() => () => leaveGuard.release(), [leaveGuard]);
@@ -212,7 +215,7 @@ export function RecordEditor({
 
   if (gone) return <ThreadNotice variant="library-not-found" />;
 
-  const input = (next: AgentDefinition, field: AgentField | null): void => {
+  const input = (next: EditorDefinition, field: AgentField | null): void => {
     dispatch({ type: 'input', values: next });
     if (field === null) return;
     // The check's error at the edited field goes; a server's stays until the next save (use-record-form).
@@ -225,12 +228,12 @@ export function RecordEditor({
 
   /** One `POST` or `PUT` with `version`; the outcome goes to the form, the conflict to MC-10. */
   async function send(
-    definition: AgentDefinition,
+    definition: EditorDefinition,
     version: number | null,
   ): Promise<void> {
     try {
       if (saved === null) {
-        const record = agentOf(
+        const record = editorRecordOf(
           await recordAction(
             {
               recordId: null,
@@ -255,7 +258,7 @@ export function RecordEditor({
         router.replace(nextPage);
         return;
       }
-      const result = agentOf(
+      const result = editorRecordOf(
         await recordAction(
           {
             recordId: saved.id,
@@ -280,7 +283,7 @@ export function RecordEditor({
         setConflictError(cause);
         dispatch({
           type: 'conflict',
-          saved: cause.saved?.kind === 'agent' ? cause.saved : null,
+          saved: cause.saved?.kind === definition.kind ? cause.saved : null,
         });
         return;
       }
@@ -289,7 +292,10 @@ export function RecordEditor({
         admin: system,
         kind: definition.kind,
         name: definition.name,
-        model: definition.content.model ?? undefined,
+        model:
+          definition.kind === 'agent'
+            ? (definition.content.model ?? undefined)
+            : undefined,
         ...refusedServer(definition, choices.servers),
       });
       if (text.place.at === 'screen') {
@@ -303,7 +309,8 @@ export function RecordEditor({
 
   /** The checks before sending: a field error stops the save and takes the focus. */
   const passes = (): boolean => {
-    const found = validateAgent(values);
+    const found =
+      values.kind === 'agent' ? validateAgent(values) : validateSkill(values);
     setChecked(found);
     if (Object.keys(found).length === 0) return true;
     setErrorsShown((count) => count + 1);
@@ -441,6 +448,12 @@ export function RecordEditor({
                     {tLibrary('editor.launchHint', { kind: record.kind })}
                   </p>
                 )}
+                {!system && record.kind === 'skill' && (
+                  // agent-guidance MC-11: how a saved skill reaches the chat and the agents.
+                  <p className="text-muted-foreground text-sm leading-5">
+                    {tLibrary('editor.skillHint')}
+                  </p>
+                )}
                 {copy.error !== null && (
                   <p
                     id={copyErrorId}
@@ -461,15 +474,20 @@ export function RecordEditor({
             )}
             {/* A disabled fieldset disables every native field inside while the save runs. */}
             <fieldset disabled={saving} className="contents">
-              <AgentFields
-                mode={mode}
-                recordId={saved?.id ?? null}
-                base={base}
-                values={values}
-                onChange={input}
-                errors={errors}
-                choices={choices}
-              />
+              {/* A record never changes its kind: the base and the values are of one kind (KD-5). */}
+              {values.kind === 'agent' && base.kind === 'agent' ? (
+                <AgentFields
+                  mode={mode}
+                  recordId={saved?.id ?? null}
+                  base={base}
+                  values={values}
+                  onChange={input}
+                  errors={errors}
+                  choices={choices}
+                />
+              ) : values.kind === 'skill' ? (
+                <SkillFields values={values} onChange={input} errors={errors} />
+              ) : null}
             </fieldset>
             {conflictText !== null && (
               <ConflictBlock
@@ -516,9 +534,9 @@ export function RecordEditor({
   );
 }
 
-/** The editor saves only agents: a route that answers with another kind breaks the contract. */
-function agentOf(record: RecordDetail): AgentRecord {
-  if (record.kind !== 'agent')
+/** The editor saves only agents and skills: a route that answers with a deep agent breaks the contract. */
+function editorRecordOf(record: RecordDetail): EditorRecord {
+  if (record.kind === 'deep_agent')
     throw new Error(
       `library: the editor got a ${record.kind} record ${record.id}`,
     );

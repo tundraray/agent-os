@@ -1,7 +1,7 @@
 {
   "status": {
     "working": "Working",
-    "awaiting_confirmation": "Awaiting confirmation",
+    "awaiting_confirmation": "Waiting for you",
     "interrupted": "Interrupted",
     "completed": "Completed",
     "failed": "Failed",
@@ -90,7 +90,9 @@
     "groupBrief": "Brief: {question}",
     "approve": "Approve",
     "reject": "Reject",
+    "allowInConversation": "Allow in this conversation",
     "approved": "Approved · {time}",
+    "allowedInConversation": "Allowed in this conversation: “{tool}” without approval · {time}",
     "rejected": "Rejected · {time}",
     "briefApproved": "Brief approved · {time}",
     "briefRejected": "Brief rejected · {time}",
@@ -104,10 +106,10 @@
     "selfLearning": "The deep agent learns: it remembers what this run finds, and other employees' runs get it."
   },
   "recordCard": {
-    "create": "{kind, select, agent {Create agent} other {Create deep agent}}",
+    "create": "{kind, select, agent {Create agent} skill {Create skill} other {Create deep agent}}",
     "edit": "Change “{name}”",
     "delete": "Delete “{name}”",
-    "deleteNote": "The {kind, select, agent {agent} other {deep agent}} will be removed from the library. This can't be undone.",
+    "deleteNote": "The {kind, select, agent {agent} skill {skill} other {deep agent}} will be removed from the library. This can't be undone.",
     "changed": "changed",
     "new": "new",
     "removed": "Removed: {what}",
@@ -119,6 +121,27 @@
     "deleted": "Deleted · {time}",
     "notSaved": "Not saved: {reason}",
     "showDiagram": "Show diagram"
+  },
+  "question": {
+    "source": "{who, select, chat {Chat asks:} other {Agent “<link>{description}</link>” asks:}}",
+    "sourcePast": "{who, select, chat {Chat asked:} other {Agent “<link>{description}</link>” asked:}}",
+    "group": "{who, select, chat {Question from the chat} other {Question from agent “{description}”}}",
+    "multiSelect": "several allowed",
+    "other": "Other",
+    "otherPlaceholder": "Your answer…",
+    "otherLabel": "Your answer to question {number}",
+    "unansweredOne": "No answer: question {a} — the agent decides itself",
+    "unansweredTwo": "No answer: questions {a} and {b} — the agent decides itself",
+    "unansweredThree": "No answer: questions {a}, {b} and {c} — the agent decides itself",
+    "answer": "Answer",
+    "skip": "Skip",
+    "answerUnavailable": "Choose an answer to at least one question or press “Skip”",
+    "sendFailed": "Couldn't send the answer. Try again.",
+    "answered": "Answered · {time}",
+    "skipped": "Skipped · {time}",
+    "cancelled": "Not needed",
+    "ownAnswer": "Your answer: {text}",
+    "noAnswer": "No answer"
   },
   "recordTool": {
     "list_records": "Library list",
@@ -190,21 +213,21 @@
       "failed": "failed {count}",
       "cancelled": "cancelled {count}"
     },
-    "task": "task {number}",
+    "task": "step {number}",
     "rowLabel": "{subagent}: {item}, {status}"
   },
   "tasks": {
     "tabs": {
       "activity": "Activity",
-      "tasks": "Tasks · {count}"
+      "tasks": "Plan · {count}"
     },
-    "listLabel": "Tasks",
-    "rowButton": "Task {number}: {subject}, {status}",
+    "listLabel": "Plan",
+    "rowButton": "Step {number}: {subject}, {status}",
     "waitsFor": "waits for {numbers}",
-    "emptyTitle": "No tasks yet",
-    "emptyHint": "The agent's tasks and delegations appear here.",
-    "loading": "Loading tasks…",
-    "loadError": "Couldn't load tasks",
+    "emptyTitle": "No plan yet",
+    "emptyHint": "The plan's steps and the agent's delegations appear here.",
+    "loading": "Loading the plan…",
+    "loadError": "Couldn't load the plan",
     "retry": "Try again"
   },
   "documents": {
@@ -221,5 +244,20 @@
   "fork": {
     "from": "Forked from “<link>{title}</link>”",
     "fromDeleted": "Forked from a deleted conversation"
+  },
+  "instructions": {
+    "title": "How to work with me",
+    "description": "Your agents read this text at every step — in chat, in schedules and in training. Only you can see it.",
+    "empty": "Empty: agents won’t get a personal instruction",
+    "placeholder": "For example: I’m an SRE on the payments team. Answer briefly, give commands for bash.",
+    "save": "Save",
+    "edit": "Edit",
+    "reject": "Decline",
+    "saveEdited": "Save with edits",
+    "cancel": "Cancel",
+    "saved": "Saved · {time}",
+    "rejected": "Declined · {time}",
+    "notSaved": "Not saved: {reason}",
+    "cancelled": "Not needed"
   }
 }

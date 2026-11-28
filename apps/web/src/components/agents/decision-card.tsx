@@ -1,14 +1,6 @@
 'use client';
 
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react';
-import Link from 'next/link';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   useFormatter,
   useLocale,
@@ -18,9 +10,11 @@ import {
 import {
   RunCodeConfirmationContentSchema,
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_TOOL_CONFIRMATION,
   isCodeRunCall,
   LIBRARY_RECORD_CONFIRMATION,
   type Confirmation,
+  type DecisionRequest,
   type LibraryRecordCard,
   type RunCodeConfirmationContent,
 } from '@agent-os/contracts';
@@ -30,15 +24,18 @@ import {
   CircleStopIcon,
   CircleXIcon,
   InfoIcon,
-  LoaderCircleIcon,
-  type LucideIcon,
 } from 'lucide-react';
 import { z } from 'zod';
 import {
-  AgentStatus,
-  FadeSlot,
-  StatusGlyph,
-} from '@/components/agents/agent-status';
+  CardHeader,
+  CardSource,
+  DecisionButton,
+  ErrorLine,
+  frameClass,
+  useCardEdit,
+  useDecisionSend,
+  type Outcome,
+} from '@/components/agents/card-parts';
 import {
   useCardThread,
   useLiveRecord,
@@ -76,7 +73,7 @@ import {
   type RecordDefinition,
 } from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
-import { agentPath, recordPath } from '@/lib/shell-route';
+import { recordPath } from '@/lib/shell-route';
 import { NEW_THREAD_TARGET } from '@/lib/threads/composer-seed';
 import { cn } from '@/lib/utils';
 import type { AgentsTranslator, ChatTranslator } from '@/i18n/catalog';
@@ -198,18 +195,6 @@ function briefOf(confirmation: Confirmation): Brief | null {
   };
 }
 
-/**
- * A decided request's final line. `failed` — an approved record card whose save did not go through: its reason
- * is the platform's text, shown whole (the line wraps), with the icon alone in `--destructive`.
- */
-type Outcome = {
-  kind: 'approved' | 'rejected' | 'cancelled' | 'failed';
-  text: string;
-  Icon: LucideIcon;
-  tone: string;
-  iconTone?: string;
-};
-
 /** The final line of a decided request (MC-19, MC-20); null while it is open. */
 function outcomeOf(
   t: AgentsTranslator,
@@ -252,81 +237,45 @@ function outcomeOf(
   };
 }
 
-/** Parts 1–2 while open, the outcome once decided: shared by every variant (decision-card.md, Anatomy). */
-function CardHeader({
-  outcome,
-  createdAt,
+/**
+ * MC-4: the outcome of «Разрешить в этой беседе», from the re-read decision; null for any other outcome, which
+ * `outcomeOf` gives.
+ */
+function allowedOutcomeOf({
+  t,
+  format,
+  confirmation,
+  toolName,
 }: {
-  outcome: Outcome | null;
-  createdAt: string;
-}) {
-  const format = useFormatter();
-  if (outcome === null)
-    return (
-      <div className="flex h-5 min-w-0 items-center justify-between gap-3">
-        <AgentStatus
-          variant="label"
-          status="awaiting_confirmation"
-          className="shrink-0"
-        />
-        <time
-          dateTime={createdAt}
-          className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
-        >
-          {formatListTime(format, createdAt)}
-        </time>
-      </div>
-    );
-  return (
-    <p
-      className={cn(
-        'flex min-w-0 gap-1 text-xs leading-4 font-medium tabular-nums',
-        outcome.kind === 'failed' ? 'items-start' : 'h-5 items-center',
-        outcome.tone,
-      )}
-    >
-      <FadeSlot swapKey={outcome.kind} className={outcome.iconTone}>
-        <outcome.Icon aria-hidden className="size-3.5" />
-      </FadeSlot>
-      <span
-        className={cn(
-          'min-w-0 animate-in fade-in-0 duration-(--duration-fast) motion-reduce:animate-none',
-          outcome.kind === 'failed'
-            ? 'break-words whitespace-pre-wrap'
-            : 'truncate',
-        )}
-      >
-        {outcome.text}
-      </span>
-    </p>
+  t: AgentsTranslator;
+  format: Formatter;
+  confirmation: Confirmation;
+  toolName: string;
+}): Outcome | null {
+  if (
+    confirmation.status !== 'resolved' ||
+    confirmation.resolution?.allowInConversation !== true
+  )
+    return null;
+  const time = formatListTime(
+    format,
+    confirmation.resolvedAt ?? confirmation.createdAt,
   );
+  return {
+    kind: 'approved',
+    text: t('decision.allowedInConversation', { tool: toolName, time }),
+    Icon: CircleCheckIcon,
+    tone: 'text-success',
+  };
 }
 
-/** Part 9: the line after a failed send of the decision. */
-function ErrorLine({ children }: { children: ReactNode }) {
-  return (
-    <p
-      role="alert"
-      className="text-foreground flex items-start gap-1.5 text-sm leading-5"
-    >
-      <CircleXIcon
-        aria-hidden
-        className="text-destructive mt-0.5 size-4 shrink-0"
-      />
-      {children}
-    </p>
-  );
-}
-
-/** The card's frame: «Ждёт» while open, `--card` once decided (decision-card.md, States). */
-const frameClass = (outcome: Outcome | null): string =>
-  cn(
-    'mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-2 rounded-lg border p-3 outline-none',
-    'focus-visible:ring-ring transition-colors duration-(--duration-fast) focus-visible:ring-2 motion-reduce:transition-none',
-    outcome === null
-      ? 'bg-approval-subtle border-approval-border'
-      : 'bg-card text-card-foreground border-border',
-  );
+/**
+ * The third answer stands only on an MCP tool's action card — the server takes it on no other (KD-6): a code
+ * run and an agent's script come without a server, a brief and a record card are other kinds.
+ */
+const allowsInConversation = (confirmation: Confirmation): boolean =>
+  confirmation.kind === AGENTS_TOOL_CONFIRMATION &&
+  confirmation.server !== null;
 
 /** A record card as it reads: the definition after a create or an edit, the saved one before an edit or a delete. */
 type RecordView =
@@ -553,79 +502,14 @@ function RecordDoneActions({
   );
 }
 
-/**
- * The brief's edit state, local to the card (design-web.md, Contract «DecisionCard»): the draft lives
- * while the card is in «Правка»; «Отмена» and Esc drop it and the text before the edit returns.
- */
-function useBriefEdit() {
-  const [draft, setDraft] = useState<BriefText | null>(null);
-  const [emptyQuestion, setEmptyQuestion] = useState(false);
+type Pressed = 'approve' | 'allow' | 'reject' | 'launch' | 'launchEdited';
 
-  return {
-    /** The fields' values while editing; null outside «Правка». */
-    draft,
-    emptyQuestion,
-    start: (original: BriefText) => setDraft(original),
-    cancel: () => {
-      setDraft(null);
-      setEmptyQuestion(false);
-    },
-    change: (field: BriefField, value: string) => {
-      setDraft((current) =>
-        current === null ? null : { ...current, [field]: value },
-      );
-      if (field === 'question') setEmptyQuestion(false);
-    },
-    /** True when the question is empty: the request must not go out (state «Пустой вопрос»). */
-    rejectEmpty: (): boolean => {
-      const empty = draft !== null && draft.question.trim() === '';
-      setEmptyQuestion(empty);
-      return empty;
-    },
-  };
-}
-
-type Pressed = 'approve' | 'reject' | 'launch' | 'launchEdited';
-
-/** A row button: in «Отправка» the pressed one shows the spinner in place of its label, at the same width. */
-function DecisionButton({
-  label,
-  variant,
-  pressed,
-  busy,
-  onClick,
-  buttonRef,
-}: {
-  label: string;
-  variant: 'default' | 'destructive' | 'outline' | 'ghost';
-  pressed: boolean;
-  busy: boolean;
-  onClick: () => void;
-  buttonRef?: (element: HTMLButtonElement | null) => void;
-}) {
-  return (
-    <Button
-      ref={buttonRef}
-      type="button"
-      size="sm"
-      variant={variant}
-      disabled={busy}
-      aria-busy={pressed || undefined}
-      onClick={onClick}
-      className="relative pointer-coarse:h-11"
-    >
-      <span className={cn(pressed && 'opacity-0')}>{label}</span>
-      {pressed && (
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center"
-        >
-          <StatusGlyph Icon={LoaderCircleIcon} spinning />
-        </span>
-      )}
-    </Button>
-  );
-}
+const APPROVE: DecisionRequest = { approve: true };
+const REJECT: DecisionRequest = { approve: false };
+const ALLOW_IN_CONVERSATION: DecisionRequest = {
+  approve: true,
+  allowInConversation: true,
+};
 
 /**
  * RN-05, deep-agents MC-22: «Задание · {имя}» by the name of the brief's content (design-web.md, «Имя в
@@ -693,7 +577,7 @@ export type DecisionCardProps = {
   /** How the call of an approved record card ended; null before its result and for any other request. */
   saved: RecordSave | null;
   /** Sends the decision and re-reads; rejects when the server did not take it. */
-  onDecide: (approve: boolean, args?: Record<string, unknown>) => Promise<void>;
+  onDecide: (decision: DecisionRequest) => Promise<void>;
 };
 
 /**
@@ -711,95 +595,9 @@ export function DecisionCard({
   const brief = briefOf(confirmation);
   const record = brief === null ? recordViewOf(confirmation) : null;
   const format = useFormatter();
-  const locale = useLocale();
   const tAgents = useTranslations('agents');
   const tChat = useTranslations('chat');
   const { tools } = useMessages();
-  const outcome =
-    record === null
-      ? outcomeOf(tAgents, confirmation, brief !== null, format)
-      : recordOutcomeOf(
-          { t: tAgents, tChat, format },
-          confirmation,
-          record,
-          saved,
-        );
-  const edit = useBriefEdit();
-  const editing = edit.draft !== null && outcome === null;
-  const [pressed, setPressed] = useState<Pressed | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const questionRef = useRef<HTMLTextAreaElement | null>(null);
-  const editButtonRef = useRef<HTMLButtonElement | null>(null);
-  const decidedHere = useRef(false);
-  const pendingFocus = useRef<'question' | 'edit' | null>(null);
-  const fieldId = useId();
-
-  // After a decision taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
-  useEffect(() => {
-    if (outcome === null || !decidedHere.current) return;
-    decidedHere.current = false;
-    containerRef.current?.focus();
-  }, [outcome]);
-
-  // «Исправить» → the question field; «Отмена» → «Исправить».
-  useEffect(() => {
-    const target = pendingFocus.current;
-    pendingFocus.current = null;
-    if (target === 'question') questionRef.current?.focus();
-    if (target === 'edit') editButtonRef.current?.focus();
-  }, [editing]);
-
-  const busy = pressed !== null;
-
-  async function decide(
-    which: Pressed,
-    approve: boolean,
-    args?: Record<string, unknown>,
-  ): Promise<void> {
-    if (busy) return;
-    setPressed(which);
-    setFailed(false);
-    decidedHere.current = true;
-    try {
-      await onDecide(approve, args);
-    } catch {
-      // The store has logged the failure. The card shows the error line and keeps the pressed button for
-      // a retry; an edited brief stays in «Правка» with the typed values (400 `INVALID_ARGUMENTS` included).
-      decidedHere.current = false;
-      setFailed(true);
-    } finally {
-      setPressed(null);
-    }
-  }
-
-  const briefArgs = (text: BriefText): Record<string, unknown> | undefined =>
-    brief === null
-      ? undefined
-      : { deepAgent: brief.deepAgent, ...pickText(text) };
-
-  const startEdit = (): void => {
-    if (brief === null) return;
-    pendingFocus.current = 'question';
-    setFailed(false);
-    edit.start(brief.text);
-  };
-  const cancelEdit = (): void => {
-    pendingFocus.current = 'edit';
-    setFailed(false);
-    edit.cancel();
-  };
-  const launchEdited = (): void => {
-    if (busy || edit.draft === null || edit.rejectEmpty()) return;
-    void decide('launchEdited', true, briefArgs(edit.draft));
-  };
-  const onEditKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || busy) return;
-    event.preventDefault();
-    cancelEdit();
-  };
-
   const { tool, server, args } = confirmation;
   const toolTitle = server === null ? undefined : confirmation.toolTitle;
   const { title: toolName, args: argLabels } = toolCallLabels(tools, {
@@ -808,6 +606,63 @@ export function DecisionCard({
     toolTitle,
     argLabels: confirmation.argLabels,
   });
+  const thirdAnswer =
+    brief === null && record === null && allowsInConversation(confirmation);
+  const outcome =
+    record === null
+      ? (allowedOutcomeOf({ t: tAgents, format, confirmation, toolName }) ??
+        outcomeOf(tAgents, confirmation, brief !== null, format))
+      : recordOutcomeOf(
+          { t: tAgents, tChat, format },
+          confirmation,
+          record,
+          saved,
+        );
+  const { pressed, busy, failed, containerRef, decide, clearFailure } =
+    useDecisionSend<Pressed>({
+      onDecide,
+      decided: outcome !== null,
+    });
+  const [emptyQuestion, setEmptyQuestion] = useState(false);
+  const { draft, setDraft, fieldRef, editButtonRef, start, cancel, onKeyDown } =
+    useCardEdit<BriefText>({
+      busy,
+      onCancel: () => {
+        clearFailure();
+        setEmptyQuestion(false);
+      },
+    });
+  const editing = draft !== null && outcome === null;
+  const fieldId = useId();
+
+  const launchDecision = (text: BriefText): DecisionRequest =>
+    brief === null
+      ? APPROVE
+      : {
+          approve: true,
+          args: { deepAgent: brief.deepAgent, ...pickText(text) },
+        };
+
+  const startEdit = (): void => {
+    if (brief === null) return;
+    clearFailure();
+    start(brief.text);
+  };
+  const changeField = (field: BriefField, value: string): void => {
+    setDraft((current) =>
+      current === null ? null : { ...current, [field]: value },
+    );
+    if (field === 'question') setEmptyQuestion(false);
+  };
+  const launchEdited = (): void => {
+    if (busy || draft === null) return;
+    // State «Пустой вопрос»: the request must not go out.
+    const empty = draft.question.trim() === '';
+    setEmptyQuestion(empty);
+    if (empty) return;
+    void decide('launchEdited', launchDecision(draft));
+  };
+
   const runCode = brief === null ? runCodeView(confirmation, tools) : null;
   const canCall = canCallOf(confirmation);
   const recordHeadingText =
@@ -855,14 +710,14 @@ export function DecisionCard({
             variant={record.action === 'delete' ? 'destructive' : 'default'}
             pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide('approve', true)}
+            onClick={() => void decide('approve', APPROVE)}
           />
           <DecisionButton
             label={tAgents('decision.reject')}
             variant="outline"
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
@@ -870,34 +725,18 @@ export function DecisionCard({
   } else if (brief === null) {
     body = (
       <>
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p className="text-foreground text-sm leading-5">
-            {byChat
+        <CardSource
+          confirmation={confirmation}
+          byChat={byChat}
+          phrase={(link) =>
+            byChat
               ? tAgents('decision.byChat')
               : tAgents.rich('decision.byAgent', {
                   description: confirmation.description,
-                  link: (chunks) => (
-                    <Link
-                      href={agentPath(confirmation.agentId)}
-                      className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
-                    >
-                      {chunks}
-                    </Link>
-                  ),
-                })}
-          </p>
-          {/* RN-04: the asking agent's record; the chat's own request has none. */}
-          {!byChat && confirmation.origin !== null && (
-            <RecordLabel
-              origin={{
-                ...confirmation.origin,
-                name: builtinName(confirmation.origin, locale),
-              }}
-              variant="under"
-              href={recordPath(confirmation.origin.recordId)}
-            />
-          )}
-        </div>
+                  link,
+                })
+          }
+        />
         <div className="flex min-w-0 flex-col">
           <p className="flex min-w-0 items-baseline gap-1.5">
             <span className="text-foreground min-w-0 text-sm leading-5 font-medium break-words">
@@ -926,6 +765,7 @@ export function DecisionCard({
       </>
     );
     if (outcome === null) {
+      // IM-04: with the third answer «Отклонить» steps down to `ghost`, «Подтвердить» stays the default.
       actions = (
         <>
           <DecisionButton
@@ -933,28 +773,37 @@ export function DecisionCard({
             variant="default"
             pressed={pressed === 'approve'}
             busy={busy}
-            onClick={() => void decide('approve', true)}
+            onClick={() => void decide('approve', APPROVE)}
           />
+          {thirdAnswer && (
+            <DecisionButton
+              label={tAgents('decision.allowInConversation')}
+              variant="outline"
+              pressed={pressed === 'allow'}
+              busy={busy}
+              onClick={() => void decide('allow', ALLOW_IN_CONVERSATION)}
+            />
+          )}
           <DecisionButton
             label={tAgents('decision.reject')}
-            variant="outline"
+            variant={thirdAnswer ? 'ghost' : 'outline'}
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
     }
-  } else if (editing && edit.draft !== null) {
-    const values = edit.draft;
+  } else if (editing && draft !== null) {
+    const values = draft;
     const errorId = `${fieldId}-question-error`;
     body = (
       <>
         <BriefHeading deepAgentName={brief.deepAgent} />
-        <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
+        <div className="flex flex-col gap-2" onKeyDown={onKeyDown}>
           {BRIEF_PARTS.map((field) => {
             const id = `${fieldId}-${field}`;
-            const invalid = field === 'question' && edit.emptyQuestion;
+            const invalid = field === 'question' && emptyQuestion;
             return (
               <div key={field} className="flex flex-col gap-1">
                 <label
@@ -965,12 +814,12 @@ export function DecisionCard({
                 </label>
                 <Textarea
                   id={id}
-                  ref={field === 'question' ? questionRef : undefined}
+                  ref={field === 'question' ? fieldRef : undefined}
                   value={values[field]}
                   disabled={busy}
                   aria-invalid={invalid || undefined}
                   aria-describedby={invalid ? errorId : undefined}
-                  onChange={(event) => edit.change(field, event.target.value)}
+                  onChange={(event) => changeField(field, event.target.value)}
                   className="min-h-0 text-sm leading-5 md:text-sm"
                 />
                 {invalid && (
@@ -1001,7 +850,7 @@ export function DecisionCard({
           variant="outline"
           pressed={false}
           busy={busy}
-          onClick={cancelEdit}
+          onClick={cancel}
         />
       </>
     );
@@ -1031,7 +880,7 @@ export function DecisionCard({
             variant="default"
             pressed={pressed === 'launch'}
             busy={busy}
-            onClick={() => void decide('launch', true, briefArgs(brief.text))}
+            onClick={() => void decide('launch', launchDecision(brief.text))}
           />
           <DecisionButton
             label={tAgents('decision.edit')}
@@ -1048,7 +897,7 @@ export function DecisionCard({
             variant="ghost"
             pressed={pressed === 'reject'}
             busy={busy}
-            onClick={() => void decide('reject', false)}
+            onClick={() => void decide('reject', REJECT)}
           />
         </>
       );
@@ -1077,8 +926,10 @@ export function DecisionCard({
         <div
           className={cn(
             'flex flex-wrap items-center gap-2',
-            // A record's buttons stand in a full-width column below 480 px (decision-card.md, Sizes).
-            record !== null && 'max-[30rem]:flex-col max-[30rem]:items-stretch',
+            // A record's buttons, and the three answers, stand in a full-width column below 480 px
+            // (decision-card.md, Sizes; UXRD Responsive «Карточка IM-04»).
+            (record !== null || thirdAnswer) &&
+              'max-[30rem]:flex-col max-[30rem]:items-stretch',
           )}
         >
           {actions}

@@ -20,8 +20,12 @@ export function fieldPath(
   return part.path === '' ? field : `${part.path}.${field}`;
 }
 
-/** Every model of the content with its servers: an agent's one, a deep agent's own and its subagents'. */
+/**
+ * Every model of the content with its servers: an agent's one, a deep agent's own and its subagents'; a skill
+ * has none.
+ */
 export function contentParts(body: RecordBody): ContentPart[] {
+  if (body.kind === 'skill') return [];
   const { servers, model } = body.content;
   const own: ContentPart = { subagent: null, path: '', servers, model };
   if (body.kind === 'agent') return [own];
@@ -34,6 +38,11 @@ export function contentParts(body: RecordBody): ContentPart[] {
       model: subagent.model,
     })),
   ];
+}
+
+/** The skill records an agent's or a deep agent's version holds; a skill holds none. */
+export function contentSkills(body: RecordBody): readonly string[] {
+  return body.kind === 'skill' ? [] : body.content.skills;
 }
 
 /** Names are unique without regard to case, as the unique indexes compare `lower(name)` (DC-8). */

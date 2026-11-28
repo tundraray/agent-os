@@ -1,5 +1,6 @@
 import {
   AgentFailureReasonSchema,
+  type AttentionEvent,
   type ChipRecord,
   HistoryEventSchema,
 } from '@agent-os/contracts';
@@ -7,6 +8,7 @@ import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
+import { signalConversation } from '../conversation-signal';
 import type { HistoryEntry } from '../history/history';
 import {
   modelDeniedEntry,
@@ -17,6 +19,7 @@ import {
 import type { AgentTurnMessage } from '../model/mastra-turn';
 import { buildProviderMessages } from '../model/provider-messages';
 import type { NewHistoryEntry } from '../store/history';
+import type { Session } from '../store/sessions';
 import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
 import { agentOwner } from './agent-owner';
@@ -78,13 +81,18 @@ function withChipLines(entries: readonly HistoryEntry[]): HistoryEntry[] {
   });
 }
 
-/** The provider messages of a step: the history read, then the entries not written yet (`shown`). */
+/**
+ * The provider messages of a step: the history read, then the entries not written yet (`shown`);
+ * `toolResultPreviewChars` — the compaction with the overflow mark shows long tool results by their start (KD-5).
+ */
 export function providerMessagesOf(
   view: SessionHistory,
   shown: readonly HistoryEntry[],
+  toolResultPreviewChars?: number,
 ): AgentTurnMessage[] {
   const { forkPrefix } = view;
   return buildProviderMessages({
+    ...(toolResultPreviewChars === undefined ? {} : { toolResultPreviewChars }),
     ...(forkPrefix === undefined
       ? {}
       : {
@@ -106,12 +114,36 @@ function failedEvent(reason: string): NewHistoryEntry {
 }
 
 /**
+ * Sends an `attention` event about the step's conversation to its owner (live-feed design-server.md KD-4); called in
+ * the step's commit, so a repeated step gives one event — from the commit that succeeded. The conversation is the
+ * tree's root, whatever agent of the tree commits.
+ */
+export async function signalAttention(
+  deps: Pick<AgentDeps, 'signals'>,
+  ctx: StepContext,
+  event: AttentionEvent,
+): Promise<void> {
+  const ownerId = agentOwner(ctx);
+  await signalConversation(deps.signals, {
+    ownerId,
+    event: { type: 'attention', data: { threadId: ctx.rootId, event } },
+  });
+  ctx.logger.info('attention event sent in the step commit', {
+    agentId: ctx.taskId,
+    rootId: ctx.rootId,
+    ownerId,
+    stepNo: ctx.stepNo,
+    event,
+  });
+}
+
+/**
  * A failure of the agent itself (DC-1): the step's entries, then the `failed` event with the reason;
  * the session is closed and its turn counter reset. The model sees the delivered messages after a
- * continuation (KD-1).
+ * continuation (KD-1). A root's failure also sends `attention` `failure` (live-feed KD-4).
  */
 export function failResult(input: {
-  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'signals'>;
   readonly ctx: StepContext;
   readonly reason: string;
   readonly message: string;
@@ -133,6 +165,58 @@ export function failResult(input: {
         ...input.patch,
         turns: 0,
         closed: true,
+        overflowed: false,
+      });
+      if (ctx.parentId === null) await signalAttention(deps, ctx, 'failure');
+    },
+  };
+}
+
+/**
+ * The first provider overflow of a model or compaction call (runtime-fixes design-steps.md, KD-5, Flow 2): the commit
+ * writes what the step owes, sets the session's overflow mark and raises `last_input_tokens` to the compaction
+ * threshold when it is below, so the next step compacts by `compactionDue`; no turn is counted, the step continues.
+ */
+export function overflowResult(input: {
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'compactAtTokens'>;
+  readonly ctx: StepContext;
+  readonly stepKind: string;
+  readonly startedAt: number;
+  readonly session: Pick<Session, 'model' | 'lastInputTokens'>;
+  /** Writes the entries the step still owes and returns them. */
+  readonly writeEntries: () => Promise<readonly NewHistoryEntry[]>;
+  readonly patch: SessionPatch;
+}): StepResult {
+  const { deps, ctx, session } = input;
+  const lastInputTokens = Math.max(
+    session.lastInputTokens ?? 0,
+    deps.compactAtTokens,
+  );
+  ctx.logger.warn(
+    'model context overflow: the next step compacts with tool result previews',
+    {
+      stepKind: input.stepKind,
+      agentId: ctx.taskId,
+      rootId: ctx.rootId,
+      ownerId: ctx.ownerId,
+      stepNo: ctx.stepNo,
+      model: session.model,
+      lastInputTokens: session.lastInputTokens,
+      compactAtTokens: deps.compactAtTokens,
+    },
+  );
+  logStep(ctx, input.stepKind, input.startedAt, 'continue', {
+    reason: FAILURE_REASONS.context_overflow,
+    overflowMarked: true,
+  });
+  return {
+    outcome: 'continue',
+    commit: async () => {
+      await deps.history.append(ctx.taskId, await input.writeEntries());
+      await deps.sessionRows.update(ctx.taskId, {
+        ...input.patch,
+        overflowed: true,
+        lastInputTokens,
       });
     },
   };
@@ -144,7 +228,7 @@ export function failResult(input: {
  * written to the audit first (KD-6, plan Notes 3): a failing hook rejects, and the runtime repeats the step.
  */
 export async function refusedResult(input: {
-  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'signals'>;
   readonly ctx: StepContext;
   readonly stepKind: string;
   readonly startedAt: number;
@@ -218,18 +302,29 @@ export async function callUnlessAborted<T>(
 
 /** The blocks of a step's system text, each `null` when empty (step-prompt-block.md). */
 interface StepBlocks {
+  /** The administrator's instruction (agent-guidance KD-3); the compaction step passes `null`. */
+  readonly organisation: string | null;
+  /** The task owner's instruction; the compaction step passes `null`. */
+  readonly personal: string | null;
   readonly memory: string | null;
   readonly tasks: string | null;
 }
 
 /**
- * The system text of a step (step-prompt-block.md; self-learning design-memory.md KD-3): the definition's prompt,
- * then each block after an empty line in a fixed order — memory, then the tasks — so the start of the text stays the
- * same from step to step. The model step and the compaction step both build their `instructions` here, so a
- * compaction call carries the same text as the model call. No block — the prompt unchanged, byte for byte.
+ * The system text of a step (step-prompt-block.md; self-learning design-memory.md KD-3; agent-guidance KD-3): the
+ * definition's prompt, then each block after an empty line in a fixed order, from the most constant to the most
+ * live — the organisation's instruction, the owner's instruction, memory, then the tasks — so the start of the
+ * text stays the same from step to step. The model step and the compaction step both build their `instructions`
+ * here; the compaction passes no instruction. No block — the prompt unchanged, byte for byte.
  */
 export function withStepBlocks(prompt: string, blocks: StepBlocks): string {
-  return [prompt, blocks.memory, blocks.tasks]
+  return [
+    prompt,
+    blocks.organisation,
+    blocks.personal,
+    blocks.memory,
+    blocks.tasks,
+  ]
     .filter((part) => part !== null)
     .join('\n\n');
 }

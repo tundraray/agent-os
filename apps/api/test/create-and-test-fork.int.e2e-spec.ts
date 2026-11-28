@@ -1,6 +1,7 @@
 // create-and-test / fork - API integration (real AppModule + real Postgres + MCP fixture process, workers on, scripted model)
 // Design Doc: docs/features/create-and-test/design-fork.md, Test Strategy UC-1 (a complete and independent copy), UC-2 (the last answer
-//   and the inherited mark; an inherited open call), UC-3 (only the owner forks), UC-4 (the four refusals).
+//   and the inherited mark; an inherited open call), UC-3 (only the owner forks), UC-4 (the four refusals); and
+//   docs/features/improvements/design-server.md, Test Strategy UC-10 (a fork through a message and an edit).
 //
 // Harness: one `createTestApp({ workers: true, mcpServers: ['logs', 'backoffice'] })`. The chat is scripted by the employee's messages;
 //   `search_logs` answers oversized (fixture fault `oversize`), so its result is stored and read back with `read_tool_result`. The
@@ -561,6 +562,210 @@ describe('create-and-test / fork - a conversation forks into an independent copy
       held.open();
       childHeld.open();
       await api.stopAgent(testRunId);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // improvements design-server.md UC-10 (AC-05.1, AC-05.2, NFR-02; KD-6, Flow 3).
+  // Catches: a boundary moved off the named message; an edit's fork made without its message, or not answered; a fork made while
+  //   the tree is busy; the task list copied past the boundary; a boundary on a non-message (or both fields) accepted; another
+  //   employee's conversation forked through a message.
+  it(
+    'FK-5: a fork through a message inherits through it; an edit forks before the message and answers the edited text (also of the first and of a message delivered mid-turn); busy -> 409, not a message -> 400, foreign -> 404',
+    async () => {
+      const owner = await employee();
+      const api = chatApi(harness.app, owner);
+      const [first, second, third] = [
+        'UC-10: what failed yesterday?',
+        'UC-10: plan the review',
+        'UC-10: sum it up',
+      ];
+      harness.model.script({ task: second }, [
+        {
+          calls: [
+            call('task_create', {
+              subject: 'Review the failures',
+              description: 'Read every failure',
+            }),
+          ],
+        },
+        { text: 'Planned.' },
+      ]);
+      harness.model.script({ task: third }, [{ text: 'Timeouts.' }]);
+      const sourceId = await conversation(api, first, 'Two payments failed.');
+      await ask(api, sourceId, second, 'Planned.');
+      const source = await ask(api, sourceId, third, 'Timeouts.');
+      const secondSeq = source.entries.find(
+        (entry) =>
+          entry.kind === 'user_message' && entry.content.text === second,
+      )?.seq;
+      if (secondSeq === undefined) throw new Error('no second message');
+      const { tasks: sourceTasks } = await expectBody(
+        api.raw('get', `/agents/${sourceId}/tasks`),
+        200,
+        AgentTasksViewSchema,
+      );
+      expect(sourceTasks.map((task) => task.subject)).toEqual([
+        'Review the failures',
+      ]);
+      const modelCalls = harness.model.calls.length;
+
+      // When: an aside through the third message; Then: three messages and the forked event, no model call, no task list
+      const aside = await expectBody(
+        api.raw('post', `/threads/${sourceId}/fork`, { throughSeq: secondSeq }),
+        201,
+        ThreadSummarySchema,
+      );
+      expect(aside.forkedFrom).toEqual({
+        threadId: sourceId,
+        title: GENERATED_TITLE,
+        throughSeq: secondSeq,
+      });
+      const asideView = await api.history(aside.id);
+      expect(asideView.chat.status).toBe('idle');
+      expect(linesOf(asideView)).toEqual([
+        `task: ${first}`,
+        'model_answer: Two payments failed. []',
+        `user_message: ${second}`,
+        'event: forked',
+      ]);
+      expect(harness.model.calls).toHaveLength(modelCalls);
+      const { tasks: asideTasks } = await expectBody(
+        api.raw('get', `/agents/${aside.id}/tasks`),
+        200,
+        AgentTasksViewSchema,
+      );
+      expect(asideTasks).toEqual([]);
+
+      // When: the first message is edited; Then: the fork starts with the edited text and answers it, through 0
+      const editedFirst = 'UC-10: what failed last week?';
+      harness.model.script({ task: editedFirst }, [
+        { text: 'Five payments failed.' },
+      ]);
+      const editFirst = await expectBody(
+        api.raw('post', `/threads/${sourceId}/fork`, {
+          edit: { seq: 1, text: editedFirst },
+        }),
+        201,
+        ThreadSummarySchema,
+      );
+      expect(editFirst.forkedFrom).toMatchObject({
+        threadId: sourceId,
+        throughSeq: 0,
+      });
+      expect(
+        linesOf(
+          await untilAnswered(api, editFirst.id, 'Five payments failed.'),
+        ),
+      ).toEqual([
+        `task: ${editedFirst}`,
+        'model_answer: Five payments failed. []',
+      ]);
+
+      // A conversation whose second message is delivered mid-turn, after the result of the call in flight
+      const looked = 'UC-10: look at the logs';
+      const added = 'UC-10: and the refunds';
+      const held = createLatch();
+      const looking = harness.model.script({ task: looked }, [
+        { latch: held, calls: [call(SEARCH_LOGS, LOG_ARGS)] },
+      ]);
+      harness.model.script({ task: added }, [{ text: 'Logs and refunds.' }]);
+      const { id: midTurnId } = await api.createThread();
+      await api.send(midTurnId, looked);
+      await looking.called(1);
+
+      // When: it is forked while the chat answers; Then: 409 answering
+      const busy = await expectError(
+        api.raw('post', `/threads/${midTurnId}/fork`, { throughSeq: 1 }),
+        409,
+      );
+      expect(busy).toMatchObject({
+        errorCode: 'FORK_REFUSED',
+        reason: 'answering',
+      });
+
+      await api.send(midTurnId, added);
+      held.open();
+      const midTurn = await untilAnswered(api, midTurnId, 'Logs and refunds.');
+      const addedIndex = midTurn.entries.findIndex(
+        (entry) =>
+          entry.kind === 'user_message' && entry.content.text === added,
+      );
+      expect(midTurn.entries[addedIndex - 1]?.kind).toBe('tool_result');
+      const callingAnswer = midTurn.entries.find(
+        (entry) =>
+          entry.kind === 'model_answer' && entry.content.toolCalls.length > 0,
+      );
+      if (callingAnswer === undefined) throw new Error('no answer with calls');
+
+      // When: the employee edits the mid-turn message; Then: everything before it, the forked event, the edited text, its answer
+      const editedAdded = 'UC-10: and the chargebacks';
+      harness.model.script({ task: editedAdded }, [
+        { text: 'Logs and chargebacks.' },
+      ]);
+      const editMid = await expectBody(
+        api.raw('post', `/threads/${midTurnId}/fork`, {
+          edit: { seq: midTurn.entries[addedIndex]!.seq, text: editedAdded },
+        }),
+        201,
+        ThreadSummarySchema,
+      );
+      expect(editMid.forkedFrom?.throughSeq).toBe(
+        midTurn.entries[addedIndex]!.seq - 1,
+      );
+      expect(
+        linesOf(await untilAnswered(api, editMid.id, 'Logs and chargebacks.')),
+      ).toEqual([
+        ...linesOf(midTurn).slice(0, addedIndex),
+        'event: forked',
+        `user_message: ${editedAdded}`,
+        'model_answer: Logs and chargebacks. []',
+      ]);
+      expect((await api.history(midTurnId)).entries).toEqual(midTurn.entries);
+
+      // When: a boundary on no message it may end at, or both fields; Then: 400, nothing made
+      const threadsBefore = (await api.listThreads()).threads.map(
+        (one) => one.id,
+      );
+      for (const body of [
+        { throughSeq: callingAnswer.seq },
+        { throughSeq: midTurn.entries[addedIndex - 1]!.seq },
+        { throughSeq: 10_000 },
+        { edit: { seq: callingAnswer.seq, text: editedAdded } },
+        { throughSeq: 1, edit: { seq: 1, text: editedAdded } },
+      ])
+        expect(
+          (
+            await expectError(
+              api.raw('post', `/threads/${midTurnId}/fork`, body),
+              400,
+            )
+          ).errorCode,
+        ).toBe('VALIDATION_FAILED');
+      expect((await api.listThreads()).threads.map((one) => one.id)).toEqual(
+        threadsBefore,
+      );
+      expect(await forksOf(api, midTurnId)).toEqual([editMid.id]);
+
+      // Then: the source did not change
+      expect((await api.history(sourceId)).entries).toEqual(source.entries);
+
+      // When: another employee forks the owner's conversation through a message; Then: 404, nothing made
+      const other = chatApi(harness.app, await employee());
+      expect(
+        (
+          await expectError(
+            other.raw('post', `/threads/${sourceId}/fork`, {
+              throughSeq: secondSeq,
+            }),
+            404,
+          )
+        ).errorCode,
+      ).toBe('THREAD_NOT_FOUND');
+      expect((await other.listThreads()).threads).toEqual([]);
+      expect([...(await forksOf(api, sourceId))].sort()).toEqual(
+        [aside.id, editFirst.id].sort(),
+      );
     },
     TEST_TIMEOUT_MS,
   );

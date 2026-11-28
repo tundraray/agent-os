@@ -139,5 +139,28 @@
     "args": { "document": "Document", "offset": "From line", "limit": "Lines" }
   },
   "notepad_list": { "title": "Notepad documents", "args": {} },
-  "notepad_past": { "title": "Past documents", "args": {} }
+  "notepad_past": { "title": "Past documents", "args": {} },
+  "ask_user": {
+    "title": "Question to the employee",
+    "args": { "questions": "Questions" }
+  },
+  "read_skill": { "title": "Reading a skill", "args": { "name": "Skill" } },
+  "set_personal_instructions": {
+    "title": "Personal instruction",
+    "args": { "text": "Text" }
+  },
+  "list_schedules": { "title": "Schedule list", "args": {} },
+  "manage_schedule": {
+    "title": "Schedule",
+    "args": {
+      "action": "Action",
+      "scheduleId": "Schedule",
+      "name": "Name",
+      "instruction": "Instruction",
+      "agentId": "Agent",
+      "rule": "When",
+      "target": "Reply",
+      "timeZone": "Time zone"
+    }
+  }
 }

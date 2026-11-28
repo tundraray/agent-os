@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BuiltinKeySchema,
+  BuiltinRoleKindSchema,
   CALL_RECORD_KINDS,
   GrantEffectSchema,
   GrantTargetKindSchema,
@@ -31,6 +32,7 @@ import {
   MemoryVersionKindSchema,
   ModelProviderKindSchema,
   ModelPurposeSchema,
+  NotificationLevelSchema,
   ProviderTypeSchema,
   RecordKindSchema,
   ScheduleStateSchema,
@@ -38,6 +40,7 @@ import {
   SessionTaskStatusSchema,
   SettingsKeySchema,
   TaskStatusSchema,
+  ThemeIdSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -81,8 +84,12 @@ const APP_TABLES = [
   'runtime_tasks',
   'schedule_runs',
   'schedules',
+  'send_keys',
   'settings',
   'tool_results',
+  'tracker_task_conversations',
+  'tracker_task_events',
+  'tracker_tasks',
   'trainings',
 ];
 
@@ -246,7 +253,17 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         ),
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_users_language_check: sorted(LanguageSchema.options),
+        identity_users_theme_check: sorted(ThemeIdSchema.options),
+        identity_users_notification_level_check: sorted(
+          NotificationLevelSchema.options,
+        ),
+        conversations_notification_level_check: sorted(
+          NotificationLevelSchema.options,
+        ),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
+        identity_roles_builtin_kind_check: sorted(
+          BuiltinRoleKindSchema.options,
+        ),
         mcp_servers_mode_check: sorted(McpServerModeSchema.options),
         model_providers_kind_check: sorted(ModelProviderKindSchema.options),
         models_purpose_check: sorted(ModelPurposeSchema.options),

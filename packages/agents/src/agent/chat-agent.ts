@@ -1,4 +1,9 @@
 import type { Logger } from '@agent-os/common';
+import {
+  ASK_USER_TOOL,
+  READ_SKILL_TOOL,
+  TRACKER_REPORT_TOOL,
+} from '@agent-os/contracts';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 
 import {
@@ -9,7 +14,7 @@ import {
 import type { ToolDeclaration } from '../tools/tool';
 import type { AgentDeps } from './agent-deps';
 import type { AgentRun } from './agent-state';
-import { BaseAgent } from './base-agent';
+import { BaseAgent, withSkillCatalogue } from './base-agent';
 import { chatTurns } from './deliver';
 import type { TurnEnd } from './model-step';
 import { agentOwner } from './agent-owner';
@@ -40,18 +45,34 @@ export class ChatAgent extends BaseAgent {
   }
 
   /**
+   * `ask_user`, and the skills its listing offers whatever its version lists (agent-guidance KD-1, KD-7); in a
+   * conversation a tracker delegation opened, `tracker_report` too (task-tracker KD-4).
+   */
+  protected override get kindTools(): readonly string[] {
+    return [
+      ASK_USER_TOOL,
+      READ_SKILL_TOOL,
+      ...(this.input.trackerTask === true ? [TRACKER_REPORT_TOOL] : []),
+    ];
+  }
+
+  /**
    * The model call's declaration lists whom the chat may start as the employee's library is now: the agents
-   * for `start_agent`, the deep agents for `start_deep_agent`. The check of its calls needs no listing.
+   * for `start_agent`, the deep agents for `start_deep_agent` — and the skills it offers for `read_skill`
+   * (agent-guidance KD-7). The check of its calls needs no listing.
    */
   override async offeredDeclaration(
     ctx: StepContext,
   ): Promise<ToolDeclaration> {
     const listing = await this.listing(ctx);
-    return {
-      ...this.declaration,
-      startable: listing.agents,
-      deepAgents: listing.deepAgents,
-    };
+    return withSkillCatalogue(
+      {
+        ...this.declaration,
+        startable: listing.agents,
+        deepAgents: listing.deepAgents,
+      },
+      listing.skills,
+    );
   }
 
   /** The chat listing of the root's owner (KD-4): his `listVisible` and his session counts, read now. */
@@ -75,10 +96,12 @@ export class ChatAgent extends BaseAgent {
         agentId: ctx.taskId,
         visible: headers.length,
         described: listing.described,
-        length: [...listing.agents, ...listing.deepAgents].reduce(
-          (sum, line) => sum + line.length,
-          0,
-        ),
+        skills: listing.skills.length,
+        length: [
+          ...listing.agents,
+          ...listing.deepAgents,
+          ...listing.skills,
+        ].reduce((sum, line) => sum + line.length, 0),
         durationMs: Date.now() - startedAt,
       });
     return listing;

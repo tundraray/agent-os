@@ -2,52 +2,13 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import type {
-  ScheduleRule,
-  ScheduleState,
-  ScheduleView,
-} from '@agent-os/contracts';
-import { useShellServices } from '@/components/shell/shell-actions';
+import type { ScheduleRule, ScheduleState } from '@agent-os/contracts';
 import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import type { SchedulesTranslator } from '@/i18n/catalog';
 import { formats, type Formatter } from '@/i18n/formats';
-import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
 import { DAYS, formatRunTime, utcOffset } from './schedule-rule-field';
 
 /** The pieces the schedules list (SH-04) and a schedule's page (SH-05, SH-06) show alike. */
-
-/** Re-reads by `tree` notes no more often than once a second, like the sidebar's counter. */
-const REREAD_INTERVAL_MS = 1000;
-
-/**
- * design-schedules «Страницы»: while a schedules screen is open it re-reads on every `tree` note of the
- * employee's stream and on every reconnect: a trigger writes into a conversation, and schedules have no event of their own,
- * so a new trigger, the next term and the state after it show without a reload.
- */
-export function useReloadOnAnyTree(reload: () => void): void {
-  const { live } = useShellServices();
-  const reloadRef = useRef(reload);
-  useLayoutEffect(() => {
-    reloadRef.current = reload;
-  });
-  useEffect(() => {
-    // `reload` only starts reads; it never rejects, so the runner never hands a rejection on.
-    const runner = createCoalescedRunner(
-      async () => {
-        reloadRef.current();
-      },
-      { minIntervalMs: REREAD_INTERVAL_MS },
-    );
-    const request = (): void => {
-      void runner.request();
-    };
-    const unsubscribers = [live.onTree(request), live.onReady(request)];
-    return () => {
-      for (const unsubscribe of unsubscribers) unsubscribe();
-      runner.cancel();
-    };
-  }, [live]);
-}
 
 /** How long after a term the screen re-reads: the pass has handled the term by then. */
 const AFTER_TERM_MS = 5000;
@@ -58,7 +19,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
  * Re-reads shortly after the term `nextRunAt` passes: the pass may change a schedule without touching any
- * conversation (it pauses one whose conversation is deleted, or a send is refused), and then no `tree` note comes.
+ * conversation (it pauses one whose conversation is deleted, or a send is refused), and then no live change comes.
  * `read` is the value the term came from: each new read arms the timer again from its own term.
  */
 export function useReloadAfterTerm(
@@ -126,14 +87,6 @@ export function ruleLine(
 /** «Europe/Moscow (UTC+3)»: the zone every time of the schedule is shown in. */
 export function zoneLine(t: SchedulesTranslator, timeZone: string): string {
   return t('ruleLine.zone', { zone: timeZone, offset: utcOffset(timeZone) });
-}
-
-/** The schedule's agent by name; `null` is the chat agent. Names are shown as written. */
-export function agentName(
-  t: SchedulesTranslator,
-  schedule: Pick<ScheduleView, 'agent'>,
-): string {
-  return schedule.agent?.name ?? t('dialog.chatAgent');
 }
 
 /** state-badge «Состояние»: «Активно» — Хорошо, «На паузе» — Выключено, «Выполнено» — Нейтрально. */

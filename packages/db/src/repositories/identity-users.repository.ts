@@ -1,6 +1,8 @@
 import {
   UserStatusSchema,
   type Language,
+  type NotificationLevel,
+  type ThemeId,
   type UserStatus,
 } from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
@@ -92,6 +94,15 @@ export class IdentityUsersRepository {
       .from(identityUsers)
       .where(eq(identityUsers.id, userId));
     return row;
+  }
+
+  /** The employee's personal instruction (agent-guidance KD-4); `undefined` for an unknown employee. */
+  async instructions(userId: string): Promise<string | undefined> {
+    const [row] = await this.db.client
+      .select({ instructions: identityUsers.instructions })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, userId));
+    return row?.instructions;
   }
 
   /** Whether the employee has the admin right now; `false` for an unknown one. */
@@ -194,6 +205,33 @@ export class IdentityUsersRepository {
     await this.db.client
       .update(identityUsers)
       .set({ language })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Records the employee's own theme; null — as in the organisation. */
+  async setTheme(userId: string, theme: ThemeId | null): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ theme })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Replaces the employee's personal instruction (agent-guidance KD-8). */
+  async setInstructions(userId: string, instructions: string): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ instructions })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Records the employee's default notification level. */
+  async setNotificationLevel(
+    userId: string,
+    notificationLevel: NotificationLevel,
+  ): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ notificationLevel })
       .where(eq(identityUsers.id, userId));
   }
 

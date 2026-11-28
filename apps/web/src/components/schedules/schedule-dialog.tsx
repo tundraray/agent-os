@@ -11,27 +11,27 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
-import { BotIcon, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { useStore } from 'zustand';
 import {
   CHAT_MESSAGE_MAX_LENGTH,
   SCHEDULE_NAME_MAX_LENGTH,
   type ChipRecord,
+  type ScheduleAccess,
   type ScheduleBody,
   type ScheduleTarget,
   type ScheduleView,
 } from '@agent-os/contracts';
+import { AgentField } from '@/components/agent-field';
 import {
   AdminRadioField,
-  AdminSelectField,
   AdminTextField,
   CAPTION,
   COMFORT_CONTROL,
   FormError,
 } from '@/components/admin/admin-form';
+import { Checkbox } from '@/components/ui/checkbox';
 import { FieldError } from '@/components/ui/field';
-import { RECORD_KIND_ICON } from '@/components/library/record-label';
 import {
   checkRule,
   defaultRuleDraft,
@@ -42,7 +42,7 @@ import {
   type RuleDraft,
   type RuleError,
 } from '@/components/schedules/schedule-rule-field';
-import { useShellServices } from '@/components/shell/shell-actions';
+import { useChatAgents } from '@/components/assistant-ui/elements/composer-actions';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -52,9 +52,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { builtinName } from '@/i18n/builtin-name';
+import { cn } from 'cn';
 import { describeApiError } from '@/lib/api/api-request';
-import { canUseInChat } from '@/lib/library/record-rules';
 import { logger } from '@/lib/logger';
 import { startTimer } from '@/lib/timer';
 import { schedulePath } from '@/lib/shell-route';
@@ -62,22 +61,14 @@ import { schedulesApi } from '@/lib/schedules/schedules-api';
 import { describeSchedulesError } from '@/lib/schedules/schedules-errors';
 
 /**
- * SH-02: the schedule dialog (settings-form «Форма диалога», comfortable density). A new schedule starts from
- * the message field — its text, its agent chip and its conversation (UXRD KD-1); an edit starts from the saved
- * schedule. The body mounts with the open dialog, so every open starts from those values.
+ * SP-04: the schedule dialog (settings-form «Форма диалога», comfortable density), opened by the pages and by the
+ * schedule card. A new schedule starts empty, with the chat agent, the default rule, the browser's zone and «Только
+ * чтение»; an edit starts from the saved schedule. The body mounts with the open dialog, so every open starts from
+ * those values — and with the consent unticked (chat-scheduling KD-3, KD-5).
  */
 
 export type ScheduleDialogMode =
-  | {
-      kind: 'create';
-      /** The message field's text: the instruction. */
-      text: string;
-      /** The field's record chip; `null` — the chat agent. */
-      agent: ChipRecord | null;
-      /** The open conversation; `null` in a new chat without messages. */
-      conversationId: string | null;
-    }
-  | { kind: 'edit'; schedule: ScheduleView };
+  { kind: 'create' } | { kind: 'edit'; schedule: ScheduleView };
 
 export type ScheduleDialogProps = {
   mode: ScheduleDialogMode;
@@ -105,7 +96,7 @@ export function ScheduleDialog({
       >
         <DialogHeader>
           <DialogTitle className="text-base leading-6 font-semibold">
-            {t(mode.kind === 'create' ? 'createTitle' : 'editTitle')}
+            {t(mode.kind === 'edit' ? 'editTitle' : 'createTitle')}
           </DialogTitle>
         </DialogHeader>
         <ScheduleForm
@@ -120,15 +111,15 @@ export function ScheduleDialog({
   );
 }
 
-/** The value of «Агент чата» in the agent select: record ids are UUIDs, so it never meets one. */
-const CHAT_AGENT = 'chat';
-
 type Values = {
   name: string;
   instruction: string;
-  agentId: string;
+  /** `null` — the chat agent. */
+  agentId: string | null;
   rule: RuleDraft;
+  timeZone: string;
   target: ScheduleTarget;
+  access: ScheduleAccess;
 };
 
 type FieldErrors = {
@@ -138,11 +129,10 @@ type FieldErrors = {
   target?: string;
 };
 
-/** Where the dialog stands: the conversation it answers in, the zone it counts in and its first values. */
+/** Where the dialog stands: the conversation it answers in and its first values. */
 type Start = {
   values: Values;
-  conversation: { id: string; title: string | null; deleted: boolean } | null;
-  timeZone: string;
+  conversation: ScheduleView['conversation'];
   /** The agent the dialog started with, kept as a choice even when the field no longer lists it. */
   agent: ChipRecord | null;
 };
@@ -152,17 +142,15 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
     return {
       values: {
         name: '',
-        instruction: mode.text,
-        agentId: mode.agent?.id ?? CHAT_AGENT,
+        instruction: '',
+        agentId: null,
         rule: defaultRuleDraft(now),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         target: 'new_conversation',
+        access: 'read',
       },
-      conversation:
-        mode.conversationId === null
-          ? null
-          : { id: mode.conversationId, title: null, deleted: false },
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      agent: mode.agent,
+      conversation: null,
+      agent: null,
     };
   }
   const { schedule } = mode;
@@ -170,15 +158,16 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
     values: {
       name: schedule.name,
       instruction: schedule.instruction,
-      agentId: schedule.agent?.id ?? CHAT_AGENT,
+      agentId: schedule.agent?.id ?? null,
       rule: ruleDraftOf(schedule.rule, now),
+      timeZone: schedule.timeZone,
       // A deleted conversation takes no replies, so the dialog opens on the only target that can be saved.
       target: schedule.conversation?.deleted
         ? 'new_conversation'
         : schedule.target,
+      access: schedule.access,
     },
     conversation: schedule.conversation,
-    timeZone: schedule.timeZone,
     agent: schedule.agent,
   };
 }
@@ -193,23 +182,26 @@ function ScheduleForm({
   const t = useTranslations('schedules');
   const tCommon = useTranslations('common');
   const tErrors = useTranslations('errors');
+  const tThread = useTranslations('shell.thread');
   const locale = useLocale();
   const format = useFormatter();
   const router = useRouter();
   const id = useId();
-  const { libraryIndex } = useShellServices();
-  const records = useStore(libraryIndex, (state) => state.records);
+  const chatAgents = useChatAgents();
   const [start] = useState(() => startOf(mode, new Date()));
   const [values, setValues] = useState(start.values);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<ReactNode>(null);
   const [saving, setSaving] = useState(false);
+  /** The consent to «Полный доступ»: never ticked on open, cleared by every new choice of the access (AC-04.3). */
+  const [consent, setConsent] = useState(false);
   /** Grows with every set of field errors shown, so focus moves to the first of them again. */
   const [errorsShown, setErrorsShown] = useState(0);
   /** The reply conversation was deleted while the dialog was open: the server refused it on save. */
   const [conversationGone, setConversationGone] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
+  const consentRef = useRef<HTMLButtonElement>(null);
 
   // Runs after the commit that enables the fields again, so the field can take focus. The radio group carries no
   // invalid mark of its own, so its error focuses the chosen radio.
@@ -222,19 +214,19 @@ function ScheduleForm({
   }, [errorsShown]);
 
   const agents = agentChoices(
-    [...(records?.values() ?? [])].filter(canUseInChat).map((record) => ({
-      id: record.id,
-      kind: record.kind,
-      name: builtinName(record, locale),
-    })),
+    chatAgents.map((agent) => agent.chip),
     start.agent,
   );
   const agentName =
     agents.find((agent) => agent.id === values.agentId)?.name ?? null;
   const conversation = start.conversation;
-  const conversationDeleted =
-    conversationGone || (conversation?.deleted ?? false);
-  const thisConversationClosed = conversation === null || conversationDeleted;
+  // SP-04: the schedule's own conversation is a choice while it is there; a new schedule has none.
+  const replyConversation =
+    conversation === null || conversation.deleted || conversationGone
+      ? null
+      : conversation;
+  /** KD-3: «Полный доступ» without the consent ticked holds the save. */
+  const consentMissing = values.access === 'full' && !consent;
 
   const set = <Key extends keyof Values>(
     key: Key,
@@ -253,6 +245,10 @@ function ScheduleForm({
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (saving) return;
+    if (consentMissing) {
+      consentRef.current?.focus();
+      return;
+    }
     setFormError(null);
     const checked = checkRule(values.rule);
     const instruction = values.instruction.trim();
@@ -267,16 +263,15 @@ function ScheduleForm({
     const body: ScheduleBody = {
       name: values.name.trim(),
       instruction,
-      agentId: values.agentId === CHAT_AGENT ? null : values.agentId,
+      agentId: values.agentId,
       rule: checked.rule,
-      timeZone: start.timeZone,
+      timeZone: values.timeZone,
       target: values.target,
-      // A new schedule is refused for a deleted conversation even when it answers elsewhere; an edit keeps its own.
-      conversationId:
-        mode.kind === 'create' && conversationGone
-          ? null
-          : (conversation?.id ?? null),
+      conversationId: conversation?.id ?? null,
       language: locale,
+      access: values.access,
+      // Only the ticked consent reaches here with `full`: `consentMissing` returned above.
+      ...(values.access === 'full' ? { consent: true } : {}),
     };
     setErrors({});
     setSaving(true);
@@ -316,18 +311,10 @@ function ScheduleForm({
     }
   }
 
-  /**
-   * MC-5: a new schedule names its next run and opens from the notice; an edit says it was saved. A new schedule
-   * comes from a conversation's composer, whose send button the bottom-right corner covers: its notice shows on top.
-   */
+  /** MC-5: a new schedule names its next run and opens from the notice; an edit says it was saved. */
   function notifySaved(saved: ScheduleView): void {
-    if (mode.kind === 'edit') {
+    if (mode.kind === 'edit' || saved.nextRunAt === null) {
       toast.success(t('dialog.saved'));
-      return;
-    }
-    const position = 'top-center';
-    if (saved.nextRunAt === null) {
-      toast.success(t('dialog.saved'), { position });
       return;
     }
     toast.success(
@@ -335,7 +322,6 @@ function ScheduleForm({
         at: formatRunTime(format, saved.nextRunAt, saved.timeZone),
       }),
       {
-        position,
         action: {
           label: t('dialog.open'),
           onClick: () => router.push(schedulePath(saved.id)),
@@ -345,16 +331,7 @@ function ScheduleForm({
   }
 
   const fieldId = (key: string): string => `${id}-${key}`;
-  const thisConversationLabel =
-    conversation?.title == null
-      ? t('dialog.thisConversation')
-      : t('dialog.namedConversation', { title: conversation.title });
-  const thisConversationHint =
-    conversation === null
-      ? t('dialog.noConversationYet')
-      : conversationDeleted
-        ? t('dialog.conversationDeleted')
-        : t('dialog.thisConversationHint');
+  const consentHintId = fieldId('consent-hint');
 
   return (
     <form
@@ -391,34 +368,18 @@ function ScheduleForm({
             error={errors.instruction}
             onChange={(instruction) => set('instruction', instruction)}
           />
-          <AdminSelectField
+          <AgentField
             id={fieldId('agent')}
-            density="comfortable"
-            label={t('dialog.agent')}
+            agents={agents}
             value={values.agentId}
-            options={[
-              { id: CHAT_AGENT, name: t('dialog.chatAgent'), icon: BotIcon },
-              ...agents.map((agent) => ({
-                ...agent,
-                icon: RECORD_KIND_ICON[agent.kind],
-              })),
-            ].map(({ id: value, name, icon: Icon }) => ({
-              value,
-              label: name,
-              content: (
-                <>
-                  <Icon aria-hidden className="text-muted-foreground" />
-                  {name}
-                </>
-              ),
-            }))}
             error={errors.agent}
             onChange={(agentId) => set('agentId', agentId)}
           />
           <ScheduleRuleField
             draft={values.rule}
             onChange={(rule) => set('rule', rule)}
-            timeZone={start.timeZone}
+            timeZone={values.timeZone}
+            onTimeZoneChange={(timeZone) => set('timeZone', timeZone)}
             error={errors.rule ?? null}
             disabled={saving}
           />
@@ -432,24 +393,75 @@ function ScheduleForm({
                 {
                   value: 'new_conversation',
                   label: t('dialog.newConversation'),
-                  hint: t('dialog.newConversationHint'),
+                  hint: t(
+                    replyConversation === null
+                      ? 'dialog.onlyNewConversationHint'
+                      : 'dialog.newConversationHint',
+                  ),
                   disabled: saving,
                 },
-                {
-                  value: 'this_conversation',
-                  label: thisConversationLabel,
-                  hint: thisConversationHint,
-                  disabled: saving || thisConversationClosed,
-                },
+                ...(replyConversation === null
+                  ? []
+                  : [
+                      {
+                        value: 'this_conversation' as const,
+                        label: t('dialog.namedConversation', {
+                          title:
+                            replyConversation.title.trim() === ''
+                              ? tThread('untitled')
+                              : replyConversation.title,
+                        }),
+                        hint: t('dialog.thisConversationHint'),
+                        disabled: saving,
+                      },
+                    ]),
               ]}
             />
             <FieldError className={CAPTION}>{errors.target}</FieldError>
           </div>
+          <AdminRadioField
+            density="comfortable"
+            label={t('dialog.access.label')}
+            value={values.access}
+            onChange={(access) => {
+              set('access', access);
+              setConsent(false);
+            }}
+            options={(['read', 'full'] as const).map((access) => ({
+              value: access,
+              label: t(`dialog.access.${access}`),
+              hint: t(`dialog.access.${access}Hint`),
+              disabled: saving,
+            }))}
+          />
+          {values.access === 'full' && (
+            <label className="flex animate-in items-start gap-2 rounded-md border border-border bg-card p-2 text-sm leading-5 text-foreground fade-in-0 duration-(--duration-fast) motion-reduce:animate-none">
+              <Checkbox
+                ref={consentRef}
+                checked={consent}
+                onCheckedChange={setConsent}
+                disabled={saving}
+                className="mt-0.5 pointer-coarse:after:-inset-3.5"
+              />
+              <span>{t('dialog.access.consent')}</span>
+            </label>
+          )}
         </fieldset>
       </div>
       {formError !== null && <FormError>{formError}</FormError>}
+      {consentMissing && (
+        <p id={consentHintId} className={cn(CAPTION, 'text-muted-foreground')}>
+          {t('dialog.access.consentHint')}
+        </p>
+      )}
       <DialogFooter className="sm:justify-start">
-        <Button type="submit" className={COMFORT_CONTROL} disabled={saving}>
+        <Button
+          type="submit"
+          className={cn(COMFORT_CONTROL, 'aria-disabled:opacity-50')}
+          disabled={saving}
+          aria-disabled={consentMissing || undefined}
+          aria-describedby={consentMissing ? consentHintId : undefined}
+        >
           {saving && (
             <LoaderCircle
               className="animate-spin motion-reduce:animate-none"
@@ -458,7 +470,7 @@ function ScheduleForm({
           )}
           {saving
             ? tCommon('saving')
-            : t(mode.kind === 'create' ? 'dialog.create' : 'dialog.save')}
+            : t(mode.kind === 'edit' ? 'dialog.save' : 'dialog.create')}
         </Button>
         <DialogClose
           render={

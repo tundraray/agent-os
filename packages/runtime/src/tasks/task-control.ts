@@ -40,8 +40,9 @@ import {
   writeHeld,
 } from './task-end';
 import { TaskEndHooks } from './task-end-hooks';
+import { TaskInterruptHooks } from './task-interrupt-hooks';
 import { Tasks } from './tasks';
-import { withTxRetry } from './transaction-retry';
+import { inSavepoint, withTxRetry } from './transaction-retry';
 
 const { queued, running, waiting } = TaskStatusSchema.enum;
 
@@ -112,6 +113,8 @@ interface TaskControlDeps extends TaskEndDeps {
   running: RunningTaskRegistry;
   /** Objects of the tasks of live types: a cut-off task's object is let go. */
   live: LiveTasks;
+  /** The upper layer's hook of an interrupt, called after the fence (runtime-fixes KD-1). */
+  interruptHooks: TaskInterruptHooks;
   /** `INBOX_PAYLOAD_MAX_BYTES`: bound of an interrupt message's payload and of an answer. */
   inboxPayloadMaxBytes: number;
 }
@@ -168,6 +171,7 @@ export class TaskControl {
     @Inject(TaskEndHooks) endHooks: TaskEndHooks,
     @Inject(RunningTaskRegistry) running: RunningTaskRegistry,
     @Inject(LiveTasks) live: LiveTasks,
+    @Inject(TaskInterruptHooks) interruptHooks: TaskInterruptHooks,
     @Inject(RUNTIME_LOGGER) logger: Logger,
     @Inject(RUNTIME_CONFIG) config: RuntimeConfig,
   ) {
@@ -180,6 +184,7 @@ export class TaskControl {
       endHooks,
       running,
       live,
+      interruptHooks,
       logger,
       inboxPayloadMaxBytes: config.inboxPayloadMaxBytes,
     };
@@ -257,7 +262,9 @@ export class TaskControl {
 
   /**
    * Interrupts a `queued`, `running` or `waiting(messages)` task: it becomes `queued` with
-   * `attempt + 1` and `recoveries = 0`, and the message goes into its queue. A finished task or one
+   * `attempt + 1` and `recoveries = 0`, the message goes into its queue, and then the interrupt hook
+   * runs in the same transaction (runtime-fixes KD-1). The step in flight is cut off after the commit,
+   * without waiting for it. A finished task or one
    * waiting for its children or a human gives `not_active` and changes nothing. `TASK_NOT_FOUND` for a missing or
    * another owner's task, `PAYLOAD_TOO_LARGE` for a message over `INBOX_PAYLOAD_MAX_BYTES`.
    */
@@ -574,7 +581,35 @@ export class TaskControl {
       payload: message.payload,
       revive: message.revive ?? false,
     });
+    await this.runInterruptHook(inserted.recipient);
     return { task: inserted.recipient, from, messageId: inserted.messageId };
+  }
+
+  /**
+   * The interrupt hook on the fenced task, in its own savepoint (runtime-fixes KD-1): a hook that throws
+   * rolls back only its writes and is logged, and the interrupt goes on; an error after which the
+   * transaction cannot go on is thrown, so the whole interrupt is repeated.
+   */
+  private async runInterruptHook(task: RuntimeTaskRow): Promise<void> {
+    const { db, interruptHooks, logger } = this.deps;
+    const registered = interruptHooks.current();
+    if (registered === undefined) return;
+    const startedAt = Date.now();
+    const outcome = await inSavepoint(db, () =>
+      registered.hook({
+        taskId: task.taskId,
+        rootId: task.rootId,
+        ownerId: task.ownerId,
+        type: task.type,
+      }),
+    );
+    if (outcome.ok) return;
+    logger.warn('task interrupt hook failed; its writes rolled back', {
+      hook: registered.name,
+      ...taskLogFields(task),
+      durationMs: Date.now() - startedAt,
+      error: outcome.error,
+    });
   }
 
   /** The rules of `inbox.enqueue` for an interrupt's message. */

@@ -60,6 +60,13 @@ export interface StepContext {
    * stopped. `fenced` means nothing was written.
    */
   guard<T>(work: () => Promise<T>): Promise<GuardResult<T>>;
+  /**
+   * As {@link guard}, and the same transaction marks the step's {@link messages} delivered, so a step
+   * repeated after a restart does not get them again (runtime-fixes design-steps.md, «Охраняемая запись
+   * с доставкой»). `fenced` means nothing was written and the messages stay pending; the step's commit
+   * marks them again, which changes nothing.
+   */
+  guardWithDelivery<T>(work: () => Promise<T>): Promise<GuardResult<T>>;
 }
 
 /** A message to put in an inbox, by the rules of `inbox.enqueue`; the owner is the task's. */

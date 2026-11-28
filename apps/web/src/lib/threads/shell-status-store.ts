@@ -1,3 +1,4 @@
+import type { NotificationLevel } from '@agent-os/contracts';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { LibraryErrorContext } from '@/lib/library/library-errors';
 
@@ -5,11 +6,13 @@ export type HistoryStatus =
   'loading' | 'ready' | 'not_found' | 'load_failed' | 'deleted';
 
 /**
- * A message the server did not accept: its text, and the refusal with what the sender knew of it — the
- * composer words the notice under the field in the interface language (`describeLibraryError`).
+ * A message the server did not accept: its text, its send key — the next send from the composer repeats it
+ * (runtime-fixes design-send.md, KD-3) — and the refusal with what the sender knew of it; the composer words the
+ * notice under the field in the interface language (`describeLibraryError`).
  */
 export type SendFailure = {
   text: string;
+  sendKey: string;
   cause: unknown;
   context: LibraryErrorContext;
 };
@@ -32,13 +35,31 @@ export type ShellStatusState = {
    * the new conversation's composer shows this failure until the next send.
    */
   newThreadSendFailure: SendFailure | null;
+  /**
+   * A conversation's notification level saved from this tab, keyed by remoteId, with the level its row was listed
+   * with at the save (live-feed KD-7): the row shows the saved level until the list reads the row anew.
+   */
+  savedLevels: Readonly<Record<string, SavedLevel>>;
   setHistory: (remoteId: string, status: HistoryStatus) => void;
   setLoadMoreFailed: (failed: boolean) => void;
   setTitleWaiting: (remoteId: string, waiting: boolean) => void;
   bumpActivity: (itemId: string, at: number) => void;
   forgetThread: (remoteId: string) => void;
   setNewThreadSendFailure: (failure: SendFailure | null) => void;
+  saveLevel: (remoteId: string, saved: SavedLevel) => void;
 };
+
+export type SavedLevel = {
+  level: NotificationLevel | null;
+  listed: NotificationLevel | null;
+};
+
+/** The row's level: the saved one while the list still shows what it showed at the save, else the listed one. */
+export const rowLevel = (
+  listed: NotificationLevel | null,
+  saved: SavedLevel | undefined,
+): NotificationLevel | null =>
+  saved !== undefined && saved.listed === listed ? saved.level : listed;
 
 export type ShellStatusStore = StoreApi<ShellStatusState>;
 
@@ -59,6 +80,7 @@ export function createShellStatusStore(): ShellStatusStore {
     titleWaiting: {},
     activityAt: {},
     newThreadSendFailure: null,
+    savedLevels: {},
     setHistory: (remoteId, status) =>
       set((state) =>
         state.history[remoteId] === status
@@ -86,8 +108,13 @@ export function createShellStatusStore(): ShellStatusStore {
         history: without(state.history, remoteId),
         titleWaiting: without(state.titleWaiting, remoteId),
         activityAt: without(state.activityAt, remoteId),
+        savedLevels: without(state.savedLevels, remoteId),
       })),
     setNewThreadSendFailure: (failure) =>
       set({ newThreadSendFailure: failure }),
+    saveLevel: (remoteId, saved) =>
+      set((state) => ({
+        savedLevels: { ...state.savedLevels, [remoteId]: saved },
+      })),
   }));
 }

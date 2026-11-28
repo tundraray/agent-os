@@ -99,6 +99,7 @@ import {
   historyOf,
   historyRowVersionsOf,
   ledgerRowsOf,
+  LOST_ANSWER,
   setRootRecord,
   START_TEST_DEEP_AGENT,
   taskCall,
@@ -882,6 +883,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           listDelegation: true,
           selfLearning: false,
           scripts: [],
+          skills: [],
         },
       });
       const model = createScriptedModel();
@@ -2066,8 +2068,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       const ownerId = await newUser();
       const fixture = createFixtureFiles();
       const noteHeld = fixture.latch('note-held');
+      // The second note call - the interrupted writer's - is held on its own latch (UC-1, the interruption)
+      const interruptedNoteHeld = fixture.latch('interrupted-note-held');
       fixture.setFaults([
         holdCall('create_incident_note', INCIDENT_NOTE, noteHeld),
+        holdCall(
+          'create_incident_note',
+          INCIDENT_NOTE,
+          interruptedNoteHeld,
+          [2],
+        ),
       ]);
       const model = createScriptedModel();
       const writer = model.script(
@@ -2080,6 +2090,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
             ],
           },
           { text: 'report after the lost step' },
+        ],
+      );
+      const interruptedWriter = model.script(
+        { task: 'Write the note, then be interrupted on the wire' },
+        [
+          { calls: [{ tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE }] },
+          { text: 'report after the interruption' },
         ],
       );
       const options = {
@@ -2176,7 +2193,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         const noteCallId = writer.calls[0]?.toolCallIds[0];
         expect(
           toolOutputOf(writer.calls[1]?.messages ?? [], noteCallId),
-        ).toContain('[unknown]');
+        ).toContain(`[unknown]\n${LOST_ANSWER}`);
 
         // When: the zombie's held call answers
         noteHeld.release();
@@ -2203,8 +2220,70 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' }),
         ).toHaveLength(1);
         expect(writer.calls).toHaveLength(2);
+
+        // Given: the zombie, whose slot is free now, runs no more steps - a step it claimed would be requeued as
+        // lost by the sweeper of B, and its repeat would spend the script's next answer
+        await zombie.runtime.stop();
+
+        // When (UC-1, the interruption): another writer's confirmed note is on the wire and the agent is interrupted
+        const interrupted = await startWriterUntilConfirmation(restarted, {
+          ownerId,
+          prompt: 'Write the note, then be interrupted on the wire',
+        });
+        expect(
+          await restarted.sessions.resolveConfirmation({
+            decisionId: interrupted.decisionId,
+            ownerId,
+            approve: true,
+          }),
+        ).toBe('resolved');
+        await waitFor(
+          () =>
+            fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' }),
+          (calls) => calls.length === 2,
+          'the interrupted writer note call on the fixture',
+        );
+        expect(
+          await restarted.sessions.interrupt({
+            agentId: interrupted.agentId,
+            ownerId,
+          }),
+        ).toBe('interrupted');
+        await waitFor(
+          () => historyOf(restarted, interrupted.agentId, ownerId),
+          (entries) => historyLines(entries).at(-1) === 'event: interrupted',
+          'the interrupted event of the second writer',
+        );
+        await restarted.sessions.send({
+          agentId: interrupted.agentId,
+          ownerId,
+          text: 'go on',
+        });
+        await interruptedWriter.called(2);
+
+        // Then: the note is unknown, was not sent again, and the model reads the same text of the lost answer
+        expect(
+          historyLines(
+            await historyOf(restarted, interrupted.agentId, ownerId),
+          ).slice(0, 4),
+        ).toEqual([
+          'task: Write the note, then be interrupted on the wire',
+          `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note]`,
+          'tool_result: create_incident_note unknown',
+          'event: interrupted',
+        ]);
+        expect(
+          fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' }),
+        ).toHaveLength(2);
+        expect(
+          toolOutputOf(
+            interruptedWriter.calls[1]?.messages ?? [],
+            interruptedWriter.calls[0]?.toolCallIds[0],
+          ),
+        ).toContain(`[unknown]\n${LOST_ANSWER}`);
       } finally {
         noteHeld.release();
+        interruptedNoteHeld.release();
         await closeAll(harnesses);
       }
     },

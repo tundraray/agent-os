@@ -59,6 +59,9 @@ export function previewOf(text: string, previewChars: number): string {
   return lastBreak > previewChars / 2 ? head.slice(0, lastBreak) : head;
 }
 
+/** The start of every wrapper: the text that tells a stored result's wrapper from a plain result. */
+export const STORED_RESULT_MARK = '[stored result]';
+
 /** What the model gets instead of a stored MCP result (R-1, R-3); the wording lives in the plan's Notes. */
 export function wrapperText(input: {
   readonly callId: string;
@@ -68,7 +71,7 @@ export function wrapperText(input: {
   const { callId, text } = input;
   const preview = previewOf(text, input.previewChars);
   return [
-    `[stored result] Output too large: ${text.length} characters. The full output is stored under callId "${callId}".`,
+    `${STORED_RESULT_MARK} Output too large: ${text.length} characters. The full output is stored under callId "${callId}".`,
     `Preview (first ${preview.length} characters):`,
     preview,
     '[end of preview]',

@@ -14,11 +14,14 @@ import {
   ChipRecordSchema,
   DeepAgentContentSchema,
   IdSchema,
+  INSTRUCTIONS_MAX_LENGTH,
   RecordKindSchema,
+  StartableKindSchema,
   VersionSchema,
 } from './library';
-import { SessionTaskStatusSchema } from './runtime';
+import { SessionTaskStatusSchema, TaskStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
+import { ConversationTrackerTaskSchema } from './tracker';
 import { TestRunSummarySchema } from './training';
 
 /**
@@ -28,8 +31,8 @@ import { TestRunSummarySchema } from './training';
 
 /** Max length of a chat message after trimming. */
 export const CHAT_MESSAGE_MAX_LENGTH = 20000;
-/** Max number of history entries in one page (the limit of the agents' `history`). */
-export const HISTORY_PAGE_SIZE = 500;
+/** Max number of history entries in one window or page (live-feed KD-5). */
+export const HISTORY_PAGE_SIZE = 100;
 /** Page size of GET /api/agents. */
 export const AGENT_PAGE_SIZE = 20;
 
@@ -37,6 +40,115 @@ export const AGENT_PAGE_SIZE = 20;
 export const AGENTS_BRIEF_CONFIRMATION = 'agents.brief';
 /** Decision kind of a record tool's card: create, edit or delete a library record (KD-3). */
 export const LIBRARY_RECORD_CONFIRMATION = 'library.record';
+/** Decision kind of an `ask_user` card: the employee answers the agent's questions (agent-guidance KD-1). */
+export const AGENTS_QUESTION_CONFIRMATION = 'agents.question';
+/** Decision kind of a `set_personal_instructions` card: the employee edits and saves his text (agent-guidance KD-8). */
+export const IDENTITY_INSTRUCTIONS_CONFIRMATION = 'identity.instructions';
+
+// Limits of a question card (agent-guidance design-server.md, «Вопрос», «Ответ»).
+export const ASK_USER_QUESTIONS_MAX = 4;
+export const QUESTION_TEXT_MAX_LENGTH = 500;
+export const QUESTION_OPTIONS_MIN = 2;
+export const QUESTION_OPTIONS_MAX = 4;
+export const QUESTION_OPTION_LABEL_MAX_LENGTH = 80;
+export const QUESTION_OPTION_DESCRIPTION_MAX_LENGTH = 300;
+export const ANSWER_OTHER_MAX_LENGTH = 2_000;
+
+/** One question of `ask_user` (form «Вопрос»): options with labels unique within the question. */
+export const QuestionSchema = z.object({
+  question: z
+    .string()
+    .min(1)
+    .max(QUESTION_TEXT_MAX_LENGTH)
+    .describe('The question, one clear sentence'),
+  options: z
+    .array(
+      z.object({
+        label: z
+          .string()
+          .min(1)
+          .max(QUESTION_OPTION_LABEL_MAX_LENGTH)
+          .describe('A short answer the employee picks'),
+        description: z
+          .string()
+          .min(1)
+          .max(QUESTION_OPTION_DESCRIPTION_MAX_LENGTH)
+          .describe('What this answer means or leads to'),
+      }),
+    )
+    .min(QUESTION_OPTIONS_MIN)
+    .max(QUESTION_OPTIONS_MAX)
+    .refine(
+      (options) =>
+        new Set(options.map((option) => option.label)).size === options.length,
+      { message: 'option labels repeat' },
+    ),
+  multiSelect: z
+    .boolean()
+    .default(false)
+    .describe('Whether the employee may pick several options'),
+});
+export type Question = z.infer<typeof QuestionSchema>;
+
+/**
+ * Arguments of `ask_user` and the content of its `agents.question` card (`content` and `args` of the
+ * `Confirmation`): one to four questions. The employee can always write his own answer under «Другое».
+ */
+export const AskUserArgsSchema = z.object({
+  questions: z.array(QuestionSchema).min(1).max(ASK_USER_QUESTIONS_MAX),
+});
+export type AskUserArgs = z.infer<typeof AskUserArgsSchema>;
+
+/** The employee's answer to one question (form «Ответ»); no answer — empty `selected` and `other: null`. */
+export const QuestionAnswerSchema = z.object({
+  /** Labels of the chosen options; at most one without `multiSelect`. */
+  selected: z.array(z.string().min(1).max(QUESTION_OPTION_LABEL_MAX_LENGTH)),
+  /** The employee's own text from «Другое». */
+  other: z.string().min(1).max(ANSWER_OTHER_MAX_LENGTH).nullable(),
+});
+export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
+
+/**
+ * Why `answers` do not fit the card's questions (DC-1), or `null` when they do: one answer per question in their
+ * order, only the labels of that question's options, each once; without `multiSelect` at most one label and
+ * never a label together with «Другое».
+ */
+export function answersMismatch(
+  questions: readonly Question[],
+  answers: readonly QuestionAnswer[],
+): string | null {
+  if (answers.length !== questions.length)
+    return `answers: ${answers.length} answers for ${questions.length} questions`;
+  for (const [index, question] of questions.entries()) {
+    const { selected, other } = answers[index] ?? { selected: [], other: null };
+    const labels = new Set(question.options.map((option) => option.label));
+    if (selected.some((label) => !labels.has(label)))
+      return `answers.${index}.selected: no such option`;
+    if (new Set(selected).size !== selected.length)
+      return `answers.${index}.selected: an option is chosen twice`;
+    if (!question.multiSelect && selected.length > 1)
+      return `answers.${index}.selected: one option at most`;
+    if (!question.multiSelect && selected.length > 0 && other !== null)
+      return `answers.${index}: an option and an own answer together`;
+  }
+  return null;
+}
+
+/**
+ * Arguments of `set_personal_instructions` and the content of its `identity.instructions` card: the whole new
+ * text; an empty text removes the instruction (agent-guidance KD-8).
+ */
+export const SetPersonalInstructionsArgsSchema = z.object({
+  text: z
+    .string()
+    .max(INSTRUCTIONS_MAX_LENGTH)
+    .describe(
+      'The whole new text of the instruction, the lines to keep included; empty removes it',
+    ),
+});
+export type SetPersonalInstructionsArgs = z.infer<
+  typeof SetPersonalInstructionsArgsSchema
+>;
 
 /** The text of a chat message: also a schedule's instruction, which is sent as one. */
 export const ChatTextSchema = z
@@ -52,29 +164,75 @@ const SeqSchema = z.number().int().nonnegative();
 /**
  * Body of POST /threads/:threadId/messages and POST /agents/:agentId/messages. `recordId` is the
  * record chip; it is not checked as a UUID here: the service answers any id it cannot start with the
- * same 404 as an invisible record.
+ * same 404 as an invisible record. `sendKey` is the send's key (runtime-fixes design-send.md, KD-5): one
+ * key is one send of the employee, a repeat of it creates nothing.
  */
 export const SendMessageRequestSchema = z.object({
   text: ChatTextSchema,
   recordId: z.string().min(1).optional(),
+  sendKey: z.uuid(),
 });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 
-/** Query of the history routes: entries with a greater `seq`; 0 by default. */
-export const HistoryQuerySchema = z.object({
-  afterSeq: z.coerce.number().int().nonnegative().default(0),
-});
+/**
+ * Body of POST /threads/:threadId/fork (improvements design-server.md, KD-6), optional: at most one of `throughSeq` —
+ * the message the fork inherits the history through — and `edit` — the employee's message `seq` replaced by `text`
+ * (with its chip, as a send). Neither forks the whole conversation.
+ */
+export const ForkRequestSchema = z
+  .object({
+    throughSeq: z.number().int().min(1).optional(),
+    edit: SendMessageRequestSchema.omit({ sendKey: true })
+      .extend({
+        seq: z.number().int().min(1),
+      })
+      .optional(),
+  })
+  .refine((body) => body.throughSeq === undefined || body.edit === undefined, {
+    message: 'At most one of throughSeq and edit',
+  })
+  .default({});
+export type ForkRequest = z.infer<typeof ForkRequestSchema>;
+
+/**
+ * Query of the history routes (live-feed KD-5): `beforeSeq` — the window before that entry, `afterSeq` — the entries
+ * after it; neither — the last window. At most one of them. The `inherited` route reads from the start without one.
+ */
+export const HistoryQuerySchema = z
+  .object({
+    beforeSeq: z.coerce.number().int().nonnegative().optional(),
+    afterSeq: z.coerce.number().int().nonnegative().optional(),
+  })
+  .refine(
+    (query) => query.beforeSeq === undefined || query.afterSeq === undefined,
+    { message: 'At most one of beforeSeq and afterSeq' },
+  );
 export type HistoryQuery = z.infer<typeof HistoryQuerySchema>;
 
 /** Query of GET /agents: the cursor is opaque, as in the thread list. */
 export const AgentListQuerySchema = ThreadListQuerySchema;
 export type AgentListQuery = z.infer<typeof AgentListQuerySchema>;
 
-/** Body of POST /decisions/:decisionId: `args` are the tool's full arguments when edited. */
-export const DecisionRequestSchema = z.object({
-  approve: z.boolean(),
-  args: z.record(z.string(), z.unknown()).optional(),
-});
+/**
+ * Body of POST /decisions/:decisionId: `args` are the tool's full arguments when edited. `allowInConversation`
+ * («allow in this conversation») also allows the card's MCP pair to the conversation; only with `approve: true`.
+ * `answers` — the employee's answers to an `agents.question` card, one per question; without them every question
+ * stays unanswered (agent-guidance KD-1).
+ */
+export const DecisionRequestSchema = z
+  .object({
+    approve: z.boolean(),
+    args: z.record(z.string(), z.unknown()).optional(),
+    allowInConversation: z.literal(true).optional(),
+    answers: z
+      .array(QuestionAnswerSchema)
+      .max(ASK_USER_QUESTIONS_MAX)
+      .optional(),
+  })
+  .refine((body) => body.approve || body.allowInConversation === undefined, {
+    message: 'allowInConversation needs approve: true',
+    path: ['allowInConversation'],
+  });
 export type DecisionRequest = z.infer<typeof DecisionRequestSchema>;
 
 /** Query of GET /events: `thread:<threadId>` or `agent:<agentId>`; an unknown value is not an error. */
@@ -137,7 +295,7 @@ export type AwaitingCount = z.infer<typeof AwaitingCountSchema>;
  */
 export const RunOriginSchema = z.object({
   recordId: IdSchema,
-  kind: RecordKindSchema,
+  kind: StartableKindSchema,
   version: VersionSchema,
   name: z.string().min(1),
   author: z.object({ id: IdSchema, name: z.string() }).nullable(),
@@ -350,6 +508,8 @@ export const ConfirmationKindSchema = z.enum([
   AGENTS_TOOL_CONFIRMATION,
   AGENTS_BRIEF_CONFIRMATION,
   LIBRARY_RECORD_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
+  IDENTITY_INSTRUCTIONS_CONFIRMATION,
 ]);
 export type ConfirmationKind = z.infer<typeof ConfirmationKindSchema>;
 
@@ -410,8 +570,19 @@ export const ConfirmationSchema = z.object({
   /** The card content: the tool's confirmation content (for a brief: the deep agent and its three fields). */
   content: z.unknown(),
   status: ConfirmationStatusSchema,
-  /** Set when `resolved`: the decision and the arguments the call ran with. */
-  resolution: z.object({ approve: z.boolean(), args: z.unknown() }).nullable(),
+  /**
+   * Set when `resolved`: the decision and the arguments the call ran with; `allowInConversation` only when the
+   * answer was «allow in this conversation»; `answers` only on an answered `agents.question` card, absent on a
+   * skipped one.
+   */
+  resolution: z
+    .object({
+      approve: z.boolean(),
+      args: z.unknown(),
+      allowInConversation: z.literal(true).optional(),
+      answers: z.array(QuestionAnswerSchema).optional(),
+    })
+    .nullable(),
   createdAt: z.iso.datetime(),
   resolvedAt: z.iso.datetime().nullable(),
   ...ToolDisplayShape,
@@ -431,8 +602,10 @@ export const ChatStatusSchema = z.enum([
 ]);
 export type ChatStatus = z.infer<typeof ChatStatusSchema>;
 
-/** Next `afterSeq` to read from, or null when everything is read. */
+/** Next `afterSeq` to read from, or null when everything is read; `null` in a window read without `afterSeq`. */
 const NextAfterSeqSchema = SeqSchema.nullable();
+/** Shown entries exist before the first entry of the window (live-feed KD-5). */
+const HasOlderSchema = z.boolean();
 
 /** What the conversation last did to the record in focus (KD-6). */
 export const RecordFocusActionSchema = z.enum([
@@ -484,12 +657,17 @@ export const ConversationViewSchema = z.object({
   }),
   entries: z.array(HistoryEntrySchema).max(HISTORY_PAGE_SIZE),
   nextAfterSeq: NextAfterSeqSchema,
+  hasOlder: HasOlderSchema,
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   agents: z.array(AgentNodeSchema),
   /** `null` while the chat has not touched a record. */
   focus: RecordFocusSchema.nullable(),
   training: ConversationTrainingSchema,
+  /** The root's «seen through» mark at the moment of reading: the web puts the unread divider after it. */
+  seenThroughSeq: SeqSchema,
+  /** The tracker task the conversation is linked to, with its current title; `null` — none (task-tracker DC-7). */
+  trackerTask: ConversationTrackerTaskSchema,
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 
@@ -503,6 +681,7 @@ export const AgentPageViewSchema = z.object({
   }),
   entries: z.array(HistoryEntrySchema).max(HISTORY_PAGE_SIZE),
   nextAfterSeq: NextAfterSeqSchema,
+  hasOlder: HasOlderSchema,
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   children: z.array(AgentNodeSchema),
@@ -605,13 +784,44 @@ export type AgentTasksView = z.infer<typeof AgentTasksViewSchema>;
 // ---------------------------------------------------------------------------------------------------
 // Live stream
 
+/**
+ * What changed in a conversation, by what the web rereads for it (live-feed design-server.md, KD-3): an agent's
+ * records (`entries`, with `agentId`), the conversation's state, its list row, or its deletion.
+ */
+export const LiveChangeKindSchema = z.enum([
+  'entries',
+  'state',
+  'summary',
+  'deleted',
+]);
+export type LiveChangeKind = z.infer<typeof LiveChangeKindSchema>;
+
+/** A fact the employee may be told about (KD-4): a decision opened, an answer is ready, a turn failed. */
+export const AttentionEventSchema = z.enum(['decision', 'answer', 'failure']);
+export type AttentionEvent = z.infer<typeof AttentionEventSchema>;
+
+const LiveChangeEventSchema = z.object({
+  type: z.literal('change'),
+  data: z.object({
+    threadId: z.string().min(1),
+    kind: LiveChangeKindSchema,
+    agentId: z.string().min(1).optional(),
+  }),
+});
+
+const LiveAttentionEventSchema = z.object({
+  type: z.literal('attention'),
+  data: z.object({
+    threadId: z.string().min(1),
+    event: AttentionEventSchema,
+  }),
+});
+
 /** An event of GET /events: `type` is the SSE event name, `data` its JSON body. */
 export const LiveEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), data: z.object({}) }),
-  z.object({
-    type: z.literal('tree'),
-    data: z.object({ threadId: z.string().min(1) }),
-  }),
+  LiveChangeEventSchema,
+  LiveAttentionEventSchema,
   z.object({
     type: z.literal('delta'),
     data: z.object({
@@ -623,3 +833,29 @@ export const LiveEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ping'), data: z.object({}) }),
 ]);
 export type LiveEvent = z.infer<typeof LiveEventSchema>;
+
+/**
+ * The data of a `runtime_tree` NOTIFY (KD-1, §Data Model «Сигналы»): the task whose row was written and, when the
+ * write changed it, the status written.
+ */
+export const RuntimeTreeSignalSchema = z.object({
+  rootId: z.string().min(1),
+  taskId: z.string().min(1),
+  status: TaskStatusSchema.optional(),
+});
+export type RuntimeTreeSignal = z.infer<typeof RuntimeTreeSignalSchema>;
+
+/**
+ * The data of a `conversation_change` NOTIFY (KD-2): a ready event for the streams of `ownerId`, whom the writer
+ * takes from the conversation's row or the step's context, never from a client.
+ */
+export const ConversationChangeSignalSchema = z.object({
+  ownerId: z.string().min(1),
+  event: z.discriminatedUnion('type', [
+    LiveChangeEventSchema,
+    LiveAttentionEventSchema,
+  ]),
+});
+export type ConversationChangeSignal = z.infer<
+  typeof ConversationChangeSignalSchema
+>;

@@ -1,13 +1,12 @@
-import type { GrantEffect, GrantTargetBody } from '@agent-os/contracts';
-
-/** A grant of the employee's roles or a personal one, as read from `access_grants`. */
-export interface GrantRow {
-  readonly id: string;
-  readonly effect: GrantEffect;
-  readonly target: GrantTargetBody;
-  /** Only on a model allow; `null` — no quota. */
-  readonly quotaUsd: number | null;
-}
+import type { GateTool } from '@agent-os/agents';
+import { toolCoverage, type ToolCoverage } from '@agent-os/contracts';
+import type { GrantRow, GrantRowTarget } from './grant-rows';
+import {
+  NO_LEVEL,
+  roleLevelOf,
+  serverLevels,
+  type ServerLevel,
+} from './levels';
 
 export type ModelAccess =
   | { readonly allowed: false }
@@ -22,17 +21,20 @@ export type ModelAccess =
     };
 
 export interface EffectiveAccess {
-  tool(server: string, tool: string): boolean;
+  /** The coverage rule's answer for a tool the gate is asked about (access-levels KD-3, KD-4). */
+  tool(tool: GateTool, superAdmin: boolean): ToolCoverage;
   model(model: string): ModelAccess;
   allowedModels(): string[];
 }
 
-type Match = (target: GrantTargetBody) => boolean;
+type Match = (target: GrantRowTarget) => boolean;
 
 /**
- * The employee's rights now (KD-2): a server deny closes all its tools, a tool deny that tool, a
- * model deny that model; a deny wins over any allow. A tool is open when its server or the tool
- * itself is allowed. Quotas of all allows of a model add up; one allow without a quota lifts the limit.
+ * The employee's rights now. Tools (access-levels KD-1, KD-3): the MCP rows of each role and the personal ones
+ * become levels by server, and the coverage rule answers for the tool. The gate is asked only of a tool the
+ * admin left on: a switched-off one is refused before it (`checkCall`, the tool set). Models (design-access
+ * KD-2): a model deny wins over any allow; quotas of all allows of a model add up, one allow without a quota
+ * lifts the limit.
  */
 export function effectiveAccess(rows: readonly GrantRow[]): EffectiveAccess {
   const allows = rows.filter((row) => row.effect === 'allow');
@@ -41,13 +43,21 @@ export function effectiveAccess(rows: readonly GrantRow[]): EffectiveAccess {
     allows.some((row) => match(row.target)) &&
     !denies.some((row) => match(row.target));
 
-  const toolMatch =
-    (server: string, tool: string): Match =>
-    (target) =>
-      (target.kind === 'server' && target.server === server) ||
-      (target.kind === 'tool' &&
-        target.server === server &&
-        target.tool === tool);
+  const personal = serverLevels(
+    rows.filter((row) => row.holder.kind === 'user'),
+  );
+  const roleIds = new Set(
+    rows.flatMap((row) => (row.holder.kind === 'role' ? [row.holder.id] : [])),
+  );
+  const roles = [...roleIds].map((id) => ({
+    id,
+    levels: serverLevels(
+      rows.filter((row) => row.holder.kind === 'role' && row.holder.id === id),
+    ),
+  }));
+  const levelOn = (levels: ReadonlyMap<string, ServerLevel>, server: string) =>
+    levels.get(server) ?? NO_LEVEL;
+
   const modelMatch =
     (model: string): Match =>
     (target) =>
@@ -66,7 +76,15 @@ export function effectiveAccess(rows: readonly GrantRow[]): EffectiveAccess {
   }
 
   return {
-    tool: (server, tool) => allowed(toolMatch(server, tool)),
+    tool: (tool, superAdmin) =>
+      toolCoverage({
+        tool: { tool: tool.tool, readOnly: tool.readOnly, enabled: true },
+        superAdmin,
+        roles: roles.map((role) =>
+          roleLevelOf(role.id, levelOn(role.levels, tool.server)),
+        ),
+        personal: levelOn(personal, tool.server),
+      }),
     model,
     allowedModels: () => {
       const ids = allows.flatMap((row) =>

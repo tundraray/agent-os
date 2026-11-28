@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ToolRefusalReasonSchema } from './agents';
+import { NotificationLevelSchema } from './identity';
 
 /** Page size of GET /api/threads (user decision 2026-10-28). */
 export const THREAD_PAGE_SIZE = 20;
@@ -16,7 +17,8 @@ export type ThreadId = z.infer<typeof ThreadIdSchema>;
 /**
  * A thread as shown in the sidebar and header. `title: null` = not titled yet ("Новая беседа").
  * `forkable` — its root is a chat; `forkedFrom` — the source of a fork (`title: null` once deleted or untitled)
- * and the last inherited entry; `forkCount` — its live forks (create-and-test design-fork.md).
+ * and the last inherited entry; `forkCount` — its live forks (create-and-test design-fork.md);
+ * `notificationLevel` — the conversation's own level, `null` — the employee's default (live-feed KD-7).
  */
 export const ThreadSummarySchema = z.object({
   id: ThreadIdSchema,
@@ -32,6 +34,7 @@ export const ThreadSummarySchema = z.object({
     })
     .nullable(),
   forkCount: z.number().int().min(0),
+  notificationLevel: NotificationLevelSchema.nullable(),
 });
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
 
@@ -47,9 +50,27 @@ export const ThreadListQuerySchema = z.object({
 });
 export type ThreadListQuery = z.infer<typeof ThreadListQuerySchema>;
 
-/** Response of GET /api/threads: newest `updatedAt` first, at most THREAD_PAGE_SIZE items. */
+/**
+ * What a conversation of the list is doing (improvements design-server.md, «ConversationState»): a question
+ * open in its tree, the root or an agent under it working, or the last answer / failure after the seen mark.
+ */
+export const ConversationStateSchema = z.enum([
+  'waiting_for_you',
+  'working',
+  'new_answer',
+  'failed',
+]);
+export type ConversationState = z.infer<typeof ConversationStateSchema>;
+
+/** Response of GET /api/threads: newest `updatedAt` first, at most THREAD_PAGE_SIZE items; `state: null` — read and idle. */
 export const ThreadListResponseSchema = z.object({
-  threads: z.array(ThreadSummarySchema).max(THREAD_PAGE_SIZE),
+  threads: z
+    .array(
+      ThreadSummarySchema.extend({
+        state: ConversationStateSchema.nullable(),
+      }),
+    )
+    .max(THREAD_PAGE_SIZE),
   nextCursor: z.string().min(1).nullable(),
 });
 export type ThreadListResponse = z.infer<typeof ThreadListResponseSchema>;
@@ -82,7 +103,8 @@ export type MatchPlace = z.infer<typeof MatchPlaceSchema>;
 /**
  * One found place. `threadId`/`title` — the employee's conversation (the tree root); `agent` — the
  * sub-agent it was found at, `null` in the employee's conversation or in the title; `tool` and `callId`
- * only for `tool_result`, `seq` only for `message`; `titleMarks` only for `title`, `snippet` for the rest.
+ * only for `tool_result`; `seq` — the history entry of a `message` or the `tool_result` entry of a result (live-feed
+ * KD-5), `null` for `title`; `titleMarks` only for `title`, `snippet` for the rest.
  */
 export const ConversationMatchSchema = z.object({
   threadId: ThreadIdSchema,
@@ -112,6 +134,23 @@ export const RenameThreadRequestSchema = z.object({
   title: z.string().trim().min(1).max(THREAD_TITLE_MAX_LENGTH),
 });
 export type RenameThreadRequest = z.infer<typeof RenameThreadRequestSchema>;
+
+/**
+ * Body of PUT /api/threads/:threadId/seen: the last history entry of the root the web has shown. The mark
+ * never goes down, and a number past the last entry becomes the last entry.
+ */
+export const MarkSeenRequestSchema = z.object({
+  throughSeq: z.number().int().min(0),
+});
+export type MarkSeenRequest = z.infer<typeof MarkSeenRequestSchema>;
+
+/** Body of PUT /api/threads/:threadId/notification-level: the conversation's level, `null` — as the default. */
+export const ThreadNotificationLevelRequestSchema = z.object({
+  level: NotificationLevelSchema.nullable(),
+});
+export type ThreadNotificationLevelRequest = z.infer<
+  typeof ThreadNotificationLevelRequestSchema
+>;
 
 /** Machine-readable error codes of the threads API. */
 export const ThreadsErrorCodeSchema = z.enum([

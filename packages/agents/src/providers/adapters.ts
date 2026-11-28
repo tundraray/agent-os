@@ -40,7 +40,7 @@ export interface ProviderEmbeddings {
 
 /**
  * Everything that depends on the provider's kind (KD-3): the AI SDK model on the connection's address and
- * key, the cache mark, the embeddings, the «tools not accepted» marker of an error body and the check
+ * key, the cache mark, the embeddings, the «tools not accepted» and context overflow markers of an error body and the check
  * request. Building a model touches no network; the key is read from the connection on every call (KD-1).
  */
 export interface ProviderAdapter {
@@ -51,6 +51,11 @@ export interface ProviderAdapter {
   readonly embeddings: ProviderEmbeddings | null;
   /** Whether a rejection is about the request's tools (design-core.md, «Как разбирается ошибка провайдера»). */
   toolsRejected(statusCode: number, body: string): boolean;
+  /**
+   * Whether a rejection says the request does not fit the model's context window (runtime-fixes
+   * design-steps.md KD-4): structured fields first, the provider's fixed error text where it has none.
+   */
+  contextOverflow(statusCode: number, body: string): boolean;
   checkRequest(connection: ProviderConnection): CheckRequest;
 }
 
@@ -80,33 +85,42 @@ export function keyHeader(
 /** A rejection of a malformed request: only these statuses can carry the «tools not accepted» marker. */
 const TOOLS_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 422]);
 
-/** The `message` and `param` of a provider's error body; empty strings when the body says neither. */
+/** The only status a context overflow is read from (runtime-fixes design-steps.md, «Как адаптер узнаёт переполнение»). */
+const CONTEXT_OVERFLOW_STATUS = 400;
+
+/**
+ * The text fields of a provider's error body; empty strings when the body says none of them.
+ * `errorType` is `metadata.error_type`, where OpenRouter names the error.
+ */
 export interface ProviderErrorText {
   readonly message: string;
   readonly param: string;
+  readonly type: string;
+  readonly code: string;
+  readonly errorType: string;
 }
 
-function textField(value: unknown, field: string): string {
-  if (typeof value !== 'object' || value === null) return '';
-  const text: unknown = Reflect.get(value, field);
+function field(value: unknown, name: string): unknown {
+  return typeof value === 'object' && value !== null
+    ? Reflect.get(value, name)
+    : undefined;
+}
+
+function textField(value: unknown, name: string): string {
+  const text = field(value, name);
   return typeof text === 'string' ? text : '';
 }
 
 /**
- * Reads a rejection for the «tools not accepted» marker: `null` unless the status is 400 or 422, else the
- * error's `message` and `param` — under `error` as Anthropic, Gemini and OpenAI send it, or at the top of
- * the body as vLLM does. A body that is not JSON gives empty strings.
+ * The fields of the error — under `error` as Anthropic, Gemini and OpenAI send it, or at the top of the body
+ * as vLLM and Mistral do. A body that is not JSON gives empty strings.
  */
-export function rejectionText(
-  statusCode: number,
-  body: string,
-): ProviderErrorText | null {
-  if (!TOOLS_REJECTION_STATUSES.has(statusCode)) return null;
+function errorText(body: string): ProviderErrorText {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return { message: '', param: '' };
+    parsed = null;
   }
   const error =
     typeof parsed === 'object' && parsed !== null && 'error' in parsed
@@ -115,5 +129,24 @@ export function rejectionText(
   return {
     message: textField(error, 'message'),
     param: textField(error, 'param'),
+    type: textField(error, 'type'),
+    code: textField(error, 'code'),
+    errorType: textField(field(error, 'metadata'), 'error_type'),
   };
+}
+
+/** Reads a rejection for the «tools not accepted» marker: `null` unless the status is 400 or 422. */
+export function rejectionText(
+  statusCode: number,
+  body: string,
+): ProviderErrorText | null {
+  return TOOLS_REJECTION_STATUSES.has(statusCode) ? errorText(body) : null;
+}
+
+/** Reads a rejection for the context overflow marker: `null` unless the status is 400. */
+export function overflowText(
+  statusCode: number,
+  body: string,
+): ProviderErrorText | null {
+  return statusCode === CONTEXT_OVERFLOW_STATUS ? errorText(body) : null;
 }

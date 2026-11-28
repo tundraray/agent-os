@@ -15,6 +15,7 @@ import {
   type TaskHandler,
   TaskControl,
   TaskEndHooks,
+  TaskInterruptHooks,
   TokenLedger,
 } from '@agent-os/runtime';
 import { runtimeModules } from '@agent-os/runtime/testing';
@@ -62,7 +63,6 @@ export function settableClock(start: Date): SettableClock {
   let current = start;
   return {
     now: () => current,
-    random: () => systemClock.random(),
     setTimer: (...args) => systemClock.setTimer(...args),
     set: (now) => {
       current = now;
@@ -87,6 +87,8 @@ export interface RuntimeHarness {
   readonly inbox: Inbox;
   /** Task end hooks; a test registers its own before the tasks end. */
   readonly endHooks: TaskEndHooks;
+  /** The interrupt hook; a test registers its own before the interrupt. */
+  readonly interruptHooks: TaskInterruptHooks;
   readonly ledger: TokenLedger;
   /** Starts the workers (`RuntimeWorkers.start`). */
   start(): void;
@@ -142,6 +144,7 @@ export async function createRuntimeHarness(
     tasks: app.get(TaskControl),
     inbox: app.get(Inbox),
     endHooks: app.get(TaskEndHooks),
+    interruptHooks: app.get(TaskInterruptHooks),
     ledger: app.get(TokenLedger),
     start: () => workers.start(),
     stop: () => workers.stop(),

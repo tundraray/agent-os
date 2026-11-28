@@ -16,12 +16,15 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  AdminUserDetailSchema,
+  DEEP_AGENT_TASK_TYPE,
   ThreadSummarySchema,
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
+import { QUESTION_TASK_TYPE } from '@agent-os/runtime';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ChatApi, expectBody, expectError } from './support/api';
+import { type ChatApi, chatApi, expectBody, expectError } from './support/api';
 import { removeRunRows } from './support/access';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
@@ -29,7 +32,13 @@ import {
   conversationsSetup,
   startConversation,
 } from './support/library';
-import { seedSuperAdmin, type Session } from './support/session';
+import {
+  apiRequest,
+  createEmployee,
+  seedSuperAdmin,
+  type Session,
+  signInWithPassword,
+} from './support/session';
 
 /** Creating 120 conversations one by one plus a page walk exceeds the default 5 s. */
 const BULK_TEST_TIMEOUT_MS = 60_000;
@@ -90,6 +99,46 @@ async function createConversations(
   for (let index = 0; index < count; index += 1)
     created.push(await startConversation(api));
   return created;
+}
+
+/**
+ * The root of the conversation answered and waits for the next message (improvements design-server.md, «How the
+ * conversation state works»): an answer without calls at seq 2, written as the step would, since no worker runs here.
+ */
+async function answerAndWait(rootId: string): Promise<void> {
+  await harness.pool.query(
+    `INSERT INTO app.messages (conversation_id, seq, kind, content) VALUES ($1, 2, 'model_answer', $2)`,
+    [rootId, JSON.stringify({ text: 'Готово', toolCalls: [] })],
+  );
+  await harness.pool.query(
+    `UPDATE app.runtime_tasks SET status = 'waiting', wait_reason = 'messages' WHERE task_id = $1`,
+    [rootId],
+  );
+}
+
+/** A subagent under the root that waits on its own question to the employee: a subagent's card. */
+async function openSubagentCard(
+  rootId: string,
+  ownerId: string,
+): Promise<void> {
+  const subagentId = randomUUID();
+  await harness.pool.query(
+    `UPDATE app.runtime_tasks SET status = 'waiting', wait_reason = 'children' WHERE task_id = $1`,
+    [rootId],
+  );
+  await harness.pool.query(
+    `INSERT INTO app.runtime_tasks (task_id, type, owner_id, parent_id, root_id, depth, input, status, wait_reason)
+     VALUES ($1, $2, $3, $4, $4, 1, '{}', 'waiting', 'children'),
+            ($5, $6, $3, $1, $4, 2, '{}', 'waiting', 'human')`,
+    [
+      subagentId,
+      DEEP_AGENT_TASK_TYPE,
+      ownerId,
+      rootId,
+      randomUUID(),
+      QUESTION_TASK_TYPE,
+    ],
+  );
 }
 
 /**
@@ -205,6 +254,86 @@ describe('agent-platform / chat - the former conversation routes over the root s
       },
       BULK_TEST_TIMEOUT_MS,
     );
+
+    // improvements UC-11 (AC-06.1, AC-06.2, NFR-02): the page's facts reach `state`, a mark from another session of
+    // the same employee clears it, and another employee can neither mark nor see the mark. The order of the states and
+    // a read failure are rows of the `conversationState` table test (chat-status.spec.ts).
+    // Catches: facts read for the wrong conversation or not read at all, a subagent's card shown as plain work, a mark
+    //   that does not clear `state`, goes down or past the last entry, a mark accepted on another employee's conversation.
+    it('lists new_answer, waiting_for_you and working; a mark from a second session clears the state; Boris gets 404', async () => {
+      if (setup === undefined) throw new Error('the suite has no setup');
+      const login = `e2e-${randomUUID()}`;
+      const password = 'e2e-password-12';
+      const anna = await createEmployee(harness.app, admin, {
+        login,
+        password,
+      });
+      await expectBody(
+        apiRequest(
+          harness.app,
+          admin,
+          'put',
+          `/admin/users/${anna.id}/roles/${setup.roleId}`,
+        ),
+        200,
+        AdminUserDetailSchema,
+      );
+      const annaApi = chatApi(harness.app, anna);
+      const answered = await startConversation(annaApi);
+      const carded = await startConversation(annaApi);
+      const working = await startConversation(annaApi);
+      await answerAndWait(answered.id);
+      await openSubagentCard(carded.id, anna.id);
+
+      const stateOf = async (api: ChatApi) =>
+        Object.fromEntries(
+          (await api.listThreads()).threads.map((thread) => [
+            thread.id,
+            thread.state,
+          ]),
+        );
+
+      expect(await stateOf(annaApi)).toEqual({
+        [answered.id]: 'new_answer',
+        [carded.id]: 'waiting_for_you',
+        [working.id]: 'working',
+      });
+      expect((await annaApi.history(answered.id)).seenThroughSeq).toBe(0);
+
+      const secondSession = chatApi(
+        harness.app,
+        await signInWithPassword(harness.app, login, password),
+      );
+      const marked = await secondSession.raw(
+        'put',
+        `/threads/${answered.id}/seen`,
+        { throughSeq: 99 },
+      );
+      expect(marked.status).toBe(204);
+      expect(
+        (
+          await secondSession.raw('put', `/threads/${answered.id}/seen`, {
+            throughSeq: 0,
+          })
+        ).status,
+      ).toBe(204);
+
+      expect((await stateOf(annaApi))[answered.id]).toBeNull();
+      expect((await annaApi.history(answered.id)).seenThroughSeq).toBe(2);
+
+      const boris = await asNewUser();
+      expect(
+        await expectError(
+          boris.raw('put', `/threads/${working.id}/seen`, { throughSeq: 1 }),
+          404,
+        ),
+      ).toEqual(NOT_FOUND_BODY);
+      expect(await boris.listThreads()).toEqual({
+        threads: [],
+        nextCursor: null,
+      });
+      expect((await annaApi.history(working.id)).seenThroughSeq).toBe(0);
+    });
 
     // Contract «Беседы»: GET /threads -> 400 INVALID_CURSOR for a cursor that does not decode.
     // Catches: an unparsable cursor that reaches the SQL page and answers 500.

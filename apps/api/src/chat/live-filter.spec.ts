@@ -1,8 +1,12 @@
+import type { RuntimeTreeSignal } from '@agent-os/contracts';
+
 import {
   deltaTargets,
   noteTargets,
   parseWatch,
+  runtimeChanges,
   type DeltaAddress,
+  type LiveChangeEvent,
   type LiveStream,
   type Watch,
 } from './live-filter';
@@ -83,8 +87,58 @@ type Row =
       expected: string[];
     };
 
+const childEntries: LiveChangeEvent = {
+  type: 'change',
+  data: { threadId: THREAD, kind: 'entries', agentId: CHILD },
+};
+const state: LiveChangeEvent = {
+  type: 'change',
+  data: { threadId: THREAD, kind: 'state' },
+};
+
+// live-feed design-server.md, «How the change kinds are derived»; AC-01.1, AC-01.2 (`state`), AC-01.4 (`running`
+// gives nothing). Catches: a claim that makes every tab reread, a step commit that rereads the conversation's state,
+// a message or a new task that does not, or `entries` naming another agent than the task of the signal.
+describe('a runtime signal becomes the change events of its task by the status it wrote', () => {
+  it.each<{
+    name: string;
+    signal: Omit<RuntimeTreeSignal, 'rootId' | 'taskId'>;
+    expected: LiveChangeEvent[];
+  }>([
+    {
+      name: 'running gives nothing',
+      signal: { status: 'running' },
+      expected: [],
+    },
+    {
+      name: "queued gives the agent's entries only",
+      signal: { status: 'queued' },
+      expected: [childEntries],
+    },
+    {
+      name: 'waiting gives entries and state',
+      signal: { status: 'waiting' },
+      expected: [childEntries, state],
+    },
+    {
+      name: 'completed gives entries and state',
+      signal: { status: 'completed' },
+      expected: [childEntries, state],
+    },
+    {
+      name: 'a signal without a status (a new task, a message, a delivery) gives entries and state',
+      signal: {},
+      expected: [childEntries, state],
+    },
+  ])('$name', ({ signal, expected }) => {
+    expect(
+      runtimeChanges({ rootId: ROOT, taskId: CHILD, ...signal }),
+    ).toStrictEqual(expected);
+  });
+});
+
 // DC-4, Invariant 3 (design-chat.md, Contract «Поток»; INT-1 A): the rule; its wiring is INT-4.
-describe("live notes go to the owner's streams and text parts only to the owner's stream that watches the agent", () => {
+describe("live events go to the owner's streams and text parts only to the owner's stream that watches the agent", () => {
   it.each<Row>([
     {
       name: 'thread:<uuid> watches the conversation',
@@ -123,7 +177,7 @@ describe("live notes go to the owner's streams and text parts only to the owner'
       expected: null,
     },
     {
-      name: 'a tree note reaches every stream of the owner and none of a stranger',
+      name: "a conversation's event reaches every stream of the owner and none of a stranger",
       rule: 'note',
       expected: [
         'owner agent',

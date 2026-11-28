@@ -42,7 +42,7 @@ export function describeSchedulesError(
   )
     return {
       place: 'agent',
-      text: t('schedules.agentUnavailable', { name: context.agentName }),
+      text: t('agentUnavailable', { name: context.agentName }),
     };
   if (
     isApiRequestError(error) &&

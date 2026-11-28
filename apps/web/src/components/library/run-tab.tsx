@@ -13,7 +13,7 @@ import { FormError } from '@/components/admin/admin-form';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
 import { TrainingStatusLabel } from '@/components/agents/agent-status';
 import { useLiveRecord } from '@/components/agents/run-card';
-import { useReloadOnTree } from '@/components/agents/session-task-list';
+import { useReloadOnChange } from '@/components/agents/session-task-list';
 import { useConversationFeed } from '@/components/shell/main-view';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
@@ -42,7 +42,7 @@ const LINK =
 /**
  * The tab «Проверка» / «Обучение» of the run's own conversation (self-learning UXRD TR-02, create-and-test UXRD
  * CT-04; KD-6): one component — the line «когда и с чего», the summary and the read states are shared, the middle
- * block is the run's own. Read on open and again on every `tree` note of the conversation (read-on-open).
+ * block is the run's own. Read on open and again on every live change of the conversation (read-on-open).
  */
 export function RunTab({ run }: { run: NonNullable<ConversationTraining> }) {
   if (run.testRun)
@@ -63,7 +63,7 @@ function useRunView<T>(
   threadId: string,
 ): Resource<T> {
   const view = useResource(load, key, 'library');
-  useReloadOnTree(view.data === undefined ? null : threadId, view.reload);
+  useReloadOnChange(view.data === undefined ? null : threadId, view.reload);
   return view;
 }
 

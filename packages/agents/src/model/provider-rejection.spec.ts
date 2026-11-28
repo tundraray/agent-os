@@ -1,6 +1,6 @@
 // design-core.md, «Как разбирается ошибка провайдера», Flow 1 Failure handling, KD-2: AC-04.2 (tools not accepted —
-// no retry, the provider's body in the log), AC-09.2 and AC-09.4 (a provider that is not ready — no request, no ledger
-// row), AC-09.3 (401/403 — no retry, no ledger row), AC-09.5 (408/429/5xx/network — two retries at 1 s and 3 s), the
+// the provider's body in the log), AC-09.2 and AC-09.4 (a provider that is not ready — no request, no ledger
+// row), AC-09.3 (401/403 — no ledger row), improvements AC-02.1 (408/429/5xx/network — one request, no retry), the
 // «tools not accepted» marker of each kind, DC-10 (no `access_denied` for a provider's refusal: the result is
 // `model_error`, never `not_started`), DC-11 (an answer without input tokens is an estimate, `estimated` in the log).
 // `classifyRejection` and `ModelClient` are real; the seam, the gate, the registry and the ledger are doubles.
@@ -17,7 +17,6 @@ import type { AuditRecord } from '../access-gate';
 import { createProviderRegistryDouble } from '../testing';
 import type { AgentTurnModelClient } from './mastra-turn';
 import { ModelClient } from './model-client';
-
 /** One provider answer of the seam: a rejection in the shape of `AI_APICallError`, or an answer with its usage. */
 type SeamAttempt =
   | { readonly status: number | null; readonly body?: string }
@@ -154,7 +153,6 @@ interface Row {
   /** `answer`, or `model_error <reason> <status>`. */
   readonly outcome: string;
   readonly providerCalls: number;
-  readonly pauses: readonly number[];
   readonly ledgerRows: number;
   /** The `warn` that names the failure, or the estimate, with the fields it must carry. */
   readonly log: {
@@ -175,40 +173,37 @@ function failed(
   };
 }
 
-describe('a provider rejection is a named reason with its retries, its ledger rows and its body in the log', () => {
+describe('a provider rejection is a named reason after one request, with its ledger rows and its body in the log', () => {
   it.each<[string, Row]>([
     [
-      '401: no retry, provider_key_rejected, no ledger row (AC-09.3)',
+      '401: provider_key_rejected, no ledger row (AC-09.3)',
       {
         model: 'anthropic/claude-turn',
         attempts: [{ status: 401, body: KEY_BODY }],
         outcome: 'model_error provider_key_rejected 401',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed('provider_key_rejected', 401, KEY_BODY),
       },
     ],
     [
-      '403: no retry, provider_key_rejected (AC-09.3)',
+      '403: provider_key_rejected (AC-09.3)',
       {
         model: 'gemini/gemini-flash',
         attempts: [{ status: 403, body: KEY_BODY }],
         outcome: 'model_error provider_key_rejected 403',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed('provider_key_rejected', 403, KEY_BODY, 'gemini'),
       },
     ],
     [
-      'Anthropic 400 about `tools.`: no retry, provider_tools_rejected, the body in the log (AC-04.2)',
+      'Anthropic 400 about `tools.`: provider_tools_rejected, the body in the log (AC-04.2)',
       {
         model: 'anthropic/claude-turn',
         attempts: [{ status: 400, body: ANTHROPIC_TOOLS_BODY }],
         outcome: 'model_error provider_tools_rejected 400',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed('provider_tools_rejected', 400, ANTHROPIC_TOOLS_BODY),
       },
@@ -220,7 +215,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [{ status: 400, body: GEMINI_TOOLS_BODY }],
         outcome: 'model_error provider_tools_rejected 400',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed(
           'provider_tools_rejected',
@@ -237,7 +231,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [{ status: 422, body: OPENAI_TOOLS_BODY }],
         outcome: 'model_error provider_tools_rejected 422',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed(
           'provider_tools_rejected',
@@ -248,53 +241,67 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
       },
     ],
     [
-      'a 400 not about tools: no retry, model_error',
+      'a 400 not about tools: model_error',
       {
         model: 'anthropic/claude-turn',
         attempts: [{ status: 400, body: OTHER_BAD_REQUEST_BODY }],
         outcome: 'model_error model_error 400',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 0,
         log: failed('provider_error', 400, OTHER_BAD_REQUEST_BODY),
       },
     ],
     [
-      '503 on all three attempts: two retries at 1 s and 3 s, provider_unavailable, no ledger row (AC-09.5)',
+      '529 — one request, provider_unavailable, no ledger row (AC-02.1)',
       {
         model: 'anthropic/claude-turn',
-        attempts: [
-          { status: 503 },
-          { status: 503 },
-          { status: 529, body: 'overloaded' },
-        ],
+        attempts: [{ status: 529, body: 'overloaded' }, { status: 503 }],
         outcome: 'model_error provider_unavailable 529',
-        providerCalls: 3,
-        pauses: [1000, 3000],
+        providerCalls: 1,
         ledgerRows: 0,
         log: failed('provider_unavailable', 529, 'overloaded'),
       },
     ],
     [
-      '408, then 429, then an answer: retried, one ledger row (AC-09.5)',
+      '503 — one request, provider_unavailable (AC-02.1)',
       {
         model: 'anthropic/claude-turn',
-        attempts: [{ status: 408 }, { status: 429 }, { usage: USAGE }],
-        outcome: 'answer',
-        providerCalls: 3,
-        pauses: [1000, 3000],
-        ledgerRows: 1,
-        log: failed('provider_unavailable', 429, null),
+        attempts: [{ status: 503 }, { usage: USAGE }],
+        outcome: 'model_error provider_unavailable 503',
+        providerCalls: 1,
+        ledgerRows: 0,
+        log: failed('provider_unavailable', 503, null),
       },
     ],
     [
-      'a network failure without a status on all three attempts: provider_unavailable (AC-09.5)',
+      '408 — one request, provider_unavailable (AC-02.1)',
+      {
+        model: 'anthropic/claude-turn',
+        attempts: [{ status: 408 }, { usage: USAGE }],
+        outcome: 'model_error provider_unavailable 408',
+        providerCalls: 1,
+        ledgerRows: 0,
+        log: failed('provider_unavailable', 408, null),
+      },
+    ],
+    [
+      '429 — one request, provider_unavailable (AC-02.1)',
+      {
+        model: 'gemini/gemini-flash',
+        attempts: [{ status: 429 }, { usage: USAGE }],
+        outcome: 'model_error provider_unavailable 429',
+        providerCalls: 1,
+        ledgerRows: 0,
+        log: failed('provider_unavailable', 429, null, 'gemini'),
+      },
+    ],
+    [
+      'a network failure without a status — one request, provider_unavailable (AC-02.1)',
       {
         model: 'openai_compatible/qwen',
-        attempts: [{ status: null }, { status: null }, { status: null }],
+        attempts: [{ status: null }, { usage: USAGE }],
         outcome: 'model_error provider_unavailable null',
-        providerCalls: 3,
-        pauses: [1000, 3000],
+        providerCalls: 1,
         ledgerRows: 0,
         log: failed('provider_unavailable', null, null, 'openai_compatible'),
       },
@@ -306,7 +313,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [],
         outcome: 'model_error provider_missing null',
         providerCalls: 0,
-        pauses: [],
         ledgerRows: 0,
         log: {
           message: 'model provider not ready',
@@ -321,7 +327,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [],
         outcome: 'model_error provider_disabled null',
         providerCalls: 0,
-        pauses: [],
         ledgerRows: 0,
         log: {
           message: 'model provider not ready',
@@ -336,7 +341,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [],
         outcome: 'model_error provider_key_missing null',
         providerCalls: 0,
-        pauses: [],
         ledgerRows: 0,
         log: {
           message: 'model provider not ready',
@@ -351,7 +355,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
         attempts: [{ usage: NO_INPUT_USAGE }],
         outcome: 'answer',
         providerCalls: 1,
-        pauses: [],
         ledgerRows: 1,
         log: {
           message:
@@ -362,18 +365,14 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
     ],
   ])('%s', async (_, row) => {
     const calls = { count: 0 };
-    const pauses: number[] = [];
     const ledgerRows: ModelCallRecord[] = [];
     const audits: AuditRecord[] = [];
     const verdictAsks: string[] = [];
     const logger = loggerDouble();
     const clock: Clock = {
       now: () => new Date(0),
-      random: () => 0,
-      setTimer: (ms, callback) => {
-        pauses.push(ms);
-        queueMicrotask(callback);
-        return () => {};
+      setTimer: () => {
+        throw new Error('ModelClient sets no timer');
       },
     };
     const client = createModelClient({
@@ -422,7 +421,6 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
     expect(outcome).toBe(row.outcome);
     expect(verdictAsks).toEqual([row.model]);
     expect(calls.count).toBe(row.providerCalls);
-    expect(pauses).toEqual(row.pauses);
     expect(ledgerRows).toHaveLength(row.ledgerRows);
     expect(audits).toEqual([]);
     if (row.log !== null) {

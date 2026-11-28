@@ -184,9 +184,10 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
         noRoles={noRoles}
         pending={copy.pending}
         describedBy={copy.error === null ? undefined : errorId}
-        onUseInChat={() =>
-          inChat({ record: { id: record.id, kind: record.kind, name } })
-        }
+        onUseInChat={() => {
+          if (canUseInChat(record))
+            inChat({ record: { id: record.id, kind: record.kind, name } });
+        }}
         onRefine={() =>
           inChat({ text: t('editor.header.refineTemplate', { name }) })
         }

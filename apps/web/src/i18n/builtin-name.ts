@@ -1,4 +1,8 @@
-import { BUILTIN_ROLE_KEY, builtinNameIn } from '@agent-os/contracts';
+import {
+  BUILTIN_ROLE_KEY,
+  EVERYONE_ROLE_KEY,
+  builtinNameIn,
+} from '@agent-os/contracts';
 import { hasMessage, type Messages } from './catalog';
 import type { Locale } from './pick-locale';
 
@@ -14,9 +18,16 @@ export function builtinName(
   return builtinNameIn(named, locale);
 }
 
-/** The name of a role in the page's language: a role has no `builtinKey`, it is known by its name alone. */
+/**
+ * The name of a role in the page's language. A role has no `builtinKey` and many callers know only its name, so
+ * the name is tried as either built-in role: the built-in names cannot be renamed or taken by another role.
+ */
 export function builtinRoleName(name: string, locale: Locale): string {
-  return builtinNameIn({ builtinKey: BUILTIN_ROLE_KEY, name }, locale);
+  for (const builtinKey of [BUILTIN_ROLE_KEY, EVERYONE_ROLE_KEY]) {
+    const translated = builtinNameIn({ builtinKey, name }, locale);
+    if (translated !== name) return translated;
+  }
+  return name;
 }
 
 /** How a tool call reads for the employee: the tool's title and its arguments' labels by key. */

@@ -3,13 +3,13 @@ import type { LibraryErrorText } from '@/lib/library/library-errors';
 import {
   changedFields,
   definitionOf,
-  type AgentDefinition,
-  type AgentRecord,
   type ChangedField,
+  type EditorDefinition,
+  type EditorRecord,
 } from '@/lib/library/record-rules';
 
 /**
- * State of the agent editor's form (design-web.md, KD-3, «State Transitions and Invariants»). The
+ * State of the record editor's form (an agent or a skill) (design-web.md, KD-3, «State Transitions and Invariants»). The
  * saved record and the typed values are kept apart: "has changes", the conflict's fields and «Вернуть»
  * are comparisons of two values, never flags. No action but the author's own replaces the typed values
  * (Invariant 1), and a save carries only the version the edit started from or the one the author
@@ -20,29 +20,29 @@ type Phase = 'editing' | 'saving' | 'saved' | 'conflict';
 
 export type RecordFormState = {
   /** The record as saved: the version the edit started from or the one accepted in a conflict; `null` while new. */
-  readonly saved: AgentRecord | null;
+  readonly saved: EditorRecord | null;
   /** What the typed values are compared with: the saved record's definition, or a new record's blank one. */
-  readonly base: AgentDefinition;
-  readonly values: AgentDefinition;
+  readonly base: EditorDefinition;
+  readonly values: EditorDefinition;
   readonly phase: Phase;
   readonly error: LibraryErrorText | null;
   /** The record saved elsewhere after a 409; `null` when its read failed (MC-10 without fields). */
-  readonly conflictSaved: AgentRecord | null;
+  readonly conflictSaved: EditorRecord | null;
   /** What «Вернуть» puts back after «Отменить изменения» or «Взять сохранённое». */
-  readonly undo: AgentDefinition | null;
+  readonly undo: EditorDefinition | null;
 };
 
 export type RecordFormInit =
-  { saved: AgentRecord } | { blank: AgentDefinition };
+  { saved: EditorRecord } | { blank: EditorDefinition };
 
 export type RecordFormAction =
-  | { type: 'input'; values: AgentDefinition }
+  | { type: 'input'; values: EditorDefinition }
   /** «Отменить изменения». */
   | { type: 'discard' }
   | { type: 'save' }
-  | { type: 'saved'; record: AgentRecord }
+  | { type: 'saved'; record: EditorRecord }
   | { type: 'failed'; error: LibraryErrorText }
-  | { type: 'conflict'; saved: AgentRecord | null }
+  | { type: 'conflict'; saved: EditorRecord | null }
   /** «Сохранить мои правки». */
   | { type: 'saveMine' }
   /** «Взять сохранённое». */
@@ -67,8 +67,8 @@ export function initialRecordForm(init: RecordFormInit): RecordFormState {
 /** Saved as `record`: both the form and the comparison base become its definition. */
 function settle(
   state: RecordFormState,
-  record: AgentRecord,
-  undo: AgentDefinition | null,
+  record: EditorRecord,
+  undo: EditorDefinition | null,
 ): RecordFormState {
   const base = definitionOf(record);
   return {
@@ -150,7 +150,7 @@ export type RecordFormView = {
   /** The version a save carries; `null` for a new record. */
   version: number | null;
   /** MC-10: the record saved elsewhere and the fields it changed against the version the edit started from. */
-  conflict: { saved: AgentRecord | null; fields: ChangedField[] } | null;
+  conflict: { saved: EditorRecord | null; fields: ChangedField[] } | null;
 };
 
 export function recordFormView(state: RecordFormState): RecordFormView {
