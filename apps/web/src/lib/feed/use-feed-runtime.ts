@@ -97,7 +97,7 @@ function useFeedState(feed: FeedStore | null): FeedState | null {
 
 /**
  * assistant-ui over a feed store (design-web.md, KD-1, Contract «useFeedRuntime»): messages from
- * `toFeed`, `onNew` → `send`, `isLoading` until the first read. No `isRunning`, `onCancel`, `onEdit`
+ * `toFeed`, `onNew` → `send`, `isLoading` until the first read, `hasEarlier` and `onLoadEarlier` for an earlier window. No `isRunning`, `onCancel`, `onEdit`
  * or `onReload`: with `isRunning` the library disables «Отправить», and FR-16 keeps sending open.
  * `feed` is null for a conversation not created yet; `send` then decides where the text goes.
  */
@@ -119,6 +119,9 @@ export function useFeedRuntime(
     messages,
     convertMessage: (message) => message,
     isLoading: state !== null && !state.loaded && state.loadError === null,
+    // «Показать предыдущие сообщения» (live-feed KD-2); the store keeps a failure itself and never rejects here.
+    hasEarlier: state?.view?.hasOlder ?? false,
+    ...(feed !== null && { onLoadEarlier: feed.loadEarlier }),
     onNew: (message) => send(textOf(message)),
   });
 }

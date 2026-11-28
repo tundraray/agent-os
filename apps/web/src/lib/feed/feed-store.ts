@@ -6,6 +6,7 @@ import {
   type AgentPageView,
   type DecisionRequest,
   type HistoryEntry,
+  type HistoryQuery,
   type InterruptResponse,
   type RestartResponse,
   type SendMessageResponse,
@@ -29,6 +30,7 @@ import {
   drawsPending,
   feedViewOf,
   isBusy,
+  lacksTask,
   type DraftPart,
   type FeedView,
   type OptimisticEntry,
@@ -39,10 +41,15 @@ export type FeedSource =
   { kind: 'thread'; threadId: string } | { kind: 'agent'; agentId: string };
 
 export type FeedState = {
-  /** Every entry read so far, with the rest of the latest page; null until the first read succeeds. */
+  /**
+   * Every entry read so far, with the rest of the latest page; null until the first read succeeds. Its `hasOlder` comes
+   * from the first read and from each earlier window (live-feed KD-2).
+   */
   view: FeedView | null;
   /** The greatest `seq` read: the next re-read continues after it. */
   lastSeq: number;
+  /** The last load of an earlier window failed: the feed shows MC-1 with «Повторить» in place of the button (KD-2). */
+  earlierFailed: boolean;
   /** The observed agent's answer assembled from `delta` parts. */
   draft: string | null;
   optimistic: readonly OptimisticEntry[];
@@ -60,10 +67,20 @@ export type FeedState = {
 
 export type FeedStore = StoreApi<FeedState> & {
   /**
-   * The first read takes the view from `afterSeq` 0 to the end, and its failure is the screen's load
-   * error; a later one reads on from `lastSeq`, and its failure keeps the view (design-web.md, Error handling).
+   * The first read takes the last window of the history, and its failure is the screen's load error; a later one
+   * reads on from `lastSeq`, and its failure keeps the view (design-web.md, Error handling).
    */
   load: () => Promise<void>;
+  /**
+   * Reads the window before the first entry and puts it in front (live-feed KD-2); never rejects: a failure sets
+   * `earlierFailed`, and the next call asks for the same window.
+   */
+  loadEarlier: () => Promise<void>;
+  /**
+   * Replaces the entries with the window that ends at `seq` and the page after it in one change, then reads on to
+   * the end (live-feed KD-4); never rejects: a failure is logged and keeps the feed.
+   */
+  openAt: (seq: number) => Promise<void>;
   applyDelta: (part: DraftPart) => void;
   /**
    * Rejects when the server did not accept the message. `record` — the composer's chip: the message
@@ -152,6 +169,7 @@ export function createFeedStore({
   const store = createStore<FeedState>()(() => ({
     view: null,
     lastSeq: 0,
+    earlierFailed: false,
     draft: null,
     optimistic: [],
     loaded: createdHere,
@@ -166,11 +184,20 @@ export function createFeedStore({
   };
 
   const readPage = (
-    afterSeq: number,
+    query: HistoryQuery,
   ): Promise<ConversationView | AgentPageView> =>
     source.kind === 'thread'
-      ? api.getConversation(source.threadId, afterSeq)
-      : api.getAgentPage(source.agentId, afterSeq);
+      ? api.getConversation(source.threadId, query)
+      : api.getAgentPage(source.agentId, query);
+
+  // Every read of the store waits in this one queue, so the answers of a re-read, an earlier window and a jump to an
+  // entry never interleave (live-feed §C3). A job's rejection still reaches its caller through `next`.
+  let tail: Promise<void> = Promise.resolve();
+  function inQueue(job: () => Promise<void>): Promise<void> {
+    const next = tail.then(job);
+    tail = next.catch(() => undefined);
+    return next;
+  }
 
   function announce(
     previous: FeedView,
@@ -199,24 +226,26 @@ export function createFeedStore({
     eligible: ReadonlySet<string>,
     view: FeedView,
   ): readonly OptimisticEntry[] {
-    const hasTask = view.entries.some((entry) => entry.kind === 'task');
     return optimistic.filter((entry) => {
-      if (entry.first) return !hasTask;
+      if (entry.first) return lacksTask(view);
       if (!eligible.has(entry.localId)) return true;
       if (entry.place === 'tray') return false;
       return view.pending.some((pending) => drawsPending(entry, pending));
     });
   }
 
-  /** Pages from `fromSeq` until `nextAfterSeq` is null: the last page and the entries after `fromSeq`. */
-  async function readToEnd(fromSeq: number): Promise<{
+  /**
+   * Pages from `fromSeq` until `nextAfterSeq` is null: the last page and the entries after `fromSeq`. Without
+   * `fromSeq` the first page is the last window of the history.
+   */
+  async function readToEnd(fromSeq: number | null): Promise<{
     page: ConversationView | AgentPageView;
     added: HistoryEntry[];
     lastSeq: number;
   }> {
     const added: HistoryEntry[] = [];
-    let lastSeq = fromSeq;
-    let page = await readPage(fromSeq);
+    let lastSeq = fromSeq ?? 0;
+    let page = await readPage(fromSeq === null ? {} : { afterSeq: fromSeq });
     for (;;) {
       for (const entry of page.entries) {
         // Invariant 2: an entry already read is never added again.
@@ -226,11 +255,11 @@ export function createFeedStore({
         }
       }
       if (page.nextAfterSeq === null) return { page, added, lastSeq };
-      page = await readPage(page.nextAfterSeq);
+      page = await readPage({ afterSeq: page.nextAfterSeq });
     }
   }
 
-  /** One read: from 0 until the first success, then from `lastSeq`; never rejects. */
+  /** One read: the last window until the first success, then from `lastSeq`; never rejects. */
   async function read(): Promise<void> {
     const before = get();
     const refreshing = before.loaded;
@@ -239,7 +268,7 @@ export function createFeedStore({
 
     let result: Awaited<ReturnType<typeof readToEnd>>;
     try {
-      result = await readToEnd(refreshing ? before.lastSeq : 0);
+      result = await readToEnd(refreshing ? before.lastSeq : null);
     } catch (error) {
       const description = describeApiError(error);
       if (description.kind === 'not_found') {
@@ -259,13 +288,15 @@ export function createFeedStore({
     const { page, added, lastSeq } = result;
     const current = get();
     const pageView = feedViewOf(page);
-    const view: FeedView = {
-      ...pageView,
-      entries:
-        refreshing && current.view !== null
-          ? [...current.view.entries, ...added]
-          : added,
-    };
+    // A re-read page says nothing of the entries before the feed: `hasOlder` stays the feed's own.
+    const view: FeedView =
+      refreshing && current.view !== null
+        ? {
+            ...pageView,
+            hasOlder: current.view.hasOlder,
+            entries: [...current.view.entries, ...added],
+          }
+        : { ...pageView, entries: added };
     set({
       view,
       lastSeq,
@@ -284,7 +315,63 @@ export function createFeedStore({
     if (refreshing && before.view !== null) announce(before.view, view, added);
   }
 
-  const reads = createCoalescedRunner(read, { minIntervalMs: 0 });
+  const reads = createCoalescedRunner(() => inQueue(read), {
+    minIntervalMs: 0,
+  });
+
+  /** The window before the first entry goes in front; the conversation's facts stay those of the newer read (KD-2). */
+  async function readEarlier(): Promise<void> {
+    const before = get().view;
+    const first = before?.entries[0];
+    if (before?.hasOlder !== true || first === undefined) return;
+    set({ earlierFailed: false });
+    let page: ConversationView | AgentPageView;
+    try {
+      page = await readPage({ beforeSeq: first.seq });
+    } catch (error) {
+      logger.warn('feed earlier load failed', {
+        ...describeApiError(error),
+        ...ids,
+        beforeSeq: first.seq,
+      });
+      set({ earlierFailed: true });
+      return;
+    }
+    const { view } = get();
+    if (view === null) return;
+    set({
+      view: {
+        ...view,
+        hasOlder: page.hasOlder,
+        entries: [...page.entries, ...view.entries],
+      },
+    });
+  }
+
+  /** The window that ends at `seq` and the page after it replace the entries in one change (KD-4). */
+  async function readAround(seq: number): Promise<void> {
+    let older: ConversationView | AgentPageView;
+    let newer: ConversationView | AgentPageView;
+    try {
+      older = await readPage({ beforeSeq: seq + 1 });
+      newer = await readPage({ afterSeq: seq });
+    } catch (error) {
+      logger.warn('feed open at entry failed', {
+        ...describeApiError(error),
+        ...ids,
+        seq,
+      });
+      return;
+    }
+    const entries = [...older.entries, ...newer.entries];
+    set({
+      view: { ...feedViewOf(newer), hasOlder: older.hasOlder, entries },
+      lastSeq: Math.max(seq, entries.at(-1)?.seq ?? seq),
+      earlierFailed: false,
+    });
+    // The rest of the history comes with the ordinary re-read, below the match; not awaited — it queues after this job.
+    if (newer.nextAfterSeq !== null) void reads.request();
+  }
 
   function addOptimistic(
     entry: Omit<OptimisticEntry, 'localId' | 'createdAt'>,
@@ -330,9 +417,8 @@ export function createFeedStore({
   function firstMessage(): boolean {
     if (source.kind !== 'thread') return false;
     const { view, optimistic } = get();
-    const hasTask =
-      view?.entries.some((entry) => entry.kind === 'task') ?? false;
-    return !hasTask && !optimistic.some((entry) => entry.first);
+    const noTask = view === null || lacksTask(view);
+    return noTask && !optimistic.some((entry) => entry.first);
   }
 
   /**
@@ -400,6 +486,8 @@ export function createFeedStore({
 
   return Object.assign(store, {
     load: () => reads.request(),
+    loadEarlier: () => inQueue(readEarlier),
+    openAt: (seq: number) => inQueue(() => readAround(seq)),
     applyDelta: (part: DraftPart) => {
       const draft = applyDraftPart(get().draft, part);
       if (draft !== get().draft) set({ draft });

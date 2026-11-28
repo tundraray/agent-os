@@ -32,6 +32,7 @@ import {
   type DeepAgentRunView,
   type Document,
   type ForkRequest,
+  type HistoryQuery,
   type InheritedHistory,
   type InterruptResponse,
   type MarkSeenRequest,
@@ -144,14 +145,22 @@ async function getThreadForks(threadId: string): Promise<ThreadForksResponse> {
 
 const agentRoute = (agentId: string): string =>
   `/api/agents/${encodeURIComponent(agentId)}`;
-const afterSeqQuery = (afterSeq: number): string => `?afterSeq=${afterSeq}`;
+
+/** The query of a history route (live-feed KD-5): none — the last window, `beforeSeq` — the window before it, `afterSeq` — the entries after it. */
+function historyQuery({ beforeSeq, afterSeq }: HistoryQuery): string {
+  const params = new URLSearchParams();
+  if (beforeSeq !== undefined) params.set('beforeSeq', `${beforeSeq}`);
+  if (afterSeq !== undefined) params.set('afterSeq', `${afterSeq}`);
+  const query = params.toString();
+  return query === '' ? '' : `?${query}`;
+}
 
 async function getConversation(
   threadId: string,
-  afterSeq: number,
+  query: HistoryQuery,
 ): Promise<ConversationView> {
   return apiRequest({
-    path: `${threadRoute(threadId)}/history${afterSeqQuery(afterSeq)}`,
+    path: `${threadRoute(threadId)}/history${historyQuery(query)}`,
     schema: ConversationViewSchema,
   });
 }
@@ -228,10 +237,10 @@ async function getAwaitingCount(): Promise<AwaitingCount> {
 
 async function getAgentPage(
   agentId: string,
-  afterSeq: number,
+  query: HistoryQuery,
 ): Promise<AgentPageView> {
   return apiRequest({
-    path: `${agentRoute(agentId)}/history${afterSeqQuery(afterSeq)}`,
+    path: `${agentRoute(agentId)}/history${historyQuery(query)}`,
     schema: AgentPageViewSchema,
   });
 }
@@ -241,7 +250,7 @@ async function getInherited(
   afterSeq: number,
 ): Promise<InheritedHistory> {
   return apiRequest({
-    path: `${agentRoute(agentId)}/inherited${afterSeqQuery(afterSeq)}`,
+    path: `${agentRoute(agentId)}/inherited${historyQuery({ afterSeq })}`,
     schema: InheritedHistorySchema,
   });
 }

@@ -49,7 +49,7 @@ const cases: Case[] = [
         { status: 404 },
       ),
     ),
-    call: () => threadsApiClient.getConversation('a', 0),
+    call: () => threadsApiClient.getConversation('a', {}),
     expected: { kind: 'not_found', status: 404 },
   },
   {
@@ -66,7 +66,7 @@ const cases: Case[] = [
     handler: http.get(`${API}/api/threads/a/history`, () =>
       HttpResponse.json({}, { status: 500 }),
     ),
-    call: () => threadsApiClient.getConversation('a', 0),
+    call: () => threadsApiClient.getConversation('a', {}),
     expected: { kind: 'http', status: 500 },
   },
   {
@@ -80,7 +80,7 @@ const cases: Case[] = [
     handler: http.get(`${API}/api/threads/a/history`, () =>
       HttpResponse.json({ entries: 'none' }),
     ),
-    call: () => threadsApiClient.getConversation('a', 0),
+    call: () => threadsApiClient.getConversation('a', {}),
     expected: { kind: 'invalid_response', status: 200 },
   },
 ];

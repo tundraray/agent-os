@@ -37,6 +37,8 @@
   },
   "loadEarlier": "Показать предыдущие сообщения",
   "loadingEarlier": "Загружаем предыдущие сообщения…",
+  "loadEarlierFailed": "Не удалось загрузить предыдущие сообщения.",
+  "loadEarlierRetry": "Повторить",
   "scrollToBottom": "К последнему сообщению",
   "newMessages": "Новые сообщения",
   "suggestions": "Подсказки",

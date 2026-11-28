@@ -650,6 +650,7 @@ describe('newDividerSeq', () => {
     newDividerSeq(
       toFeed(feedViewOf(conversationView({ entries })), null, []),
       range,
+      null,
     );
 
   // improvements KD-4, AC-11.2, FR-11: the divider stands before the first unread message the employee did not write.

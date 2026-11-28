@@ -41,8 +41,11 @@ import {
 // ---------------------------------------------------------------------------------------------------
 // Inputs
 
-/** A conversation or an agent page with every history entry read so far. */
-export type FeedView =
+/**
+ * A conversation or an agent page with every history entry read so far. `hasOlder` — entries older than the first
+ * one read exist (live-feed KD-2): the feed holds a window, not the start of the history.
+ */
+export type FeedView = { hasOlder: boolean } & (
   | {
       kind: 'thread';
       threadId: string;
@@ -69,18 +72,20 @@ export type FeedView =
       decisions: readonly Confirmation[];
       children: readonly AgentNode[];
       training: AgentPageView['training'];
-    };
+    }
+);
 
 /** A deep agent's run: started from a deep agent record and not as one of its subagents. */
 export function isDeepAgentRun(agent: Pick<AgentView, 'origin'>): boolean {
   return agent.origin?.kind === 'deep_agent' && agent.origin.subagent === null;
 }
 
-/** The view of one page read, with that page's entries. */
+/** The view of one page read, with that page's entries and its `hasOlder`. */
 export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
   if ('chat' in page) {
     return {
       kind: 'thread',
+      hasOlder: page.hasOlder,
       threadId: page.thread.id,
       thread: page.thread,
       chat: page.chat,
@@ -95,6 +100,7 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
   }
   return {
     kind: 'agent',
+    hasOlder: page.hasOlder,
     agent: page.agent,
     entries: page.entries,
     pending: page.pending,
@@ -102,6 +108,19 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
     children: page.children,
     training: page.training,
   };
+}
+
+/**
+ * The conversation has no task yet (live-feed KD-3): no `task` entry was read and nothing older than the feed exists.
+ * A window of a long conversation lacks the task entry, yet the conversation has one.
+ */
+export function lacksTask(view: FeedView): boolean {
+  return !view.hasOlder && !view.entries.some((entry) => entry.kind === 'task');
+}
+
+/** The `seq` the feed starts at while older entries exist (live-feed KD-3); null when it holds the history's start. */
+export function windowStartOf(view: FeedView): number | null {
+  return view.hasOlder ? (view.entries[0]?.seq ?? null) : null;
 }
 
 /** A message the server accepted (202) and the next re-read has not shown yet (KD-4). */
@@ -768,6 +787,19 @@ function recordSaveOf(
     : { outcome: call.result.outcome, text: call.result.text ?? null };
 }
 
+/**
+ * A card created before the feed's first entry while older entries exist (live-feed KD-3): it belongs above the
+ * window and is not drawn, unless it still asks for attention — an open decision, a working or waiting subagent.
+ */
+function olderThanWindow(view: FeedView, createdAt: string): boolean {
+  const first = view.entries[0];
+  return (
+    view.hasOlder &&
+    first !== undefined &&
+    time(createdAt) < time(first.createdAt)
+  );
+}
+
 /** Decisions and direct children, by creation time; equal times keep the API's list order. */
 function floatingItems(
   view: FeedView,
@@ -775,7 +807,13 @@ function floatingItems(
 ): Floating[] {
   const byChatRoot = (c: Confirmation): boolean =>
     view.kind === 'thread' && c.agentId === view.chat.rootAgentId;
-  const decisions = view.decisions.map((confirmation) => {
+  const shownDecisions = view.decisions.filter(
+    (c) => c.status === 'open' || !olderThanWindow(view, c.createdAt),
+  );
+  const shownChildren = view.children.filter(
+    (node) => isActive(node.status) || !olderThanWindow(view, node.createdAt),
+  );
+  const decisions = shownDecisions.map((confirmation) => {
     const data: DecisionPartData = {
       confirmation,
       byChat: byChatRoot(confirmation),
@@ -791,7 +829,7 @@ function floatingItems(
       ),
     };
   });
-  const children = view.children.map((node) => {
+  const children = shownChildren.map((node) => {
     const data: RunCardPartData = {
       ...node,
       briefQuestion: briefQuestionOf(view.decisions, node),
@@ -1035,12 +1073,16 @@ type FeedMessageRef = {
 /**
  * The `seq` of the message the «Новое» divider stands before (improvements KD-4, UXRD IM-10): the first message of the
  * range the employee did not send from the composer — a schedule's message counts; null when there is none.
+ * `windowStart` — `windowStartOf` the feed: a window that starts after the «seen through» mark has no divider, since
+ * the first unread message may lie above it (live-feed KD-3, AC-07.2).
  */
 export function newDividerSeq(
   messages: readonly FeedMessageRef[],
   range: UnreadRange | null,
+  windowStart: number | null,
 ): number | null {
   if (range === null) return null;
+  if (windowStart !== null && windowStart > range.afterSeq) return null;
   for (const message of messages) {
     const seq = message.id === undefined ? null : feedSeqOf(message.id);
     if (seq === null || seq <= range.afterSeq || seq > range.throughSeq)

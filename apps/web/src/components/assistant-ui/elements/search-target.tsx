@@ -12,7 +12,7 @@ import {
 import { useStore } from 'zustand';
 
 import { useShellServices } from '@/components/shell/shell-actions';
-import { useFeedSelector } from '@/lib/feed/feed-context';
+import { useFeed, useFeedSelector } from '@/lib/feed/feed-context';
 import type { FeedSource } from '@/lib/feed/feed-store';
 import { feedSeqOf, type FeedView } from '@/lib/feed/to-feed';
 import { logger } from '@/lib/logger';
@@ -120,6 +120,15 @@ function selectorOf(mark: SearchMark): string | null {
   return null;
 }
 
+/** The lowest `seq` among the drawn feed messages; null while none draws an entry. */
+const firstDrawnSeq = (s: AssistantState): number | null => {
+  for (const message of s.thread.messages) {
+    const seq = feedSeqOf(message.id);
+    if (seq !== null) return seq;
+  }
+  return null;
+};
+
 type Applied = {
   mark: SearchMark;
   target: SearchTarget;
@@ -133,7 +142,8 @@ type Applied = {
  * Takes the pending target of the feed's own source from the search store once the whole history is drawn, and
  * returns the mark the feed hands down (DD KD-7, Flow 2). The target is scrolled to the upper third, marked and
  * focused; each opening is logged with its place, position and whether the target was found. Without an element
- * (a call drawn as a card) nothing is marked (DC-4). The mark goes when another match is opened, when the feed shows
+ * (a call drawn as a card) nothing is marked (DC-4). A match older than the feed's first entry first has the feed
+ * opened around it (live-feed KD-4), and is marked once the feed draws an entry not newer than it. The mark goes when another match is opened, when the feed shows
  * another source (the screens are not remounted between conversations or agents) and when the feed unmounts.
  */
 export function useFeedSearchMark(
@@ -141,6 +151,8 @@ export function useFeedSearchMark(
   historyPending: boolean,
 ): SearchMark | null {
   const { search } = useShellServices();
+  const feedStore = useFeed();
+  const drawnFrom = useAuiState(firstDrawnSeq);
   const openedKey = useStore(search, (state) => state.openedKey);
   const view = useFeedSelector(
     (state): FeedView | null => (state.loaded ? state.view : null),
@@ -151,9 +163,16 @@ export function useFeedSearchMark(
   );
   const source = view === null ? null : keyOf(sourceOf(view));
   const [applied, setApplied] = useState<Applied | null>(null);
+  // A match whose entry the feed is being opened around; `settled` — the reads ended without its window.
+  const [jump, setJump] = useState<{
+    applied: Applied;
+    seq: number;
+    settled: boolean;
+  } | null>(null);
 
   // Adjusted during render, so the old mark never shows on another source for a frame.
   const [seen, setSeen] = useState({ source, openedKey });
+  let pending = jump;
   if (seen.source !== source || seen.openedKey !== openedKey) {
     setSeen({ source, openedKey });
     const replaced =
@@ -161,6 +180,22 @@ export function useFeedSearchMark(
       (applied.source !== source ||
         (openedKey !== null && openedKey !== applied.key));
     if (replaced) setApplied(null);
+    if (
+      pending !== null &&
+      (pending.applied.source !== source ||
+        (openedKey !== null && openedKey !== pending.applied.key))
+    ) {
+      pending = null;
+      setJump(null);
+    }
+  }
+  // The feed was opened around the match: it is marked once its window is drawn, adjusted during render like `seen`.
+  if (
+    pending !== null &&
+    (pending.settled || (drawnFrom !== null && drawnFrom <= pending.seq))
+  ) {
+    setJump(null);
+    setApplied(pending.applied);
   }
 
   // Once the history is drawn, the feed takes its target now and whenever a new one is opened while it stays.
@@ -170,16 +205,36 @@ export function useFeedSearchMark(
     const take = (): void => {
       const taken = search.takeTarget(feedSource);
       if (taken === null) return;
-      setApplied({
+      const next: Applied = {
         mark: markOf(taken),
         target: taken,
         source: keyOf(feedSource),
         key: matchKey(taken.match),
+      };
+      const { seq } = taken.match;
+      const first = view.entries[0]?.seq;
+      if (
+        feedStore === null ||
+        seq === null ||
+        first === undefined ||
+        seq >= first
+      ) {
+        setApplied(next);
+        return;
+      }
+      setJump({ applied: next, seq, settled: false });
+      // A failed read keeps the feed (logged by the store): the match is then opened as it is, found or not.
+      void feedStore.openAt(seq).then(() => {
+        const held = feedStore.getState().view?.entries[0]?.seq;
+        if (held === undefined || held > seq)
+          setJump((current) =>
+            current?.applied === next ? { ...current, settled: true } : current,
+          );
       });
     };
     take();
     return search.subscribe(take);
-  }, [search, view, drawn, historyPending]);
+  }, [search, feedStore, view, drawn, historyPending]);
 
   const logged = useRef<Applied | null>(null);
   useEffect(() => {

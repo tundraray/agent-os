@@ -37,6 +37,8 @@
   },
   "loadEarlier": "Show earlier messages",
   "loadingEarlier": "Loading earlier messages…",
+  "loadEarlierFailed": "Couldn't load earlier messages.",
+  "loadEarlierRetry": "Retry",
   "scrollToBottom": "Go to latest message",
   "newMessages": "New messages",
   "suggestions": "Suggestions",

@@ -78,6 +78,7 @@ import {
   newDividerSeq,
   stripAgents,
   trayEntries,
+  windowStartOf,
   type UnreadRange,
   type DecisionPartData,
   type EventPartData,
@@ -391,10 +392,21 @@ const ThreadRoot: FC<{
   const mark = useFeedSearchMark(feedRef, historyPending);
   const { apiClient } = useShellServices();
   const unread = useSeenMark(useFeed(), apiClient);
-  const dividerSeq = useAuiState((s) =>
-    newDividerSeq(s.thread.messages, unread),
+  const windowStart = useFeedSelector(
+    (state) => (state.view === null ? null : windowStartOf(state.view)),
+    null,
   );
-  useOpenOnNewDivider({ feedRef, unread, dividerSeq, mark, historyPending });
+  const dividerSeq = useAuiState((s) =>
+    newDividerSeq(s.thread.messages, unread, windowStart),
+  );
+  useOpenOnNewDivider({
+    feedRef,
+    unread,
+    dividerSeq,
+    windowStart,
+    mark,
+    historyPending,
+  });
 
   return (
     <SearchMarkProvider value={mark}>
@@ -540,28 +552,36 @@ const NEW_DIVIDER_SELECTOR = '[data-slot="feed-divider"][data-variant="new"]';
 /**
  * improvements Flow 3: a conversation with unread messages opens on the «Новое» divider in the upper third, once per
  * opening, with the search target's alignment. A search target wins: its mark stops this alignment and keeps it off.
+ * Only the window the conversation opened with aligns (live-feed KD-3, AC-07.3): a divider that an earlier window
+ * brings in leaves the feed where it is.
  */
 function useOpenOnNewDivider({
   feedRef,
   unread,
   dividerSeq,
+  windowStart,
   mark,
   historyPending,
 }: {
   feedRef: RefObject<HTMLDivElement | null>;
   unread: UnreadRange | null;
   dividerSeq: number | null;
+  windowStart: number | null;
   mark: SearchMark | null;
   historyPending: boolean;
 }): void {
   const alignedFor = useRef<UnreadRange | null>(null);
+  const openedWith = useRef<{ range: UnreadRange; start: number | null }>(null);
   useEffect(() => {
+    if (unread !== null && openedWith.current?.range !== unread)
+      openedWith.current = { range: unread, start: windowStart };
     if (
       unread === null ||
       dividerSeq === null ||
       mark !== null ||
       historyPending ||
-      alignedFor.current === unread
+      alignedFor.current === unread ||
+      openedWith.current?.start !== windowStart
     )
       return;
     const feed = feedRef.current;
@@ -570,7 +590,7 @@ function useOpenOnNewDivider({
     if (feed === null || divider === null) return;
     alignedFor.current = unread;
     return alignInUpperThird(divider, feed);
-  }, [feedRef, unread, dividerSeq, mark, historyPending]);
+  }, [feedRef, unread, dividerSeq, windowStart, mark, historyPending]);
 }
 
 const ThreadMessage: FC = () => {
@@ -897,15 +917,26 @@ const nextFocusable = (start: Element) => {
   return null;
 };
 
+const LOAD_EARLIER_SELECTOR = '[data-slot="aui_thread-load-earlier"]';
+
+/**
+ * MC-41 «Показать предыдущие сообщения» (live-feed UXRD LF-01). A failed window shows MC-1 with «Повторить» in its
+ * place, focus on «Повторить»; the retry asks the library again, so the button comes back with its loading caption.
+ */
 const ThreadLoadEarlier: FC = () => {
   const t = useTranslations('chat');
+  const aui = useAui();
   const { announcer } = useShellServices();
+  const loading = useAuiState((s) => s.thread.isLoadingEarlier);
+  const failed =
+    useFeedSelector((state) => state.earlierFailed, false) && !loading;
   const visible = useAuiState(
     (s) => s.thread.hasEarlier || s.thread.isLoadingEarlier,
   );
-  const loading = useAuiState((s) => s.thread.isLoadingEarlier);
   const slotRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef<Element | null>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const retriedRef = useRef(false);
 
   // The last page removes the button; a keyboard user on it continues from the
   // next control in tab order rather than from the document body.
@@ -919,9 +950,44 @@ const ThreadLoadEarlier: FC = () => {
     nextFocusable(slot)?.focus();
   }, [visible]);
 
+  // UXRD §Accessibility: focus goes to «Повторить» on a failure and back to the button while the retry loads.
+  useLayoutEffect(() => {
+    if (failed) {
+      retryRef.current?.focus();
+      return;
+    }
+    if (!loading || !retriedRef.current) return;
+    retriedRef.current = false;
+    slotRef.current?.querySelector<HTMLElement>(LOAD_EARLIER_SELECTOR)?.focus();
+  }, [failed, loading]);
+
   useEffect(() => {
     if (loading) announcer.getState().announce('announce.loadingEarlier');
   }, [loading, announcer]);
+
+  if (failed)
+    return (
+      <div
+        ref={slotRef}
+        role="status"
+        data-slot="aui_thread-load-earlier-failed"
+        className="text-muted-foreground mb-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 self-center text-sm"
+      >
+        <span>{t('loadEarlierFailed')}</span>
+        <Button
+          ref={retryRef}
+          variant="ghost"
+          size="sm"
+          className="rounded-full"
+          onClick={() => {
+            retriedRef.current = true;
+            void aui.thread.loadEarlier();
+          }}
+        >
+          {t('loadEarlierRetry')}
+        </Button>
+      </div>
+    );
 
   return (
     <div
