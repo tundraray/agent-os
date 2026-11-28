@@ -72,10 +72,12 @@ CREATE TABLE "app"."conversations" (
 	"last_task_number" integer DEFAULT 0 NOT NULL,
 	"granted_tools" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"seen_through_seq" integer DEFAULT 0 NOT NULL,
+	"notification_level" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "conversations_start_call_check" CHECK (("app"."conversations"."start_call_id" is not null) = ("app"."conversations"."parent_id" is not null)),
 	CONSTRAINT "conversations_root_check" CHECK (("app"."conversations"."title" is not null) = ("app"."conversations"."parent_id" is null) and ("app"."conversations"."updated_at" is not null) = ("app"."conversations"."parent_id" is null)),
-	CONSTRAINT "conversations_fork_check" CHECK ("app"."conversations"."forked_from_id" is null or ("app"."conversations"."parent_id" is null and "app"."conversations"."forked_through_seq" is not null))
+	CONSTRAINT "conversations_fork_check" CHECK ("app"."conversations"."forked_from_id" is null or ("app"."conversations"."parent_id" is null and "app"."conversations"."forked_through_seq" is not null)),
+	CONSTRAINT "conversations_notification_level_check" CHECK ("app"."conversations"."notification_level" in ('all', 'decisions_and_failures', 'off'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."messages" (
@@ -180,9 +182,11 @@ CREATE TABLE "app"."identity_users" (
 	"is_admin" boolean DEFAULT false NOT NULL,
 	"last_sign_in_at" timestamp with time zone,
 	"language" text,
+	"notification_level" text DEFAULT 'all' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "identity_users_status_check" CHECK ("app"."identity_users"."status" in ('active', 'disabled')),
-	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru'))
+	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru')),
+	CONSTRAINT "identity_users_notification_level_check" CHECK ("app"."identity_users"."notification_level" in ('all', 'decisions_and_failures', 'off'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."identity_roles" (

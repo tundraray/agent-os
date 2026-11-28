@@ -107,6 +107,7 @@ export function threadSummary(
     forkable: true,
     forkedFrom: null,
     forkCount: 0,
+    notificationLevel: null,
     ...overrides,
   });
 }
@@ -167,6 +168,7 @@ export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
     language: null,
     trainOwn: false,
     trainingCapUsd: 2,
+    notificationLevel: 'all',
     ...overrides,
   });
 }

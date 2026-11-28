@@ -1,6 +1,7 @@
 import {
   UserStatusSchema,
   type Language,
+  type NotificationLevel,
   type UserStatus,
 } from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
@@ -194,6 +195,17 @@ export class IdentityUsersRepository {
     await this.db.client
       .update(identityUsers)
       .set({ language })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Records the employee's default notification level. */
+  async setNotificationLevel(
+    userId: string,
+    notificationLevel: NotificationLevel,
+  ): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ notificationLevel })
       .where(eq(identityUsers.id, userId));
   }
 

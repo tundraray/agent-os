@@ -32,6 +32,7 @@ import {
   MemoryVersionKindSchema,
   ModelProviderKindSchema,
   ModelPurposeSchema,
+  NotificationLevelSchema,
   ProviderTypeSchema,
   RecordKindSchema,
   ScheduleStateSchema,
@@ -248,6 +249,12 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         ),
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_users_language_check: sorted(LanguageSchema.options),
+        identity_users_notification_level_check: sorted(
+          NotificationLevelSchema.options,
+        ),
+        conversations_notification_level_check: sorted(
+          NotificationLevelSchema.options,
+        ),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
         identity_roles_builtin_kind_check: sorted(
           BuiltinRoleKindSchema.options,

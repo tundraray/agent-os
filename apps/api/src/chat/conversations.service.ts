@@ -21,6 +21,7 @@ import {
   type DocumentSummary,
   type ForkRequest,
   type InterruptResponse,
+  type NotificationLevel,
   type ScheduleMark,
   type SendMessageRequest,
   type SendMessageResponse,
@@ -177,6 +178,7 @@ export class ConversationsService {
       forkable: true,
       forkedFrom: null,
       forkCount: 0,
+      notificationLevel: null,
     };
   }
 
@@ -360,6 +362,21 @@ export class ConversationsService {
       isUuid(threadId) &&
       (await this.conversations.markSeen(threadId, ownerId, throughSeq));
     if (!marked) throw threadNotFound();
+  }
+
+  /**
+   * Flow 4 of live-feed design-server.md: writes the owner's own level of the conversation, `null` — as the owner's
+   * default. A malformed, missing, deleted or foreign id is `THREAD_NOT_FOUND`, and nothing is written.
+   */
+  async setNotificationLevel(
+    threadId: string,
+    ownerId: string,
+    level: NotificationLevel | null,
+  ): Promise<void> {
+    const written =
+      isUuid(threadId) &&
+      (await this.conversations.setNotificationLevel(threadId, ownerId, level));
+    if (!written) throw threadNotFound();
   }
 
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */

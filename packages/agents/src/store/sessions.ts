@@ -1,6 +1,8 @@
 import {
   CHAT_TASK_TYPE,
   type ChipRecord,
+  type NotificationLevel,
+  NotificationLevelSchema,
   RecordKindSchema,
   type RunOrigin,
   type ScheduleMark,
@@ -118,6 +120,8 @@ export interface RootSession {
   readonly forkCount: number;
   /** The last entry of the root's history the owner has seen (improvements design-server.md, KD-7). */
   readonly seenThroughSeq: number;
+  /** The conversation's own notification level; `null` — the owner's default (live-feed KD-7). */
+  readonly notificationLevel: NotificationLevel | null;
 }
 
 /** Reads a root's row as a root session; a row without a title or a list time is not a root's. */
@@ -142,6 +146,9 @@ export function toRootSession(row: RootConversationRow): RootSession {
           },
     forkCount: row.forkCount,
     seenThroughSeq: row.seenThroughSeq,
+    notificationLevel: NotificationLevelSchema.nullable().parse(
+      row.notificationLevel,
+    ),
   };
 }
 

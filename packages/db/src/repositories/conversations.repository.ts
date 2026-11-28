@@ -19,6 +19,7 @@ import {
   HistoryEventSchema,
   TaskStatusSchema,
   WaitReasonSchema,
+  type NotificationLevel,
   type ToolPair,
 } from '@agent-os/contracts';
 import type { Db } from '../db';
@@ -83,6 +84,8 @@ export interface RootConversationRow {
   readonly forkCount: number;
   /** The last entry of the root's history the owner has seen. */
   readonly seenThroughSeq: number;
+  /** The conversation's own notification level as stored; `null` — the owner's default. */
+  readonly notificationLevel: string | null;
 }
 
 /**
@@ -181,6 +184,7 @@ const ROOT_COLUMNS = {
     join ${runtimeTasks} fork_task on fork_task.task_id = fork.id
     where fork.forked_from_id = ${conversations.id} and fork_task.deleted_at is null)`,
   seenThroughSeq: conversations.seenThroughSeq,
+  notificationLevel: conversations.notificationLevel,
 };
 
 const UNFINISHED = sql`(${sql.join(
@@ -435,6 +439,23 @@ export class ConversationsRepository {
       .set({
         seenThroughSeq: sql`greatest(${conversations.seenThroughSeq}, least(${throughSeq}::int, ${lastEntry}))`,
       })
+      .where(ownedLiveRoot(rootId, ownerId))
+      .returning({ id: conversations.id });
+    return rows.length > 0;
+  }
+
+  /**
+   * Writes the owner's live root's own notification level (`null` — the owner's default); `false` for a missing,
+   * deleted or another owner's root, and nothing is written then.
+   */
+  async setNotificationLevel(
+    rootId: string,
+    ownerId: string,
+    level: NotificationLevel | null,
+  ): Promise<boolean> {
+    const rows = await this.db.client
+      .update(conversations)
+      .set({ notificationLevel: level })
       .where(ownedLiveRoot(rootId, ownerId))
       .returning({ id: conversations.id });
     return rows.length > 0;

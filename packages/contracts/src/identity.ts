@@ -80,8 +80,19 @@ export type Language = z.infer<typeof LanguageSchema>;
 export const LOCALE_COOKIE = 'aos_locale';
 
 /**
+ * Which events the web notifies the employee about (live-feed design-server.md, KD-7): `all`, decisions and
+ * failures only, or none. The employee's default and a conversation's own level take these values.
+ */
+export const NotificationLevelSchema = z.enum([
+  'all',
+  'decisions_and_failures',
+  'off',
+]);
+export type NotificationLevel = z.infer<typeof NotificationLevelSchema>;
+
+/**
  * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
- * while the employee has not chosen one.
+ * while the employee has not chosen one; `notificationLevel` is the employee's default level.
  */
 export const CurrentUserSchema = z.object({
   id: IdSchema,
@@ -93,12 +104,19 @@ export const CurrentUserSchema = z.object({
   /** The role's right to train own agents; with `trainingCapUsd`, the cap of one training now (design-test-run.md, KD-6). */
   trainOwn: z.boolean(),
   trainingCapUsd: z.number(),
+  notificationLevel: NotificationLevelSchema,
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
 
 /** Body of PUT /api/auth/me/language. */
 export const LanguageBodySchema = z.object({ language: LanguageSchema });
 export type LanguageBody = z.infer<typeof LanguageBodySchema>;
+
+/** Body of PUT /api/auth/me/notification-level: the employee's default level. */
+export const NotificationLevelBodySchema = z.object({
+  level: NotificationLevelSchema,
+});
+export type NotificationLevelBody = z.infer<typeof NotificationLevelBodySchema>;
 
 /** Body of POST /api/auth/password. */
 export const PasswordSignInBodySchema = z.object({

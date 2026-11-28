@@ -1,4 +1,4 @@
-import type { Language } from '@agent-os/contracts';
+import type { Language, NotificationLevel } from '@agent-os/contracts';
 import type { Request } from 'express';
 
 /** The employee of a request with a live session, put into `req.user` by `SessionGuard` (KD-3). */
@@ -18,6 +18,8 @@ export interface AuthUser {
   hasPassword: boolean;
   /** The chosen interface language, or null while there is no choice (`CurrentUser.language`). */
   language: Language | null;
+  /** The employee's default notification level (`CurrentUser.notificationLevel`). */
+  notificationLevel: NotificationLevel;
   sessionId: string;
 }
 

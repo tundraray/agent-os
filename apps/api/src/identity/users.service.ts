@@ -11,6 +11,7 @@ import {
   type CreateLocalUserBody,
   type Language,
   type MyRoleList,
+  type NotificationLevel,
   type PasswordChangeBody,
   type UserStatus,
 } from '@agent-os/contracts';
@@ -340,6 +341,14 @@ export class UsersService {
   /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
   async setOwnLanguage(userId: string, language: Language): Promise<void> {
     await this.users.setLanguage(userId, language);
+  }
+
+  /** The employee saves his own default notification level (live-feed KD-7); no audit: the level grants nothing. */
+  async setOwnNotificationLevel(
+    userId: string,
+    level: NotificationLevel,
+  ): Promise<void> {
+    await this.users.setNotificationLevel(userId, level);
   }
 
   /** Logs a refused own change and gives its 400 answer; the password stays as it was (AC-33.4). */

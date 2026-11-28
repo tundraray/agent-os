@@ -1,4 +1,4 @@
-import type { ToolPair } from '@agent-os/contracts';
+import { NotificationLevelSchema, type ToolPair } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -13,7 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { app } from './app';
 import { agentVersions } from './agent-versions';
-import { createdAt, searchVector } from './helpers';
+import { createdAt, isOneOf, searchVector } from './helpers';
 import { identityUsers } from './identity-users';
 import { runtimeTasks } from './runtime-tasks';
 
@@ -98,6 +98,11 @@ export const conversations = app.table(
       .default([]),
     /** Set on a root: the seq of the last entry of its history the owner has seen. */
     seenThroughSeq: integer('seen_through_seq').notNull().default(0),
+    /**
+     * Written only on a root: the conversation's own notification level; null — the owner's default
+     * (live-feed design-server.md, KD-7). A fork starts without one.
+     */
+    notificationLevel: text('notification_level'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -128,6 +133,10 @@ export const conversations = app.table(
     check(
       'conversations_fork_check',
       sql`${t.forkedFromId} is null or (${t.parentId} is null and ${t.forkedThroughSeq} is not null)`,
+    ),
+    check(
+      'conversations_notification_level_check',
+      isOneOf(t.notificationLevel, NotificationLevelSchema.options),
     ),
   ],
 );

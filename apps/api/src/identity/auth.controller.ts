@@ -15,11 +15,13 @@ import { LOGGER, type Logger } from '@agent-os/common';
 import {
   LanguageBodySchema,
   nextPath,
+  NotificationLevelBodySchema,
   PasswordChangeBodySchema,
   PasswordSignInBodySchema,
   type CurrentUser,
   type LanguageBody,
   type MyRoleList,
+  type NotificationLevelBody,
   type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
@@ -153,8 +155,16 @@ export class AuthController {
     @Req() req: AuthedRequest,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CurrentUser> {
-    const { id, email, name, isAdmin, hasPassword, language, trainOwn } =
-      req.user;
+    const {
+      id,
+      email,
+      name,
+      isAdmin,
+      hasPassword,
+      language,
+      trainOwn,
+      notificationLevel,
+    } = req.user;
     const { trainingCapUsd } = (
       await this.settings.read('self_learning_settings')
     ).value;
@@ -168,6 +178,7 @@ export class AuthController {
       language,
       trainOwn,
       trainingCapUsd,
+      notificationLevel,
     };
   }
 
@@ -202,6 +213,23 @@ export class AuthController {
       userId: req.user.id,
       sessionId: req.user.sessionId,
       language: body.language,
+      outcome: 'ok',
+    });
+  }
+
+  /** 204; only the employee of `req.user` changes (live-feed design-server.md, KD-7). */
+  @Put('me/notification-level')
+  @HttpCode(204)
+  async changeNotificationLevel(
+    @Body(new ZodValidationPipe(NotificationLevelBodySchema))
+    body: NotificationLevelBody,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    await this.users.setOwnNotificationLevel(req.user.id, body.level);
+    this.logger.info('notification level saved', {
+      userId: req.user.id,
+      sessionId: req.user.sessionId,
+      level: body.level,
       outcome: 'ok',
     });
   }

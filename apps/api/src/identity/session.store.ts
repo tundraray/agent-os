@@ -3,9 +3,11 @@ import { Injectable } from '@nestjs/common';
 import { IdentitySessionsRepository } from '@agent-os/db';
 import {
   LanguageSchema,
+  NotificationLevelSchema,
   parseSettingsValue,
   UserStatusSchema,
   type Language,
+  type NotificationLevel,
   type UserStatus,
 } from '@agent-os/contracts';
 import { SettingsService } from '../settings/settings.service';
@@ -44,6 +46,8 @@ export interface FoundSession {
     hasPassword: boolean;
     /** The chosen interface language, or null while there is no choice. */
     language: Language | null;
+    /** The default notification level. */
+    notificationLevel: NotificationLevel;
   };
 }
 
@@ -95,6 +99,7 @@ export class SessionStore {
       trainAny,
       hasPassword,
       language,
+      notificationLevel,
       signInSettings,
     } = row;
     const limits = parseSettingsValue('sign_in_settings', signInSettings);
@@ -114,6 +119,7 @@ export class SessionStore {
         trainAny,
         hasPassword,
         language: LanguageSchema.nullable().parse(language),
+        notificationLevel: NotificationLevelSchema.parse(notificationLevel),
       },
     };
   }

@@ -1,6 +1,6 @@
 {
-  "id": "aa7e7a9a-c84c-4fb5-aa90-ffefb0ac73f0",
-  "prevId": "d842f633-f90b-4a50-a88e-9ead4ef34933",
+  "id": "33372692-14ce-4031-a296-ee0f6490d82c",
+  "prevId": "80cc1955-8e4f-477c-a34e-8e29fb8f61a8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -687,6 +687,12 @@
           "notNull": true,
           "default": 0
         },
+        "notification_level": {
+          "name": "notification_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -894,6 +900,10 @@
         "conversations_fork_check": {
           "name": "conversations_fork_check",
           "value": "\"app\".\"conversations\".\"forked_from_id\" is null or (\"app\".\"conversations\".\"parent_id\" is null and \"app\".\"conversations\".\"forked_through_seq\" is not null)"
+        },
+        "conversations_notification_level_check": {
+          "name": "conversations_notification_level_check",
+          "value": "\"app\".\"conversations\".\"notification_level\" in ('all', 'decisions_and_failures', 'off')"
         }
       },
       "isRLSEnabled": false
@@ -1659,6 +1669,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "notification_level": {
+          "name": "notification_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'all'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1711,6 +1728,10 @@
         "identity_users_language_check": {
           "name": "identity_users_language_check",
           "value": "\"app\".\"identity_users\".\"language\" in ('en', 'ru')"
+        },
+        "identity_users_notification_level_check": {
+          "name": "identity_users_notification_level_check",
+          "value": "\"app\".\"identity_users\".\"notification_level\" in ('all', 'decisions_and_failures', 'off')"
         }
       },
       "isRLSEnabled": false

@@ -110,6 +110,7 @@ export class SessionGuard implements CanActivate {
       trainAny,
       hasPassword,
       language,
+      notificationLevel,
     } = session.user;
     return {
       id,
@@ -120,6 +121,7 @@ export class SessionGuard implements CanActivate {
       trainAny,
       hasPassword,
       language,
+      notificationLevel,
       sessionId: session.sessionId,
     };
   }

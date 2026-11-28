@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ToolRefusalReasonSchema } from './agents';
+import { NotificationLevelSchema } from './identity';
 
 /** Page size of GET /api/threads (user decision 2026-10-28). */
 export const THREAD_PAGE_SIZE = 20;
@@ -16,7 +17,8 @@ export type ThreadId = z.infer<typeof ThreadIdSchema>;
 /**
  * A thread as shown in the sidebar and header. `title: null` = not titled yet ("Новая беседа").
  * `forkable` — its root is a chat; `forkedFrom` — the source of a fork (`title: null` once deleted or untitled)
- * and the last inherited entry; `forkCount` — its live forks (create-and-test design-fork.md).
+ * and the last inherited entry; `forkCount` — its live forks (create-and-test design-fork.md);
+ * `notificationLevel` — the conversation's own level, `null` — the employee's default (live-feed KD-7).
  */
 export const ThreadSummarySchema = z.object({
   id: ThreadIdSchema,
@@ -32,6 +34,7 @@ export const ThreadSummarySchema = z.object({
     })
     .nullable(),
   forkCount: z.number().int().min(0),
+  notificationLevel: NotificationLevelSchema.nullable(),
 });
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
 
@@ -139,6 +142,14 @@ export const MarkSeenRequestSchema = z.object({
   throughSeq: z.number().int().min(0),
 });
 export type MarkSeenRequest = z.infer<typeof MarkSeenRequestSchema>;
+
+/** Body of PUT /api/threads/:threadId/notification-level: the conversation's level, `null` — as the default. */
+export const ThreadNotificationLevelRequestSchema = z.object({
+  level: NotificationLevelSchema.nullable(),
+});
+export type ThreadNotificationLevelRequest = z.infer<
+  typeof ThreadNotificationLevelRequestSchema
+>;
 
 /** Machine-readable error codes of the threads API. */
 export const ThreadsErrorCodeSchema = z.enum([

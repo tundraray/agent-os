@@ -21,6 +21,7 @@ import {
   RenameThreadRequestSchema,
   SendMessageRequestSchema,
   ThreadListQuerySchema,
+  ThreadNotificationLevelRequestSchema,
   type AgentNode,
   type ConversationView,
   type Document,
@@ -35,6 +36,7 @@ import {
   type ThreadForksResponse,
   type ThreadListQuery,
   type ThreadListResponse,
+  type ThreadNotificationLevelRequest,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -204,6 +206,24 @@ export class ThreadsController {
       fields: { ownerId, threadId, throughSeq: body.throughSeq },
       work: () =>
         this.conversations.markSeen(threadId, ownerId, body.throughSeq),
+    });
+  }
+
+  /** The conversation's own notification level, `null` — as the default (live-feed design-server.md, Flow 4). */
+  @Put(':threadId/notification-level')
+  @HttpCode(204)
+  setNotificationLevel(
+    @Param('threadId') threadId: string,
+    @Body(new ZodValidationPipe(ThreadNotificationLevelRequestSchema))
+    body: ThreadNotificationLevelRequest,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'PUT /threads/:threadId/notification-level',
+      fields: { ownerId, threadId, level: body.level },
+      work: () =>
+        this.conversations.setNotificationLevel(threadId, ownerId, body.level),
     });
   }
 
