@@ -57,3 +57,4 @@
 
 - [docs/features/create-and-test/uxrd.md](../../features/create-and-test/uxrd.md) — разделитель ветки (FK-03).
 - [docs/features/improvements/uxrd.md](../../features/improvements/uxrd.md) — разделитель «Новое» (IM-10), ветка после правки первого сообщения (IM-13).
+- [docs/features/live-feed/uxrd.md](../../features/live-feed/uxrd.md) — вариант «Новое» в точке открытия беседы (LF-02).
