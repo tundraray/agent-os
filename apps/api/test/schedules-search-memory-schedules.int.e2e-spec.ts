@@ -844,6 +844,17 @@ describe('schedules: due terms trigger one send of the instruction', () => {
       await harness.close();
       clock.set(later(start, 3 * HOUR_MS + 30 * 60_000));
       harness = await createTestApp(appOptions());
+      // The new harness registers the run's server anew, and removing the old row took the role's level on it by cascade
+      // (`access_grants.server`): the role gets «Все» again for the cases below.
+      await grantTo(
+        harness.app,
+        admin,
+        { roleId: role.id },
+        {
+          effect: 'allow',
+          target: { kind: 'server', server: BACKOFFICE_SERVER },
+        },
+      );
       const schedulesNow = schedulesOf(chatApi(harness.app, annaSession));
       await pass();
       await untilRuns(hourly.id, 1);

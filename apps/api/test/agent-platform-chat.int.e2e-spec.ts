@@ -933,16 +933,20 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           "the writer's report",
           2_000,
         );
-        // Then: the chat answers the report by itself, without an employee message
-        await untilNoted(
-          stream,
-          thread.id,
-          () => reader.read(),
-          () =>
-            reader.entries.at(-1)?.kind === 'model_answer' &&
-            reader.entries.some((entry) => entry.kind === 'child_report'),
-          "the chat's answer to the report",
-        );
+        // Then: the chat answers the report by itself, without an employee message. The step that takes the report
+        // writes it and its answer in one commit, so the note that showed the report may have shown the answer too:
+        // a further note is awaited only while the answer is not among the entries the notes' reads brought
+        const answeredReport = () =>
+          reader.entries.at(-1)?.kind === 'model_answer' &&
+          reader.entries.some((entry) => entry.kind === 'child_report');
+        if (!answeredReport())
+          await untilNoted(
+            stream,
+            thread.id,
+            () => reader.read(),
+            answeredReport,
+            "the chat's answer to the report",
+          );
         await untilIdle(
           api,
           thread.id,
