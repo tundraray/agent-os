@@ -947,7 +947,8 @@ const ThreadLoadEarlier: FC = () => {
     focusedRef.current = null;
     const active = document.activeElement;
     if (active && active !== document.body) return;
-    nextFocusable(slot)?.focus();
+    // The focus moves to the first loaded entry without scrolling: the feed has just been held in place.
+    nextFocusable(slot)?.focus({ preventScroll: true });
   }, [visible]);
 
   // UXRD §Accessibility: focus goes to «Повторить» on a failure and back to the button while the retry loads.
