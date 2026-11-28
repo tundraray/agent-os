@@ -10,6 +10,7 @@ import {
   ReportDocument,
   useThreadDocument,
 } from '@/components/agents/notepad-document';
+import { visualizationLanguages } from '@/components/inline-vis/inline-visualization';
 import { MarkdownText } from '@/components/markdown-text';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
@@ -175,7 +176,7 @@ export function AgentReport({ data }: { data: ReportPartData }) {
             </p>
           ) : (
             <TextMessagePartProvider text={data.text}>
-              <MarkdownText />
+              <MarkdownText componentsByLanguage={visualizationLanguages} />
             </TextMessagePartProvider>
           )}
         </div>

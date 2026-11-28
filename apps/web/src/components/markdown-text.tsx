@@ -81,7 +81,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
 
 export const MarkdownText = memo(MarkdownTextImpl);
 
-const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+/** The header of a code block in the reply: language and «Копировать»; the visualization block reuses it. */
+export const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const t = useTranslations('chat');
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {

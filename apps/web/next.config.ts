@@ -39,7 +39,11 @@ const nextConfig: NextConfig = {
       {
         source: '/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          {
+            // `frame-src 'none'`: a visualization frame cannot navigate itself away (design-inline-vis.md, KD-3).
+            key: 'Content-Security-Policy',
+            value: "frame-ancestors 'none'; frame-src 'none'",
+          },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

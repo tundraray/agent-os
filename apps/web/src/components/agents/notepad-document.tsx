@@ -7,6 +7,7 @@ import { useFormatter, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
 import type { Document, ThreadDocumentsView } from '@agent-os/contracts';
 import { useReloadOnChange } from '@/components/agents/session-task-list';
+import { visualizationLanguages } from '@/components/inline-vis/inline-visualization';
 import { MarkdownText } from '@/components/markdown-text';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
@@ -97,7 +98,10 @@ function TextSkeleton() {
 function Markdown({ text }: { text: string }) {
   return (
     <TextMessagePartProvider text={text}>
-      <MarkdownText imagesAsFallback />
+      <MarkdownText
+        imagesAsFallback
+        componentsByLanguage={visualizationLanguages}
+      />
     </TextMessagePartProvider>
   );
 }

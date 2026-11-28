@@ -222,5 +222,17 @@
     "seek": "Seek",
     "playFailed": "Couldn't play the audio",
     "video": "Video"
+  },
+  "inlineVis": {
+    "drawing": "Drawing a visualization…",
+    "untitled": "Visualization",
+    "named": "Visualization: {title}",
+    "showCode": "Show code",
+    "hideCode": "Hide code",
+    "failed": "The visualization didn't render",
+    "failedAfter": "The visualization hit an error: {text}",
+    "confirmTitle": "Open an address from the visualization?",
+    "confirmText": "Check the whole address: the page may have added conversation data to it.",
+    "open": "Open"
   }
 }

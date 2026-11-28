@@ -20,6 +20,7 @@ import {
 import { File, getFileHref } from '@/components/file';
 import { ThreadFollowupSuggestions } from '@/components/assistant-ui/elements/follow-up-suggestions.aui';
 import { Image as MessageImage } from '@/components/image';
+import { visualizationLanguages } from '@/components/inline-vis/inline-visualization';
 import { MarkdownText } from '@/components/markdown-text';
 import {
   Reasoning,
@@ -1682,7 +1683,11 @@ const AssistantMessage: FC = () => {
                     );
                   }
                   case 'text':
-                    return <MarkdownText />;
+                    return (
+                      <MarkdownText
+                        componentsByLanguage={visualizationLanguages}
+                      />
+                    );
                   case 'reasoning':
                     return <Reasoning {...part} />;
                   case 'tool-call':
