@@ -10,6 +10,9 @@ import {
   LIBRARY_RECORD_CONFIRMATION,
   IDENTITY_INSTRUCTIONS_CONFIRMATION,
   LibraryRecordCardSchema,
+  MANAGE_SCHEDULE_TOOL,
+  SCHEDULE_ACCESS_DROPPED_LINE,
+  ScheduleToolActionSchema,
   SET_PERSONAL_INSTRUCTIONS_TOOL,
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
@@ -27,6 +30,7 @@ import {
   type LibraryRecordCard,
   type PendingMessage,
   type ScheduleMark,
+  type ScheduleToolAction,
   type TestRunSummary,
   type ToolCallState,
   type ToolOutcome,
@@ -195,6 +199,7 @@ export const FEED_PART = {
   offer: 'offer',
   plan: 'plan',
   testRunCard: 'test-run-card',
+  scheduleCard: 'schedule-card',
 } as const;
 
 /** The deep agent card also shows the question of the brief that started it (agent-run-card.md, part 4). */
@@ -262,6 +267,16 @@ export type TestRunCardPartData = {
   first: boolean;
   last: boolean;
   rounds: readonly (TestRunSummary['rounds'][number] & { number: number })[];
+};
+/** The schedule card of a successful `manage_schedule` call (chat-scheduling KD-1), read from the call and its result. */
+export type ScheduleCardPartData = {
+  /** The schedule of the call: the first line of its result, `Schedule <id>: <name>`. */
+  scheduleId: string;
+  name: string;
+  /** The call's `args.action`: the result word of a pause or a resume; a delete reads nothing. */
+  action: ScheduleToolAction;
+  /** The result's second line is `SCHEDULE_ACCESS_DROPPED_LINE`: the change took full access away. */
+  accessDropped: boolean;
 };
 export type EventPartData = Extract<
   HistoryEntry,
@@ -426,6 +441,37 @@ function toolCallPart(
   };
 }
 
+/** The first line of a `manage_schedule` result (chat-scheduling design-server.md, «Карточка результата в ленте»). */
+const SCHEDULE_RESULT_TITLE = /^Schedule (\S+): (.+)$/;
+
+/**
+ * The schedule card of a `manage_schedule` call; null for any other call, before the result, for a call that did not
+ * succeed and for a result whose first line does not name a schedule — those stay the call's block.
+ */
+function scheduleCardOf(
+  call: AnswerToolCall,
+  result: ToolResult | undefined,
+): ScheduleCardPartData | null {
+  if (
+    call.tool !== MANAGE_SCHEDULE_TOOL ||
+    call.server !== null ||
+    result?.outcome !== 'success'
+  )
+    return null;
+  const lines = (result.text ?? '').split('\n');
+  const title = SCHEDULE_RESULT_TITLE.exec(lines[0]);
+  const action = ScheduleToolActionSchema.safeParse(
+    stringField(call.args, 'action'),
+  );
+  if (title === null || !action.success) return null;
+  return {
+    scheduleId: title[1],
+    name: title[2],
+    action: action.data,
+    accessDropped: lines[1] === SCHEDULE_ACCESS_DROPPED_LINE,
+  };
+}
+
 /** The questions of an `ask_user` call or card as one comparable value; null for anything outside the contract. */
 function questionsKey(value: unknown): string | null {
   const parsed = AskUserArgsSchema.safeParse(value);
@@ -458,6 +504,8 @@ function isDrawnCall(
 ): boolean {
   // A trainer's offer or plan is its card instead of the call block (KD-4).
   if (cardCalls.has(call.callId)) return false;
+  // A schedule the call made or changed is its card instead of the call block (chat-scheduling KD-1).
+  if (scheduleCardOf(call, result) !== null) return false;
   // A question shown as its card has no call line; without a card (refused, nobody to answer) the line stays.
   if (call.tool === ASK_USER_TOOL && call.server === null) {
     const key = questionsKey(call.args);
@@ -782,6 +830,25 @@ function runParts(
   return parts;
 }
 
+/** The schedule cards of the calls in one answer, in call order (chat-scheduling KD-1): each call has its own card. */
+function scheduleCards(
+  entry: HistoryEntry,
+  results: ReadonlyMap<string, ToolResult>,
+): ThreadMessageLike[] {
+  if (entry.kind !== 'model_answer') return [];
+  return entry.content.toolCalls.flatMap((call) => {
+    const data = scheduleCardOf(call, results.get(call.callId));
+    return data === null
+      ? []
+      : dataMessage(
+          `schedule-${call.callId}`,
+          entry.createdAt,
+          FEED_PART.scheduleCard,
+          data,
+        );
+  });
+}
+
 /**
  * The test run's description (KD-4 table): the first `user_message` right after the fork's `forked` event, or the
  * `task` of a test run without a fork. `empty` — the event is followed by something else: the chip stands alone.
@@ -935,7 +1002,7 @@ const OPENS_TURN = new Set<HistoryEntry['kind']>([
 /**
  * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `local-*`, `draft`): entries
  * by `seq`; each decision and direct child after the last entry created not later than it (KD-3); a test run's
- * cards at the end of the trainer's turn that made their calls; optimistic feed entries, then the draft, last.
+ * cards and the schedule cards at the end of the turn that made their calls; optimistic feed entries, then the draft, last.
  */
 export function toFeed(
   view: FeedView,
@@ -992,7 +1059,8 @@ export function toFeed(
   }
 
   const messages: ThreadMessageLike[] = [...(anchored.get(-1) ?? [])];
-  // The trainer's cards wait for the end of its turn: its text, often in a later answer, explains them first.
+  // The trainer's cards and the schedule cards wait for the end of the turn: the agent's text, often in a later
+  // answer, explains them first, so a card stands under the reply.
   let turnCards: ThreadMessageLike[] = [];
   entries.forEach((entry, index) => {
     if (OPENS_TURN.has(entry.kind)) {
@@ -1019,6 +1087,7 @@ export function toFeed(
         }),
       });
     if (run !== null) turnCards.push(...runParts(run, entry));
+    turnCards.push(...scheduleCards(entry, results));
     messages.push(...(anchored.get(index) ?? []));
   });
   messages.push(...turnCards);

@@ -142,7 +142,11 @@ function rowOf(
     name: schedule.name,
     href: rowHref(schedule),
     cells: [
-      <span key="schedule" className="flex min-w-0 flex-col py-1">
+      // The table's cells do not wrap; this one does, so the access level at the line's end stays in view at 360 px.
+      <span
+        key="schedule"
+        className="flex min-w-0 flex-col py-1 whitespace-normal"
+      >
         <span className="wrap-break-word">{schedule.name}</span>
         {/* The link reads «{название}, {вторая строка}» (UXRD Accessibility, SP-03). */}
         <span className="sr-only">, </span>

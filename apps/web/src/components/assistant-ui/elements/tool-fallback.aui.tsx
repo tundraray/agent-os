@@ -24,12 +24,9 @@ import {
 import {
   IdSchema,
   LIST_RECORDS_TOOL,
-  MANAGE_SCHEDULE_TOOL,
   MEMORY_TOOLS,
   NOTEPAD_CREATE_TOOL,
   NOTEPAD_TOOLS,
-  SCHEDULE_ACCESS_DROPPED_LINE,
-  ScheduleToolActionSchema,
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
   scriptNameOf,
@@ -50,7 +47,6 @@ import {
 } from '@/components/agents/agent-status';
 import { useLiveRecord, useRecordNamed } from '@/components/agents/run-card';
 import { ValueRows } from '@/components/agents/value-rows';
-import { ScheduleCard } from '@/components/schedules/schedule-card';
 import { ShellLink } from '@/components/shell/shell-link';
 import { refusalText } from '@/lib/access/access-texts';
 import { NO_RUN_VALUE, runCodeView } from '@/lib/agents/run-code';
@@ -443,60 +439,12 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     result,
     artifact,
   };
-  if (toolName === MANAGE_SCHEDULE_TOOL)
-    return <ScheduleToolBlock {...props} />;
   return isRecordTool(toolName) ? (
     <RecordToolBlock {...props} toolName={toolName} />
   ) : (
     <ToolBlock {...props} />
   );
 };
-
-/** The first line of a `manage_schedule` result (chat-scheduling design-server.md, «Карточка результата в ленте»). */
-const SCHEDULE_RESULT_TITLE = /^Schedule (\S+): (.+)$/;
-const ScheduleActionArgsSchema = z.object({
-  action: ScheduleToolActionSchema,
-});
-
-/** Calls whose result did not read as a schedule, each warned about once per page. */
-const warnedScheduleCalls = new Set<string>();
-
-/**
- * chat-scheduling KD-1: a successful `manage_schedule` call is its usual block with the schedule card under it; a
- * failed one is the block alone. A result whose first line is not `Schedule <id>: <name>` leaves the block alone too.
- */
-function ScheduleToolBlock(props: ToolBlockProps) {
-  const block = <ToolBlock {...props} />;
-  if (outcomeOf(props.artifact) !== 'success') return block;
-  const lines =
-    typeof props.result === 'string' ? props.result.split('\n') : [];
-  const title = SCHEDULE_RESULT_TITLE.exec(lines[0] ?? '');
-  const action = ScheduleActionArgsSchema.safeParse(props.args).data?.action;
-  if (title === null || action === undefined) {
-    if (!warnedScheduleCalls.has(props.callId)) {
-      warnedScheduleCalls.add(props.callId);
-      // Only the action: the result and the arguments carry the schedule's instruction.
-      logger.warn(
-        '[web-feed] manage_schedule result does not name a schedule',
-        {
-          action: action ?? null,
-        },
-      );
-    }
-    return block;
-  }
-  return (
-    <>
-      {block}
-      <ScheduleCard
-        scheduleId={title[1]}
-        name={title[2]}
-        action={action}
-        accessDropped={lines[1] === SCHEDULE_ACCESS_DROPPED_LINE}
-      />
-    </>
-  );
-}
 
 type ToolBlockProps = {
   /** The call's id: an opened search match finds the block by it (KD-7). */

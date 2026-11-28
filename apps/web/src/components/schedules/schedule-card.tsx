@@ -5,6 +5,7 @@ import { ClockIcon, LoaderCircle } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import type { ScheduleToolAction, ScheduleView } from '@agent-os/contracts';
+import type { ScheduleCardPartData } from '@/lib/feed/to-feed';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { Button } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
@@ -18,16 +19,6 @@ import { cn } from 'cn';
 import { ScheduleDialog } from './schedule-dialog';
 import { ruleLine, zoneLine } from './schedule-parts';
 
-export type ScheduleCardProps = {
-  /** The schedule of the call: the first line of its result, `Schedule <id>: <name>`. */
-  scheduleId: string;
-  name: string;
-  /** The call's `args.action`: the result word of a pause or a resume; a delete reads nothing. */
-  action: ScheduleToolAction;
-  /** The result's second line is `SCHEDULE_ACCESS_DROPPED_LINE`: the change took full access away. */
-  accessDropped: boolean;
-};
-
 /** The result word that starts the line (MC-1); a create and a change have none. */
 const RESULT_WORD: Partial<Record<ScheduleToolAction, 'paused' | 'resumed'>> = {
   pause: 'paused',
@@ -35,7 +26,7 @@ const RESULT_WORD: Partial<Record<ScheduleToolAction, 'paused' | 'resumed'>> = {
 };
 
 /**
- * CS-01, CS-02 (schedule-card.md): the card under a successful `manage_schedule` call. It shows the schedule as it
+ * CS-01, CS-02 (schedule-card.md): the card of a successful `manage_schedule` call, its own block of the feed. It shows the schedule as it
  * is now — read on show, read again by «Открыть», replaced by what the dialog saved (chat-scheduling KD-2); from the
  * call it takes only the result word and the note about dropped full access. A 404 reads as «Расписание удалено».
  */
@@ -44,7 +35,7 @@ export function ScheduleCard({
   name,
   action,
   accessDropped,
-}: ScheduleCardProps) {
+}: ScheduleCardPartData) {
   const t = useTranslations('schedules');
   const tErrors = useTranslations('errors');
   const format = useFormatter();

@@ -63,6 +63,7 @@ import { InterruptButton } from '@/components/agents/interrupt-button';
 import { AgentsStrip } from '@/components/agents/agents-strip';
 import { QueueTray } from '@/components/agents/queue-tray';
 import { RunCard, TestRunCard } from '@/components/agents/run-card';
+import { ScheduleCard } from '@/components/schedules/schedule-card';
 import { Chip, RecordLabel } from '@/components/library/record-label';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { Button } from '@/components/ui/button';
@@ -87,6 +88,7 @@ import {
   type PlanPartData,
   type ReportPartData,
   type RunCardPartData,
+  type ScheduleCardPartData,
   type TestRunCardPartData,
 } from '@/lib/feed/to-feed';
 import { useTranslations } from 'next-intl';
@@ -763,6 +765,10 @@ const TestRunCardPart: DataMessagePartComponent<TestRunCardPartData> = ({
   data,
 }) => <TestRunCard data={data} />;
 
+const ScheduleCardPart: DataMessagePartComponent<ScheduleCardPartData> = ({
+  data,
+}) => <ScheduleCard {...data} />;
+
 const ReportPart: DataMessagePartComponent<ReportPartData> = ({ data }) => (
   <AgentReport data={data} />
 );
@@ -787,6 +793,7 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.offer]: OfferPart,
       [FEED_PART.plan]: PlanPart,
       [FEED_PART.testRunCard]: TestRunCardPart,
+      [FEED_PART.scheduleCard]: ScheduleCardPart,
     },
   },
 };
