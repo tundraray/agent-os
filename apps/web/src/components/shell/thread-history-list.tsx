@@ -581,7 +581,12 @@ export function ThreadHistoryList() {
   if (hasError && listShown) setListShown(false);
 
   // Coming back to the tab re-reads page 1 only while one page is loaded: reload() drops pages 2+ (DD Open Questions 2).
-  const onePageLoaded = entries.length <= THREAD_PAGE_SIZE;
+  // Only rows read from the list count: a conversation created in this tab has no `custom` until the list reads it,
+  // and it must not close the re-reads that would read it — its row sits on top of a full page 1.
+  const onePageLoaded =
+    threadItems.filter(
+      (item) => item.status === 'regular' && item.custom !== undefined,
+    ).length <= THREAD_PAGE_SIZE;
   useEffect(() => {
     if (!onePageLoaded) return;
     const onVisibilityChange = () => {

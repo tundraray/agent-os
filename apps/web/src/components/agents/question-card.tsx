@@ -168,12 +168,12 @@ function QuestionFields({
     <label key={option} className={ROW_CLASS}>
       {control}
       <span className="flex min-w-0 flex-col">
-        <span className="text-foreground text-sm leading-5 break-all">
+        <span className="text-foreground text-sm leading-5 break-words">
           {label}
         </span>
         <span
           id={describedBy(option)}
-          className="text-muted-foreground text-sm leading-5 break-all"
+          className="text-muted-foreground text-sm leading-5 break-words"
         >
           {description}
         </span>
@@ -210,7 +210,7 @@ function QuestionFields({
 
   const legend = (
     <legend className="mb-1 flex w-full items-baseline justify-between gap-3">
-      <span className="text-foreground text-sm leading-5 font-medium break-all">
+      <span className="text-foreground min-w-0 text-sm leading-5 font-medium break-words">
         {numbered ? `${number}. ${question.question}` : question.question}
       </span>
       {question.multiSelect && (
@@ -327,11 +327,11 @@ function AnsweredList({
         const answered = answer !== undefined && isAnswered(answer);
         return (
           <div key={index} className="flex min-w-0 flex-col">
-            <dt className="text-foreground text-sm leading-5 font-medium break-all">
+            <dt className="text-foreground text-sm leading-5 font-medium break-words">
               {question.question}
             </dt>
             {answered ? (
-              <dd className="text-foreground text-sm leading-5 break-all whitespace-pre-wrap">
+              <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">
                 {answer.selected.length > 0 && (
                   <span className="block">{answer.selected.join(', ')}</span>
                 )}
@@ -477,7 +477,7 @@ export function QuestionCard({
         {questions.map((question, index) => (
           <li
             key={index}
-            className="text-foreground text-sm leading-5 font-medium break-all"
+            className="text-foreground text-sm leading-5 font-medium break-words"
           >
             {question.question}
           </li>
