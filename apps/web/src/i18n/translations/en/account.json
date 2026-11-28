@@ -1,4 +1,14 @@
 {
+  "theme": {
+    "heading": "Theme",
+    "hint": "Light or dark mode is in the user menu.",
+    "names": {
+      "graphite": "Graphite",
+      "petrol": "Petrol",
+      "nord": "Nord"
+    },
+    "announced": "Theme: {theme}"
+  },
   "language": {
     "heading": "Language",
     "optionEn": "English",

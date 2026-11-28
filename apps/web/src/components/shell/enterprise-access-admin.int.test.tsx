@@ -109,7 +109,7 @@ const adminRequests = ({ requests }: TrackedRequests): string[] =>
     .filter((request) => request.path.startsWith('/api/admin/'))
     .map((request) => `${request.method} ${request.path}`);
 
-/** Opens the user menu, reads its items (the theme radios aside) and closes it again. */
+/** Opens the user menu, reads its items (the mode radios aside) and closes it again. */
 async function userMenuItems(user: UserEvent): Promise<string[]> {
   await user.click(screen.getByRole('button', { name: /^Меню пользователя/ }));
   const items = (await screen.findAllByRole('menuitem')).map(
@@ -1042,7 +1042,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       await within(employeeHistory).findByRole('link', { name: 'План релиза' }),
     ).toHaveAttribute('href', '/chat/a');
     expect(screen.getByRole('link', { name: 'Агенты' })).toBeInTheDocument();
-    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+    expect(await userMenuItems(user)).toEqual([
+      'Мой доступ',
+      'Тема: Графит',
+      'Выйти',
+    ]);
 
     // Act (row 1): «В чат»
     await followLink(user, toChat, employeeView.setPathname);
@@ -1167,7 +1171,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(
       await within(adminHistory).findByRole('link', { name: 'План релиза' }),
     ).toBeInTheDocument();
-    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+    expect(await userMenuItems(user)).toEqual([
+      'Мой доступ',
+      'Тема: Графит',
+      'Выйти',
+    ]);
     expect(adminView.router.push).not.toHaveBeenCalled();
     expect(adminView.router.replace).not.toHaveBeenCalled();
     expect(adminView.assign).not.toHaveBeenCalled();

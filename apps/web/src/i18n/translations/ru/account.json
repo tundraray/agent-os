@@ -1,4 +1,14 @@
 {
+  "theme": {
+    "heading": "Тема",
+    "hint": "Светлый или тёмный режим — в меню пользователя.",
+    "names": {
+      "graphite": "Графит",
+      "petrol": "Петроль",
+      "nord": "Nord"
+    },
+    "announced": "Тема: {theme}"
+  },
   "language": {
     "heading": "Язык",
     "optionEn": "English",

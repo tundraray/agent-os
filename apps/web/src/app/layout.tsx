@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { LocaleRoot } from '@/i18n/locale-root';
 import { ThemeProvider } from '@/components/theme-provider';
+import { THEME_ATTRIBUTE, THEME_COOKIE } from '@/lib/theme';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -26,9 +27,11 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 };
 
-// Keeps <meta name="theme-color"> equal to the page background: re-reads the computed
-// --background whenever next-themes changes the class on <html>. Static, no user data.
-const THEME_COLOR_SCRIPT = `(function(){var html=document.documentElement;var meta=document.querySelector('meta[name="theme-color"]');if(!meta){meta=document.createElement('meta');meta.setAttribute('name','theme-color');document.head.appendChild(meta);}function update(){var color=getComputedStyle(html).getPropertyValue('--background').trim();if(color)meta.setAttribute('content',color);}new MutationObserver(update).observe(html,{attributes:true,attributeFilter:['class']});window.addEventListener('load',update);update();})();`;
+// Runs before <body> is parsed: copies the theme cookie into data-theme on <html> unchecked, since an
+// unknown id matches no theme block and leaves «Graphite»; then keeps <meta name="theme-color">
+// equal to the computed --background whenever the theme attribute or the next-themes class changes.
+// Built from constants, no request data, so the layout stays static (pre-paint-preference.md).
+const THEME_SCRIPT = `(function(){var html=document.documentElement;var match=document.cookie.match(/(?:^|; )${THEME_COOKIE}=([^;]*)/);if(match)html.setAttribute('${THEME_ATTRIBUTE}',match[1]);var meta=document.querySelector('meta[name="theme-color"]');if(!meta){meta=document.createElement('meta');meta.setAttribute('name','theme-color');document.head.appendChild(meta);}function update(){var color=getComputedStyle(html).getPropertyValue('--background').trim();if(color)meta.setAttribute('content',color);}new MutationObserver(update).observe(html,{attributes:true,attributeFilter:['class','${THEME_ATTRIBUTE}']});window.addEventListener('load',update);update();})();`;
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
@@ -38,7 +41,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_COLOR_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col">
         <ThemeProvider

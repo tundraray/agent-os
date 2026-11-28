@@ -2,6 +2,9 @@ export const CHAT_PATH_PREFIX = '/chat/';
 export const AGENTS_PATH = '/agents';
 /** «Мой доступ» (UXRD Screen 3). */
 export const ACCOUNT_PATH = '/account';
+/** The anchor of the section «Тема» on «Мой доступ» (theming UXRD, TP-02); the route compares the path only. */
+export const THEME_SECTION_ID = 'theme';
+export const ACCOUNT_THEME_PATH = `${ACCOUNT_PATH}#${THEME_SECTION_ID}`;
 
 const AGENT_PATH_PREFIX = `${AGENTS_PATH}/`;
 const LIBRARY_PATH = '/library';
