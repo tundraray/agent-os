@@ -155,8 +155,8 @@ export type ToolPair = z.infer<typeof ToolPairSchema>;
 
 /**
  * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal
- * of the access gate. `provider_*` name a provider state or rejection; `model_error` is any other
- * provider error. The runtime's own reasons are `RuntimeFailureReason`.
+ * of the access gate. `provider_*` name a provider state or rejection; `context_overflow` — the history does
+ * not fit the model's context window even after compaction; `model_error` is any other provider error. The runtime's own reasons are `RuntimeFailureReason`.
  */
 export const AgentFailureReasonSchema = z.enum([
   'turn_limit',
@@ -167,6 +167,7 @@ export const AgentFailureReasonSchema = z.enum([
   'provider_key_rejected',
   'provider_unavailable',
   'provider_tools_rejected',
+  'context_overflow',
   'owner_disabled',
   'quota_exhausted',
   'model_not_connected',

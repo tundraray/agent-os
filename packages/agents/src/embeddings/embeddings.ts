@@ -148,12 +148,13 @@ function unavailable(
   return { kind: 'unavailable', reason, model, message };
 }
 
-/** The reason of the failure: the chat's `provider_tools_rejected` cannot apply to embeddings. */
+/** The reason of the failure: the chat's `provider_tools_rejected` and `context_overflow` are `provider_error` here. */
 function failure(call: EmbedCall, error: ProviderError): EmbedUnavailable {
   const status =
     error.statusCode === null ? '' : `, status ${error.statusCode}`;
   const reason =
-    error.reason === 'provider_tools_rejected'
+    error.reason === 'provider_tools_rejected' ||
+    error.reason === 'context_overflow'
       ? 'provider_error'
       : error.reason;
   const message = `Embedding model ${call.model} of provider ${call.connection.name} failed: ${reason}${status}`;

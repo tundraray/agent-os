@@ -1,6 +1,11 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 
-import { type ProviderAdapter, keyHeader, rejectionText } from './adapters';
+import {
+  type ProviderAdapter,
+  keyHeader,
+  overflowText,
+  rejectionText,
+} from './adapters';
 
 /** The Messages API version the check request asks for. */
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -21,6 +26,14 @@ export const anthropicAdapter: ProviderAdapter = {
   toolsRejected(statusCode, body) {
     return (
       rejectionText(statusCode, body)?.message.startsWith('tools.') ?? false
+    );
+  },
+  contextOverflow(statusCode, body) {
+    const error = overflowText(statusCode, body);
+    return (
+      error !== null &&
+      error.type === 'invalid_request_error' &&
+      error.message.startsWith('prompt is too long')
     );
   },
   checkRequest(connection) {

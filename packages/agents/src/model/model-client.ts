@@ -139,6 +139,7 @@ export type ModelFailureReason = Extract<
   | 'provider_key_rejected'
   | 'provider_unavailable'
   | 'provider_tools_rejected'
+  | 'context_overflow'
 >;
 
 /**

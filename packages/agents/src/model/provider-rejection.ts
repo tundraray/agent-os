@@ -1,11 +1,13 @@
 import type { ProviderAdapter } from '../providers/adapters';
 
 /**
- * The named reason of a provider rejection (design-core.md, «Как разбирается ошибка провайдера»).
- * `provider_error` is any other status: the chat reports it as `model_error`, the embeddings as it is.
+ * The named reason of a provider rejection (design-core.md, «Как разбирается ошибка провайдера»;
+ * runtime-fixes design-steps.md KD-4 for `context_overflow`). `provider_error` is any other status: the chat
+ * reports it as `model_error`, the embeddings as it is.
  */
 export type ProviderRejectionReason =
   | 'provider_key_rejected'
+  | 'context_overflow'
   | 'provider_tools_rejected'
   | 'provider_unavailable'
   | 'provider_error';
@@ -27,9 +29,11 @@ const KEY_REJECTED_STATUSES: ReadonlySet<number> = new Set([401, 403]);
 function reasonOf(
   statusCode: number,
   body: string,
-  adapter: Pick<ProviderAdapter, 'toolsRejected'>,
+  adapter: Pick<ProviderAdapter, 'contextOverflow' | 'toolsRejected'>,
 ): ProviderRejectionReason {
   if (KEY_REJECTED_STATUSES.has(statusCode)) return 'provider_key_rejected';
+  // Asked before the tools rule: an overflow body may name the tools too.
+  if (adapter.contextOverflow(statusCode, body)) return 'context_overflow';
   if (adapter.toolsRejected(statusCode, body)) return 'provider_tools_rejected';
   if (
     statusCode === TOO_MANY_REQUESTS ||
@@ -42,13 +46,13 @@ function reasonOf(
 
 /**
  * Reads a rejection by the error's fields — `name` `AI_APICallError`, its `statusCode` and `responseBody` —
- * without importing `ai`; the «tools not accepted» marker is the adapter's of the provider's kind. An error
+ * without importing `ai`; the context overflow and «tools not accepted» markers are the adapter's of the provider's kind. An error
  * without a status (a network failure, a request timeout) is `provider_unavailable`. Anything else is not a
  * provider error (null).
  */
 export function classifyRejection(
   error: unknown,
-  adapter: Pick<ProviderAdapter, 'toolsRejected'>,
+  adapter: Pick<ProviderAdapter, 'contextOverflow' | 'toolsRejected'>,
 ): ProviderError | null {
   if (!(error instanceof Error) || error.name !== API_CALL_ERROR) return null;
   const statusCode = 'statusCode' in error ? error.statusCode : undefined;

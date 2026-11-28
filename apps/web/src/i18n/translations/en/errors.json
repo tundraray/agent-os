@@ -152,6 +152,7 @@
   "failureReason": {
     "turn_limit": "turn limit reached",
     "model_error": "model error",
+    "context_overflow": "the history doesn't fit the model's context window even after compaction",
     "owner_disabled": "employee disabled",
     "quota_exhausted": "quota used up",
     "model_not_allowed": "model not allowed",
