@@ -87,6 +87,9 @@ const APP_TABLES = [
   'send_keys',
   'settings',
   'tool_results',
+  'tracker_task_conversations',
+  'tracker_task_events',
+  'tracker_tasks',
   'trainings',
 ];
 

@@ -43,6 +43,11 @@ export const AgentTaskInputSchema = z.object({
   answerFields: z.array(AnswerFieldSchema).optional(),
   /** A trainer task that runs a test run, not a training (design-test-run.md, KD-1). */
   testRun: z.literal(true).optional(),
+  /**
+   * A chat root a tracker delegation opened (task-tracker KD-4): its chat declares `tracker_report`. Set once at the
+   * start and never removed; a fork and a restart start without it.
+   */
+  trackerTask: z.literal(true).optional(),
 });
 export type AgentTaskInput = z.infer<typeof AgentTaskInputSchema>;
 

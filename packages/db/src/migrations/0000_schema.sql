@@ -438,6 +438,40 @@ CREATE TABLE "app"."schedule_runs" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "app"."tracker_tasks" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"owner_id" uuid NOT NULL,
+	"title" text NOT NULL,
+	"description" text DEFAULT '' NOT NULL,
+	"status" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "tracker_tasks_status_check" CHECK ("app"."tracker_tasks"."status" in ('todo', 'in_progress', 'in_review', 'needs_decision', 'done', 'cancelled'))
+);
+--> statement-breakpoint
+CREATE TABLE "app"."tracker_task_conversations" (
+	"conversation_id" uuid PRIMARY KEY NOT NULL,
+	"task_id" uuid NOT NULL,
+	"agent_id" uuid,
+	"agent_name" text,
+	"delegated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "app"."tracker_task_events" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"task_id" uuid NOT NULL,
+	"kind" text NOT NULL,
+	"author" text NOT NULL,
+	"conversation_id" uuid,
+	"text" text,
+	"status" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "tracker_task_events_kind_check" CHECK ("app"."tracker_task_events"."kind" in ('comment', 'status')),
+	CONSTRAINT "tracker_task_events_author_check" CHECK ("app"."tracker_task_events"."author" in ('employee', 'agent')),
+	CONSTRAINT "tracker_task_events_status_check" CHECK ("app"."tracker_task_events"."status" in ('todo', 'in_progress', 'in_review', 'needs_decision', 'done', 'cancelled')),
+	CONSTRAINT "tracker_task_events_content_check" CHECK (("app"."tracker_task_events"."text" is not null) = ("app"."tracker_task_events"."kind" = 'comment') and ("app"."tracker_task_events"."status" is not null) = ("app"."tracker_task_events"."kind" = 'status'))
+);
+--> statement-breakpoint
 CREATE TABLE "app"."send_keys" (
 	"user_id" uuid NOT NULL,
 	"send_key" uuid NOT NULL,
@@ -518,6 +552,12 @@ ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_agent_id_agents_id_fk" F
 ALTER TABLE "app"."schedules" ADD CONSTRAINT "schedules_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_schedule_id_schedules_id_fk" FOREIGN KEY ("schedule_id") REFERENCES "app"."schedules"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."schedule_runs" ADD CONSTRAINT "schedule_runs_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_tasks" ADD CONSTRAINT "tracker_tasks_owner_id_identity_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_task_id_tracker_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."tracker_tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_conversations" ADD CONSTRAINT "tracker_task_conversations_agent_id_agents_id_fk" FOREIGN KEY ("agent_id") REFERENCES "app"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_events" ADD CONSTRAINT "tracker_task_events_task_id_tracker_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."tracker_tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."tracker_task_events" ADD CONSTRAINT "tracker_task_events_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."conversations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."send_keys" ADD CONSTRAINT "send_keys_user_id_identity_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."settings" ADD CONSTRAINT "settings_updated_by_identity_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "app"."identity_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "runtime_tasks_ready_idx" ON "app"."runtime_tasks" USING btree ("created_at","task_id") WHERE "app"."runtime_tasks"."status" = 'queued';--> statement-breakpoint
@@ -567,4 +607,9 @@ CREATE INDEX "schedules_conversation_idx" ON "app"."schedules" USING btree ("con
 CREATE INDEX "schedules_due_idx" ON "app"."schedules" USING btree ("next_run_at") WHERE "app"."schedules"."state" = 'active';--> statement-breakpoint
 CREATE UNIQUE INDEX "schedule_runs_term_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at") WHERE not "app"."schedule_runs"."manual";--> statement-breakpoint
 CREATE INDEX "schedule_runs_page_idx" ON "app"."schedule_runs" USING btree ("schedule_id","due_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");
+CREATE INDEX "schedule_runs_conversation_idx" ON "app"."schedule_runs" USING btree ("conversation_id");--> statement-breakpoint
+CREATE INDEX "tracker_tasks_owner_updated_idx" ON "app"."tracker_tasks" USING btree ("owner_id","updated_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "tracker_task_conversations_task_idx" ON "app"."tracker_task_conversations" USING btree ("task_id","delegated_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "tracker_task_conversations_agent_idx" ON "app"."tracker_task_conversations" USING btree ("agent_id");--> statement-breakpoint
+CREATE INDEX "tracker_task_events_task_idx" ON "app"."tracker_task_events" USING btree ("task_id","created_at");--> statement-breakpoint
+CREATE INDEX "tracker_task_events_conversation_idx" ON "app"."tracker_task_events" USING btree ("conversation_id");

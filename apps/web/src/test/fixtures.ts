@@ -382,6 +382,7 @@ export function conversationView(
       0,
       ...(overrides.entries ?? []).map((entry) => entry.seq),
     ),
+    trackerTask: null,
     ...overrides,
   });
 }

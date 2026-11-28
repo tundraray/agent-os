@@ -14,4 +14,5 @@ export * from './notepad';
 export * from './tool-results';
 export * from './schedules';
 export * from './settings';
+export * from './tracker';
 export * from './training';

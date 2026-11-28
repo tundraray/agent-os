@@ -1,5 +1,9 @@
 import type { Logger } from '@agent-os/common';
-import { ASK_USER_TOOL, READ_SKILL_TOOL } from '@agent-os/contracts';
+import {
+  ASK_USER_TOOL,
+  READ_SKILL_TOOL,
+  TRACKER_REPORT_TOOL,
+} from '@agent-os/contracts';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 
 import {
@@ -40,9 +44,16 @@ export class ChatAgent extends BaseAgent {
     return true;
   }
 
-  /** `ask_user`, and the skills its listing offers whatever its version lists (agent-guidance KD-1, KD-7). */
+  /**
+   * `ask_user`, and the skills its listing offers whatever its version lists (agent-guidance KD-1, KD-7); in a
+   * conversation a tracker delegation opened, `tracker_report` too (task-tracker KD-4).
+   */
   protected override get kindTools(): readonly string[] {
-    return [ASK_USER_TOOL, READ_SKILL_TOOL];
+    return [
+      ASK_USER_TOOL,
+      READ_SKILL_TOOL,
+      ...(this.input.trackerTask === true ? [TRACKER_REPORT_TOOL] : []),
+    ];
   }
 
   /**

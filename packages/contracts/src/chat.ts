@@ -21,6 +21,7 @@ import {
 } from './library';
 import { SessionTaskStatusSchema, TaskStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
+import { ConversationTrackerTaskSchema } from './tracker';
 import { TestRunSummarySchema } from './training';
 
 /**
@@ -665,6 +666,8 @@ export const ConversationViewSchema = z.object({
   training: ConversationTrainingSchema,
   /** The root's «seen through» mark at the moment of reading: the web puts the unread divider after it. */
   seenThroughSeq: SeqSchema,
+  /** The tracker task the conversation is linked to, with its current title; `null` — none (task-tracker DC-7). */
+  trackerTask: ConversationTrackerTaskSchema,
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 

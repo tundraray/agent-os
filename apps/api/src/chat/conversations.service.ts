@@ -42,6 +42,7 @@ import {
   RuntimeModelCallsRepository,
   RuntimeTasksRepository,
   SendKeysRepository,
+  TrackerTasksRepository,
   type TrainingRow,
   TrainingsRepository,
 } from '@agent-os/db';
@@ -128,6 +129,8 @@ export class ConversationsService {
     @Inject(ConversationsRepository)
     private readonly conversations: ConversationsRepository,
     @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    @Inject(TrackerTasksRepository)
+    private readonly trackerTasks: TrackerTasksRepository,
     /** The sender of the conversation's own events (`signalConversation`). */
     @Inject(RuntimeTasksRepository)
     private readonly signals: RuntimeTasksRepository,
@@ -288,18 +291,24 @@ export class ConversationsService {
   }
 
   /**
-   * A schedule's send (schedules KD-2, KD-6), without a send key: its mark goes into the message or the root's `task`
-   * entry and the title of a new conversation, and no title generation starts. Inside the caller's transaction every
-   * write of the send joins it, so the caller commits the message or the new root with its own rows.
+   * A send without a send key, of a schedule (schedules KD-2, KD-6) and of the tracker (task-tracker KD-3): a
+   * schedule's mark goes into the message or the root's `task` entry; `title` names a new conversation and
+   * `trackerTask` marks its root's input. No title generation starts. Inside the caller's transaction every write of
+   * the send joins it, so the caller commits the message or the new root with its own rows.
    */
-  async sendScheduled(
+  async sendWithoutKey(
     threadId: string,
     ownerId: string,
     text: string,
     recordId: string | undefined,
-    scheduled: { readonly schedule: ScheduleMark; readonly title?: string },
+    options: {
+      readonly schedule?: ScheduleMark;
+      readonly title?: string;
+      readonly trackerTask?: true;
+    } = {},
   ): Promise<SendMessageResponse> {
     if (!isUuid(threadId)) throw threadNotFound();
+    const { schedule, ...opening } = options;
     const record =
       recordId === undefined ? undefined : await this.chipOf(ownerId, recordId);
     const { messageId } = await this.deliver(
@@ -308,9 +317,9 @@ export class ConversationsService {
       text,
       {
         ...(record === undefined ? {} : { record }),
-        schedule: scheduled.schedule,
+        ...(schedule === undefined ? {} : { schedule }),
       },
-      scheduled.title,
+      opening,
     );
     return { messageId };
   }
@@ -318,7 +327,7 @@ export class ConversationsService {
   /**
    * DC-1: the first message creates the root, with the conversation's id and the text as its task (`messageId` null);
    * any later one goes into the root's queue and moves the conversation up. `untitled` — the conversation's title is
-   * empty; `title` names a new conversation. A root the start procedure refuses is `START_REFUSED` from `agents`, and
+   * empty; `opening` — the title and the tracker mark of a new conversation. A root the start procedure refuses is `START_REFUSED` from `agents`, and
    * no conversation appears. The id of a deleted conversation is taken by its rows: `start` gets `TASK_EXISTS` and
    * `owned()` answers 404, for its owner and anyone else alike. A send to a conversation deleted meanwhile is
    * `AGENT_NOT_FOUND` of `agents`: the delete and the send take turns on the root task's lock.
@@ -328,7 +337,7 @@ export class ConversationsService {
     ownerId: string,
     text: string,
     chip: { readonly record?: ChipRecord; readonly schedule?: ScheduleMark },
-    title?: string,
+    opening: { readonly title?: string; readonly trackerTask?: true } = {},
   ): Promise<{
     readonly messageId: string | null;
     readonly created: boolean;
@@ -337,10 +346,7 @@ export class ConversationsService {
     const existing = await this.views.root(threadId, ownerId);
     if (
       existing === undefined &&
-      (await this.start(threadId, ownerId, text, {
-        ...chip,
-        ...(title === undefined ? {} : { title }),
-      }))
+      (await this.start(threadId, ownerId, text, { ...chip, ...opening }))
     )
       return { messageId: null, created: true, untitled: true };
     // The id is taken: by the employee's root (`start` lost to a simultaneous first send), or by a
@@ -433,7 +439,7 @@ export class ConversationsService {
    * The conversation as the web reads it (design-chat.md, ConversationView): the chat status, a window of
    * the root's history (live-feed KD-5), its queue, the decisions of the whole tree in every status, the
    * agents under the root and the record in focus (deep-agents KD-6), read from a selection of the root's
-   * history (live-feed KD-6).
+   * history (live-feed KD-6), and the tracker task linked to it, read after the owner check (task-tracker KD-1).
    */
   async view(
     threadId: string,
@@ -442,7 +448,7 @@ export class ConversationsService {
   ): Promise<ConversationView> {
     const owned = await this.owned(threadId, ownerId);
     const thread = toThreadSummary(owned);
-    const [task, views, window, messages, confirmations, training] =
+    const [task, views, window, messages, confirmations, training, tracked] =
       await Promise.all([
         this.tasks.get(threadId, ownerId),
         this.views.list(threadId, ownerId),
@@ -455,6 +461,7 @@ export class ConversationsService {
         this.inbox.listPending(threadId, ownerId),
         this.views.confirmations(threadId, ownerId),
         this.trainings.find(threadId),
+        this.trackerTasks.findByConversation(threadId),
       ]);
     const root = views.find((view) => view.agentId === threadId);
     if (root === undefined)
@@ -502,6 +509,10 @@ export class ConversationsService {
         run,
       ),
       seenThroughSeq: owned.seenThroughSeq,
+      trackerTask:
+        tracked === undefined
+          ? null
+          : { id: tracked.task.id, title: tracked.task.title },
     };
   }
 
@@ -592,6 +603,7 @@ export class ConversationsService {
       readonly record?: ChipRecord;
       readonly schedule?: ScheduleMark;
       readonly title?: string;
+      readonly trackerTask?: true;
     },
   ): Promise<boolean> {
     try {

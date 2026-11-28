@@ -23,6 +23,7 @@ import { RuntimeTasksRepository } from './runtime-tasks.repository';
 import { SchedulesRepository } from './schedules.repository';
 import { SendKeysRepository } from './send-keys.repository';
 import { SettingsRepository } from './settings.repository';
+import { TrackerTasksRepository } from './tracker-tasks.repository';
 import { TrainingsRepository } from './trainings.repository';
 
 export * from './access-grants.repository';
@@ -50,6 +51,7 @@ export * from './runtime-tasks.repository';
 export * from './schedules.repository';
 export * from './send-keys.repository';
 export * from './settings.repository';
+export * from './tracker-tasks.repository';
 export * from './trainings.repository';
 
 /** Every repository class: `DbModule` provides and exports them all. */
@@ -79,5 +81,6 @@ export const REPOSITORIES = [
   SchedulesRepository,
   SendKeysRepository,
   SettingsRepository,
+  TrackerTasksRepository,
   TrainingsRepository,
 ];

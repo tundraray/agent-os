@@ -32,6 +32,8 @@ export interface StartRequest {
   readonly schedule?: ScheduleMark;
   /** The conversation's title, written in the transaction that creates the root (schedules KD-6). */
   readonly title?: string;
+  /** A tracker delegation opens the conversation: the mark goes into the root's task input (task-tracker KD-4). */
+  readonly trackerTask?: true;
 }
 
 /**

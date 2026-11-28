@@ -33,7 +33,12 @@ import {
 } from '../start/resolve-start';
 import type { RunStart } from '../start/run-definition';
 import { History } from '../store/history';
-import { type Session, Sessions, type SessionStart } from '../store/sessions';
+import {
+  type AgentTaskInput,
+  type Session,
+  Sessions,
+  type SessionStart,
+} from '../store/sessions';
 import { logStart } from '../tools/system/start-child';
 import { inTrainingTree } from '../training/training-tree';
 import type {
@@ -144,7 +149,8 @@ export class StartOperations {
 
   /**
    * Starts a conversation's root — a chat. A schedule's start carries its mark, which goes to the root's `task`
-   * entry, and the title, written in the transaction that creates the root (schedules KD-5, KD-6).
+   * entry, and the title, written in the transaction that creates the root (schedules KD-5, KD-6). A tracker
+   * delegation's start puts its mark into the root's task input (task-tracker KD-4).
    */
   start({
     agentId,
@@ -154,6 +160,7 @@ export class StartOperations {
     record,
     schedule,
     title,
+    trackerTask,
   }: StartRequest): Promise<{ agentId: string }> {
     return this.logged(
       'start',
@@ -162,6 +169,7 @@ export class StartOperations {
         ownerId,
         recordId: record?.id ?? null,
         scheduleId: schedule?.scheduleId ?? null,
+        trackerTask: trackerTask ?? false,
       },
       async () => {
         const started = await this.startRun(
@@ -180,6 +188,7 @@ export class StartOperations {
           },
           {
             ...(agentId === undefined ? {} : { agentId }),
+            ...(trackerTask === undefined ? {} : { input: { trackerTask } }),
             ...(title === undefined
               ? {}
               : {
@@ -452,10 +461,11 @@ export class StartOperations {
     start: SessionStart,
     options: {
       readonly agentId?: string;
+      readonly input?: AgentTaskInput;
       readonly after?: (rootId: string) => Promise<void>;
     } = {},
   ): Promise<{ agentId: string }> {
-    const { agentId, after } = options;
+    const { agentId, input, after } = options;
     return createAgent(this.creation, {
       task: {
         type: CHAT_TASK_TYPE,
@@ -464,6 +474,7 @@ export class StartOperations {
       },
       placeOf: (taskId) => ({ rootId: taskId, depth: 0 }),
       start,
+      ...(input === undefined ? {} : { input }),
       ...(after === undefined ? {} : { after }),
     });
   }

@@ -88,6 +88,15 @@ export * from './schedules';
 export * from './schedule-runs';
 
 // ---------------------------------------------------------------------------------------------
+// Task tracker (task-tracker/design-server.md, Data Model): an employee's tasks, their links with the
+// conversations their delegations opened and their feed; links and feed go with the task by cascade,
+// the conversations stay.
+// ---------------------------------------------------------------------------------------------
+export * from './tracker-tasks';
+export * from './tracker-task-conversations';
+export * from './tracker-task-events';
+
+// ---------------------------------------------------------------------------------------------
 // Send keys (runtime-fixes/design-send.md, Data Model, KD-1): one row per accepted send of an employee
 // with a key; goes with the employee by cascade, never expires.
 // ---------------------------------------------------------------------------------------------
