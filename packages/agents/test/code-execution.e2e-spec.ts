@@ -33,6 +33,7 @@ import {
   createAgentsHarness,
   historyLines,
   historyOf,
+  LOST_ANSWER,
   testRecord,
   toolCallRowsOf,
 } from './support/agentsHarness';
@@ -396,7 +397,7 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
           `1/1 ${BACKOFFICE_SERVER}/create_incident_note unknown`,
         ]);
         expect(await runLine(scene, agentId)).toBe(
-          'run_code unknown attempts 0 -',
+          `run_code unknown attempts 0 ${LOST_ANSWER}`,
         );
         expect(
           historyLines(await historyOf(scene.control, agentId, scene.ownerId)),

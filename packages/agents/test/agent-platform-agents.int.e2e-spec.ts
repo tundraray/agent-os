@@ -99,6 +99,7 @@ import {
   historyOf,
   historyRowVersionsOf,
   ledgerRowsOf,
+  LOST_ANSWER,
   setRootRecord,
   START_TEST_DEEP_AGENT,
   taskCall,
@@ -124,10 +125,6 @@ const GET_TRACE = `mcp__${LOGS_SERVER}__get_trace`;
 /** The fixture's mutating tool (the `backoffice` server) as the model names it, and its arguments. */
 const CREATE_INCIDENT_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
 const INCIDENT_NOTE = { orderId: 'ORD-1001', text: 'Customer charged twice' };
-/** What the model reads for a call whose answer was lost (FR-01), written out independently of the code. */
-const LOST_ANSWER =
-  'The run stopped while this call was in flight, so its answer was lost. Nobody rejected the call. ' +
-  'The action may have been carried out. Do not repeat it before checking whether it was.';
 /** A built-in call that needs no server: the agent's descendants. */
 const LIST_AGENTS: ScriptedToolCall = { tool: 'list_agents', args: {} };
 
@@ -2222,6 +2219,10 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' }),
         ).toHaveLength(1);
         expect(writer.calls).toHaveLength(2);
+
+        // Given: the zombie, whose slot is free now, runs no more steps - a step it claimed would be requeued as
+        // lost by the sweeper of B, and its repeat would spend the script's next answer
+        await zombie.runtime.stop();
 
         // When (UC-1, the interruption): another writer's confirmed note is on the wire and the agent is interrupted
         const interrupted = await startWriterUntilConfirmation(restarted, {

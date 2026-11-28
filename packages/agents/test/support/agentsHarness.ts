@@ -138,6 +138,11 @@ export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = {
   reaperMs: 600_000,
 };
 
+/** What the model reads for a call whose answer was lost (improvements FR-01), written out independently of the code. */
+export const LOST_ANSWER =
+  'The run stopped while this call was in flight, so its answer was lost. Nobody rejected the call. ' +
+  'The action may have been carried out. Do not repeat it before checking whether it was.';
+
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
 
