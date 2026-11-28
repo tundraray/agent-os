@@ -1,14 +1,11 @@
+import { THEME_COOKIE, ThemeIdSchema, type ThemeId } from '@agent-os/contracts';
 import { logger } from '@/lib/logger';
 
 /** The built-in colour themes in card order (design system, Themes); each has its block in `globals.css`. */
-export const THEME_IDS = ['graphite', 'petrol', 'nord'] as const;
-export type ThemeId = (typeof THEME_IDS)[number];
+export const THEME_IDS = ThemeIdSchema.options;
 
 /** The theme of a page without the attribute or with an unknown one: `globals.css` puts it on `:root`. */
 export const DEFAULT_THEME: ThemeId = 'graphite';
-
-/** The colour theme of this browser (design-engine.md, KD-3); the head script of the root layout reads it before paint. */
-export const THEME_COOKIE = 'aos_theme';
 
 /** The attribute on `<html>` that selects the theme block; the head script of the root layout sets it too. */
 export const THEME_ATTRIBUTE = 'data-theme';

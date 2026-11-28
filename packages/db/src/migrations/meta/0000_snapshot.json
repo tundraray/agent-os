@@ -1,5 +1,5 @@
 {
-  "id": "fe09d7c5-9f53-4c18-920b-a1461a7401c2",
+  "id": "3d07a1b9-651b-4aa5-9f20-b43b18c5a125",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1669,6 +1669,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "theme": {
+          "name": "theme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "notification_level": {
           "name": "notification_level",
           "type": "text",
@@ -1735,6 +1741,10 @@
         "identity_users_language_check": {
           "name": "identity_users_language_check",
           "value": "\"app\".\"identity_users\".\"language\" in ('en', 'ru')"
+        },
+        "identity_users_theme_check": {
+          "name": "identity_users_theme_check",
+          "value": "\"app\".\"identity_users\".\"theme\" in ('graphite', 'petrol', 'nord')"
         },
         "identity_users_notification_level_check": {
           "name": "identity_users_notification_level_check",
@@ -4161,7 +4171,7 @@
       "checkConstraints": {
         "settings_key_check": {
           "name": "settings_key_check",
-          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions')"
+          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions', 'appearance_settings')"
         }
       },
       "isRLSEnabled": false

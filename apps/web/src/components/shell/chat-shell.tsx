@@ -50,6 +50,7 @@ import { LeaveGuardDialog } from './leave-guard-dialog';
 import { MainView, useConversationFeed } from './main-view';
 import { SchemaPanel, useChatTasks, type ChatTasks } from './schema-panel';
 import { useShellServices } from './shell-actions';
+import { ThemeSync } from './theme-sync';
 import { useAttentionNotifications } from './use-attention-notifications';
 import {
   FEED_MIN_WIDTH,
@@ -98,6 +99,7 @@ export function ChatShell({
       >
         <AdminRightWatch />
         <ShellLocaleSync />
+        <ShellThemeSync />
         <ShellAnnouncer />
         <GlobalShortcuts />
         <LeaveGuard />
@@ -404,6 +406,12 @@ function AdminRightWatch() {
 function ShellLocaleSync() {
   const { currentUser } = useShellServices();
   return <LocaleSync currentUser={currentUser} />;
+}
+
+/** A theme changed on another device or in the organisation takes over the page after the employee is read (theming KD-4). */
+function ShellThemeSync() {
+  const { currentUser } = useShellServices();
+  return <ThemeSync currentUser={currentUser} />;
 }
 
 /** The shell's only polite live region (design-web.md, «Доступность»). */

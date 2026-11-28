@@ -4,7 +4,8 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { LocaleRoot } from '@/i18n/locale-root';
 import { ThemeProvider } from '@/components/theme-provider';
-import { THEME_ATTRIBUTE, THEME_COOKIE } from '@/lib/theme';
+import { THEME_COOKIE } from '@agent-os/contracts';
+import { THEME_ATTRIBUTE } from '@/lib/theme';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 

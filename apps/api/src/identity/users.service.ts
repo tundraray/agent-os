@@ -13,6 +13,7 @@ import {
   type MyRoleList,
   type NotificationLevel,
   type PasswordChangeBody,
+  type ThemeId,
   type UserStatus,
 } from '@agent-os/contracts';
 import {
@@ -341,6 +342,11 @@ export class UsersService {
   /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
   async setOwnLanguage(userId: string, language: Language): Promise<void> {
     await this.users.setLanguage(userId, language);
+  }
+
+  /** The employee saves his own theme, null — as in the organisation (theming KD-1); no audit: it grants nothing. */
+  async setOwnTheme(userId: string, theme: ThemeId | null): Promise<void> {
+    await this.users.setTheme(userId, theme);
   }
 
   /**

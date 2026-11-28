@@ -47,7 +47,7 @@ export function AccountScreen({
         <ModelsSection />
         <MemorySection />
         <PasswordSection hasPassword={user?.hasPassword === true} />
-        <ThemeSection />
+        <ThemeSection currentUser={currentUser} />
         <LanguageSection currentUser={currentUser} />
         <NotificationsSection currentUser={currentUser} />
       </div>

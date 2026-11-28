@@ -8,7 +8,13 @@
     "servers": "MCP servers",
     "models": "Models",
     "library": "Library",
-    "instructions": "Agent instructions"
+    "instructions": "Agent instructions",
+    "appearance": "Appearance"
+  },
+  "appearance": {
+    "heading": "Organization theme",
+    "hint": "Employees who haven't chosen their own theme see it from their next page load.",
+    "loadFailed": "Couldn't load the organization theme"
   },
   "table": {
     "retry": "Retry",

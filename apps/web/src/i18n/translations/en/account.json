@@ -1,7 +1,10 @@
 {
   "theme": {
     "heading": "Theme",
-    "hint": "Light or dark mode is in the user menu.",
+    "hint": "Your theme applies on all your devices. Light or dark mode is in the user menu.",
+    "saveFailed": "Couldn't save the theme: try again.",
+    "organization": "Same as organization",
+    "organizationNow": "Now: {theme}",
     "names": {
       "graphite": "Graphite",
       "petrol": "Petrol",

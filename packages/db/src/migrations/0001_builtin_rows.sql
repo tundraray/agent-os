@@ -8,7 +8,8 @@ INSERT INTO "app"."settings" ("key", "value") VALUES
   ('tool_result_settings', '{"storeFromChars": 50000, "previewChars": 2000, "readMaxTokens": 25000}'),
   ('model_defaults', '{"chatModel": null, "embeddingModel": null}'),
   ('self_learning_settings', '{"memoryIndexTokens": 2000, "trainingCapUsd": 2}'),
-  ('organisation_instructions', '{"text": ""}');--> statement-breakpoint
+  ('organisation_instructions', '{"text": ""}'),
+  ('appearance_settings', '{"theme": "graphite"}');--> statement-breakpoint
 INSERT INTO "app"."agents" ("id", "kind", "name", "description", "offer_in_chat", "builtin_key") VALUES
   ('6a74a70b-e4b9-4b01-9750-20fa789b3b6c', 'agent', 'Главный чат', 'The employee''s main chat: answers the employee, starts agents and deep agents for them and manages their library records.', true, 'chat'),
   ('d8992d6d-6ff0-4dc6-9b33-df4f88f00b7d', 'agent', 'general-purpose', 'General-purpose agent for research, multi-step tasks and actions in external systems. Use it when no more specific agent fits.', true, 'agent'),

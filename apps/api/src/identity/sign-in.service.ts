@@ -2,9 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { LOGGER, type Logger } from '@agent-os/common';
 import {
   LanguageSchema,
+  ThemeIdSchema,
   UserStatusSchema,
   type Language,
   type SignInError,
+  type ThemeId,
 } from '@agent-os/contracts';
 import {
   type IdentityUserRow,
@@ -12,6 +14,7 @@ import {
   Db,
 } from '@agent-os/db';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
+import { SettingsService } from '../settings/settings.service';
 import { normalizeIdentifier } from './identity-input';
 import { identityError } from './identity.errors';
 import { OidcSignIn, type ReturnFromProvider } from './oidc-sign-in';
@@ -43,13 +46,23 @@ export type ProviderStart =
   | { ok: true; authorizationUrl: URL; state: string }
   | { ok: false; reason: 'provider_unavailable' };
 
-/** An opened session with the employee's interface language, for the `aos_locale` cookie (i18n KD-2). */
+/**
+ * An opened session with the employee's interface language, for the `aos_locale` cookie (i18n KD-2), and his
+ * effective theme — his own, without it the organisation's — for the `aos_theme` cookie (theming KD-3).
+ */
 export interface SignedIn extends OpenedSession {
   language: Language | null;
+  theme: ThemeId;
 }
 
 export type ProviderSignIn =
-  | { ok: true; token: string; next: string; language: Language | null }
+  | {
+      ok: true;
+      token: string;
+      next: string;
+      language: Language | null;
+      theme: ThemeId;
+    }
   | { ok: false; reason: SignInError };
 
 /**
@@ -67,6 +80,7 @@ export class SignInService {
     private readonly auditLog: AuditLog,
     private readonly sessionStore: SessionStore,
     private readonly users: IdentityUsersRepository,
+    private readonly settings: SettingsService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -159,11 +173,12 @@ export class SignInService {
       token: opened.token,
       next: finished.next,
       language: opened.language,
+      theme: opened.theme,
     };
   }
 
   /**
-   * The session of an active employee with his language; undefined, with the refusal written, for a
+   * The session of an active employee with his language and effective theme; undefined, with the refusal written, for a
    * disabled one.
    */
   private async openFor(
@@ -187,15 +202,20 @@ export class SignInService {
       });
       return session;
     });
+    const theme =
+      ThemeIdSchema.nullable().parse(user.theme) ??
+      (await this.settings.read('appearance_settings')).value.theme;
     this.logger.info('sign-in accepted', {
       ...logAttempt(attempt),
       userId: user.id,
       sessionId: opened.sessionId,
+      theme,
       outcome: 'ok',
     });
     return {
       ...opened,
       language: LanguageSchema.nullable().parse(user.language),
+      theme,
     };
   }
 

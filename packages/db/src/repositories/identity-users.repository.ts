@@ -2,6 +2,7 @@ import {
   UserStatusSchema,
   type Language,
   type NotificationLevel,
+  type ThemeId,
   type UserStatus,
 } from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
@@ -204,6 +205,14 @@ export class IdentityUsersRepository {
     await this.db.client
       .update(identityUsers)
       .set({ language })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Records the employee's own theme; null — as in the organisation. */
+  async setTheme(userId: string, theme: ThemeId | null): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ theme })
       .where(eq(identityUsers.id, userId));
   }
 

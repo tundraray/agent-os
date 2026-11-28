@@ -1,10 +1,18 @@
-import { LOCALE_COOKIE, type Language } from '@agent-os/contracts';
+import {
+  LOCALE_COOKIE,
+  THEME_COOKIE,
+  type Language,
+  type ThemeId,
+} from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 
 /** The cookie that carries the session token (KD-2). */
 export const SESSION_COOKIE = 'aos_session';
 
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
+
+/** A year, as the web's `chooseTheme` keeps the theme cookie (theming design-engine.md, Contract «Cookie `aos_theme`»). */
+const THEME_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
  * The web's origin: the address the browser opens Agent OS at, the only `Origin` a changing request
@@ -61,4 +69,24 @@ export function setLocaleCookie(
 ): void {
   if (language === null) res.clearCookie(LOCALE_COOKIE, cookieOptions());
   else res.cookie(LOCALE_COOKIE, language, cookieOptions());
+}
+
+/**
+ * The options of the theme cookie: those of every API cookie but without `HttpOnly`, so the web's head script reads
+ * it and `chooseTheme` overwrites the same cookie (theming design-preference.md, KD-3).
+ */
+function themeCookieOptions(): CookieOptions {
+  return { ...cookieOptions(), httpOnly: false };
+}
+
+/** Gives the browser the employee's effective theme at sign-in, so the first page is painted in it. */
+export function setThemeCookie(res: Response, theme: ThemeId): void {
+  res.cookie(THEME_COOKIE, theme, {
+    ...themeCookieOptions(),
+    maxAge: THEME_COOKIE_MAX_AGE_MS,
+  });
+}
+
+export function clearThemeCookie(res: Response): void {
+  res.clearCookie(THEME_COOKIE, themeCookieOptions());
 }

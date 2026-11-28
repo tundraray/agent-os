@@ -37,14 +37,17 @@ export const ADMIN_SECTION_IDS = [
   'models',
   'library',
   'instructions',
+  'appearance',
 ] as const;
 export type AdminSection = (typeof ADMIN_SECTION_IDS)[number];
 /**
- * The model catalogue is edited in dialogs on its list and the organisation's instruction is one text; every other
- * section's records have their own page.
+ * The model catalogue is edited in dialogs on its list, the organisation's instruction is one text and «Оформление»
+ * one choice of theme; every other section's records have their own page.
  */
 const hasRecordPages = (section: AdminSection): boolean =>
-  section !== 'models' && section !== 'instructions';
+  section !== 'models' &&
+  section !== 'instructions' &&
+  section !== 'appearance';
 
 /** The tabs of the panel's «Агенты и глубокие агенты» (design-web.md KD-1); «Системные» is the section's own address. */
 export const LIBRARY_TABS = ['system', 'shared', 'bans'] as const;

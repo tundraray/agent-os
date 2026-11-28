@@ -79,6 +79,13 @@ export type Language = z.infer<typeof LanguageSchema>;
 /** The cookie the API writes with the employee's language and the Next server reads (i18n design-web.md, KD-2). */
 export const LOCALE_COOKIE = 'aos_locale';
 
+/** The built-in colour themes in card order (theming design-preference.md, KD-6). */
+export const ThemeIdSchema = z.enum(['graphite', 'petrol', 'nord']);
+export type ThemeId = z.infer<typeof ThemeIdSchema>;
+
+/** The cookie with the theme of this browser: the web's head script reads it, the API writes it at sign-in (KD-3). */
+export const THEME_COOKIE = 'aos_theme';
+
 /**
  * Which events the web notifies the employee about (live-feed design-server.md, KD-7): `all`, decisions and
  * failures only, or none. The employee's default and a conversation's own level take these values.
@@ -92,7 +99,8 @@ export type NotificationLevel = z.infer<typeof NotificationLevelSchema>;
 
 /**
  * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
- * while the employee has not chosen one; `notificationLevel` is the employee's default level.
+ * while the employee has not chosen one; `notificationLevel` is the employee's default level; `theme` is null
+ * while the employee follows `organizationTheme` (theming design-preference.md, KD-4).
  */
 export const CurrentUserSchema = z.object({
   id: IdSchema,
@@ -105,8 +113,14 @@ export const CurrentUserSchema = z.object({
   trainOwn: z.boolean(),
   trainingCapUsd: z.number(),
   notificationLevel: NotificationLevelSchema,
+  theme: ThemeIdSchema.nullable(),
+  organizationTheme: ThemeIdSchema,
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
+
+/** Body of PUT /api/auth/me/theme: the employee's own theme, or null — as in the organisation (KD-1). */
+export const ThemeBodySchema = z.object({ theme: ThemeIdSchema.nullable() });
+export type ThemeBody = z.infer<typeof ThemeBodySchema>;
 
 /** Body of PUT /api/auth/me/language. */
 export const LanguageBodySchema = z.object({ language: LanguageSchema });

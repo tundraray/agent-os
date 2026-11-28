@@ -182,11 +182,13 @@ CREATE TABLE "app"."identity_users" (
 	"is_admin" boolean DEFAULT false NOT NULL,
 	"last_sign_in_at" timestamp with time zone,
 	"language" text,
+	"theme" text,
 	"notification_level" text DEFAULT 'all' NOT NULL,
 	"instructions" text DEFAULT '' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "identity_users_status_check" CHECK ("app"."identity_users"."status" in ('active', 'disabled')),
 	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru')),
+	CONSTRAINT "identity_users_theme_check" CHECK ("app"."identity_users"."theme" in ('graphite', 'petrol', 'nord')),
 	CONSTRAINT "identity_users_notification_level_check" CHECK ("app"."identity_users"."notification_level" in ('all', 'decisions_and_failures', 'off'))
 );
 --> statement-breakpoint
@@ -447,7 +449,7 @@ CREATE TABLE "app"."settings" (
 	"value" jsonb NOT NULL,
 	"updated_at" timestamp with time zone,
 	"updated_by" uuid,
-	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions'))
+	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions', 'appearance_settings'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."audit_events" (

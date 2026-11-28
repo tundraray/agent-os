@@ -12,6 +12,7 @@ import type {
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import {
+  appearanceSettings,
   currentUser,
   modelDefaults,
   modelProviderView,
@@ -71,6 +72,10 @@ const shellDefaults = [
   http.get('/api/admin/tool-results/settings', () =>
     HttpResponse.json(toolResultSettings()),
   ),
+  http.get('/api/admin/appearance/settings', () =>
+    HttpResponse.json(appearanceSettings()),
+  ),
+  http.put('/api/auth/me/theme', () => new HttpResponse(null, { status: 204 })),
   http.put(
     '/api/threads/:threadId/seen',
     () => new HttpResponse(null, { status: 204 }),

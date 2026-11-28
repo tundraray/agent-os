@@ -9,6 +9,8 @@ import {
   type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
+  type ThemeBody,
+  type ThemeId,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
 
@@ -54,6 +56,12 @@ async function saveNotificationLevel(level: NotificationLevel): Promise<void> {
   });
 }
 
+/** 204 without a cookie: the page keeps the theme itself (theming KD-3); null — as in the organisation. */
+async function saveTheme(theme: ThemeId | null): Promise<void> {
+  const body: ThemeBody = { theme };
+  await apiRequest({ path: '/api/auth/me/theme', method: 'PUT', body });
+}
+
 /** The provider sign-in answers 302 to the provider, so the tab goes to this address instead of a request. */
 function providerSignInUrl(providerId: string, next: string): string {
   const query = new URLSearchParams({ next }).toString();
@@ -68,5 +76,6 @@ export const authApi = {
   changePassword,
   saveLanguage,
   saveNotificationLevel,
+  saveTheme,
   providerSignInUrl,
 };

@@ -5,9 +5,11 @@ import {
   LanguageSchema,
   NotificationLevelSchema,
   parseSettingsValue,
+  ThemeIdSchema,
   UserStatusSchema,
   type Language,
   type NotificationLevel,
+  type ThemeId,
   type UserStatus,
 } from '@agent-os/contracts';
 import { SettingsService } from '../settings/settings.service';
@@ -46,6 +48,8 @@ export interface FoundSession {
     hasPassword: boolean;
     /** The chosen interface language, or null while there is no choice. */
     language: Language | null;
+    /** The own colour theme, or null while the employee follows the organisation's. */
+    theme: ThemeId | null;
     /** The default notification level. */
     notificationLevel: NotificationLevel;
   };
@@ -99,6 +103,7 @@ export class SessionStore {
       trainAny,
       hasPassword,
       language,
+      theme,
       notificationLevel,
       signInSettings,
     } = row;
@@ -119,6 +124,7 @@ export class SessionStore {
         trainAny,
         hasPassword,
         language: LanguageSchema.nullable().parse(language),
+        theme: ThemeIdSchema.nullable().parse(theme),
         notificationLevel: NotificationLevelSchema.parse(notificationLevel),
       },
     };

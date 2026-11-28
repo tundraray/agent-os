@@ -1124,6 +1124,8 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       'MCP-серверы',
       'Модели',
       'Агенты и глубокие агенты',
+      'Инструкция для агентов',
+      'Оформление',
     ]);
     expect(
       within(panelNav).getByRole('link', { name: 'Сотрудники' }),

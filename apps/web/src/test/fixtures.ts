@@ -4,6 +4,7 @@ import {
   AdminUserPageSchema,
   AdminUserSummarySchema,
   AgentListPageSchema,
+  AppearanceSettingsSchema,
   AgentContentSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
@@ -52,6 +53,7 @@ import {
   type AgentListNode,
   type AgentContent,
   type AgentListPage,
+  type AppearanceSettings,
   type AgentNode,
   type AgentPageView,
   type AgentView,
@@ -169,6 +171,8 @@ export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
     trainOwn: false,
     trainingCapUsd: 2,
     notificationLevel: 'all',
+    theme: null,
+    organizationTheme: 'graphite',
     ...overrides,
   });
 }
@@ -710,6 +714,11 @@ export function selfLearningSettings(): SelfLearningSettings {
     trainingCapUsd: TRAINING_CAP_USD_DEFAULT,
     updatedAt: null,
   });
+}
+
+/** GET /api/admin/appearance/settings: «Графит», never set. */
+export function appearanceSettings(): AppearanceSettings {
+  return AppearanceSettingsSchema.parse({ theme: 'graphite', updatedAt: null });
 }
 
 /** GET /api/admin/tool-results/settings: the defaults, never set. */

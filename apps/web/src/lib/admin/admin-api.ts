@@ -15,6 +15,7 @@ import {
   ModelProviderCheckSchema,
   ModelProviderViewSchema,
   OrganisationInstructionsSchema,
+  AppearanceSettingsSchema,
   ProviderListSchema,
   ProviderViewSchema,
   RecordDetailSchema,
@@ -51,6 +52,7 @@ import {
   type ModelProviderCheck,
   type ModelProviderView,
   type OrganisationInstructions,
+  type AppearanceSettings,
   type ProviderList,
   type ProviderView,
   type RecordDetail,
@@ -76,6 +78,8 @@ import {
   type UpdateModelDefaultsBody,
   type UpdateModelProviderBody,
   type UpdateOrganisationInstructionsBody,
+  type ThemeId,
+  type UpdateAppearanceSettingsBody,
   type UpdateProviderBody,
   type UpdateRecordBody,
   type UpdateRoleBody,
@@ -553,6 +557,22 @@ const instructions = {
     }),
 };
 
+/** «Оформление» (theming design-preference.md, KD-2): the organisation's theme. */
+const appearance = {
+  settings: (): Promise<AppearanceSettings> =>
+    apiRequest({
+      path: apiPath('appearance', 'settings'),
+      schema: AppearanceSettingsSchema,
+    }),
+  saveSettings: (theme: ThemeId): Promise<AppearanceSettings> =>
+    apiRequest({
+      path: apiPath('appearance', 'settings'),
+      method: 'PUT',
+      body: { theme } satisfies UpdateAppearanceSettingsBody,
+      schema: AppearanceSettingsSchema,
+    }),
+};
+
 export const adminApi = {
   users,
   roles,
@@ -567,4 +587,5 @@ export const adminApi = {
   selfLearning,
   toolResults,
   instructions,
+  appearance,
 };

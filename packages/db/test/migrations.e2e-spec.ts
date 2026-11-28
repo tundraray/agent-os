@@ -40,6 +40,7 @@ import {
   SessionTaskStatusSchema,
   SettingsKeySchema,
   TaskStatusSchema,
+  ThemeIdSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -249,6 +250,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         ),
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_users_language_check: sorted(LanguageSchema.options),
+        identity_users_theme_check: sorted(ThemeIdSchema.options),
         identity_users_notification_level_check: sorted(
           NotificationLevelSchema.options,
         ),

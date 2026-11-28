@@ -1,12 +1,8 @@
 'use client';
 
 import { useSyncExternalStore } from 'react';
-import {
-  DEFAULT_THEME,
-  THEME_ATTRIBUTE,
-  readTheme,
-  type ThemeId,
-} from './theme';
+import type { ThemeId } from '@agent-os/contracts';
+import { DEFAULT_THEME, THEME_ATTRIBUTE, readTheme } from './theme';
 
 function subscribe(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange);
