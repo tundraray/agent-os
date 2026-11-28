@@ -15,5 +15,6 @@
   "decisionsOpened": "Нужно ваше решение: {count, plural, one {# запрос} few {# запроса} many {# запросов} other {# запроса}}",
   "decisionRequested": "Нужно ваше решение: {who, select, chat {Чат} other {Агент «{agent}»}} хочет выполнить {tool}",
   "briefReady": "Задание готово — нужно ваше решение",
+  "questionAsked": "Новый вопрос от {who, select, chat {чата} other {агента «{agent}»}}",
   "reportArrived": "Пришёл отчёт: {description}"
 }

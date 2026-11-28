@@ -1,5 +1,8 @@
 import {
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
+  ASK_USER_TOOL,
+  AskUserArgsSchema,
   ChatRecordToolSchema,
   CREATE_RECORD_TOOL,
   DELETE_RECORD_TOOL,
@@ -414,13 +417,43 @@ function toolCallPart(
   };
 }
 
+/** The questions of an `ask_user` call or card as one comparable value; null for anything outside the contract. */
+function questionsKey(value: unknown): string | null {
+  const parsed = AskUserArgsSchema.safeParse(value);
+  return parsed.success ? JSON.stringify(parsed.data.questions) : null;
+}
+
+/**
+ * The questions of the question cards the feed's own agent asked (agent-guidance KD-2): the card names no call, so an
+ * `ask_user` call is paired with its card by the same questions.
+ */
+function askedQuestionsOf(view: FeedView): Set<string> {
+  const ownerId =
+    view.kind === 'thread' ? view.chat.rootAgentId : view.agent.agentId;
+  return new Set(
+    view.decisions.flatMap((confirmation) => {
+      if (
+        confirmation.kind !== AGENTS_QUESTION_CONFIRMATION ||
+        confirmation.agentId !== ownerId
+      )
+        return [];
+      return questionsKey(confirmation.content) ?? [];
+    }),
+  );
+}
+
 function isDrawnCall(
   call: AnswerToolCall,
   result: ToolResult | undefined,
-  cardCalls: ReadonlySet<string>,
+  { cardCalls, askedQuestions }: EntryContext,
 ): boolean {
   // A trainer's offer or plan is its card instead of the call block (KD-4).
   if (cardCalls.has(call.callId)) return false;
+  // A question shown as its card has no call line; without a card (refused, nobody to answer) the line stays.
+  if (call.tool === ASK_USER_TOOL && call.server === null) {
+    const key = questionsKey(call.args);
+    return key === null || !askedQuestions.has(key);
+  }
   if (!SHOWN_ELSEWHERE.has(call.tool)) return true;
   return result !== undefined && !HIDDEN_OUTCOMES.has(result.outcome);
 }
@@ -458,6 +491,8 @@ type EntryContext = {
   cards: readonly LibraryRecordCard[];
   /** Calls drawn as the trainer's cards. */
   cardCalls: ReadonlySet<string>;
+  /** The questions of the feed's own agent's question cards (`questionsKey`). */
+  askedQuestions: ReadonlySet<string>;
   /** Entries up to this `seq` are a fork's copy; 0 — none. */
   inheritedThrough: number;
   /** The test run's description: its message carries the action chip; null — none. */
@@ -467,8 +502,9 @@ type EntryContext = {
 function entryMessage(
   view: FeedView,
   entry: HistoryEntry,
-  { results, cards, cardCalls, inheritedThrough, descriptionSeq }: EntryContext,
+  context: EntryContext,
 ): ThreadMessageLike | null {
+  const { results, cards, inheritedThrough, descriptionSeq } = context;
   const id = `seq-${entry.seq}`;
   const testRun =
     entry.seq === descriptionSeq ? { testRun: true as const } : {};
@@ -534,7 +570,7 @@ function entryMessage(
         parts.push({ type: 'text', text: entry.content.text });
       for (const call of entry.content.toolCalls) {
         const result = results.get(call.callId);
-        if (isDrawnCall(call, result, cardCalls))
+        if (isDrawnCall(call, result, context))
           parts.push(toolCallPart(call, result, recordNameOf(call, cards)));
       }
       if (parts.length === 0) return null;
@@ -926,6 +962,7 @@ export function toFeed(
             ...run.plans.map((plan) => plan.callId),
           ],
     ),
+    askedQuestions: askedQuestionsOf(view),
     inheritedThrough:
       view.kind === 'thread' ? (view.thread.forkedFrom?.throughSeq ?? 0) : 0,
     descriptionSeq:

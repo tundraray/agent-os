@@ -20,21 +20,34 @@ export type Announcement = {
   values?: AnnouncementValues;
 };
 
+/** A phrase in the queue; `seq` grows with every `announce`, so a repeated phrase is a new one. */
+export type QueuedAnnouncement = { seq: number; announcement: Announcement };
+
 export type AnnouncerState = {
-  /** The latest phrase for the shell's only polite live region; null before the first `announce`. */
-  message: Announcement | null;
-  /** Grows with every `announce`, so a repeated phrase still changes the region and is spoken again. */
-  seq: number;
+  /**
+   * The latest phrases for the shell's only polite live region, oldest first: each is its own node there, so
+   * phrases announced together are spoken in turn (agent-guidance UXRD, Accessibility); empty before the first
+   * `announce`.
+   */
+  queue: readonly QueuedAnnouncement[];
   announce: (key: AnnouncementKey, values?: AnnouncementValues) => void;
 };
 
 export type AnnouncerStore = StoreApi<AnnouncerState>;
 
+/** Phrases kept in the region; older nodes are already spoken and only grow the page. */
+const QUEUE_LENGTH = 8;
+
 export function createAnnouncerStore(): AnnouncerStore {
+  let seq = 0;
   return createStore<AnnouncerState>()((set) => ({
-    message: null,
-    seq: 0,
-    announce: (key, values) =>
-      set((state) => ({ message: { key, values }, seq: state.seq + 1 })),
+    queue: [],
+    announce: (key, values) => {
+      seq += 1;
+      const next = { seq, announcement: { key, values } };
+      set((state) => ({
+        queue: [...state.queue, next].slice(-QUEUE_LENGTH),
+      }));
+    },
   }));
 }

@@ -268,7 +268,7 @@ export function TaskStatusGlyph({
 
 /**
  * A delegation's status icon (agent-status.md, «Статусы поручения»), decorative like the task's. A running
- * delegation whose subagent waits for a decision shows the agent's «Ждёт подтверждения» instead.
+ * delegation whose subagent waits for a decision shows the agent's «Ждёт вас» instead.
  */
 export function DelegationStatusGlyph({
   status,

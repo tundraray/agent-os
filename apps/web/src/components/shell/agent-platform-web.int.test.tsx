@@ -972,7 +972,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     );
     expect(ticketCard).toHaveAttribute('data-state', 'open');
     expect(
-      within(ticketCard).getByText('Ждёт подтверждения'),
+      within(ticketCard).getByText('Ждёт вас'),
     ).toBeInTheDocument();
     expect(within(ticketCard).getByRole('button', { name: 'Отклонить' })).toBe(
       reject,

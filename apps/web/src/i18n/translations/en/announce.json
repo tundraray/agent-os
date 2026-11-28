@@ -15,5 +15,6 @@
   "decisionsOpened": "Your decision is needed: {count, plural, one {# request} other {# requests}}",
   "decisionRequested": "Your decision is needed: {who, select, chat {Chat} other {Agent “{agent}”}} wants to run {tool}",
   "briefReady": "The brief is ready — your decision is needed",
+  "questionAsked": "New question from {who, select, chat {the chat} other {agent “{agent}”}}",
   "reportArrived": "Report arrived: {description}"
 }

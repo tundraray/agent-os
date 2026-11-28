@@ -1,7 +1,7 @@
 {
   "status": {
     "working": "Работает",
-    "awaiting_confirmation": "Ждёт подтверждения",
+    "awaiting_confirmation": "Ждёт вас",
     "interrupted": "Прерван",
     "completed": "Завершён",
     "failed": "Сбой",
@@ -121,6 +121,27 @@
     "deleted": "Удалено · {time}",
     "notSaved": "Не сохранено: {reason}",
     "showDiagram": "Показать схему"
+  },
+  "question": {
+    "source": "{who, select, chat {Чат спрашивает:} other {Агент «<link>{description}</link>» спрашивает:}}",
+    "sourcePast": "{who, select, chat {Чат спрашивал:} other {Агент «<link>{description}</link>» спрашивал:}}",
+    "group": "{who, select, chat {Вопрос от чата} other {Вопрос от агента «{description}»}}",
+    "multiSelect": "можно несколько",
+    "other": "Другое",
+    "otherPlaceholder": "Свой ответ…",
+    "otherLabel": "Свой ответ на вопрос {number}",
+    "unansweredOne": "Без ответа: вопрос {a} — агент решит сам",
+    "unansweredTwo": "Без ответа: вопросы {a} и {b} — агент решит сам",
+    "unansweredThree": "Без ответа: вопросы {a}, {b} и {c} — агент решит сам",
+    "answer": "Ответить",
+    "skip": "Пропустить",
+    "answerUnavailable": "Выберите ответ хотя бы на один вопрос или нажмите «Пропустить»",
+    "sendFailed": "Не удалось отправить ответ. Попробуйте ещё раз.",
+    "answered": "Отвечено · {time}",
+    "skipped": "Пропущено · {time}",
+    "cancelled": "Не понадобилось",
+    "ownAnswer": "Свой ответ: {text}",
+    "noAnswer": "Без ответа"
   },
   "recordTool": {
     "list_records": "Список библиотеки",

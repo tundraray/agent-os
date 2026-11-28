@@ -55,6 +55,7 @@ import {
   OfferCard,
   PlanCard,
 } from '@/components/agents/decision-card';
+import { QuestionCard } from '@/components/agents/question-card';
 import {
   EventLine,
   AnswerRefusedLine,
@@ -105,9 +106,11 @@ import {
 import type { SendFailure } from '@/lib/threads/shell-status-store';
 import { cn } from '@/lib/utils';
 import {
+  AGENTS_QUESTION_CONFIRMATION,
   ChipRecordSchema,
   ScheduleMarkSchema,
   type ChipRecord,
+  type DecisionRequest,
   type ScheduleMark,
 } from '@agent-os/contracts';
 import { useStore } from 'zustand';
@@ -720,14 +723,23 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
   const feed = useFeed();
   // Decision parts come only from a feed; a screen without its store has nothing to decide with.
   if (feed === null) return null;
+  const onDecide = (decision: DecisionRequest): Promise<void> =>
+    feed.decide(data.confirmation.decisionId, decision);
+  // Each kind mounts its own card (agent-guidance KD-1); the others are the decision card's variants.
+  if (data.confirmation.kind === AGENTS_QUESTION_CONFIRMATION)
+    return (
+      <QuestionCard
+        confirmation={data.confirmation}
+        byChat={data.byChat}
+        onDecide={onDecide}
+      />
+    );
   return (
     <DecisionCard
       confirmation={data.confirmation}
       byChat={data.byChat}
       saved={data.saved}
-      onDecide={(decision) =>
-        feed.decide(data.confirmation.decisionId, decision)
-      }
+      onDecide={onDecide}
     />
   );
 };
@@ -1157,7 +1169,7 @@ const SeededComposer: FC<{
   const removeChip = (): void => {
     composerSeed.clear(target);
     // The live region must not keep announcing a chip that is gone.
-    announcer.setState({ message: null });
+    announcer.setState({ queue: [] });
     focusShellTarget('composer');
   };
 

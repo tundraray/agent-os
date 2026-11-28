@@ -87,7 +87,7 @@ const NO_CHILDREN: readonly AgentNode[] = [];
 
 /**
  * DA-05 and DA-09: the deep agent's tasks and delegations in place of the feed on the tab «Задачи»; the composer
- * stays under it. «Ждёт подтверждения» of a delegation is its subagent's status among the agent's children.
+ * stays under it. «Ждёт вас» of a delegation is its subagent's status among the agent's children.
  */
 function TasksFeed() {
   const tasks = useContext(TasksContext);

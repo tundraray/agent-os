@@ -1,7 +1,7 @@
 {
   "status": {
     "working": "Working",
-    "awaiting_confirmation": "Awaiting confirmation",
+    "awaiting_confirmation": "Waiting for you",
     "interrupted": "Interrupted",
     "completed": "Completed",
     "failed": "Failed",
@@ -121,6 +121,27 @@
     "deleted": "Deleted · {time}",
     "notSaved": "Not saved: {reason}",
     "showDiagram": "Show diagram"
+  },
+  "question": {
+    "source": "{who, select, chat {Chat asks:} other {Agent “<link>{description}</link>” asks:}}",
+    "sourcePast": "{who, select, chat {Chat asked:} other {Agent “<link>{description}</link>” asked:}}",
+    "group": "{who, select, chat {Question from the chat} other {Question from agent “{description}”}}",
+    "multiSelect": "several allowed",
+    "other": "Other",
+    "otherPlaceholder": "Your answer…",
+    "otherLabel": "Your answer to question {number}",
+    "unansweredOne": "No answer: question {a} — the agent decides itself",
+    "unansweredTwo": "No answer: questions {a} and {b} — the agent decides itself",
+    "unansweredThree": "No answer: questions {a}, {b} and {c} — the agent decides itself",
+    "answer": "Answer",
+    "skip": "Skip",
+    "answerUnavailable": "Choose an answer to at least one question or press “Skip”",
+    "sendFailed": "Couldn't send the answer. Try again.",
+    "answered": "Answered · {time}",
+    "skipped": "Skipped · {time}",
+    "cancelled": "Not needed",
+    "ownAnswer": "Your answer: {text}",
+    "noAnswer": "No answer"
   },
   "recordTool": {
     "list_records": "Library list",

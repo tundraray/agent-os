@@ -552,14 +552,14 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
         .getAllByRole('button')
         .map((button) => button.getAttribute('aria-label')),
     ).toEqual([
-      `${DEEP_AGENT_NAME}, Ждёт подтверждения`,
+      `${DEEP_AGENT_NAME}, Ждёт вас`,
       'Разбор логов, Работает',
     ]);
 
     // Act 2: choose the deep agent
     await user.click(
       within(strip).getByRole('button', {
-        name: `${DEEP_AGENT_NAME}, Ждёт подтверждения`,
+        name: `${DEEP_AGENT_NAME}, Ждёт вас`,
       }),
     );
 

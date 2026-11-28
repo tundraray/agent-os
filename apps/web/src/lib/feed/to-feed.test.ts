@@ -90,6 +90,46 @@ function result(
   });
 }
 
+/** The chat's `ask_user` call at `seq` with one question. */
+const ASKED = [
+  {
+    question: 'Какой сервис разобрать?',
+    options: [
+      { label: 'payments', description: 'Касса' },
+      { label: 'checkout', description: 'Корзина' },
+    ],
+    multiSelect: false,
+  },
+];
+const askAnswer = (seq: number, callId: string): HistoryEntry =>
+  historyEntry({
+    kind: 'model_answer',
+    seq,
+    content: {
+      text: 'Ответ',
+      toolCalls: [
+        {
+          callId,
+          tool: 'ask_user',
+          server: null,
+          args: { questions: ASKED },
+          state: 'done' as const,
+        },
+      ],
+    },
+  });
+const questionCard = (agentId: string) =>
+  confirmation({
+    decisionId: 'q1',
+    agentId,
+    kind: 'agents.question',
+    tool: 'ask_user',
+    server: null,
+    args: { questions: ASKED },
+    content: { questions: ASKED },
+    createdAt: fixtureTime(2.5),
+  });
+
 const notice: HistoryEntry = {
   seq: 2,
   kind: 'notice',
@@ -283,6 +323,45 @@ describe('toFeed', () => {
       draft: null,
       optimistic: [],
       feed: ['seq-1', 'seq-2 tool:start_agent#c2', 'agent-a1 data-run-card'],
+      tray: [],
+    },
+    {
+      // agent-guidance KD-2, DC-4: the card stands instead of the call line of the same agent's same questions.
+      name: 'an ask_user call has no line while its question card is in the feed',
+      view: conversationView({
+        entries: [task, askAnswer(2, 'c1')],
+        decisions: [questionCard('root')],
+      }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-2', 'decision-q1 data-decision'],
+      tray: [],
+    },
+    {
+      // agent-guidance DC-4, QC-04: refused or nobody to answer — no card, the line «Вопрос сотруднику» stays.
+      name: 'an ask_user call without its card is drawn',
+      view: conversationView({
+        entries: [
+          task,
+          askAnswer(2, 'c1'),
+          result(3, 'c1', 'ask_user', 'success'),
+        ],
+      }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-2 tool:ask_user#c1'],
+      tray: [],
+    },
+    {
+      // agent-guidance KD-2: another agent's card with the same questions is not this call's card.
+      name: 'an ask_user call stays drawn beside another agent’s question card',
+      view: conversationView({
+        entries: [task, askAnswer(2, 'c1')],
+        decisions: [questionCard('a1')],
+      }),
+      draft: null,
+      optimistic: [],
+      feed: ['seq-1', 'seq-2 tool:ask_user#c1', 'decision-q1 data-decision'],
       tray: [],
     },
     {

@@ -1,5 +1,6 @@
 import {
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
   type ChipRecord,
   type Confirmation,
   type ConversationView,
@@ -117,7 +118,33 @@ export type CreateFeedStoreInput = {
   onActivity?: () => void;
 };
 
-/** MC-25 for decisions that opened since the previous read; a deep agent's brief — deep-agents MC-22. */
+const askedBy = (view: FeedView, decision: Confirmation): 'chat' | 'agent' =>
+  view.kind === 'thread' && decision.agentId === view.chat.rootAgentId
+    ? 'chat'
+    : 'agent';
+
+/**
+ * MC-25 for decisions that opened since the previous read; a deep agent's brief — deep-agents MC-22. Each new question
+ * card has its own phrase (agent-guidance MC-5), so several at once still say who asks; the rest read as before.
+ */
+function decisionAnnouncements(
+  view: FeedView,
+  opened: readonly Confirmation[],
+): Announcement[] {
+  const questions = opened.filter(
+    (d) => d.kind === AGENTS_QUESTION_CONFIRMATION,
+  );
+  const others = opened.filter((d) => d.kind !== AGENTS_QUESTION_CONFIRMATION);
+  const other = decisionAnnouncement(view, others);
+  return [
+    ...questions.map((question): Announcement => ({
+      key: 'announce.questionAsked',
+      values: { who: askedBy(view, question), agent: question.description },
+    })),
+    ...(other === null ? [] : [other]),
+  ];
+}
+
 function decisionAnnouncement(
   view: FeedView,
   opened: readonly Confirmation[],
@@ -131,12 +158,10 @@ function decisionAnnouncement(
   const [decision] = opened;
   if (decision.kind === AGENTS_BRIEF_CONFIRMATION)
     return { key: 'announce.briefReady' };
-  const byChat =
-    view.kind === 'thread' && decision.agentId === view.chat.rootAgentId;
   return {
     key: 'announce.decisionRequested',
     values: {
-      who: byChat ? 'chat' : 'agent',
+      who: askedBy(view, decision),
       agent: decision.description,
       // Only a call without a server is a built-in tool's; an MCP tool reads by its name.
       tool:
@@ -208,8 +233,7 @@ export function createFeedStore({
     const opened = next.decisions.filter(
       (d) => d.status === 'open' && !known.has(d.decisionId),
     );
-    const decision = decisionAnnouncement(next, opened);
-    if (decision !== null)
+    for (const decision of decisionAnnouncements(next, opened))
       announcer.getState().announce(decision.key, decision.values);
     for (const entry of added) {
       if (entry.kind === 'child_report') {
