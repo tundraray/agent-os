@@ -169,6 +169,11 @@ function stepContext(logger: Logger): StepContext {
     guard: async () => {
       throw new Error('a refused call writes nothing outside the commit');
     },
+    // The model step writes its debt before the call (runtime-fixes KD-1): here into the empty database.
+    guardWithDelivery: async (work) => ({
+      outcome: 'committed',
+      value: await work(),
+    }),
   };
 }
 

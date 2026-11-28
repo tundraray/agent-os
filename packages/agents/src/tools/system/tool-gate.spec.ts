@@ -548,6 +548,7 @@ function stepContext(): StepContext {
     signal: new AbortController().signal,
     logger: SILENT,
     guard: NO_SERVER_CALLS,
+    guardWithDelivery: NO_SERVER_CALLS,
   };
 }
 

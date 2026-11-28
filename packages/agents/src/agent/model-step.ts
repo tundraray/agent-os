@@ -8,7 +8,6 @@ import type { SessionPatch } from '@agent-os/db';
 import {
   isFinished,
   type StepContext,
-  type StepEffects,
   type StepResult,
 } from '@agent-os/runtime';
 
@@ -50,6 +49,9 @@ const OPEN_TASK_STATUSES: readonly SessionTaskStatus[] = [
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
+
+/** After the call the step owes no entry: its debt was written before the call (KD-1). */
+const writtenBeforeCall = async (): Promise<readonly NewHistoryEntry[]> => [];
 
 /**
  * The journal fields of an answered model call (FR-07, AC-07.1, DC-10): the tools the model was shown,
@@ -128,7 +130,9 @@ export async function childrenInFlight(
  * (continuation, interrupt).
  *
  * - The turn limit spent → `fail` `turn_limit`, the delivered messages written before the `failed` event.
- * - Otherwise the delivered messages go to history before the call, and the model of the session
+ * - Otherwise the prelude, the delivered messages and their session fields are written by
+ *   `ctx.guardWithDelivery` before the call (runtime-fixes KD-1); fenced → `continue` without a call or a write.
+ *   Then the model of the session
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
  *   `model_error`; a call `AccessGate` refused → `fail` with the verdict's reason, the model not called.
  *   Each failure closes the session and resets the turn counter (DC-1).
@@ -192,6 +196,20 @@ export async function runModelStep(
     ...(prelude?.entries ?? []),
     ...delivered,
   ]);
+  // KD-1 (runtime-fixes design-steps.md): the step's debt and its session fields lie in history before the
+  // call, with the messages marked delivered; an interrupt or a stop during the call then finds the question
+  // written, and a step repeated after a restart gets no message again. The commit writes only the answer.
+  const debt = await ctx.guardWithDelivery(async () => {
+    await deps.history.append(ctx.taskId, await writeStepEntries());
+    await deps.sessionRows.update(ctx.taskId, { ...basePatch, turns });
+  });
+  if (debt.outcome === 'fenced') {
+    logStep(ctx, STEP_KIND, startedAt, 'continue', {
+      fenced: true,
+      deliveredMessages: ctx.messages.length,
+    });
+    return { outcome: 'continue' };
+  }
   // Memory is live data read beside the version on every step (design-memory.md KD-3); a failed read fails the step.
   const memory = await memoryBlock(deps, agent.caller, ctx.logger);
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
@@ -230,8 +248,8 @@ export async function runModelStep(
       model: session.model,
       refusal: result.verdict,
       audit,
-      writeEntries: writeStepEntries,
-      patch: basePatch,
+      writeEntries: writtenBeforeCall,
+      patch: {},
     });
   }
   if (result.kind === 'model_error') {
@@ -245,8 +263,8 @@ export async function runModelStep(
       ctx,
       reason: result.reason,
       message: modelErrorMessage(session.model, result),
-      writeEntries: writeStepEntries,
-      patch: basePatch,
+      writeEntries: writtenBeforeCall,
+      patch: {},
     });
   }
 
@@ -265,20 +283,14 @@ export async function runModelStep(
     },
   };
   const callPatch: SessionPatch = {
-    ...basePatch,
     turns: counted,
     lastInputTokens: result.usage.inputTokens,
   };
   const writeAnswer = async (
-    effects: StepEffects,
     after: readonly NewHistoryEntry[],
     patch: SessionPatch,
   ): Promise<void> => {
-    await deps.history.append(ctx.taskId, [
-      ...(await writeStepEntries()),
-      answerEntry,
-      ...after,
-    ]);
+    await deps.history.append(ctx.taskId, [answerEntry, ...after]);
     await deps.sessionRows.update(ctx.taskId, patch);
   };
 
@@ -290,7 +302,7 @@ export async function runModelStep(
     });
     return {
       outcome: 'continue',
-      commit: (effects) => writeAnswer(effects, [], callPatch),
+      commit: () => writeAnswer([], callPatch),
     };
   }
 
@@ -312,7 +324,7 @@ export async function runModelStep(
       });
       return {
         outcome: 'wait',
-        commit: (effects) => writeAnswer(effects, [], callPatch),
+        commit: () => writeAnswer([], callPatch),
       };
     case 'notice':
       if (ending.openTasks !== undefined) {
@@ -342,9 +354,8 @@ export async function runModelStep(
       });
       return {
         outcome: 'continue',
-        commit: (effects) =>
+        commit: () =>
           writeAnswer(
-            effects,
             [{ kind: 'notice', content: noticeContent(ending) }],
             callPatch,
           ),
@@ -357,8 +368,7 @@ export async function runModelStep(
       return {
         outcome: 'complete',
         result: { report: ending.report, document: ending.document },
-        commit: (effects) =>
-          writeAnswer(effects, [], { ...callPatch, turns: 0, closed: true }),
+        commit: () => writeAnswer([], { ...callPatch, turns: 0, closed: true }),
       };
   }
 }

@@ -2,6 +2,7 @@ import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
 import type { Db, RuntimeInboxRow, RuntimeTaskRow } from '@agent-os/db';
 import type { CrashPoints } from '../crash-points';
+import type { Inbox } from '../messaging/inbox';
 import type { Tasks } from '../tasks/tasks';
 import { withTxRetry } from '../tasks/transaction-retry';
 import type { GuardResult, StepContext, StepMessage } from './step-contract';
@@ -13,6 +14,7 @@ const { running } = TaskStatusSchema.enum;
 export interface StepContextDeps {
   db: Db;
   tasks: Tasks;
+  inbox: Inbox;
   crashPoints: CrashPoints;
   /** The runtime's logger; the step's logger is its child. */
   logger: Logger;
@@ -88,14 +90,42 @@ export class TaskStepContext implements StepContext {
    * An interrupt, a stop or a requeue raises the attempt, so `fenced` follows from it; nothing is
    * written then.
    */
-  async guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
+  guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
+    return this.guarded('step.guard', () => work());
+  }
+
+  /**
+   * As {@link guard}; after `work` the same transaction marks the step's messages delivered, in the
+   * order of the step's commit (the task row, the handler's rows, the inbox).
+   */
+  async guardWithDelivery<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
+    const result = await this.guarded(
+      'step.guardWithDelivery',
+      async (task) => {
+        const value = await work();
+        await this.deps.inbox.markDelivered(task, this.messageIds);
+        return value;
+      },
+    );
+    if (result.outcome === 'committed') {
+      this.logger.info('step messages delivered by guard', {
+        messageIds: this.messageIds,
+      });
+    }
+    return result;
+  }
+
+  private async guarded<T>(
+    operation: string,
+    work: (task: RuntimeTaskRow) => Promise<T>,
+  ): Promise<GuardResult<T>> {
     const startedAt = Date.now();
     try {
       const result = await withTxRetry(
         {
           db: this.deps.db,
           logger: this.logger,
-          operation: 'step.guard',
+          operation,
           taskId: this.taskId,
         },
         async (): Promise<GuardResult<T>> => {
@@ -105,18 +135,20 @@ export class TaskStepContext implements StepContext {
             attempt: this.attempt,
           });
           if (!own) return { outcome: 'fenced' };
-          return { outcome: 'committed', value: await work() };
+          return { outcome: 'committed', value: await work(own) };
         },
       );
       const durationMs = Date.now() - startedAt;
       if (result.outcome === 'fenced') {
         this.logger.warn('guard fenced: the attempt is no longer current', {
+          operation,
           outcome: 'fenced',
           durationMs,
         });
         return result;
       }
       this.logger.debug('guard committed', {
+        operation,
         outcome: 'committed',
         durationMs,
       });
@@ -124,6 +156,7 @@ export class TaskStepContext implements StepContext {
       return result;
     } catch (error) {
       this.logger.warn('guard rolled back', {
+        operation,
         outcome: 'error',
         durationMs: Date.now() - startedAt,
         error,

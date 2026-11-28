@@ -155,6 +155,8 @@ export interface ScriptedAnswer {
   /** Over {@link DEFAULT_USAGE}. */
   readonly usage?: Partial<CallUsage>;
   readonly latch?: Latch;
+  /** Waited on after the text parts streamed, so a step is held with its text already in the feed. */
+  readonly latchAfterText?: Latch;
   /** The answer ends at the output length limit: the double reports `finishReason: 'length'` (KD-3). */
   readonly cutOff?: true;
 }
@@ -308,7 +310,8 @@ function resolveWaiters(
 
 /**
  * Answers a call as the provider would stream it: after the latch (if any), each text part goes to
- * `onText` in order, then the generation with the tool calls `toolCalls` makes and the usage.
+ * `onText` in order, then, after `latchAfterText` (if any), the generation with the tool calls
+ * `toolCalls` makes and the usage.
  */
 async function streamAnswer(
   answer: ScriptedAnswer,
@@ -322,6 +325,8 @@ async function streamAnswer(
   for (const part of parts) {
     if (part !== '') onText(part);
   }
+  await answer.latchAfterText?.pass(signal);
+  signal.throwIfAborted();
   const calls = toolCalls();
   return {
     finishReason: answer.cutOff
