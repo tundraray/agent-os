@@ -77,5 +77,5 @@ flowchart LR
 - [design-scripts.md](../../features/self-learning/design-scripts.md) — скрипты владельца в объявлении (KD-4)
 - [design-memory.md](../../features/self-learning/design-memory.md) — инструменты памяти по флажку версии глубокого агента (KD-2, KD-4)
 - [design-notepad.md](../../features/self-learning/design-notepad.md) — шесть инструментов блокнота в списках `tools` глубокого агента и сабагента; запуск из `ToolCaller.parentId` (KD-2, KD-3)
-- [agent-guidance/design-server.md](../../features/agent-guidance/design-server.md) — `ask_user` у каждого вида агента, кроме тренера, `read_skill` по списку скиллов версии, у чата и тренера (KD-1, KD-6)
+- [agent-guidance/design-server.md](../../features/agent-guidance/design-server.md) — `ask_user` у каждого вида агента, кроме тренера, `read_skill` у версии со скиллами и у чата, строки каталога в объявлении, как `startable` (KD-1, KD-6)
 - [design-memory-hygiene.md](../../features/schedules-search-memory/design-memory-hygiene.md) — номер версии в аргументах `remember` и `forget`, проверка записи в `execute` у `remember`, три причины отказа (KD-2, KD-4, KD-5)
