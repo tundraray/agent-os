@@ -133,7 +133,7 @@ type DeepAgentTabsProps = {
 /**
  * DA-04: only a deep agent's page has the tab row «Ход работы» and «Задачи · {N}» under the header; it does not
  * scroll with the content. The chosen tab is the page's address, so «Назад» returns to the previous one; the
- * list is read on open and on every `tree` note of the agent's conversation, so the count is live on both tabs.
+ * list is read on open and on every live change of the agent's conversation, so the count is live on both tabs.
  */
 function DeepAgentTabs({ agent, tasksTab, children }: DeepAgentTabsProps) {
   const t = useTranslations('agents.tasks');

@@ -125,8 +125,8 @@ type ThreadFeedsDeps = {
 };
 
 /**
- * Each store follows the live stream (design-web.md, KD-2): a `tree` note with its own `threadId`
- * re-reads it; `ready` and the answer's text parts reach it only while the stream watches it,
+ * Each store follows the live stream (design-web.md, KD-2; live-feed design-web.md, KD-1): its root agent's records,
+ * its state and its row re-read it, its deletion marks it deleted without a read; `ready` and the answer's text parts reach it only while the stream watches it,
  * because a `thread:` stream carries the parts of that conversation's root alone.
  */
 function createThreadFeeds({
@@ -152,9 +152,19 @@ function createThreadFeeds({
         onActivity: () => status.getState().bumpActivity(itemId, Date.now()),
       });
       const unsubscribers = [
-        live.onTree((threadId) => {
-          if (threadId === remoteId) void store.load();
-        }),
+        // The root agent's id is the conversation's, so `agentId` keeps the records of its own answer alone.
+        live.onChange(
+          {
+            kinds: ['entries', 'state', 'summary', 'deleted'],
+            threadId: remoteId,
+            agentId: remoteId,
+          },
+          (change) => {
+            if (change.kind === 'deleted')
+              status.getState().setHistory(remoteId, 'deleted');
+            else void store.load();
+          },
+        ),
         live.onReady(() => {
           // Created in this tab and not read yet: the conversation is on the server only from its first message,
           // and the accepted send reads the feed. A read now would be 404 and show «не найдено».

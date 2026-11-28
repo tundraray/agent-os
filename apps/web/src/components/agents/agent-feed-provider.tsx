@@ -8,8 +8,8 @@ import { logger } from '@/lib/logger';
 
 /**
  * The agent page's feed store (design-web.md, KD-1, KD-2), handed to the header, the screen and the tab
- * title through `FeedProvider`. It reads on mount and follows the live stream: a `tree` note of the
- * agent's conversation and `ready` re-read the page; text parts of this agent alone build the draft.
+ * title through `FeedProvider`. It reads on mount and follows the live stream: the agent's records, the state,
+ * row and deletion of its conversation and `ready` re-read the page (live-feed design-web.md, KD-1); text parts of this agent alone build the draft.
  * The shell keys the provider by `agentId`, so another agent gets a new store.
  */
 export function AgentFeedProvider({
@@ -32,13 +32,20 @@ export function AgentFeedProvider({
   );
 
   useEffect(() => {
+    // Before the first read the agent's conversation is unknown; that read shows the change.
+    const shownThread = (): string | null => {
+      const { view, loadError } = feed.getState();
+      return view?.kind === 'agent' && loadError === null
+        ? view.agent.threadId
+        : null;
+    };
     const unsubscribers = [
-      live.onTree((threadId) => {
-        const { view, loadError } = feed.getState();
-        // Before the first read the agent's conversation is unknown; that read shows the note's change.
-        if (view === null || loadError !== null) return;
-        if (view.kind === 'agent' && view.agent.threadId === threadId)
-          void feed.load();
+      live.onChange({ kinds: ['entries'], agentId }, () => {
+        if (shownThread() !== null) void feed.load();
+      }),
+      // The change names the conversation only, which the page knows after its first read.
+      live.onChange({ kinds: ['state', 'summary', 'deleted'] }, (change) => {
+        if (shownThread() === change.threadId) void feed.load();
       }),
       live.onReady(() => {
         // A missing agent stays missing; a failed first read gets another try with the stream back.

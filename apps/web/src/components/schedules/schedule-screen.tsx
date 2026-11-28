@@ -47,7 +47,7 @@ import {
   ruleLine,
   ScheduleStateBadge,
   useReloadAfterTerm,
-  useReloadOnAnyTree,
+  useReloadOnAnyChange,
   zoneLine,
 } from './schedule-parts';
 import { formatRunTime } from './schedule-rule-field';
@@ -59,7 +59,7 @@ type Action = 'pause' | 'resume' | 'run';
 
 /**
  * The schedule page `/schedules/<id>` (UXRD Screen 3): SH-05 header, actions and settings, SH-06 history. Both are
- * read on open, after every own change, on every `tree` note and shortly after the next term, so a trigger of the
+ * read on open, after every own change, on every live change and shortly after the next term, so a trigger of the
  * pass — or a pause it makes without one — shows while the page is open (design-schedules «Страницы»); a re-read
  * by note or term leaves the history alone once «Показать ещё» has added a page. Any 404 — a foreign,
  * deleted or missing schedule — is SH-08, which names nothing of the schedule.
@@ -80,13 +80,13 @@ export function ScheduleScreen({ id }: { id: string }) {
     reloadSchedule();
     reloadRuns();
   }, [reloadSchedule, reloadRuns]);
-  // A `tree` note comes often while any conversation runs: it must not drop the pages loaded by «Показать ещё».
-  const reloadOnTree = useCallback(() => {
+  // A live change comes often while any conversation runs: it must not drop the pages loaded by «Показать ещё».
+  const reloadOnChange = useCallback(() => {
     reloadSchedule();
     if (!loadedMore) reloadRuns();
   }, [reloadSchedule, reloadRuns, loadedMore]);
-  useReloadOnAnyTree(reloadOnTree);
-  useReloadAfterTerm(schedule.data?.nextRunAt, schedule.data, reloadOnTree);
+  useReloadOnAnyChange(reloadOnChange);
+  useReloadAfterTerm(schedule.data?.nextRunAt, schedule.data, reloadOnChange);
 
   if (isNotFound(schedule.error))
     return <ThreadNotice variant="schedule-not-found" />;

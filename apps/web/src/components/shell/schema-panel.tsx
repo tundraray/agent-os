@@ -76,7 +76,7 @@ export type ChatTasks = {
 };
 
 /**
- * The open conversation's task list — its root's list, read once for the shell and re-read on every `tree` note of
+ * The open conversation's task list — its root's list, read once for the shell and re-read on every live change of
  * the conversation (design-task-list.md, KD-5). `feed` is null where the panel is not offered.
  */
 export function useChatTasks(feed: FeedStore | null): ChatTasks {

@@ -27,7 +27,7 @@ function deferred(): Deferred {
 
 /**
  * One run at a time; requests during a run queue exactly one next run, and a run starts no sooner than
- * `minIntervalMs` after the previous one started (design-web.md, KD-2: re-reads by `tree` notes).
+ * `minIntervalMs` after the previous one started (design-web.md, KD-2: re-reads by live changes).
  */
 export function createCoalescedRunner(
   run: () => Promise<void>,

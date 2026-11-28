@@ -6,7 +6,7 @@ import { ArrowLeft, CopyIcon, LoaderCircle } from 'lucide-react';
 import { useFormatter, useTranslations } from 'next-intl';
 import { useStore } from 'zustand';
 import type { Document, ThreadDocumentsView } from '@agent-os/contracts';
-import { useReloadOnTree } from '@/components/agents/session-task-list';
+import { useReloadOnChange } from '@/components/agents/session-task-list';
 import { MarkdownText } from '@/components/markdown-text';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
@@ -37,13 +37,13 @@ export function useThreadDocuments(
     threadId ?? '',
     'agents',
   );
-  useReloadOnTree(threadId, documents.reload);
+  useReloadOnChange(threadId, documents.reload);
   return documents;
 }
 
 /**
  * One document of the conversation; null when there is no conversation or no document to read, without a request.
- * Read again on `tree` notes only while it can change: until it is read, and while its run is writing it.
+ * Read again on live changes only while it can change: until it is read, and while its run is writing it.
  */
 export function useThreadDocument(
   threadId: string | null,
@@ -59,7 +59,7 @@ export function useThreadDocument(
     'agents',
   );
   const changing = documentId !== null && document.data?.writing !== false;
-  useReloadOnTree(changing ? threadId : null, document.reload);
+  useReloadOnChange(changing ? threadId : null, document.reload);
   return document;
 }
 

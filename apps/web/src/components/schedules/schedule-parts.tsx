@@ -16,15 +16,15 @@ import { DAYS, formatRunTime, utcOffset } from './schedule-rule-field';
 
 /** The pieces the schedules list (SH-04) and a schedule's page (SH-05, SH-06) show alike. */
 
-/** Re-reads by `tree` notes no more often than once a second, like the sidebar's counter. */
+/** Re-reads by live changes no more often than once a second, like the sidebar's counter. */
 const REREAD_INTERVAL_MS = 1000;
 
 /**
- * design-schedules «Страницы»: while a schedules screen is open it re-reads on every `tree` note of the
- * employee's stream and on every reconnect: a trigger writes into a conversation, and schedules have no event of their own,
- * so a new trigger, the next term and the state after it show without a reload.
+ * design-schedules «Страницы»: while a schedules screen is open it re-reads on any conversation's state, row or
+ * deletion (live-feed design-web.md, KD-1) and on every reconnect: a trigger writes into a conversation, and schedules
+ * have no event of their own, so a new trigger, the next term and the state after it show without a reload.
  */
-export function useReloadOnAnyTree(reload: () => void): void {
+export function useReloadOnAnyChange(reload: () => void): void {
   const { live } = useShellServices();
   const reloadRef = useRef(reload);
   useLayoutEffect(() => {
@@ -41,7 +41,10 @@ export function useReloadOnAnyTree(reload: () => void): void {
     const request = (): void => {
       void runner.request();
     };
-    const unsubscribers = [live.onTree(request), live.onReady(request)];
+    const unsubscribers = [
+      live.onChange({ kinds: ['state', 'summary', 'deleted'] }, request),
+      live.onReady(request),
+    ];
     return () => {
       for (const unsubscribe of unsubscribers) unsubscribe();
       runner.cancel();
@@ -58,7 +61,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
  * Re-reads shortly after the term `nextRunAt` passes: the pass may change a schedule without touching any
- * conversation (it pauses one whose conversation is deleted, or a send is refused), and then no `tree` note comes.
+ * conversation (it pauses one whose conversation is deleted, or a send is refused), and then no live change comes.
  * `read` is the value the term came from: each new read arms the timer again from its own term.
  */
 export function useReloadAfterTerm(

@@ -6,12 +6,12 @@ import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
 import { logger } from '@/lib/logger';
 import { describeApiError } from '@/lib/api/api-request';
 
-/** design-web.md, «Сайдбар»: the counter re-reads by `tree` notes no more than once a second. */
+/** design-web.md, «Сайдбар»: the counter re-reads by live changes no more than once a second. */
 const REREAD_INTERVAL_MS = 1000;
 
 /**
  * NV-01: open decision requests in all the employee's conversations. Read on mount, on every `ready`
- * and on any `tree` note; a failed read keeps the previous number.
+ * and on any conversation's state or deletion (live-feed design-web.md, KD-1); a failed read keeps the previous number.
  */
 export function useAwaitingCount(): number {
   const { apiClient, live } = useShellServices();
@@ -34,7 +34,10 @@ export function useAwaitingCount(): number {
     const read = (): void => {
       void runner.request();
     };
-    const unsubscribers = [live.onTree(read), live.onReady(read)];
+    const unsubscribers = [
+      live.onChange({ kinds: ['state', 'deleted'] }, read),
+      live.onReady(read),
+    ];
     read();
     return () => {
       mounted = false;

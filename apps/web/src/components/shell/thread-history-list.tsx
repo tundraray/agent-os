@@ -147,7 +147,7 @@ const MORE_SKELETON_ROW_WIDTHS = ['68%', '52%', '80%'] as const;
 /** SB-10 starts the next page this far before it scrolls into view (UXRD 6.8 Default). */
 const AUTO_LOAD_ROOT_MARGIN = '0px 0px 200px 0px';
 
-/** The shortest gap between two re-reads of page 1 by `tree` notes (design-web.md, KD-2). */
+/** The shortest gap between two re-reads of page 1 by live changes (design-web.md, KD-2). */
 const TREE_RELOAD_INTERVAL_MS = 1000;
 
 /** The sidebar's scroll container: the observer's root, so the 200 px margin applies to its edge. */
@@ -568,8 +568,9 @@ export function ThreadHistoryList() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [aui, onePageLoaded]);
 
-  // Page 1 carries each row's state (improvements KD-5): any `tree` note re-reads it — a new conversation, a reply
-  // started or finished, a question asked — on the same terms as coming back to the tab.
+  // Page 1 carries each row's state (improvements KD-5): a conversation's state, row or deletion re-reads it — a new
+  // conversation, a reply started or finished, a question asked — on the same terms as coming back to the tab
+  // (live-feed design-web.md, KD-1). A deletion in this tab comes back from the server like any other.
   const reads = useMemo(
     () =>
       createCoalescedRunner(() => aui.threads.reload(), {
@@ -580,7 +581,10 @@ export function ThreadHistoryList() {
   useEffect(() => () => reads.cancel(), [reads]);
   useEffect(() => {
     if (!onePageLoaded) return;
-    return services.live.onTree(() => void reads.request());
+    return services.live.onChange(
+      { kinds: ['state', 'summary', 'deleted'] },
+      () => void reads.request(),
+    );
   }, [services, reads, onePageLoaded]);
   const requestRead = useEffectEvent(() => {
     if (onePageLoaded) void reads.request();
@@ -592,7 +596,7 @@ export function ThreadHistoryList() {
     previousMainThread.current = mainThreadId;
     requestRead();
   }, [mainThreadId]);
-  // A side chat's branch has no message yet, so no `tree` note announces it (KD-5). The list may be off screen
+  // A side chat's branch has no message yet, so no live change announces it (KD-5). The list may be off screen
   // while the panel folds the sidebar, so the check also runs when it mounts again.
   const isUnlisted = useEffectEvent(
     (threadId: string) => !entries.some((entry) => entry.remoteId === threadId),
@@ -644,22 +648,15 @@ export function ThreadHistoryList() {
           );
           return;
         }
-        item.delete().then(
-          // design-web.md, Risks: the tree, the counter and an open agent page of this thread re-read.
-          () => {
-            if (entry.remoteId !== undefined)
-              services.live.emitLocalTree(entry.remoteId);
-          },
-          (error: unknown) => {
-            // A failed DELETE is already reported by the list adapter (toast, rollback, log).
-            if (!isApiRequestError(error)) {
-              logger.error('[web-shell] thread delete failed', {
-                threadId: entry.id,
-                ...describeApiError(error),
-              });
-            }
-          },
-        );
+        item.delete().catch((error: unknown) => {
+          // A failed DELETE is already reported by the list adapter (toast, rollback, log).
+          if (!isApiRequestError(error)) {
+            logger.error('[web-shell] thread delete failed', {
+              threadId: entry.id,
+              ...describeApiError(error),
+            });
+          }
+        });
       }}
       renderItem={(entry, onRequestDelete) => (
         <ThreadHistoryItem

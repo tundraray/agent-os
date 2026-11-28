@@ -22,20 +22,20 @@ import {
   ruleLine,
   ScheduleStateBadge,
   useReloadAfterTerm,
-  useReloadOnAnyTree,
+  useReloadOnAnyChange,
 } from './schedule-parts';
 import { formatRunTime } from './schedule-rule-field';
 
 /**
  * SH-04 «Расписания»: the employee's schedules in the server's order — active by the next run, then paused, then
- * completed — as link rows, «Две строки» below 768 px. Read on open, on every `tree` note and shortly after the
+ * completed — as link rows, «Две строки» below 768 px. Read on open, on every live change and shortly after the
  * nearest next term, so a new trigger or a pause the pass made shows while the page is open.
  */
 export function SchedulesScreen() {
   const t = useTranslations('schedules');
   const format = useFormatter();
   const list = useResource(schedulesApi.list, 'schedules', 'schedules');
-  useReloadOnAnyTree(list.reload);
+  useReloadOnAnyChange(list.reload);
   useReloadAfterTerm(
     earliestTerm(list.data?.schedules),
     list.data,

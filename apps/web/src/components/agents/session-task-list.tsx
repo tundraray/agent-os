@@ -38,8 +38,11 @@ const SUMMARY_ORDER: readonly DelegationStatus[] = [
 /** The widest subagent column (run-task-list.md, part 6: «до 160 px»). */
 const SUBAGENT_COLUMN_MAX = '10rem';
 
-/** Calls `reload` on every `tree` note of the conversation `threadId`; a null `threadId` listens to nothing. */
-export function useReloadOnTree(
+/**
+ * Calls `reload` on the records of any agent of the conversation `threadId` and on its state: the change does not
+ * say whose agent it is (live-feed design-web.md, KD-1). A null `threadId` listens to nothing.
+ */
+export function useReloadOnChange(
   threadId: string | null,
   reload: () => void,
 ): void {
@@ -48,15 +51,15 @@ export function useReloadOnTree(
     () =>
       threadId === null
         ? undefined
-        : live.onTree((noted) => {
-            if (noted === threadId) reload();
-          }),
+        : live.onChange({ kinds: ['entries', 'state'], threadId }, () =>
+            reload(),
+          ),
     [live, threadId, reload],
   );
 }
 
 /**
- * A session's tasks and delegations (`GET /api/agents/:agentId/tasks`), read on open and again on every `tree` note
+ * A session's tasks and delegations (`GET /api/agents/:agentId/tasks`), read on open and again on every live change
  * of its conversation (deep-agents design-task-list.md, KD-5): new rows and statuses show without a reload. A null
  * `agentId` — the session is not known yet — reads as an empty list without a request.
  */
@@ -73,7 +76,7 @@ export function useAgentTasks(
     agentId ?? '',
     'agents',
   );
-  useReloadOnTree(agentId === null ? null : threadId, tasks.reload);
+  useReloadOnChange(agentId === null ? null : threadId, tasks.reload);
   return tasks;
 }
 

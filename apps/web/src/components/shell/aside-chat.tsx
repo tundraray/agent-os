@@ -39,7 +39,7 @@ import { useForkThread } from './use-open-branch';
  * The side chat (improvements design-web.md KD-1, Flow 1; UXRD IM-05, IM-06): a branch of the conversation cut after
  * an answer, shown on the panel's tab «В стороне» while the conversation stays on screen. Its feed is a second
  * runtime over the branch's own store, as on an agent page; the live stream watches only the main conversation,
- * so the branch's answer arrives whole with its `tree` note.
+ * so the branch's answer arrives whole with its live change.
  */
 
 /** The longest quote put in the branch's field (IM-05). */
