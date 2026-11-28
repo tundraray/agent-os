@@ -95,6 +95,12 @@ export interface ToolCaller {
    * tasks with these numbers are moved by code only; `null` — an ordinary list.
    */
   readonly fixedTasks: readonly number[] | null;
+  /**
+   * The schedule mark of the root's last message as the tool step read it (chat-scheduling KD-4): the call rule and
+   * `manage_schedule` know a schedule's run by it. `null` — the employee wrote it, and in the agent's own caller,
+   * which no step has read.
+   */
+  readonly scheduleId: string | null;
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */

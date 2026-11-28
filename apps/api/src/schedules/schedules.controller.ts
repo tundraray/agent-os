@@ -23,7 +23,6 @@ import {
   type ScheduleRunsPage,
   type ScheduleRunsQuery,
   type ScheduleRunView,
-  type ScheduleToolsResponse,
   type ScheduleView,
 } from '@agent-os/contracts';
 import { loggedRoute, type RouteCall } from '../common/logged-route';
@@ -80,7 +79,7 @@ export class SchedulesController {
         conversationId: body.conversationId,
         ruleKind: body.rule.kind,
         instructionLength: body.instruction.length,
-        allowedTools: body.allowedTools.length,
+        access: body.access,
       },
       work: () => this.schedules.create(ownerId, body),
       outcomeOf: scheduleOutcome,
@@ -101,18 +100,6 @@ export class SchedulesController {
       fields: { ownerId, ruleKind: body.rule.kind },
       work: () => Promise.resolve(this.schedules.nextRun(body)),
       outcomeOf: (next) => ({ nextRunAt: next.nextRunAt }),
-    });
-  }
-
-  /** Declared before `:id` routes: `tools` is not an id. */
-  @Get('tools')
-  tools(@Req() req: AuthedRequest): Promise<ScheduleToolsResponse> {
-    const ownerId = req.user.id;
-    return this.logged({
-      route: 'GET /schedules/tools',
-      fields: { ownerId },
-      work: () => this.schedules.tools(ownerId),
-      outcomeOf: (response) => ({ count: response.tools.length }),
     });
   }
 
@@ -145,7 +132,7 @@ export class SchedulesController {
         agentId: body.agentId,
         ruleKind: body.rule.kind,
         instructionLength: body.instruction.length,
-        allowedTools: body.allowedTools.length,
+        access: body.access,
       },
       work: () => this.schedules.update(id, ownerId, body),
       outcomeOf: scheduleOutcome,

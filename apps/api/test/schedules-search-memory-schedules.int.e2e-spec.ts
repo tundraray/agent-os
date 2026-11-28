@@ -27,10 +27,8 @@ import {
   ScheduleRunViewSchema,
   type ScheduleRunsPage,
   ScheduleRunsPageSchema,
-  ScheduleToolsResponseSchema,
   ScheduleViewSchema,
   TestRunStartedSchema,
-  type ToolPair,
 } from '@agent-os/contracts';
 import { waitFor } from '@agent-os/db/testing';
 import { fixtureCallsOf } from '@agent-os/mcp-fixture';
@@ -75,11 +73,6 @@ const MODEL = runModel('haiku-schedules');
 const GENERATED_TITLE = 'Conversation title';
 const HOUR_MS = 3_600_000;
 const CREATE_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
-/** The pair of the changing tool, as a schedule's permission holds it. */
-const NOTE_PAIR: ToolPair = {
-  server: BACKOFFICE_SERVER,
-  tool: 'create_incident_note',
-};
 const START_DEEP_AGENT = 'start_deep_agent';
 /** The built-in research deep agent the briefs of improvements UC-5 name. */
 const DEEP_RESEARCH = BUILTIN.deepResearch;
@@ -173,7 +166,7 @@ function body(
     target: 'new_conversation',
     conversationId: null,
     language: 'en',
-    allowedTools: [],
+    access: 'read',
     ...fields,
   };
 }
@@ -220,12 +213,6 @@ function schedulesOf(api: ChatApi) {
         api.raw('get', `/schedules/${id}/runs`),
         200,
         ScheduleRunsPageSchema,
-      ),
-    tools: () =>
-      expectBody(
-        api.raw('get', '/schedules/tools'),
-        200,
-        ScheduleToolsResponseSchema,
       ),
   };
 }
@@ -524,10 +511,11 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           rule: { kind: 'every_hours', hours: 1 },
           target: 'this_conversation',
           conversationId: threadId,
-          allowedTools: [NOTE_PAIR],
+          access: 'full',
+          consent: true,
         }),
       );
-      expect(schedule.allowedTools).toEqual([NOTE_PAIR]);
+      expect(schedule.access).toBe('full');
 
       // Anna's own message asks for the allowed pair: her turn is not the schedule's, so the call waits for her decision
       const own = 'UC-7: note the stuck queue';
@@ -1122,7 +1110,8 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           name: 'Morning note',
           instruction,
           rule: { kind: 'every_hours', hours: 1 },
-          allowedTools: [NOTE_PAIR],
+          access: 'full',
+          consent: true,
         }),
       );
 
@@ -1220,7 +1209,8 @@ describe('schedules: due terms trigger one send of the instruction', () => {
         body({
           instruction: deleted,
           rule: hourly,
-          allowedTools: [NOTE_PAIR],
+          access: 'full',
+          consent: true,
         }),
       );
 
@@ -1268,7 +1258,7 @@ describe('schedules: due terms trigger one send of the instruction', () => {
   // Catches: a schedule's permission that sends a call the owner lost the right to (the permission checked before the rights), or
   //   a refusal by rights that leaves no `access_denied` record as it does in the chat.
   it(
-    'improvements UC-6: a pair the owner lost the right to is refused no_access with an access_denied record, though the schedule still lists it',
+    'improvements UC-6: a changing call the owner lost the right to is refused no_access with an access_denied record, though the schedule is full',
     async () => {
       const start = at('2030-10-07T08:00:00Z');
       clock.set(start);
@@ -1286,7 +1276,8 @@ describe('schedules: due terms trigger one send of the instruction', () => {
         body({
           instruction,
           rule: { kind: 'every_hours', hours: 1 },
-          allowedTools: [NOTE_PAIR],
+          access: 'full',
+          consent: true,
         }),
       );
       await grantTo(
@@ -1332,95 +1323,7 @@ describe('schedules: due terms trigger one send of the instruction', () => {
           reason: 'no_access',
         },
       ]);
-      expect((await schedules.get(schedule.id)).allowedTools).toEqual([
-        NOTE_PAIR,
-      ]);
-    },
-    TEST_TIMEOUT_MS,
-  );
-
-  // AC: improvements NFR-02, FR-03 (saving a pair that is not the owner's).
-  // Catches: another employee who reads or changes a schedule's permission, a tool list that offers another employee's tools or a
-  //   read-only tool, a save that stores a pair outside the owner's changing tools (and then a run that writes under it), or a
-  //   repeated pair stored twice.
-  it(
-    "improvements UC-8: the permission and the tool list are the owner's own; a pair outside them is 400 and nothing is written",
-    async () => {
-      clock.set(at('2030-11-04T08:00:00Z'));
-      const anna = chatApi(harness.app, await employee());
-      const boris = chatApi(harness.app, await employee(false));
-      const daily: ScheduleRule = { kind: 'daily', time: '09:00' };
-
-      // Anna's list: her changing tools by server and name, the back office's read-only tools left out
-      const { tools } = await schedulesOf(anna).tools();
-      const backOffice = tools.filter(
-        (tool) => tool.server === BACKOFFICE_SERVER,
-      );
-      expect(backOffice.map(({ server, tool }) => ({ server, tool }))).toEqual([
-        NOTE_PAIR,
-      ]);
-      expect(backOffice[0]?.description).toEqual(expect.any(String));
-      const keys = tools.map(({ server, tool }) => `${server}\n${tool}`);
-      expect(keys).toEqual([...keys].sort());
-
-      // A repeated pair is kept once; a read-only tool is refused
-      const schedule = await schedulesOf(anna).create(
-        body({ rule: daily, allowedTools: [NOTE_PAIR, NOTE_PAIR] }),
-      );
-      expect(schedule.allowedTools).toEqual([NOTE_PAIR]);
-      expect(
-        (
-          await expectError(
-            anna.raw(
-              'put',
-              `/schedules/${schedule.id}`,
-              body({
-                rule: daily,
-                allowedTools: [
-                  NOTE_PAIR,
-                  { server: BACKOFFICE_SERVER, tool: 'get_order' },
-                ],
-              }),
-            ),
-            400,
-          )
-        ).errorCode,
-      ).toBe('VALIDATION_FAILED');
-      const before = await schedulesOf(anna).get(schedule.id);
-      expect(before.allowedTools).toEqual([NOTE_PAIR]);
-
-      // Boris: Anna's schedule is missing for him, his tool list holds none of Anna's rights, her pair is not his to allow
-      for (const [method, payload] of [
-        ['get', undefined],
-        ['put', body({ rule: daily, allowedTools: [] })],
-      ] as const)
-        expect(
-          (
-            await expectError(
-              boris.raw(method, `/schedules/${schedule.id}`, payload),
-              404,
-            )
-          ).errorCode,
-        ).toBe('SCHEDULE_NOT_FOUND');
-      expect(
-        (await schedulesOf(boris).tools()).tools.filter(
-          (tool) => tool.server === BACKOFFICE_SERVER,
-        ),
-      ).toEqual([]);
-      expect(
-        (
-          await expectError(
-            boris.raw(
-              'post',
-              '/schedules',
-              body({ rule: daily, allowedTools: [NOTE_PAIR] }),
-            ),
-            400,
-          )
-        ).errorCode,
-      ).toBe('VALIDATION_FAILED');
-      expect((await schedulesOf(boris).list()).schedules).toEqual([]);
-      expect(await schedulesOf(anna).get(schedule.id)).toEqual(before);
+      expect((await schedules.get(schedule.id)).access).toBe('full');
     },
     TEST_TIMEOUT_MS,
   );

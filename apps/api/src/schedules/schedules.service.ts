@@ -1,12 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import {
-  inRootLaunchSet,
-  ToolRegistry,
-  ViewOperations,
-} from '@agent-os/agents';
+import { inRootLaunchSet, ViewOperations } from '@agent-os/agents';
 import {
   type ChipRecord,
   isStartable,
+  type Language,
+  LanguageSchema,
+  ScheduleAccessSchema,
   SCHEDULE_NAME_MAX_LENGTH,
   SCHEDULE_RUNS_PAGE_SIZE,
   type ScheduleAgent,
@@ -20,14 +19,13 @@ import {
   type ScheduleRunView,
   ScheduleStateSchema,
   ScheduleTargetSchema,
-  type ScheduleToolsResponse,
   type ScheduleView,
   StartableKindSchema,
-  type ToolPair,
 } from '@agent-os/contracts';
 import {
   AgentsRepository,
   Db,
+  IdentityUsersRepository,
   type OwnedScheduleRow,
   type ScheduleChange,
   type ScheduleRow,
@@ -36,6 +34,7 @@ import {
 } from '@agent-os/db';
 import { CLOCK, type Clock } from '@agent-os/runtime';
 import { z } from 'zod';
+import { AuditLog } from '../audit/audit-log';
 import { isUuid } from '../common/is-uuid';
 import {
   CursorTimeSchema,
@@ -50,10 +49,6 @@ import {
   ScheduleTriggersService,
 } from './schedule-triggers.service';
 import { invalidSchedule, schedulesError } from './schedules.errors';
-
-/** Plain code-point order: the same for every locale. */
-const compareText = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
 
 /** Resumable: not completed and not waiting for an answer in a deleted conversation (DC-4). */
 const resumable = (schedule: ScheduleRow): boolean =>
@@ -104,32 +99,6 @@ function nameOf(body: ScheduleBody): string {
 const ruleKey = (rule: unknown): string =>
   JSON.stringify(ScheduleRuleSchema.parse(rule));
 
-/** Every server the owner may use and no system tool: the MCP tools of the owner's rights (`toolsFor`). */
-const ALL_SERVERS: Parameters<ToolRegistry['toolsFor']>[1] = {
-  servers: ['*'],
-  system: [],
-  root: false,
-  startable: null,
-  deepAgents: null,
-  skills: [],
-  taskList: false,
-  listDelegation: false,
-  scripts: [],
-};
-
-const pairKey = ({ server, tool }: ToolPair): string =>
-  JSON.stringify([server, tool]);
-
-/** The pairs in their first order, each once (Contract Definitions «POST /api/schedules»). */
-function distinctPairs(pairs: readonly ToolPair[]): ToolPair[] {
-  const seen = new Map<string, ToolPair>();
-  for (const { server, tool } of pairs) {
-    const key = pairKey({ server, tool });
-    if (!seen.has(key)) seen.set(key, { server, tool });
-  }
-  return [...seen.values()];
-}
-
 /**
  * An employee's schedules (design-schedules.md, C3 «маршруты расписаний», Flow 2): the routes. The owner is the
  * session's; another employee's schedule answers as a missing one, and so does an id that is not a UUID. The agent
@@ -143,10 +112,12 @@ export class SchedulesService {
     @Inject(SchedulesRepository)
     private readonly schedules: SchedulesRepository,
     @Inject(AgentsRepository) private readonly agents: AgentsRepository,
+    @Inject(IdentityUsersRepository)
+    private readonly users: IdentityUsersRepository,
     private readonly library: LibraryService,
     @Inject(ViewOperations) private readonly views: ViewOperations,
-    @Inject(ToolRegistry) private readonly registry: ToolRegistry,
     private readonly triggers: ScheduleTriggersService,
+    private readonly auditLog: AuditLog,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -158,19 +129,13 @@ export class SchedulesService {
     };
   }
 
-  /** Flow 2: checks the rule, the conversation and the agent, then writes the schedule with its next term. */
+  /**
+   * Flow 2: checks the body (`checked`), then writes the schedule with its next term; the form's route and the
+   * chat's `manage_schedule` both call it (chat-scheduling KD-1).
+   */
   async create(ownerId: string, body: ScheduleBody): Promise<ScheduleView> {
     const now = this.clock.now();
-    this.checkRule(body, now);
-    if (body.conversationId !== null)
-      await this.liveConversation(body.conversationId, ownerId);
-    else if (body.target === 'this_conversation')
-      throw schedulesError('THREAD_NOT_FOUND');
-    await this.checkAgent(ownerId, body.agentId);
-    const allowedTools = await this.checkAllowedTools(
-      ownerId,
-      body.allowedTools,
-    );
+    const conversationId = await this.checked(ownerId, body, now);
     const id = await this.db.transaction(async () => {
       const nextRunAt = this.firstTerm(body, now);
       const row = await this.schedules.insert({
@@ -182,37 +147,61 @@ export class SchedulesService {
         timeZone: body.timeZone,
         language: body.language,
         target: body.target,
-        conversationId: body.conversationId,
+        conversationId,
         state: 'active',
         pausedBecause: null,
         nextRunAt,
         ruleSetAt: now,
-        allowedTools,
+        access: body.access,
       });
+      await this.auditFullAccess(ownerId, row.id, body);
       return row.id;
     });
     return this.get(id, ownerId);
   }
 
   /**
-   * GET /api/schedules/tools: the changing MCP tools the owner has the right to, by server, then by tool name;
-   * read-only tools are not offered (improvements design-server.md, Contract Definitions).
+   * The zone and language of a schedule the chat creates, and the zone of the local time `list_schedules` gives
+   * (chat-scheduling KD-5): the zone of the owner's schedule changed last, else the server's; the language of his
+   * profile, else of that schedule, else `en`.
    */
-  async tools(ownerId: string): Promise<ScheduleToolsResponse> {
-    const tools = (await this.changingMcpTools(ownerId))
-      .map(({ server, tool, description, display }) => ({
-        server,
-        tool,
-        ...(display.toolTitle === undefined
-          ? {}
-          : { toolTitle: display.toolTitle }),
-        description,
-      }))
-      .sort(
-        (a, b) =>
-          compareText(a.server, b.server) || compareText(a.tool, b.tool),
-      );
-    return { tools };
+  async chatDefaults(
+    ownerId: string,
+  ): Promise<{ timeZone: string; language: Language }> {
+    const latest = await this.schedules.latestOwned(ownerId);
+    const user = await this.users.findById(ownerId);
+    return {
+      timeZone:
+        latest?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      language: LanguageSchema.parse(
+        user?.language ?? latest?.language ?? LanguageSchema.enum.en,
+      ),
+    };
+  }
+
+  /**
+   * The saved schedule as the body of a change, and whether its conversation is deleted: a change from the chat
+   * keeps every field it does not name (chat-scheduling KD-1), the zone and language included (AC-15.3).
+   */
+  async savedBody(
+    id: string,
+    ownerId: string,
+  ): Promise<{ body: ScheduleBody; conversationDeleted: boolean }> {
+    const { schedule, conversationDeletedAt } = await this.owned(id, ownerId);
+    return {
+      body: {
+        name: schedule.name,
+        instruction: schedule.instruction,
+        agentId: schedule.agentId,
+        rule: ScheduleRuleSchema.parse(schedule.rule),
+        timeZone: schedule.timeZone,
+        target: ScheduleTargetSchema.parse(schedule.target),
+        conversationId: schedule.conversationId,
+        language: LanguageSchema.parse(schedule.language),
+        access: ScheduleAccessSchema.parse(schedule.access),
+      },
+      conversationDeleted: conversationDeletedAt !== null,
+    };
   }
 
   /** The nearest term from now of a rule; nothing is written. */
@@ -227,9 +216,10 @@ export class SchedulesService {
   }
 
   /**
-   * Changes the schedule (AC-10.1, FR-09): its conversation never changes, a `this_conversation` answer needs it
-   * alive; the next term is counted again from now, a completed schedule with a term ahead is active again, and
-   * a pause for a deleted conversation is lifted by answering in a new one (`resume` restarts it).
+   * Changes the schedule (AC-10.1, FR-09) after the checks of `checked`, for the form and the chat alike: the
+   * conversation is the body's by its target (chat-scheduling KD-6); the next term is counted again from now, a
+   * completed schedule with a term ahead is active again, and a pause for a deleted conversation is lifted while
+   * the schedule stays paused (`resume` restarts it).
    */
   async update(
     id: string,
@@ -238,28 +228,14 @@ export class SchedulesService {
   ): Promise<ScheduleView> {
     const { schedule } = await this.owned(id, ownerId);
     const now = this.clock.now();
-    this.checkRule(body, now);
-    if (body.conversationId !== schedule.conversationId)
-      throw invalidSchedule(
-        'conversationId: the conversation of a schedule never changes',
-      );
-    if (body.target === 'this_conversation') {
-      if (body.conversationId === null)
-        throw schedulesError('THREAD_NOT_FOUND');
-      await this.liveConversation(body.conversationId, ownerId);
-    }
-    await this.checkAgent(ownerId, body.agentId);
-    const allowedTools = await this.checkAllowedTools(
-      ownerId,
-      body.allowedTools,
-    );
+    const conversationId = await this.checked(ownerId, body, now);
     const ruleChanged =
       ruleKey(schedule.rule) !== ruleKey(body.rule) ||
       schedule.timeZone !== body.timeZone;
     const ruleSetAt = ruleChanged ? now : schedule.ruleSetAt;
     const paused = schedule.state === 'paused';
-    await this.db.transaction(() =>
-      this.schedules.update(id, ownerId, {
+    await this.db.transaction(async () => {
+      await this.schedules.update(id, ownerId, {
         name: nameOf(body),
         instruction: body.instruction,
         agentId: body.agentId,
@@ -267,13 +243,15 @@ export class SchedulesService {
         timeZone: body.timeZone,
         language: body.language,
         target: body.target,
+        conversationId,
         state: paused ? 'paused' : 'active',
         pausedBecause: null,
         nextRunAt: paused ? null : this.firstTerm({ ...body, ruleSetAt }, now),
         ruleSetAt,
-        allowedTools,
-      }),
-    );
+        access: body.access,
+      });
+      await this.auditFullAccess(ownerId, id, body);
+    });
     return this.get(id, ownerId);
   }
 
@@ -376,33 +354,50 @@ export class SchedulesService {
     await this.db.transaction(() => this.schedules.update(id, ownerId, change));
   }
 
-  /** The owner's changing MCP tools: the tool set of every server by his rights, without read-only tools. */
-  private async changingMcpTools(ownerId: string) {
-    const tools = await this.registry.toolsFor(ownerId, ALL_SERVERS);
-    return tools.flatMap((tool) =>
-      'mcp' in tool && !tool.mcp.readOnly ? [tool.mcp] : [],
-    );
+  /**
+   * The checks of a body the form and the chat share: the rule, the consent to `full` (chat-scheduling KD-2), the
+   * conversation by the target and the agent. Returns the conversation the schedule keeps: none with
+   * `new_conversation`, the owner's live chat with `this_conversation` (KD-6). Nothing is written.
+   */
+  private async checked(
+    ownerId: string,
+    body: ScheduleBody,
+    now: Date,
+  ): Promise<string | null> {
+    this.checkRule(body, now);
+    if (body.access === ScheduleAccessSchema.enum.full && body.consent !== true)
+      throw invalidSchedule(
+        'consent: full access is given only with the consent of the employee',
+      );
+    let conversationId: string | null = null;
+    if (body.target === ScheduleTargetSchema.enum.this_conversation) {
+      if (body.conversationId === null)
+        throw schedulesError('THREAD_NOT_FOUND');
+      await this.liveConversation(body.conversationId, ownerId);
+      conversationId = body.conversationId;
+    }
+    await this.checkAgent(ownerId, body.agentId);
+    return conversationId;
   }
 
   /**
-   * The schedule's pairs, each once; a pair that is not one of the owner's changing MCP tools is 400
-   * `VALIDATION_FAILED`, and nothing is written (FR-03, NFR-02).
+   * One `audit_events` row for a save with `full`: the employee, the time, the schedule and the level; the form's
+   * request leaves no other trace of who gave full access (chat-scheduling, «Маршруты расписаний»).
    */
-  private async checkAllowedTools(
+  private async auditFullAccess(
     ownerId: string,
-    pairs: readonly ToolPair[],
-  ): Promise<ToolPair[]> {
-    const distinct = distinctPairs(pairs);
-    if (distinct.length === 0) return distinct;
-    const allowed = new Set(
-      (await this.changingMcpTools(ownerId)).map(pairKey),
-    );
-    const foreign = distinct.find((pair) => !allowed.has(pairKey(pair)));
-    if (foreign !== undefined)
-      throw invalidSchedule(
-        `allowedTools: ${foreign.server}/${foreign.tool} is not a changing tool you may use`,
-      );
-    return distinct;
+    scheduleId: string,
+    body: ScheduleBody,
+  ): Promise<void> {
+    if (body.access !== ScheduleAccessSchema.enum.full) return;
+    await this.auditLog.record({
+      kind: 'schedule_access',
+      actor: ownerId,
+      objectType: 'schedule',
+      objectId: scheduleId,
+      after: { access: body.access },
+      outcome: 'ok',
+    });
   }
 
   /** 400 `VALIDATION_FAILED` for a rule a schedule may not have (DC-2). */
@@ -477,10 +472,9 @@ export class SchedulesService {
     conversationDeletedAt,
   }: OwnedScheduleRow): Promise<ScheduleView> {
     const { ownerId } = schedule;
-    const [agent, lastRun] = await Promise.all([
-      this.agentOf(ownerId, schedule.agentId),
-      this.schedules.lastRun(schedule.id),
-    ]);
+    // One after another: `manage_schedule` reads the view inside the step's transaction, on one client.
+    const agent = await this.agentOf(ownerId, schedule.agentId);
+    const lastRun = await this.schedules.lastRun(schedule.id);
     return {
       id: schedule.id,
       name: schedule.name,
@@ -504,7 +498,7 @@ export class SchedulesService {
       ),
       nextRunAt: schedule.nextRunAt?.toISOString() ?? null,
       lastRun: lastRun === undefined ? null : toRunView(lastRun),
-      allowedTools: schedule.allowedTools,
+      access: ScheduleAccessSchema.parse(schedule.access),
     };
   }
 }

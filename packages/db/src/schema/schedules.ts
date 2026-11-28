@@ -1,9 +1,9 @@
 import {
   LanguageSchema,
+  ScheduleAccessSchema,
   SchedulePauseReasonSchema,
   ScheduleStateSchema,
   ScheduleTargetSchema,
-  type ToolPair,
 } from '@agent-os/contracts';
 import { sql } from 'drizzle-orm';
 import {
@@ -44,13 +44,10 @@ export const schedules = app.table(
     /** The language of the day in a new conversation's title (KD-6). */
     language: text('language').notNull(),
     target: text('target').notNull(),
-    /** Null — created in a new chat without messages. */
+    /** The conversation a `this_conversation` run answers in (chat-scheduling KD-6); null with `new_conversation`. */
     conversationId: uuid('conversation_id').references(() => conversations.id),
-    /** The changing MCP tools a run of the schedule calls without a confirmation card. */
-    allowedTools: jsonb('allowed_tools')
-      .$type<ToolPair[]>()
-      .notNull()
-      .default([]),
+    /** What a run does without a person (chat-scheduling KD-3). */
+    access: text('access').notNull().default(ScheduleAccessSchema.enum.read),
     state: text('state').notNull(),
     pausedBecause: text('paused_because'),
     /** The next term; null while paused and once completed (rule 4). */
@@ -77,6 +74,10 @@ export const schedules = app.table(
     check(
       'schedules_target_check',
       isOneOf(t.target, ScheduleTargetSchema.options),
+    ),
+    check(
+      'schedules_access_check',
+      isOneOf(t.access, ScheduleAccessSchema.options),
     ),
     check(
       'schedules_state_check',

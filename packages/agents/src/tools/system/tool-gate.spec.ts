@@ -92,6 +92,7 @@ const CALLER: ToolCaller = {
   servers: [],
   training: false,
   fixedTasks: null,
+  scheduleId: null,
 };
 
 const MCP_TOOL: McpSessionTool = {

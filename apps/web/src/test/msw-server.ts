@@ -4,7 +4,6 @@ import type {
   McpConnection,
   MyModels,
   RecordSummary,
-  ScheduleToolsResponse,
   AgentTasksView,
   SpendResponse,
   ThreadDocumentsView,
@@ -31,7 +30,7 @@ import {
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
  * «Системные» tab of «Агенты и глубокие агенты» (self-learning AS-01); the settings of large tool results by the
  * «MCP-серверы» list (tool-result-reading R-5). A session's task list is read by a deep agent's page and, for
- * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12); the conversation's documents by its panel (self-learning DC-02); every deep agent card reads its training state (self-learning KD-1). Every shown conversation raises its «seen through» mark (improvements KD-4). The schedule dialog and page read the owner's changing tools (improvements FR-07). A test that cares overrides them with
+ * the conversation's root, by the shell for the diagram panel (deep-agents DA-05, DA-12); the conversation's documents by its panel (self-learning DC-02); every deep agent card reads its training state (self-learning KD-1). Every shown conversation raises its «seen through» mark (improvements KD-4). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [
@@ -71,9 +70,6 @@ const shellDefaults = [
   ),
   http.get('/api/admin/tool-results/settings', () =>
     HttpResponse.json(toolResultSettings()),
-  ),
-  http.get('/api/schedules/tools', () =>
-    HttpResponse.json({ tools: [] } satisfies ScheduleToolsResponse),
   ),
   http.put(
     '/api/threads/:threadId/seen',

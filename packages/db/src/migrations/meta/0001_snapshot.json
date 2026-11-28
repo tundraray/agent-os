@@ -1,6 +1,6 @@
 {
-  "id": "825dca2c-32d4-4a6b-8eff-a15b6359e62a",
-  "prevId": "c5130b03-2283-433f-916b-fce79ad7621a",
+  "id": "d74680eb-c2b7-4495-b3b0-37f9e9331b3d",
+  "prevId": "fe09d7c5-9f53-4c18-920b-a1461a7401c2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3724,12 +3724,12 @@
           "primaryKey": false,
           "notNull": false
         },
-        "allowed_tools": {
-          "name": "allowed_tools",
-          "type": "jsonb",
+        "access": {
+          "name": "access",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'[]'::jsonb"
+          "default": "'read'"
         },
         "state": {
           "name": "state",
@@ -3888,6 +3888,10 @@
         "schedules_target_check": {
           "name": "schedules_target_check",
           "value": "\"app\".\"schedules\".\"target\" in ('new_conversation', 'this_conversation')"
+        },
+        "schedules_access_check": {
+          "name": "schedules_access_check",
+          "value": "\"app\".\"schedules\".\"access\" in ('read', 'full')"
         },
         "schedules_state_check": {
           "name": "schedules_state_check",

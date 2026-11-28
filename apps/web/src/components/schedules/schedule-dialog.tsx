@@ -21,7 +21,6 @@ import {
   type ScheduleBody,
   type ScheduleTarget,
   type ScheduleView,
-  type ToolPair,
 } from '@agent-os/contracts';
 import {
   AdminRadioField,
@@ -33,11 +32,6 @@ import {
 } from '@/components/admin/admin-form';
 import { FieldError } from '@/components/ui/field';
 import { RECORD_KIND_ICON } from '@/components/library/record-label';
-import {
-  AllowedToolsField,
-  listedPairs,
-  useScheduleTools,
-} from '@/components/schedules/allowed-tools';
 import {
   checkRule,
   defaultRuleDraft,
@@ -145,8 +139,6 @@ type Values = {
   agentId: string;
   rule: RuleDraft;
   target: ScheduleTarget;
-  /** «Без вас» as ticked; the body sends only the pairs of the read list. */
-  allowedTools: readonly ToolPair[];
 };
 
 type FieldErrors = {
@@ -177,8 +169,6 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
           mode.later && mode.conversationId !== null
             ? 'this_conversation'
             : 'new_conversation',
-        // IM-01: nothing is ticked by default.
-        allowedTools: [],
       },
       conversation:
         mode.conversationId === null
@@ -199,7 +189,6 @@ function startOf(mode: ScheduleDialogMode, now: Date): Start {
       target: schedule.conversation?.deleted
         ? 'new_conversation'
         : schedule.target,
-      allowedTools: schedule.allowedTools,
     },
     conversation: schedule.conversation,
     timeZone: schedule.timeZone,
@@ -223,7 +212,6 @@ function ScheduleForm({
   const id = useId();
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
-  const tools = useScheduleTools();
   const [start] = useState(() => startOf(mode, new Date()));
   const [values, setValues] = useState(start.values);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -277,8 +265,7 @@ function ScheduleForm({
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    // FR-07: a pair the owner lost would be refused with a 400 they cannot fix, so nothing saves before the list.
-    if (saving || tools.data === undefined) return;
+    if (saving) return;
     setFormError(null);
     const checked = checkRule(values.rule);
     const instruction = values.instruction.trim();
@@ -303,7 +290,8 @@ function ScheduleForm({
           ? null
           : (conversation?.id ?? null),
       language: locale,
-      allowedTools: listedPairs(values.allowedTools, tools.data.tools),
+      // Full access comes with the consent field of the page (chat-scheduling, web part).
+      access: 'read',
     };
     setErrors({});
     setSaving(true);
@@ -472,21 +460,11 @@ function ScheduleForm({
             />
             <FieldError className={CAPTION}>{errors.target}</FieldError>
           </div>
-          <AllowedToolsField
-            tools={tools}
-            chosen={values.allowedTools}
-            disabled={saving}
-            onChange={(allowedTools) => set('allowedTools', allowedTools)}
-          />
         </fieldset>
       </div>
       {formError !== null && <FormError>{formError}</FormError>}
       <DialogFooter className="sm:justify-start">
-        <Button
-          type="submit"
-          className={COMFORT_CONTROL}
-          disabled={saving || tools.data === undefined}
-        >
+        <Button type="submit" className={COMFORT_CONTROL} disabled={saving}>
           {saving && (
             <LoaderCircle
               className="animate-spin motion-reduce:animate-none"

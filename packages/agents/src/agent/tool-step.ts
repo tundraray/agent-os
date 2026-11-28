@@ -3,6 +3,7 @@ import {
   ChildFinishedPayloadSchema,
   type QuestionAnswer,
   QuestionAnswerSchema,
+  ScheduleAccessSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   type ToolPair,
@@ -35,6 +36,7 @@ import {
   toolDeniedEntry,
   toolRefusedEntry,
 } from '../tools/call-check';
+import type { ToolCaller } from '../tools/tool';
 import type { NotSent, ToolExecution } from '../tools/tool-execution';
 import type { ConfirmedSend } from '../tools/tool-runner';
 import {
@@ -162,25 +164,27 @@ function pairOf(resolved: ResolvedCall): ToolPair | null {
 }
 
 /**
- * Reads the facts of the call rule now and asks it (improvements design-server.md KD-1, KD-2): the last message of
- * the root's history, straight from the table; with a schedule mark — that schedule's pairs, read by its id and the
- * caller's owner (none for a deleted or another's one); without one — the pairs allowed to the conversation.
+ * Reads the facts of the call rule now and asks it (improvements design-server.md KD-1, KD-2): the schedule mark
+ * the step put in the caller (chat-scheduling KD-4); with one — that schedule's access level, read by its id and the
+ * caller's owner (`read` for a deleted or another's one, KD-3); without one — the pairs allowed to the conversation.
  */
 async function ruleOn(
-  deps: Pick<AgentDeps, 'history' | 'scheduleRows' | 'sessionRows'>,
+  deps: Pick<AgentDeps, 'scheduleRows' | 'sessionRows'>,
   resolved: ResolvedCall,
   cardKind: string,
 ): Promise<RuledCall> {
   const { caller } = resolved;
   const pair = pairOf(resolved);
-  const scheduleId =
-    (await deps.history.lastMessage(caller.rootId))?.content.schedule
-      ?.scheduleId ?? null;
-  const schedulePairs =
+  const { scheduleId } = caller;
+  const schedule =
     scheduleId === null
-      ? []
-      : ((await deps.scheduleRows.findOwned(scheduleId, caller.ownerId))
-          ?.schedule.allowedTools ?? []);
+      ? undefined
+      : await deps.scheduleRows.findOwned(scheduleId, caller.ownerId);
+  // A deleted or another's schedule reads as none: `read` (chat-scheduling KD-3).
+  const scheduleAccess =
+    schedule === undefined
+      ? ScheduleAccessSchema.enum.read
+      : ScheduleAccessSchema.parse(schedule.schedule.access);
   const conversationPairs =
     scheduleId === null
       ? await deps.sessionRows.grantedTools(caller.rootId)
@@ -191,7 +195,7 @@ async function ruleOn(
       pair,
       cardKind,
       scheduleId,
-      schedulePairs,
+      scheduleAccess,
       conversationPairs,
     }),
     scheduleId,
@@ -357,7 +361,14 @@ export async function runToolStep(
     return { outcome: 'continue' };
   };
 
-  const { caller } = agent;
+  // The schedule mark of the root's last message, straight from the table (chat-scheduling KD-4): the call rule and
+  // the tools read it from the caller of this step.
+  const caller: ToolCaller = {
+    ...agent.caller,
+    scheduleId:
+      (await deps.history.lastMessage(agent.caller.rootId))?.content.schedule
+        ?.scheduleId ?? null,
+  };
   // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
   // whose account went away gets `auth_required` (C3, DC-2). The set comes from the version (ADR-0017).
   const sessionTools = await registry.checkTools(agent.declaration);

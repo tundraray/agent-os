@@ -144,6 +144,7 @@ export abstract class BaseAgent implements LiveTask {
       servers: definition.servers,
       training,
       fixedTasks: this.fixedTasks,
+      scheduleId: null,
     };
     this.declaration = {
       servers: definition.servers,

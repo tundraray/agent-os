@@ -3,10 +3,8 @@ import {
   ScheduleNextRunResponseSchema,
   ScheduleRunsPageSchema,
   ScheduleRunViewSchema,
-  ScheduleToolsResponseSchema,
   ScheduleViewSchema,
   type ScheduleBody,
-  type ScheduleToolsResponse,
   type ScheduleListResponse,
   type ScheduleNextRunRequest,
   type ScheduleNextRunResponse,
@@ -44,15 +42,8 @@ export const schedulesApi = {
       body,
       schema: ScheduleNextRunResponseSchema,
     }),
-  /** The changing MCP tools the owner has the right to: the choices of «Без вас», by server, then by tool. */
-  tools: (): Promise<ScheduleToolsResponse> =>
-    apiRequest({
-      path: '/api/schedules/tools',
-      schema: ScheduleToolsResponseSchema,
-    }),
   get: (id: string): Promise<ScheduleView> =>
     apiRequest({ path: scheduleRoute(id), schema: ScheduleViewSchema }),
-  /** `body.conversationId` stays the conversation the schedule was created in. */
   update: (id: string, body: ScheduleBody): Promise<ScheduleView> =>
     apiRequest({
       path: scheduleRoute(id),
