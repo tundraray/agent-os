@@ -631,7 +631,7 @@ describe('improvements / web — conversation states in the list', () => {
     );
     const readsBefore = listReads;
     workingDone = true;
-    view.live.emit('tree', { threadId: WORKING });
+    view.live.emit('change', { threadId: WORKING, kind: 'state' });
     expect(await link('Сборка')).toBeInTheDocument();
     expect(listReads).toBeGreaterThan(readsBefore);
 

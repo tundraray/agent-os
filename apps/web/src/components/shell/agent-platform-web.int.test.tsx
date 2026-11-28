@@ -551,7 +551,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
         ]),
       ],
     };
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert (after the re-read): the draft gave way to its entry, three steps with new statuses, the report last, no repeats
     await waitFor(() =>
@@ -700,7 +700,7 @@ describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () 
       ],
       pending: [],
     };
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 1b: the tray is empty and the message is in the feed at its place; never missing, never twice
     await waitFor(() => expect(tray()).toBeNull());
@@ -1296,7 +1296,7 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
       },
       root,
     ]);
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert: the new root is first in the tree without a reload (AC-21.1)
     await waitFor(() =>

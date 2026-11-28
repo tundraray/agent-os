@@ -41,9 +41,10 @@ export type LiveStore = StoreApi<LiveState> & {
   /** Closes the stream and all timers; the next `watch` opens the stream again (StrictMode remount). */
   dispose: () => void;
   onReady: (listener: () => void) => () => void;
+  /** Every `change` of a conversation, whatever its kind: the subscriber rereads the conversation. */
   onTree: (listener: (threadId: string) => void) => () => void;
   onDelta: (listener: (delta: LiveDelta) => void) => () => void;
-  /** Hands a `tree` note to the subscribers without the server: a deletion in this tab. */
+  /** Hands a change to the `onTree` subscribers without the server: a deletion in this tab. */
   emitLocalTree: (threadId: string) => void;
 };
 
@@ -56,9 +57,10 @@ const REOPEN_DELAY_MS = 2000;
 /** The longest `watch` waits for `ready` (design-web.md, KD-2). */
 const READY_WAIT_MS = 1000;
 
+/** `attention` is not listened to yet: notifications are the web part's work (live-feed design-web.md). */
 const LIVE_EVENT_TYPES: readonly LiveEvent['type'][] = [
   'ready',
-  'tree',
+  'change',
   'delta',
   'ping',
 ];
@@ -192,12 +194,15 @@ export function createLiveStore({
       case 'ready':
         handleReady();
         break;
-      case 'tree':
+      // An unknown kind is «reread everything» (live-feed design-server.md, Contract Definitions): so is every kind
+      // until the web part reads them apart.
+      case 'change':
         dispatchTree(frame.data.threadId);
         break;
       case 'delta':
         for (const listener of deltaListeners) listener(frame.data);
         break;
+      case 'attention':
       case 'ping':
         break;
     }

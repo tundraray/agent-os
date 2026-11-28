@@ -14,14 +14,17 @@ import {
   AgentsRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  Db,
   RuntimeModelCallsRepository,
+  RuntimeTasksRepository,
   TrainingsRepository,
 } from '@agent-os/db';
-import { Inbox, type Task, TaskControl } from '@agent-os/runtime';
+import { Inbox, type Task, TaskControl, withTxRetry } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
 
 import { AGENTS_LOGGER } from '../agents.tokens';
+import { signalConversation } from '../conversation-signal';
 import { AgentsError } from '../errors';
 import { messagePayload } from '../resume';
 import {
@@ -105,6 +108,10 @@ export class ControlOperations {
     private readonly sessionTaskRows: Pick<ConversationTasksRepository, 'list'>,
     @Inject(RuntimeModelCallsRepository)
     private readonly modelCalls: Pick<RuntimeModelCallsRepository, 'sumTree'>,
+    @Inject(Db) private readonly db: Db,
+    /** The sender of the conversation's own events (`signalConversation`). */
+    @Inject(RuntimeTasksRepository)
+    private readonly signals: Pick<RuntimeTasksRepository, 'notify'>,
   ) {
     this.logger = logger.child({ service: 'agents.sessions' });
     this.logged = createLogged(this.logger);
@@ -324,7 +331,10 @@ export class ControlOperations {
     );
   }
 
-  /** Sets the title and moves the root session up; `undefined` as in `root`. */
+  /**
+   * Sets the title and moves the root session up, with the conversation's `summary` event in the same
+   * transaction (live-feed design-server.md, KD-2); `undefined` as in `root`.
+   */
   renameRoot(
     rootId: string,
     ownerId: string,
@@ -333,17 +343,19 @@ export class ControlOperations {
     return this.logged(
       'renameRoot',
       { rootId, ownerId },
-      async () => {
-        if (!(await this.sessionRows.renameRoot(rootId, ownerId, title)))
-          return undefined;
-        const row = await this.sessionRows.root(rootId, ownerId);
-        return row === undefined ? undefined : toRootSession(row);
-      },
+      () =>
+        this.db.transaction(async () => {
+          if (!(await this.sessionRows.renameRoot(rootId, ownerId, title)))
+            return undefined;
+          await this.signalSummary(rootId, ownerId);
+          const row = await this.sessionRows.root(rootId, ownerId);
+          return row === undefined ? undefined : toRootSession(row);
+        }),
       (renamed) => ({ found: renamed !== undefined }),
     );
   }
 
-  /** Writes a generated title only into an empty one; `true` when it was written. */
+  /** Writes a generated title only into an empty one, with `summary` only when it was written; `true` then. */
   titleRootIfEmpty(
     rootId: string,
     ownerId: string,
@@ -352,21 +364,58 @@ export class ControlOperations {
     return this.logged(
       'titleRootIfEmpty',
       { rootId, ownerId },
-      () => this.sessionRows.titleRootIfEmpty(rootId, ownerId, title),
+      () =>
+        this.db.transaction(async () => {
+          const written = await this.sessionRows.titleRootIfEmpty(
+            rootId,
+            ownerId,
+            title,
+          );
+          if (written) await this.signalSummary(rootId, ownerId);
+          return written;
+        }),
       (written) => ({ written }),
     );
   }
 
   /**
-   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`, in
-   * its own transaction, which it repeats after a deadlock): the deletion mark lives on the tasks
-   * only (KD-2), and from then on the conversation answers as a missing one everywhere. The rows
-   * stay. `AGENT_NOT_FOUND` for a missing, another owner's or an already deleted root.
+   * Stops the conversation's tree and marks its runtime tasks deleted (`TaskControl.deleteTree`): the deletion mark
+   * lives on the tasks only (KD-2), and from then on the conversation answers as a missing one everywhere. The rows
+   * stay. The `deleted` event with the owner goes in the same transaction (live-feed design-server.md, Flow 2); the
+   * transaction is opened here under `withTxRetry`, because `deleteTree` repeats nothing inside a caller's one.
+   * `AGENT_NOT_FOUND` for a missing, another owner's or an already deleted root.
    */
   deleteRoot(rootId: string, ownerId: string): Promise<void> {
     return this.logged('deleteRoot', { rootId, ownerId }, () =>
-      asAgent(this.tasks.deleteTree(rootId, ownerId).then(() => undefined)),
+      asAgent(
+        withTxRetry(
+          {
+            db: this.db,
+            logger: this.logger,
+            operation: 'agents.deleteRoot',
+            taskId: rootId,
+          },
+          async () => {
+            await this.tasks.deleteTree(rootId, ownerId);
+            await signalConversation(this.signals, {
+              ownerId,
+              event: {
+                type: 'change',
+                data: { threadId: rootId, kind: 'deleted' },
+              },
+            });
+          },
+        ),
+      ),
     );
+  }
+
+  /** The conversation's list row changed (title or level): its `summary` event to the owner. */
+  private signalSummary(rootId: string, ownerId: string): Promise<void> {
+    return signalConversation(this.signals, {
+      ownerId,
+      event: { type: 'change', data: { threadId: rootId, kind: 'summary' } },
+    });
   }
 
   /** The edited arguments parsed by the tool's schema; `INVALID_ARGUMENTS` unless the tool allows the edit. */

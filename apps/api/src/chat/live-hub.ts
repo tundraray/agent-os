@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LOGGER, type Logger } from '@agent-os/common';
-import type { LiveEvent } from '@agent-os/contracts';
+import {
+  ConversationChangeSignalSchema,
+  type LiveEvent,
+  RuntimeTreeSignalSchema,
+} from '@agent-os/contracts';
 import {
   CLOCK,
   RUNTIME_TREE_CHANNEL,
@@ -17,11 +21,12 @@ import {
 import pg from 'pg';
 import { Observable, type Subscriber } from 'rxjs';
 import { z } from 'zod';
-import { ViewOperations } from '@agent-os/agents';
+import { CONVERSATION_CHANGE_CHANNEL, ViewOperations } from '@agent-os/agents';
 import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher';
 import {
   deltaTargets,
   noteTargets,
+  runtimeChanges,
   type LiveStream,
   type Watch,
 } from './live-filter';
@@ -34,9 +39,6 @@ const RECONNECT_MS = 1000;
 
 /** How often an idle stream gets a `ping`, so that a proxy does not close it. */
 const PING_MS = 20_000;
-
-/** The data of a `runtime_tree` NOTIFY (`Tasks.signal` of the runtime). */
-const TreeNoticeSchema = z.object({ rootId: z.string().min(1) });
 
 /** The payload of an `agent_text_delta` NOTIFY (`notifyPayloads` of `DeltaPublisher`). */
 const TextDeltaSchema = z.object({
@@ -61,18 +63,21 @@ const READY = messageEvent({ type: 'ready', data: {} });
 const PING = messageEvent({ type: 'ping', data: {} });
 
 /**
- * The live updates of the API (design-chat.md, KD-2, KD-3, C3 «живые обновления»): one dedicated
- * connection per process listens on `runtime_tree` and `agent_text_delta` and hands the signals to
- * the open SSE streams. A tree signal becomes a `tree` note to every stream of the conversation's
- * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
+ * The live updates of the API (design-chat.md, KD-2, KD-3; live-feed design-server.md, KD-1, KD-2): one dedicated
+ * connection per process listens on `runtime_tree`, `conversation_change` and `agent_text_delta` and hands the
+ * signals to the open SSE streams. A runtime signal becomes `change` events by the rule of `runtimeChanges`, sent to
+ * every stream of the conversation's owner; a `conversation_change` signal carries a ready event and its owner and
+ * goes to that owner's streams as it is; a text part goes only to the owner's streams that watch its agent
+ * (live-filter.ts).
  *
- * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
- * by the tree's root id, and its owner is read for every note — one row of `conversations` by its
- * primary key, and never remembered. A deleted conversation's root is marked and so has no owner
- * (`rootOwner` answers `undefined`): the notes of its tree go to nobody, on this or another API
- * instance, from the moment the deletion commits. A root that is no conversation (a tree of another
- * task type) has no owner either, and a signal nobody can receive is dropped. A lost connection is reopened every second, and
- * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
+ * Only the streams live in memory (ADR-0001): a conversation is its root session, so an event names it by the
+ * tree's root id, and the owner of a runtime signal is read only when the rule gives an event — one row of
+ * `conversations` by its primary key, never remembered. A deleted conversation's root is marked and so has no
+ * owner (`rootOwner` answers `undefined`): the runtime signals of its tree go to nobody, on this or another API
+ * instance, from the moment the deletion commits; its `deleted` event carries the owner. A root that is no
+ * conversation (a tree of another task type) has no owner either, and a signal nobody can receive is dropped. A
+ * lost connection is reopened every second, and then every stream gets `ready`: the signals of the gap are lost and
+ * the web rereads its screen.
  */
 @Injectable()
 export class LiveHub
@@ -143,6 +148,7 @@ export class LiveHub
     try {
       await client.connect();
       await client.query(`LISTEN "${RUNTIME_TREE_CHANNEL}"`);
+      await client.query(`LISTEN "${CONVERSATION_CHANGE_CHANNEL}"`);
       await client.query(`LISTEN "${AGENT_TEXT_DELTA_CHANNEL}"`);
     } catch (error) {
       await client.end().catch(() => undefined);
@@ -198,18 +204,48 @@ export class LiveHub
   ): Promise<void> {
     // Nobody to tell: drop before parsing or looking anything up.
     if (this.streams.size === 0 || payload === undefined) return;
-    if (channel === RUNTIME_TREE_CHANNEL) await this.note(payload);
+    if (channel === RUNTIME_TREE_CHANNEL) await this.runtimeSignal(payload);
+    else if (channel === CONVERSATION_CHANGE_CHANNEL)
+      this.conversationSignal(payload);
     else if (channel === AGENT_TEXT_DELTA_CHANNEL) this.delta(payload);
   }
 
-  /** A change of a tree: a `tree` note to every stream of the conversation's owner. */
-  private async note(payload: string): Promise<void> {
-    const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
-    const ownerId = await this.views.rootOwner(rootId);
+  /** A task's row was written: its change events, when the rule gives any, to the conversation's owner. */
+  private async runtimeSignal(payload: string): Promise<void> {
+    const signal = RuntimeTreeSignalSchema.parse(JSON.parse(payload));
+    const events = runtimeChanges(signal);
+    if (events.length === 0) return;
+    const ownerId = await this.views.rootOwner(signal.rootId);
     if (ownerId === undefined) return;
-    const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
-    for (const stream of noteTargets(ownerId, this.streams))
-      stream.subscriber.next(event);
+    for (const event of events) this.send(RUNTIME_TREE_CHANNEL, ownerId, event);
+  }
+
+  /** A ready event of a conversation's writer: to its owner's streams, without the rule or a read. */
+  private conversationSignal(payload: string): void {
+    const { ownerId, event } = ConversationChangeSignalSchema.parse(
+      JSON.parse(payload),
+    );
+    this.send(CONVERSATION_CHANGE_CHANNEL, ownerId, event);
+  }
+
+  /** One `change` or `attention` event to every stream of the owner, logged by ids and kinds only. */
+  private send(
+    channel: string,
+    ownerId: string,
+    event: Extract<LiveEvent, { type: 'change' | 'attention' }>,
+  ): void {
+    const targets = noteTargets(ownerId, this.streams);
+    this.logger.info('live event sent', {
+      channel,
+      type: event.type,
+      kind: event.type === 'change' ? event.data.kind : event.data.event,
+      threadId: event.data.threadId,
+      agentId: event.type === 'change' ? (event.data.agentId ?? null) : null,
+      ownerId,
+      streams: targets.length,
+    });
+    const message = messageEvent(event);
+    for (const stream of targets) stream.subscriber.next(message);
   }
 
   /** A text part: only to the owner's streams that watch its agent or the root's conversation. */

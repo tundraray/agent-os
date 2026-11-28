@@ -1,4 +1,8 @@
-import { type TaskStatus, TaskStatusSchema } from '@agent-os/contracts';
+import {
+  type RuntimeTreeSignal,
+  type TaskStatus,
+  TaskStatusSchema,
+} from '@agent-os/contracts';
 import {
   type NewRuntimeTaskRow,
   type RuntimeTaskRow,
@@ -17,9 +21,9 @@ import {
 const { running, waiting } = TaskStatusSchema.enum;
 
 /**
- * The `LISTEN` channel of the runtime: one notification with `{"rootId"}` per committed transaction
- * that changed a task's status or its queue. The web and the dispatcher's loop learn by it that a
- * tree changed; it carries nothing else.
+ * The `LISTEN` channel of the runtime: a notification `{rootId, taskId, status?}` (`RuntimeTreeSignal`)
+ * for each task whose row or queue a committed transaction wrote; `status` only when the write changed
+ * it. The dispatcher's loop wakes on any of them; the API's live hub derives the change kinds from it.
  */
 export const RUNTIME_TREE_CHANNEL = 'runtime_tree';
 
@@ -77,13 +81,25 @@ export class Tasks {
       }
       return null;
     }
-    await this.signal(row.rootId);
+    // Created in `queued` or `waiting`: the signal carries no status (live-feed design-server.md, KD-1).
+    await this.signal(row);
     return row;
   }
 
-  /** The tree's signal on {@link RUNTIME_TREE_CHANNEL}, sent when the open transaction commits. */
-  signal(rootId: string): Promise<void> {
-    return this.rows.notify(RUNTIME_TREE_CHANNEL, rootId);
+  /**
+   * The task's signal on {@link RUNTIME_TREE_CHANNEL}, sent when the open transaction commits;
+   * `status` only from a write of the status.
+   */
+  signal(
+    task: Pick<RuntimeTaskRow, 'rootId' | 'taskId'>,
+    status?: TaskStatus,
+  ): Promise<void> {
+    const signal: RuntimeTreeSignal = {
+      rootId: task.rootId,
+      taskId: task.taskId,
+      ...(status === undefined ? {} : { status }),
+    };
+    return this.rows.notify(RUNTIME_TREE_CHANNEL, signal);
   }
 
   /**
@@ -100,7 +116,7 @@ export class Tasks {
     const write = changeColumns(change);
     const row = await this.rows.updateGuarded(guard, write);
     if (row !== undefined && write.status !== undefined) {
-      await this.signal(row.rootId);
+      await this.signal(row, write.status);
     }
     return row;
   }

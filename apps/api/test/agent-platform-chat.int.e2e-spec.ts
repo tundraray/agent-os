@@ -237,8 +237,8 @@ function liveReader(api: ChatApi, threadId: string): LiveReader {
 }
 
 /**
- * Takes the stream's `tree` notes one by one, re-reading the conversation in the handler of each, until
- * `done` holds: what the test then sees became visible through a note, not through polling.
+ * Takes the stream's `change` events one by one, re-reading the conversation in the handler of each, until
+ * `done` holds: what the test then sees became visible through an event, not through polling.
  */
 async function untilNoted(
   stream: SseStream,
@@ -251,11 +251,13 @@ async function untilNoted(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const note = await stream
-      .next('tree', Math.max(deadline - Date.now(), 1))
+      .next('change', Math.max(deadline - Date.now(), 1))
       .catch((error: unknown) => {
-        throw new Error(`No tree note made ${what} visible: ${String(error)}`);
+        throw new Error(
+          `No change event made ${what} visible: ${String(error)}`,
+        );
       });
-    expect(note.data).toEqual({ threadId });
+    expect(isChangeOf(note, threadId)).toBe(true);
     const view = await read();
     if (done(view)) return { view, note };
   }
@@ -363,11 +365,11 @@ async function allAgents(
   return { pages, agents: pages.flatMap((page) => page.agents) };
 }
 
-/** Whether a stream event is a `tree` note of this thread. */
-function isTreeOf(event: SseEvent, threadId: string): boolean {
-  if (event.type !== 'tree') return false;
+/** Whether a stream event is a `change` event of this thread. */
+function isChangeOf(event: SseEvent, threadId: string): boolean {
+  if (event.type !== 'change') return false;
   const parsed = LiveEventSchema.parse({ type: event.type, data: event.data });
-  return parsed.type === 'tree' && parsed.data.threadId === threadId;
+  return parsed.type === 'change' && parsed.data.threadId === threadId;
 }
 
 /** One route of the API with the id in its path; the body, when given, is sent as JSON. */
@@ -2994,7 +2996,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           "the writer's text parts on A's stream",
         );
         await aControl.until(
-          (events) => events.some((event) => isTreeOf(event, aThread.id)),
+          (events) => events.some((event) => isChangeOf(event, aThread.id)),
           "a note of A's thread on A's stream",
         );
         expect(
@@ -3016,7 +3018,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         // When: B writes in its own conversation (its note comes after every signal of A's: the hub handles them in order)
         await b.send(bThread.id, 'INT-4 B: still here');
         await bOnOwn.until(
-          (events) => events.some((event) => isTreeOf(event, bThread.id)),
+          (events) => events.some((event) => isChangeOf(event, bThread.id)),
           "a note of B's own thread",
         );
 
@@ -3024,7 +3026,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         for (const stream of [bOnAThread, bOnAWriter, bOnOwn]) {
           expect(stream.events[0]?.type).toBe('ready');
           expect(
-            stream.events.filter((event) => isTreeOf(event, aThread.id)),
+            stream.events.filter((event) => isChangeOf(event, aThread.id)),
           ).toEqual([]);
           expect(
             deltasOf(stream.events).filter((delta) =>
@@ -3088,11 +3090,11 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         const aNext = await a.createThread();
         await a.send(aNext.id, aNextTask);
         await aAfterDelete.until(
-          (events) => events.some((event) => isTreeOf(event, aNext.id)),
+          (events) => events.some((event) => isChangeOf(event, aNext.id)),
           "a note of A's next thread",
         );
         expect(
-          aAfterDelete.events.filter((event) => isTreeOf(event, aThread.id)),
+          aAfterDelete.events.filter((event) => isChangeOf(event, aThread.id)),
         ).toEqual([]);
       } finally {
         readerHeld.release();

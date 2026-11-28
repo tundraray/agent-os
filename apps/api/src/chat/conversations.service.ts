@@ -4,6 +4,7 @@ import { LOGGER, type Logger } from '@agent-os/common';
 import {
   inRootLaunchSet,
   type RootSession,
+  signalConversation,
   ViewOperations,
   ControlOperations,
   StartOperations,
@@ -38,6 +39,7 @@ import {
   Db,
   DocumentsRepository,
   RuntimeModelCallsRepository,
+  RuntimeTasksRepository,
   SendKeysRepository,
   type TrainingRow,
   TrainingsRepository,
@@ -125,6 +127,9 @@ export class ConversationsService {
     @Inject(ConversationsRepository)
     private readonly conversations: ConversationsRepository,
     @Inject(SendKeysRepository) private readonly sendKeys: SendKeysRepository,
+    /** The sender of the conversation's own events (`signalConversation`). */
+    @Inject(RuntimeTasksRepository)
+    private readonly signals: RuntimeTasksRepository,
     @Inject(LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.conversations' });
@@ -367,7 +372,8 @@ export class ConversationsService {
 
   /**
    * Flow 4 of live-feed design-server.md: writes the owner's own level of the conversation, `null` — as the owner's
-   * default. A malformed, missing, deleted or foreign id is `THREAD_NOT_FOUND`, and nothing is written.
+   * default, with the conversation's `summary` event in the same transaction. A malformed, missing, deleted or
+   * foreign id is `THREAD_NOT_FOUND`, and nothing is written or sent.
    */
   async setNotificationLevel(
     threadId: string,
@@ -376,8 +382,30 @@ export class ConversationsService {
   ): Promise<void> {
     const written =
       isUuid(threadId) &&
-      (await this.conversations.setNotificationLevel(threadId, ownerId, level));
+      (await this.db.transaction(async () => {
+        if (
+          !(await this.conversations.setNotificationLevel(
+            threadId,
+            ownerId,
+            level,
+          ))
+        )
+          return false;
+        await signalConversation(this.signals, {
+          ownerId,
+          event: {
+            type: 'change',
+            data: { threadId, kind: 'summary' },
+          },
+        });
+        return true;
+      }));
     if (!written) throw threadNotFound();
+    this.logger.info('conversation notification level set', {
+      threadId,
+      ownerId,
+      level,
+    });
   }
 
   /** Flow 2, FR-16: interrupts the root's step; `not_active` when the root is not active. */

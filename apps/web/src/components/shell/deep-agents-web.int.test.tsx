@@ -418,7 +418,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
       }),
       sessionTask({ id: 3, subject: 'Написать сводку', blockedBy: [2] }),
     ];
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 1 (AC-15.1, KD-7): the panel opened by itself on «Задачи · 3», focus stayed out of it, the conversation's tasks are listed
     const panel = await screen.findByRole('complementary', { name: 'Схема' });
@@ -454,7 +454,7 @@ describe('deep-agents / web - integration (jsdom + MSW)', () => {
         blockedBy: [2],
       }),
     ];
-    live.emit('tree', { threadId: 'a' });
+    live.emit('change', { threadId: 'a', kind: 'state' });
 
     // Assert 2 (AC-15.1): the rows follow without a reload; task 3 waits for nothing any more
     await waitFor(() => {

@@ -17,7 +17,7 @@ import {
   RecordKindSchema,
   VersionSchema,
 } from './library';
-import { SessionTaskStatusSchema } from './runtime';
+import { SessionTaskStatusSchema, TaskStatusSchema } from './runtime';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
 import { TestRunSummarySchema } from './training';
 
@@ -660,13 +660,44 @@ export type AgentTasksView = z.infer<typeof AgentTasksViewSchema>;
 // ---------------------------------------------------------------------------------------------------
 // Live stream
 
+/**
+ * What changed in a conversation, by what the web rereads for it (live-feed design-server.md, KD-3): an agent's
+ * records (`entries`, with `agentId`), the conversation's state, its list row, or its deletion.
+ */
+export const LiveChangeKindSchema = z.enum([
+  'entries',
+  'state',
+  'summary',
+  'deleted',
+]);
+export type LiveChangeKind = z.infer<typeof LiveChangeKindSchema>;
+
+/** A fact the employee may be told about (KD-4): a decision opened, an answer is ready, a turn failed. */
+export const AttentionEventSchema = z.enum(['decision', 'answer', 'failure']);
+export type AttentionEvent = z.infer<typeof AttentionEventSchema>;
+
+const LiveChangeEventSchema = z.object({
+  type: z.literal('change'),
+  data: z.object({
+    threadId: z.string().min(1),
+    kind: LiveChangeKindSchema,
+    agentId: z.string().min(1).optional(),
+  }),
+});
+
+const LiveAttentionEventSchema = z.object({
+  type: z.literal('attention'),
+  data: z.object({
+    threadId: z.string().min(1),
+    event: AttentionEventSchema,
+  }),
+});
+
 /** An event of GET /events: `type` is the SSE event name, `data` its JSON body. */
 export const LiveEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), data: z.object({}) }),
-  z.object({
-    type: z.literal('tree'),
-    data: z.object({ threadId: z.string().min(1) }),
-  }),
+  LiveChangeEventSchema,
+  LiveAttentionEventSchema,
   z.object({
     type: z.literal('delta'),
     data: z.object({
@@ -678,3 +709,29 @@ export const LiveEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ping'), data: z.object({}) }),
 ]);
 export type LiveEvent = z.infer<typeof LiveEventSchema>;
+
+/**
+ * The data of a `runtime_tree` NOTIFY (KD-1, §Data Model «Сигналы»): the task whose row was written and, when the
+ * write changed it, the status written.
+ */
+export const RuntimeTreeSignalSchema = z.object({
+  rootId: z.string().min(1),
+  taskId: z.string().min(1),
+  status: TaskStatusSchema.optional(),
+});
+export type RuntimeTreeSignal = z.infer<typeof RuntimeTreeSignalSchema>;
+
+/**
+ * The data of a `conversation_change` NOTIFY (KD-2): a ready event for the streams of `ownerId`, whom the writer
+ * takes from the conversation's row or the step's context, never from a client.
+ */
+export const ConversationChangeSignalSchema = z.object({
+  ownerId: z.string().min(1),
+  event: z.discriminatedUnion('type', [
+    LiveChangeEventSchema,
+    LiveAttentionEventSchema,
+  ]),
+});
+export type ConversationChangeSignal = z.infer<
+  typeof ConversationChangeSignalSchema
+>;

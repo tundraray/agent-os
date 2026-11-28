@@ -280,7 +280,7 @@ export class Inbox {
       payload: message.payload,
       revive,
     });
-    await tasks.signal(recipient.rootId);
+    await tasks.signal(recipient);
 
     const wake = await wakeChange(taskRows, recipient, {
       revive,
@@ -305,7 +305,7 @@ export class Inbox {
       messageIds,
     );
     if (rows.length === 0) return;
-    await this.deps.tasks.signal(task.rootId);
+    await this.deps.tasks.signal(task);
   }
 
   /** The task's pending messages by `seq`. */

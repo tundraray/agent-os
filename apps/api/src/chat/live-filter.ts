@@ -1,6 +1,17 @@
+import {
+  type LiveEvent,
+  type RuntimeTreeSignal,
+  TaskStatusSchema,
+} from '@agent-os/contracts';
+
 import { isUuid } from '../common/is-uuid';
 
-/** What a stream watches besides the owner's tree notes: a conversation's root or one agent. */
+const { running, queued } = TaskStatusSchema.enum;
+
+/** The `change` event of the live stream. */
+export type LiveChangeEvent = Extract<LiveEvent, { type: 'change' }>;
+
+/** What a stream watches besides the owner's change events: a conversation's root or one agent. */
 export type Watch =
   { kind: 'thread'; threadId: string } | { kind: 'agent'; agentId: string };
 
@@ -33,7 +44,30 @@ export function parseWatch(value: string | undefined): Watch | null {
   return null;
 }
 
-/** A `tree` note of a conversation goes to every stream of the conversation's owner (DC-4). */
+/**
+ * The change events of a runtime signal (live-feed design-server.md, «How the change kinds are derived»): a claim
+ * (`running`) writes no record and gives none; `queued` — a step's commit after which the agent goes on — gives the
+ * agent's `entries`; any other status, a new task and a message to the task or its delivery give `entries` and
+ * `state`. The conversation's id is the tree's root id, the agent's id its task id.
+ */
+export function runtimeChanges({
+  rootId,
+  taskId,
+  status,
+}: RuntimeTreeSignal): LiveChangeEvent[] {
+  if (status === running) return [];
+  const entries: LiveChangeEvent = {
+    type: 'change',
+    data: { threadId: rootId, kind: 'entries', agentId: taskId },
+  };
+  if (status === queued) return [entries];
+  return [
+    entries,
+    { type: 'change', data: { threadId: rootId, kind: 'state' } },
+  ];
+}
+
+/** A conversation's `change` and `attention` events go to every stream of its owner (DC-4). */
 export function noteTargets<S extends LiveStream>(
   ownerId: string,
   streams: Iterable<S>,
