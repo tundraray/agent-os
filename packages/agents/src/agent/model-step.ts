@@ -32,6 +32,7 @@ import {
   previewEntries,
   providerMessagesOf,
   refusedResult,
+  signalAttention,
   type StepPrelude,
   withStepBlocks,
 } from './step-common';
@@ -317,6 +318,11 @@ export async function runModelStep(
     await deps.history.append(ctx.taskId, [answerEntry, ...after]);
     await deps.sessionRows.update(ctx.taskId, patch);
   };
+  // An answer that ends the root's turn calls the employee (live-feed KD-4); a subagent's answer does not.
+  const writeTurnEnd = async (patch: SessionPatch): Promise<void> => {
+    await writeAnswer([], patch);
+    if (ctx.parentId === null) await signalAttention(deps, ctx, 'answer');
+  };
 
   if (result.toolCalls.length > 0) {
     logStep(ctx, STEP_KIND, startedAt, 'continue', {
@@ -348,7 +354,7 @@ export async function runModelStep(
       });
       return {
         outcome: 'wait',
-        commit: () => writeAnswer([], callPatch),
+        commit: () => writeTurnEnd(callPatch),
       };
     case 'notice':
       if (ending.openTasks !== undefined) {
@@ -392,7 +398,7 @@ export async function runModelStep(
       return {
         outcome: 'complete',
         result: { report: ending.report, document: ending.document },
-        commit: () => writeAnswer([], { ...callPatch, turns: 0, closed: true }),
+        commit: () => writeTurnEnd({ ...callPatch, turns: 0, closed: true }),
       };
   }
 }

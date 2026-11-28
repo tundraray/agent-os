@@ -3,6 +3,7 @@ import {
   MessagesRepository,
   ConversationsRepository,
   ConversationTasksRepository,
+  RuntimeTasksRepository,
   SchedulesRepository,
   SettingsRepository,
   ToolResultsRepository,
@@ -79,6 +80,9 @@ export class AgentDeps {
     @Inject(TaskControl) readonly tasks: Pick<TaskControl, 'get' | 'listTree'>,
     /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
     @Inject(Inbox) readonly inbox: Pick<Inbox, 'listPending'>,
+    /** The sender of the attention events a step commits (live-feed design-server.md KD-4). */
+    @Inject(RuntimeTasksRepository)
+    readonly signals: Pick<RuntimeTasksRepository, 'notify'>,
     @Inject(AGENTS_CONFIG) config: Pick<AgentsConfig, 'compactAtTokens'>,
   ) {
     this.compactAtTokens = config.compactAtTokens;

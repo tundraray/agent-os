@@ -48,7 +48,7 @@ import { callRule, type CallRuling } from './call-rule';
 import type { BaseAgent } from './base-agent';
 import type { CallClosing, DelegatedCall } from './delegation';
 import { entriesOf } from './deliver';
-import { logStep, refusedResult } from './step-common';
+import { logStep, refusedResult, signalAttention } from './step-common';
 import {
   type PastCall,
   repeatMarkText,
@@ -250,7 +250,10 @@ async function closeAll(
  * this step closes and of the question it answers.
  */
 function commitOf(
-  deps: Pick<AgentDeps, 'history' | 'sessions' | 'messageRows' | 'tasks'>,
+  deps: Pick<
+    AgentDeps,
+    'history' | 'sessions' | 'messageRows' | 'tasks' | 'signals'
+  >,
   ctx: StepContext,
   closings: readonly CallClosing[],
   closedChildren: ReadonlySet<string>,
@@ -273,6 +276,8 @@ function commitOf(
           ]),
       ...(await entriesOf(deps, ctx, closedChildren)),
     ]);
+    // A question in any agent of the tree opens a decision of the root conversation (live-feed KD-4).
+    if (questionId !== undefined) await signalAttention(deps, ctx, 'decision');
   };
 }
 

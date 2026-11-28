@@ -1,5 +1,6 @@
 import {
   AgentFailureReasonSchema,
+  type AttentionEvent,
   type ChipRecord,
   HistoryEventSchema,
 } from '@agent-os/contracts';
@@ -7,6 +8,7 @@ import type { SessionPatch } from '@agent-os/db';
 import type { StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate';
+import { signalConversation } from '../conversation-signal';
 import type { HistoryEntry } from '../history/history';
 import {
   modelDeniedEntry,
@@ -112,12 +114,36 @@ function failedEvent(reason: string): NewHistoryEntry {
 }
 
 /**
+ * Sends an `attention` event about the step's conversation to its owner (live-feed design-server.md KD-4); called in
+ * the step's commit, so a repeated step gives one event — from the commit that succeeded. The conversation is the
+ * tree's root, whatever agent of the tree commits.
+ */
+export async function signalAttention(
+  deps: Pick<AgentDeps, 'signals'>,
+  ctx: StepContext,
+  event: AttentionEvent,
+): Promise<void> {
+  const ownerId = agentOwner(ctx);
+  await signalConversation(deps.signals, {
+    ownerId,
+    event: { type: 'attention', data: { threadId: ctx.rootId, event } },
+  });
+  ctx.logger.info('attention event sent in the step commit', {
+    agentId: ctx.taskId,
+    rootId: ctx.rootId,
+    ownerId,
+    stepNo: ctx.stepNo,
+    event,
+  });
+}
+
+/**
  * A failure of the agent itself (DC-1): the step's entries, then the `failed` event with the reason;
  * the session is closed and its turn counter reset. The model sees the delivered messages after a
- * continuation (KD-1).
+ * continuation (KD-1). A root's failure also sends `attention` `failure` (live-feed KD-4).
  */
 export function failResult(input: {
-  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'signals'>;
   readonly ctx: StepContext;
   readonly reason: string;
   readonly message: string;
@@ -141,6 +167,7 @@ export function failResult(input: {
         closed: true,
         overflowed: false,
       });
+      if (ctx.parentId === null) await signalAttention(deps, ctx, 'failure');
     },
   };
 }
@@ -201,7 +228,7 @@ export function overflowResult(input: {
  * written to the audit first (KD-6, plan Notes 3): a failing hook rejects, and the runtime repeats the step.
  */
 export async function refusedResult(input: {
-  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows'>;
+  readonly deps: Pick<AgentDeps, 'history' | 'sessionRows' | 'signals'>;
   readonly ctx: StepContext;
   readonly stepKind: string;
   readonly startedAt: number;

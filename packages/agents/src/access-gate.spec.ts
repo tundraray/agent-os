@@ -293,6 +293,7 @@ function refusedAgent(refusal: Refusal) {
       modelClient,
       tasks: { get: notCalled, listTree: async () => [] },
       inbox: { listPending: async () => [] },
+      signals: { notify: async () => undefined },
       compactAtTokens: 100_000,
       library: createLibraryDouble(),
       logger,
