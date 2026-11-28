@@ -5,6 +5,7 @@ import {
   type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
+  isStartable,
   type LibraryChoices,
   nameWinner,
   type RecordAudienceBody,
@@ -12,6 +13,7 @@ import {
   type RecordHeader,
   type RecordKind,
   type RecordSummary,
+  type ResolvedAgent,
   type ResolvedRecord,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
@@ -232,7 +234,7 @@ export class LibraryService {
           await Promise.all([
             this.records.allowedModelIds(viewer.id),
             this.access.defaultChatModel(),
-            this.records.visibleAgentIds(viewer, refersToRecords(source.body)),
+            this.records.visibleRecordIds(viewer, refersToRecords(source.body)),
             this.repository.names(viewer.id),
             this.repository.names(null),
           ]);
@@ -243,7 +245,8 @@ export class LibraryService {
           usableServers: facts.usableServers,
           allowedModels,
           defaultModel,
-          visibleAgentIds: visible,
+          visibleAgentIds: visible.agentIds,
+          visibleSkillIds: visible.skillIds,
           language,
           builtinKey: source.builtinKey,
         });
@@ -283,6 +286,7 @@ export class LibraryService {
           removedServers: plan.removedServers,
           replacedModels: plan.replacedModels,
           removedAgents: plan.removedAgents,
+          removedSkills: plan.removedSkills,
         };
       },
       (result) => ({ ...recordFields(result.record), copiedFrom: id }),
@@ -446,7 +450,7 @@ export class LibraryService {
    * The default agent with this key and its active version, without a visibility check: it exists always
    * (data-model design-agents.md, «Порт `RecordLibrary`»). A missing one is a broken database.
    */
-  resolveBuiltin(builtinKey: BuiltinKey): Promise<ResolvedRecord> {
+  resolveBuiltin(builtinKey: BuiltinKey): Promise<ResolvedAgent> {
     return this.records.logged(
       'resolve_builtin',
       { builtinKey },
@@ -455,7 +459,10 @@ export class LibraryService {
         if (record === undefined)
           throw new Error(`The default agent ${builtinKey} is missing`);
         // No viewer: a default agent is a system one, nobody's own.
-        return resolvedRecord(record, null);
+        const resolved = resolvedRecord(record, null);
+        if (!isStartable(resolved))
+          throw new Error(`The default agent ${builtinKey} is a skill`);
+        return resolved;
       },
       recordFields,
     );
@@ -476,11 +483,15 @@ export class LibraryService {
           : undefined;
         if (row === undefined)
           throw new Error(`Agent version ${versionId} is missing`);
+        const body = recordBody(row.kind, row.content);
+        // A skill never starts, so no run is on a skill's version (agent-guidance KD-5).
+        if (!isStartable(body))
+          throw new Error(`Agent version ${versionId} is a skill's`);
         return {
           id: row.id,
           agentId: row.agentId,
           number: row.number,
-          ...recordBody(row.kind, row.content),
+          ...body,
         };
       },
       (version) => ({

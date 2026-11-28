@@ -15,6 +15,7 @@ import {
   DeepAgentContentSchema,
   IdSchema,
   RecordKindSchema,
+  StartableKindSchema,
   VersionSchema,
 } from './library';
 import { SessionTaskStatusSchema, TaskStatusSchema } from './runtime';
@@ -177,7 +178,7 @@ export type AwaitingCount = z.infer<typeof AwaitingCountSchema>;
  */
 export const RunOriginSchema = z.object({
   recordId: IdSchema,
-  kind: RecordKindSchema,
+  kind: StartableKindSchema,
   version: VersionSchema,
   name: z.string().min(1),
   author: z.object({ id: IdSchema, name: z.string() }).nullable(),

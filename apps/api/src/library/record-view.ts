@@ -1,6 +1,7 @@
 import {
   ALL_SERVERS,
   type BannedRecord,
+  type ConnectedSkill,
   type MissingRight,
   type RecordAudience,
   type RecordBody,
@@ -40,11 +41,17 @@ export function recordSummary(
   return { ...viewFields(record, context), kind: record.body.kind };
 }
 
+/** `connectedSkills` — the skills of an agent's list as its page names them; a skill has none. */
 export function recordDetail(
   record: LibraryRecord,
   context: ViewContext,
+  connectedSkills: ConnectedSkill[],
 ): RecordDetail {
-  return { ...viewFields(record, context), ...record.body };
+  const fields = viewFields(record, context);
+  const { body } = record;
+  return body.kind === 'skill'
+    ? { ...fields, ...body }
+    : { ...fields, ...body, connectedSkills };
 }
 
 /** The record has at least one holder: `shared` of a header. */

@@ -18,11 +18,11 @@ import {
   LibraryRecordCardSchema,
   LIST_RECORDS_TOOL,
   READ_RECORD_TOOL,
-  RecordKindSchema,
+  StartableKindSchema,
   SUBAGENT_MAX_RUNS_MAX,
   type LibraryRecordAction,
-  type RecordBody,
-  type RecordKind,
+  type StartableBody,
+  type StartableKind,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { z } from 'zod';
@@ -46,15 +46,22 @@ const RecordIdSchema = z
   .min(1)
   .describe('The id of the record, as list_records names it');
 
-/** The deep agent's content without the self-learning flag and the scripts: only a person changes them (KD-2). */
+/**
+ * The agent's content without the skills: only a person sets them (agent-guidance KD-5); the library keeps the
+ * stored ones.
+ */
+const AgentToolContentSchema = AgentContentSchema.omit({ skills: true });
+
+/** The deep agent's content without the self-learning flag, the scripts and the skills: only a person changes them (KD-2). */
 const {
   selfLearning: _selfLearning,
   scripts: _scripts,
+  skills: _skills,
   ...deepAgentFields
 } = DeepAgentContentSchema.shape;
 
 /**
- * The content a record tool takes: the content schema of the kind without `selfLearning` and `scripts`. The
+ * The content a record tool takes: the content schema of the kind without `selfLearning`, `scripts` and `skills`. The
  * deep agent's own rules — repeated names, `finalSubagent` outside the team — stay the contract's: they
  * are asked of `DeepAgentContentSchema` itself, so the paths and the rules are the contract's.
  */
@@ -73,14 +80,14 @@ const DeepAgentToolContentSchema = z
     }
   });
 
-function toolContentSchema(kind: RecordKind) {
-  return kind === 'agent' ? AgentContentSchema : DeepAgentToolContentSchema;
+function toolContentSchema(kind: StartableKind) {
+  return kind === 'agent' ? AgentToolContentSchema : DeepAgentToolContentSchema;
 }
 
 const [agentBodySchema] = CreateRecordBodySchema.options;
 
 const recordShape = {
-  kind: RecordKindSchema.describe(
+  kind: StartableKindSchema.describe(
     'agent or deep_agent; a record never changes its kind',
   ),
   name: agentBodySchema.shape.name.describe(
@@ -92,12 +99,12 @@ const recordShape = {
   content: z
     .record(z.string(), z.unknown())
     .describe(
-      'The whole definition of the record in the form of its kind (see the tool description), without selfLearning and scripts',
+      'The whole definition of the record in the form of its kind (see the tool description), without selfLearning, scripts and skills',
     ),
 };
 
 /** `content` checked by the schema of `kind`; an error names its path under `content` and the rule. */
-function withContentOfKind<T extends { kind: RecordKind; content: unknown }>(
+function withContentOfKind<T extends { kind: StartableKind; content: unknown }>(
   args: T,
   ctx: z.RefinementCtx,
 ): void {
@@ -136,13 +143,18 @@ type DeleteRecordArgs = z.infer<typeof DeleteRecordArgsSchema>;
 type CreateRecordArgs = z.infer<typeof CreateRecordArgsSchema>;
 type EditRecordArgs = z.infer<typeof EditRecordArgsSchema>;
 
-/** The checked arguments as a record body; the flag is set by the library, never by the chat. */
+/** The checked arguments as a record body; the flag and the skills are set by the library, never by the chat. */
 function bodyOf(args: {
-  kind: RecordKind;
+  kind: StartableKind;
   content: Record<string, unknown>;
-}): RecordBody {
+}): StartableBody {
   if (args.kind === 'agent')
-    return { kind: 'agent', content: AgentContentSchema.parse(args.content) };
+    return {
+      kind: 'agent',
+      content: AgentContentSchema.parse(
+        AgentToolContentSchema.parse(args.content),
+      ),
+    };
   return {
     kind: 'deep_agent',
     content: DeepAgentContentSchema.parse(
@@ -284,6 +296,10 @@ export function refusalOf(refusal: ChatRefusal): {
         reason: 'agent_not_visible',
         text: `${path}: ${values.join(', ')} — agent records you do not see`,
       };
+    case 'skill_not_visible':
+      throw new Error(
+        'a chat change was refused for a skill, which the chat never sets',
+      );
     case 'role_not_member':
     case 'sharing_banned':
     case 'holder_not_found':
@@ -583,7 +599,7 @@ function createRecordTools(options: RecordToolsOptions) {
 /** What the model reads after an approved card was saved. */
 function savedText(
   action: LibraryRecordAction,
-  kind: RecordKind,
+  kind: StartableKind,
   saved: { readonly recordId: string; readonly version: number | null },
 ): string {
   switch (action) {

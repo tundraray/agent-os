@@ -19,6 +19,7 @@ function agent(fields: Partial<AgentContent> = {}): RecordBody {
       agents: [],
       tools: [],
       taskList: true,
+      skills: [],
       ...fields,
     },
   };
@@ -48,6 +49,7 @@ const deepAgent: RecordBody = {
     listDelegation: true,
     selfLearning: false,
     scripts: [],
+    skills: [],
   },
 };
 
@@ -60,6 +62,7 @@ function copy(fields: Partial<CopyInput>): CopyInput {
     allowedModels: [ANYA_MODEL],
     defaultModel: PLATFORM_MODEL,
     visibleAgentIds: [AGENT_SEEN],
+    visibleSkillIds: [],
     language: 'ru',
     builtinKey: null,
     ...fields,

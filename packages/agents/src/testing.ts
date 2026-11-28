@@ -10,10 +10,10 @@ import {
   nameWinner,
   type McpServerMode,
   type ModelProviderState,
-  type RecordBody,
   type RecordHeader,
   RecordKindSchema,
-  type ResolvedRecord,
+  type ResolvedAgent,
+  type StartableBody,
   type ToolCallState,
   type ToolOutcome,
   type ToolRefusalReason,
@@ -769,7 +769,7 @@ export function createProviderRegistryDouble(
 }
 
 /** A record the library double holds: its kind and content, its owner and who sees it. */
-export type LibraryDoubleRecord = RecordBody & {
+export type LibraryDoubleRecord = StartableBody & {
   /** A fresh uuid when omitted. */
   readonly id?: string;
   readonly name: string;
@@ -792,7 +792,7 @@ export type LibraryDoubleRecord = RecordBody & {
 export interface LibraryDoubleEdit {
   readonly name?: string;
   readonly description?: string;
-  readonly body?: RecordBody;
+  readonly body?: StartableBody;
 }
 
 /**
@@ -844,7 +844,7 @@ interface StoredRecord {
 /** An agent row the double writes: what it was when it gave the agent out first. */
 interface AgentRowOf {
   readonly id: string;
-  readonly kind: RecordBody['kind'];
+  readonly kind: StartableBody['kind'];
   readonly ownerId: string | null;
   readonly name: string;
   readonly description: string;
@@ -874,7 +874,7 @@ export function createLibraryDouble(): LibraryDouble {
     return version;
   }
 
-  function addVersion(record: StoredRecord, body: RecordBody): string {
+  function addVersion(record: StoredRecord, body: StartableBody): string {
     const previous = versions.get(record.versionId);
     const version: AgentVersion = {
       id: randomUUID(),
@@ -952,11 +952,11 @@ export function createLibraryDouble(): LibraryDouble {
   async function resolvedOf(
     record: StoredRecord,
     viewerId: string | null,
-  ): Promise<ResolvedRecord> {
+  ): Promise<ResolvedAgent> {
     await persist(record.versionId);
     const { kind: _kind, ...header } = headerOf(record, viewerId);
     const version = versionOf(record.versionId);
-    const body: RecordBody =
+    const body: StartableBody =
       version.kind === 'agent'
         ? { kind: 'agent', content: structuredClone(version.content) }
         : { kind: 'deep_agent', content: structuredClone(version.content) };
@@ -969,7 +969,7 @@ export function createLibraryDouble(): LibraryDouble {
       const id = record.id ?? randomUUID();
       if (records.has(id))
         throw new Error(`The library double already holds record ${id}`);
-      const body: RecordBody =
+      const body: StartableBody =
         record.kind === 'agent'
           ? { kind: 'agent', content: record.content }
           : { kind: 'deep_agent', content: record.content };
@@ -1000,7 +1000,7 @@ export function createLibraryDouble(): LibraryDouble {
       }
       record.name = change.name ?? record.name;
       record.description = change.description ?? record.description;
-      const body: RecordBody =
+      const body: StartableBody =
         change.body ??
         (current.kind === 'agent'
           ? { kind: 'agent', content: current.content }

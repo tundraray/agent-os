@@ -191,6 +191,7 @@ export function blankAgent({
       tools: [],
       // An agent keeps a task list by default (deep-agents design-task-list.md, KD-2).
       taskList: true,
+      skills: [],
     },
   };
 }

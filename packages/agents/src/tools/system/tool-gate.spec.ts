@@ -64,6 +64,7 @@ const NO_TOOLS_CONTENT: AgentContent = {
   agents: [],
   tools: [],
   taskList: false,
+  skills: [],
 };
 
 /** An agent's run whose version names no tool and no server (code-execution AC-01.2, UC-3). */

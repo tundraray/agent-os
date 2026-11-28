@@ -35,6 +35,12 @@ export const SUBAGENT_MAX_RUNS_MAX = 20;
 export const GENERAL_PURPOSE_SUBAGENT = 'general-purpose';
 export const RECORD_MAX_TURNS_MIN = 1;
 export const RECORD_MAX_TURNS_MAX = 200;
+/** The procedure text of a skill's version (agent-guidance design-server.md, Data Model). */
+export const SKILL_TEXT_MAX_LENGTH = 20_000;
+/** Skills one agent or deep agent version holds. */
+export const RECORD_SKILLS_MAX = 20;
+/** The organisation's and the employee's instruction alike (agent-guidance design-server.md, Data Model). */
+export const INSTRUCTIONS_MAX_LENGTH = 4_000;
 
 /**
  * Keys of the default agents, one per task type (data-model design-agents.md, KD-4): every enabled employee
@@ -112,6 +118,7 @@ export const LibraryRejectReasonSchema = z.enum([
   'all_servers_not_allowed',
   'model_not_allowed',
   'agent_not_visible',
+  'skill_not_visible',
   'role_not_member',
   'sharing_banned',
   'holder_not_found',
@@ -124,8 +131,19 @@ export type LibraryRejectReason = z.infer<typeof LibraryRejectReasonSchema>;
 export const RecordNameTakenReasonSchema = z.enum(['own', 'system']);
 export type RecordNameTakenReason = z.infer<typeof RecordNameTakenReasonSchema>;
 
-export const RecordKindSchema = z.enum(['agent', 'deep_agent']);
+/** `skill` is a library record that never starts (agent-guidance design-server.md, KD-5). */
+export const RecordKindSchema = z.enum(['agent', 'deep_agent', 'skill']);
 export type RecordKind = z.infer<typeof RecordKindSchema>;
+/** The kinds a start, a chip, a schedule, a memory and a training take; a skill is never among them. */
+export const StartableKindSchema = RecordKindSchema.exclude([
+  RecordKindSchema.enum.skill,
+]);
+export type StartableKind = z.infer<typeof StartableKindSchema>;
+
+/** The record is of a kind that starts: a skill answers every start path as a missing record (KD-5). */
+export function isStartableKind(kind: RecordKind): kind is StartableKind {
+  return kind !== RecordKindSchema.enum.skill;
+}
 
 /** Platform tools an agent record may hold. `run_code` and `start_deep_agent` are never stored in a record. */
 export const RecordToolSchema = z.enum([
@@ -171,7 +189,7 @@ export const VersionSchema = z.number().int().positive();
 /** The record chip of a message (custom-agents design-runtime.md, KD-4): shown next to its text. */
 export const ChipRecordSchema = z.object({
   id: IdSchema,
-  kind: RecordKindSchema,
+  kind: StartableKindSchema,
   name: z.string().min(1),
 });
 export type ChipRecord = z.infer<typeof ChipRecordSchema>;
@@ -219,6 +237,10 @@ const RecordModelSchema = ModelIdSchema.nullable();
  * agent, off for a subagent. The conversation's root keeps one whatever its record says.
  */
 const taskListSchema = (byDefault: boolean) => z.boolean().default(byDefault);
+/** Skill records of the version, by id, read from their active versions (agent-guidance KD-6). */
+const SkillsSchema = listWithoutRepeats(IdSchema)
+  .max(RECORD_SKILLS_MAX)
+  .default([]);
 
 export const AgentContentSchema = z.object({
   prompt: PromptSchema,
@@ -229,6 +251,7 @@ export const AgentContentSchema = z.object({
   agents: listWithoutRepeats(IdSchema),
   tools: ToolsSchema,
   taskList: taskListSchema(true),
+  skills: SkillsSchema,
 });
 export type AgentContent = z.infer<typeof AgentContentSchema>;
 
@@ -299,6 +322,7 @@ export const DeepAgentContentSchema = z
     /** Runs of the deep agent and its subagents keep a memory; only people change it, never on a default agent. */
     selfLearning: z.boolean().default(false),
     scripts: z.array(ScriptSchema).max(100).default([]),
+    skills: SkillsSchema,
   })
   .superRefine((content, ctx) => {
     const names = content.subagents.map((subagent) => subagent.name);
@@ -351,18 +375,37 @@ export const DeepAgentContentSchema = z
   });
 export type DeepAgentContent = z.infer<typeof DeepAgentContentSchema>;
 
-/** `kind` and the content of that kind, joined to the given fields. */
-export function withContentByKind<T extends z.ZodRawShape>(fields: T) {
+/** A skill's version: the procedure text only (agent-guidance design-server.md, «Библиотека»). */
+export const SkillContentSchema = z.object({
+  text: z.string().min(1).max(SKILL_TEXT_MAX_LENGTH),
+});
+export type SkillContent = z.infer<typeof SkillContentSchema>;
+
+/**
+ * `kind` and the content of that kind, joined to the given fields; `agentFields` join the two agent kinds
+ * only.
+ */
+export function withContentByKind<
+  T extends z.ZodRawShape,
+  A extends z.ZodRawShape = Record<never, never>,
+>(fields: T, agentFields?: A) {
   return z.discriminatedUnion('kind', [
     z.object({
       ...fields,
+      ...(agentFields as A),
       kind: z.literal(RecordKindSchema.enum.agent),
       content: AgentContentSchema,
     }),
     z.object({
       ...fields,
+      ...(agentFields as A),
       kind: z.literal(RecordKindSchema.enum.deep_agent),
       content: DeepAgentContentSchema,
+    }),
+    z.object({
+      ...fields,
+      kind: z.literal(RecordKindSchema.enum.skill),
+      content: SkillContentSchema,
     }),
   ]);
 }
@@ -370,7 +413,10 @@ export function withContentByKind<T extends z.ZodRawShape>(fields: T) {
 /** A record's kind and the content of that kind, as the bodies and the stored rows hold it. */
 export type RecordBody =
   | { readonly kind: 'agent'; readonly content: AgentContent }
-  | { readonly kind: 'deep_agent'; readonly content: DeepAgentContent };
+  | { readonly kind: 'deep_agent'; readonly content: DeepAgentContent }
+  | { readonly kind: 'skill'; readonly content: SkillContent };
+/** The body of a record that starts: an agent or a deep agent. */
+export type StartableBody = Extract<RecordBody, { kind: StartableKind }>;
 
 // ---------- Bodies ----------
 
@@ -483,8 +529,21 @@ export const RecordSummarySchema = z.object({
 });
 export type RecordSummary = z.infer<typeof RecordSummarySchema>;
 
-/** Response of GET /api/library/:id and of every write that returns the record. */
-export const RecordDetailSchema = withContentByKind(recordViewFields);
+/** A skill of an agent's list as its page names it: no text (agent-guidance design-server.md, AC-06.7). */
+const ConnectedSkillSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  description: z.string(),
+});
+export type ConnectedSkill = z.infer<typeof ConnectedSkillSchema>;
+
+/**
+ * Response of GET /api/library/:id and of every write that returns the record. `connectedSkills` — every
+ * undeleted skill of an agent's list, in its order, whoever views the record.
+ */
+export const RecordDetailSchema = withContentByKind(recordViewFields, {
+  connectedSkills: z.array(ConnectedSkillSchema),
+});
 export type RecordDetail = z.infer<typeof RecordDetailSchema>;
 
 /** Response of POST /api/library/:id/copy. */
@@ -505,6 +564,8 @@ export const CopyResultSchema = z.object({
   ),
   /** Agents the copy may not start: the copier does not see them. */
   removedAgents: z.array(IdSchema),
+  /** Skills the copy lost: the copier does not see them, or they are deleted. */
+  removedSkills: z.array(IdSchema),
 });
 export type CopyResult = z.infer<typeof CopyResultSchema>;
 
@@ -621,15 +682,25 @@ export function nameWinner<T extends NameCandidate>(
   return winner ?? null;
 }
 
-/** Answer of `resolve` and `resolveBuiltin`: the header and the content of its active version. */
+/** Answer of `resolve` and `resolveByName`: the header and the content of its active version. */
 export type ResolvedRecord = Omit<RecordHeader, 'kind'> & RecordBody;
+/** A resolved record that starts: an agent or a deep agent, never a skill. */
+export type ResolvedAgent = Extract<ResolvedRecord, { kind: StartableKind }>;
+
+/** The record starts: every start path answers a skill as a missing record (agent-guidance KD-5). */
+export function isStartable<T extends { readonly kind: RecordKind }>(
+  record: T,
+): record is Extract<T, { kind: StartableKind }> {
+  return isStartableKind(record.kind);
+}
 
 /**
  * Answer of `version(versionId)` (data-model design-agents.md, «Порт `RecordLibrary`»): an immutable version
- * with its agent's id and kind and the parsed content, read without a visibility check.
+ * a run is started on, with its agent's id and kind and the parsed content, read without a visibility check.
+ * A skill never starts, so a run's version is never a skill's.
  */
 export type AgentVersion = {
   id: string;
   agentId: string;
   number: number;
-} & RecordBody;
+} & StartableBody;

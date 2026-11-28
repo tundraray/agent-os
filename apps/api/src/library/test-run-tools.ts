@@ -16,6 +16,7 @@ import {
   DEEP_AGENT_SUBAGENTS_MIN,
   DeepAgentContentSchema,
   IdSchema,
+  isStartable,
   RECORD_MAX_TURNS_MIN,
   SessionTaskStatusSchema,
   TEST_RUN_PLAN_REVISIONS_MAX,
@@ -313,7 +314,9 @@ function createTestRunTools(deps: {
     // The chip rule of a message: a record the starter's chat may start (DC-3).
     async prepare({ args, caller }) {
       const resolved = await deps.library.resolve(caller.ownerId, args.agentId);
-      return resolved === null || !inRootLaunchSet(resolved)
+      return resolved === null ||
+        !isStartable(resolved) ||
+        !inRootLaunchSet(resolved)
         ? null
         : { id: resolved.id, kind: resolved.kind, name: resolved.name };
     },

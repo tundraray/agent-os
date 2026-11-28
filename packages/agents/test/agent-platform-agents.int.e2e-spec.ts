@@ -883,6 +883,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           listDelegation: true,
           selfLearning: false,
           scripts: [],
+          skills: [],
         },
       });
       const model = createScriptedModel();

@@ -914,10 +914,10 @@ describe('self-learning / training - the trainer changes nothing outside, stays 
       const after = RecordDetailSchema.parse(
         await getRecord(harness.app, anya, record.id),
       );
-      expect([after.version, after.content.prompt]).toEqual([
-        saved.version,
-        `${prompts.base} v4`,
-      ]);
+      expect([
+        after.version,
+        after.kind === 'deep_agent' && after.content.prompt,
+      ]).toEqual([saved.version, `${prompts.base} v4`]);
       expect(
         (await auditOfRecord(harness.pool, record.id)).filter(
           (event) => event.kind === 'training_activate',

@@ -61,6 +61,7 @@ export function agentBody(
       agents: [],
       tools: [],
       taskList: false,
+      skills: [],
       ...content,
     },
   };
@@ -96,6 +97,7 @@ export function deepAgentBody(
     listDelegation: true,
     selfLearning: false,
     scripts: [],
+    skills: [],
   };
   return {
     kind: 'deep_agent',
@@ -263,6 +265,7 @@ function panelRecord(
  * default chat model.
  */
 function modelsOf(record: RecordDetail): (string | null)[] {
+  if (record.kind === 'skill') return [];
   return record.kind === 'agent'
     ? [record.content.model]
     : [
@@ -281,6 +284,8 @@ function withModels(
     description: record.description,
     version: record.version,
   };
+  if (record.kind === 'skill')
+    throw new Error(`Record ${record.id} is a skill, which has no model`);
   if (record.kind === 'agent') {
     return {
       ...fields,

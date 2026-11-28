@@ -3,12 +3,14 @@ import {
   TRAINER_BUILTIN_KEY,
   type AgentContent,
   type DeepAgentContent,
+  isStartableKind,
   nameWinner,
   type RecordBody,
   type RecordDetail,
   type RecordKind,
   type RecordSummary,
   type RunOrigin,
+  type StartableKind,
   type Subagent,
 } from '@agent-os/contracts';
 import type { LibraryTranslator } from '@/i18n/catalog';
@@ -21,13 +23,14 @@ import type { LibraryTranslator } from '@/i18n/catalog';
 type LiveRecord<K extends keyof RecordSummary> =
   Pick<RecordSummary, K> | null | undefined;
 
-/** «Использовать в чате» (AC-26.2, RV-01). */
-export function canUseInChat(
-  record: Pick<
+/** «Использовать в чате» (AC-26.2, RV-01); a skill never starts (agent-guidance KD-5). */
+export function canUseInChat<
+  T extends Pick<
     RecordSummary,
-    'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
+    'kind' | 'builtinKey' | 'mine' | 'offerInChat' | 'missingRights'
   >,
-): boolean {
+>(record: T): record is T & { kind: StartableKind } {
+  if (!isStartableKind(record.kind)) return false;
   if (
     record.builtinKey === CHAT_BUILTIN_KEY ||
     record.builtinKey === TRAINER_BUILTIN_KEY

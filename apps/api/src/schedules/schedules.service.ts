@@ -6,7 +6,7 @@ import {
 } from '@agent-os/agents';
 import {
   type ChipRecord,
-  RecordKindSchema,
+  isStartable,
   SCHEDULE_NAME_MAX_LENGTH,
   SCHEDULE_RUNS_PAGE_SIZE,
   type ScheduleAgent,
@@ -14,14 +14,15 @@ import {
   type ScheduleListResponse,
   type ScheduleNextRunRequest,
   type ScheduleNextRunResponse,
-  ScheduleRuleSchema,
-  type ScheduleRunView,
-  type ScheduleRunsPage,
-  type ScheduleToolsResponse,
   SchedulePauseReasonSchema,
+  ScheduleRuleSchema,
+  type ScheduleRunsPage,
+  type ScheduleRunView,
   ScheduleStateSchema,
   ScheduleTargetSchema,
+  type ScheduleToolsResponse,
   type ScheduleView,
+  StartableKindSchema,
   type ToolPair,
 } from '@agent-os/contracts';
 import {
@@ -347,7 +348,13 @@ export class SchedulesService {
     agentId: string,
   ): Promise<ChipRecord | null> {
     const resolved = await this.library.resolve(ownerId, agentId);
-    if (resolved === null || !inRootLaunchSet(resolved)) return null;
+    // A skill never starts: it answers as a missing record (agent-guidance KD-5).
+    if (
+      resolved === null ||
+      !isStartable(resolved) ||
+      !inRootLaunchSet(resolved)
+    )
+      return null;
     return { id: resolved.id, kind: resolved.kind, name: resolved.name };
   }
 
@@ -457,7 +464,7 @@ export class SchedulesService {
       throw new Error(`Schedule agent ${agentId} has no row`);
     return {
       id: row.id,
-      kind: RecordKindSchema.parse(row.kind),
+      kind: StartableKindSchema.parse(row.kind),
       name: row.name,
       available: false,
     };

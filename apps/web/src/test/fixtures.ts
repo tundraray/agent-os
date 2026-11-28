@@ -804,6 +804,7 @@ export function recordDetail(
   const row = recordSummary(summary);
   return RecordDetailSchema.parse({
     ...row,
+    connectedSkills: [],
     content:
       content ??
       (row.kind === 'deep_agent' ? deepAgentContent() : agentContent()),
@@ -817,6 +818,7 @@ export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
     removedServers: [],
     replacedModels: [],
     removedAgents: [],
+    removedSkills: [],
     ...overrides,
   });
 }

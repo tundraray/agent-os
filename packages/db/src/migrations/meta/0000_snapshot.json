@@ -1,5 +1,5 @@
 {
-  "id": "80cc1955-8e4f-477c-a34e-8e29fb8f61a8",
+  "id": "c5130b03-2283-433f-916b-fce79ad7621a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1676,6 +1676,13 @@
           "notNull": true,
           "default": "'all'"
         },
+        "instructions": {
+          "name": "instructions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2681,7 +2688,7 @@
       "checkConstraints": {
         "agents_kind_check": {
           "name": "agents_kind_check",
-          "value": "\"app\".\"agents\".\"kind\" in ('agent', 'deep_agent')"
+          "value": "\"app\".\"agents\".\"kind\" in ('agent', 'deep_agent', 'skill')"
         },
         "agents_builtin_key_check": {
           "name": "agents_builtin_key_check",
@@ -4150,7 +4157,7 @@
       "checkConstraints": {
         "settings_key_check": {
           "name": "settings_key_check",
-          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings')"
+          "value": "\"app\".\"settings\".\"key\" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions')"
         }
       },
       "isRLSEnabled": false

@@ -1,4 +1,8 @@
-import type { RecordBody, RecordKind } from '@agent-os/contracts';
+import {
+  isStartable,
+  type StartableBody,
+  type StartableKind,
+} from '@agent-os/contracts';
 import type { LibraryRecord } from './library.types';
 import { hasHolders } from './record-view';
 
@@ -12,17 +16,20 @@ import { hasHolders } from './record-view';
 /** Whose a record is to the employee: his own, another employee's opened to his role, or a system one. */
 export type RecordOwnership = 'own' | 'role' | 'system';
 
-/** A record as the chat reads it: the header, whose it is, whether it is shared, and its content. */
+/**
+ * A record as the chat reads it: the header, whose it is, whether it is shared, and its content. The chat
+ * reads no skill: its record tools answer a skill as a missing record (agent-guidance KD-5).
+ */
 export interface ChatRecord {
   readonly id: string;
-  readonly kind: RecordKind;
+  readonly kind: StartableKind;
   readonly name: string;
   readonly description: string;
   readonly version: number;
   readonly ownership: RecordOwnership;
   /** The record has at least one holder. */
   readonly shared: boolean;
-  readonly body: RecordBody;
+  readonly body: StartableBody;
 }
 
 /** A server the employee may use and the names of its tools he has a right to call. */
@@ -40,20 +47,22 @@ const OWNERSHIP_LABELS: Record<RecordOwnership, string> = {
   system: 'system',
 };
 
-/** The chat's reading of a stored record the employee may see. */
+/** The chat's reading of a stored record the employee may see; a skill is none of the chat's. */
 export function chatRecordOf(
   record: LibraryRecord,
   viewerId: string,
-): ChatRecord {
+): ChatRecord | null {
+  const { body } = record;
+  if (!isStartable(body)) return null;
   return {
     id: record.id,
-    kind: record.body.kind,
+    kind: body.kind,
     name: record.name,
     description: record.description,
     version: record.version,
     ownership: ownershipOf(record.ownerId, viewerId),
     shared: hasHolders(record),
-    body: record.body,
+    body,
   };
 }
 
@@ -128,7 +137,7 @@ function cutLines(lines: readonly string[], maxChars: number): string {
 /**
  * The answer of `read_record`: the whole definition of a record the employee sees — its header, whose it
  * is, its version and its content. The self-learning flag stands on its own line: only a person changes
- * it, so the content an edit sends back holds no flag. The task-list flags (`taskList` of the agent, the deep
+ * it, so the content an edit sends back holds no flag. The skills are left out: only a person sets them. The task-list flags (`taskList` of the agent, the deep
  * agent and each subagent; design-task-list.md KD-2) stay in the content: the chat may change them, and an
  * edit that sends the content back keeps them.
  */
@@ -151,12 +160,14 @@ export function recordText(record: ChatRecord): string {
   ].join('\n');
 }
 
-function splitFlag(body: RecordBody): {
+function splitFlag(body: StartableBody): {
   selfLearning: boolean | null;
   content: object;
 } {
-  if (body.kind === 'agent')
-    return { selfLearning: null, content: body.content };
-  const { selfLearning, ...content } = body.content;
+  if (body.kind === 'agent') {
+    const { skills: _skills, ...content } = body.content;
+    return { selfLearning: null, content };
+  }
+  const { selfLearning, skills: _skills, ...content } = body.content;
   return { selfLearning, content };
 }

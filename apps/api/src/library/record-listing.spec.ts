@@ -41,6 +41,7 @@ function record(ownership: RecordOwnership, shared: boolean): ChatRecord {
         listDelegation: true,
         selfLearning: false,
         scripts: [],
+        skills: [],
       },
     },
   };

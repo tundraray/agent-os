@@ -28,6 +28,8 @@ export function SystemRecordPage({
 }) {
   if (record.kind === 'deep_agent')
     return <DeepAgentCard mode="system" record={record} />;
+  // The panel page of a skill comes with the web part of agent-guidance.
+  if (record.kind === 'skill') return null;
   return <SystemEditor start={{ saved: record }} created={created} />;
 }
 

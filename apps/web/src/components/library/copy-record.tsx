@@ -54,11 +54,12 @@ const droppedOf = (rights: readonly MissingRight[]): PartServers[] =>
     .map(({ subagent, servers }) => ({ subagent, servers }));
 
 const hasAllServers = (record: RecordDetail): boolean =>
-  record.content.servers.includes(ALL_SERVERS) ||
-  (record.kind === 'deep_agent' &&
-    record.content.subagents.some((subagent) =>
-      subagent.servers.includes(ALL_SERVERS),
-    ));
+  record.kind !== 'skill' &&
+  (record.content.servers.includes(ALL_SERVERS) ||
+    (record.kind === 'deep_agent' &&
+      record.content.subagents.some((subagent) =>
+        subagent.servers.includes(ALL_SERVERS),
+      )));
 
 /**
  * What the dialog must name before the copy. Only a company record can hold «Все системы»; a library row

@@ -17,6 +17,7 @@ import {
   type MissingRight,
   type RecordBody,
   type RecordKind,
+  type StartableBody,
   type Subagent,
 } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
@@ -73,6 +74,8 @@ export function DefinitionView({
   modelNames,
   changes = [],
 }: DefinitionViewProps) {
+  // The view of a skill comes with the web part of agent-guidance.
+  if (definition.kind === 'skill') return null;
   if (variant === 'schema')
     return <SchemaRows definition={definition} missingRights={missingRights} />;
   const marks = marksOf(changes);
@@ -618,7 +621,9 @@ function SubagentItem({
 function SchemaRows({
   definition,
   missingRights,
-}: Pick<DefinitionViewProps, 'definition' | 'missingRights'>) {
+}: Pick<DefinitionViewProps, 'missingRights'> & {
+  definition: { readonly description: string } & StartableBody;
+}) {
   const tLibrary = useTranslations('library');
   const locale = useLocale();
   const subagents =

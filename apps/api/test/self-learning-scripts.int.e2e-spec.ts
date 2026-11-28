@@ -369,7 +369,9 @@ describe('self-learning / scripts - a saved script is a tool of its owner only, 
 
       const saved = await getRecord(harness.app, anya, record.id);
       expect(saved.version).toBe(2);
-      expect(saved.content.prompt).toBe('Новый промпт из чата');
+      expect(saved.kind === 'deep_agent' && saved.content.prompt).toBe(
+        'Новый промпт из чата',
+      );
       expect(saved.kind === 'deep_agent' && saved.content.scripts).toEqual([
         LOOKUP,
         NOTE,

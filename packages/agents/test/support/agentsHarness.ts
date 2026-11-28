@@ -200,6 +200,7 @@ export function testRecord(
       agents: [],
       tools: [],
       taskList: false,
+      skills: [],
       ...content,
     },
   };
@@ -253,7 +254,8 @@ export function testSubagent(
  */
 export function testDeepAgent(
   name: string,
-  content: DeepAgentContent,
+  content: Omit<DeepAgentContent, 'skills'> &
+    Partial<Pick<DeepAgentContent, 'skills'>>,
   overrides: TestDeepAgentOverrides = {},
 ): TestDeepAgentRecord {
   return {
@@ -263,7 +265,7 @@ export function testDeepAgent(
     everyone: true,
     offerInChat: true,
     ...overrides,
-    content,
+    content: { skills: [], ...content },
   };
 }
 
@@ -329,6 +331,7 @@ async function addDefaultAgents(library: LibraryDouble): Promise<void> {
         listDelegation: true,
         selfLearning: false,
         scripts: [],
+        skills: [],
       },
     });
   }

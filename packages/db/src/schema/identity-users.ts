@@ -36,6 +36,8 @@ export const identityUsers = app.table(
     notificationLevel: text('notification_level')
       .notNull()
       .default(NotificationLevelSchema.enum.all),
+    /** The employee's personal instruction, read by every step of their tasks; empty — none (agent-guidance KD-4). */
+    instructions: text('instructions').notNull().default(''),
     createdAt: createdAt(),
   },
   (t) => [

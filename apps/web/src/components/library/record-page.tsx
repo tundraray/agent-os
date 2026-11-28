@@ -77,7 +77,9 @@ export function RecordPage({ id }: RecordPageProps) {
   if (record.data.mine && record.data.canEdit) {
     if (record.data.kind === 'deep_agent')
       return <OwnDeepAgentPage record={record.data} />;
-    return <EditorPage start={{ saved: record.data }} created={created} />;
+    // The editor of a skill comes with the web part of agent-guidance.
+    if (record.data.kind === 'agent')
+      return <EditorPage start={{ saved: record.data }} created={created} />;
   }
   return <RecordView record={record.data} />;
 }
@@ -163,7 +165,7 @@ function RecordView({ record }: { record: RecordDetail }) {
   const choices = useResource(libraryApi.choices, 'choices', 'library');
   const modelNames = modelNamesOf(models.data, choices.data);
   // `missingRights` names only models without a right; a model of a provider that does not work is the viewer's own.
-  const ownModel = record.content.model;
+  const ownModel = record.kind === 'skill' ? null : record.content.model;
   const brokenReason =
     ownModel === null
       ? null

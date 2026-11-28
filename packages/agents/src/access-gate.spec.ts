@@ -99,6 +99,7 @@ const VERSION: AgentVersion = {
     agents: [],
     tools: [LOOKUP],
     taskList: false,
+    skills: [],
   },
 };
 

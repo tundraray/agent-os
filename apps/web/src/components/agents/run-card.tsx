@@ -4,15 +4,16 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
-import type {
-  AgentNode,
-  AgentStatus as AgentStatusValue,
-  AgentView,
-  RecordKind,
-  RecordSummary,
-  RunOrigin,
-  DeepAgentRunView,
-  TrainingStatus,
+import {
+  isStartableKind,
+  type AgentNode,
+  type AgentStatus as AgentStatusValue,
+  type AgentView,
+  type RecordKind,
+  type RecordSummary,
+  type RunOrigin,
+  type DeepAgentRunView,
+  type TrainingStatus,
 } from '@agent-os/contracts';
 import {
   ArrowUpRightIcon,
@@ -159,11 +160,11 @@ function RerunLine({ origin }: { origin: RunOrigin }) {
         size="sm"
         className="pointer-coarse:h-11"
         onClick={() => {
+          // A run's record is never a skill (agent-guidance KD-5).
           if (live == null) return;
-          inChat(
-            { record: { id: live.id, kind: live.kind, name: live.name } },
-            thread,
-          );
+          const { id, kind, name } = live;
+          if (!isStartableKind(kind)) return;
+          inChat({ record: { id, kind, name } }, thread);
         }}
       >
         {t('rerun')}

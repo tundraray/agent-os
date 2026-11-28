@@ -1,5 +1,6 @@
 import {
   CHAT_BUILTIN_KEY,
+  isStartableKind,
   nameWinners,
   TRAINER_BUILTIN_KEY,
   type RecordHeader,
@@ -101,8 +102,9 @@ export function chatListing({
   sessionCounts,
   budget,
 }: ChatListingInput): ChatListing {
+  // Skills are not listed yet: their lines come with `read_skill` (agent-guidance KD-7).
   const offered = nameWinners(headers)
-    .filter(inRootLaunchSet)
+    .filter((header) => isStartableKind(header.kind) && inRootLaunchSet(header))
     .sort(displayOrder);
   const countOf = (header: RecordHeader): number =>
     sessionCounts.get(header.id) ?? 0;

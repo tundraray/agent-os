@@ -227,6 +227,7 @@ function teamV1(): DeepAgentContent {
     listDelegation: true,
     selfLearning: false,
     scripts: [],
+    skills: [],
   };
 }
 
@@ -609,6 +610,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
           listDelegation: true,
           selfLearning: false,
           scripts: [],
+          skills: [],
         },
       });
       const forkerRecord = testRecord('forker', {

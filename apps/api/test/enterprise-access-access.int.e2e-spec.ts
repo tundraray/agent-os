@@ -225,6 +225,7 @@ function accessCheckDeepAgent(): Extract<
       listDelegation: false,
       selfLearning: false,
       scripts: [],
+      skills: [],
     },
   };
 }

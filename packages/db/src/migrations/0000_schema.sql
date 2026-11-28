@@ -183,6 +183,7 @@ CREATE TABLE "app"."identity_users" (
 	"last_sign_in_at" timestamp with time zone,
 	"language" text,
 	"notification_level" text DEFAULT 'all' NOT NULL,
+	"instructions" text DEFAULT '' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "identity_users_status_check" CHECK ("app"."identity_users"."status" in ('active', 'disabled')),
 	CONSTRAINT "identity_users_language_check" CHECK ("app"."identity_users"."language" in ('en', 'ru')),
@@ -316,7 +317,7 @@ CREATE TABLE "app"."agents" (
 	"active_version_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "agents_kind_check" CHECK ("app"."agents"."kind" in ('agent', 'deep_agent')),
+	CONSTRAINT "agents_kind_check" CHECK ("app"."agents"."kind" in ('agent', 'deep_agent', 'skill')),
 	CONSTRAINT "agents_builtin_key_check" CHECK ("app"."agents"."builtin_key" is null or ("app"."agents"."owner_id" is null and "app"."agents"."builtin_key" in ('chat', 'agent', 'deep_agent', 'trainer'))),
 	CONSTRAINT "agents_closed_at_check" CHECK ("app"."agents"."closed_at" is null or "app"."agents"."owner_id" is not null),
 	CONSTRAINT "agents_deleted_at_check" CHECK ("app"."agents"."deleted_at" is null or "app"."agents"."builtin_key" is null)
@@ -445,7 +446,7 @@ CREATE TABLE "app"."settings" (
 	"value" jsonb NOT NULL,
 	"updated_at" timestamp with time zone,
 	"updated_by" uuid,
-	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings'))
+	CONSTRAINT "settings_key_check" CHECK ("app"."settings"."key" in ('sign_in_settings', 'library_settings', 'tool_result_settings', 'model_defaults', 'self_learning_settings', 'organisation_instructions'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."audit_events" (

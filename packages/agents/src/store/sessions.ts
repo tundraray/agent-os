@@ -3,9 +3,9 @@ import {
   type ChipRecord,
   type NotificationLevel,
   NotificationLevelSchema,
-  RecordKindSchema,
   type RunOrigin,
   type ScheduleMark,
+  StartableKindSchema,
 } from '@agent-os/contracts';
 import {
   type ConversationRow,
@@ -163,7 +163,7 @@ export interface SessionTask {
 function originOf(row: ConversationRow): RunOrigin {
   return {
     recordId: row.agentId,
-    kind: RecordKindSchema.parse(row.agentKind),
+    kind: StartableKindSchema.parse(row.agentKind),
     version: row.versionNumber,
     name: row.agentName,
     author:

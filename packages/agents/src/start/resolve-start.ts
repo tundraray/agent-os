@@ -2,9 +2,11 @@ import {
   type BuiltinKey,
   CHAT_BUILTIN_KEY,
   type ChipRecord,
+  isStartable,
   modelProvider,
-  type RecordKind,
+  type ResolvedAgent,
   type ResolvedRecord,
+  type StartableKind,
   type StartRefusedError,
   TRAINER_BUILTIN_KEY,
 } from '@agent-os/contracts';
@@ -38,7 +40,7 @@ export type StartSource =
   | {
       readonly kind: 'record';
       readonly recordId: string;
-      readonly expected: RecordKind;
+      readonly expected: StartableKind;
       readonly name?: string;
     }
   /** A fork: the caller's start. */
@@ -87,7 +89,7 @@ export interface NamedStartRequest {
   readonly ownerId: string;
   readonly name: string;
   /** `agent` for `start_agent`, `deep_agent` for `start_deep_agent`. */
-  readonly kind: RecordKind;
+  readonly kind: StartableKind;
   readonly callerModel: string | null;
   /** The chip of the message the call answers (`History.answeredChip`); `null` — the message carries none. */
   readonly chip: ChipRecord | null;
@@ -99,7 +101,8 @@ export interface NamedStartRequest {
  * that starts it.
  */
 export type NamedStartResolution =
-  StartResolution | { readonly kind: 'other_kind'; readonly found: RecordKind };
+  | StartResolution
+  | { readonly kind: 'other_kind'; readonly found: StartableKind };
 
 const RECORD_UNAVAILABLE: StartRefusal = {
   kind: 'refused',
@@ -107,6 +110,11 @@ const RECORD_UNAVAILABLE: StartRefusal = {
   model: null,
   denied: null,
 };
+
+/** The record when it starts; a skill answers as a missing record (agent-guidance KD-5). */
+function startable(record: ResolvedRecord | null): ResolvedAgent | null {
+  return record !== null && isStartable(record) ? record : null;
+}
 
 const MODEL_NOT_CONFIGURED: StartRefusal = {
   kind: 'refused',
@@ -152,12 +160,10 @@ export async function resolveNamedStart(
   const { ownerId, name, kind, callerModel } = request;
   const winner =
     (await chosenRecord(request, deps.library)) ??
-    (await deps.library.resolveByName(ownerId, name, kind));
+    startable(await deps.library.resolveByName(ownerId, name, kind));
   if (winner === null) {
-    const other = await deps.library.resolveByName(
-      ownerId,
-      name,
-      otherKind(kind),
+    const other = startable(
+      await deps.library.resolveByName(ownerId, name, otherKind(kind)),
     );
     if (other !== null) return { kind: 'other_kind', found: other.kind };
   }
@@ -178,10 +184,10 @@ export async function resolveNamedStart(
 async function chosenRecord(
   { ownerId, name, kind, chip }: NamedStartRequest,
   library: RecordLibrary,
-): Promise<ResolvedRecord | null> {
+): Promise<ResolvedAgent | null> {
   if (chip === null || chip.name.toLowerCase() !== name.toLowerCase())
     return null;
-  const record = await library.resolve(ownerId, chip.id);
+  const record = startable(await library.resolve(ownerId, chip.id));
   return record?.kind === kind &&
     record.builtinKey !== CHAT_BUILTIN_KEY &&
     record.builtinKey !== TRAINER_BUILTIN_KEY
@@ -189,7 +195,7 @@ async function chosenRecord(
     : null;
 }
 
-function otherKind(kind: RecordKind): RecordKind {
+function otherKind(kind: StartableKind): StartableKind {
   return kind === 'agent' ? 'deep_agent' : 'agent';
 }
 
@@ -228,7 +234,9 @@ async function startOf(
       return startOfRecord(record, callerModel, deps);
     }
     case 'record': {
-      const record = await deps.library.resolve(ownerId, source.recordId);
+      const record = startable(
+        await deps.library.resolve(ownerId, source.recordId),
+      );
       return startOfRecord(
         record?.kind === source.expected
           ? { ...record, name: source.name ?? record.name }
@@ -248,7 +256,7 @@ async function startOf(
  * the chain of KD-3. The system model is read only when the version and the caller have none — at a root.
  */
 async function startOfRecord(
-  record: ResolvedRecord | null,
+  record: ResolvedAgent | null,
   callerModel: string | null,
   deps: StartDeps,
 ): Promise<StartResolution> {

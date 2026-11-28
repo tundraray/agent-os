@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { LogFields } from '@agent-os/common';
 import {
   DeepAgentContentSchema,
+  isStartable,
   LibraryRecordCardSchema,
   type LibraryRecordCard,
   type RecordBody,
@@ -27,6 +28,7 @@ import type {
   SaveResult,
   SaveScope,
 } from './library.types';
+import { contentSkills } from './record-content';
 import { chatRecordOf, type ChatRecord } from './record-listing';
 import { hasHolders } from './record-view';
 import { decideDelete, type RefusedField } from './save-rules';
@@ -103,15 +105,20 @@ function chatScope(
 }
 
 /**
- * The record with the deep agent's fields the chat never sets (KD-2): the self-learning flag and the scripts
- * of `previous`, or off and none on a create.
+ * The record with the fields the chat never sets (KD-2; agent-guidance KD-5): the skills of `previous`, and a
+ * deep agent's self-learning flag and scripts of `previous`; none, off and none on a create.
  */
 function withKeptFields(
   record: ChatRecordInput,
   previous: RecordBody | null,
 ): ChatRecordInput {
   const { body } = record;
-  if (body.kind !== 'deep_agent') return record;
+  const skills = previous === null ? [] : [...contentSkills(previous)];
+  if (body.kind === 'agent')
+    return {
+      ...record,
+      body: { kind: 'agent', content: { ...body.content, skills } },
+    };
   const { selfLearning, scripts } =
     previous?.kind === 'deep_agent'
       ? previous.content
@@ -120,7 +127,7 @@ function withKeptFields(
     ...record,
     body: {
       kind: 'deep_agent',
-      content: { ...body.content, selfLearning, scripts },
+      content: { ...body.content, selfLearning, scripts, skills },
     },
   };
 }
@@ -244,7 +251,7 @@ export class LibraryChatService {
         return [
           ...visible,
           ...system.filter((record) => !seen.has(record.id)),
-        ].map((record) => chatRecordOf(record, viewer.id));
+        ].flatMap((record) => chatRecordOf(record, viewer.id) ?? []);
       },
       (records) => ({ count: records.length }),
     );
@@ -418,18 +425,22 @@ export class LibraryChatService {
 
   /**
    * The record a chat call names: one the employee sees, or for an admin a system record of the panel.
-   * Missing, not seen — another employee's private record among them — and an id that is not a UUID
-   * answer alike, so the chat learns nothing of a record it cannot see.
+   * Missing, not seen — another employee's private record among them — a skill, and an id that is not a
+   * UUID answer alike, so the chat learns nothing of a record it cannot see (agent-guidance KD-5).
    */
   private async chatTarget(
     context: ChatContext,
     recordId: string,
   ): Promise<LibraryRecord | undefined> {
     if (!isUuid(recordId)) return undefined;
-    const visible = await this.records.visibleOne(context.viewer, recordId);
-    if (visible !== undefined || !context.actor.isAdmin) return visible;
-    const inPanel = await this.records.panelOne(recordId);
-    return inPanel?.ownerId === null ? inPanel : undefined;
+    let record = await this.records.visibleOne(context.viewer, recordId);
+    if (record === undefined && context.actor.isAdmin) {
+      const inPanel = await this.records.panelOne(recordId);
+      record = inPanel?.ownerId === null ? inPanel : undefined;
+    }
+    return record !== undefined && isStartable(record.body)
+      ? record
+      : undefined;
   }
 
   /** The save request of a chat change: the employee's choices, or the panel's for an admin's system record. */

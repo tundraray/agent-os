@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { UpdateModelDefaultsBodySchema } from './access';
 import { UpdateSignInSettingsBodySchema } from './identity';
-import { UpdateLibrarySettingsBodySchema } from './library';
+import {
+  INSTRUCTIONS_MAX_LENGTH,
+  UpdateLibrarySettingsBodySchema,
+} from './library';
 import { UpdateSelfLearningSettingsBodySchema } from './memory';
 import { UpdateToolResultSettingsBodySchema } from './tool-results';
 
@@ -15,8 +18,20 @@ export const SettingsKeySchema = z.enum([
   'tool_result_settings',
   'model_defaults',
   'self_learning_settings',
+  'organisation_instructions',
 ]);
 export type SettingsKey = z.infer<typeof SettingsKeySchema>;
+
+/**
+ * Body of PUT /api/admin/instructions and the value of `organisation_instructions` (agent-guidance
+ * design-server.md, «Инструкции»): an empty text clears the instruction.
+ */
+export const UpdateOrganisationInstructionsBodySchema = z.object({
+  text: z.string().max(INSTRUCTIONS_MAX_LENGTH),
+});
+export type UpdateOrganisationInstructionsBody = z.infer<
+  typeof UpdateOrganisationInstructionsBodySchema
+>;
 
 /** The schema of each key's value; a new key comes with its schema here and its default row in the migration. */
 export const SETTINGS_VALUE_SCHEMAS = {
@@ -25,6 +40,7 @@ export const SETTINGS_VALUE_SCHEMAS = {
   tool_result_settings: UpdateToolResultSettingsBodySchema,
   model_defaults: UpdateModelDefaultsBodySchema,
   self_learning_settings: UpdateSelfLearningSettingsBodySchema,
+  organisation_instructions: UpdateOrganisationInstructionsBodySchema,
 } satisfies Record<SettingsKey, z.ZodType>;
 
 /** The value of a key as its schema gives it. */

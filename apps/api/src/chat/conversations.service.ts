@@ -10,26 +10,27 @@ import {
   StartOperations,
 } from '@agent-os/agents';
 import {
-  DocumentRefSchema,
-  HISTORY_PAGE_SIZE,
-  THREAD_PAGE_SIZE,
   type AgentNode,
   type ChipRecord,
   type ConversationView,
   type Document,
-  type HistoryEntry,
+  DocumentRefSchema,
   type DocumentSummary,
   type ForkRequest,
+  HISTORY_PAGE_SIZE,
+  type HistoryEntry,
   type HistoryQuery,
   type InterruptResponse,
+  isStartable,
   type NotificationLevel,
   type ScheduleMark,
   type SendMessageRequest,
   type SendMessageResponse,
+  type TestRunSummary,
+  THREAD_PAGE_SIZE,
   type ThreadDocumentsView,
   type ThreadForksResponse,
   type ThreadListResponse,
-  type TestRunSummary,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import {
@@ -616,7 +617,12 @@ export class ConversationsService {
    */
   private async chipOf(ownerId: string, recordId: string): Promise<ChipRecord> {
     const resolved = await this.library.resolve(ownerId, recordId);
-    if (resolved === null || !inRootLaunchSet(resolved))
+    // A skill never starts: it answers as a missing record (agent-guidance KD-5).
+    if (
+      resolved === null ||
+      !isStartable(resolved) ||
+      !inRootLaunchSet(resolved)
+    )
       throw libraryError('RECORD_NOT_FOUND');
     return { id: resolved.id, kind: resolved.kind, name: resolved.name };
   }

@@ -30,6 +30,7 @@ const inChat = (fields: {
   missingRights?: MissingRight[];
 }) =>
   canUseInChat({
+    kind: 'agent',
     builtinKey: null,
     mine: false,
     offerInChat: false,
@@ -64,6 +65,7 @@ const agentContent: AgentContent = {
   agents: [],
   tools: [],
   taskList: true,
+  skills: [],
 };
 
 const agent = (

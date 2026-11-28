@@ -281,6 +281,7 @@ function rejected(
       );
     case 'sharing_banned':
       return at(form, t('library.sharingBanned'));
+    case 'skill_not_visible':
     case 'audience_fixed':
     case 'builtin':
     case 'holder_not_found':
