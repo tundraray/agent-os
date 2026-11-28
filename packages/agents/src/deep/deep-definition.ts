@@ -119,6 +119,7 @@ export function deepAgentDefinition(
     taskList: content.taskList,
     listDelegation: content.listDelegation,
     scripts: content.scripts.filter((script) => script.owner === null),
+    skills: content.skills,
   };
 }
 
@@ -164,6 +165,7 @@ export function subagentDefinition(
     listDelegation: false,
     // `general-purpose` never owns a script (KD-4).
     scripts: version.content.scripts.filter((script) => script.owner === name),
+    skills: version.content.skills,
   };
 }
 

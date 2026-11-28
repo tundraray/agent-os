@@ -403,6 +403,10 @@ export class ViewOperations {
                       ...(resolved.allowInConversation === true
                         ? { allowInConversation: true as const }
                         : {}),
+                      // An answered question card's answers; a skipped one has none (agent-guidance KD-1).
+                      ...(resolved.answers === undefined
+                        ? {}
+                        : { answers: resolved.answers }),
                     },
               createdAt: question.createdAt,
               resolvedAt: status === 'resolved' ? question.finishedAt : null,

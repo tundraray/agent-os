@@ -1,6 +1,5 @@
 import {
   CHAT_BUILTIN_KEY,
-  isStartableKind,
   nameWinners,
   TRAINER_BUILTIN_KEY,
   type RecordHeader,
@@ -44,6 +43,8 @@ export interface ChatListing {
   readonly agents: readonly string[];
   /** Lines of the deep agents, for the description of the tool that starts one by a brief. */
   readonly deepAgents: readonly string[];
+  /** Lines of the skills, for the description of `read_skill` (agent-guidance KD-7). */
+  readonly skills: readonly string[];
   /** Records whose line kept its description. */
   readonly described: number;
 }
@@ -102,9 +103,10 @@ export function chatListing({
   sessionCounts,
   budget,
 }: ChatListingInput): ChatListing {
-  // Skills are not listed yet: their lines come with `read_skill` (agent-guidance KD-7).
+  // Skills share the budget and the drop order (agent-guidance KD-7): they start no session, so they lose
+  // their descriptions first.
   const offered = nameWinners(headers)
-    .filter((header) => isStartableKind(header.kind) && inRootLaunchSet(header))
+    .filter(inRootLaunchSet)
     .sort(displayOrder);
   const countOf = (header: RecordHeader): number =>
     sessionCounts.get(header.id) ?? 0;
@@ -131,6 +133,7 @@ export function chatListing({
   return {
     agents: linesOf('agent'),
     deepAgents: linesOf('deep_agent'),
+    skills: linesOf('skill'),
     described: described.size,
   };
 }

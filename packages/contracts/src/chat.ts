@@ -14,6 +14,7 @@ import {
   ChipRecordSchema,
   DeepAgentContentSchema,
   IdSchema,
+  INSTRUCTIONS_MAX_LENGTH,
   RecordKindSchema,
   StartableKindSchema,
   VersionSchema,
@@ -38,6 +39,115 @@ export const AGENT_PAGE_SIZE = 20;
 export const AGENTS_BRIEF_CONFIRMATION = 'agents.brief';
 /** Decision kind of a record tool's card: create, edit or delete a library record (KD-3). */
 export const LIBRARY_RECORD_CONFIRMATION = 'library.record';
+/** Decision kind of an `ask_user` card: the employee answers the agent's questions (agent-guidance KD-1). */
+export const AGENTS_QUESTION_CONFIRMATION = 'agents.question';
+/** Decision kind of a `set_personal_instructions` card: the employee edits and saves his text (agent-guidance KD-8). */
+export const IDENTITY_INSTRUCTIONS_CONFIRMATION = 'identity.instructions';
+
+// Limits of a question card (agent-guidance design-server.md, «Вопрос», «Ответ»).
+export const ASK_USER_QUESTIONS_MAX = 4;
+export const QUESTION_TEXT_MAX_LENGTH = 500;
+export const QUESTION_OPTIONS_MIN = 2;
+export const QUESTION_OPTIONS_MAX = 4;
+export const QUESTION_OPTION_LABEL_MAX_LENGTH = 80;
+export const QUESTION_OPTION_DESCRIPTION_MAX_LENGTH = 300;
+export const ANSWER_OTHER_MAX_LENGTH = 2_000;
+
+/** One question of `ask_user` (form «Вопрос»): options with labels unique within the question. */
+export const QuestionSchema = z.object({
+  question: z
+    .string()
+    .min(1)
+    .max(QUESTION_TEXT_MAX_LENGTH)
+    .describe('The question, one clear sentence'),
+  options: z
+    .array(
+      z.object({
+        label: z
+          .string()
+          .min(1)
+          .max(QUESTION_OPTION_LABEL_MAX_LENGTH)
+          .describe('A short answer the employee picks'),
+        description: z
+          .string()
+          .min(1)
+          .max(QUESTION_OPTION_DESCRIPTION_MAX_LENGTH)
+          .describe('What this answer means or leads to'),
+      }),
+    )
+    .min(QUESTION_OPTIONS_MIN)
+    .max(QUESTION_OPTIONS_MAX)
+    .refine(
+      (options) =>
+        new Set(options.map((option) => option.label)).size === options.length,
+      { message: 'option labels repeat' },
+    ),
+  multiSelect: z
+    .boolean()
+    .default(false)
+    .describe('Whether the employee may pick several options'),
+});
+export type Question = z.infer<typeof QuestionSchema>;
+
+/**
+ * Arguments of `ask_user` and the content of its `agents.question` card (`content` and `args` of the
+ * `Confirmation`): one to four questions. The employee can always write his own answer under «Другое».
+ */
+export const AskUserArgsSchema = z.object({
+  questions: z.array(QuestionSchema).min(1).max(ASK_USER_QUESTIONS_MAX),
+});
+export type AskUserArgs = z.infer<typeof AskUserArgsSchema>;
+
+/** The employee's answer to one question (form «Ответ»); no answer — empty `selected` and `other: null`. */
+export const QuestionAnswerSchema = z.object({
+  /** Labels of the chosen options; at most one without `multiSelect`. */
+  selected: z.array(z.string().min(1).max(QUESTION_OPTION_LABEL_MAX_LENGTH)),
+  /** The employee's own text from «Другое». */
+  other: z.string().min(1).max(ANSWER_OTHER_MAX_LENGTH).nullable(),
+});
+export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
+
+/**
+ * Why `answers` do not fit the card's questions (DC-1), or `null` when they do: one answer per question in their
+ * order, only the labels of that question's options, each once; without `multiSelect` at most one label and
+ * never a label together with «Другое».
+ */
+export function answersMismatch(
+  questions: readonly Question[],
+  answers: readonly QuestionAnswer[],
+): string | null {
+  if (answers.length !== questions.length)
+    return `answers: ${answers.length} answers for ${questions.length} questions`;
+  for (const [index, question] of questions.entries()) {
+    const { selected, other } = answers[index] ?? { selected: [], other: null };
+    const labels = new Set(question.options.map((option) => option.label));
+    if (selected.some((label) => !labels.has(label)))
+      return `answers.${index}.selected: no such option`;
+    if (new Set(selected).size !== selected.length)
+      return `answers.${index}.selected: an option is chosen twice`;
+    if (!question.multiSelect && selected.length > 1)
+      return `answers.${index}.selected: one option at most`;
+    if (!question.multiSelect && selected.length > 0 && other !== null)
+      return `answers.${index}: an option and an own answer together`;
+  }
+  return null;
+}
+
+/**
+ * Arguments of `set_personal_instructions` and the content of its `identity.instructions` card: the whole new
+ * text; an empty text removes the instruction (agent-guidance KD-8).
+ */
+export const SetPersonalInstructionsArgsSchema = z.object({
+  text: z
+    .string()
+    .max(INSTRUCTIONS_MAX_LENGTH)
+    .describe(
+      'The whole new text of the instruction, the lines to keep included; empty removes it',
+    ),
+});
+export type SetPersonalInstructionsArgs = z.infer<
+  typeof SetPersonalInstructionsArgsSchema
+>;
 
 /** The text of a chat message: also a schedule's instruction, which is sent as one. */
 export const ChatTextSchema = z
@@ -105,12 +215,18 @@ export type AgentListQuery = z.infer<typeof AgentListQuerySchema>;
 /**
  * Body of POST /decisions/:decisionId: `args` are the tool's full arguments when edited. `allowInConversation`
  * («allow in this conversation») also allows the card's MCP pair to the conversation; only with `approve: true`.
+ * `answers` — the employee's answers to an `agents.question` card, one per question; without them every question
+ * stays unanswered (agent-guidance KD-1).
  */
 export const DecisionRequestSchema = z
   .object({
     approve: z.boolean(),
     args: z.record(z.string(), z.unknown()).optional(),
     allowInConversation: z.literal(true).optional(),
+    answers: z
+      .array(QuestionAnswerSchema)
+      .max(ASK_USER_QUESTIONS_MAX)
+      .optional(),
   })
   .refine((body) => body.approve || body.allowInConversation === undefined, {
     message: 'allowInConversation needs approve: true',
@@ -391,6 +507,8 @@ export const ConfirmationKindSchema = z.enum([
   AGENTS_TOOL_CONFIRMATION,
   AGENTS_BRIEF_CONFIRMATION,
   LIBRARY_RECORD_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
+  IDENTITY_INSTRUCTIONS_CONFIRMATION,
 ]);
 export type ConfirmationKind = z.infer<typeof ConfirmationKindSchema>;
 
@@ -453,13 +571,15 @@ export const ConfirmationSchema = z.object({
   status: ConfirmationStatusSchema,
   /**
    * Set when `resolved`: the decision and the arguments the call ran with; `allowInConversation` only when the
-   * answer was «allow in this conversation».
+   * answer was «allow in this conversation»; `answers` only on an answered `agents.question` card, absent on a
+   * skipped one.
    */
   resolution: z
     .object({
       approve: z.boolean(),
       args: z.unknown(),
       allowInConversation: z.literal(true).optional(),
+      answers: z.array(QuestionAnswerSchema).optional(),
     })
     .nullable(),
   createdAt: z.iso.datetime(),

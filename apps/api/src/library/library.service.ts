@@ -15,6 +15,7 @@ import {
   type RecordSummary,
   type ResolvedAgent,
   type ResolvedRecord,
+  type ResolvedSkill,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
 import { AgentsRepository, Db } from '@agent-os/db';
@@ -499,6 +500,30 @@ export class LibraryService {
         kind: version.kind,
         number: version.number,
       }),
+    );
+  }
+
+  /**
+   * The skills of a version's list with the text of their active versions, in the list's order, without a
+   * visibility check and without the deleted ones (agent-guidance KD-6): the skills come with the agent.
+   */
+  skills(
+    viewerId: string,
+    skillIds: readonly string[],
+  ): Promise<ResolvedSkill[]> {
+    return this.records.logged(
+      'skills',
+      { viewerId, listed: skillIds.length },
+      async () => {
+        const records = await this.records.notDeleted(skillIds);
+        return skillIds.flatMap((id) => {
+          const record = records.find((candidate) => candidate.id === id);
+          if (record === undefined) return [];
+          const resolved = resolvedRecord(record, viewerId);
+          return resolved.kind === 'skill' ? [resolved] : [];
+        });
+      },
+      (skills) => ({ count: skills.length }),
     );
   }
 

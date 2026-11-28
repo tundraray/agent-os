@@ -302,18 +302,29 @@ export async function callUnlessAborted<T>(
 
 /** The blocks of a step's system text, each `null` when empty (step-prompt-block.md). */
 interface StepBlocks {
+  /** The administrator's instruction (agent-guidance KD-3); the compaction step passes `null`. */
+  readonly organisation: string | null;
+  /** The task owner's instruction; the compaction step passes `null`. */
+  readonly personal: string | null;
   readonly memory: string | null;
   readonly tasks: string | null;
 }
 
 /**
- * The system text of a step (step-prompt-block.md; self-learning design-memory.md KD-3): the definition's prompt,
- * then each block after an empty line in a fixed order — memory, then the tasks — so the start of the text stays the
- * same from step to step. The model step and the compaction step both build their `instructions` here, so a
- * compaction call carries the same text as the model call. No block — the prompt unchanged, byte for byte.
+ * The system text of a step (step-prompt-block.md; self-learning design-memory.md KD-3; agent-guidance KD-3): the
+ * definition's prompt, then each block after an empty line in a fixed order, from the most constant to the most
+ * live — the organisation's instruction, the owner's instruction, memory, then the tasks — so the start of the
+ * text stays the same from step to step. The model step and the compaction step both build their `instructions`
+ * here; the compaction passes no instruction. No block — the prompt unchanged, byte for byte.
  */
 export function withStepBlocks(prompt: string, blocks: StepBlocks): string {
-  return [prompt, blocks.memory, blocks.tasks]
+  return [
+    prompt,
+    blocks.organisation,
+    blocks.personal,
+    blocks.memory,
+    blocks.tasks,
+  ]
     .filter((part) => part !== null)
     .join('\n\n');
 }

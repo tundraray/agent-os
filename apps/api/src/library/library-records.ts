@@ -155,6 +155,13 @@ export class LibraryRecords {
     );
   }
 
+  /** The undeleted records with these ids, without a visibility check: the skills of a version's list (agent-guidance KD-6). */
+  async notDeleted(ids: readonly string[]): Promise<LibraryRecord[]> {
+    return this.named(
+      await this.stored(await this.repository.findNotDeleted(ids)),
+    );
+  }
+
   /** The default agent with this key, without a visibility check (data-model design-agents.md, «Порт `RecordLibrary`»). */
   async builtin(builtinKey: string): Promise<LibraryRecord | undefined> {
     const row = await this.repository.findBuiltin(builtinKey);

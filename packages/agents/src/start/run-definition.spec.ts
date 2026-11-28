@@ -170,6 +170,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -187,6 +188,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: true,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -208,6 +210,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -225,6 +228,7 @@ describe('runDefinition', () => {
         taskList: true,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -243,6 +247,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {
@@ -262,6 +267,7 @@ describe('runDefinition', () => {
         taskList: false,
         listDelegation: false,
         scripts: [],
+        skills: [],
       },
     },
     {

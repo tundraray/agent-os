@@ -1045,6 +1045,10 @@ export function createLibraryDouble(): LibraryDouble {
         );
       return resolvedOf(record, null);
     },
+    // The double holds agents and deep agents only: no list names a skill it holds.
+    async skills() {
+      return [];
+    },
     async listVisible(viewerId) {
       const visible = [...records.values()].filter((record) =>
         visibleTo(record, viewerId),

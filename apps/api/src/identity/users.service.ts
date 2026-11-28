@@ -343,6 +343,20 @@ export class UsersService {
     await this.users.setLanguage(userId, language);
   }
 
+  /**
+   * The employee's own personal instruction, saved by the main chat's `set_personal_instructions` after he confirmed
+   * its card (agent-guidance KD-8), in the caller's transaction; the call's `tool_result` is its audit. Only the
+   * length is logged (AC-04.3).
+   */
+  async setOwnInstructions(userId: string, text: string): Promise<void> {
+    await this.users.setInstructions(userId, text);
+    this.logger.info('personal instructions saved', {
+      userId,
+      textChars: text.length,
+      outcome: 'ok',
+    });
+  }
+
   /** The employee saves his own default notification level (live-feed KD-7); no audit: the level grants nothing. */
   async setOwnNotificationLevel(
     userId: string,

@@ -2,8 +2,10 @@ import type { ToolResultsRepository, SettingsRepository } from '@agent-os/db';
 
 import type { Sessions } from '../../store/sessions';
 import type { AgentTool } from '../tool';
+import { createAskUserTool } from './ask-user';
 import { type BuiltinTasks, createListAgentsTool } from './list-agents';
 import { createMessageAgentTool } from './message-agent';
+import { createReadSkillTool } from './read-skill';
 import { createStartAgentTool, type StartAgentDeps } from './start-agent';
 import { createStopAgentTool } from './stop-agent';
 import { createToolResultTools } from './tool-result-tools';
@@ -18,8 +20,8 @@ export interface SystemToolsDeps extends StartAgentDeps {
 
 /**
  * The system tools — the ones agents run the platform itself with (design-agents.md, «Инструменты»):
- * `start_agent`, `message_agent`, `list_agents`, `stop_agent`, and `read_tool_result`, `search_tool_result`
- * of every session (tool-result-reading R-2). The task-list tools are made by `createTaskListTools`; a deep agent's
+ * `start_agent`, `message_agent`, `list_agents`, `stop_agent`, `read_skill` of a version with skills and of the
+ * chat (agent-guidance KD-6), `ask_user` of every kind but the trainer (KD-1), and `read_tool_result`, `search_tool_result` of every session (tool-result-reading R-2). The task-list tools are made by `createTaskListTools`; a deep agent's
  * tools live in `deep/`. `SystemToolsRegistration` registers them all in the tools library.
  */
 export function createSystemTools(deps: SystemToolsDeps): AgentTool[] {
@@ -29,5 +31,7 @@ export function createSystemTools(deps: SystemToolsDeps): AgentTool[] {
     createListAgentsTool(deps),
     createStopAgentTool(deps),
     ...createToolResultTools(deps),
+    createReadSkillTool(deps),
+    createAskUserTool(deps),
   ];
 }

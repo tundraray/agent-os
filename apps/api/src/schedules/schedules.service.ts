@@ -111,6 +111,7 @@ const ALL_SERVERS: Parameters<ToolRegistry['toolsFor']>[1] = {
   root: false,
   startable: null,
   deepAgents: null,
+  skills: [],
   taskList: false,
   listDelegation: false,
   scripts: [],

@@ -155,6 +155,7 @@ export class SystemToolsRegistration implements OnModuleInit {
         tasks: this.tasks,
         access,
         registry: this.registry,
+        library,
         maskSecrets: this.maskSecrets,
         logger,
       }),

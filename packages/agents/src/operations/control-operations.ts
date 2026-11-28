@@ -1,7 +1,11 @@
 import type { Logger } from '@agent-os/common';
 import {
+  AGENTS_QUESTION_CONFIRMATION,
   AGENTS_TOOL_CONFIRMATION,
   AgentMessageKindSchema,
+  AskUserArgsSchema,
+  answersMismatch,
+  type QuestionAnswer,
   type DecisionResponse,
   SessionTaskStatusSchema,
   TaskStatusSchema,
@@ -61,6 +65,20 @@ function isMcpCard(card: z.infer<typeof QuestionInputSchema>): boolean {
     card.payload.server !== null &&
     card.payload.server !== ''
   );
+}
+
+/**
+ * Why `answers` do not fit the open card (agent-guidance DC-1), `null` when they do: a card of another kind has
+ * no questions, so any answers miss it.
+ */
+function answersMismatchOf(
+  card: z.infer<typeof QuestionInputSchema>,
+  answers: readonly QuestionAnswer[],
+): string | null {
+  if (card.kind !== AGENTS_QUESTION_CONFIRMATION)
+    return `answers on a ${card.kind} card`;
+  const { questions } = AskUserArgsSchema.parse(card.payload.content);
+  return answersMismatch(questions, answers);
 }
 
 /** A test run's trainer: a root `trainer` task with `testRun` in its input. */
@@ -269,8 +287,9 @@ export class ControlOperations {
     approve,
     args,
     allowInConversation,
+    answers,
   }: ResolveConfirmationRequest): Promise<
-    DecisionResponse['outcome'] | 'not_mcp_card'
+    DecisionResponse['outcome'] | 'not_mcp_card' | 'answers_mismatch'
   > {
     return this.logged(
       'resolveConfirmation',
@@ -280,6 +299,7 @@ export class ControlOperations {
         approve,
         withArgs: args !== undefined,
         allowInConversation: allowInConversation === true,
+        answers: answers?.length ?? null,
       },
       async () => {
         // The decision is the answer to a question task (data-model/design-runtime.md, KD-3). The edit is
@@ -287,7 +307,9 @@ export class ControlOperations {
         // `already_answered` (answered or stopped) or `TASK_NOT_FOUND` (missing, another owner's, deleted or
         // not a question) and writes nothing; `TASK_NOT_FOUND` passes through as the runtime's error.
         const question =
-          args === undefined && allowInConversation !== true
+          args === undefined &&
+          allowInConversation !== true &&
+          answers === undefined
             ? undefined
             : await this.tasks.get(decisionId, ownerId);
         const card =
@@ -303,20 +325,33 @@ export class ControlOperations {
         ) {
           return 'not_mcp_card';
         }
+        const open = card !== undefined && question?.status === waiting;
+        // The answers are checked against the open card's questions before the answer (agent-guidance DC-1).
+        const mismatch =
+          answers !== undefined && open
+            ? answersMismatchOf(card, answers)
+            : null;
+        if (mismatch !== null) {
+          this.logger.info('decision answers rejected', {
+            decisionId,
+            ownerId,
+            reason: mismatch,
+          });
+          return 'answers_mismatch';
+        }
         const edited =
-          args !== undefined &&
-          card !== undefined &&
-          question?.status === waiting
+          args !== undefined && open
             ? { args: this.editedArgs(card.payload, args) }
             : {};
-        // The tool step reads `{ approve, args?, allowInConversation? }` from the question's result and the call
-        // id from its input.
+        // The tool step reads `{ approve, args?, allowInConversation?, answers? }` from the question's result and
+        // the call id from its input.
         const outcome = await this.tasks.answer(decisionId, ownerId, {
           approve,
           ...edited,
           ...(allowInConversation === true
             ? { allowInConversation: true }
             : {}),
+          ...(answers === undefined ? {} : { answers }),
         });
         return outcome === 'answered' ? 'resolved' : 'already_resolved';
       },

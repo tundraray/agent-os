@@ -23,6 +23,7 @@ import type { AgentDeps } from './agent-deps';
 import type { SessionHistory } from './agent-state';
 import type { BaseAgent } from './base-agent';
 import { entriesOf } from './deliver';
+import { instructionBlocks } from './instruction-blocks';
 import {
   callUnlessAborted,
   FAILURE_REASONS,
@@ -217,6 +218,8 @@ export async function runModelStep(
   }
   // Memory is live data read beside the version on every step (design-memory.md KD-3); a failed read fails the step.
   const memory = await memoryBlock(deps, agent.caller, ctx.logger);
+  // The two instructions are live data too (agent-guidance KD-4): a change reaches the next step.
+  const instructions = await instructionBlocks(deps, ctx);
   // The task list too (design-task-list.md KD-2): only a tool step changes it, so `endOfTurn` below reads the
   // same tasks.
   const declaration = await agent.offeredDeclaration(ctx);
@@ -231,6 +234,7 @@ export async function runModelStep(
       agentName: definition.name,
       model: session.model,
       instructions: withStepBlocks(definition.prompt, {
+        ...instructions,
         memory,
         tasks: taskBlock(tasks),
       }),

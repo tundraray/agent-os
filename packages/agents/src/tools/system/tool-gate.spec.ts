@@ -278,6 +278,7 @@ async function checkRunCode(
     root: false,
     startable: [],
     deepAgents: null,
+    skills: [],
     taskList: false,
     listDelegation: false,
     scripts: [],

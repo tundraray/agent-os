@@ -205,6 +205,9 @@ export function toConfirmation(
             ...(confirmation.resolution.allowInConversation === true
               ? { allowInConversation: true }
               : {}),
+            ...(confirmation.resolution.answers === undefined
+              ? {}
+              : { answers: [...confirmation.resolution.answers] }),
           },
     createdAt: iso(confirmation.createdAt),
     resolvedAt: isoOrNull(confirmation.resolvedAt),

@@ -2,6 +2,7 @@ import type {
   ChipRecord,
   ConfirmationStatus,
   ForkRefusalReason,
+  QuestionAnswer,
   ScheduleMark,
   ToolCallState,
 } from '@agent-os/contracts';
@@ -113,6 +114,8 @@ export interface ResolveConfirmationRequest {
   readonly args?: unknown;
   /** The third answer «allow in this conversation»: only with `approve` and only on a changing MCP tool's card. */
   readonly allowInConversation?: true;
+  /** The employee's answers, one per question: only on an `agents.question` card (agent-guidance KD-1). */
+  readonly answers?: readonly QuestionAnswer[];
 }
 
 /** One tool call of a model answer as `history` shows it; an open call carries its state. */
@@ -170,6 +173,8 @@ export interface AgentConfirmation extends ToolDisplay {
     readonly args: unknown;
     /** Only when the answer was «allow in this conversation». */
     readonly allowInConversation?: true;
+    /** Only on an answered `agents.question` card (agent-guidance KD-1). */
+    readonly answers?: readonly QuestionAnswer[];
   } | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;

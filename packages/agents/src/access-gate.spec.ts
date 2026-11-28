@@ -5,6 +5,7 @@
 import type { Logger } from '@agent-os/common';
 import {
   CodeCallsRepository,
+  IdentityUsersRepository,
   MemoriesRepository,
   McpAccountsRepository,
   McpServersRepository,
@@ -229,6 +230,7 @@ function refusedAgent(refusal: Refusal) {
     // The chat has no memory: its block reads neither.
     memoryRows: new MemoriesRepository(db),
     settingsRows: new SettingsRepository(db),
+    userRows: new IdentityUsersRepository(db),
     scheduleRows: new SchedulesRepository(db),
   };
   const registry = new ToolRegistry(

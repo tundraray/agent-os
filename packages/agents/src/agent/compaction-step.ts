@@ -85,8 +85,8 @@ export async function runCompactionStep(
   const delivered = await entriesOf(deps, ctx);
   // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
   const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
-  // The same system text as the model step's (design-memory.md KD-3): otherwise this call would miss its prompt cache, and
-  // the summary would be written without the task list (design-task-list.md KD-2).
+  // The model step's system text without the instructions (design-memory.md KD-3, agent-guidance KD-3): without the
+  // task list the summary would be written without it (design-task-list.md KD-2).
   const memory = await memoryBlock(deps, agent.caller, ctx.logger);
   const declaration = await agent.offeredDeclaration(ctx);
   const tasks = taskBlock(
@@ -116,7 +116,13 @@ export async function runCompactionStep(
       taskId: ctx.taskId,
       agentName: definition.name,
       model: session.model,
-      instructions: withStepBlocks(definition.prompt, { memory, tasks }),
+      // The compaction does not work for the employee: no instruction block (agent-guidance KD-3).
+      instructions: withStepBlocks(definition.prompt, {
+        organisation: null,
+        personal: null,
+        memory,
+        tasks,
+      }),
       messages: [
         ...providerMessagesOf(view, shown, previewChars),
         { role: 'user', content: COMPACTION_REQUEST },

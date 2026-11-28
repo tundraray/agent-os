@@ -1,5 +1,7 @@
 import {
   AgentMessageKindSchema,
+  ASK_USER_TOOL,
+  READ_SKILL_TOOL,
   ToolCallStateSchema,
 } from '@agent-os/contracts';
 import type {
@@ -10,6 +12,7 @@ import type {
   StepResult,
 } from '@agent-os/runtime';
 
+import { listingLine } from '../chat-listing';
 import { type CallState, isDelegated } from '../history/call-state';
 import {
   type RunDefinition,
@@ -57,6 +60,24 @@ import { agentOwner } from './agent-owner';
 
 const { interrupt } = AgentMessageKindSchema.enum;
 const { done } = ToolCallStateSchema.enum;
+
+/**
+ * The declaration of a model call with its skill catalogue (agent-guidance KD-6): the lines go to the description
+ * of `read_skill`; an empty catalogue — the call is not offered `read_skill` at all.
+ */
+export function withSkillCatalogue(
+  declaration: ToolDeclaration,
+  skills: readonly string[],
+): ToolDeclaration {
+  return {
+    ...declaration,
+    skills,
+    system:
+      skills.length === 0
+        ? declaration.system.filter((name) => name !== READ_SKILL_TOOL)
+        : declaration.system,
+  };
+}
 
 /**
  * The agent of one task: the object the runtime keeps in memory between the task's steps (design-agents.md: C3
@@ -130,6 +151,7 @@ export abstract class BaseAgent implements LiveTask {
       root: this.root,
       startable: this.root ? null : definition.startable,
       deepAgents: null,
+      skills: [],
       taskList: taskListTools.length > 0,
       listDelegation: definition.listDelegation,
       scripts: definition.scripts,
@@ -149,9 +171,16 @@ export abstract class BaseAgent implements LiveTask {
     return this.root || this.definition.taskList ? TASK_LIST_TOOLS : [];
   }
 
-  /** System tools the agent's kind declares beyond its version's: none. A getter: the constructor reads it. Overridden by `Trainer`. */
+  /**
+   * System tools the agent's kind declares beyond its version's: `ask_user` (agent-guidance KD-1) and `read_skill`
+   * when the version lists skills (KD-6). A getter: the constructor reads it after `definition`. Overridden by
+   * `ChatAgent` and `Trainer`, which has neither.
+   */
   protected get kindTools(): readonly string[] {
-    return [];
+    return [
+      ASK_USER_TOOL,
+      ...(this.definition.skills.length > 0 ? [READ_SKILL_TOOL] : []),
+    ];
   }
 
   /** `ToolCaller.fixedTasks`: `null`, an ordinary list. A getter: the constructor reads it. Overridden by `Trainer`. */
@@ -300,9 +329,27 @@ export abstract class BaseAgent implements LiveTask {
     return runModelStep(this.deps, this, ctx, session, view, prelude);
   }
 
-  /** The declaration the tools of a model call are built from: `declaration`. Overridden by `ChatAgent`. */
-  async offeredDeclaration(_ctx: StepContext): Promise<ToolDeclaration> {
-    return this.declaration;
+  /**
+   * The declaration the tools of a model call are built from: `declaration` with the skill catalogue of the
+   * version's list (agent-guidance KD-6), read on every step without the viewer's visibility and without the
+   * deleted skills, in the list's order. A version without skills reads nothing. Overridden by `Agent` and
+   * `ChatAgent`.
+   */
+  async offeredDeclaration(ctx: StepContext): Promise<ToolDeclaration> {
+    const { skills } = this.definition;
+    if (skills.length === 0) return this.declaration;
+    const found = await this.deps.library.skills(agentOwner(ctx), skills);
+    const lines = found.map((skill) => listingLine(skill));
+    ctx.logger.info('skill catalogue built', {
+      agentId: ctx.taskId,
+      rootId: ctx.rootId,
+      ownerId: ctx.ownerId,
+      stepNo: ctx.stepNo,
+      listed: skills.length,
+      skills: lines.length,
+      length: lines.reduce((sum, line) => sum + line.length, 0),
+    });
+    return withSkillCatalogue(this.declaration, lines);
   }
 
   /** The turn counter after the step's messages are delivered (DC-1): unchanged. Overridden by `ChatAgent`. */

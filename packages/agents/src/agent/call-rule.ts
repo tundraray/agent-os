@@ -1,5 +1,6 @@
 import {
   AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
   type ToolPair,
   ToolRefusalReasonSchema,
 } from '@agent-os/contracts';
@@ -46,17 +47,24 @@ function hasPair(pairs: readonly ToolPair[], pair: ToolPair | null): boolean {
   );
 }
 
+/** Cards a schedule's run sends without asking: a deep agent's brief, and a question nobody is there to answer. */
+const UNASKED_IN_SCHEDULE: readonly string[] = [
+  AGENTS_BRIEF_CONFIRMATION,
+  AGENTS_QUESTION_CONFIRMATION,
+];
+
 /**
  * The rule of a call that needs a card (improvements design-server.md KD-1, KD-4, «How the call rule works»).
- * In a schedule's run: a pair of the schedule's permission and a deep agent's brief are sent without a card
- * under the schedule's grant, any other call is refused `unattended`. In an ordinary run: a pair of the
+ * In a schedule's run: a pair of the schedule's permission, a deep agent's brief and an `ask_user` question
+ * (agent-guidance KD-2, Flow 2) are sent without a card under the schedule's grant, any other call is refused
+ * `unattended`. In an ordinary run: a pair of the
  * conversation's permission is sent under the conversation's grant, any other call gets its card.
  */
 export function callRule(facts: CallRuleFacts): CallRuling {
   if (facts.scheduleId !== null) {
     if (
       hasPair(facts.schedulePairs, facts.pair) ||
-      facts.cardKind === AGENTS_BRIEF_CONFIRMATION
+      UNASKED_IN_SCHEDULE.includes(facts.cardKind)
     ) {
       return {
         kind: 'send',

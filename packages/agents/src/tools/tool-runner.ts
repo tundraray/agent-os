@@ -1,5 +1,8 @@
 import { errorText, type Logger } from '@agent-os/common';
-import { AGENTS_TOOL_CONFIRMATION } from '@agent-os/contracts';
+import {
+  AGENTS_TOOL_CONFIRMATION,
+  type QuestionAnswer,
+} from '@agent-os/contracts';
 import { type CallKey, SettingsRepository } from '@agent-os/db';
 import type { StepContext, StepEffects } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -101,6 +104,14 @@ export interface StartChildScope {
 
 /** The step context the runner needs for an outside call; the tool gets it in its input. */
 export type OutsideContext = Pick<StepContext, 'signal' | 'logger' | 'guard'>;
+
+/** The employee's decision a confirmed call is sent with (`sendConfirmed`). */
+export interface ConfirmedDecision {
+  readonly editedArgs?: unknown;
+  readonly confirmed?: unknown;
+  readonly answers?: readonly QuestionAnswer[];
+  readonly grant?: SendGrant;
+}
 
 /** The step context of a confirmed call: the intent goes through `guard`. */
 export type ConfirmContext = Pick<
@@ -319,23 +330,23 @@ export class ToolRunner {
    * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
-   * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3). `grant` — the
+   * the tool in its input, `outside` or `in_commit` (code-execution KD-10; deep-agents KD-3). `answers` — the
+   * employee's answers of the decision, given to an `outside` tool (agent-guidance KD-1). `grant` — the
    * conversation's, for the third answer «allow in this conversation»: the intent adds the call's pair to the
    * conversation's permission (improvements design-server.md Flow 2).
    */
   sendConfirmed(
     call: ResolvedCall,
     ctx: ConfirmContext,
-    editedArgs?: unknown,
-    confirmed?: unknown,
-    grant?: SendGrant,
+    decision: ConfirmedDecision = {},
   ): Promise<ConfirmedSend> {
     return this.sendOnce(
       call,
       ctx,
-      (key) => this.callRecords.markSent(key, grant),
-      editedArgs,
-      confirmed,
+      (key) => this.callRecords.markSent(key, decision.grant),
+      decision.editedArgs,
+      decision.confirmed,
+      decision.answers ?? null,
     );
   }
 
@@ -366,6 +377,7 @@ export class ToolRunner {
     mark: (key: CallKey & { readonly args?: unknown }) => Promise<boolean>,
     editedArgs?: unknown,
     confirmed?: unknown,
+    answers?: readonly QuestionAnswer[] | null,
   ): Promise<ConfirmedSend> {
     const sent: ResolvedCall =
       editedArgs === undefined ? call : { ...call, args: editedArgs };
@@ -410,7 +422,7 @@ export class ToolRunner {
       logCall(ctx.logger, loggedCall(sent), notSent, startedAt);
       return notSent;
     }
-    const execution = await this.execute(sent, ctx, confirmed);
+    const execution = await this.execute(sent, ctx, confirmed, answers);
     logCall(ctx.logger, loggedCall(sent), execution, startedAt);
     return { kind: 'sent', execution };
   }
@@ -419,6 +431,7 @@ export class ToolRunner {
     call: ResolvedCall,
     ctx: OutsideContext,
     confirmed?: unknown,
+    answers?: readonly QuestionAnswer[] | null,
   ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
     if (isMcp(tool)) {
@@ -442,6 +455,7 @@ export class ToolRunner {
         logger: ctx.logger,
         guard: (work) => ctx.guard(work),
         ...(confirmed === undefined ? {} : { confirmed }),
+        ...(answers === undefined ? {} : { answers }),
       }),
     );
     return ctx.signal.aborted ? { kind: 'aborted' } : result;

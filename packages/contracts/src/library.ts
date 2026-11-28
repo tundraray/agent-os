@@ -159,6 +159,8 @@ export const START_AGENT_TOOL = RecordToolSchema.enum.start_agent;
 export const START_DEEP_AGENT_TOOL = 'start_deep_agent';
 /** The tool a deep agent assigns work to its subagents with (deep-agents/design-task.md KD-6). */
 export const TASK_TOOL = 'task';
+/** The tool a model reads a skill of its catalogue with (agent-guidance design-server.md, KD-6). */
+export const READ_SKILL_TOOL = 'read_skill';
 /**
  * `agent` of `start_agent` that starts a fork of the caller; no record may take this name (data-model
  * design-agents.md, «Таблицы каталога»).
@@ -686,6 +688,8 @@ export function nameWinner<T extends NameCandidate>(
 export type ResolvedRecord = Omit<RecordHeader, 'kind'> & RecordBody;
 /** A resolved record that starts: an agent or a deep agent, never a skill. */
 export type ResolvedAgent = Extract<ResolvedRecord, { kind: StartableKind }>;
+/** A resolved skill: its header and the text of its active version (agent-guidance KD-6). */
+export type ResolvedSkill = Extract<ResolvedRecord, { kind: 'skill' }>;
 
 /** The record starts: every start path answers a skill as a missing record (agent-guidance KD-5). */
 export function isStartable<T extends { readonly kind: RecordKind }>(

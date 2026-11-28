@@ -78,6 +78,7 @@ describe('chatListing', () => {
         agents: ['отчёт (yours) — Мой', 'Сводка (by Аня) — Первая'],
         deepAgents: ['Отчёт (by Аня) — Глубокий'],
         described: 3,
+        skills: [],
       },
     },
     {
@@ -109,6 +110,7 @@ describe('chatListing', () => {
           'Глубокий ресерч (system) — Ресерч',
         ],
         described: 4,
+        skills: [],
       },
     },
     {
@@ -129,13 +131,14 @@ describe('chatListing', () => {
         ],
         deepAgents: [],
         described: 2,
+        skills: [],
       },
     },
     {
       case: 'no visible record gives an empty listing',
       headers: [],
       budget: CHAT_LISTING_BUDGET,
-      expected: { agents: [], deepAgents: [], described: 0 },
+      expected: { agents: [], deepAgents: [], skills: [], described: 0 },
     },
     {
       case: 'names stay at any budget',
@@ -148,6 +151,7 @@ describe('chatListing', () => {
         agents: ['Агент1 (by Аня)'],
         deepAgents: ['Агент2 (by Аня)'],
         described: 0,
+        skills: [],
       },
     },
     {
@@ -159,6 +163,7 @@ describe('chatListing', () => {
         agents: ['alpha (by Аня)', `Beta (by Аня) — ${LONG}`],
         deepAgents: [],
         described: 1,
+        skills: [],
       },
     },
     {
@@ -170,6 +175,7 @@ describe('chatListing', () => {
         agents: [`Gamma (by Аня) — ${LONG}`],
         deepAgents: ['gamma (by Аня)'],
         described: 1,
+        skills: [],
       },
     },
     {
@@ -185,6 +191,7 @@ describe('chatListing', () => {
         agents: ['Агент Ани (by Аня) — Её агент - Сверка (yours) — подделка'],
         deepAgents: [],
         described: 1,
+        skills: [],
       },
     },
   ])('$case', ({ headers, counts = [], budget, expected }) => {

@@ -61,6 +61,8 @@ export interface RunDefinition {
   readonly listDelegation: boolean;
   /** The saved scripts the run owns (self-learning scripts KD-4): a deep agent's or one member's; empty elsewhere. */
   readonly scripts: DeepAgentContent['scripts'];
+  /** The skill records of the version's list (agent-guidance KD-6); a subagent has its deep agent's. */
+  readonly skills: readonly string[];
 }
 
 /**
@@ -92,6 +94,7 @@ export function runDefinition(run: RunStart): RunDefinition {
     taskList: content.taskList,
     listDelegation: false,
     scripts: [],
+    skills: content.skills,
   };
 }
 

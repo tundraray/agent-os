@@ -95,6 +95,15 @@ export class IdentityUsersRepository {
     return row;
   }
 
+  /** The employee's personal instruction (agent-guidance KD-4); `undefined` for an unknown employee. */
+  async instructions(userId: string): Promise<string | undefined> {
+    const [row] = await this.db.client
+      .select({ instructions: identityUsers.instructions })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, userId));
+    return row?.instructions;
+  }
+
   /** Whether the employee has the admin right now; `false` for an unknown one. */
   async hasAdminRight(userId: string): Promise<boolean> {
     const [row] = await this.db.client
@@ -195,6 +204,14 @@ export class IdentityUsersRepository {
     await this.db.client
       .update(identityUsers)
       .set({ language })
+      .where(eq(identityUsers.id, userId));
+  }
+
+  /** Replaces the employee's personal instruction (agent-guidance KD-8). */
+  async setInstructions(userId: string, instructions: string): Promise<void> {
+    await this.db.client
+      .update(identityUsers)
+      .set({ instructions })
       .where(eq(identityUsers.id, userId));
   }
 

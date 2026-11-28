@@ -35,6 +35,7 @@ import {
   TrainingsRepository,
 } from '@agent-os/db';
 import { Inbox, monthOf, TokenLedger } from '@agent-os/runtime';
+import { apiError } from '../common/api-error';
 import { isUuid } from '../common/is-uuid';
 import { httpError } from './chat.errors';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
@@ -295,8 +296,16 @@ export class AgentControlService {
       ...(decision.allowInConversation === true
         ? { allowInConversation: true }
         : {}),
+      ...(decision.answers === undefined ? {} : { answers: decision.answers }),
     });
     if (outcome === 'not_mcp_card') throw httpError('VALIDATION_FAILED');
+    if (outcome === 'answers_mismatch')
+      throw apiError(
+        400,
+        'VALIDATION_FAILED',
+        'Answers do not match the questions of the card',
+        'answers_mismatch',
+      );
     return { outcome };
   }
 

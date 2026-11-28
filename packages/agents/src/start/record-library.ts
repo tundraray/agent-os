@@ -5,6 +5,7 @@ import type {
   RecordKind,
   ResolvedAgent,
   ResolvedRecord,
+  ResolvedSkill,
 } from '@agent-os/contracts';
 
 /**
@@ -32,6 +33,15 @@ export interface RecordLibrary {
   ): Promise<ResolvedRecord | null>;
   /** The default agent with this key and its active version: it exists always, read without a visibility check. */
   resolveBuiltin(builtinKey: BuiltinKey): Promise<ResolvedAgent>;
+  /**
+   * The skills of a version's list with the text of their active versions, in the order of `skillIds`, read
+   * without a visibility check — the skills come with the agent (agent-guidance KD-6) — and without the deleted
+   * ones; an id of another kind gives nothing. `viewerId` decides only `mine` of each header.
+   */
+  skills(
+    viewerId: string,
+    skillIds: readonly string[],
+  ): Promise<ResolvedSkill[]>;
   /** Headers of every agent the viewer sees, by name, agents of one name earliest created first. */
   listVisible(viewerId: string): Promise<RecordHeader[]>;
   /**

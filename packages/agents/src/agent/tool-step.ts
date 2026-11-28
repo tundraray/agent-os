@@ -1,6 +1,8 @@
 import {
   CHILD_FINISHED_KIND,
   ChildFinishedPayloadSchema,
+  type QuestionAnswer,
+  QuestionAnswerSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   type ToolPair,
@@ -91,6 +93,8 @@ export const ConfirmationResolutionSchema = z.object({
   approve: z.boolean(),
   args: z.unknown().optional(),
   allowInConversation: z.boolean().optional(),
+  /** The employee's answers to an `agents.question` card; absent — he skipped it (agent-guidance KD-1). */
+  answers: z.array(QuestionAnswerSchema).optional(),
 });
 
 /** The employee's decision on one call, read from the answered question. */
@@ -102,6 +106,8 @@ interface CallDecision {
   readonly allowInConversation: boolean;
   /** `content` of the question's input, handed to the tool (code-execution KD-10; deep-agents KD-3). */
   readonly confirmed?: unknown;
+  /** The employee's answers to a question card, handed to the tool (agent-guidance KD-1). */
+  readonly answers?: readonly QuestionAnswer[];
 }
 
 /**
@@ -133,6 +139,9 @@ async function answerOf(
         allowInConversation: resolution.allowInConversation === true,
         ...(resolution.args === undefined ? {} : { args: resolution.args }),
         ...(content === undefined ? {} : { confirmed: content }),
+        ...(resolution.answers === undefined
+          ? {}
+          : { answers: resolution.answers }),
       },
     };
   }
@@ -768,15 +777,22 @@ export async function runToolStep(
           // «Allow in this conversation» joins the pair to the conversation's permission with the intent (Flow 2);
           // a call without a pair has nothing to allow.
           const pair = pairOf(resolved);
-          send = await runner.sendConfirmed(
-            resolved,
-            ctx,
-            callDecision.args,
-            callDecision.confirmed,
-            callDecision.allowInConversation && pair !== null
-              ? { kind: 'conversation', rootId: caller.rootId, pair }
-              : undefined,
-          );
+          send = await runner.sendConfirmed(resolved, ctx, {
+            editedArgs: callDecision.args,
+            confirmed: callDecision.confirmed,
+            ...(callDecision.answers === undefined
+              ? {}
+              : { answers: callDecision.answers }),
+            ...(callDecision.allowInConversation && pair !== null
+              ? {
+                  grant: {
+                    kind: 'conversation',
+                    rootId: caller.rootId,
+                    pair,
+                  },
+                }
+              : {}),
+          });
         }
         if (send.kind === 'not_sent') {
           if (send.reason === 'fenced') return abandon('intent fenced');

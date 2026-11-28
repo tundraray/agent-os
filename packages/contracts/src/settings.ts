@@ -33,6 +33,15 @@ export type UpdateOrganisationInstructionsBody = z.infer<
   typeof UpdateOrganisationInstructionsBodySchema
 >;
 
+/** Response of GET/PUT /api/admin/instructions. `updatedAt: null` while the default row stands. */
+export const OrganisationInstructionsSchema =
+  UpdateOrganisationInstructionsBodySchema.extend({
+    updatedAt: z.iso.datetime().nullable(),
+  });
+export type OrganisationInstructions = z.infer<
+  typeof OrganisationInstructionsSchema
+>;
+
 /** The schema of each key's value; a new key comes with its schema here and its default row in the migration. */
 export const SETTINGS_VALUE_SCHEMAS = {
   sign_in_settings: UpdateSignInSettingsBodySchema,

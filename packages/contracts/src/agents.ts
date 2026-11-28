@@ -26,6 +26,11 @@ export const AGENT_TASK_TYPES: readonly string[] = [
 /** Decision kind of a tool call that waits for the employee's confirmation. */
 export const AGENTS_TOOL_CONFIRMATION = 'agents.tool_confirmation';
 
+/** The tool an agent asks the employee questions with (agent-guidance design-server.md, KD-1). */
+export const ASK_USER_TOOL = 'ask_user';
+/** The main chat's tool that replaces the employee's personal instruction (agent-guidance KD-8). */
+export const SET_PERSONAL_INSTRUCTIONS_TOOL = 'set_personal_instructions';
+
 /** Kind of a history entry. */
 export const HistoryEntryKindSchema = z.enum([
   'task',
