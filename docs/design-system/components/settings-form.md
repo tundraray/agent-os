@@ -75,6 +75,7 @@ https://agent-os.corp/auth/oidc/7/callback  [⧉]  5 значение для к�
 - [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — настройки самообучения в панели (AS-01); переключатели прав обучать у роли (RT-01); поля формы скрипта агента (SC-02).
 - [docs/features/model-providers/uxrd.md](../../features/model-providers/uxrd.md) — модели по умолчанию (MP-01), диалоги провайдера и модели (MP-04, MP-06).
 - [docs/features/i18n/uxrd.md](../../features/i18n/uxrd.md) — выбор языка интерфейса в «Мой доступ» (LN-01).
-- [docs/features/schedules-search-memory/uxrd.md](../../features/schedules-search-memory/uxrd.md) — диалог расписания (SH-02) в комфортной плотности; предупреждение о конфликте в истории записи (MH-02).
+- [docs/features/schedules-search-memory/uxrd.md](../../features/schedules-search-memory/uxrd.md) — предупреждение о конфликте в истории записи (MH-02).
+- [docs/features/chat-scheduling/uxrd.md](../../features/chat-scheduling/uxrd.md) — правила подписи, подсказки и ошибки полей карточки расписания (CS-02).
 - [docs/features/live-feed/uxrd.md](../../features/live-feed/uxrd.md) — радиогруппа уровня уведомлений в «Мой доступ» (LF-04).
 - [docs/features/task-tracker/uxrd.md](../../features/task-tracker/uxrd.md) — диалог «Поручить агенту» (TT-09).
